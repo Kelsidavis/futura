@@ -3,9 +3,10 @@
  * Copyright (c) 2025 Kelsi Davis
  * Licensed under the MPL v2.0 — see LICENSE for details.
  *
- * Implements eventfd, signalfd, and timerfd syscalls for event-driven I/O.
+ * Implements eventfd and timerfd syscalls for event-driven I/O.
  * These provide file descriptor-based event notification mechanisms that
  * integrate with epoll/poll/select for unified event handling.
+ * signalfd is implemented separately in sys_signalfd.c.
  */
 
 /* ============================================================
@@ -538,10 +539,6 @@ static void eventfd_uid_dec(uint32_t uid) {
 #define FD_CLOEXEC      1
 #endif
 
-/* signalfd flags */
-#define SFD_CLOEXEC     02000000
-#define SFD_NONBLOCK    00004000
-
 /* timerfd flags */
 #define TFD_CLOEXEC     02000000
 #define TFD_NONBLOCK    00004000
@@ -1052,260 +1049,6 @@ long sys_eventfd2(unsigned int initval, int flags) {
     return fd;
 }
 
-/* ============================================================
- * signalfd implementation
- * ============================================================ */
-
-/* POSIX signalfd_siginfo — 128 bytes exactly as on Linux x86-64 */
-struct signalfd_siginfo {
-    uint32_t ssi_signo;
-    int32_t  ssi_errno;
-    int32_t  ssi_code;
-    uint32_t ssi_pid;
-    uint32_t ssi_uid;
-    int32_t  ssi_fd;
-    uint32_t ssi_tid;
-    uint32_t ssi_band;
-    uint32_t ssi_overrun;
-    uint32_t ssi_trapno;
-    int32_t  ssi_status;
-    int32_t  ssi_int;
-    uint64_t ssi_ptr;
-    uint64_t ssi_utime;
-    uint64_t ssi_stime;
-    uint64_t ssi_addr;
-    uint16_t ssi_addr_lsb;
-    uint16_t __pad2;
-    int32_t  ssi_syscall;
-    uint64_t ssi_call_addr;
-    uint32_t ssi_arch;
-    uint8_t  __pad[28];
-};
-
-struct signalfd_ctx {
-    uint64_t sigmask;           /* Signals this fd will dequeue */
-    fut_task_t *task;           /* Owning task */
-    fut_waitq_t read_waitq;     /* Threads blocked in read() */
-    fut_spinlock_t lock;
-    fut_waitq_t *epoll_notify;  /* Wakes epoll/poll/select when signal arrives */
-};
-
-struct signalfd_file {
-    struct signalfd_ctx *ctx;
-    struct fut_file *file;
-};
-
-static ssize_t signalfd_read_op(void *inode, void *priv,
-                                void *u_buf, size_t len, off_t *pos);
-static int signalfd_release(void *inode, void *priv);
-
-static struct fut_file_ops signalfd_fops;
-
-/* Read pending signals matching ctx->sigmask from task->pending_signals.
- * Returns one struct signalfd_siginfo (128 bytes) per consumed signal.
- * Blocks if no matching signals are pending (unless O_NONBLOCK). */
-static ssize_t signalfd_read_op(void *inode, void *priv,
-                                void *u_buf, size_t len, off_t *pos) {
-    (void)inode; (void)pos;
-    struct signalfd_file *sfile = (struct signalfd_file *)priv;
-    if (!sfile || !sfile->ctx) return -EBADF;
-    struct signalfd_ctx *ctx = sfile->ctx;
-    fut_task_t *task = ctx->task;
-    if (!task) return -ESRCH;
-
-    if (len < sizeof(struct signalfd_siginfo)) return -EINVAL;
-
-    ssize_t total = 0;
-    uint8_t *out = (uint8_t *)u_buf;
-    size_t remain = len;
-
-    while (remain >= sizeof(struct signalfd_siginfo)) {
-        /* Find lowest-numbered pending signal in our mask */
-        uint64_t pending;
-        fut_spinlock_acquire(&ctx->lock);
-        pending = task->pending_signals & ctx->sigmask;
-        fut_spinlock_release(&ctx->lock);
-
-        if (!pending) {
-            /* No matching signals */
-            if (total > 0) break;  /* Already returned some - don't block */
-            if (sfile->file && (sfile->file->flags & O_NONBLOCK))
-                return -EAGAIN;
-            /* Check for pending process signals → EINTR */
-            {
-                fut_task_t *stask = fut_task_current();
-                if (stask) {
-                    uint64_t ppend = __atomic_load_n(&stask->pending_signals, __ATOMIC_ACQUIRE);
-                    fut_thread_t *scur_thr = fut_thread_current();
-                uint64_t blocked = scur_thr ?
-                    __atomic_load_n(&scur_thr->signal_mask, __ATOMIC_ACQUIRE) :
-                    __atomic_load_n(&stask->signal_mask, __ATOMIC_ACQUIRE);
-                    if (ppend & ~blocked)
-                        return -EINTR;
-                }
-            }
-            /* Block on task's signal waitq — woken by fut_signal_send() */
-            fut_spinlock_acquire(&task->signal_waitq.lock);
-            fut_waitq_sleep_locked(&task->signal_waitq, &task->signal_waitq.lock, FUT_THREAD_BLOCKED);
-            continue;
-        }
-
-        /* Take lowest set bit */
-        int signo = __builtin_ctzll(pending) + 1;  /* signals are 1-based */
-        uint64_t bit = 1ULL << (signo - 1);
-
-        /* Atomically consume the signal from task->pending_signals */
-        fut_spinlock_acquire(&ctx->lock);
-        /* Re-check: another reader may have taken it */
-        if (!(task->pending_signals & bit)) {
-            fut_spinlock_release(&ctx->lock);
-            continue;
-        }
-        task->pending_signals &= ~bit;
-        fut_spinlock_release(&ctx->lock);
-
-        /* Fill in signalfd_siginfo from the per-signal queue info.
-         * Linux copies all available siginfo_t fields so applications
-         * (e.g. SIGCHLD handlers, timer consumers) get complete data. */
-        struct signalfd_siginfo info;
-        __builtin_memset(&info, 0, sizeof(info));
-        const siginfo_t *qi = &task->sig_queue_info[signo - 1];
-        info.ssi_signo   = (uint32_t)signo;
-        info.ssi_errno   = qi->si_errno;
-        info.ssi_code    = qi->si_code;
-        info.ssi_pid     = (uint32_t)qi->si_pid;
-        info.ssi_uid     = qi->si_uid;
-        info.ssi_status  = qi->si_status;
-        info.ssi_int     = (int32_t)qi->si_value;
-        info.ssi_ptr     = (uint64_t)qi->si_value;
-        info.ssi_addr    = (uint64_t)(uintptr_t)qi->si_addr;
-        info.ssi_overrun = (uint32_t)qi->si_overrun;
-
-        if (sfd_copy_to_user(out, &info, sizeof(info)) != 0)
-            return total > 0 ? total : -EFAULT;
-
-        out    += sizeof(info);
-        remain -= sizeof(info);
-        total  += (ssize_t)sizeof(info);
-    }
-
-    return total;
-}
-
-static int signalfd_release(void *inode, void *priv) {
-    (void)inode;
-    struct signalfd_file *sfile = (struct signalfd_file *)priv;
-    if (!sfile) return 0;
-    if (sfile->ctx) fut_free(sfile->ctx);
-    fut_free(sfile);
-    return 0;
-}
-
-/**
- * sys_signalfd4 - Create a file descriptor for signal notification
- *
- * @param ufd:      -1 to create new fd, or existing signalfd to update its mask
- * @param mask:     Pointer to signal mask (uint64_t bitmask, sizemask bytes)
- * @param sizemask: Size of mask in bytes (must be >= 4)
- * @param flags:    SFD_CLOEXEC, SFD_NONBLOCK
- *
- * signalfd allows receiving signals via read() instead of signal handlers.
- * Useful for integrating signal handling with event loops (epoll).
- *
- * Phase 1 (Completed): Stub returning -ENOSYS
- * Phase 2 (Completed): Full implementation with signal mask and file operations
- *
- * Returns:
- *   - File descriptor on success
- *   - -EINVAL if flags or mask invalid
- *   - -EBADF if ufd does not refer to a signalfd
- */
-long sys_signalfd4(int ufd, const void *mask, size_t sizemask, int flags) {
-    fut_task_t *task = fut_task_current();
-    if (!task) return -ESRCH;
-
-    static int signalfd_fops_inited = 0;
-    if (!signalfd_fops_inited) {
-        signalfd_fops.open = NULL;
-        signalfd_fops.release = signalfd_release;
-        signalfd_fops.read = signalfd_read_op;
-        signalfd_fops.write = NULL;
-        signalfd_fops.ioctl = NULL;
-        signalfd_fops.mmap = NULL;
-        signalfd_fops_inited = 1;
-    }
-
-    /* Validate flags */
-    int valid_flags = SFD_CLOEXEC | SFD_NONBLOCK;
-    if (flags & ~valid_flags) return -EINVAL;
-
-    /* Validate and copy signal mask */
-    if (!mask || sizemask < 4) return -EINVAL;
-    uint64_t sigmask = 0;
-    size_t copy_bytes = (sizemask >= 8) ? 8 : 4;
-    if (sfd_copy_from_user(&sigmask, mask, copy_bytes) != 0) return -EFAULT;
-    if (copy_bytes == 4) sigmask &= 0xFFFFFFFFULL;
-
-    /* SIGKILL and SIGSTOP cannot be caught via signalfd */
-    sigmask &= ~((1ULL << (9  - 1)) |   /* SIGKILL */
-                 (1ULL << (19 - 1)));    /* SIGSTOP */
-
-    /* Update-mask case: ufd refers to an existing signalfd */
-    if (ufd != -1) {
-        if (!task->fd_table || ufd < 0 || ufd >= task->max_fds) return -EBADF;
-        struct fut_file *file = task->fd_table[ufd];
-        if (!file || file->chr_ops != &signalfd_fops || !file->chr_private)
-            return -EBADF;
-        struct signalfd_file *sfile = (struct signalfd_file *)file->chr_private;
-        if (!sfile->ctx) return -EBADF;
-        fut_spinlock_acquire(&sfile->ctx->lock);
-        sfile->ctx->sigmask = sigmask;
-        fut_spinlock_release(&sfile->ctx->lock);
-        return ufd;
-    }
-
-    /* Create new signalfd */
-    struct signalfd_ctx *ctx = fut_malloc(sizeof(struct signalfd_ctx));
-    if (!ctx) return -ENOMEM;
-    ctx->sigmask       = sigmask;
-    ctx->task          = task;
-    ctx->epoll_notify  = NULL;
-    fut_spinlock_init(&ctx->lock);
-    fut_waitq_init(&ctx->read_waitq);
-
-    struct signalfd_file *sfile = fut_malloc(sizeof(struct signalfd_file));
-    if (!sfile) {
-        fut_free(ctx);
-        return -ENOMEM;
-    }
-    sfile->ctx  = ctx;
-    sfile->file = NULL;
-
-    int fd = chrdev_alloc_fd(&signalfd_fops, NULL, sfile);
-    if (fd < 0) {
-        fut_free(ctx);
-        fut_free(sfile);
-        return fd;
-    }
-
-    /* Attach fut_file pointer back into context */
-    if (task->fd_table && fd >= 0 && fd < task->max_fds)
-        sfile->file = task->fd_table[fd];
-
-    if (!sfile->file) {
-        fut_vfs_close(fd);
-        return -EFAULT;
-    }
-
-    if (flags & SFD_NONBLOCK) sfile->file->flags    |= O_NONBLOCK;
-    if (flags & SFD_CLOEXEC) {
-        if (task->fd_flags && fd < task->max_fds)
-            task->fd_flags[fd] |= FD_CLOEXEC;
-    }
-
-    return fd;
-}
-
 /**
  * sys_timerfd_create - Create a timer file descriptor
  *
@@ -1489,67 +1232,6 @@ bool fut_timerfd_poll(struct fut_file *file, uint32_t requested, uint32_t *ready
 
     if (ready_out) *ready_out = ready;
     return true;
-}
-
-/* Check if a file is a signalfd and query pending signals for epoll polling */
-bool fut_signalfd_poll(struct fut_file *file, uint32_t requested, uint32_t *ready_out) {
-    if (!file || file->chr_private == NULL || file->chr_ops != &signalfd_fops) {
-        return false;
-    }
-    struct signalfd_file *sfile = (struct signalfd_file *)file->chr_private;
-    struct signalfd_ctx *ctx = sfile->ctx;
-    if (!ctx || !ctx->task) return false;
-
-    uint32_t ready = 0;
-    fut_spinlock_acquire(&ctx->lock);
-    uint64_t pending = ctx->task->pending_signals & ctx->sigmask;
-    if (pending != 0 && (requested & (EPOLLIN | EPOLLRDNORM))) {
-        ready |= (EPOLLIN | EPOLLRDNORM);
-    }
-    fut_spinlock_release(&ctx->lock);
-
-    if (ready_out) *ready_out = ready;
-    return true;
-}
-
-/**
- * Set the epoll/poll/select notification waitqueue on a signalfd.
- * Called from epoll_ctl ADD, poll_wire_fds(), and select wiring.
- * Pass wq=NULL to unwire.
- */
-void fut_signalfd_set_epoll_notify(struct fut_file *file, fut_waitq_t *wq) {
-    if (!file || file->chr_private == NULL || file->chr_ops != &signalfd_fops)
-        return;
-    struct signalfd_file *sfile = (struct signalfd_file *)file->chr_private;
-    if (!sfile || !sfile->ctx)
-        return;
-    sfile->ctx->epoll_notify = wq;
-}
-
-/**
- * Wake epoll_notify on signalfd contexts watching a given task whose
- * sigmask intersects the delivered signal.  Called by fut_signal_send()
- * after waking task->signal_waitq.
- *
- * Walks the task's fd_table looking for signalfd FDs; for each that
- * covers the delivered signal, wakes the registered epoll_notify.
- */
-void fut_signalfd_wake_epoll(fut_task_t *task, int signo) {
-    if (!task || !task->fd_table || signo < 1 || signo > 64)
-        return;
-    uint64_t bit = 1ULL << (signo - 1);
-    for (int i = 0; i < (int)task->max_fds; i++) {
-        struct fut_file *f = task->fd_table[i];
-        if (!f || f->chr_ops != &signalfd_fops || !f->chr_private)
-            continue;
-        struct signalfd_file *sfile = (struct signalfd_file *)f->chr_private;
-        if (!sfile->ctx)
-            continue;
-        if (!(sfile->ctx->sigmask & bit))
-            continue;
-        if (sfile->ctx->epoll_notify)
-            fut_waitq_wake_one(sfile->ctx->epoll_notify);
-    }
 }
 
 long sys_timerfd_create(int clockid, int flags) {
@@ -1857,29 +1539,17 @@ int fut_timerfd_get_info(struct fut_file *file,
 }
 
 /**
- * fut_signalfd_get_sigmask() - Read signalfd sigmask for fdinfo.
- * Returns the signal mask as a 64-bit word, or 0 if not a signalfd.
- */
-uint64_t fut_signalfd_get_sigmask(struct fut_file *file) {
-    if (!file || file->chr_ops != &signalfd_fops || !file->chr_private)
-        return 0;
-    struct signalfd_file *sfile = (struct signalfd_file *)file->chr_private;
-    if (!sfile->ctx)
-        return 0;
-    return sfile->ctx->sigmask;
-}
-
-/**
  * fut_chrdev_fstat_mode() - Return st_mode file-type bits for fstat on this fd.
  *
  * On Linux, each anonymous file type has a specific mode type:
- *   eventfd  → S_IFCHR  (0020000) character device
- *   timerfd  → S_IFREG  (0100000) anon_inode:[timerfd]
- *   signalfd → S_IFREG  (0100000) anon_inode:[signalfd]
+ *   eventfd  -> S_IFCHR  (0020000) character device
+ *   timerfd  -> S_IFREG  (0100000) anon_inode:[timerfd]
+ *   signalfd -> S_IFREG  (0100000) anon_inode:[signalfd]
  *
  * Returns the file-type bits (e.g. 0020000), or 0 if unknown.
  */
 extern const struct fut_file_ops epoll_fops;
+extern struct fut_file_ops signalfd_fops;  /* defined in sys_signalfd.c */
 
 uint32_t fut_chrdev_fstat_mode(struct fut_file *file) {
     if (!file || !file->chr_ops) return 0u;

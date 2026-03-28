@@ -994,6 +994,7 @@ KERNEL_SOURCES := \
     kernel/sys_timer.c \
     kernel/sys_futex.c \
     kernel/sys_eventfd.c \
+    kernel/sys_signalfd.c \
     kernel/sys_chdir.c \
     kernel/sys_getcwd.c \
     kernel/sys_vhangup.c \

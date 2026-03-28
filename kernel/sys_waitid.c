@@ -162,7 +162,7 @@ long sys_waitid(int idtype, int id, siginfo_t *infop, int options,
     int wait_flags = 0;
     if (options & WNOHANG)    wait_flags |= WNOHANG;     /* 0x1 */
     if (options & WNOWAIT)    wait_flags |= WNOWAIT;     /* 0x01000000 */
-    if (options & WSTOPPED)   wait_flags |= 2;           /* WUNTRACED = 0x2 */
+    if (options & WSTOPPED)   wait_flags |= WUNTRACED;   /* WUNTRACED = 0x2 */
     if (options & WCONTINUED) wait_flags |= WCONTINUED;  /* 0x8 */
 
     /* Call the extended wait implementation (returns uid for si_uid) */
@@ -203,7 +203,7 @@ long sys_waitid(int idtype, int id, siginfo_t *infop, int options,
     } else if (WIFSTOPPED(status)) {
         info.si_code   = CLD_STOPPED;
         info.si_status = WSTOPSIG(status);
-    } else if (status == 0xffff) {  /* WCONTINUED */
+    } else if (WIFCONTINUED(status)) {
         info.si_code   = CLD_CONTINUED;
         info.si_status = SIGCONT;
     } else {

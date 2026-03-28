@@ -380,126 +380,31 @@ long sys_getrlimit(int resource, struct rlimit *rlim) {
         return -EFAULT;
     }
 
-    /* Identify resource type for error logging */
-    const char *resource_name = "UNKNOWN";
-
-    struct rlimit limit;
-
-    /* Return reasonable default limits based on resource type */
-    switch (resource) {
-        case RLIMIT_NOFILE:
-            resource_name = "RLIMIT_NOFILE";
-            limit.rlim_cur = RLIMIT_NOFILE_SOFT_DEFAULT;
-            limit.rlim_max = RLIMIT_NOFILE_HARD_DEFAULT;
-            break;
-
-        case RLIMIT_NPROC:
-            resource_name = "RLIMIT_NPROC";
-            limit.rlim_cur = RLIMIT_NPROC_SOFT_DEFAULT;
-            limit.rlim_max = RLIMIT_NPROC_HARD_DEFAULT;
-            break;
-
-        case RLIMIT_STACK:
-            resource_name = "RLIMIT_STACK";
-            limit.rlim_cur = RLIMIT_STACK_SOFT_DEFAULT;
-            limit.rlim_max = RLIM_INFINITY;
-            break;
-
-        case RLIMIT_DATA:
-            resource_name = "RLIMIT_DATA";
-            limit.rlim_cur = RLIM_INFINITY;
-            limit.rlim_max = RLIM_INFINITY;
-            break;
-
-        case RLIMIT_AS:
-            resource_name = "RLIMIT_AS";
-            limit.rlim_cur = RLIM_INFINITY;
-            limit.rlim_max = RLIM_INFINITY;
-            break;
-
-        case RLIMIT_CORE:
-            resource_name = "RLIMIT_CORE";
-            limit.rlim_cur = 0;         /* Disabled by default */
-            limit.rlim_max = RLIM_INFINITY;
-            break;
-
-        case RLIMIT_CPU:
-            resource_name = "RLIMIT_CPU";
-            limit.rlim_cur = RLIM_INFINITY;
-            limit.rlim_max = RLIM_INFINITY;
-            break;
-
-        case RLIMIT_FSIZE:
-            resource_name = "RLIMIT_FSIZE";
-            limit.rlim_cur = RLIM_INFINITY;
-            limit.rlim_max = RLIM_INFINITY;
-            break;
-
-        case RLIMIT_RSS:
-            resource_name = "RLIMIT_RSS";
-            limit.rlim_cur = RLIM_INFINITY;
-            limit.rlim_max = RLIM_INFINITY;
-            break;
-
-        case RLIMIT_MEMLOCK:
-            resource_name = "RLIMIT_MEMLOCK";
-            limit.rlim_cur = RLIMIT_MEMLOCK_DEFAULT;
-            limit.rlim_max = RLIMIT_MEMLOCK_DEFAULT;
-            break;
-
-        case RLIMIT_LOCKS:
-            resource_name = "RLIMIT_LOCKS";
-            limit.rlim_cur = RLIM_INFINITY;
-            limit.rlim_max = RLIM_INFINITY;
-            break;
-
-        case RLIMIT_SIGPENDING:
-            resource_name = "RLIMIT_SIGPENDING";
-            limit.rlim_cur = RLIMIT_SIGPENDING_DEFAULT;
-            limit.rlim_max = RLIMIT_SIGPENDING_DEFAULT;
-            break;
-
-        case RLIMIT_MSGQUEUE:
-            resource_name = "RLIMIT_MSGQUEUE";
-            limit.rlim_cur = RLIMIT_MSGQUEUE_DEFAULT;
-            limit.rlim_max = RLIMIT_MSGQUEUE_DEFAULT;
-            break;
-
-        case RLIMIT_NICE:
-            resource_name = "RLIMIT_NICE";
-            limit.rlim_cur = RLIMIT_NICE_DEFAULT;
-            limit.rlim_max = RLIMIT_NICE_DEFAULT;
-            break;
-
-        case RLIMIT_RTPRIO:
-            resource_name = "RLIMIT_RTPRIO";
-            limit.rlim_cur = RLIMIT_RTPRIO_DEFAULT;
-            limit.rlim_max = RLIMIT_RTPRIO_DEFAULT;
-            break;
-
-        case RLIMIT_RTTIME:
-            resource_name = "RLIMIT_RTTIME";
-            limit.rlim_cur = RLIM_INFINITY;
-            limit.rlim_max = RLIM_INFINITY;
-            break;
-
-        default:
-            fut_printf("[PROC] getrlimit(resource=%d, rlim=%p) -> EINVAL (unknown resource)\n",
-                       resource, rlim);
-            return -EINVAL;
+    /* Validate resource index */
+    if (resource < 0 || resource >= RLIMIT_NLIMITS) {
+        fut_printf("[PROC] getrlimit(resource=%d, rlim=%p) -> EINVAL (unknown resource)\n",
+                   resource, rlim);
+        return -EINVAL;
     }
 
-    /* Phase 4: Use per-task stored limits (initialized with defaults at task creation) */
+    /* Read limits from per-task rlimits array (authoritative source).
+     * Task creation (fut_task_create) initializes all rlimits with
+     * correct defaults, so the per-task array is always valid. */
+    struct rlimit limit;
     fut_task_t *task = fut_task_current();
     if (task) {
         limit.rlim_cur = task->rlimits[resource].rlim_cur;
         limit.rlim_max = task->rlimits[resource].rlim_max;
+    } else {
+        /* Kernel thread fallback - use infinity */
+        limit.rlim_cur = RLIM_INFINITY;
+        limit.rlim_max = RLIM_INFINITY;
     }
 
     /* Copy limits to userspace */
     if (sys_proc_copy_to_user(rlim, &limit, sizeof(struct rlimit)) != 0) {
-        fut_printf("[PROC] getrlimit(resource=%s, rlim=%p) -> EFAULT (copy_to_user failed)\n",
-                   resource_name, rlim);
+        fut_printf("[PROC] getrlimit(resource=%d, rlim=%p) -> EFAULT (copy_to_user failed)\n",
+                   resource, rlim);
         return -EFAULT;
     }
 

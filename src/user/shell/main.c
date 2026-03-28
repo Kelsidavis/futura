@@ -21021,6 +21021,7 @@ static void cmd_whatis(int argc, char *argv[]) {
         {"unexpand",  "unexpand (1)        - convert spaces to tabs"},
         {"uniq",      "uniq (1)            - report or omit repeated lines"},
         {"uptime",    "uptime (1)          - tell how long the system has been running"},
+        {"uuidgen",   "uuidgen (1)         - create a new UUID value"},
         {"users",     "users (1)           - print the user names of users currently logged in"},
         {"vi",        "vi (1)              - screen-oriented text editor"},
         {"vmstat",    "vmstat (8)          - report virtual memory statistics"},

@@ -11733,6 +11733,7 @@ static void test_waitid_cld_dumped(void) {
             goto t1284;
         }
         int child_pid = (int)child->pid;
+        child->rlimits[4].rlim_cur = 1;  /* RLIMIT_CORE > 0 for CLD_DUMPED */
         child->state = FUT_TASK_ZOMBIE;
         child->exit_code = 0;
         child->term_signal = 6;  /* SIGABRT */

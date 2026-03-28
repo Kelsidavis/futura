@@ -147,6 +147,7 @@ static void cmd_renice(int argc, char *argv[]);
 static void cmd_xxd(int argc, char *argv[]);
 static void cmd_patch(int argc, char *argv[]);
 static void cmd_sha1sum(int argc, char *argv[]);
+static void cmd_vi(int argc, char *argv[]);
 
 /* Forward declaration for prompt */
 static void print_prompt(void);
@@ -547,7 +548,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     const char *builtins[] = {
         "arp", "bg", "brctl", "cal", "cd", "chgrp", "chmod", "chroot", "clear", "cmp", "comm", "conntrack", "date", "dd", "df", "dhclient", "dmesg", "echo", "edit", "ethtool", "expand", "expr", "factor", "file", "fold", "hexdump", "install", "locale", "lsof", "md5sum", "mkfifo", "nc", "nice", "nohup", "patch", "pgrep", "pidof", "pkill", "poweroff", "reboot", "renice", "reset", "seq", "sha1sum", "sleep", "strings", "tac", "time", "timeout", "tput", "traceroute", "tty", "unexpand", "wget", "xxd", "exit", "export", "fg", "free",
         "help", "hostname", "httpd", "id", "ifconfig", "iostat", "ipcs", "iptables", "jobs", "kill", "logger", "losetup", "ls", "lsblk", "lspci", "mkfs", "mount", "netstat",
-        ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "getconf", "history", "ip", "ln", "mktemp", "more", "nproc", "nslookup", "ping", "printf", "ps", "pwd", "read", "readlink", "set", "sha1sum", "sha256sum", "shutdown", "source", "ss", "stat", "stty", "sync", "sysctl", "sysinfo", "tc", "test", "top", "trap", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "vmstat", "wait", "watch", "wdctl", "which", "whoami", "xargs", "yes", NULL
+        ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "getconf", "history", "ip", "ln", "mktemp", "more", "nproc", "nslookup", "ping", "printf", "ps", "pwd", "read", "readlink", "set", "sha1sum", "sha256sum", "shutdown", "source", "ss", "stat", "stty", "sync", "sysctl", "sysinfo", "tc", "test", "top", "trap", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "vi", "vmstat", "wait", "watch", "wdctl", "which", "whoami", "xargs", "yes", NULL
     };
 
     /* External commands we might have */
@@ -1611,6 +1612,308 @@ static void cmd_mount(int argc, char *argv[]) {
     } else {
         write_str(1, "mount: /proc/mounts not available\n");
     }
+}
+
+/* Built-in: vi - Minimal vi text editor with normal/insert modes */
+#define VI_MAX_LINES 500
+#define VI_MAX_COLS  256
+#define VI_MODE_NORMAL 0
+#define VI_MODE_INSERT 1
+
+static void cmd_vi(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "usage: vi <file>\n");
+        return;
+    }
+
+    const char *filename = argv[1];
+    static char vi_lines[VI_MAX_LINES][VI_MAX_COLS];
+    int num_lines = 1;
+    int cx = 0, cy = 0;       /* cursor col, row */
+    int top_row = 0;           /* first visible row */
+    int mode = VI_MODE_NORMAL;
+    int modified = 0;
+    int running = 1;
+    int term_rows = 24, term_cols = 80;
+    int last_key = 0; /* for dd detection */
+
+    /* Initialize buffer */
+    for (int i = 0; i < VI_MAX_LINES; i++)
+        vi_lines[i][0] = '\0';
+
+    /* Load file if it exists */
+    int fd = sys_open(filename, O_RDONLY, 0);
+    if (fd >= 0) {
+        char rbuf[512];
+        ssize_t n;
+        int li = 0, lci = 0;
+        while ((n = sys_read(fd, rbuf, sizeof(rbuf))) > 0) {
+            for (ssize_t ri = 0; ri < n; ri++) {
+                if (rbuf[ri] == '\n') {
+                    vi_lines[li][lci] = '\0';
+                    li++;
+                    lci = 0;
+                    if (li >= VI_MAX_LINES) goto vi_done_load;
+                } else if (lci < VI_MAX_COLS - 1) {
+                    vi_lines[li][lci++] = rbuf[ri];
+                }
+            }
+        }
+vi_done_load:
+        if (lci > 0 || li > 0) {
+            vi_lines[li][lci] = '\0';
+            num_lines = li + 1;
+        }
+        sys_close(fd);
+    }
+
+    /* Helper: write an integer as decimal string */
+    #define VI_WRITE_NUM(wfd, val) do { \
+        char _nb[20]; int _ni = 0; long _nv = (val); \
+        if (_nv < 0) { write_char((wfd), '-'); _nv = -_nv; } \
+        if (_nv == 0) { write_char((wfd), '0'); } else { \
+            while (_nv > 0) { _nb[_ni++] = '0' + (_nv % 10); _nv /= 10; } \
+            while (_ni > 0) write_char((wfd), _nb[--_ni]); \
+        } \
+    } while(0)
+
+    /* Helper: move cursor to row,col (1-based) */
+    #define VI_MOVE(r, c) do { \
+        write_str(1, "\033["); VI_WRITE_NUM(1, (r)); \
+        write_char(1, ';'); VI_WRITE_NUM(1, (c)); write_char(1, 'H'); \
+    } while(0)
+
+    while (running) {
+        /* --- Render screen --- */
+        write_str(1, "\033[2J"); /* clear */
+        write_str(1, "\033[H");  /* home */
+
+        int visible = term_rows - 1; /* last row is status bar */
+        for (int r = 0; r < visible; r++) {
+            int line_idx = top_row + r;
+            VI_MOVE(r + 1, 1);
+            if (line_idx < num_lines) {
+                write_str(1, vi_lines[line_idx]);
+            } else {
+                write_char(1, '~');
+            }
+        }
+
+        /* Status bar on last row (reverse video) */
+        VI_MOVE(term_rows, 1);
+        write_str(1, "\033[7m"); /* reverse */
+        write_str(1, " ");
+        write_str(1, filename);
+        if (modified) write_str(1, " [+]");
+        write_str(1, "  L:");
+        VI_WRITE_NUM(1, cy + 1);
+        write_str(1, "/");
+        VI_WRITE_NUM(1, num_lines);
+        write_str(1, " C:");
+        VI_WRITE_NUM(1, cx + 1);
+        write_str(1, "  ");
+        write_str(1, mode == VI_MODE_INSERT ? "-- INSERT --" : "NORMAL");
+        /* Pad status bar */
+        write_str(1, "                              ");
+        write_str(1, "\033[0m"); /* reset */
+
+        /* Position cursor */
+        VI_MOVE(cy - top_row + 1, cx + 1);
+
+        /* --- Read input (raw byte) --- */
+        char ch;
+        ssize_t inr = sys_read(0, &ch, 1);
+        if (inr <= 0) break;
+
+        if (mode == VI_MODE_INSERT) {
+            if (ch == 27) { /* ESC -> normal mode */
+                mode = VI_MODE_NORMAL;
+                if (cx > 0) cx--;
+            } else if (ch == 127 || ch == 8) { /* Backspace */
+                if (cx > 0) {
+                    int len = (int)strlen_simple(vi_lines[cy]);
+                    for (int si = cx - 1; si < len; si++)
+                        vi_lines[cy][si] = vi_lines[cy][si + 1];
+                    cx--;
+                    modified = 1;
+                } else if (cy > 0) {
+                    /* Join with previous line */
+                    int prev_len = (int)strlen_simple(vi_lines[cy - 1]);
+                    int cur_len = (int)strlen_simple(vi_lines[cy]);
+                    if (prev_len + cur_len < VI_MAX_COLS - 1) {
+                        for (int ji = 0; ji <= cur_len; ji++)
+                            vi_lines[cy - 1][prev_len + ji] = vi_lines[cy][ji];
+                        /* Shift lines up */
+                        for (int si = cy; si < num_lines - 1; si++)
+                            strcpy_simple(vi_lines[si], vi_lines[si + 1]);
+                        num_lines--;
+                        cy--;
+                        cx = prev_len;
+                        modified = 1;
+                    }
+                }
+            } else if (ch == '\r' || ch == '\n') { /* Enter - split line */
+                if (num_lines < VI_MAX_LINES) {
+                    /* Shift lines down */
+                    for (int si = num_lines; si > cy + 1; si--)
+                        strcpy_simple(vi_lines[si], vi_lines[si - 1]);
+                    num_lines++;
+                    /* Split current line at cursor */
+                    int len = (int)strlen_simple(vi_lines[cy]);
+                    int j = 0;
+                    for (int si = cx; si <= len; si++)
+                        vi_lines[cy + 1][j++] = vi_lines[cy][si];
+                    vi_lines[cy][cx] = '\0';
+                    cy++;
+                    cx = 0;
+                    modified = 1;
+                }
+            } else if (ch >= 32 && ch < 127) { /* Printable */
+                int len = (int)strlen_simple(vi_lines[cy]);
+                if (len < VI_MAX_COLS - 2) {
+                    for (int si = len + 1; si > cx; si--)
+                        vi_lines[cy][si] = vi_lines[cy][si - 1];
+                    vi_lines[cy][cx] = ch;
+                    cx++;
+                    modified = 1;
+                }
+            }
+        } else { /* NORMAL mode */
+            if (ch == 'h') {
+                if (cx > 0) cx--;
+            } else if (ch == 'l') {
+                int len = (int)strlen_simple(vi_lines[cy]);
+                if (cx < len - 1) cx++;
+            } else if (ch == 'j') {
+                if (cy < num_lines - 1) cy++;
+                int len = (int)strlen_simple(vi_lines[cy]);
+                if (cx >= len && len > 0) cx = len - 1;
+                if (len == 0) cx = 0;
+            } else if (ch == 'k') {
+                if (cy > 0) cy--;
+                int len = (int)strlen_simple(vi_lines[cy]);
+                if (cx >= len && len > 0) cx = len - 1;
+                if (len == 0) cx = 0;
+            } else if (ch == 'i') {
+                mode = VI_MODE_INSERT;
+            } else if (ch == 'a') {
+                mode = VI_MODE_INSERT;
+                int len = (int)strlen_simple(vi_lines[cy]);
+                if (len > 0) cx++;
+            } else if (ch == 'o') {
+                /* Open line below */
+                if (num_lines < VI_MAX_LINES) {
+                    for (int si = num_lines; si > cy + 1; si--)
+                        strcpy_simple(vi_lines[si], vi_lines[si - 1]);
+                    vi_lines[cy + 1][0] = '\0';
+                    num_lines++;
+                    cy++;
+                    cx = 0;
+                    mode = VI_MODE_INSERT;
+                    modified = 1;
+                }
+            } else if (ch == 'x') {
+                int len = (int)strlen_simple(vi_lines[cy]);
+                if (len > 0 && cx < len) {
+                    for (int si = cx; si < len; si++)
+                        vi_lines[cy][si] = vi_lines[cy][si + 1];
+                    if (cx >= len - 1 && cx > 0) cx--;
+                    modified = 1;
+                }
+            } else if (ch == 'd' && last_key == 'd') {
+                /* dd: delete current line */
+                if (num_lines > 1) {
+                    for (int si = cy; si < num_lines - 1; si++)
+                        strcpy_simple(vi_lines[si], vi_lines[si + 1]);
+                    num_lines--;
+                    if (cy >= num_lines) cy = num_lines - 1;
+                    int len = (int)strlen_simple(vi_lines[cy]);
+                    if (cx >= len && len > 0) cx = len - 1;
+                    if (len == 0) cx = 0;
+                    modified = 1;
+                } else {
+                    vi_lines[0][0] = '\0';
+                    cx = 0;
+                    modified = 1;
+                }
+                ch = 0; /* reset so ddd doesn't re-trigger */
+            } else if (ch == ':') {
+                /* Command mode */
+                VI_MOVE(term_rows, 1);
+                write_str(1, "\033[7m:");
+                write_str(1, "                                                              ");
+                write_str(1, "\033[0m");
+                VI_MOVE(term_rows, 2);
+                char cmdbuf[64];
+                int cbi = 0;
+                while (cbi < 62) {
+                    char cc;
+                    ssize_t rr = sys_read(0, &cc, 1);
+                    if (rr <= 0) break;
+                    if (cc == '\r' || cc == '\n') break;
+                    if (cc == 27) { cbi = 0; break; } /* ESC cancels */
+                    if ((cc == 127 || cc == 8) && cbi > 0) {
+                        cbi--;
+                        write_str(1, "\b \b");
+                        continue;
+                    }
+                    cmdbuf[cbi++] = cc;
+                    write_char(1, cc);
+                }
+                cmdbuf[cbi] = '\0';
+
+                if (cbi > 0) {
+                    int do_write = 0, do_quit = 0, force = 0;
+                    /* Parse :w :q :wq :q! :wq! */
+                    for (int p = 0; cmdbuf[p]; p++) {
+                        if (cmdbuf[p] == 'w') do_write = 1;
+                        else if (cmdbuf[p] == 'q') do_quit = 1;
+                        else if (cmdbuf[p] == '!') force = 1;
+                    }
+                    if (do_write) {
+                        int wfd = sys_open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                        if (wfd >= 0) {
+                            for (int wi = 0; wi < num_lines; wi++) {
+                                sys_write(wfd, vi_lines[wi], strlen_simple(vi_lines[wi]));
+                                sys_write(wfd, "\n", 1);
+                            }
+                            sys_close(wfd);
+                            modified = 0;
+                        }
+                    }
+                    if (do_quit) {
+                        if (!modified || force || do_write) {
+                            running = 0;
+                        }
+                        /* If modified and no force/write, stay in editor */
+                    }
+                }
+            } else if (ch == 'G') {
+                /* Go to last line */
+                cy = num_lines - 1;
+                int len = (int)strlen_simple(vi_lines[cy]);
+                if (cx >= len && len > 0) cx = len - 1;
+                if (len == 0) cx = 0;
+            } else if (ch == '0') {
+                cx = 0;
+            } else if (ch == '$') {
+                int len = (int)strlen_simple(vi_lines[cy]);
+                if (len > 0) cx = len - 1;
+            }
+            last_key = ch;
+        }
+
+        /* Scroll viewport */
+        if (cy < top_row) top_row = cy;
+        if (cy >= top_row + (term_rows - 1)) top_row = cy - (term_rows - 2);
+    }
+
+    /* Restore screen */
+    write_str(1, "\033[2J\033[H");
+
+    #undef VI_WRITE_NUM
+    #undef VI_MOVE
+    (void)term_cols;
 }
 
 /* Built-in: edit - Simple line editor for files */
@@ -8297,6 +8600,9 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "edit") == 0) {
         cmd_edit(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "vi") == 0) {
+        cmd_vi(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "free") == 0) {
         cmd_free(argc, argv);
         return 0;
@@ -11224,6 +11530,7 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "df") == 0 ||
             strcmp_simple(cmd, "dmesg") == 0 ||
             strcmp_simple(cmd, "edit") == 0 ||
+            strcmp_simple(cmd, "vi") == 0 ||
             strcmp_simple(cmd, "free") == 0 ||
             strcmp_simple(cmd, "hostname") == 0 ||
             strcmp_simple(cmd, "id") == 0 ||
@@ -13964,6 +14271,209 @@ static void cmd_tput(int argc, char *argv[]) {
     } else {
         write_str(2, "tput: unknown capability: "); write_str(2, cap); write_str(2, "\n");
     }
+}
+
+/* ── vi: minimal vi text editor ── */
+#define VI_MAX_LINES 1000
+#define VI_MAX_COLS  256
+#define VI_ROWS      24
+
+static void cmd_vi(int argc, char *argv[]) {
+    if (argc < 2) { write_str(2, "usage: vi <file>\n"); return; }
+    const char *filename = argv[1];
+    static char lines[VI_MAX_LINES][VI_MAX_COLS];
+    int num_lines = 0, cur_row = 0, cur_col = 0, top_row = 0;
+    int modified = 0, mode = 0, running = 1;
+    char status_msg[80];
+    status_msg[0] = '\0';
+    for (int i = 0; i < VI_MAX_LINES; i++) lines[i][0] = '\0';
+
+    /* Load file */
+    int fd = sys_open(filename, O_RDONLY, 0);
+    if (fd >= 0) {
+        char buf[512]; int col = 0; ssize_t n;
+        while ((n = sys_read(fd, buf, sizeof(buf))) > 0) {
+            for (int i = 0; i < n; i++) {
+                if (buf[i] == '\n') {
+                    lines[num_lines][col] = '\0'; num_lines++; col = 0;
+                    if (num_lines >= VI_MAX_LINES) break;
+                } else if (col < VI_MAX_COLS - 1) lines[num_lines][col++] = buf[i];
+            }
+            if (num_lines >= VI_MAX_LINES) break;
+        }
+        if (col > 0 || num_lines == 0) { lines[num_lines][col] = '\0'; num_lines++; }
+        sys_close(fd);
+    } else { num_lines = 1; lines[0][0] = '\0'; }
+
+    #define VI_LINELEN(r) ((int)strlen_simple(lines[(r)]))
+    #define VI_WRITE_INT(v) do { int _v=(v); char _b[12]; int _i=0; \
+        if(_v==0){write_char(1,'0');}else{ if(_v<0){write_char(1,'-');_v=-_v;} \
+        while(_v>0){_b[_i++]='0'+(_v%10);_v/=10;} while(_i>0)write_char(1,_b[--_i]);} }while(0)
+    #define VI_SCROLL() do { if(cur_row<top_row) top_row=cur_row; \
+        if(cur_row>=top_row+VI_ROWS-1) top_row=cur_row-VI_ROWS+2; }while(0)
+    #define VI_CLAMP_COL() do { int _l=VI_LINELEN(cur_row); \
+        if(mode==0){if(_l>0)_l--;else _l=0;} if(cur_col>_l)cur_col=_l; if(cur_col<0)cur_col=0; }while(0)
+    #define VI_REDRAW() do { \
+        write_str(1,"\033[2J\033[H"); int _rows=VI_ROWS-1; \
+        for(int _r=0;_r<_rows;_r++){ int _line=top_row+_r; \
+            if(_line<num_lines) write_str(1,lines[_line]); else write_char(1,'~'); \
+            if(_r<_rows-1) write_str(1,"\r\n"); } \
+        write_str(1,"\033["); VI_WRITE_INT(VI_ROWS); write_str(1,";1H\033[7m"); \
+        if(mode==1) write_str(1,"-- INSERT -- "); else write_str(1,"             "); \
+        write_str(1,filename); if(modified) write_str(1," [+]"); \
+        write_str(1,"  L"); VI_WRITE_INT(cur_row+1); write_str(1,"/"); VI_WRITE_INT(num_lines); \
+        write_str(1," C"); VI_WRITE_INT(cur_col+1); \
+        if(status_msg[0]){write_str(1,"  ");write_str(1,status_msg);} \
+        write_str(1,"                              \033[0m"); \
+        write_str(1,"\033["); VI_WRITE_INT(cur_row-top_row+1); \
+        write_str(1,";"); VI_WRITE_INT(cur_col+1); write_str(1,"H"); }while(0)
+    #define VI_SAVE() do { \
+        int _wfd=sys_open(filename,O_WRONLY|O_CREAT|O_TRUNC,0644); \
+        if(_wfd<0){ const char*_m="E: cannot save"; int _j=0; \
+            while(_m[_j]&&_j<78){status_msg[_j]=_m[_j];_j++;}status_msg[_j]='\0'; \
+        }else{ for(int _i=0;_i<num_lines;_i++){ int _len=VI_LINELEN(_i); \
+            if(_len>0){sys_write(_wfd,lines[_i],_len);} sys_write(_wfd,"\n",1); } \
+            sys_close(_wfd); modified=0; \
+            const char*_m="written"; int _j=0; \
+            while(_m[_j]&&_j<78){status_msg[_j]=_m[_j];_j++;}status_msg[_j]='\0'; } }while(0)
+
+    VI_REDRAW();
+    char prev_ch = 0;
+
+    while (running) {
+        char c; ssize_t nr = sys_read(0, &c, 1);
+        if (nr <= 0) break;
+        status_msg[0] = '\0';
+
+        if (mode == 1) {
+            /* Insert mode */
+            if (c == 27) {
+                char seq[2]; ssize_t s1 = sys_read(0, &seq[0], 1);
+                if (s1 > 0 && seq[0] == '[') {
+                    ssize_t s2 = sys_read(0, &seq[1], 1);
+                    if (s2 > 0) {
+                        if (seq[1]=='A' && cur_row>0){cur_row--;VI_CLAMP_COL();}
+                        else if(seq[1]=='B' && cur_row<num_lines-1){cur_row++;VI_CLAMP_COL();}
+                        else if(seq[1]=='C'){if(cur_col<VI_LINELEN(cur_row))cur_col++;}
+                        else if(seq[1]=='D'){if(cur_col>0)cur_col--;}
+                    }
+                } else { mode = 0; VI_CLAMP_COL(); }
+            } else if (c == 127 || c == 8) {
+                if (cur_col > 0) {
+                    int len = VI_LINELEN(cur_row);
+                    for (int i = cur_col-1; i < len; i++) lines[cur_row][i] = lines[cur_row][i+1];
+                    cur_col--; modified = 1;
+                } else if (cur_row > 0) {
+                    int prev_len = VI_LINELEN(cur_row-1), cur_len = VI_LINELEN(cur_row);
+                    if (prev_len + cur_len < VI_MAX_COLS-1) {
+                        for (int i = 0; i <= cur_len; i++) lines[cur_row-1][prev_len+i] = lines[cur_row][i];
+                        for (int i = cur_row; i < num_lines-1; i++)
+                            for (int j = 0; j < VI_MAX_COLS; j++) lines[i][j] = lines[i+1][j];
+                        num_lines--; cur_row--; cur_col = prev_len; modified = 1;
+                    }
+                }
+            } else if (c == '\r' || c == '\n') {
+                if (num_lines < VI_MAX_LINES) {
+                    for (int i = num_lines; i > cur_row+1; i--)
+                        for (int j = 0; j < VI_MAX_COLS; j++) lines[i][j] = lines[i-1][j];
+                    num_lines++; int k = 0;
+                    for (int i = cur_col; lines[cur_row][i]; i++) lines[cur_row+1][k++] = lines[cur_row][i];
+                    lines[cur_row+1][k] = '\0'; lines[cur_row][cur_col] = '\0';
+                    cur_row++; cur_col = 0; modified = 1;
+                }
+            } else if (c >= 32 || c == '\t') {
+                int len = VI_LINELEN(cur_row);
+                if (len < VI_MAX_COLS-2) {
+                    for (int i = len+1; i > cur_col; i--) lines[cur_row][i] = lines[cur_row][i-1];
+                    lines[cur_row][cur_col] = c; cur_col++; modified = 1;
+                }
+            }
+        } else {
+            /* Normal mode */
+            if (c == 27) {
+                char seq[2]; ssize_t s1 = sys_read(0, &seq[0], 1);
+                if (s1 > 0 && seq[0] == '[') {
+                    ssize_t s2 = sys_read(0, &seq[1], 1);
+                    if (s2 > 0) {
+                        if(seq[1]=='A'&&cur_row>0){cur_row--;VI_CLAMP_COL();}
+                        else if(seq[1]=='B'&&cur_row<num_lines-1){cur_row++;VI_CLAMP_COL();}
+                        else if(seq[1]=='C'){int l=VI_LINELEN(cur_row);if(l>0&&cur_col<l-1)cur_col++;}
+                        else if(seq[1]=='D'){if(cur_col>0)cur_col--;}
+                    }
+                }
+            } else if (c=='h') { if(cur_col>0) cur_col--;
+            } else if (c=='j') { if(cur_row<num_lines-1){cur_row++;VI_CLAMP_COL();}
+            } else if (c=='k') { if(cur_row>0){cur_row--;VI_CLAMP_COL();}
+            } else if (c=='l') { int l=VI_LINELEN(cur_row); if(l>0&&cur_col<l-1) cur_col++;
+            } else if (c=='i') { mode=1;
+            } else if (c=='a') { mode=1; int l=VI_LINELEN(cur_row); if(l>0) cur_col++;
+            } else if (c=='o') {
+                if (num_lines < VI_MAX_LINES) {
+                    for (int i=num_lines;i>cur_row+1;i--)
+                        for(int j=0;j<VI_MAX_COLS;j++) lines[i][j]=lines[i-1][j];
+                    num_lines++; lines[cur_row+1][0]='\0'; cur_row++; cur_col=0; mode=1; modified=1;
+                }
+            } else if (c=='O') {
+                if (num_lines < VI_MAX_LINES) {
+                    for (int i=num_lines;i>cur_row;i--)
+                        for(int j=0;j<VI_MAX_COLS;j++) lines[i][j]=lines[i-1][j];
+                    num_lines++; lines[cur_row][0]='\0'; cur_col=0; mode=1; modified=1;
+                }
+            } else if (c=='x') {
+                int len=VI_LINELEN(cur_row);
+                if(len>0){ for(int i=cur_col;i<len;i++) lines[cur_row][i]=lines[cur_row][i+1];
+                    modified=1; if(cur_col>=VI_LINELEN(cur_row)&&cur_col>0) cur_col--; }
+            } else if (c=='d') {
+                if (prev_ch=='d') {
+                    if(num_lines>1){
+                        for(int i=cur_row;i<num_lines-1;i++)
+                            for(int j=0;j<VI_MAX_COLS;j++) lines[i][j]=lines[i+1][j];
+                        num_lines--;
+                        if(cur_row>=num_lines) cur_row=num_lines-1;
+                        VI_CLAMP_COL();
+                    } else { lines[0][0]='\0'; cur_col=0; }
+                    modified=1; prev_ch=0; VI_SCROLL(); VI_REDRAW(); continue;
+                }
+            } else if (c=='G') { cur_row=num_lines-1; cur_col=0; VI_CLAMP_COL();
+            } else if (c=='g') {
+                if(prev_ch=='g'){cur_row=0;cur_col=0;VI_CLAMP_COL();prev_ch=0;VI_SCROLL();VI_REDRAW();continue;}
+            } else if (c=='Z') {
+                if(prev_ch=='Z'){VI_SAVE();running=0;prev_ch=0;continue;}
+            } else if (c==':') {
+                write_str(1,"\033["); VI_WRITE_INT(VI_ROWS); write_str(1,";1H\033[2K:");
+                char cmdbuf[64]; int cpos=0;
+                while(cpos<62){
+                    char cc; ssize_t rr=sys_read(0,&cc,1);
+                    if(rr<=0) break;
+                    if(cc=='\r'||cc=='\n') break;
+                    if(cc==27){cpos=0;break;}
+                    if((cc==127||cc==8)&&cpos>0){cpos--;write_str(1,"\b \b");continue;}
+                    cmdbuf[cpos++]=cc; write_char(1,cc);
+                }
+                cmdbuf[cpos]='\0';
+                if(cpos>0){
+                    if(cmdbuf[0]=='w'&&cmdbuf[1]=='q'&&cmdbuf[2]=='\0'){VI_SAVE();running=0;}
+                    else if(cmdbuf[0]=='w'&&cmdbuf[1]=='\0'){VI_SAVE();}
+                    else if(cmdbuf[0]=='q'&&cmdbuf[1]=='!'&&cmdbuf[2]=='\0'){running=0;}
+                    else if(cmdbuf[0]=='q'&&cmdbuf[1]=='\0'){
+                        if(modified){const char*m="E: unsaved changes (use :q! to force)";int j=0;
+                            while(m[j]&&j<78){status_msg[j]=m[j];j++;}status_msg[j]='\0';}
+                        else running=0;
+                    } else {const char*m="E: unknown command";int j=0;
+                        while(m[j]&&j<78){status_msg[j]=m[j];j++;}status_msg[j]='\0';}
+                }
+            }
+            prev_ch = c;
+        }
+        VI_SCROLL(); VI_REDRAW();
+    }
+    write_str(1, "\033[2J\033[H");
+    #undef VI_LINELEN
+    #undef VI_WRITE_INT
+    #undef VI_REDRAW
+    #undef VI_SAVE
+    #undef VI_SCROLL
+    #undef VI_CLAMP_COL
 }
 
 int main(int argc, char **argv, char **envp) {

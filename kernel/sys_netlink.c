@@ -1,17 +1,33 @@
-/* kernel/sys_netlink.c - AF_NETLINK (NETLINK_ROUTE) minimal stub
+/* kernel/sys_netlink.c - AF_NETLINK NETLINK_ROUTE implementation
  *
  * Copyright (c) 2025 Kelsi Davis
  * Licensed under the MPL v2.0 — see LICENSE for details.
  *
- * Provides enough NETLINK_ROUTE support for getifaddrs() and similar
- * programs that enumerate network interfaces at startup.
+ * Provides NETLINK_ROUTE support for ip(8), getifaddrs(3), and similar
+ * programs that enumerate network interfaces, addresses, and routes
+ * through the standard netlink protocol.
  *
  * Supported operations:
- *   RTM_GETLINK   → RTM_NEWLINK for loopback (lo, index 1)
- *   RTM_GETADDR   → RTM_NEWADDR for 127.0.0.1/8 on lo
- *   RTM_GETROUTE  → RTM_NEWROUTE for loopback route (127.0.0.0/8 lo)
+ *   RTM_GETLINK   → RTM_NEWLINK for all active interfaces (lo, eth0, ...)
+ *                   with IFLA_IFNAME, IFLA_ADDRESS, IFLA_BROADCAST, IFLA_MTU,
+ *                   IFLA_TXQLEN, IFLA_QDISC, IFLA_OPERSTATE, IFLA_STATS,
+ *                   IFLA_GROUP attributes
+ *   RTM_GETADDR   → RTM_NEWADDR for each configured IPv4 address
+ *                   with IFA_LOCAL, IFA_ADDRESS, IFA_BROADCAST, IFA_LABEL,
+ *                   IFA_FLAGS attributes
+ *   RTM_GETROUTE  → RTM_NEWROUTE for routing table entries
+ *                   with RTA_DST, RTA_GATEWAY, RTA_OIF, RTA_TABLE,
+ *                   RTA_PRIORITY attributes
  *   RTM_GETNEIGH  → NLMSG_DONE (empty neighbor table)
- *   anything else → empty NLMSG_DONE
+ *   anything else → NLMSG_ERROR with errno=EOPNOTSUPP
+ *
+ * Response format follows standard Netlink multi-part messages:
+ *   [RTM_NEW* (NLM_F_MULTI)] ... [NLMSG_DONE]
+ *
+ * recvmsg() semantics: each call returns one or more complete netlink
+ * messages that fit within the caller's buffer, never splitting a message
+ * across calls.  Standard tools like ip(8) call recvmsg() in a loop and
+ * stop when they see NLMSG_DONE.
  *
  * Socket lifecycle:
  *   socket(AF_NETLINK, SOCK_RAW|SOCK_DGRAM, NETLINK_ROUTE) → fd
@@ -36,8 +52,11 @@
 #define NLMSG_DONE      3
 #define NLMSG_MIN_TYPE  0x10
 
-#define NLM_F_MULTI     0x0002  /* multi-part message */
 #define NLM_F_REQUEST   0x0001
+#define NLM_F_MULTI     0x0002  /* multi-part message */
+#define NLM_F_ROOT      0x0100
+#define NLM_F_MATCH     0x0200
+#define NLM_F_DUMP      (NLM_F_ROOT | NLM_F_MATCH)
 
 #define RTM_NEWLINK     16
 #define RTM_GETLINK     18
@@ -60,6 +79,7 @@
 #define IFA_ADDRESS     1
 #define IFA_LOCAL       2
 #define IFA_LABEL       3
+#define IFA_BROADCAST   4
 #define IFA_FLAGS       8
 
 /* IFA scope values */
@@ -127,6 +147,37 @@ typedef struct __attribute__((packed)) {
     uint32_t rtm_flags;     /* Route flags */
 } nl_rtmsg_t;  /* 12 bytes */
 
+/* IFLA_STATS payload: struct rtnl_link_stats (Linux ABI, 24 x uint32 = 96 bytes) */
+typedef struct __attribute__((packed)) {
+    uint32_t rx_packets;
+    uint32_t tx_packets;
+    uint32_t rx_bytes;
+    uint32_t tx_bytes;
+    uint32_t rx_errors;
+    uint32_t tx_errors;
+    uint32_t rx_dropped;
+    uint32_t tx_dropped;
+    uint32_t multicast;
+    uint32_t collisions;
+    /* detailed rx errors */
+    uint32_t rx_length_errors;
+    uint32_t rx_over_errors;
+    uint32_t rx_crc_errors;
+    uint32_t rx_frame_errors;
+    uint32_t rx_fifo_errors;
+    uint32_t rx_missed_errors;
+    /* detailed tx errors */
+    uint32_t tx_aborted_errors;
+    uint32_t tx_carrier_errors;
+    uint32_t tx_fifo_errors;
+    uint32_t tx_heartbeat_errors;
+    uint32_t tx_window_errors;
+    /* compression */
+    uint32_t rx_compressed;
+    uint32_t tx_compressed;
+    uint32_t rx_nohandler;
+} nl_rtnl_link_stats_t;  /* 96 bytes */
+
 /* rtmsg table / protocol / scope / type constants */
 #define RT_TABLE_MAIN    254
 #define RT_TABLE_LOCAL   255
@@ -140,8 +191,18 @@ typedef struct __attribute__((packed)) {
 
 /* Route rtattrs */
 #define RTA_DST          1
-#define RTA_GATEWAY      5
+#define RTA_SRC          2
+#define RTA_IIF          3
 #define RTA_OIF          4
+#define RTA_GATEWAY      5
+#define RTA_PRIORITY     6   /* Route metric */
+#define RTA_PREFSRC      7
+#define RTA_TABLE        15  /* Extended routing table ID */
+
+/* Response buffer size — must accommodate up to 16 interfaces with full
+ * attributes (IFLA_STATS alone is 96 bytes) plus NLMSG_DONE sentinel.
+ * Each NEWLINK message is ~256 bytes; 16 interfaces = ~4KB + headroom. */
+#define NL_RESP_BUF_SIZE 8192
 
 /* ── Builder helpers ────────────────────────────────────────────────────── */
 
@@ -219,15 +280,18 @@ static void nl_emit_one_link(uint8_t *buf, uint32_t *pos, uint32_t seq,
     nl_append(buf, pos, &hdr, sizeof(hdr));
 
     uint32_t flags = 0;
-    if (iface->flags & 0x0001) flags |= IFF_UP;
-    if (iface->flags & 0x0008) flags |= IFF_LOOPBACK;
-    if (iface->flags & 0x0040) flags |= IFF_RUNNING;
-    flags |= IFF_LOWER_UP;
+    if (iface->flags & IFF_UP)        flags |= IFF_UP;
+    if (iface->flags & IFF_BROADCAST) flags |= IFF_BROADCAST;
+    if (iface->flags & IFF_LOOPBACK)  flags |= IFF_LOOPBACK;
+    if (iface->flags & IFF_RUNNING)   flags |= IFF_RUNNING;
+    if (iface->flags & IFF_MULTICAST) flags |= IFF_MULTICAST;
+    if (iface->flags & IFF_PROMISC)   flags |= IFF_PROMISC;
+    if (flags & IFF_UP) flags |= IFF_LOWER_UP;
 
     nl_ifinfomsg_t ifi = {
         .ifi_family = 0,
         .__pad      = 0,
-        .ifi_type   = (iface->flags & 0x0008) ? ARPHRD_LOOPBACK : ARPHRD_ETHER,
+        .ifi_type   = (iface->flags & IFF_LOOPBACK) ? ARPHRD_LOOPBACK : ARPHRD_ETHER,
         .ifi_index  = iface->index,
         .ifi_flags  = flags,
         .ifi_change = 0xFFFFFFFFu,
@@ -264,8 +328,26 @@ static void nl_emit_one_link(uint8_t *buf, uint32_t *pos, uint32_t seq,
 
     /* IFLA_OPERSTATE: 6 = IF_OPER_UP when running, 2 = IF_OPER_DOWN otherwise */
     {
-        uint8_t opstate = (iface->flags & 0x0040 /* IFF_RUNNING */) ? 6 : 2;
+        uint8_t opstate = (iface->flags & IFF_RUNNING) ? 6 : 2;
         nl_rta_data(buf, pos, IFLA_OPERSTATE, &opstate, 1);
+    }
+
+    /* IFLA_GROUP: interface group (0 = default) */
+    nl_rta32(buf, pos, IFLA_GROUP, 0);
+
+    /* IFLA_STATS: interface statistics (struct rtnl_link_stats, 96 bytes) */
+    {
+        nl_rtnl_link_stats_t stats;
+        __builtin_memset(&stats, 0, sizeof(stats));
+        stats.rx_packets = (uint32_t)iface->rx_packets;
+        stats.tx_packets = (uint32_t)iface->tx_packets;
+        stats.rx_bytes   = (uint32_t)iface->rx_bytes;
+        stats.tx_bytes   = (uint32_t)iface->tx_bytes;
+        stats.rx_errors  = (uint32_t)iface->rx_errors;
+        stats.tx_errors  = (uint32_t)iface->tx_errors;
+        stats.rx_dropped = (uint32_t)iface->rx_dropped;
+        stats.tx_dropped = (uint32_t)iface->tx_dropped;
+        nl_rta_data(buf, pos, IFLA_STATS, &stats, sizeof(stats));
     }
 
     /* Patch length */
@@ -276,14 +358,16 @@ static void nl_emit_one_link(uint8_t *buf, uint32_t *pos, uint32_t seq,
 static uint32_t nl_build_newlink(uint8_t *buf, uint32_t seq) {
     uint32_t pos = 0;
 
-    /* Enumerate all active interfaces from the netif registry */
-    for (int i = 1; i <= 16; i++) {
+    /* Enumerate all active interfaces from the netif registry.
+     * Each NEWLINK message is ~300 bytes (with IFLA_STATS); reserve
+     * headroom of 384 bytes per interface plus 32 for NLMSG_DONE. */
+    for (int i = 1; i <= NET_IFACE_MAX; i++) {
         struct net_iface *iface = netif_by_index(i);
-        if (iface && iface->active && pos + 256 < 4096)
+        if (iface && iface->active && pos + 384 < NL_RESP_BUF_SIZE)
             nl_emit_one_link(buf, &pos, seq, iface);
     }
 
-    /* NLMSG_DONE */
+    /* NLMSG_DONE sentinel */
     nl_done(buf, &pos, seq);
 
     return pos;
@@ -334,9 +418,9 @@ static void nl_emit_one_addr(uint8_t *buf, uint32_t *pos, uint32_t seq,
     nl_rta32(buf, pos, IFA_ADDRESS, ip_nbo);
 
     /* IFA_BROADCAST: computed from IP + netmask if not loopback */
-    if (!(iface->flags & 0x0008) && iface->broadcast) {
+    if (!(iface->flags & IFF_LOOPBACK) && iface->broadcast) {
         uint32_t bcast_nbo = ip_to_nbo(iface->broadcast);
-        nl_rta32(buf, pos, 4 /* IFA_BROADCAST */, bcast_nbo);
+        nl_rta32(buf, pos, IFA_BROADCAST, bcast_nbo);
     }
 
     /* IFA_LABEL: interface name */
@@ -355,9 +439,9 @@ static uint32_t nl_build_newaddr(uint8_t *buf, uint32_t seq) {
     uint32_t pos = 0;
 
     /* Enumerate all active interfaces with an IP address */
-    for (int i = 1; i <= 16; i++) {
+    for (int i = 1; i <= NET_IFACE_MAX; i++) {
         struct net_iface *iface = netif_by_index(i);
-        if (iface && iface->active && pos + 256 < 4096)
+        if (iface && iface->active && pos + 128 < NL_RESP_BUF_SIZE)
             nl_emit_one_addr(buf, &pos, seq, iface);
     }
 
@@ -370,7 +454,7 @@ static uint32_t nl_build_newaddr(uint8_t *buf, uint32_t seq) {
 /* Emit one RTM_NEWROUTE message for a routing table entry */
 static void nl_emit_one_route(const struct net_route *route, void *ctx_) {
     struct { uint8_t *buf; uint32_t *pos; uint32_t seq; } *ctx = ctx_;
-    if (*ctx->pos + 128 >= 4096) return; /* buffer limit */
+    if (*ctx->pos + 128 >= NL_RESP_BUF_SIZE) return; /* buffer limit */
 
     uint32_t msg_start = *ctx->pos;
     nl_hdr_t hdr = {
@@ -384,19 +468,24 @@ static void nl_emit_one_route(const struct net_route *route, void *ctx_) {
 
     uint8_t prefixlen = netmask_to_prefixlen(route->netmask);
     uint8_t scope = route->gateway ? RT_SCOPE_UNIVERSE : RT_SCOPE_LINK;
+    uint8_t table = route->table_id ? route->table_id : RT_TABLE_MAIN;
+    uint8_t protocol = route->gateway ? RTPROT_STATIC : RTPROT_KERNEL;
 
     nl_rtmsg_t rtm = {
-        .rtm_family   = 2,
+        .rtm_family   = 2 /* AF_INET */,
         .rtm_dst_len  = prefixlen,
         .rtm_src_len  = 0,
         .rtm_tos      = 0,
-        .rtm_table    = RT_TABLE_MAIN,
-        .rtm_protocol = RTPROT_BOOT,
+        .rtm_table    = table,
+        .rtm_protocol = protocol,
         .rtm_scope    = scope,
         .rtm_type     = RTN_UNICAST,
         .rtm_flags    = 0,
     };
     nl_append(ctx->buf, ctx->pos, &rtm, sizeof(rtm));
+
+    /* RTA_TABLE: extended table ID (32-bit, supercedes rtm_table 8-bit field) */
+    nl_rta32(ctx->buf, ctx->pos, RTA_TABLE, (uint32_t)table);
 
     /* RTA_DST (omitted for default route where dst_len=0) */
     if (prefixlen > 0) {
@@ -410,8 +499,22 @@ static void nl_emit_one_route(const struct net_route *route, void *ctx_) {
         nl_rta32(ctx->buf, ctx->pos, RTA_GATEWAY, gw_nbo);
     }
 
-    /* RTA_OIF */
+    /* RTA_OIF: output interface index */
     nl_rta32(ctx->buf, ctx->pos, RTA_OIF, (uint32_t)route->iface_idx);
+
+    /* RTA_PRIORITY: route metric */
+    if (route->metric > 0) {
+        nl_rta32(ctx->buf, ctx->pos, RTA_PRIORITY, route->metric);
+    }
+
+    /* RTA_PREFSRC: preferred source address (the interface's own IP) */
+    {
+        struct net_iface *oif = netif_by_index(route->iface_idx);
+        if (oif && oif->ip_addr) {
+            uint32_t src_nbo = ip_to_nbo(oif->ip_addr);
+            nl_rta32(ctx->buf, ctx->pos, RTA_PREFSRC, src_nbo);
+        }
+    }
 
     uint32_t msg_len = *ctx->pos - msg_start;
     __builtin_memcpy(ctx->buf + msg_start, &msg_len, sizeof(msg_len));
@@ -476,10 +579,11 @@ ssize_t netlink_handle_send(fut_socket_t *sock,
     nl_hdr_t req;
     __builtin_memcpy(&req, iov_base, sizeof(req));
 
-    /* Allocate response buffer large enough for any single-interface response */
-    uint8_t *buf = fut_malloc(256);
+    /* Allocate response buffer large enough for all interfaces + routes.
+     * With IFLA_STATS each NEWLINK is ~300 bytes; 16 interfaces = ~5KB. */
+    uint8_t *buf = fut_malloc(NL_RESP_BUF_SIZE);
     if (!buf) return -ENOMEM;
-    __builtin_memset(buf, 0, 256);
+    __builtin_memset(buf, 0, NL_RESP_BUF_SIZE);
 
     uint32_t resp_len;
     switch (req.nlmsg_type) {
@@ -497,7 +601,24 @@ ssize_t netlink_handle_send(fut_socket_t *sock,
         resp_len = nl_build_done_only(buf, req.nlmsg_seq);
         break;
     default:
-        resp_len = nl_build_done_only(buf, req.nlmsg_seq);
+        /* Unsupported request type: return NLMSG_ERROR with EOPNOTSUPP.
+         * This matches Linux behavior for unknown RTM_* types. */
+        {
+            uint32_t pos = 0;
+            int32_t err_code = -95; /* -EOPNOTSUPP */
+            uint32_t err_msg_len = (uint32_t)(sizeof(nl_hdr_t) + sizeof(err_code) + sizeof(nl_hdr_t));
+            nl_hdr_t ehdr = {
+                .nlmsg_len   = err_msg_len,
+                .nlmsg_type  = NLMSG_ERROR,
+                .nlmsg_flags = 0,
+                .nlmsg_seq   = req.nlmsg_seq,
+                .nlmsg_pid   = 0,
+            };
+            nl_append(buf, &pos, &ehdr, sizeof(ehdr));
+            nl_append(buf, &pos, &err_code, sizeof(err_code));
+            nl_append(buf, &pos, &req, sizeof(req));  /* echo original header */
+            resp_len = pos;
+        }
         break;
     }
 
@@ -511,7 +632,14 @@ ssize_t netlink_handle_send(fut_socket_t *sock,
 /**
  * netlink_handle_recv - Process a recvmsg() on an AF_NETLINK socket.
  *
- * Copies pending response data into @out_buf (up to @out_len bytes).
+ * Copies pending response data into @out_buf (up to @out_len bytes),
+ * respecting netlink message boundaries.  Each call returns one or more
+ * complete netlink messages; a message is never split across calls.
+ *
+ * Standard tools like ip(8) call recvmsg() in a loop and stop when they
+ * receive a message with type NLMSG_DONE.  If the caller's buffer is
+ * too small for even the first message, we return the full message anyway
+ * (the caller will see MSG_TRUNC but can still parse the header).
  *
  * @sock     Kernel socket (address_family == AF_NETLINK)
  * @out_buf  Destination buffer
@@ -522,10 +650,50 @@ ssize_t netlink_handle_recv(fut_socket_t *sock, void *out_buf, size_t out_len) {
     if (!sock->nl_resp_buf || sock->nl_resp_pos >= sock->nl_resp_len)
         return 0;
 
+    uint8_t *base = sock->nl_resp_buf + sock->nl_resp_pos;
     uint32_t available = sock->nl_resp_len - sock->nl_resp_pos;
-    size_t to_copy = out_len < available ? out_len : (size_t)available;
-    __builtin_memcpy(out_buf, sock->nl_resp_buf + sock->nl_resp_pos, to_copy);
-    sock->nl_resp_pos += (uint32_t)to_copy;
+
+    /* Walk forward through complete netlink messages that fit in out_len.
+     * Each message starts with nlmsg_len (uint32_t at offset 0). */
+    uint32_t to_copy = 0;
+    while (to_copy < available && to_copy < (uint32_t)out_len) {
+        /* Read nlmsg_len from the next message header */
+        if (to_copy + sizeof(nl_hdr_t) > available)
+            break;  /* incomplete header at end of buffer (shouldn't happen) */
+
+        uint32_t msg_len;
+        __builtin_memcpy(&msg_len, base + to_copy, sizeof(msg_len));
+
+        /* Sanity: message must be at least header-sized */
+        if (msg_len < sizeof(nl_hdr_t))
+            break;
+
+        /* Aligned message length */
+        uint32_t aligned_len = NL_ALIGN(msg_len);
+        if (aligned_len > available - to_copy)
+            aligned_len = available - to_copy;  /* last message may not be padded */
+
+        /* Would this message fit in the remaining buffer space? */
+        if (to_copy + aligned_len > (uint32_t)out_len) {
+            /* If we haven't copied anything yet, copy this one message anyway
+             * (even if it overflows the buffer) so the caller makes progress. */
+            if (to_copy == 0) {
+                to_copy = aligned_len < (uint32_t)out_len ? aligned_len : (uint32_t)out_len;
+            }
+            break;
+        }
+
+        to_copy += aligned_len;
+    }
+
+    /* Fallback: if we computed 0 bytes (shouldn't happen with valid data),
+     * copy whatever fits to prevent infinite loops. */
+    if (to_copy == 0) {
+        to_copy = available < (uint32_t)out_len ? available : (uint32_t)out_len;
+    }
+
+    __builtin_memcpy(out_buf, base, to_copy);
+    sock->nl_resp_pos += to_copy;
 
     /* Free when fully consumed */
     if (sock->nl_resp_pos >= sock->nl_resp_len) {

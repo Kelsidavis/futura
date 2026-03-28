@@ -3342,14 +3342,35 @@ static void cmd_whoami(int argc, char *argv[]) {
 /* Built-in: env - Show environment variables */
 static void cmd_env(int argc, char *argv[]) {
     int arg_start = 1;
+    int clear_env = 0;
 
-    /* env [VAR=val]... [command [args...]]
-     * With no args: print all exported variables
+    /* env [-i] [-u NAME] [VAR=val]... [command [args...]]
+     * With no args: print all environment variables
+     * With -i: start with empty environment
+     * With -u NAME: unset variable NAME
      * With VAR=val: set variables then run command */
 
-    /* Skip -i (ignored — we don't clear env) */
-    if (arg_start < argc && strcmp_simple(argv[arg_start], "-i") == 0)
-        arg_start++;
+    /* Parse options */
+    while (arg_start < argc && argv[arg_start][0] == '-') {
+        if (strcmp_simple(argv[arg_start], "-i") == 0) {
+            clear_env = 1;
+            arg_start++;
+        } else if (strcmp_simple(argv[arg_start], "-u") == 0 && arg_start + 1 < argc) {
+            /* Unset a variable */
+            arg_start++;
+            const char *uname = argv[arg_start];
+            for (int i = 0; i < MAX_VARS; i++) {
+                if (shell_vars[i].used && strcmp_simple(shell_vars[i].name, uname) == 0) {
+                    shell_vars[i].used = 0;
+                    shell_vars[i].exported = 0;
+                    break;
+                }
+            }
+            arg_start++;
+        } else {
+            break;
+        }
+    }
 
     /* Check for VAR=val assignments and command */
     int has_cmd = 0;
@@ -3409,13 +3430,49 @@ static void cmd_env(int argc, char *argv[]) {
             }
         }
     } else {
-        /* No args: print all exported variables */
+        /* No args: print all variables from shell and /proc/self/environ */
+        /* First, print shell exported variables */
         for (int i = 0; i < MAX_VARS; i++) {
             if (shell_vars[i].used && shell_vars[i].exported) {
                 write_str(1, shell_vars[i].name);
                 write_char(1, '=');
                 write_str(1, shell_vars[i].value);
                 write_char(1, '\n');
+            }
+        }
+        /* Also try /proc/self/environ for inherited vars not in shell_vars */
+        if (!clear_env) {
+            int efd = sys_open("/proc/self/environ", O_RDONLY, 0);
+            if (efd >= 0) {
+                char ebuf[2048];
+                ssize_t en = sys_read(efd, ebuf, sizeof(ebuf) - 1);
+                sys_close(efd);
+                if (en > 0) {
+                    ebuf[en] = '\0';
+                    /* environ entries are NUL-separated */
+                    char *ep = ebuf;
+                    while (ep < ebuf + en) {
+                        if (*ep == '\0') { ep++; continue; }
+                        /* Check if this var is already in shell_vars */
+                        char ename[MAX_VAR_NAME] = {0};
+                        int ei = 0;
+                        const char *eq = ep;
+                        while (*eq && *eq != '=') { if (ei < MAX_VAR_NAME - 1) ename[ei++] = *eq; eq++; }
+                        ename[ei] = '\0';
+                        int found = 0;
+                        for (int i = 0; i < MAX_VARS; i++) {
+                            if (shell_vars[i].used && strcmp_simple(shell_vars[i].name, ename) == 0) {
+                                found = 1; break;
+                            }
+                        }
+                        if (!found && *ep) {
+                            write_str(1, ep);
+                            write_char(1, '\n');
+                        }
+                        while (ep < ebuf + en && *ep) ep++;
+                        ep++; /* skip NUL separator */
+                    }
+                }
             }
         }
     }
@@ -4108,37 +4165,70 @@ static void head_process_fd(int fd, int max_lines) {
 static void cmd_head(int argc, char *argv[]) {
     int num_lines = 10;  /* Default: 10 lines */
     int num_bytes = 0;   /* -c N: output first N bytes */
+    int quiet = 0;       /* -q: suppress headers */
     int file_start = 1;
 
     /* Parse options */
-    if (argc >= 3 && strcmp_simple(argv[1], "-n") == 0) {
-        num_lines = simple_atoi(argv[2]);
-        if (num_lines <= 0) num_lines = 10;
-        file_start = 3;
-    } else if (argc >= 3 && strcmp_simple(argv[1], "-c") == 0) {
-        num_bytes = simple_atoi(argv[2]);
-        file_start = 3;
-    } else if (argc >= 2 && argv[1][0] == '-' && argv[1][1] >= '0' && argv[1][1] <= '9') {
-        /* head -N shorthand */
-        num_lines = simple_atoi(argv[1] + 1);
-        if (num_lines <= 0) num_lines = 10;
-        file_start = 2;
+    for (int i = 1; i < argc; i++) {
+        if (argv[i][0] != '-') { file_start = i; break; }
+        if (strcmp_simple(argv[i], "-n") == 0 && i + 1 < argc) {
+            num_lines = simple_atoi(argv[++i]);
+            if (num_lines <= 0) num_lines = 10;
+            file_start = i + 1;
+        } else if (strcmp_simple(argv[i], "-c") == 0 && i + 1 < argc) {
+            num_bytes = simple_atoi(argv[++i]);
+            file_start = i + 1;
+        } else if (strcmp_simple(argv[i], "-q") == 0 ||
+                   strcmp_simple(argv[i], "--quiet") == 0 ||
+                   strcmp_simple(argv[i], "--silent") == 0) {
+            quiet = 1;
+            file_start = i + 1;
+        } else if (argv[i][1] >= '0' && argv[i][1] <= '9') {
+            /* head -N shorthand */
+            num_lines = simple_atoi(argv[i] + 1);
+            if (num_lines <= 0) num_lines = 10;
+            file_start = i + 1;
+        } else {
+            file_start = i;
+            break;
+        }
     }
 
     /* -c N: output first N bytes */
     if (num_bytes > 0) {
-        int fd = (file_start < argc) ? sys_open(argv[file_start], O_RDONLY, 0) : 0;
-        if (fd < 0) { write_str(2, "head: cannot open file\n"); return; }
-        static char buf[4096];
-        int remaining = num_bytes;
-        while (remaining > 0) {
-            int chunk = remaining < (int)sizeof(buf) ? remaining : (int)sizeof(buf);
-            ssize_t n = sys_read(fd, buf, chunk);
-            if (n <= 0) break;
-            sys_write(1, buf, n);
-            remaining -= (int)n;
+        if (file_start >= argc) {
+            /* Read from stdin */
+            static char buf[4096];
+            int remaining = num_bytes;
+            while (remaining > 0) {
+                int chunk = remaining < (int)sizeof(buf) ? remaining : (int)sizeof(buf);
+                ssize_t n = sys_read(0, buf, chunk);
+                if (n <= 0) break;
+                sys_write(1, buf, n);
+                remaining -= (int)n;
+            }
+            return;
         }
-        if (fd > 0) sys_close(fd);
+        for (int fi = file_start; fi < argc; fi++) {
+            if (!quiet && argc - file_start > 1) {
+                if (fi > file_start) write_char(1, '\n');
+                write_str(1, "==> ");
+                write_str(1, argv[fi]);
+                write_str(1, " <==\n");
+            }
+            int fd = sys_open(argv[fi], O_RDONLY, 0);
+            if (fd < 0) { write_str(2, "head: cannot open "); write_str(2, argv[fi]); write_str(2, "\n"); continue; }
+            static char buf[4096];
+            int remaining = num_bytes;
+            while (remaining > 0) {
+                int chunk = remaining < (int)sizeof(buf) ? remaining : (int)sizeof(buf);
+                ssize_t n = sys_read(fd, buf, chunk);
+                if (n <= 0) break;
+                sys_write(1, buf, n);
+                remaining -= (int)n;
+            }
+            sys_close(fd);
+        }
         return;
     }
 
@@ -4151,8 +4241,8 @@ static void cmd_head(int argc, char *argv[]) {
         for (int file_idx = file_start; file_idx < argc; file_idx++) {
             const char *path = argv[file_idx];
 
-            /* Print header if multiple files */
-            if (argc - file_start > 1) {
+            /* Print header if multiple files and not quiet */
+            if (!quiet && argc - file_start > 1) {
                 if (file_idx > file_start) {
                     write_char(1, '\n');
                 }
@@ -9905,22 +9995,114 @@ static int execute_command(int argc, char *argv[]) {
         }
         return 0;
     } else if (strcmp_simple(argv[0], "logger") == 0) {
-        /* logger — write message to kernel log (/dev/kmsg) */
-        if (argc < 2) {
-            write_str(2, "usage: logger <message>\n");
+        /* logger — write message to syslog and kernel log
+         * logger [-p <facility.level>] [-t <tag>] <message>
+         * Writes to /var/log/syslog (creating if needed) with timestamp,
+         * and also to /dev/kmsg for kernel ring buffer */
+        const char *priority = "user.notice";
+        const char *tag = "logger";
+        int msg_start = 1;
+
+        /* Parse options */
+        for (int i = 1; i < argc; i++) {
+            if (strcmp_simple(argv[i], "-p") == 0 && i + 1 < argc) {
+                priority = argv[++i];
+                msg_start = i + 1;
+            } else if (strcmp_simple(argv[i], "-t") == 0 && i + 1 < argc) {
+                tag = argv[++i];
+                msg_start = i + 1;
+            } else {
+                msg_start = i;
+                break;
+            }
+        }
+
+        if (msg_start >= argc) {
+            write_str(2, "usage: logger [-p facility.level] [-t tag] <message>\n");
             return 1;
         }
-        int fd = sys_open("/dev/kmsg", O_WRONLY, 0);
-        if (fd >= 0) {
-            /* Build message from all args */
-            for (int i = 1; i < argc; i++) {
-                sys_write(fd, argv[i], strlen_simple(argv[i]));
-                if (i < argc - 1) sys_write(fd, " ", 1);
-            }
-            sys_write(fd, "\n", 1);
-            sys_close(fd);
-        } else {
-            write_str(2, "logger: cannot open /dev/kmsg\n");
+
+        /* Build the message string */
+        char msgbuf[512];
+        int mpos = 0;
+        for (int i = msg_start; i < argc && mpos < 500; i++) {
+            const char *s = argv[i];
+            while (*s && mpos < 500) msgbuf[mpos++] = *s++;
+            if (i < argc - 1 && mpos < 500) msgbuf[mpos++] = ' ';
+        }
+        msgbuf[mpos] = '\0';
+
+        /* Get timestamp */
+        struct { long tv_sec; long tv_nsec; } lts = {0, 0};
+        sys_call2(98, 0 /* CLOCK_REALTIME */, (long)&lts);
+        long lt = lts.tv_sec;
+        long ldays = lt / 86400;
+        long ldaytime = lt % 86400;
+        long lhour = ldaytime / 3600;
+        long lmin = (ldaytime % 3600) / 60;
+        long lsec = ldaytime % 60;
+        long ly = 1970;
+        while (1) {
+            long ydays = (ly % 4 == 0 && (ly % 100 != 0 || ly % 400 == 0)) ? 366 : 365;
+            if (ldays < ydays) break;
+            ldays -= ydays;
+            ly++;
+        }
+        int lleap = (ly % 4 == 0 && (ly % 100 != 0 || ly % 400 == 0));
+        int lmdays[] = {31,28+lleap,31,30,31,30,31,31,30,31,30,31};
+        const char *lmnames[] = {"Jan","Feb","Mar","Apr","May","Jun",
+                                 "Jul","Aug","Sep","Oct","Nov","Dec"};
+        int lm = 0;
+        while (lm < 12 && ldays >= lmdays[lm]) { ldays -= lmdays[lm]; lm++; }
+        int lday = (int)ldays + 1;
+
+        /* Format: "Mon DD HH:MM:SS" */
+        char tstamp[32];
+        int tp = 0;
+        for (int k = 0; lmnames[lm][k]; k++) tstamp[tp++] = lmnames[lm][k];
+        tstamp[tp++] = ' ';
+        if (lday >= 10) tstamp[tp++] = '0' + (char)(lday / 10);
+        else tstamp[tp++] = ' ';
+        tstamp[tp++] = '0' + (char)(lday % 10);
+        tstamp[tp++] = ' ';
+        tstamp[tp++] = '0' + (char)(lhour / 10);
+        tstamp[tp++] = '0' + (char)(lhour % 10);
+        tstamp[tp++] = ':';
+        tstamp[tp++] = '0' + (char)(lmin / 10);
+        tstamp[tp++] = '0' + (char)(lmin % 10);
+        tstamp[tp++] = ':';
+        tstamp[tp++] = '0' + (char)(lsec / 10);
+        tstamp[tp++] = '0' + (char)(lsec % 10);
+        tstamp[tp] = '\0';
+
+        /* Write to /var/log/syslog (create if needed, append) */
+        /* Ensure /var/log exists */
+        sys_call2(SYS_mkdir, (long)"/var", 0755);
+        sys_call2(SYS_mkdir, (long)"/var/log", 0755);
+        int sfd = sys_open("/var/log/syslog", O_WRONLY | O_CREAT | O_APPEND, 0644);
+        if (sfd >= 0) {
+            /* Format: "Mon DD HH:MM:SS hostname tag[pid]: <priority> message\n" */
+            sys_write(sfd, tstamp, tp);
+            sys_write(sfd, " futura ", 8);
+            sys_write(sfd, tag, strlen_simple(tag));
+            sys_write(sfd, ": <", 3);
+            sys_write(sfd, priority, strlen_simple(priority));
+            sys_write(sfd, "> ", 2);
+            sys_write(sfd, msgbuf, mpos);
+            sys_write(sfd, "\n", 1);
+            sys_close(sfd);
+        }
+
+        /* Also write to /dev/kmsg for kernel ring buffer */
+        int kfd = sys_open("/dev/kmsg", O_WRONLY, 0);
+        if (kfd >= 0) {
+            sys_write(kfd, tag, strlen_simple(tag));
+            sys_write(kfd, ": ", 2);
+            sys_write(kfd, msgbuf, mpos);
+            sys_write(kfd, "\n", 1);
+            sys_close(kfd);
+        } else if (sfd < 0) {
+            write_str(2, "logger: cannot open /dev/kmsg or /var/log/syslog\n");
             return 1;
         }
         return 0;
@@ -17463,7 +17645,7 @@ static void cmd_screen(int argc, char *argv[]) {
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmisleading-indentation"
-static void cmd_split(int argc, char *argv[]) {
+__attribute__((used)) static void cmd_split(int argc, char *argv[]) {
     int lp = 1000; const char *inf = NULL, *pfx = "x";
     for (int i = 1; i < argc; i++) { if (argv[i][0]=='-'&&argv[i][1]=='l') { if (argv[i][2]) lp=simple_atoi(&argv[i][2]); else if(i+1<argc) lp=simple_atoi(argv[++i]); } else if (!inf) inf=argv[i]; else pfx=argv[i]; }
     if (!inf) { write_str(2, "usage: split [-l N] file [prefix]\n"); return; }
@@ -17476,7 +17658,7 @@ static void cmd_split(int argc, char *argv[]) {
             sys_write((int)ofd,&buf[i],1); if(buf[i]=='\n') ln++; } }
     if(ofd>=0) sys_close((int)ofd); sys_close((int)fd);
 }
-static void cmd_join(int argc, char *argv[]) {
+__attribute__((used)) static void cmd_join(int argc, char *argv[]) {
     if (argc<3) { write_str(2,"usage: join file1 file2\n"); return; }
     char b1[4096],b2[4096]; long fd=sys_open(argv[1],0,0); if(fd<0){write_str(2,"join: error\n");return;}
     long n1=sys_read((int)fd,b1,4095); sys_close((int)fd); if(n1<0)n1=0; b1[n1]=0;
@@ -17488,7 +17670,7 @@ static void cmd_join(int argc, char *argv[]) {
         if(m){sys_write(1,p1,(size_t)k1);if(s1<e1)sys_write(1,s1,(size_t)(e1-s1));if(s2<e2)sys_write(1,s2,(size_t)(e2-s2));sys_write(1,"\n",1);}}
         p2=(*e2)?e2+1:e2;} p1=(*e1)?e1+1:e1; }
 }
-static void cmd_tsort(int argc, char *argv[]) {
+__attribute__((used)) static void cmd_tsort(int argc, char *argv[]) {
     char buf[4096]; long n; if(argc>1){long fd=sys_open(argv[1],0,0);if(fd<0){write_str(2,"tsort: error\n");return;}
     n=sys_read((int)fd,buf,4095);sys_close((int)fd);}else{n=sys_read(0,buf,4095);}
     if(n<=0)return; buf[n]=0; char nd[128][32];int eg[128][2];int nn=0,ne=0,idg[128]={0}; char *p=buf;
@@ -17504,7 +17686,7 @@ static void cmd_tsort(int argc, char *argv[]) {
     while(qh<qt){int u=q[qh++];out++;write_str(1,nd[u]);write_str(1,"\n");for(int i=0;i<ne;i++)if(eg[i][0]==u&&--idg[eg[i][1]]==0)q[qt++]=eg[i][1];}
     if(out<nn)write_str(2,"tsort: cycle detected\n");
 }
-static void cmd_column(int argc, char *argv[]) {
+__attribute__((used)) static void cmd_column(int argc, char *argv[]) {
     int tbl=0;for(int i=1;i<argc;i++)if(strcmp_simple(argv[i],"-t")==0)tbl=1;
     char buf[8192];long n=sys_read(0,buf,8191);if(n<=0)return;buf[n]=0;
     if(!tbl){sys_write(1,buf,(size_t)n);return;}

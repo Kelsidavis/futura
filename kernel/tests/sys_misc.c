@@ -65076,6 +65076,253 @@ __attribute__((noinline)) static void test_proc_environ_content(void) {
     }
 }
 
+/* ============================================================
+ * Tests 2295-2300: inotify end-to-end /tmp directory watch
+ * ============================================================
+ *   Test 2295: inotify_init1 + inotify_add_watch on /tmp
+ *   Test 2296: IN_CREATE event fires when a file is created in /tmp
+ *   Test 2297: IN_MODIFY event fires when a file is written in /tmp
+ *   Test 2298: IN_CLOSE_WRITE event fires when a writable file is closed
+ *   Test 2299: inotify_rm_watch removes watch and delivers IN_IGNORED
+ *   Test 2300: read() returns properly formatted inotify_event struct
+ */
+__attribute__((noinline)) static void test_inotify_tmp_watch(void) {
+    extern long sys_inotify_init1(int flags);
+    extern long sys_inotify_add_watch(int fd, const char *path, uint32_t mask);
+    extern long sys_inotify_rm_watch(int fd, int wd);
+    extern long sys_open(const char *, int, int);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_write(int, const void *, size_t);
+    extern long sys_close(int);
+    extern long sys_unlink(const char *);
+    extern long sys_mkdir(const char *, unsigned int);
+
+    /* inotify event layout: wd(4)+mask(4)+cookie(4)+len(4)+name[len] */
+    struct ino_ev { int wd; uint32_t mask; uint32_t cookie; uint32_t len; char name[256]; };
+
+    #define INO_NB       0x00004000  /* IN_NONBLOCK */
+    #define INO_CREATE   0x00000100  /* IN_CREATE */
+    #define INO_MODIFY   0x00000002  /* IN_MODIFY */
+    #define INO_CL_WR    0x00000008  /* IN_CLOSE_WRITE */
+    #define INO_IGNORED  0x00008000  /* IN_IGNORED */
+
+    /* Ensure /tmp exists */
+    sys_mkdir("/tmp", 0777);
+
+    /* ---- Test 2295: inotify_init1 + add_watch on /tmp ---- */
+    fut_printf("[MISC-TEST] Test 2295: inotify_init1 + inotify_add_watch on /tmp\n");
+    long ifd = sys_inotify_init1(INO_NB);
+    if (ifd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 2295: inotify_init1 -> %ld\n", ifd);
+        fut_test_fail(2295);
+        fut_test_fail(2296);
+        fut_test_fail(2297);
+        fut_test_fail(2298);
+        fut_test_fail(2299);
+        fut_test_fail(2300);
+        return;
+    }
+    /* Watch /tmp for CREATE, MODIFY, and CLOSE_WRITE events */
+    long wd = sys_inotify_add_watch((int)ifd, "/tmp",
+                                     INO_CREATE | INO_MODIFY | INO_CL_WR);
+    if (wd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 2295: add_watch -> %ld\n", wd);
+        sys_close((int)ifd);
+        fut_test_fail(2295);
+        fut_test_fail(2296);
+        fut_test_fail(2297);
+        fut_test_fail(2298);
+        fut_test_fail(2299);
+        fut_test_fail(2300);
+        return;
+    }
+    fut_printf("[MISC-TEST] ✓ Test 2295: inotify fd=%ld, wd=%ld on /tmp\n", ifd, wd);
+    fut_test_pass();
+
+    /* ---- Test 2296: IN_CREATE fires when a file is created in /tmp ---- */
+    fut_printf("[MISC-TEST] Test 2296: IN_CREATE on file creation in /tmp\n");
+
+    /* Clean up any leftover file */
+    sys_unlink("/tmp/ino_test_2296.txt");
+
+    /* Create the file — this should trigger IN_CREATE */
+    long cfd = sys_open("/tmp/ino_test_2296.txt", 0x42 /* O_CREAT|O_RDWR */, 0644);
+    if (cfd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 2296: create file -> %ld\n", cfd);
+        sys_close((int)ifd);
+        fut_test_fail(2296);
+        fut_test_fail(2297);
+        fut_test_fail(2298);
+        fut_test_fail(2299);
+        fut_test_fail(2300);
+        return;
+    }
+
+    /* Read the IN_CREATE event */
+    struct ino_ev ev_create;
+    __builtin_memset(&ev_create, 0, sizeof(ev_create));
+    long nr = sys_read((int)ifd, &ev_create, sizeof(ev_create));
+    if (nr >= 16 && (ev_create.mask & INO_CREATE) && ev_create.wd == (int)wd
+            && ev_create.len > 0
+            && __builtin_strncmp(ev_create.name, "ino_test_2296.txt", 17) == 0) {
+        fut_printf("[MISC-TEST] ✓ Test 2296: IN_CREATE wd=%d mask=0x%x name='%s'\n",
+                   ev_create.wd, ev_create.mask, ev_create.name);
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 2296: nr=%ld wd=%d mask=0x%x len=%u name='%s'\n",
+                   nr, ev_create.wd, ev_create.mask, ev_create.len,
+                   (nr >= 16 && ev_create.len > 0) ? ev_create.name : "<none>");
+        fut_test_fail(2296);
+    }
+
+    /* ---- Test 2297: IN_MODIFY fires when a file is written in /tmp ---- */
+    fut_printf("[MISC-TEST] Test 2297: IN_MODIFY on file write in /tmp\n");
+
+    /* Drain any pending events (e.g. IN_OPEN) before the write */
+    {
+        struct ino_ev drain;
+        while (sys_read((int)ifd, &drain, sizeof(drain)) > 0) { /* drain */ }
+    }
+
+    /* Write to the file — this should trigger IN_MODIFY */
+    const char *wdata = "hello inotify";
+    sys_write((int)cfd, wdata, 13);
+
+    struct ino_ev ev_modify;
+    __builtin_memset(&ev_modify, 0, sizeof(ev_modify));
+    nr = sys_read((int)ifd, &ev_modify, sizeof(ev_modify));
+    if (nr >= 16 && (ev_modify.mask & INO_MODIFY) && ev_modify.wd == (int)wd) {
+        fut_printf("[MISC-TEST] ✓ Test 2297: IN_MODIFY wd=%d mask=0x%x name='%s'\n",
+                   ev_modify.wd, ev_modify.mask,
+                   ev_modify.len > 0 ? ev_modify.name : "");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 2297: nr=%ld mask=0x%x (expected IN_MODIFY)\n",
+                   nr, (unsigned)(nr >= 16 ? ev_modify.mask : 0));
+        fut_test_fail(2297);
+    }
+
+    /* ---- Test 2298: IN_CLOSE_WRITE fires when writable file is closed ---- */
+    fut_printf("[MISC-TEST] Test 2298: IN_CLOSE_WRITE on closing writable file in /tmp\n");
+
+    /* Drain any pending events before the close */
+    {
+        struct ino_ev drain;
+        while (sys_read((int)ifd, &drain, sizeof(drain)) > 0) { /* drain */ }
+    }
+
+    /* Close the writable file — should trigger IN_CLOSE_WRITE */
+    sys_close((int)cfd);
+
+    struct ino_ev ev_close;
+    __builtin_memset(&ev_close, 0, sizeof(ev_close));
+    nr = sys_read((int)ifd, &ev_close, sizeof(ev_close));
+    if (nr >= 16 && (ev_close.mask & INO_CL_WR) && ev_close.wd == (int)wd) {
+        fut_printf("[MISC-TEST] ✓ Test 2298: IN_CLOSE_WRITE wd=%d mask=0x%x name='%s'\n",
+                   ev_close.wd, ev_close.mask,
+                   ev_close.len > 0 ? ev_close.name : "");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 2298: nr=%ld mask=0x%x (expected IN_CLOSE_WRITE)\n",
+                   nr, (unsigned)(nr >= 16 ? ev_close.mask : 0));
+        fut_test_fail(2298);
+    }
+
+    /* ---- Test 2299: inotify_rm_watch removes watch + delivers IN_IGNORED ---- */
+    fut_printf("[MISC-TEST] Test 2299: inotify_rm_watch delivers IN_IGNORED\n");
+
+    /* Drain any pending events */
+    {
+        struct ino_ev drain;
+        while (sys_read((int)ifd, &drain, sizeof(drain)) > 0) { /* drain */ }
+    }
+
+    long rm_ret = sys_inotify_rm_watch((int)ifd, (int)wd);
+    if (rm_ret != 0) {
+        fut_printf("[MISC-TEST] ✗ Test 2299: rm_watch returned %ld\n", rm_ret);
+        fut_test_fail(2299);
+    } else {
+        struct ino_ev ev_ign;
+        __builtin_memset(&ev_ign, 0, sizeof(ev_ign));
+        nr = sys_read((int)ifd, &ev_ign, sizeof(ev_ign));
+        if (nr >= 16 && (ev_ign.mask & INO_IGNORED) && ev_ign.wd == (int)wd) {
+            fut_printf("[MISC-TEST] ✓ Test 2299: IN_IGNORED wd=%d after rm_watch\n",
+                       ev_ign.wd);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2299: nr=%ld mask=0x%x (expected IN_IGNORED)\n",
+                       nr, (unsigned)(nr >= 16 ? ev_ign.mask : 0));
+            fut_test_fail(2299);
+        }
+    }
+
+    /* ---- Test 2300: read() returns properly formatted inotify_event ---- */
+    fut_printf("[MISC-TEST] Test 2300: inotify_event struct format validation\n");
+
+    /* Add a fresh watch and create a new file to get a known event */
+    long wd2 = sys_inotify_add_watch((int)ifd, "/tmp", INO_CREATE);
+    if (wd2 < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 2300: add_watch -> %ld\n", wd2);
+        sys_close((int)ifd);
+        sys_unlink("/tmp/ino_test_2296.txt");
+        fut_test_fail(2300);
+        return;
+    }
+
+    sys_unlink("/tmp/ino_test_2300.txt");
+    long cfd2 = sys_open("/tmp/ino_test_2300.txt", 0x42 /* O_CREAT|O_RDWR */, 0644);
+    if (cfd2 >= 0) sys_close((int)cfd2);
+
+    /* Read the raw bytes and validate inotify_event struct layout */
+    char raw[512];
+    __builtin_memset(raw, 0, sizeof(raw));
+    nr = sys_read((int)ifd, raw, sizeof(raw));
+
+    int pass2300 = 0;
+    if (nr >= 16) {
+        /* Parse the inotify_event header */
+        int ev_wd;
+        uint32_t ev_mask, ev_cookie, ev_len;
+        __builtin_memcpy(&ev_wd, raw + 0, 4);
+        __builtin_memcpy(&ev_mask, raw + 4, 4);
+        __builtin_memcpy(&ev_cookie, raw + 8, 4);
+        __builtin_memcpy(&ev_len, raw + 12, 4);
+
+        /* Validate: wd matches, mask has IN_CREATE, cookie is 0 for non-rename,
+         * len is name+null rounded to 4-byte boundary, and total bytes match */
+        size_t expected_total = 16 + ev_len;
+        if (ev_wd == (int)wd2 && (ev_mask & INO_CREATE) && ev_cookie == 0
+                && ev_len > 0 && (ev_len % 4) == 0
+                && (size_t)nr >= expected_total) {
+            /* Verify the name is null-terminated within the padded region */
+            const char *ev_name = raw + 16;
+            if (__builtin_strncmp(ev_name, "ino_test_2300.txt", 17) == 0) {
+                pass2300 = 1;
+            }
+        }
+    }
+
+    if (pass2300) {
+        fut_printf("[MISC-TEST] ✓ Test 2300: inotify_event struct format valid\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 2300: nr=%ld, format check failed\n", nr);
+        fut_test_fail(2300);
+    }
+
+    /* Cleanup */
+    sys_inotify_rm_watch((int)ifd, (int)wd2);
+    sys_close((int)ifd);
+    sys_unlink("/tmp/ino_test_2296.txt");
+    sys_unlink("/tmp/ino_test_2300.txt");
+
+    #undef INO_NB
+    #undef INO_CREATE
+    #undef INO_MODIFY
+    #undef INO_CL_WR
+    #undef INO_IGNORED
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -69387,6 +69634,7 @@ void fut_misc_test_thread(void *arg) {
     test_linger_shutdown(); /* Tests 2275-2280: SO_LINGER round-trip and shutdown() behavior */
     test_pty_winsize_ctty(); /* Tests 2285-2288: PTY winsize and controlling terminal ioctls */
     test_proc_environ_content(); /* Tests 2290-2291: /proc/self/environ content verification */
+    test_inotify_tmp_watch(); /* Tests 2295-2300: inotify end-to-end /tmp directory watch */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

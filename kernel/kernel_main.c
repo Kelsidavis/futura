@@ -1177,11 +1177,11 @@ void fut_kernel_main(void) {
     }
 
     /* Mount ramfs at /tmp to make it writable for Wayland sockets and other temporary files */
-    /* Mount /tmp */
-    int tmp_mount_ret = fut_vfs_mount(NULL, "/tmp", "ramfs", 0, NULL, FUT_INVALID_HANDLE);
+    /* Mount /tmp with a 64 MB size limit */
+    int tmp_mount_ret = fut_vfs_mount(NULL, "/tmp", "ramfs", 0, "size=64m", FUT_INVALID_HANDLE);
     (void)tmp_mount_ret;
     if (tmp_mount_ret == 0) {
-        fut_printf("[INIT] ✓ Mounted writable ramfs at /tmp\n");
+        fut_printf("[INIT] ✓ Mounted writable ramfs at /tmp (size=64m)\n");
     } else {
         fut_printf("[WARN] ✗ Failed to mount ramfs at /tmp (error %d)\n", tmp_mount_ret);
     }
@@ -1322,7 +1322,7 @@ void fut_kernel_main(void) {
                   "\n"
                   "  Futura OS 0.6.0\n"
                   "\n"
-                  "  200 built-in commands — type 'help' or 'man <cmd>'\n"
+                  "  210 built-in commands — type 'help' or 'man <cmd>'\n"
                   "\n"
                   "  Development:  vi, make, git, patch, bc, curl, tar, less\n"
                   "  Networking:   ping, wget, curl, nc, netstat, ss, httpd\n"
@@ -1489,7 +1489,7 @@ void fut_kernel_main(void) {
         planned_tests += 17u; /* clock_sched: getres, sched_param, sched_policy, itimer, rusage, times, getpriority, setpriority, getpriority(-who), setpriority(-who), unshare(0), unshare(invalid), rr_get_interval, clock_gettime, posix_timer_sigev_value, posix_timer_si_timer, itimer_virtual */
         planned_tests += 22u; /* vfs: O_TRUNC, O_APPEND, relpath, dir_mtime, readlink, hardlink, mount, renameat2, inotify(10), umount, dotdot, eisdir, chdir_dotdot */
         planned_tests += 17u; /* poll: file ready, eventfd not-ready, eventfd ready, POLLNVAL, select file, select pipe, pselect6 pipe, pselect6 sigmask restore, timeout-only sleep, timerfd readiness, signalfd readiness, pipe EOF, select pipe EOF, select timerfd wakeup, poll negative fd, POLLRDNORM, select timeout update */
-        planned_tests += 2268u; /* misc(2268): ..., memfd_seal+pidfd+close_range+dup (2240-2259), socket_opt_enforcement (2270-2272), pty_winsize_ctty (2285-2288), proc_environ_content (2290-2291) */
+        planned_tests += 2274u; /* misc(2274): ..., memfd_seal+pidfd+close_range+dup (2240-2259), socket_opt_enforcement (2270-2272), pty_winsize_ctty (2285-2288), proc_environ_content (2290-2291), inotify_tmp_watch (2295-2300) */
         // planned_tests += 1u; /* block */
         // planned_tests += 1u; /* futfs */
         // planned_tests += 1u; /* net */

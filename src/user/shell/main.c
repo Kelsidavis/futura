@@ -157,6 +157,7 @@ static void cmd_crontab(int argc, char *argv[]);
 static void cmd_scp(int argc, char *argv[]);
 static void cmd_pkg(int argc, char *argv[]);
 static void cmd_man(int argc, char *argv[]);
+static void cmd_screen(int argc, char *argv[]);
 static void strcpy_simple(char *dest, const char *src);
 
 /* Forward declaration for prompt */
@@ -1290,6 +1291,7 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  sysctl key[=v]  - Read/write kernel parameters\n");
     write_str(1, "  systemctl <cmd> - Service management (start/stop/status/list-units)\n");
     write_str(1, "  pkg <cmd>       - Package manager (install/remove/list/search/info)\n");
+    write_str(1, "  screen [-ls|-r] - Terminal multiplexer (Ctrl+A prefix, 4 windows)\n");
     write_str(1, "\n");
     write_str(1, "Networking:\n");
     write_str(1, "  ip addr|link|route|neigh|forward - Network configuration\n");
@@ -11440,6 +11442,9 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "man") == 0) {
         cmd_man(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "screen") == 0) {
+        cmd_screen(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -11614,6 +11619,7 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "scp") == 0 ||
             strcmp_simple(cmd, "pkg") == 0 ||
             strcmp_simple(cmd, "man") == 0 ||
+            strcmp_simple(cmd, "screen") == 0 ||
             0);
 }
 
@@ -16739,4 +16745,391 @@ static void cmd_man(int argc, char *argv[]) {
     write_str(2, "No manual entry for ");
     write_str(2, command);
     write_str(2, "\n");
+}
+
+/* ============================================================
+ *   screen — simplified terminal multiplexer (up to 4 windows)
+ * ============================================================ */
+
+#define SCREEN_MAX_WIN  4
+#define SCREEN_MAX_SESS 4
+#define SCREEN_BUF_SIZE 4096
+
+struct screen_window {
+    int  master_fd;   /* PTY master fd (-1 = unused) */
+    long child_pid;   /* shell process pid */
+    int  alive;       /* 1 if window active */
+};
+
+struct screen_session {
+    int  id;
+    int  used;
+    int  detached;
+    int  nwin;        /* number of windows created */
+    int  active;      /* index of active window */
+    struct screen_window wins[SCREEN_MAX_WIN];
+};
+
+static struct screen_session screen_sessions[SCREEN_MAX_SESS];
+static int screen_next_id = 1;
+
+/* Allocate a PTY pair, return master fd (>=0) or -1 on error.
+ * Writes slave path to slave_path (must be >= 32 bytes). */
+static int screen_alloc_pty(char *slave_path) {
+    int mfd = (int)sys_open("/dev/ptmx", 0x0002 /* O_RDWR */, 0);
+    if (mfd < 0) return -1;
+
+    /* Unlock slave */
+    int unlock = 0;
+    sys_ioctl(mfd, 0x40045431 /* TIOCSPTLCK */, (long)&unlock);
+
+    /* Get slave number */
+    int snum = -1;
+    sys_ioctl(mfd, 0x80045430 /* TIOCGPTN */, (long)&snum);
+    if (snum < 0) { sys_close(mfd); return -1; }
+
+    /* Build "/dev/pts/<n>" */
+    slave_path[0] = '/'; slave_path[1] = 'd'; slave_path[2] = 'e';
+    slave_path[3] = 'v'; slave_path[4] = '/'; slave_path[5] = 'p';
+    slave_path[6] = 't'; slave_path[7] = 's'; slave_path[8] = '/';
+    int sp = 9;
+    if (snum >= 100) slave_path[sp++] = '0' + (char)(snum / 100 % 10);
+    if (snum >= 10)  slave_path[sp++] = '0' + (char)(snum / 10 % 10);
+    slave_path[sp++] = '0' + (char)(snum % 10);
+    slave_path[sp] = '\0';
+
+    return mfd;
+}
+
+/* Spawn a shell on a new PTY window, return 0 on success */
+static int screen_spawn_window(struct screen_window *win) {
+    char slave_path[32];
+    int mfd = screen_alloc_pty(slave_path);
+    if (mfd < 0) return -1;
+
+    long pid = sys_fork_call();
+    if (pid < 0) { sys_close(mfd); return -1; }
+
+    if (pid == 0) {
+        /* Child: set up slave PTY as stdio */
+        sys_close(mfd);
+        sys_call1(112 /* setsid */, 0);
+
+        int sfd = (int)sys_open(slave_path, 0x0002 /* O_RDWR */, 0);
+        if (sfd < 0) sys_exit(126);
+
+        sys_ioctl(sfd, 0x540E /* TIOCSCTTY */, 0);
+
+        sys_close(0); sys_close(1); sys_close(2);
+        sys_dup2_call(sfd, 0);
+        sys_dup2_call(sfd, 1);
+        sys_dup2_call(sfd, 2);
+        if (sfd > 2) sys_close(sfd);
+
+        char *av[] = { "/bin/shell", (void *)0 };
+        char *ev[] = { "TERM=screen", "HOME=/", (void *)0 };
+        sys_execve_call("/bin/shell", av, ev);
+        sys_exit(127);
+    }
+
+    /* Parent: keep master fd, set non-blocking */
+    sys_fcntl_call(mfd, 4 /* F_SETFL */,
+                   sys_fcntl_call(mfd, 3 /* F_GETFL */, 0) | 0x0800 /* O_NONBLOCK */);
+    win->master_fd = mfd;
+    win->child_pid = pid;
+    win->alive = 1;
+    return 0;
+}
+
+/* Draw a minimal status bar: " [0] 1  2  3   — window N " */
+static void screen_draw_status(struct screen_session *s) {
+    write_str(1, "\033[s");       /* save cursor */
+    write_str(1, "\033[999;1H");  /* move to bottom row */
+    write_str(1, "\033[7m");      /* reverse video */
+    write_str(1, " screen");
+
+    for (int i = 0; i < s->nwin; i++) {
+        if (!s->wins[i].alive) continue;
+        if (i == s->active)
+            write_str(1, "  [");
+        else
+            write_str(1, "   ");
+        char digit[2] = { (char)('0' + i), '\0' };
+        write_str(1, digit);
+        if (i == s->active)
+            write_str(1, "]");
+    }
+
+    /* Pad remainder */
+    write_str(1, "                                                  ");
+    write_str(1, "\033[0m");      /* reset attrs */
+    write_str(1, "\033[u");       /* restore cursor */
+}
+
+/* Close a window and clean up */
+static void screen_kill_window(struct screen_session *s, int idx) {
+    if (idx < 0 || idx >= s->nwin || !s->wins[idx].alive) return;
+    sys_close(s->wins[idx].master_fd);
+    /* Reap child (non-blocking) */
+    int st;
+    sys_waitpid((int)s->wins[idx].child_pid, &st, 1 /* WNOHANG */);
+    s->wins[idx].master_fd = -1;
+    s->wins[idx].child_pid = -1;
+    s->wins[idx].alive = 0;
+}
+
+/* Find next alive window from current, wrapping around. Returns -1 if none. */
+static int screen_next_alive(struct screen_session *s, int cur, int dir) {
+    for (int i = 1; i <= s->nwin; i++) {
+        int idx = (cur + i * dir + SCREEN_MAX_WIN) % SCREEN_MAX_WIN;
+        if (idx < s->nwin && s->wins[idx].alive) return idx;
+    }
+    return -1;
+}
+
+/* Count alive windows */
+static int screen_alive_count(struct screen_session *s) {
+    int n = 0;
+    for (int i = 0; i < s->nwin; i++)
+        if (s->wins[i].alive) n++;
+    return n;
+}
+
+/* Main event loop for an active screen session */
+static void screen_run(struct screen_session *s) {
+    char buf[SCREEN_BUF_SIZE];
+    int ctrl_a_pending = 0;
+
+    /* Set stdin non-blocking */
+    long orig_flags = sys_fcntl_call(0, 3 /* F_GETFL */, 0);
+    sys_fcntl_call(0, 4 /* F_SETFL */, orig_flags | 0x0800 /* O_NONBLOCK */);
+
+    write_str(1, "\033[2J\033[H");  /* clear screen */
+    screen_draw_status(s);
+
+    while (screen_alive_count(s) > 0) {
+        /* Poll stdin + active window's master fd */
+        struct { int fd; short events; short revents; } pfds[2];
+        pfds[0].fd = 0;
+        pfds[0].events = 0x0001; /* POLLIN */
+        pfds[0].revents = 0;
+
+        int active_mfd = s->wins[s->active].alive ? s->wins[s->active].master_fd : -1;
+        pfds[1].fd = active_mfd;
+        pfds[1].events = 0x0001; /* POLLIN */
+        pfds[1].revents = 0;
+
+        sys_poll_call(&pfds, 2, 50 /* 50ms timeout */);
+
+        /* Read from active window's PTY master → display on stdout */
+        if (active_mfd >= 0 && (pfds[1].revents & (0x0001 | 0x0010))) {
+            long nr = sys_read(active_mfd, buf, SCREEN_BUF_SIZE - 1);
+            if (nr > 0) {
+                sys_write(1, buf, nr);
+            } else if (nr == 0 || (nr < 0 && nr != -11 /* EAGAIN */)) {
+                /* Window closed */
+                screen_kill_window(s, s->active);
+                int nxt = screen_next_alive(s, s->active, 1);
+                if (nxt < 0) break;
+                s->active = nxt;
+                write_str(1, "\033[2J\033[H");
+                screen_draw_status(s);
+                continue;
+            }
+        }
+
+        /* Read from stdin */
+        if (pfds[0].revents & 0x0001) {
+            long nr = sys_read(0, buf, 1);
+            if (nr <= 0) continue;
+
+            if (ctrl_a_pending) {
+                ctrl_a_pending = 0;
+                char ch = buf[0];
+
+                if (ch == 'c' || ch == 'C') {
+                    /* Create new window */
+                    if (s->nwin < SCREEN_MAX_WIN) {
+                        int idx = s->nwin;
+                        if (screen_spawn_window(&s->wins[idx]) == 0) {
+                            s->nwin++;
+                            s->active = idx;
+                            write_str(1, "\033[2J\033[H");
+                            screen_draw_status(s);
+                        } else {
+                            write_str(1, "\r\n[screen: cannot create window]\r\n");
+                        }
+                    } else {
+                        write_str(1, "\r\n[screen: max 4 windows]\r\n");
+                    }
+                } else if (ch == 'n' || ch == 'N') {
+                    /* Next window */
+                    int nxt = screen_next_alive(s, s->active, 1);
+                    if (nxt >= 0 && nxt != s->active) {
+                        s->active = nxt;
+                        write_str(1, "\033[2J\033[H");
+                        screen_draw_status(s);
+                    }
+                } else if (ch == 'p' || ch == 'P') {
+                    /* Previous window */
+                    int prv = screen_next_alive(s, s->active, -1);
+                    if (prv >= 0 && prv != s->active) {
+                        s->active = prv;
+                        write_str(1, "\033[2J\033[H");
+                        screen_draw_status(s);
+                    }
+                } else if (ch >= '0' && ch <= '3') {
+                    /* Switch to window N */
+                    int idx = ch - '0';
+                    if (idx < s->nwin && s->wins[idx].alive) {
+                        s->active = idx;
+                        write_str(1, "\033[2J\033[H");
+                        screen_draw_status(s);
+                    }
+                } else if (ch == 'd' || ch == 'D') {
+                    /* Detach */
+                    s->detached = 1;
+                    write_str(1, "\r\n[detached from session ");
+                    char id_buf[8];
+                    int id_val = s->id, pos = 0;
+                    if (id_val >= 10) id_buf[pos++] = '0' + (char)(id_val / 10 % 10);
+                    id_buf[pos++] = '0' + (char)(id_val % 10);
+                    id_buf[pos] = '\0';
+                    write_str(1, id_buf);
+                    write_str(1, "]\r\n");
+                    break;
+                } else if (ch == 'k' || ch == 'K') {
+                    /* Kill current window */
+                    screen_kill_window(s, s->active);
+                    int nxt = screen_next_alive(s, s->active, 1);
+                    if (nxt < 0) break;
+                    s->active = nxt;
+                    write_str(1, "\033[2J\033[H");
+                    screen_draw_status(s);
+                } else if (ch == 1) {
+                    /* Ctrl+A Ctrl+A → send literal Ctrl+A to shell */
+                    if (active_mfd >= 0) {
+                        char ca = 1;
+                        sys_write(active_mfd, &ca, 1);
+                    }
+                }
+                /* Unknown command key — ignore */
+            } else if (buf[0] == 1 /* Ctrl+A */) {
+                ctrl_a_pending = 1;
+            } else {
+                /* Forward input to active window's PTY */
+                if (active_mfd >= 0) {
+                    sys_write(active_mfd, buf, 1);
+                }
+            }
+        }
+
+        /* Reap dead children (non-blocking) */
+        for (int i = 0; i < s->nwin; i++) {
+            if (!s->wins[i].alive) continue;
+            int st;
+            long r = sys_waitpid((int)s->wins[i].child_pid, &st, 1 /* WNOHANG */);
+            if (r > 0) {
+                s->wins[i].alive = 0;
+                sys_close(s->wins[i].master_fd);
+                s->wins[i].master_fd = -1;
+                if (i == s->active) {
+                    int nxt = screen_next_alive(s, s->active, 1);
+                    if (nxt < 0) break;
+                    s->active = nxt;
+                    write_str(1, "\033[2J\033[H");
+                    screen_draw_status(s);
+                }
+            }
+        }
+    }
+
+    /* Restore stdin flags */
+    sys_fcntl_call(0, 4 /* F_SETFL */, orig_flags);
+}
+
+static void cmd_screen(int argc, char *argv[]) {
+    /* screen -ls: list sessions */
+    if (argc >= 2 && strcmp_simple(argv[1], "-ls") == 0) {
+        int found = 0;
+        for (int i = 0; i < SCREEN_MAX_SESS; i++) {
+            if (!screen_sessions[i].used) continue;
+            found++;
+            char line[64];
+            int p = 0;
+            line[p++] = '\t';
+            int id = screen_sessions[i].id;
+            if (id >= 10) line[p++] = '0' + (char)(id / 10 % 10);
+            line[p++] = '0' + (char)(id % 10);
+            line[p] = '\0';
+            write_str(1, line);
+            write_str(1, screen_sessions[i].detached
+                         ? "\t(Detached)\n" : "\t(Attached)\n");
+        }
+        if (!found) write_str(1, "No screen sessions.\n");
+        return;
+    }
+
+    /* screen -r [id]: reattach */
+    if (argc >= 2 && strcmp_simple(argv[1], "-r") == 0) {
+        int target_id = -1;
+        if (argc >= 3) target_id = simple_atoi(argv[2]);
+
+        for (int i = 0; i < SCREEN_MAX_SESS; i++) {
+            if (!screen_sessions[i].used || !screen_sessions[i].detached) continue;
+            if (target_id >= 0 && screen_sessions[i].id != target_id) continue;
+
+            screen_sessions[i].detached = 0;
+            write_str(1, "[reattaching to session]\n");
+            screen_run(&screen_sessions[i]);
+
+            if (!screen_sessions[i].detached && screen_alive_count(&screen_sessions[i]) == 0) {
+                /* All windows dead — clean up session */
+                screen_sessions[i].used = 0;
+                write_str(1, "[screen session ended]\n");
+            }
+            return;
+        }
+        write_str(2, "No detached session found.\n");
+        return;
+    }
+
+    /* screen: start new session */
+    int slot = -1;
+    for (int i = 0; i < SCREEN_MAX_SESS; i++) {
+        if (!screen_sessions[i].used) { slot = i; break; }
+    }
+    if (slot < 0) {
+        write_str(2, "screen: max sessions reached\n");
+        return;
+    }
+
+    struct screen_session *s = &screen_sessions[slot];
+    s->id = screen_next_id++;
+    s->used = 1;
+    s->detached = 0;
+    s->nwin = 0;
+    s->active = 0;
+
+    for (int i = 0; i < SCREEN_MAX_WIN; i++) {
+        s->wins[i].master_fd = -1;
+        s->wins[i].child_pid = -1;
+        s->wins[i].alive = 0;
+    }
+
+    /* Create first window */
+    if (screen_spawn_window(&s->wins[0]) < 0) {
+        write_str(2, "screen: failed to create PTY window\n");
+        s->used = 0;
+        return;
+    }
+    s->nwin = 1;
+
+    write_str(1, "[screen session started — Ctrl+A ? for help]\n");
+    screen_run(s);
+
+    if (!s->detached && screen_alive_count(s) == 0) {
+        s->used = 0;
+        write_str(1, "[screen session ended]\n");
+    }
 }

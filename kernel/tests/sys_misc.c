@@ -67642,6 +67642,238 @@ __attribute__((noinline)) static void test_mprotect_prot_none(void) {
 #undef MPN_MAP_ANON
 }
 
+/* ============================================================
+ * Tests 2420-2425: eventfd EFD_SEMAPHORE container-compatibility semantics
+ *   Test 2420: EFD_SEMAPHORE + EFD_NONBLOCK: read returns 1, then EAGAIN at 0
+ *   Test 2421: EFD_SEMAPHORE: write N, read N times each returning 1, then EAGAIN
+ *   Test 2422: EFD_SEMAPHORE: poll POLLIN when counter > 0, not when counter = 0
+ *   Test 2423: EFD_CLOEXEC sets FD_CLOEXEC flag on the file descriptor
+ *   Test 2424: Normal eventfd read returns full counter and resets to 0
+ *   Test 2425: write(UINT64_MAX) returns EINVAL; write(0) succeeds
+ * ============================================================ */
+__attribute__((noinline)) static void test_eventfd_semaphore_compat(void) {
+    extern long sys_eventfd2(unsigned int initval, int flags);
+    extern long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout);
+
+#define ESEM_EFD_SEMAPHORE 0x1
+#define ESEM_EFD_NONBLOCK  0x800
+#define ESEM_EFD_CLOEXEC   0x80000
+
+    /* ---- Test 2420: EFD_SEMAPHORE + NONBLOCK: read=1, then EAGAIN ---- */
+    fut_printf("[MISC-TEST] Test 2420: EFD_SEMAPHORE+NONBLOCK read=1 then EAGAIN\n");
+    {
+        long efd = sys_eventfd2(1, ESEM_EFD_SEMAPHORE | ESEM_EFD_NONBLOCK);
+        if (efd < 0) {
+            fut_printf("[MISC-TEST] FAIL Test 2420: eventfd2 returned %ld\n", efd);
+            fut_test_fail(2420);
+        } else {
+            uint64_t val = 0;
+            ssize_t nr = fut_vfs_read((int)efd, &val, sizeof(val));
+            if (nr != 8 || val != 1) {
+                fut_printf("[MISC-TEST] FAIL Test 2420: first read nr=%zd val=%llu (want 8/1)\n",
+                           nr, (unsigned long long)val);
+                fut_vfs_close((int)efd);
+                fut_test_fail(2420);
+            } else {
+                /* Counter is now 0; nonblock read should return EAGAIN */
+                val = 0;
+                nr = fut_vfs_read((int)efd, &val, sizeof(val));
+                fut_vfs_close((int)efd);
+                if (nr == -EAGAIN) {
+                    fut_printf("[MISC-TEST] pass Test 2420: sem read=1 then EAGAIN\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] FAIL Test 2420: second read=%zd (want EAGAIN)\n", nr);
+                    fut_test_fail(2420);
+                }
+            }
+        }
+    }
+
+    /* ---- Test 2421: write N, read N times each returning 1 ---- */
+    fut_printf("[MISC-TEST] Test 2421: EFD_SEMAPHORE write 5, read 5x1, then EAGAIN\n");
+    {
+        long efd = sys_eventfd2(0, ESEM_EFD_SEMAPHORE | ESEM_EFD_NONBLOCK);
+        if (efd < 0) {
+            fut_printf("[MISC-TEST] FAIL Test 2421: eventfd2 returned %ld\n", efd);
+            fut_test_fail(2421);
+        } else {
+            uint64_t wval = 5;
+            ssize_t nw = fut_vfs_write((int)efd, &wval, sizeof(wval));
+            if (nw != 8) {
+                fut_printf("[MISC-TEST] FAIL Test 2421: write returned %zd\n", nw);
+                fut_vfs_close((int)efd);
+                fut_test_fail(2421);
+            } else {
+                bool ok = true;
+                for (int i = 0; i < 5; i++) {
+                    uint64_t val = 0;
+                    ssize_t nr = fut_vfs_read((int)efd, &val, sizeof(val));
+                    if (nr != 8 || val != 1) {
+                        fut_printf("[MISC-TEST] FAIL Test 2421: read[%d] nr=%zd val=%llu\n",
+                                   i, nr, (unsigned long long)val);
+                        ok = false;
+                        break;
+                    }
+                }
+                if (ok) {
+                    /* 6th read should fail with EAGAIN */
+                    uint64_t val = 0;
+                    ssize_t nr = fut_vfs_read((int)efd, &val, sizeof(val));
+                    if (nr == -EAGAIN) {
+                        fut_printf("[MISC-TEST] pass Test 2421: 5 reads=1, then EAGAIN\n");
+                        fut_test_pass();
+                    } else {
+                        fut_printf("[MISC-TEST] FAIL Test 2421: 6th read=%zd (want EAGAIN)\n", nr);
+                        fut_test_fail(2421);
+                    }
+                } else {
+                    fut_test_fail(2421);
+                }
+                fut_vfs_close((int)efd);
+            }
+        }
+    }
+
+    /* ---- Test 2422: poll POLLIN when counter > 0, not at 0 ---- */
+    fut_printf("[MISC-TEST] Test 2422: EFD_SEMAPHORE poll POLLIN\n");
+    {
+        long efd = sys_eventfd2(3, ESEM_EFD_SEMAPHORE | ESEM_EFD_NONBLOCK);
+        if (efd < 0) {
+            fut_printf("[MISC-TEST] FAIL Test 2422: eventfd2 returned %ld\n", efd);
+            fut_test_fail(2422);
+        } else {
+            /* Counter=3, poll should show POLLIN */
+            struct pollfd pfd;
+            pfd.fd = (int)efd;
+            pfd.events = POLLIN;
+            pfd.revents = 0;
+            long ret = sys_poll(&pfd, 1, 0);
+            if (ret != 1 || !(pfd.revents & POLLIN)) {
+                fut_printf("[MISC-TEST] FAIL Test 2422: poll(counter=3) ret=%ld revents=0x%x\n",
+                           ret, pfd.revents);
+                fut_vfs_close((int)efd);
+                fut_test_fail(2422);
+            } else {
+                /* Drain all 3 via semaphore reads */
+                for (int i = 0; i < 3; i++) {
+                    uint64_t v = 0;
+                    fut_vfs_read((int)efd, &v, sizeof(v));
+                }
+                /* Counter=0, poll should NOT show POLLIN */
+                pfd.revents = 0;
+                ret = sys_poll(&pfd, 1, 0);
+                fut_vfs_close((int)efd);
+                if (ret == 0 || (ret == 1 && !(pfd.revents & POLLIN))) {
+                    fut_printf("[MISC-TEST] pass Test 2422: POLLIN at 3, not at 0\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] FAIL Test 2422: poll(counter=0) ret=%ld revents=0x%x\n",
+                               ret, pfd.revents);
+                    fut_test_fail(2422);
+                }
+            }
+        }
+    }
+
+    /* ---- Test 2423: EFD_CLOEXEC sets FD_CLOEXEC flag ---- */
+    fut_printf("[MISC-TEST] Test 2423: EFD_CLOEXEC sets FD_CLOEXEC\n");
+    {
+        long efd = sys_eventfd2(0, ESEM_EFD_CLOEXEC);
+        if (efd < 0) {
+            fut_printf("[MISC-TEST] FAIL Test 2423: eventfd2 returned %ld\n", efd);
+            fut_test_fail(2423);
+        } else {
+            /* Check fd_flags via task struct directly (kernel test context) */
+            fut_task_t *t = fut_task_current();
+            bool cloexec = false;
+            if (t && t->fd_flags && (int)efd < t->max_fds) {
+                cloexec = (t->fd_flags[(int)efd] & FD_CLOEXEC) != 0;
+            }
+            fut_vfs_close((int)efd);
+            if (cloexec) {
+                fut_printf("[MISC-TEST] pass Test 2423: FD_CLOEXEC set\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL Test 2423: FD_CLOEXEC not set\n");
+                fut_test_fail(2423);
+            }
+        }
+    }
+
+    /* ---- Test 2424: Normal read returns full counter, resets to 0 ---- */
+    fut_printf("[MISC-TEST] Test 2424: normal eventfd read returns full counter\n");
+    {
+        long efd = sys_eventfd2(0, ESEM_EFD_NONBLOCK);
+        if (efd < 0) {
+            fut_printf("[MISC-TEST] FAIL Test 2424: eventfd2 returned %ld\n", efd);
+            fut_test_fail(2424);
+        } else {
+            /* Write 7, then write 3 -> counter should be 10 */
+            uint64_t w1 = 7;
+            fut_vfs_write((int)efd, &w1, sizeof(w1));
+            uint64_t w2 = 3;
+            fut_vfs_write((int)efd, &w2, sizeof(w2));
+
+            uint64_t val = 0;
+            ssize_t nr = fut_vfs_read((int)efd, &val, sizeof(val));
+            if (nr != 8 || val != 10) {
+                fut_printf("[MISC-TEST] FAIL Test 2424: read nr=%zd val=%llu (want 10)\n",
+                           nr, (unsigned long long)val);
+                fut_vfs_close((int)efd);
+                fut_test_fail(2424);
+            } else {
+                /* Second read should EAGAIN (counter reset to 0) */
+                val = 0;
+                nr = fut_vfs_read((int)efd, &val, sizeof(val));
+                fut_vfs_close((int)efd);
+                if (nr == -EAGAIN) {
+                    fut_printf("[MISC-TEST] pass Test 2424: read=10, then EAGAIN\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] FAIL Test 2424: second read=%zd (want EAGAIN)\n", nr);
+                    fut_test_fail(2424);
+                }
+            }
+        }
+    }
+
+    /* ---- Test 2425: write(UINT64_MAX) -> EINVAL; write(0) -> success ---- */
+    fut_printf("[MISC-TEST] Test 2425: write UINT64_MAX=EINVAL, write 0=success\n");
+    {
+        long efd = sys_eventfd2(0, ESEM_EFD_NONBLOCK);
+        if (efd < 0) {
+            fut_printf("[MISC-TEST] FAIL Test 2425: eventfd2 returned %ld\n", efd);
+            fut_test_fail(2425);
+        } else {
+            /* write(UINT64_MAX) must return EINVAL */
+            uint64_t bad = UINT64_MAX;
+            ssize_t nw = fut_vfs_write((int)efd, &bad, sizeof(bad));
+            if (nw != -EINVAL) {
+                fut_printf("[MISC-TEST] FAIL Test 2425: write(MAX) returned %zd (want EINVAL)\n", nw);
+                fut_vfs_close((int)efd);
+                fut_test_fail(2425);
+            } else {
+                /* write(0) is valid per Linux semantics */
+                uint64_t zero = 0;
+                nw = fut_vfs_write((int)efd, &zero, sizeof(zero));
+                fut_vfs_close((int)efd);
+                if (nw == 8) {
+                    fut_printf("[MISC-TEST] pass Test 2425: UINT64_MAX=EINVAL, 0=ok\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] FAIL Test 2425: write(0) returned %zd (want 8)\n", nw);
+                    fut_test_fail(2425);
+                }
+            }
+        }
+    }
+
+#undef ESEM_EFD_SEMAPHORE
+#undef ESEM_EFD_NONBLOCK
+#undef ESEM_EFD_CLOEXEC
+}
+
 /* ── Tests 2395-2402: MAP_SHARED file visibility, anonymous shared, /dev/shm ── */
 __attribute__((noinline)) static void test_mmap_shared_semantics(void) {
     extern long sys_open(const char *, int, int);
@@ -72366,6 +72598,7 @@ void fut_misc_test_thread(void *arg) {
     test_mmap_shared_semantics(); /* Tests 2395-2402: MAP_SHARED file/anonymous/shm semantics */
     test_mprotect_prot_none(); /* Tests 2405-2410: mprotect PROT_NONE enforcement */
     test_clone3_enhanced(); /* Tests 2415-2418: clone3 CLONE_CLEAR_SIGHAND + CLONE_NEWTIME + CLONE_PIDFD */
+    test_eventfd_semaphore_compat(); /* Tests 2420-2425: eventfd EFD_SEMAPHORE container-compatibility */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

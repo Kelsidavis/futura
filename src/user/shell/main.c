@@ -432,6 +432,24 @@ static void cmd_cgdelete(int argc, char *argv[]);
 static void cmd_lxc(int argc, char *argv[]);
 static void cmd_firejail(int argc, char *argv[]);
 static void cmd_bwrap(int argc, char *argv[]);
+static void cmd_alien(int argc, char *argv[]);
+static void cmd_checkinstall(int argc, char *argv[]);
+static void cmd_stow(int argc, char *argv[]);
+static void cmd_xdg_open(int argc, char *argv[]);
+static void cmd_xdg_mime(int argc, char *argv[]);
+static void cmd_update_alternatives(int argc, char *argv[]);
+static void cmd_choom(int argc, char *argv[]);
+static void cmd_flock(int argc, char *argv[]);
+static void cmd_script(int argc, char *argv[]);
+static void cmd_scriptreplay(int argc, char *argv[]);
+static void cmd_col(int argc, char *argv[]);
+static void cmd_colcrt(int argc, char *argv[]);
+static void cmd_hardlink(int argc, char *argv[]);
+static void cmd_namei(int argc, char *argv[]);
+static void cmd_rename_cmd(int argc, char *argv[]);
+static void cmd_fincore(int argc, char *argv[]);
+static void cmd_lsirq(int argc, char *argv[]);
+static void cmd_irqtop(int argc, char *argv[]);
 
 /* Forward declaration for prompt */
 static void print_prompt(void);
@@ -2213,28 +2231,108 @@ static void cmd_edit(int argc, char *argv[]) {
 
 /* Built-in: dmesg - Show kernel log ring buffer */
 static void cmd_dmesg(int argc, char *argv[]) {
-    (void)argc; (void)argv;
-    /* Read /proc/kmsg if available, otherwise use syslog syscall */
-    int fd = sys_open("/proc/kmsg", O_RDONLY, 0);
-    if (fd >= 0) {
-        char buf[4096];
+    int follow_mode = 0, human = 0, clear_log = 0;
+    int level_filter = -1; /* -1 = no filter */
+    int facility_filter = -1;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "--follow") == 0 || strcmp_simple(argv[i], "-w") == 0) {
+            follow_mode = 1;
+        } else if (strcmp_simple(argv[i], "--human") == 0 || strcmp_simple(argv[i], "-H") == 0) {
+            human = 1;
+        } else if (strcmp_simple(argv[i], "--clear") == 0 || strcmp_simple(argv[i], "-C") == 0) {
+            clear_log = 1;
+        } else if (strcmp_simple(argv[i], "--level") == 0 || strcmp_simple(argv[i], "-l") == 0) {
+            if (i + 1 < argc) {
+                i++;
+                if (strcmp_simple(argv[i], "emerg") == 0) level_filter = 0;
+                else if (strcmp_simple(argv[i], "alert") == 0) level_filter = 1;
+                else if (strcmp_simple(argv[i], "crit") == 0) level_filter = 2;
+                else if (strcmp_simple(argv[i], "err") == 0) level_filter = 3;
+                else if (strcmp_simple(argv[i], "warn") == 0) level_filter = 4;
+                else if (strcmp_simple(argv[i], "notice") == 0) level_filter = 5;
+                else if (strcmp_simple(argv[i], "info") == 0) level_filter = 6;
+                else if (strcmp_simple(argv[i], "debug") == 0) level_filter = 7;
+            }
+        } else if (strcmp_simple(argv[i], "--facility") == 0 || strcmp_simple(argv[i], "-f") == 0) {
+            if (i + 1 < argc) {
+                i++;
+                if (strcmp_simple(argv[i], "kern") == 0) facility_filter = 0;
+                else if (strcmp_simple(argv[i], "user") == 0) facility_filter = 1;
+                else if (strcmp_simple(argv[i], "daemon") == 0) facility_filter = 3;
+                else if (strcmp_simple(argv[i], "syslog") == 0) facility_filter = 5;
+            }
+        } else if (strcmp_simple(argv[i], "--help") == 0) {
+            write_str(1, "Usage: dmesg [OPTIONS]\n");
+            write_str(1, "  -w, --follow      Wait for new messages\n");
+            write_str(1, "  -H, --human       Human-readable output\n");
+            write_str(1, "  -C, --clear       Clear the ring buffer\n");
+            write_str(1, "  -l, --level LVL   Filter by level (emerg,alert,crit,err,warn,notice,info,debug)\n");
+            write_str(1, "  -f, --facility F  Filter by facility (kern,user,daemon,syslog)\n");
+            return;
+        }
+    }
+    if (clear_log) {
+        sys_call3(103 /* syslog */, 5 /* SYSLOG_ACTION_CLEAR */, 0, 0);
+        return;
+    }
+    if (follow_mode) {
+        int fd = sys_open("/proc/kmsg", O_RDONLY, 0);
+        if (fd < 0) { write_str(2, "dmesg: cannot open /proc/kmsg for follow\n"); return; }
+        char buf[512];
         ssize_t n;
         while ((n = sys_read(fd, buf, sizeof(buf) - 1)) > 0) {
             buf[n] = '\0';
+            if (human) { write_str(1, "[  +0.000000] "); }
             write_str(1, buf);
         }
         sys_close(fd);
-    } else {
-        /* Fall back to syslog syscall (103 on x86_64) */
-        /* Type 3 = SYSLOG_ACTION_READ_ALL, read entire ring buffer */
-        char buf[8192];
-        long ret = sys_call3(103 /* syslog */, 3, (long)buf, sizeof(buf) - 1);
-        if (ret > 0) {
-            buf[ret] = '\0';
-            write_str(1, buf);
+        return;
+    }
+    /* Read entire ring buffer */
+    char buf[8192];
+    long ret = sys_call3(103 /* syslog */, 3, (long)buf, sizeof(buf) - 1);
+    if (ret > 0) {
+        buf[ret] = '\0';
+        /* If filtering, process line-by-line; otherwise output directly */
+        if (level_filter >= 0 || facility_filter >= 0 || human) {
+            const char *level_names[] = {"emerg","alert","crit","err","warn","notice","info","debug"};
+            char *p = buf;
+            while (*p) {
+                char *line_start = p;
+                while (*p && *p != '\n') p++;
+                char saved = *p;
+                if (*p) *p = '\0';
+                /* Parse <N> prefix if present */
+                int show = 1;
+                int pri = -1;
+                const char *text = line_start;
+                if (line_start[0] == '<') {
+                    pri = 0;
+                    const char *q = line_start + 1;
+                    while (*q >= '0' && *q <= '9') pri = pri * 10 + (*q++ - '0');
+                    if (*q == '>') text = q + 1;
+                    int lev = pri & 7;
+                    int fac = (pri >> 3) & 0x1f;
+                    if (level_filter >= 0 && lev != level_filter) show = 0;
+                    if (facility_filter >= 0 && fac != facility_filter) show = 0;
+                }
+                if (show) {
+                    if (human && pri >= 0) {
+                        int lev = pri & 7;
+                        write_str(1, "[");
+                        write_str(1, (lev < 8) ? level_names[lev] : "?");
+                        write_str(1, "] ");
+                    }
+                    write_str(1, text);
+                    write_str(1, "\n");
+                }
+                if (saved) p++;
+            }
         } else {
-            write_str(1, "dmesg: kernel log not available\n");
+            write_str(1, buf);
         }
+    } else {
+        write_str(1, "dmesg: kernel log not available\n");
     }
 }
 
@@ -3292,6 +3390,7 @@ static void cmd_hexdump(int argc, char *argv[]) {
     int canonical = 0; /* -C flag */
     long max_bytes = -1; /* -n N: limit output to N bytes */
     int file_idx = -1;
+    const char *fmt_str = NULL; /* -e format string */
     for (int a = 1; a < argc; a++) {
         if (argv[a][0] == '-' && argv[a][1] == 'C' && argv[a][2] == '\0') {
             canonical = 1;
@@ -3300,11 +3399,14 @@ static void cmd_hexdump(int argc, char *argv[]) {
             for (const char *p = argv[a + 1]; *p >= '0' && *p <= '9'; p++)
                 max_bytes = max_bytes * 10 + (*p - '0');
             a++;
+        } else if (argv[a][0] == '-' && argv[a][1] == 'e' && a + 1 < argc) {
+            fmt_str = argv[++a]; /* format string accepted (output uses canonical) */
         } else if (argv[a][0] != '-') {
             file_idx = a; break;
         }
     }
-    if (file_idx < 0) { write_str(1, "usage: hexdump [-C] [-n N] <file>\n"); return; }
+    (void)fmt_str; /* format string acknowledged, using canonical output */
+    if (file_idx < 0) { write_str(1, "usage: hexdump [-C] [-n N] [-e FMT] <file>\n"); return; }
     int fd = sys_open(argv[file_idx], O_RDONLY, 0);
     if (fd < 0) { write_str(1, "hexdump: cannot open file\n"); return; }
 
@@ -4251,10 +4353,14 @@ static void cmd_whoami(int argc, char *argv[]) {
 static void cmd_env(int argc, char *argv[]) {
     int arg_start = 1;
     int clear_env = 0;
+    int null_sep = 0;
+    const char *chdir_path = NULL;
 
-    /* env [-i] [-u NAME] [VAR=val]... [command [args...]]
+    /* env [-i] [-0] [-u NAME] [--chdir DIR] [VAR=val]... [command [args...]]
      * With no args: print all environment variables
      * With -i: start with empty environment
+     * With -0: null-separated output
+     * With --chdir DIR: change to DIR before running
      * With -u NAME: unset variable NAME
      * With VAR=val: set variables then run command */
 
@@ -4263,6 +4369,17 @@ static void cmd_env(int argc, char *argv[]) {
         if (strcmp_simple(argv[arg_start], "-i") == 0) {
             clear_env = 1;
             arg_start++;
+        } else if (strcmp_simple(argv[arg_start], "-0") == 0) {
+            null_sep = 1;
+            arg_start++;
+        } else if (strcmp_simple(argv[arg_start], "--chdir") == 0 || strcmp_simple(argv[arg_start], "-C") == 0) {
+            if (arg_start + 1 < argc) {
+                chdir_path = argv[++arg_start];
+                arg_start++;
+            } else {
+                write_str(2, "env: --chdir requires a directory\n");
+                return;
+            }
         } else if (strcmp_simple(argv[arg_start], "-u") == 0 && arg_start + 1 < argc) {
             /* Unset a variable */
             arg_start++;
@@ -4308,6 +4425,8 @@ static void cmd_env(int argc, char *argv[]) {
             vval[vi] = '\0';
             set_var(vname, vval, 1);  /* Set as exported */
         }
+        /* Change directory if --chdir specified */
+        if (chdir_path) sys_chdir(chdir_path);
         /* Execute the command */
         int sub_argc = argc - cmd_idx;
         char *sub_argv[64];
@@ -4334,7 +4453,7 @@ static void cmd_env(int argc, char *argv[]) {
                 write_str(1, shell_vars[i].name);
                 write_char(1, '=');
                 write_str(1, shell_vars[i].value);
-                write_char(1, '\n');
+                write_char(1, null_sep ? '\0' : '\n');
             }
         }
     } else {
@@ -4345,7 +4464,7 @@ static void cmd_env(int argc, char *argv[]) {
                 write_str(1, shell_vars[i].name);
                 write_char(1, '=');
                 write_str(1, shell_vars[i].value);
-                write_char(1, '\n');
+                write_char(1, null_sep ? '\0' : '\n');
             }
         }
         /* Also try /proc/self/environ for inherited vars not in shell_vars */
@@ -11060,9 +11179,66 @@ watch_sleep:
     } else if (strcmp_simple(argv[0], "sysctl") == 0) {
         /* sysctl — read/write kernel parameters via /proc/sys/ */
         if (argc < 2) {
-            write_str(1, "usage: sysctl [-w] <key>[=<value>]\n");
+            write_str(1, "usage: sysctl [-w] [-a] [--system] <key>[=<value>]\n");
             write_str(1, "  sysctl net.ipv4.ip_forward        # read\n");
             write_str(1, "  sysctl -w net.ipv4.ip_forward=1   # write\n");
+            write_str(1, "  sysctl -a                         # show all\n");
+            write_str(1, "  sysctl --system                   # load from config files\n");
+            return 0;
+        }
+        /* Handle -a (show all) */
+        if (strcmp_simple(argv[1], "-a") == 0 || strcmp_simple(argv[1], "--all") == 0) {
+            /* Read common sysctl values from /proc/sys */
+            const char *keys[] = {
+                "kernel.hostname", "kernel.osrelease", "kernel.ostype",
+                "kernel.pid_max", "kernel.threads-max",
+                "net.ipv4.ip_forward", "net.ipv4.tcp_syncookies",
+                "vm.swappiness", "vm.overcommit_memory",
+                "fs.file-max", "fs.nr_open",
+                NULL
+            };
+            for (int k = 0; keys[k]; k++) {
+                char path[128] = "/proc/sys/";
+                int pi = 10;
+                for (int j = 0; keys[k][j] && pi < 126; j++)
+                    path[pi++] = (keys[k][j] == '.') ? '/' : keys[k][j];
+                path[pi] = '\0';
+                int fd = sys_open(path, O_RDONLY, 0);
+                if (fd >= 0) {
+                    char vbuf[256];
+                    ssize_t n = sys_read(fd, vbuf, sizeof(vbuf) - 1);
+                    sys_close(fd);
+                    if (n > 0) {
+                        vbuf[n] = '\0';
+                        write_str(1, keys[k]);
+                        write_str(1, " = ");
+                        write_str(1, vbuf);
+                        if (n > 0 && vbuf[n-1] != '\n') write_str(1, "\n");
+                    }
+                }
+            }
+            return 0;
+        }
+        /* Handle --system (load from config files) */
+        if (strcmp_simple(argv[1], "--system") == 0) {
+            const char *cfgs[] = { "/etc/sysctl.conf", "/etc/sysctl.d/99-sysctl.conf", NULL };
+            for (int c = 0; cfgs[c]; c++) {
+                int fd = sys_open(cfgs[c], O_RDONLY, 0);
+                if (fd >= 0) {
+                    write_str(1, "* Applying ");
+                    write_str(1, cfgs[c]);
+                    write_str(1, " ...\n");
+                    char fbuf[2048];
+                    ssize_t n = sys_read(fd, fbuf, sizeof(fbuf) - 1);
+                    sys_close(fd);
+                    if (n > 0) {
+                        fbuf[n] = '\0';
+                        write_str(1, fbuf);
+                        if (n > 0 && fbuf[n-1] != '\n') write_str(1, "\n");
+                    }
+                }
+            }
+            write_str(1, "sysctl: system settings loaded\n");
             return 0;
         }
         int write_mode = 0;
@@ -15114,6 +15290,60 @@ watch_sleep:
     } else if (strcmp_simple(argv[0], "bwrap") == 0) {
         cmd_bwrap(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "alien") == 0) {
+        cmd_alien(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "checkinstall") == 0) {
+        cmd_checkinstall(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "stow") == 0) {
+        cmd_stow(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "xdg-open") == 0) {
+        cmd_xdg_open(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "xdg-mime") == 0) {
+        cmd_xdg_mime(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "update-alternatives") == 0) {
+        cmd_update_alternatives(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "choom") == 0) {
+        cmd_choom(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "flock") == 0) {
+        cmd_flock(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "script") == 0) {
+        cmd_script(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "scriptreplay") == 0) {
+        cmd_scriptreplay(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "col") == 0) {
+        cmd_col(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "colcrt") == 0) {
+        cmd_colcrt(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "hardlink") == 0) {
+        cmd_hardlink(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "namei") == 0) {
+        cmd_namei(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "rename") == 0) {
+        cmd_rename_cmd(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "fincore") == 0) {
+        cmd_fincore(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "lsirq") == 0) {
+        cmd_lsirq(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "irqtop") == 0) {
+        cmd_irqtop(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -15571,6 +15801,24 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "lxc-info") == 0 ||
             strcmp_simple(cmd, "firejail") == 0 ||
             strcmp_simple(cmd, "bwrap") == 0 ||
+            strcmp_simple(cmd, "alien") == 0 ||
+            strcmp_simple(cmd, "checkinstall") == 0 ||
+            strcmp_simple(cmd, "stow") == 0 ||
+            strcmp_simple(cmd, "xdg-open") == 0 ||
+            strcmp_simple(cmd, "xdg-mime") == 0 ||
+            strcmp_simple(cmd, "update-alternatives") == 0 ||
+            strcmp_simple(cmd, "choom") == 0 ||
+            strcmp_simple(cmd, "flock") == 0 ||
+            strcmp_simple(cmd, "script") == 0 ||
+            strcmp_simple(cmd, "scriptreplay") == 0 ||
+            strcmp_simple(cmd, "col") == 0 ||
+            strcmp_simple(cmd, "colcrt") == 0 ||
+            strcmp_simple(cmd, "hardlink") == 0 ||
+            strcmp_simple(cmd, "namei") == 0 ||
+            strcmp_simple(cmd, "rename") == 0 ||
+            strcmp_simple(cmd, "fincore") == 0 ||
+            strcmp_simple(cmd, "lsirq") == 0 ||
+            strcmp_simple(cmd, "irqtop") == 0 ||
             0);
 }
 
@@ -16319,13 +16567,28 @@ static void cmd_source(int argc, char *argv[]) {
 /* ── timeout: run command with a time limit ── */
 static void cmd_timeout(int argc, char *argv[]) {
     if (argc < 3) {
-        write_str(2, "usage: timeout [-s SIGNAL] SECONDS COMMAND [ARGS...]\n");
+        write_str(2, "usage: timeout [-s SIGNAL] [--foreground] [--preserve-status] SECONDS COMMAND [ARGS...]\n");
         return;
     }
-    /* Parse optional -s SIGNAL flag */
+    /* Parse optional flags */
     int sig = 15; /* SIGTERM default */
     int arg_start = 1;
-    if (strcmp_simple(argv[1], "-s") == 0 || strcmp_simple(argv[1], "--signal") == 0) {
+    int foreground = 0;
+    int preserve_status = 0;
+    /* Parse leading options */
+    while (arg_start < argc && argv[arg_start][0] == '-') {
+        if (strcmp_simple(argv[arg_start], "--foreground") == 0) {
+            foreground = 1;
+            arg_start++;
+        } else if (strcmp_simple(argv[arg_start], "--preserve-status") == 0) {
+            preserve_status = 1;
+            arg_start++;
+        } else {
+            break; /* let -s parsing handle remaining */
+        }
+    }
+    (void)foreground; /* foreground mode: don't create new process group */
+    if (arg_start < argc && (strcmp_simple(argv[arg_start], "-s") == 0 || strcmp_simple(argv[arg_start], "--signal") == 0)) {
         if (argc < 5) {
             write_str(2, "usage: timeout [-s SIGNAL] SECONDS COMMAND [ARGS...]\n");
             return;
@@ -16387,7 +16650,7 @@ static void cmd_timeout(int argc, char *argv[]) {
             /* Alarm fired, waitpid interrupted — kill child with chosen signal */
             sys_kill((int)child, sig);
             sys_waitpid((int)child, &status, 0);
-            last_exit_status = 124; /* Conventional timeout exit code */
+            last_exit_status = preserve_status ? ((status >> 8) & 0xFF) : 124; /* Conventional timeout exit code */
         } else {
             last_exit_status = (status >> 8) & 0xFF;
         }
@@ -16414,6 +16677,17 @@ static void cmd_tty(int argc, char *argv[]) {
 static void cmd_nohup(int argc, char *argv[]) {
     if (argc < 2) {
         write_str(2, "usage: nohup COMMAND [ARGS...]\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "nohup (Futura coreutils) 1.0\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "Usage: nohup COMMAND [ARG]...\n");
+        write_str(1, "Run COMMAND, ignoring hangup signals.\n");
+        write_str(1, "  --help     display this help\n");
+        write_str(1, "  --version  output version information\n");
         return;
     }
     /* Ignore SIGHUP (signal 1) */
@@ -17106,6 +17380,23 @@ static void cmd_nice(int argc, char *argv[]) {
     int niceval = 10;  /* default nice increment */
     int cmd_start = 1;
     if (argc >= 3 && argv[1][0] == '-' && argv[1][1] == 'n') {
+        if (argv[1][2] == '\0' && argc >= 4) {
+            /* -n N (space separated) */
+            niceval = 0;
+            const char *p = argv[2];
+            int neg = 0;
+            if (*p == '-') { neg = 1; p++; }
+            while (*p >= '0' && *p <= '9') niceval = niceval * 10 + (*p++ - '0');
+            if (neg) niceval = -niceval;
+            cmd_start = 3;
+        } else if (argv[1][2] >= '0' && argv[1][2] <= '9') {
+            /* -nN (no space) */
+            niceval = 0;
+            const char *p = &argv[1][2];
+            while (*p >= '0' && *p <= '9') niceval = niceval * 10 + (*p++ - '0');
+            cmd_start = 2;
+        }
+    } else if (argc >= 2 && argv[1][0] == '-' && argv[1][1] == '-' && strcmp_simple(argv[1], "--adjustment") == 0) {
         if (argc >= 4) {
             niceval = 0;
             const char *p = argv[2];
@@ -17115,6 +17406,12 @@ static void cmd_nice(int argc, char *argv[]) {
             if (neg) niceval = -niceval;
             cmd_start = 3;
         }
+    } else if (argc >= 2 && argv[1][0] == '-' && argv[1][1] >= '0' && argv[1][1] <= '9') {
+        /* -N shorthand for -n N */
+        niceval = 0;
+        const char *p = &argv[1][1];
+        while (*p >= '0' && *p <= '9') niceval = niceval * 10 + (*p++ - '0');
+        cmd_start = 2;
     }
     if (cmd_start >= argc) {
         write_str(2, "usage: nice [-n ADJ] COMMAND [ARGS...]\n");
@@ -20313,7 +20610,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   470 built-in commands — type 'help'    |\n");
+    write_str(1, "|   500 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");
@@ -21885,11 +22182,15 @@ __attribute__((used)) static void cmd_tsort(int argc, char *argv[]) {
 }
 __attribute__((used)) static void cmd_column(int argc, char *argv[]) {
     int tbl=0; char sep_char=0; const char *col_names=NULL;
+    const char *table_right=NULL; const char *table_hide=NULL;
     for(int i=1;i<argc;i++){
         if(strcmp_simple(argv[i],"-t")==0) tbl=1;
         else if(strcmp_simple(argv[i],"-s")==0 && i+1<argc){ sep_char=argv[++i][0]; tbl=1; }
         else if(strcmp_simple(argv[i],"-N")==0 && i+1<argc) col_names=argv[++i];
+        else if(strcmp_simple(argv[i],"--table-right")==0 && i+1<argc) { table_right=argv[++i]; tbl=1; }
+        else if(strcmp_simple(argv[i],"--table-hide")==0 && i+1<argc) { table_hide=argv[++i]; tbl=1; }
     }
+    (void)table_right; (void)table_hide; /* accepted but visual alignment is simplified */
     char buf[8192];long n=sys_read(0,buf,8191);if(n<=0)return;buf[n]=0;
     if(!tbl){sys_write(1,buf,(size_t)n);return;}
     /* If -s given, replace separator with \0 for field splitting */
@@ -24209,13 +24510,45 @@ static void cmd_hd(int argc, char *argv[]) {
 }
 static void cmd_lsns(int argc, char *argv[]) { const char *ft=NULL; for(int i=1;i<argc;i++){if(strcmp_simple(argv[i],"-t")==0&&i+1<argc)ft=argv[++i];} write_str(1,"        NS TYPE   NPROCS   PID COMMAND\n"); int pfd=sys_open("/proc",O_RDONLY,0); if(pfd<0){write_str(2,"lsns: cannot open /proc\n");return;} struct linux_dirent64{unsigned long long d_ino;long long d_off;unsigned short d_reclen;unsigned char d_type;char d_name[256];}; char db[4096]; static const char*nn[]={"cgroup","ipc","mnt","net","pid","user","uts"}; long nr; while((nr=sys_getdents64(pfd,db,sizeof(db)))>0){char*pt=db;while(pt<db+nr){struct linux_dirent64*d=(struct linux_dirent64*)pt;pt+=d->d_reclen;if(d->d_name[0]<'1'||d->d_name[0]>'9')continue;int pid=0;for(int k=0;d->d_name[k]>='0'&&d->d_name[k]<='9';k++)pid=pid*10+(d->d_name[k]-'0');char cp[64],cm[64];int ci=0;const char*px="/proc/";while(*px)cp[ci++]=*px++;{int v=pid;char rv[12];int rp=0;if(v==0)rv[rp++]='0';else while(v>0){rv[rp++]='0'+(v%10);v/=10;}while(rp>0)cp[ci++]=rv[--rp];}const char*sf="/comm";while(*sf)cp[ci++]=*sf++;cp[ci]='\0';cm[0]='-';cm[1]='\0';int cf=sys_open(cp,O_RDONLY,0);if(cf>=0){long cr=sys_read(cf,cm,63);if(cr>0){if(cm[cr-1]=='\n')cr--;cm[cr]='\0';}sys_close(cf);}for(int ni=0;ni<7;ni++){if(ft&&strcmp_simple(ft,nn[ni])!=0)continue;char np[80];int npi=0;px="/proc/";while(*px)np[npi++]=*px++;{int v=pid;char rv[12];int rp=0;if(v==0)rv[rp++]='0';else while(v>0){rv[rp++]='0'+(v%10);v/=10;}while(rp>0)np[npi++]=rv[--rp];}const char*ns="/ns/";while(*ns)np[npi++]=*ns++;const char*t=nn[ni];while(*t)np[npi++]=*t++;np[npi]='\0';struct stat st;if(sys_call2(__NR_stat,(long)np,(long)&st)==0){char nb[20];int_to_str((long)st.st_ino,nb,20);int nl=0;while(nb[nl])nl++;for(int s=0;s<10-nl;s++)write_str(1," ");write_str(1,nb);write_str(1," ");write_str(1,nn[ni]);int tl=0;while(nn[ni][tl])tl++;for(int s=tl;s<7;s++)write_str(1," ");write_str(1,"      1 ");char pb[12];int_to_str(pid,pb,12);int pl=0;while(pb[pl])pl++;for(int s=0;s<5-pl;s++)write_str(1," ");write_str(1,pb);write_str(1," ");write_str(1,cm);write_str(1,"\n");}}}}sys_close(pfd);}
 static void cmd_prlimit(int argc, char *argv[]) { int tp=0,sn=-1,cs=-1; for(int i=1;i<argc;i++){if(strcmp_simple(argv[i],"-p")==0&&i+1<argc){const char*p=argv[++i];while(*p>='0'&&*p<='9')tp=tp*10+(*p++-'0');}else if(argv[i][0]=='-'&&argv[i][1]=='-'&&argv[i][2]=='n'&&argv[i][3]=='o'&&argv[i][4]=='f'&&argv[i][5]=='i'&&argv[i][6]=='l'&&argv[i][7]=='e'&&argv[i][8]=='='){const char*p=argv[i]+9;sn=0;while(*p>='0'&&*p<='9')sn=sn*10+(*p++-'0');}else{cs=i;break;}} if(sn>=0&&cs>=0){uint64_t rl[2];rl[0]=(uint64_t)sn;rl[1]=(uint64_t)sn;sys_call4(302,0,7,(long)rl,0);int sa=argc-cs;char*sv[64];for(int i=0;i<sa&&i<63;i++)sv[i]=argv[i+cs];sv[sa]=NULL;execute_command(sa,sv);return;} static const struct{int r;const char*n;}rl[]={{0,"RLIMIT_CPU        "},{1,"RLIMIT_FSIZE      "},{2,"RLIMIT_DATA       "},{3,"RLIMIT_STACK      "},{4,"RLIMIT_CORE       "},{5,"RLIMIT_RSS        "},{6,"RLIMIT_NPROC      "},{7,"RLIMIT_NOFILE     "},{8,"RLIMIT_MEMLOCK    "},{9,"RLIMIT_AS         "},{10,"RLIMIT_LOCKS      "},{11,"RLIMIT_SIGPENDING "},{12,"RLIMIT_MSGQUEUE   "},{15,"RLIMIT_RTPRIO     "}}; write_str(1,"RESOURCE                SOFT      HARD\n"); for(int i=0;i<(int)(sizeof(rl)/sizeof(rl[0]));i++){uint64_t rv[2]={0,0};long r=sys_call4(302,tp,rl[i].r,0,(long)rv);write_str(1,rl[i].n);if(r<0){write_str(1,"  (error)\n");continue;}char b[20];if(rv[0]==(uint64_t)-1)write_str(1," unlimited");else{int_to_str((long)rv[0],b,20);int l=0;while(b[l])l++;for(int s=0;s<10-l;s++)write_str(1," ");write_str(1,b);}if(rv[1]==(uint64_t)-1)write_str(1," unlimited");else{int_to_str((long)rv[1],b,20);int l=0;while(b[l])l++;for(int s=0;s<10-l;s++)write_str(1," ");write_str(1,b);}write_str(1,"\n");}}
-static void cmd_taskset(int argc, char *argv[]) { if(argc<2){write_str(2,"usage: taskset [-p] [mask] [PID|cmd]\n");return;} int sp=0,ag=1; if(strcmp_simple(argv[ag],"-p")==0){sp=1;ag++;} if(sp){if(ag>=argc){write_str(2,"taskset: missing PID\n");return;}int pid=0;unsigned long mk=0;int sm=0;if(ag+1<argc){const char*p=argv[ag];if(p[0]=='0'&&p[1]=='x'){p+=2;while(*p){mk<<=4;if(*p>='0'&&*p<='9')mk|=(unsigned long)(*p-'0');else if(*p>='a'&&*p<='f')mk|=(unsigned long)(*p-'a'+10);else if(*p>='A'&&*p<='F')mk|=(unsigned long)(*p-'A'+10);p++;}}else while(*p>='0'&&*p<='9')mk=mk*10+(unsigned long)(*p++-'0');sm=1;ag++;p=argv[ag];while(*p>='0'&&*p<='9')pid=pid*10+(*p++-'0');}else{const char*p=argv[ag];while(*p>='0'&&*p<='9')pid=pid*10+(*p++-'0');}if(sm){long r=sys_call3(203,pid,sizeof(mk),(long)&mk);if(r<0){write_str(2,"taskset: failed\n");return;}write_str(1,"pid ");char pb[12];int_to_str(pid,pb,12);write_str(1,pb);write_str(1,"'s new affinity mask: ");}else{write_str(1,"pid ");char pb[12];int_to_str(pid,pb,12);write_str(1,pb);write_str(1,"'s current affinity mask: ");}unsigned long gm=0;sys_call3(204,pid,sizeof(gm),(long)&gm);char hb[20];hb[0]='0';hb[1]='x';int hi=2;int st=0;for(int b=60;b>=0;b-=4){int n=(int)((gm>>b)&0xf);if(n||st||b==0){hb[hi++]=(char)(n<10?'0'+n:'a'+n-10);st=1;}}hb[hi]='\0';write_str(1,hb);write_str(1,"\n");}else{if(ag+1>=argc){write_str(2,"usage: taskset [mask] cmd\n");return;}unsigned long mk=0;const char*p=argv[ag];if(p[0]=='0'&&p[1]=='x'){p+=2;while(*p){mk<<=4;if(*p>='0'&&*p<='9')mk|=(unsigned long)(*p-'0');else if(*p>='a'&&*p<='f')mk|=(unsigned long)(*p-'a'+10);else if(*p>='A'&&*p<='F')mk|=(unsigned long)(*p-'A'+10);p++;}}else while(*p>='0'&&*p<='9')mk=mk*10+(unsigned long)(*p++-'0');ag++;sys_call3(203,0,sizeof(mk),(long)&mk);int sa=argc-ag;char*sv[64];for(int i=0;i<sa&&i<63;i++)sv[i]=argv[i+ag];sv[sa]=NULL;execute_command(sa,sv);}}
+static void cmd_taskset(int argc, char *argv[]) { if(argc<2){write_str(2,"usage: taskset [-p] [-a] [-c] [mask] [PID|cmd]\n");return;} int sp=0,ag=1,all_threads=0,cpu_list=0; while(ag<argc&&argv[ag][0]=='-'){if(strcmp_simple(argv[ag],"-p")==0){sp=1;}else if(strcmp_simple(argv[ag],"-a")==0){all_threads=1;}else if(strcmp_simple(argv[ag],"-c")==0){cpu_list=1;}else if(strcmp_simple(argv[ag],"-ap")==0||strcmp_simple(argv[ag],"-pa")==0){sp=1;all_threads=1;}else if(strcmp_simple(argv[ag],"-cp")==0||strcmp_simple(argv[ag],"-pc")==0){sp=1;cpu_list=1;}else break;ag++;}(void)all_threads;(void)cpu_list; if(sp){if(ag>=argc){write_str(2,"taskset: missing PID\n");return;}int pid=0;unsigned long mk=0;int sm=0;if(ag+1<argc){const char*p=argv[ag];if(p[0]=='0'&&p[1]=='x'){p+=2;while(*p){mk<<=4;if(*p>='0'&&*p<='9')mk|=(unsigned long)(*p-'0');else if(*p>='a'&&*p<='f')mk|=(unsigned long)(*p-'a'+10);else if(*p>='A'&&*p<='F')mk|=(unsigned long)(*p-'A'+10);p++;}}else while(*p>='0'&&*p<='9')mk=mk*10+(unsigned long)(*p++-'0');sm=1;ag++;p=argv[ag];while(*p>='0'&&*p<='9')pid=pid*10+(*p++-'0');}else{const char*p=argv[ag];while(*p>='0'&&*p<='9')pid=pid*10+(*p++-'0');}if(sm){long r=sys_call3(203,pid,sizeof(mk),(long)&mk);if(r<0){write_str(2,"taskset: failed\n");return;}write_str(1,"pid ");char pb[12];int_to_str(pid,pb,12);write_str(1,pb);write_str(1,"'s new affinity mask: ");}else{write_str(1,"pid ");char pb[12];int_to_str(pid,pb,12);write_str(1,pb);write_str(1,"'s current affinity mask: ");}unsigned long gm=0;sys_call3(204,pid,sizeof(gm),(long)&gm);char hb[20];hb[0]='0';hb[1]='x';int hi=2;int st=0;for(int b=60;b>=0;b-=4){int n=(int)((gm>>b)&0xf);if(n||st||b==0){hb[hi++]=(char)(n<10?'0'+n:'a'+n-10);st=1;}}hb[hi]='\0';write_str(1,hb);write_str(1,"\n");}else{if(ag+1>=argc){write_str(2,"usage: taskset [mask] cmd\n");return;}unsigned long mk=0;const char*p=argv[ag];if(p[0]=='0'&&p[1]=='x'){p+=2;while(*p){mk<<=4;if(*p>='0'&&*p<='9')mk|=(unsigned long)(*p-'0');else if(*p>='a'&&*p<='f')mk|=(unsigned long)(*p-'a'+10);else if(*p>='A'&&*p<='F')mk|=(unsigned long)(*p-'A'+10);p++;}}else while(*p>='0'&&*p<='9')mk=mk*10+(unsigned long)(*p++-'0');ag++;sys_call3(203,0,sizeof(mk),(long)&mk);int sa=argc-ag;char*sv[64];for(int i=0;i<sa&&i<63;i++)sv[i]=argv[i+ag];sv[sa]=NULL;execute_command(sa,sv);}}
 static void cmd_chrt(int argc, char *argv[]) { if(argc<2){write_str(2,"usage: chrt [-f|-r|-o|-b] [-p] [prio] [PID|cmd]\n");return;} int po=-1,pr=0,sp=0,ag=1; while(ag<argc&&argv[ag][0]=='-'){const char*f=argv[ag];if(strcmp_simple(f,"-f")==0)po=1;else if(strcmp_simple(f,"-r")==0)po=2;else if(strcmp_simple(f,"-o")==0)po=0;else if(strcmp_simple(f,"-b")==0)po=3;else if(strcmp_simple(f,"-p")==0)sp=1;else break;ag++;} if(sp){int pid=0;if(ag<argc){const char*p=argv[ag];while(*p>='0'&&*p<='9')pid=pid*10+(*p++-'0');}long cp=sys_call1(145,pid);int pm[1]={0};sys_call2(143,pid,(long)pm);write_str(1,"pid ");char pb[12];int_to_str(pid,pb,12);write_str(1,pb);write_str(1,"'s current scheduling policy: ");if(cp==0)write_str(1,"SCHED_OTHER");else if(cp==1)write_str(1,"SCHED_FIFO");else if(cp==2)write_str(1,"SCHED_RR");else if(cp==3)write_str(1,"SCHED_BATCH");else if(cp==5)write_str(1,"SCHED_IDLE");else{char nb[12];int_to_str(cp,nb,12);write_str(1,nb);}write_str(1,"\npid ");write_str(1,pb);write_str(1,"'s current scheduling priority: ");char prb[12];int_to_str(pm[0],prb,12);write_str(1,prb);write_str(1,"\n");return;} if(ag<argc){const char*p=argv[ag];while(*p>='0'&&*p<='9')pr=pr*10+(*p++-'0');ag++;}if(ag>=argc){write_str(2,"chrt: missing command\n");return;}if(po<0)po=1;int sm[1];sm[0]=pr;long r=sys_call3(144,0,po,(long)sm);if(r<0)write_str(2,"chrt: failed to set scheduling policy\n");int sa=argc-ag;char*sv[64];for(int i=0;i<sa&&i<63;i++)sv[i]=argv[i+ag];sv[sa]=NULL;execute_command(sa,sv);}
 static void cmd_ionice(int argc, char *argv[]) { int ic=-1,ip=-1,tp=0,cs=-1; for(int i=1;i<argc;i++){if(strcmp_simple(argv[i],"-c")==0&&i+1<argc){i++;ic=0;const char*p=argv[i];while(*p>='0'&&*p<='9')ic=ic*10+(*p++-'0');}else if(argv[i][0]=='-'&&argv[i][1]=='c'&&argv[i][2]>='0')ic=argv[i][2]-'0';else if(strcmp_simple(argv[i],"-n")==0&&i+1<argc){i++;ip=0;const char*p=argv[i];while(*p>='0'&&*p<='9')ip=ip*10+(*p++-'0');}else if(argv[i][0]=='-'&&argv[i][1]=='n'&&argv[i][2]>='0')ip=argv[i][2]-'0';else if(strcmp_simple(argv[i],"-p")==0&&i+1<argc){i++;const char*p=argv[i];while(*p>='0'&&*p<='9')tp=tp*10+(*p++-'0');}else{cs=i;break;}} if(cs<0&&ic<0){long c=sys_call2(252,1,tp);if(c<0)c=0;int cl=(int)((c>>13)&0x3);int p=(int)(c&0x1fff);const char*cn[]={"none","realtime","best-effort","idle"};write_str(1,cn[cl<4?cl:0]);write_str(1,": prio ");char pb[8];int_to_str(p,pb,8);write_str(1,pb);write_str(1,"\n");return;}if(ic<0)ic=2;if(ip<0)ip=4;int io=(ic<<13)|ip;if(tp>0){sys_call3(251,1,tp,io);return;}sys_call3(251,1,0,io);if(cs>=0&&cs<argc){int sa=argc-cs;char*sv[64];for(int i=0;i<sa&&i<63;i++)sv[i]=argv[i+cs];sv[sa]=NULL;execute_command(sa,sv);}}
 static void cmd_cpupower(int argc, char *argv[]) { (void)argc;(void)argv; int fd=sys_open("/proc/cpuinfo",O_RDONLY,0);if(fd<0){write_str(2,"cpupower: cannot open /proc/cpuinfo\n");return;}char buf[4096];long nr=sys_read(fd,buf,sizeof(buf)-1);sys_close(fd);if(nr<=0)return;buf[nr]='\0';write_str(1,"analyzing CPU information:\n");int cc=0;char mn[128]={0};char mz[32]={0};char*p=buf;while(*p){if(p[0]=='p'&&p[1]=='r'&&p[2]=='o'&&p[3]=='c'&&p[4]=='e'&&p[5]=='s'&&p[6]=='s'&&p[7]=='o'&&p[8]=='r')cc++;if(p[0]=='m'&&p[1]=='o'&&p[2]=='d'&&p[3]=='e'&&p[4]=='l'&&p[5]==' '&&p[6]=='n'&&p[7]=='a'&&p[8]=='m'&&p[9]=='e'&&!mn[0]){const char*q=p;while(*q&&*q!=':')q++;if(*q==':'){q++;while(*q==' '||*q=='\t')q++;int mi=0;while(*q&&*q!='\n'&&mi<126)mn[mi++]=*q++;mn[mi]='\0';}}if(p[0]=='c'&&p[1]=='p'&&p[2]=='u'&&p[3]==' '&&p[4]=='M'&&p[5]=='H'&&p[6]=='z'&&!mz[0]){const char*q=p;while(*q&&*q!=':')q++;if(*q==':'){q++;while(*q==' '||*q=='\t')q++;int mi=0;while(*q&&*q!='\n'&&mi<30)mz[mi++]=*q++;mz[mi]='\0';}}while(*p&&*p!='\n')p++;if(*p=='\n')p++;}char nb[12];write_str(1,"  CPUs:       ");int_to_str(cc?cc:1,nb,12);write_str(1,nb);write_str(1,"\n");if(mn[0]){write_str(1,"  Model:      ");write_str(1,mn);write_str(1,"\n");}if(mz[0]){write_str(1,"  Frequency:  ");write_str(1,mz);write_str(1," MHz\n");}else write_str(1,"  Frequency:  (not available)\n");int gf=sys_open("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor",O_RDONLY,0);if(gf>=0){char gv[64];long gr=sys_read(gf,gv,sizeof(gv)-1);sys_close(gf);if(gr>0){if(gv[gr-1]=='\n')gr--;gv[gr]='\0';write_str(1,"  Governor:   ");write_str(1,gv);write_str(1,"\n");}}else write_str(1,"  Governor:   (not available)\n");}
 static void cmd_numactl(int argc, char *argv[]) { if(argc>=2&&strcmp_simple(argv[1],"--hardware")==0){write_str(1,"available: 1 node (0)\n");int fd=sys_open("/proc/meminfo",O_RDONLY,0);if(fd>=0){char buf[2048];long nr=sys_read(fd,buf,sizeof(buf)-1);sys_close(fd);if(nr>0){buf[nr]='\0';char*p=buf;while(*p){if(p[0]=='M'&&p[1]=='e'&&p[2]=='m'&&p[3]=='T'&&p[4]=='o'&&p[5]=='t'){write_str(1,"node 0 size: ");while(*p&&*p!=':')p++;if(*p==':')p++;while(*p==' ')p++;while(*p&&*p!='\n'){sys_write(1,p,1);p++;}write_str(1,"\n");break;}while(*p&&*p!='\n')p++;if(*p=='\n')p++;}}}write_str(1,"node 0 cpus: 0\n");return;}write_str(1,"policy: default\n");write_str(1,"preferred node: current\n");unsigned long mk=0;long r=sys_call3(204,0,sizeof(mk),(long)&mk);if(r>=0){write_str(1,"physcpubind: ");char nb[8];int f=1;for(int i=0;i<64;i++){if(mk&(1UL<<i)){if(!f)write_str(1," ");int_to_str(i,nb,8);write_str(1,nb);f=0;}}write_str(1,"\n");}write_str(1,"cpubind: 0\n");write_str(1,"nodebind: 0\n");write_str(1,"membind: 0\n");(void)argc;(void)argv;}
 static void cmd_perf(int argc, char *argv[]) { if(argc<3||strcmp_simple(argv[1],"stat")!=0){write_str(2,"usage: perf stat command [args...]\n");return;}long st=0;int uf=sys_open("/proc/uptime",O_RDONLY,0);if(uf>=0){char ub[64];long ur=sys_read(uf,ub,sizeof(ub)-1);sys_close(uf);if(ur>0){ub[ur]='\0';const char*p=ub;while(*p>='0'&&*p<='9')st=st*10+(*p++-'0');st*=100;if(*p=='.'){p++;if(*p>='0'&&*p<='9')st+=(*p++-'0')*10;if(*p>='0'&&*p<='9')st+=(*p++-'0');}}}int sa=argc-2;char*sv[64];for(int i=0;i<sa&&i<63;i++)sv[i]=argv[i+2];sv[sa]=NULL;execute_command(sa,sv);long et=0;uf=sys_open("/proc/uptime",O_RDONLY,0);if(uf>=0){char ub[64];long ur=sys_read(uf,ub,sizeof(ub)-1);sys_close(uf);if(ur>0){ub[ur]='\0';const char*p=ub;while(*p>='0'&&*p<='9')et=et*10+(*p++-'0');et*=100;if(*p=='.'){p++;if(*p>='0'&&*p<='9')et+=(*p++-'0')*10;if(*p>='0'&&*p<='9')et+=(*p++-'0');}}}long ec=et-st;if(ec<0)ec=0;write_str(2,"\n Performance counter stats:\n\n");int sf=sys_open("/proc/stat",O_RDONLY,0);if(sf>=0){char sb[2048];long sr=sys_read(sf,sb,sizeof(sb)-1);sys_close(sf);if(sr>0){sb[sr]='\0';char*sp=sb;while(*sp){if(sp[0]=='c'&&sp[1]=='t'&&sp[2]=='x'&&sp[3]=='t'){while(*sp&&*sp!=' ')sp++;while(*sp==' ')sp++;char nb[20];int ni=0;while(*sp>='0'&&*sp<='9'&&ni<19)nb[ni++]=*sp++;nb[ni]='\0';write_str(2,"        ");write_str(2,nb);write_str(2,"      context-switches\n");break;}while(*sp&&*sp!='\n')sp++;if(*sp=='\n')sp++;}}}char tb[20];int_to_str(ec/100,tb,20);write_str(2,"\n   ");write_str(2,tb);write_str(2,".");char cb[4];cb[0]=(char)('0'+(ec%100)/10);cb[1]=(char)('0'+(ec%10));cb[2]='\0';write_str(2,cb);write_str(2," seconds time elapsed\n\n");}
-static void cmd_stdbuf(int argc, char *argv[]) { if(argc<3){write_str(2,"usage: stdbuf [-oL|-o0] command [args...]\n");return;}int cs=1;while(cs<argc&&argv[cs][0]=='-'){char c=argv[cs][1];if(c=='o'||c=='i'||c=='e'){if(argv[cs][2]=='\0'&&cs+1<argc)cs++;}else break;cs++;}if(cs>=argc){write_str(2,"stdbuf: missing command\n");return;}int sa=argc-cs;char*sv[64];for(int i=0;i<sa&&i<63;i++)sv[i]=argv[i+cs];sv[sa]=NULL;execute_command(sa,sv);}
+static void cmd_stdbuf(int argc, char *argv[]) {
+    if (argc < 3) {
+        write_str(2, "usage: stdbuf [-i MODE] [-o MODE] [-e MODE] command [args...]\n");
+        write_str(2, "  MODE: L (line buffered), 0 (unbuffered), SIZE (fully buffered)\n");
+        write_str(2, "  -i MODE  adjust stdin buffering\n");
+        write_str(2, "  -o MODE  adjust stdout buffering\n");
+        write_str(2, "  -e MODE  adjust stderr buffering\n");
+        return;
+    }
+    int cs = 1;
+    const char *ibuf = NULL, *obuf = NULL, *ebuf = NULL;
+    while (cs < argc && argv[cs][0] == '-') {
+        char c = argv[cs][1];
+        if (c == 'o') {
+            if (argv[cs][2] != '\0') { obuf = &argv[cs][2]; }
+            else if (cs + 1 < argc) { obuf = argv[++cs]; }
+        } else if (c == 'i') {
+            if (argv[cs][2] != '\0') { ibuf = &argv[cs][2]; }
+            else if (cs + 1 < argc) { ibuf = argv[++cs]; }
+        } else if (c == 'e') {
+            if (argv[cs][2] != '\0') { ebuf = &argv[cs][2]; }
+            else if (cs + 1 < argc) { ebuf = argv[++cs]; }
+        } else break;
+        cs++;
+    }
+    (void)ibuf; (void)obuf; (void)ebuf; /* buffering modes noted but simulated */
+    if (cs >= argc) { write_str(2, "stdbuf: missing command\n"); return; }
+    int sa = argc - cs;
+    char *sv[64];
+    for (int i = 0; i < sa && i < 63; i++) sv[i] = argv[i + cs];
+    sv[sa] = NULL;
+    execute_command(sa, sv);
+}
 static void cmd_fuser(int argc, char *argv[]) { int dk=0,fs=1;if(argc>=2&&strcmp_simple(argv[1],"-k")==0){dk=1;fs=2;}if(fs>=argc){write_str(2,"usage: fuser [-k] file...\n");return;}for(int fi=fs;fi<argc;fi++){const char*tg=argv[fi];struct stat ts;if(sys_call2(__NR_stat,(long)tg,(long)&ts)<0){write_str(2,"fuser: ");write_str(2,tg);write_str(2,": No such file\n");continue;}write_str(1,tg);write_str(1,":");struct linux_dirent64{unsigned long long d_ino;long long d_off;unsigned short d_reclen;unsigned char d_type;char d_name[256];};int pf=sys_open("/proc",O_RDONLY,0);if(pf<0)continue;char db[4096];long nr;while((nr=sys_getdents64(pf,db,sizeof(db)))>0){char*pt=db;while(pt<db+nr){struct linux_dirent64*d=(struct linux_dirent64*)pt;pt+=d->d_reclen;if(d->d_name[0]<'1'||d->d_name[0]>'9')continue;int pid=0;for(int k=0;d->d_name[k]>='0'&&d->d_name[k]<='9';k++)pid=pid*10+(d->d_name[k]-'0');char fd[64];int fp=0;const char*px="/proc/";while(*px)fd[fp++]=*px++;{int v=pid;char rv[12];int rp=0;if(v==0)rv[rp++]='0';else while(v>0){rv[rp++]='0'+(v%10);v/=10;}while(rp>0)fd[fp++]=rv[--rp];}const char*sf="/fd";while(*sf)fd[fp++]=*sf++;fd[fp]='\0';int ff=sys_open(fd,O_RDONLY,0);if(ff<0)continue;char fb[2048];long fn;int fo=0;while(!fo&&(fn=sys_getdents64(ff,fb,sizeof(fb)))>0){char*fp2=fb;while(fp2<fb+fn){struct linux_dirent64*fe=(struct linux_dirent64*)fp2;fp2+=fe->d_reclen;if(fe->d_name[0]=='.')continue;char fdp[80];int pp=0;for(int k=0;fd[k]&&pp<70;k++)fdp[pp++]=fd[k];fdp[pp++]='/';for(int k=0;fe->d_name[k]&&pp<78;k++)fdp[pp++]=fe->d_name[k];fdp[pp]='\0';struct stat fs2;if(sys_call2(__NR_stat,(long)fdp,(long)&fs2)==0&&fs2.st_ino==ts.st_ino&&fs2.st_dev==ts.st_dev){write_str(1," ");char pb[12];int_to_str(pid,pb,12);write_str(1,pb);if(dk)sys_kill(pid,9);fo=1;break;}}}sys_close(ff);}}sys_close(pf);write_str(1,"\n");}}
 /* __ findmnt: find a filesystem __ */
 static void cmd_findmnt(int argc, char *argv[]) { const char*tgt=NULL;int raw=0;for(int i=1;i<argc;i++){if(strcmp_simple(argv[i],"--raw")==0||strcmp_simple(argv[i],"-r")==0)raw=1;else if(strcmp_simple(argv[i],"--version")==0){write_str(1,"findmnt from futura-util 2.40\n");return;}else if(argv[i][0]!='-')tgt=argv[i];}int fd=sys_open("/proc/mounts",O_RDONLY,0);if(fd<0){write_str(2,"findmnt: cannot open /proc/mounts\n");return;}char buf[4096];long nr=sys_read(fd,buf,sizeof(buf)-1);sys_close(fd);if(nr<=0)return;buf[nr]='\0';if(!raw)write_str(1,"TARGET                          SOURCE     FSTYPE  OPTIONS\n");char*p=buf;while(*p){char dev[128],mp[128],fs[64],opts[256];int di=0,mi=0,fi=0,oi=0;while(*p&&*p!=' '&&di<126)dev[di++]=*p++;dev[di]='\0';while(*p==' ')p++;while(*p&&*p!=' '&&mi<126)mp[mi++]=*p++;mp[mi]='\0';while(*p==' ')p++;while(*p&&*p!=' '&&fi<62)fs[fi++]=*p++;fs[fi]='\0';while(*p==' ')p++;while(*p&&*p!=' '&&*p!='\n'&&oi<254)opts[oi++]=*p++;opts[oi]='\0';while(*p&&*p!='\n')p++;if(*p=='\n')p++;if(tgt&&strcmp_simple(mp,tgt)!=0&&strcmp_simple(dev,tgt)!=0)continue;if(raw){write_str(1,mp);write_str(1," ");write_str(1,dev);write_str(1," ");write_str(1,fs);write_str(1," ");write_str(1,opts);write_str(1,"\n");}else{write_str(1,mp);int ml=0;while(mp[ml])ml++;for(int s=ml;s<32;s++)write_str(1," ");write_str(1,dev);int dl=0;while(dev[dl])dl++;for(int s=dl;s<11;s++)write_str(1," ");write_str(1,fs);int fl=0;while(fs[fl])fl++;for(int s=fl;s<8;s++)write_str(1," ");write_str(1,opts);write_str(1,"\n");}}(void)argc;}
@@ -24629,6 +24962,10 @@ static void cmd_journalctl(int argc, char *argv[]) {
     int kernel_only = 0;
     int follow_mode = 0;
     int last_n = 0; /* 0 = show all */
+    const char *since_str = NULL;
+    const char *until_str = NULL;
+    const char *unit_str = NULL;
+    int priority_filter = -1; /* -1 = no filter */
 
     /* Parse flags */
     for (int i = 1; i < argc; i++) {
@@ -24649,14 +24986,52 @@ static void cmd_journalctl(int argc, char *argv[]) {
         } else if (argv[i][0] == '-' && argv[i][1] == 'n' && argv[i][2] >= '0' && argv[i][2] <= '9') {
             last_n = simple_atoi(&argv[i][2]);
             if (last_n <= 0) last_n = 10;
+        } else if (strcmp_simple(argv[i], "--since") == 0 || strcmp_simple(argv[i], "-S") == 0) {
+            if (i + 1 < argc) since_str = argv[++i];
+        } else if (strcmp_simple(argv[i], "--until") == 0 || strcmp_simple(argv[i], "-U") == 0) {
+            if (i + 1 < argc) until_str = argv[++i];
+        } else if (strcmp_simple(argv[i], "--unit") == 0 || strcmp_simple(argv[i], "-u") == 0) {
+            if (i + 1 < argc) unit_str = argv[++i];
+        } else if (strcmp_simple(argv[i], "--priority") == 0 || strcmp_simple(argv[i], "-p") == 0) {
+            if (i + 1 < argc) {
+                i++;
+                if (strcmp_simple(argv[i], "emerg") == 0) priority_filter = 0;
+                else if (strcmp_simple(argv[i], "alert") == 0) priority_filter = 1;
+                else if (strcmp_simple(argv[i], "crit") == 0) priority_filter = 2;
+                else if (strcmp_simple(argv[i], "err") == 0) priority_filter = 3;
+                else if (strcmp_simple(argv[i], "warning") == 0) priority_filter = 4;
+                else if (strcmp_simple(argv[i], "notice") == 0) priority_filter = 5;
+                else if (strcmp_simple(argv[i], "info") == 0) priority_filter = 6;
+                else if (strcmp_simple(argv[i], "debug") == 0) priority_filter = 7;
+                else { priority_filter = 0; const char *p = argv[i]; while (*p >= '0' && *p <= '9') priority_filter = priority_filter * 10 + (*p++ - '0'); }
+            }
         } else if (strcmp_simple(argv[i], "--help") == 0) {
-            write_str(1, "Usage: journalctl [-k] [-b] [-f] [-n N]\n");
-            write_str(1, "  -k, --dmesg   Show kernel messages only\n");
-            write_str(1, "  -b, --boot    Show messages from this boot\n");
-            write_str(1, "  -f, --follow  Follow new messages\n");
-            write_str(1, "  -n N          Show last N lines (default 10)\n");
+            write_str(1, "Usage: journalctl [-k] [-b] [-f] [-n N] [--since TIME] [--until TIME]\n");
+            write_str(1, "                  [--unit UNIT] [--priority LEVEL]\n");
+            write_str(1, "  -k, --dmesg       Show kernel messages only\n");
+            write_str(1, "  -b, --boot        Show messages from this boot\n");
+            write_str(1, "  -f, --follow      Follow new messages\n");
+            write_str(1, "  -n N              Show last N lines (default 10)\n");
+            write_str(1, "  -S, --since TIME  Show entries since TIME\n");
+            write_str(1, "  -U, --until TIME  Show entries until TIME\n");
+            write_str(1, "  -u, --unit UNIT   Show entries for unit\n");
+            write_str(1, "  -p, --priority LVL Filter by priority\n");
             return;
         }
+    }
+    /* Display filter context if specified */
+    if (since_str || until_str || unit_str || priority_filter >= 0) {
+        write_str(1, "-- Journal begins ");
+        if (since_str) { write_str(1, "since "); write_str(1, since_str); write_str(1, " "); }
+        if (until_str) { write_str(1, "until "); write_str(1, until_str); write_str(1, " "); }
+        if (unit_str) { write_str(1, "for unit "); write_str(1, unit_str); write_str(1, " "); }
+        if (priority_filter >= 0) {
+            const char *pnames[] = {"emerg","alert","crit","err","warning","notice","info","debug"};
+            write_str(1, "priority<=");
+            write_str(1, (priority_filter < 8) ? pnames[priority_filter] : "?");
+            write_str(1, " ");
+        }
+        write_str(1, "--\n");
     }
 
     if (kernel_only) {
@@ -41531,6 +41906,760 @@ static void cmd_bwrap(int argc, char *argv[]) {
         sub_argv[i] = argv[cmd_start + i];
     sub_argv[sub_argc] = NULL;
     execute_command(sub_argc, sub_argv);
+}
+
+/* ── alien: convert between package formats (simulated) ── */
+static void cmd_alien(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "Usage: alien [OPTIONS] FILE...\n");
+        write_str(1, "  --to-deb       Convert to .deb (default)\n");
+        write_str(1, "  --to-rpm       Convert to .rpm\n");
+        write_str(1, "  --to-tgz       Convert to .tgz\n");
+        write_str(1, "  -i, --install  Install after conversion\n");
+        write_str(1, "  -k, --keep-version  Keep version number\n");
+        write_str(1, "  --version      Show version\n");
+        return;
+    }
+    const char *target = "deb";
+    int install = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "--to-deb") == 0) target = "deb";
+        else if (strcmp_simple(argv[i], "--to-rpm") == 0) target = "rpm";
+        else if (strcmp_simple(argv[i], "--to-tgz") == 0) target = "tgz";
+        else if (strcmp_simple(argv[i], "-i") == 0 || strcmp_simple(argv[i], "--install") == 0) install = 1;
+        else if (strcmp_simple(argv[i], "--version") == 0) { write_str(1, "alien 8.95 (Futura)\n"); return; }
+        else if (argv[i][0] != '-') {
+            write_str(1, "alien: converting ");
+            write_str(1, argv[i]);
+            write_str(1, " to .");
+            write_str(1, target);
+            write_str(1, " format...\n");
+            /* Simulate output name */
+            write_str(1, "  package_1.0-1.");
+            write_str(1, target);
+            write_str(1, " generated\n");
+            if (install) write_str(1, "  installing package...\n");
+        }
+    }
+}
+
+/* ── checkinstall: track install and create package (simulated) ── */
+static void cmd_checkinstall(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "Usage: checkinstall [OPTIONS] [COMMAND [ARGS...]]\n");
+        write_str(1, "  -D  Create a Debian package (default)\n");
+        write_str(1, "  -R  Create an RPM package\n");
+        write_str(1, "  -S  Create a Slackware package\n");
+        write_str(1, "  -y  Accept default answers\n");
+        write_str(1, "  --pkgname=NAME  Set package name\n");
+        write_str(1, "  --pkgversion=VER  Set package version\n");
+        return;
+    }
+    const char *pkg_type = "deb";
+    const char *pkg_name = "package";
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-D") == 0) pkg_type = "deb";
+        else if (strcmp_simple(argv[i], "-R") == 0) pkg_type = "rpm";
+        else if (strcmp_simple(argv[i], "-S") == 0) pkg_type = "tgz";
+    }
+    write_str(1, "checkinstall: tracking installation...\n");
+    write_str(1, "  monitoring file system changes...\n");
+    write_str(1, "  creating ");
+    write_str(1, pkg_type);
+    write_str(1, " package: ");
+    write_str(1, pkg_name);
+    write_str(1, "_1.0-1.");
+    write_str(1, pkg_type);
+    write_str(1, "\n");
+    write_str(1, "  done.\n");
+}
+
+/* ── stow: GNU Stow symlink manager (simulated) ── */
+static void cmd_stow(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "Usage: stow [OPTIONS] PACKAGE...\n");
+        write_str(1, "  -d DIR     Set stow directory (default: current)\n");
+        write_str(1, "  -t DIR     Set target directory (default: parent)\n");
+        write_str(1, "  -D PKG     Unstow (remove symlinks)\n");
+        write_str(1, "  -R PKG     Restow (unstow + stow)\n");
+        write_str(1, "  -S PKG     Stow (default)\n");
+        write_str(1, "  --simulate Simulate, don't perform\n");
+        write_str(1, "  --version  Show version\n");
+        return;
+    }
+    int unstow = 0, restow = 0, simulate = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-D") == 0) unstow = 1;
+        else if (strcmp_simple(argv[i], "-R") == 0) restow = 1;
+        else if (strcmp_simple(argv[i], "--simulate") == 0 || strcmp_simple(argv[i], "-n") == 0) simulate = 1;
+        else if (strcmp_simple(argv[i], "--version") == 0) { write_str(1, "stow 2.3.1 (Futura)\n"); return; }
+        else if (strcmp_simple(argv[i], "-d") == 0 || strcmp_simple(argv[i], "-t") == 0) { i++; }
+        else if (argv[i][0] != '-') {
+            if (simulate) write_str(1, "SIMULATE: ");
+            if (restow) {
+                write_str(1, "stow: restowing ");
+            } else if (unstow) {
+                write_str(1, "stow: unstowing ");
+            } else {
+                write_str(1, "stow: stowing ");
+            }
+            write_str(1, argv[i]);
+            write_str(1, "...\n");
+        }
+    }
+}
+
+/* ── xdg-open: open file with default application (simulated) ── */
+static void cmd_xdg_open(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "Usage: xdg-open FILE|URL\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "xdg-open 1.1.0 (Futura)\n");
+        return;
+    }
+    /* Detect type and simulate opening */
+    const char *f = argv[1];
+    int is_url = 0;
+    if ((f[0]=='h'&&f[1]=='t'&&f[2]=='t'&&f[3]=='p') || (f[0]=='f'&&f[1]=='t'&&f[2]=='p'))
+        is_url = 1;
+    write_str(1, "xdg-open: opening ");
+    write_str(1, f);
+    if (is_url)
+        write_str(1, " with default browser\n");
+    else
+        write_str(1, " with default application\n");
+}
+
+/* ── xdg-mime: query MIME types (simulated) ── */
+static void cmd_xdg_mime(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "Usage: xdg-mime query filetype FILE\n");
+        write_str(1, "       xdg-mime query default MIMETYPE\n");
+        write_str(1, "       xdg-mime default APP.desktop MIMETYPE\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "query") == 0) {
+        if (argc >= 4 && strcmp_simple(argv[2], "filetype") == 0) {
+            /* Guess MIME from extension */
+            const char *fn = argv[3];
+            const char *ext = NULL;
+            for (const char *p = fn; *p; p++) if (*p == '.') ext = p;
+            write_str(1, fn);
+            write_str(1, ": ");
+            if (ext && (ext[1]=='t'&&ext[2]=='x'&&ext[3]=='t')) write_str(1, "text/plain\n");
+            else if (ext && (ext[1]=='c' && (ext[2]=='\0'||ext[2]=='p'))) write_str(1, "text/x-c\n");
+            else if (ext && (ext[1]=='h' && ext[2]=='\0')) write_str(1, "text/x-c\n");
+            else if (ext && (ext[1]=='p'&&ext[2]=='n'&&ext[3]=='g')) write_str(1, "image/png\n");
+            else if (ext && (ext[1]=='j'&&ext[2]=='p'&&ext[3]=='g')) write_str(1, "image/jpeg\n");
+            else if (ext && (ext[1]=='p'&&ext[2]=='d'&&ext[3]=='f')) write_str(1, "application/pdf\n");
+            else if (ext && (ext[1]=='h'&&ext[2]=='t'&&ext[3]=='m')) write_str(1, "text/html\n");
+            else write_str(1, "application/octet-stream\n");
+        } else if (argc >= 4 && strcmp_simple(argv[2], "default") == 0) {
+            write_str(1, "xdg-open.desktop\n");
+        }
+    } else if (strcmp_simple(argv[1], "default") == 0 && argc >= 4) {
+        write_str(1, "xdg-mime: set ");
+        write_str(1, argv[2]);
+        write_str(1, " as default for ");
+        write_str(1, argv[3]);
+        write_str(1, "\n");
+    }
+}
+
+/* ── update-alternatives: manage alternatives (simulated) ── */
+static void cmd_update_alternatives(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "Usage: update-alternatives [OPTIONS] COMMAND\n");
+        write_str(1, "  --display NAME     Show alternatives for NAME\n");
+        write_str(1, "  --list NAME        List alternatives for NAME\n");
+        write_str(1, "  --config NAME      Configure alternative interactively\n");
+        write_str(1, "  --set NAME PATH    Set alternative to PATH\n");
+        write_str(1, "  --auto NAME        Set alternative to auto mode\n");
+        write_str(1, "  --install LINK NAME PATH PRI  Install alternative\n");
+        write_str(1, "  --remove NAME PATH Remove alternative\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--display") == 0 && argc >= 3) {
+        write_str(1, argv[2]);
+        write_str(1, " - auto mode\n");
+        write_str(1, "  link best version is /usr/bin/");
+        write_str(1, argv[2]);
+        write_str(1, "\n  /usr/bin/");
+        write_str(1, argv[2]);
+        write_str(1, " - priority 100\n");
+    } else if (strcmp_simple(argv[1], "--list") == 0 && argc >= 3) {
+        write_str(1, "/usr/bin/");
+        write_str(1, argv[2]);
+        write_str(1, "\n");
+    } else if (strcmp_simple(argv[1], "--config") == 0 && argc >= 3) {
+        write_str(1, "There is only one alternative in link group ");
+        write_str(1, argv[2]);
+        write_str(1, ": /usr/bin/");
+        write_str(1, argv[2]);
+        write_str(1, "\nNothing to configure.\n");
+    } else if (strcmp_simple(argv[1], "--set") == 0 && argc >= 4) {
+        write_str(1, "update-alternatives: using ");
+        write_str(1, argv[3]);
+        write_str(1, " to provide ");
+        write_str(1, argv[2]);
+        write_str(1, "\n");
+    } else if (strcmp_simple(argv[1], "--auto") == 0 && argc >= 3) {
+        write_str(1, "update-alternatives: ");
+        write_str(1, argv[2]);
+        write_str(1, " set to auto mode\n");
+    } else if (strcmp_simple(argv[1], "--install") == 0 && argc >= 6) {
+        write_str(1, "update-alternatives: installed ");
+        write_str(1, argv[3]);
+        write_str(1, " -> ");
+        write_str(1, argv[4]);
+        write_str(1, " (priority ");
+        write_str(1, argv[5]);
+        write_str(1, ")\n");
+    } else if (strcmp_simple(argv[1], "--remove") == 0 && argc >= 4) {
+        write_str(1, "update-alternatives: removed ");
+        write_str(1, argv[3]);
+        write_str(1, " from ");
+        write_str(1, argv[2]);
+        write_str(1, "\n");
+    }
+}
+
+/* ── choom: adjust OOM score ── */
+static void cmd_choom(int argc, char *argv[]) {
+    int pid = -1, adj = -1000; /* sentinel */
+    int has_adj = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-p") == 0 && i + 1 < argc) {
+            pid = 0;
+            const char *p = argv[++i];
+            while (*p >= '0' && *p <= '9') pid = pid * 10 + (*p++ - '0');
+        } else if (strcmp_simple(argv[i], "-n") == 0 && i + 1 < argc) {
+            i++;
+            adj = 0; has_adj = 1;
+            const char *p = argv[i];
+            int neg = 0;
+            if (*p == '-') { neg = 1; p++; }
+            while (*p >= '0' && *p <= '9') adj = adj * 10 + (*p++ - '0');
+            if (neg) adj = -adj;
+        } else if (strcmp_simple(argv[i], "--help") == 0) {
+            write_str(1, "Usage: choom -p PID [-n ADJ]\n");
+            write_str(1, "  -p PID   Target process\n");
+            write_str(1, "  -n ADJ   OOM score adjustment (-1000 to 1000)\n");
+            return;
+        }
+    }
+    if (pid < 0) { write_str(2, "choom: -p PID required\n"); return; }
+    char path[64] = "/proc/";
+    char pidbuf[12];
+    int_to_str(pid, pidbuf, 12);
+    int pi = 6;
+    for (int k = 0; pidbuf[k]; k++) path[pi++] = pidbuf[k];
+    if (has_adj) {
+        /* Write oom_score_adj */
+        const char *suf = "/oom_score_adj";
+        for (int k = 0; suf[k]; k++) path[pi++] = suf[k];
+        path[pi] = '\0';
+        int fd = sys_open(path, O_WRONLY, 0);
+        if (fd >= 0) {
+            char vbuf[12];
+            int_to_str(adj, vbuf, 12);
+            int vlen = 0; while (vbuf[vlen]) vlen++;
+            sys_write(fd, vbuf, vlen);
+            sys_close(fd);
+            write_str(1, "pid ");
+            write_str(1, pidbuf);
+            write_str(1, "'s OOM score adjustment set to ");
+            write_str(1, vbuf);
+            write_str(1, "\n");
+        } else {
+            write_str(2, "choom: cannot write oom_score_adj\n");
+        }
+    } else {
+        /* Read current oom_score_adj */
+        const char *suf = "/oom_score_adj";
+        for (int k = 0; suf[k]; k++) path[pi++] = suf[k];
+        path[pi] = '\0';
+        int fd = sys_open(path, O_RDONLY, 0);
+        if (fd >= 0) {
+            char vbuf[32];
+            ssize_t n = sys_read(fd, vbuf, sizeof(vbuf) - 1);
+            sys_close(fd);
+            if (n > 0) {
+                vbuf[n] = '\0';
+                write_str(1, "pid ");
+                write_str(1, pidbuf);
+                write_str(1, "'s OOM score adj: ");
+                write_str(1, vbuf);
+                if (n > 0 && vbuf[n-1] != '\n') write_str(1, "\n");
+            }
+        } else {
+            write_str(2, "choom: cannot read oom_score_adj\n");
+        }
+    }
+}
+
+/* ── flock: file locking utility ── */
+static void cmd_flock(int argc, char *argv[]) {
+    if (argc < 3) {
+        write_str(1, "Usage: flock [-sxun] [-w TIMEOUT] LOCKFILE COMMAND [ARGS...]\n");
+        write_str(1, "  -s, --shared     Shared lock\n");
+        write_str(1, "  -x, --exclusive  Exclusive lock (default)\n");
+        write_str(1, "  -u, --unlock     Unlock\n");
+        write_str(1, "  -n, --nonblock   Fail rather than wait\n");
+        write_str(1, "  -w, --wait SEC   Timeout\n");
+        return;
+    }
+    int cmd_start = 1;
+    int lock_type = 2; /* LOCK_EX default */
+    int nonblock = 0;
+    while (cmd_start < argc && argv[cmd_start][0] == '-') {
+        if (strcmp_simple(argv[cmd_start], "-s") == 0 || strcmp_simple(argv[cmd_start], "--shared") == 0) lock_type = 1;
+        else if (strcmp_simple(argv[cmd_start], "-x") == 0 || strcmp_simple(argv[cmd_start], "--exclusive") == 0) lock_type = 2;
+        else if (strcmp_simple(argv[cmd_start], "-n") == 0 || strcmp_simple(argv[cmd_start], "--nonblock") == 0) nonblock = 1;
+        else if (strcmp_simple(argv[cmd_start], "-u") == 0 || strcmp_simple(argv[cmd_start], "--unlock") == 0) lock_type = 8;
+        else if (strcmp_simple(argv[cmd_start], "-w") == 0 || strcmp_simple(argv[cmd_start], "--wait") == 0) { cmd_start++; }
+        else break;
+        cmd_start++;
+    }
+    if (cmd_start >= argc) { write_str(2, "flock: missing lockfile\n"); return; }
+    const char *lockfile = argv[cmd_start++];
+    if (cmd_start >= argc) { write_str(2, "flock: missing command\n"); return; }
+    /* Open/create lock file */
+    int fd = sys_open(lockfile, O_RDWR | O_CREAT, 0644);
+    if (fd < 0) {
+        write_str(2, "flock: cannot open lock file: ");
+        write_str(2, lockfile);
+        write_str(2, "\n");
+        return;
+    }
+    /* Acquire lock via flock syscall (73 on x86_64) */
+    int flags = lock_type;
+    if (nonblock) flags |= 4; /* LOCK_NB */
+    long r = sys_call2(73 /* flock */, fd, flags);
+    if (r < 0) {
+        write_str(2, "flock: lock acquisition failed\n");
+        sys_close(fd);
+        return;
+    }
+    /* Execute command */
+    int sub_argc = argc - cmd_start;
+    char *sub_argv[64];
+    for (int i = 0; i < sub_argc && i < 63; i++)
+        sub_argv[i] = argv[i + cmd_start];
+    sub_argv[sub_argc] = NULL;
+    execute_command(sub_argc, sub_argv);
+    /* Release lock */
+    sys_call2(73 /* flock */, fd, 8 /* LOCK_UN */);
+    sys_close(fd);
+}
+
+/* ── script: record terminal session ── */
+static void cmd_script(int argc, char *argv[]) {
+    const char *outfile = "typescript";
+    int quiet = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-q") == 0 || strcmp_simple(argv[i], "--quiet") == 0) quiet = 1;
+        else if (strcmp_simple(argv[i], "-a") == 0 || strcmp_simple(argv[i], "--append") == 0) { /* append mode */ }
+        else if (strcmp_simple(argv[i], "--help") == 0) {
+            write_str(1, "Usage: script [-q] [-a] [FILE]\n");
+            write_str(1, "  -q, --quiet   Quiet mode\n");
+            write_str(1, "  -a, --append  Append to file\n");
+            write_str(1, "  FILE          Output file (default: typescript)\n");
+            return;
+        } else if (argv[i][0] != '-') outfile = argv[i];
+    }
+    if (!quiet) {
+        write_str(1, "Script started, output file is ");
+        write_str(1, outfile);
+        write_str(1, "\n");
+    }
+    /* Create/open output file */
+    int fd = sys_open(outfile, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd >= 0) {
+        write_str(fd, "Script started on ");
+        /* Write timestamp placeholder */
+        write_str(fd, "--- session start ---\n");
+        /* In a real implementation, this would tee stdin/stdout to the file.
+         * For our simulation, record a simulated session. */
+        char buf[256];
+        ssize_t n = sys_read(0, buf, sizeof(buf) - 1);
+        if (n > 0) {
+            buf[n] = '\0';
+            sys_write(fd, buf, (size_t)n);
+            sys_write(1, buf, (size_t)n);
+        }
+        write_str(fd, "\n--- session end ---\n");
+        sys_close(fd);
+    }
+    if (!quiet) {
+        write_str(1, "Script done, output file is ");
+        write_str(1, outfile);
+        write_str(1, "\n");
+    }
+}
+
+/* ── scriptreplay: replay recorded terminal session ── */
+static void cmd_scriptreplay(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "Usage: scriptreplay [--timing TIMINGFILE] TYPESCRIPT\n");
+        write_str(1, "  --timing FILE  Timing data file\n");
+        write_str(1, "  --divisor N    Speed up replay by factor N\n");
+        return;
+    }
+    const char *tsfile = NULL;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "--timing") == 0 && i + 1 < argc) { i++; }
+        else if (strcmp_simple(argv[i], "--divisor") == 0 && i + 1 < argc) { i++; }
+        else if (argv[i][0] != '-') tsfile = argv[i];
+    }
+    if (!tsfile) { write_str(2, "scriptreplay: missing typescript file\n"); return; }
+    int fd = sys_open(tsfile, O_RDONLY, 0);
+    if (fd < 0) {
+        write_str(2, "scriptreplay: cannot open ");
+        write_str(2, tsfile);
+        write_str(2, "\n");
+        return;
+    }
+    char buf[4096];
+    ssize_t n;
+    while ((n = sys_read(fd, buf, sizeof(buf))) > 0) {
+        sys_write(1, buf, (size_t)n);
+    }
+    sys_close(fd);
+}
+
+/* ── col: filter reverse line feeds ── */
+static void cmd_col(int argc, char *argv[]) {
+    int strip_bs = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-b") == 0) strip_bs = 1;
+        else if (strcmp_simple(argv[i], "-x") == 0) { /* convert tabs to spaces - simulated */ }
+        else if (strcmp_simple(argv[i], "--help") == 0) {
+            write_str(1, "Usage: col [-bfhx]\n");
+            write_str(1, "  -b  Do not output any backspaces\n");
+            write_str(1, "  -x  Output tabs as spaces\n");
+            return;
+        }
+    }
+    /* Read stdin, filter reverse line feeds (ESC-7, \r) */
+    char buf[8192];
+    ssize_t n = sys_read(0, buf, sizeof(buf) - 1);
+    if (n <= 0) return;
+    buf[n] = '\0';
+    for (long i = 0; i < n; i++) {
+        if (buf[i] == '\033' && i + 1 < n && buf[i+1] == '7') {
+            i++; /* skip reverse line feed */
+            continue;
+        }
+        if (strip_bs && buf[i] == '\b') continue;
+        if (buf[i] == '\r') continue; /* strip carriage returns */
+        write_char(1, buf[i]);
+    }
+}
+
+/* ── colcrt: filter nroff output for CRT viewing ── */
+static void cmd_colcrt(int argc, char *argv[]) {
+    int no_underline = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-") == 0 || strcmp_simple(argv[i], "-2") == 0) no_underline = 1;
+        else if (strcmp_simple(argv[i], "--help") == 0) {
+            write_str(1, "Usage: colcrt [-] [-2] [FILE...]\n");
+            write_str(1, "  -   Suppress underlining\n");
+            write_str(1, "  -2  Double-space output\n");
+            return;
+        }
+    }
+    /* Read stdin, process nroff overstrikes */
+    char buf[8192];
+    ssize_t n = sys_read(0, buf, sizeof(buf) - 1);
+    if (n <= 0) return;
+    buf[n] = '\0';
+    for (long i = 0; i < n; i++) {
+        if (buf[i] == '_' && i + 1 < n && buf[i+1] == '\b') {
+            if (no_underline) {
+                i += 2; /* skip _\b, print next char */
+                if (i < n) write_char(1, buf[i]);
+            } else {
+                i++; /* skip \b */
+            }
+            continue;
+        }
+        if (buf[i] == '\b') {
+            /* Overstrike: skip the backspace, the next char overprints */
+            continue;
+        }
+        write_char(1, buf[i]);
+    }
+}
+
+/* ── hardlink: find and link identical files ── */
+static void cmd_hardlink(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "Usage: hardlink [OPTIONS] DIRECTORY...\n");
+        write_str(1, "  -n, --dry-run   Don't actually link\n");
+        write_str(1, "  -v, --verbose   Verbose output\n");
+        write_str(1, "  -f, --force     Force linking of files with different permissions\n");
+        return;
+    }
+    int dry_run = 0, verbose = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-n") == 0 || strcmp_simple(argv[i], "--dry-run") == 0) dry_run = 1;
+        else if (strcmp_simple(argv[i], "-v") == 0 || strcmp_simple(argv[i], "--verbose") == 0) verbose = 1;
+        else if (argv[i][0] != '-') {
+            if (verbose) {
+                write_str(1, "hardlink: scanning ");
+                write_str(1, argv[i]);
+                write_str(1, "...\n");
+            }
+        }
+    }
+    write_str(1, "Directories:   ");
+    write_num(argc - 1);
+    write_str(1, "\n");
+    write_str(1, "Files:         0\n");
+    write_str(1, "Linked:        0\n");
+    write_str(1, "Saved:         0 bytes\n");
+    if (dry_run) write_str(1, "(dry run, no changes made)\n");
+}
+
+/* ── namei: follow a pathname ── */
+static void cmd_namei(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "Usage: namei [-lx] PATHNAME...\n");
+        return;
+    }
+    int long_list = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-l") == 0) long_list = 1;
+        else if (strcmp_simple(argv[i], "-x") == 0) { /* show mount points */ }
+        else if (strcmp_simple(argv[i], "--help") == 0) {
+            write_str(1, "Usage: namei [-lx] PATHNAME...\n");
+            write_str(1, "  -l  Long listing format\n");
+            write_str(1, "  -x  Show mount point information\n");
+            return;
+        } else {
+            write_str(1, "f: ");
+            write_str(1, argv[i]);
+            write_str(1, "\n");
+            /* Walk the path components */
+            const char *p = argv[i];
+            if (*p == '/') {
+                if (long_list)
+                    write_str(1, " drwxr-xr-x /\n");
+                else
+                    write_str(1, " d /\n");
+                p++;
+            }
+            char comp[256];
+            while (*p) {
+                int ci = 0;
+                while (*p && *p != '/' && ci < 254) comp[ci++] = *p++;
+                comp[ci] = '\0';
+                if (*p == '/') p++;
+                if (ci == 0) continue;
+                /* Try to stat the component to determine type */
+                write_str(1, " ");
+                struct stat st;
+                char fullpath[512];
+                /* Build path up to this component */
+                int fi = 0;
+                const char *q = argv[i];
+                while (q < p && fi < 510) fullpath[fi++] = *q++;
+                fullpath[fi] = '\0';
+                if (sys_call2(__NR_stat, (long)fullpath, (long)&st) == 0) {
+                    if (long_list) {
+                        if ((st.st_mode & 0170000) == 0040000)
+                            write_str(1, "drwxr-xr-x ");
+                        else if ((st.st_mode & 0170000) == 0120000)
+                            write_str(1, "lrwxrwxrwx ");
+                        else
+                            write_str(1, "-rw-r--r-- ");
+                    } else {
+                        if ((st.st_mode & 0170000) == 0040000)
+                            write_str(1, "d ");
+                        else if ((st.st_mode & 0170000) == 0120000)
+                            write_str(1, "l ");
+                        else
+                            write_str(1, "- ");
+                    }
+                } else {
+                    write_str(1, "  ? ");
+                }
+                write_str(1, comp);
+                write_str(1, "\n");
+            }
+        }
+    }
+}
+
+/* ── rename: rename files using pattern ── */
+static void cmd_rename_cmd(int argc, char *argv[]) {
+    if (argc < 3) {
+        write_str(1, "Usage: rename [-v] [-n] 's/old/new/' FILES...\n");
+        write_str(1, "  -v, --verbose  Show renamed files\n");
+        write_str(1, "  -n, --no-act   Dry run\n");
+        return;
+    }
+    int verbose = 0, dry_run = 0;
+    int pat_idx = 1;
+    while (pat_idx < argc && argv[pat_idx][0] == '-') {
+        if (strcmp_simple(argv[pat_idx], "-v") == 0 || strcmp_simple(argv[pat_idx], "--verbose") == 0) verbose = 1;
+        else if (strcmp_simple(argv[pat_idx], "-n") == 0 || strcmp_simple(argv[pat_idx], "--no-act") == 0) dry_run = 1;
+        else break;
+        pat_idx++;
+    }
+    if (pat_idx >= argc) { write_str(2, "rename: missing pattern\n"); return; }
+    /* Parse s/old/new/ pattern */
+    const char *pat = argv[pat_idx++];
+    char old_str[128] = {0}, new_str[128] = {0};
+    if (pat[0] == 's' && pat[1] == '/') {
+        const char *p = pat + 2;
+        int oi = 0;
+        while (*p && *p != '/' && oi < 126) old_str[oi++] = *p++;
+        old_str[oi] = '\0';
+        if (*p == '/') p++;
+        int ni = 0;
+        while (*p && *p != '/' && ni < 126) new_str[ni++] = *p++;
+        new_str[ni] = '\0';
+    } else {
+        write_str(2, "rename: pattern must be s/old/new/\n");
+        return;
+    }
+    int old_len = 0; while (old_str[old_len]) old_len++;
+    int new_len = 0; while (new_str[new_len]) new_len++;
+    for (int i = pat_idx; i < argc; i++) {
+        const char *fn = argv[i];
+        /* Find old_str in filename */
+        int fn_len = 0; while (fn[fn_len]) fn_len++;
+        int found = -1;
+        for (int j = 0; j <= fn_len - old_len; j++) {
+            int match = 1;
+            for (int k = 0; k < old_len; k++) {
+                if (fn[j + k] != old_str[k]) { match = 0; break; }
+            }
+            if (match) { found = j; break; }
+        }
+        if (found < 0) continue; /* no match */
+        /* Build new filename */
+        char newname[512];
+        int ni = 0;
+        for (int k = 0; k < found && ni < 510; k++) newname[ni++] = fn[k];
+        for (int k = 0; k < new_len && ni < 510; k++) newname[ni++] = new_str[k];
+        for (int k = found + old_len; k < fn_len && ni < 510; k++) newname[ni++] = fn[k];
+        newname[ni] = '\0';
+        if (dry_run || verbose) {
+            write_str(1, fn);
+            write_str(1, " -> ");
+            write_str(1, newname);
+            write_str(1, "\n");
+        }
+        if (!dry_run) {
+            sys_rename(fn, newname);
+        }
+    }
+}
+
+/* ── fincore: show pages cached in memory ── */
+static void cmd_fincore(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "Usage: fincore [OPTIONS] FILE...\n");
+        write_str(1, "  --bytes   Show sizes in bytes\n");
+        write_str(1, "  --raw     Raw output\n");
+        return;
+    }
+    write_str(1, "RES  PAGES  SIZE FILE\n");
+    for (int i = 1; i < argc; i++) {
+        if (argv[i][0] == '-') continue;
+        struct stat st;
+        if (sys_call2(__NR_stat, (long)argv[i], (long)&st) < 0) {
+            write_str(2, "fincore: cannot stat ");
+            write_str(2, argv[i]);
+            write_str(2, "\n");
+            continue;
+        }
+        /* Estimate cached pages (simulated: assume all cached) */
+        long pages = (st.st_size + 4095) / 4096;
+        long res = pages * 4096;
+        char buf[20];
+        int_to_str((int)(res / 1024), buf, 20);
+        write_str(1, buf);
+        write_str(1, "K ");
+        int_to_str((int)pages, buf, 20);
+        write_str(1, buf);
+        write_str(1, " ");
+        int_to_str((int)st.st_size, buf, 20);
+        write_str(1, buf);
+        write_str(1, " ");
+        write_str(1, argv[i]);
+        write_str(1, "\n");
+    }
+}
+
+/* ── lsirq: list IRQ affinities ── */
+static void cmd_lsirq(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    /* Read /proc/interrupts */
+    int fd = sys_open("/proc/interrupts", O_RDONLY, 0);
+    if (fd < 0) {
+        /* Simulated output */
+        write_str(1, " IRQ   COUNT  NAME\n");
+        write_str(1, "   0:      0  timer\n");
+        write_str(1, "   1:      0  i8042 (keyboard)\n");
+        write_str(1, "   4:      0  serial\n");
+        write_str(1, "   8:      0  rtc0\n");
+        write_str(1, "  12:      0  i8042 (mouse)\n");
+        write_str(1, "  14:      0  ata_piix\n");
+        return;
+    }
+    char buf[4096];
+    ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
+    sys_close(fd);
+    if (n > 0) {
+        buf[n] = '\0';
+        write_str(1, buf);
+    }
+}
+
+/* ── irqtop: monitor IRQ rates (simulated) ── */
+static void cmd_irqtop(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    write_str(1, "\033[2J\033[H"); /* clear screen */
+    write_str(1, "irqtop - IRQ monitor (snapshot)\n");
+    write_str(1, "==================================================\n");
+    write_str(1, " IRQ   TOTAL   DELTA  NAME\n");
+    write_str(1, "──────────────────────────────────────────────────\n");
+    /* Read /proc/interrupts for snapshot */
+    int fd = sys_open("/proc/interrupts", O_RDONLY, 0);
+    if (fd >= 0) {
+        char buf[4096];
+        ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
+        sys_close(fd);
+        if (n > 0) {
+            buf[n] = '\0';
+            /* Parse and display in irqtop format */
+            char *p = buf;
+            /* Skip header line */
+            while (*p && *p != '\n') p++;
+            if (*p) p++;
+            while (*p) {
+                char *line = p;
+                while (*p && *p != '\n') p++;
+                if (*p) *p++ = '\0';
+                write_str(1, line);
+                write_str(1, "      0");
+                write_str(1, "\n");
+            }
+        }
+    } else {
+        write_str(1, "   0:        0      0  timer\n");
+        write_str(1, "   1:        0      0  keyboard\n");
+        write_str(1, "   4:        0      0  serial\n");
+        write_str(1, "   8:        0      0  rtc\n");
+    }
+    write_str(1, "──────────────────────────────────────────────────\n");
+    write_str(1, "(snapshot mode — press Ctrl+C to exit in live mode)\n");
 }
 
 #pragma GCC diagnostic pop

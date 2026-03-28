@@ -1,10 +1,14 @@
-/* kernel/dev_null.c - /dev/null and /dev/zero character devices
+/* kernel/dev_null.c - /dev/null, /dev/zero, /dev/random, /dev/urandom,
+ *                     /dev/hwrng character devices
  *
  * Copyright (c) 2025 Kelsi Davis
  * Licensed under the MPL v2.0 — see LICENSE for details.
  *
- * /dev/null: write discards all data, read returns EOF (0 bytes)
- * /dev/zero: write discards all data, read returns zero bytes
+ * /dev/null:    write discards all data, read returns EOF (0 bytes)
+ * /dev/zero:    write discards all data, read returns zero bytes
+ * /dev/urandom: reads from ChaCha20 CSPRNG, never blocks
+ * /dev/random:  reads from CSPRNG, blocks when entropy < 128 bits
+ * /dev/hwrng:   reads directly from RDRAND (hardware RNG), no entropy pool
  *
  * These are essential pseudo-devices used by virtually all Unix programs.
  */
@@ -62,7 +66,7 @@ static void *zero_mmap_op(void *inode, void *priv, void *u_addr, size_t len,
 
 static struct fut_file_ops zero_fops;
 
-/* /dev/urandom: read returns random bytes (from getrandom), write succeeds */
+/* /dev/urandom: read returns random bytes (from CSPRNG), never blocks */
 static ssize_t urandom_read(void *inode, void *priv, void *buf, size_t n, off_t *pos) {
     (void)inode; (void)priv; (void)pos;
     extern long sys_getrandom(void *buf, size_t buflen, unsigned int flags);
@@ -71,6 +75,42 @@ static ssize_t urandom_read(void *inode, void *priv, void *buf, size_t n, off_t 
 }
 
 static struct fut_file_ops urandom_fops;
+
+/* /dev/random: read returns random bytes, blocks when entropy is low (<128 bits).
+ * Uses GRND_RANDOM flag which triggers entropy-gated blocking behavior. */
+static ssize_t random_read(void *inode, void *priv, void *buf, size_t n, off_t *pos) {
+    (void)inode; (void)priv; (void)pos;
+    extern long sys_getrandom(void *buf, size_t buflen, unsigned int flags);
+    /* GRND_RANDOM (0x02): block if entropy pool is below low watermark */
+    long ret = sys_getrandom(buf, n, 0x0002 /* GRND_RANDOM */);
+    return (ret < 0) ? ret : (ssize_t)ret;
+}
+
+/* /dev/random write: writing to /dev/random mixes data into the entropy pool */
+static ssize_t random_write(void *inode, void *priv, const void *buf, size_t n, off_t *pos) {
+    (void)inode; (void)priv; (void)pos;
+    if (!buf || n == 0) return 0;
+    /* Mix written data into entropy pool via input entropy interface.
+     * We XOR successive bytes into the pool -- this doesn't credit
+     * entropy (matching Linux behavior: write doesn't increase entropy_avail). */
+    extern void getrandom_add_hwrng_entropy(uint64_t sample, uint32_t bits);
+    const uint8_t *data = (const uint8_t *)buf;
+    size_t i = 0;
+    while (i + 8 <= n) {
+        uint64_t val;
+        __builtin_memcpy(&val, data + i, 8);
+        getrandom_add_hwrng_entropy(val, 0);  /* 0 bits: no entropy credit */
+        i += 8;
+    }
+    if (i < n) {
+        uint64_t val = 0;
+        __builtin_memcpy(&val, data + i, n - i);
+        getrandom_add_hwrng_entropy(val, 0);
+    }
+    return (ssize_t)n;
+}
+
+static struct fut_file_ops random_fops;
 
 /* /dev/full: read returns zero bytes (like /dev/zero), write returns ENOSPC */
 static ssize_t full_write(void *inode, void *priv, const void *buf, size_t n, off_t *pos) {
@@ -89,14 +129,17 @@ static int hwrng_has_rdrand(void) {
 }
 #endif
 
-/* /dev/hwrng: hardware random number generator backed by RDRAND (x86_64) */
+/* /dev/hwrng: hardware random number generator backed by RDRAND (x86_64).
+ * Reads directly from the hardware RNG, bypassing the entropy pool entirely.
+ * Also feeds collected entropy back into the kernel entropy pool. */
 static ssize_t hwrng_read(void *inode, void *priv, void *buf, size_t n, off_t *pos) {
     (void)inode; (void)priv; (void)pos;
     uint8_t *out = (uint8_t *)buf;
     size_t filled = 0;
+    extern void getrandom_add_hwrng_entropy(uint64_t sample, uint32_t bits);
 #ifdef __x86_64__
     if (!hwrng_has_rdrand()) {
-        /* Fallback: use xorshift from getrandom() */
+        /* Fallback: use CSPRNG from getrandom() */
         extern long sys_getrandom(void *buf, size_t buflen, unsigned int flags);
         long r = sys_getrandom(buf, n, 0);
         return r > 0 ? r : 0;
@@ -108,9 +151,11 @@ static ssize_t hwrng_read(void *inode, void *priv, void *buf, size_t n, off_t *p
         __asm__ volatile("rdrand %0; setc %1" : "=r"(val), "=qm"(ok));
         if (ok) {
             __builtin_memcpy(out + filled, &val, 8);
+            /* Feed RDRAND output back into the kernel entropy pool */
+            getrandom_add_hwrng_entropy(val, 64);
             filled += 8;
         } else {
-            break;  /* RDRAND failed — return what we have */
+            break;  /* RDRAND failed -- return what we have */
         }
     }
     /* Handle remaining bytes */
@@ -122,6 +167,7 @@ static ssize_t hwrng_read(void *inode, void *priv, void *buf, size_t n, off_t *p
             size_t remain = n - filled;
             if (remain > 8) remain = 8;
             __builtin_memcpy(out + filled, &val, remain);
+            getrandom_add_hwrng_entropy(val, 64);
             filled += remain;
         }
     }
@@ -137,6 +183,7 @@ static ssize_t hwrng_read(void *inode, void *priv, void *buf, size_t n, off_t *p
         size_t chunk = n - filled;
         if (chunk > 8) chunk = 8;
         __builtin_memcpy(out + filled, &state, chunk);
+        getrandom_add_hwrng_entropy(state, 4);
         filled += chunk;
     }
 #endif
@@ -144,11 +191,11 @@ static ssize_t hwrng_read(void *inode, void *priv, void *buf, size_t n, off_t *p
 }
 
 /**
- * Initialize /dev/null, /dev/zero, /dev/full, and /dev/urandom devices.
- * Call from kernel_main during boot.
+ * Initialize /dev/null, /dev/zero, /dev/full, /dev/urandom, /dev/random,
+ * /dev/hwrng, and other character devices. Call from kernel_main during boot.
  */
 /* ============================================================
- *   /dev/kmsg — Kernel Log Buffer Access
+ *   /dev/kmsg -- Kernel Log Buffer Access
  * ============================================================ */
 
 /* External kernel log buffer (defined in sys_syslog.c) */
@@ -198,7 +245,7 @@ static ssize_t kmsg_write(void *inode, void *priv, const void *buf, size_t n, of
     return (ssize_t)n;
 }
 
-/* ── /dev/rtc0 — Real-time clock ── */
+/* -- /dev/rtc0 -- Real-time clock -- */
 
 /* RTC ioctl numbers (Linux ABI) */
 #define RTC_RD_TIME     0x80247009  /* Read RTC time */
@@ -309,6 +356,8 @@ void dev_null_init(void) {
     zero_fops.mmap = zero_mmap_op;
     urandom_fops.read = urandom_read;
     urandom_fops.write = null_write;
+    random_fops.read = random_read;
+    random_fops.write = random_write;
     full_fops.read = zero_read;
     full_fops.write = full_write;
 
@@ -323,14 +372,15 @@ void dev_null_init(void) {
     chrdev_register(1, 7, &full_fops, "full", NULL);
     devfs_create_chr("/dev/full", 1, 7);
 
-    /* /dev/urandom = (1,9), /dev/random = (1,8) — both use same PRNG */
+    /* /dev/urandom = (1,9): reads from ChaCha20 CSPRNG, never blocks */
     chrdev_register(1, 9, &urandom_fops, "urandom", NULL);
     devfs_create_chr("/dev/urandom", 1, 9);
 
-    chrdev_register(1, 8, &urandom_fops, "random", NULL);
+    /* /dev/random = (1,8): reads from CSPRNG, blocks when entropy < 128 bits */
+    chrdev_register(1, 8, &random_fops, "random", NULL);
     devfs_create_chr("/dev/random", 1, 8);
 
-    /* /dev/kmsg = (1,11) — kernel log ring buffer access (systemd-journald, dmesg)
+    /* /dev/kmsg = (1,11) -- kernel log ring buffer access (systemd-journald, dmesg)
      * Reading returns log messages; writing injects messages into the log. */
     static struct fut_file_ops kmsg_fops;
     kmsg_fops.read = kmsg_read;
@@ -338,8 +388,9 @@ void dev_null_init(void) {
     chrdev_register(1, 11, &kmsg_fops, "kmsg", NULL);
     devfs_create_chr("/dev/kmsg", 1, 11);
 
-    /* /dev/hwrng = (10,183) — hardware random number generator.
+    /* /dev/hwrng = (10,183) -- hardware random number generator.
      * On x86_64, backed by RDRAND instruction for true hardware entropy.
+     * Reads bypass the entropy pool; output also feeds back into the pool.
      * On ARM64, falls back to CNTVCT-seeded PRNG. */
     static struct fut_file_ops hwrng_fops;
     hwrng_fops.read = hwrng_read;
@@ -347,7 +398,7 @@ void dev_null_init(void) {
     chrdev_register(10, 183, &hwrng_fops, "hwrng", NULL);
     devfs_create_chr("/dev/hwrng", 10, 183);
 
-    /* /dev/rtc0 = (252,0) — Real-time clock device.
+    /* /dev/rtc0 = (252,0) -- Real-time clock device.
      * Supports read() for time and RTC_RD_TIME/RTC_SET_TIME ioctls.
      * Used by hwclock, systemd-timesyncd, and ntpd. */
     static struct fut_file_ops rtc_fops;
@@ -357,7 +408,7 @@ void dev_null_init(void) {
     devfs_create_chr("/dev/rtc0", 252, 0);
     devfs_create_chr("/dev/rtc", 252, 0); /* symlink-like alias */
 
-    /* /dev/mem = (1,1) — Physical memory access (read-only stub).
+    /* /dev/mem = (1,1) -- Physical memory access (read-only stub).
      * Returns zeroes for all reads. Programs like dmidecode and
      * firmware scanners check for this device's existence. */
     static struct fut_file_ops mem_fops;

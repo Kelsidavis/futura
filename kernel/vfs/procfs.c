@@ -2548,6 +2548,7 @@ static size_t gen_modules(char *buf, size_t cap) {
     };
 #endif
 
+#if !defined(DRIVERS_QEMU)
     /* Helper: emit one module line. Address increments by size each time. */
     uintptr_t addr = 0xffffffff80100000ULL;
 
@@ -2563,12 +2564,10 @@ static size_t gen_modules(char *buf, size_t cap) {
     } \
 } while (0)
 
-#if !defined(DRIVERS_QEMU)
     EMIT_MOD_ARRAY(virtio_mods);
     EMIT_MOD_ARRAY(x86_platform_mods);
     EMIT_MOD_ARRAY(x86_storage_mods);
     EMIT_MOD_ARRAY(x86_net_mods);
-#endif
 
 #if defined(DRIVERS_AMD) || defined(DRIVERS_ALL)
     EMIT_MOD_ARRAY(amd_mods);
@@ -2579,6 +2578,7 @@ static size_t gen_modules(char *buf, size_t cap) {
 #endif
 
 #undef EMIT_MOD_ARRAY
+#endif /* !DRIVERS_QEMU */
 
     return b.pos;
 }
@@ -7128,7 +7128,8 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             "interrupts", "cmdline", "swaps", "devices", "misc",
             "buddyinfo", "zoneinfo", "pagetypeinfo", "diskstats", "partitions", "cgroups", "kallsyms",
             "locks", "modules", "sysvipc", "pci", "pressure", "config.gz",
-            "sysrq-trigger", "crypto", "softirqs", "consoles", "iomem", "ioports"
+            "sysrq-trigger", "crypto", "softirqs", "consoles", "iomem", "ioports",
+            "kmsg"
         };
         static const uint8_t fixed_type[] = {
             FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
@@ -7153,7 +7154,8 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             FUT_VDIR_TYPE_REG,  /* softirqs */
             FUT_VDIR_TYPE_REG,  /* consoles */
             FUT_VDIR_TYPE_REG,  /* iomem */
-            FUT_VDIR_TYPE_REG   /* ioports */
+            FUT_VDIR_TYPE_REG,  /* ioports */
+            FUT_VDIR_TYPE_REG   /* kmsg */
         };
         static const uint64_t fixed_ino[] = {
             PROC_INO_ROOT, PROC_INO_ROOT,
@@ -7171,9 +7173,10 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             PROC_INO_PRESSURE_DIR, PROC_INO_KCONFIG,
             PROC_INO_SYSRQ_TRIGGER, PROC_INO_CRYPTO,
             PROC_INO_SOFTIRQS, PROC_INO_CONSOLES,
-            PROC_INO_IOMEM, PROC_INO_IOPORTS
+            PROC_INO_IOMEM, PROC_INO_IOPORTS,
+            PROC_INO_KMSG
         };
-        if (idx < 39) {
+        if (idx < 40) {
             de->d_ino    = fixed_ino[idx];
             de->d_off    = idx + 1;
             de->d_type   = fixed_type[idx];
@@ -7188,13 +7191,13 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         }
 
         /*
-         * PID enumeration: after the 29 fixed entries, cookies encode
-         * "find first task with pid > (cookie - 30)".  After returning
-         * a PID entry we set cookie = 38 + that_pid + 1.
+         * PID enumeration: after the 40 fixed entries, cookies encode
+         * "find first task with pid > (cookie - 40)".  After returning
+         * a PID entry we set cookie = 39 + that_pid + 1.
          */
-        /* Cookie encodes 38 + last_returned_pid + 1, so the PID to resume
-         * after is (idx - 38 - 1).  We scan for pid > that value, i.e., pid >= (idx - 38). */
-        uint64_t min_pid = idx > 38 ? idx - 38 - 1 : 0;  /* start scanning for pid > min_pid */
+        /* Cookie encodes 39 + last_returned_pid + 1, so the PID to resume
+         * after is (idx - 39 - 1).  We scan for pid > that value, i.e., pid >= (idx - 39). */
+        uint64_t min_pid = idx > 39 ? idx - 39 - 1 : 0;  /* start scanning for pid > min_pid */
         fut_task_t *best = NULL;
         uint64_t   best_pid = (uint64_t)-1;
         fut_task_t *t = fut_task_list;
@@ -7219,14 +7222,14 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         pidname[pn] = '\0';
 
         de->d_ino    = PROC_INO_PID_DIR(best->pid);
-        de->d_off    = 38 + best->pid + 1;
+        de->d_off    = 39 + best->pid + 1;
         de->d_type   = FUT_VDIR_TYPE_DIR;
         de->d_reclen = sizeof(*de);
         size_t nl = (size_t)pn;
         if (nl > FUT_VFS_NAME_MAX) nl = FUT_VFS_NAME_MAX;
         __builtin_memcpy(de->d_name, pidname, nl);
         de->d_name[nl] = '\0';
-        *cookie = 38 + best->pid + 1;  /* resume after this pid */
+        *cookie = 39 + best->pid + 1;  /* resume after this pid */
         return 1;
     }
 

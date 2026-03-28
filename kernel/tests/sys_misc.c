@@ -65557,6 +65557,114 @@ __attribute__((noinline)) static void test_overlayfs_container(void) {
     sys_umount2("/tmp/ovl2_merged", 0);
 }
 
+/* Tests 2325-2330: ELF auxv correctness — AT_UID/AT_EUID/AT_GID/AT_EGID/AT_PLATFORM/AT_SECURE */
+__attribute__((noinline)) static void test_elf_auxv_correctness(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_close(int);
+
+    static struct { uint64_t key; uint64_t val; } entries[32];
+
+    int afd = (int)sys_open("/proc/self/auxv", 0 /* O_RDONLY */, 0);
+    long nr = (afd >= 0) ? sys_read(afd, entries, (long)sizeof(entries)) : 0;
+    if (afd >= 0) sys_close(afd);
+    int n = (int)(nr / 16);
+
+    /* Helper: find auxv entry by key */
+    #define FIND_AUXV(KEY, out_val, out_found) do { \
+        (out_found) = 0; (out_val) = 0; \
+        for (int _i = 0; _i < n && entries[_i].key != 0; _i++) { \
+            if (entries[_i].key == (KEY)) { (out_val) = entries[_i].val; (out_found) = 1; break; } \
+        } \
+    } while (0)
+
+    /* Test 2325: AT_UID (key=11) present and equals 0 (kernel test runs as root) */
+    fut_printf("[MISC-TEST] Test 2325: AT_UID present in auxv\n");
+    {
+        int found = 0; uint64_t val = 0;
+        FIND_AUXV(11, val, found);
+        if (found && val == 0) {
+            fut_printf("[MISC-TEST] pass Test 2325\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL Test 2325: found=%d val=%llu\n", found, (unsigned long long)val);
+            fut_test_fail(2325);
+        }
+    }
+
+    /* Test 2326: AT_EUID (key=12) present and equals 0 */
+    fut_printf("[MISC-TEST] Test 2326: AT_EUID present in auxv\n");
+    {
+        int found = 0; uint64_t val = 0;
+        FIND_AUXV(12, val, found);
+        if (found && val == 0) {
+            fut_printf("[MISC-TEST] pass Test 2326\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL Test 2326: found=%d val=%llu\n", found, (unsigned long long)val);
+            fut_test_fail(2326);
+        }
+    }
+
+    /* Test 2327: AT_GID (key=13) present and equals 0 */
+    fut_printf("[MISC-TEST] Test 2327: AT_GID present in auxv\n");
+    {
+        int found = 0; uint64_t val = 0;
+        FIND_AUXV(13, val, found);
+        if (found && val == 0) {
+            fut_printf("[MISC-TEST] pass Test 2327\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL Test 2327: found=%d val=%llu\n", found, (unsigned long long)val);
+            fut_test_fail(2327);
+        }
+    }
+
+    /* Test 2328: AT_EGID (key=14) present and equals 0 */
+    fut_printf("[MISC-TEST] Test 2328: AT_EGID present in auxv\n");
+    {
+        int found = 0; uint64_t val = 0;
+        FIND_AUXV(14, val, found);
+        if (found && val == 0) {
+            fut_printf("[MISC-TEST] pass Test 2328\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL Test 2328: found=%d val=%llu\n", found, (unsigned long long)val);
+            fut_test_fail(2328);
+        }
+    }
+
+    /* Test 2329: AT_PLATFORM (key=15) present and non-zero (pointer to string) */
+    fut_printf("[MISC-TEST] Test 2329: AT_PLATFORM present in auxv\n");
+    {
+        int found = 0; uint64_t val = 0;
+        FIND_AUXV(15, val, found);
+        if (found && val != 0) {
+            fut_printf("[MISC-TEST] pass Test 2329\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL Test 2329: found=%d val=%llu\n", found, (unsigned long long)val);
+            fut_test_fail(2329);
+        }
+    }
+
+    /* Test 2330: AT_SECURE (key=23) present and equals 0 (not setuid) */
+    fut_printf("[MISC-TEST] Test 2330: AT_SECURE present in auxv\n");
+    {
+        int found = 0; uint64_t val = 0;
+        FIND_AUXV(23, val, found);
+        if (found && val == 0) {
+            fut_printf("[MISC-TEST] pass Test 2330\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL Test 2330: found=%d val=%llu\n", found, (unsigned long long)val);
+            fut_test_fail(2330);
+        }
+    }
+
+    #undef FIND_AUXV
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -69871,6 +69979,7 @@ void fut_misc_test_thread(void *arg) {
     test_inotify_tmp_watch(); /* Tests 2295-2300: inotify end-to-end /tmp directory watch */
     test_pivot_root_full(); /* Tests 2305-2309: pivot_root full implementation */
     test_overlayfs_container(); /* Tests 2315-2320: overlayfs whiteout, upper-first, container support */
+    test_elf_auxv_correctness(); /* Tests 2325-2330: auxv AT_UID/AT_EUID/AT_GID/AT_EGID/AT_PLATFORM/AT_SECURE */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

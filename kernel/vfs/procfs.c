@@ -2402,24 +2402,8 @@ static void net_tcp_emit_one(const fut_socket_t *s, void *arg) {
     struct pbuf *b = ctx->b;
     int sl = ctx->slot++;
 
-    /* TCP state mapping — refine with shutdown half-close tracking */
-    uint8_t tcp_state;
-    switch (s->state) {
-    case FUT_SOCK_CONNECTED:
-        if (s->shutdown_wr && s->shutdown_rd)
-            tcp_state = 0x07;  /* CLOSE (both halves shut) */
-        else if (s->shutdown_wr)
-            tcp_state = 0x05;  /* FIN_WAIT2 (local close) */
-        else if (s->shutdown_rd)
-            tcp_state = 0x08;  /* CLOSE_WAIT (peer closed) */
-        else
-            tcp_state = 0x01;  /* ESTABLISHED */
-        break;
-    case FUT_SOCK_LISTENING:  tcp_state = 0x0A; break;  /* LISTEN */
-    case FUT_SOCK_CONNECTING: tcp_state = 0x02; break;  /* SYN_SENT */
-    case FUT_SOCK_BOUND:      tcp_state = 0x07; break;  /* CLOSE */
-    default:                  tcp_state = 0x07; break;  /* CLOSE */
-    }
+    /* Use the real tcp_state field tracked by connect/listen/shutdown/close */
+    uint8_t tcp_state = s->tcp_state ? s->tcp_state : 0x07; /* default CLOSE */
 
     /* inet_port is stored in network byte order; swap to host order for display */
     uint16_t lport = (uint16_t)((s->inet_port >> 8) | ((s->inet_port & 0xFF) << 8));
@@ -2636,13 +2620,8 @@ static void net_tcp6_emit_one(const fut_socket_t *s, void *arg) {
     struct pbuf *b = ctx->b;
     int sl = ctx->slot++;
 
-    uint8_t tcp_state;
-    switch (s->state) {
-    case FUT_SOCK_CONNECTED:  tcp_state = 0x01; break;
-    case FUT_SOCK_LISTENING:  tcp_state = 0x0A; break;
-    case FUT_SOCK_CONNECTING: tcp_state = 0x02; break;
-    default:                  tcp_state = 0x07; break;
-    }
+    /* Use the real tcp_state field tracked by connect/listen/shutdown/close */
+    uint8_t tcp_state = s->tcp_state ? s->tcp_state : 0x07; /* default CLOSE */
 
     uint16_t lport = (uint16_t)((s->inet_port >> 8) | ((s->inet_port & 0xFF) << 8));
 

@@ -371,6 +371,7 @@ fut_socket_t *fut_socket_create(int family, int type) {
     socket->socket_type = type;
     socket->refcount = 1;
     socket->socket_id = __atomic_fetch_add(&socket_next_id, 1, __ATOMIC_RELAXED);
+    socket->tcp_state = TCP_CLOSE;  /* New socket starts in CLOSE state */
     socket->shutdown_rd = false;
     socket->shutdown_wr = false;
     /* SO_SNDBUF / SO_RCVBUF: use sysctl defaults (wmem_default / rmem_default) */
@@ -668,6 +669,7 @@ int fut_socket_listen(fut_socket_t *socket, int backlog) {
 
     socket->listener = listener;
     socket->state = FUT_SOCK_LISTENING;
+    socket->tcp_state = TCP_LISTEN;
     SOCKET_LOG("[SOCKET] Socket %u now listening (backlog=%d)\n",
                socket->socket_id, listener->backlog);
     return 0;
@@ -767,6 +769,7 @@ int fut_socket_accept(fut_socket_t *listener, fut_socket_t **out_socket) {
         peer->pair_reverse = pair_reverse;  /* client receives from here */
         peer->is_accepted = false;  /* Client side */
         peer->state = FUT_SOCK_CONNECTED;
+        peer->tcp_state = TCP_ESTABLISHED;
     }
 
     /* Create a NEW server-side socket for the accepted connection
@@ -787,6 +790,7 @@ int fut_socket_accept(fut_socket_t *listener, fut_socket_t **out_socket) {
     accepted->refcount = 1;
     accepted->socket_id = __atomic_fetch_add(&socket_next_id, 1, __ATOMIC_RELAXED);
     accepted->is_accepted = true;  /* Server side */
+    accepted->tcp_state = TCP_ESTABLISHED;
     accepted->shutdown_rd = false;
     accepted->shutdown_wr = false;
     /* Inherit buffer size defaults (memset zeroed these) */
@@ -939,6 +943,7 @@ int fut_socket_connect(fut_socket_t *socket, const char *target_path, size_t pat
         __builtin_memcpy(socket->dgram_peer_path, target_path, path_len);
         socket->dgram_peer_path_len = (uint16_t)path_len;
         socket->state = FUT_SOCK_CONNECTED;
+        socket->tcp_state = TCP_ESTABLISHED;
         SOCKET_LOG("[SOCKET] DGRAM socket %u connected to peer (path_len=%zu)\n",
                    socket->socket_id, path_len);
         return 0;
@@ -987,6 +992,7 @@ int fut_socket_connect(fut_socket_t *socket, const char *target_path, size_t pat
     queue->queue_count++;
 
     socket->state = FUT_SOCK_CONNECTING;
+    socket->tcp_state = TCP_SYN_SENT;
 
     /* Wake up listener's accept queue so it can call accept() */
     fut_waitq_wake_one(queue->accept_waitq);
@@ -1590,6 +1596,7 @@ int fut_socket_close(fut_socket_t *socket) {
     }
 
     socket->state = FUT_SOCK_CLOSED;
+    socket->tcp_state = TCP_CLOSE;
 
     /* SO_LINGER with l_linger=0: hard close (RST semantics).
      * Discard buffered send data and set ECONNRESET on the peer so
@@ -1637,6 +1644,7 @@ int fut_socket_close(fut_socket_t *socket) {
             fut_socket_t *pending = lq->queue[idx].peer_socket;
             if (pending && pending->connect_waitq) {
                 pending->state = FUT_SOCK_CLOSED;
+                pending->tcp_state = TCP_CLOSE;
                 fut_waitq_wake_all(pending->connect_waitq);
             }
         }
@@ -2339,6 +2347,7 @@ int fut_socket_connect_inet(fut_socket_t *socket, uint32_t addr, uint16_t port) 
         socket->inet_peer_addr = addr;
         socket->inet_peer_port = port;
         socket->state = FUT_SOCK_CONNECTED;
+        socket->tcp_state = TCP_ESTABLISHED;
         return 0;
     }
 
@@ -2387,6 +2396,7 @@ int fut_socket_connect_inet(fut_socket_t *socket, uint32_t addr, uint16_t port) 
     queue->queue_count++;
 
     socket->state = FUT_SOCK_CONNECTING;
+    socket->tcp_state = TCP_SYN_SENT;
     /* Store peer address for getpeername/netstat */
     socket->inet_peer_addr = addr;
     socket->inet_peer_port = port;

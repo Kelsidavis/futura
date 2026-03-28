@@ -199,6 +199,12 @@ long sys_shutdown(int sockfd, int how) {
     switch (local_how) {
         case SHUT_RD:
             socket->shutdown_rd = true;
+            /* TCP state: peer closed their write side → CLOSE_WAIT.
+             * If we already shut down writes (FIN_WAIT*), both halves are done → CLOSE. */
+            if (socket->shutdown_wr)
+                socket->tcp_state = TCP_CLOSE;
+            else if (socket->tcp_state == TCP_ESTABLISHED)
+                socket->tcp_state = TCP_CLOSE_WAIT;
             /* Discard any data currently buffered in the receive direction.
              * Future recv() calls will return 0 (EOF) via the shutdown_rd flag. */
             if (socket->pair_reverse) {
@@ -210,6 +216,12 @@ long sys_shutdown(int sockfd, int how) {
 
         case SHUT_WR:
             socket->shutdown_wr = true;
+            /* TCP state transitions for SHUT_WR (sending FIN):
+             * ESTABLISHED → FIN_WAIT1, CLOSE_WAIT → LAST_ACK */
+            if (socket->tcp_state == TCP_ESTABLISHED)
+                socket->tcp_state = TCP_FIN_WAIT1;
+            else if (socket->tcp_state == TCP_CLOSE_WAIT)
+                socket->tcp_state = TCP_LAST_ACK;
             /* Signal EOF to the peer's blocking recv() by nulling our send-pair's peer
              * pointer. The peer's recv loop checks !pair->peer to detect EOF.
              * safe: send() checks shutdown_wr before checking pair->peer, so our own
@@ -224,6 +236,13 @@ long sys_shutdown(int sockfd, int how) {
         case SHUT_RDWR:
             socket->shutdown_rd = true;
             socket->shutdown_wr = true;
+            /* Both halves shut down → transition towards CLOSE.
+             * ESTABLISHED → FIN_WAIT1 (send FIN, await peer FIN).
+             * Any other state → CLOSE (fully terminated). */
+            if (socket->tcp_state == TCP_ESTABLISHED)
+                socket->tcp_state = TCP_FIN_WAIT1;
+            else
+                socket->tcp_state = TCP_CLOSE;
             /* Discard buffered receive data (SHUT_RD half) */
             if (socket->pair_reverse) {
                 fut_spinlock_acquire(&socket->pair_reverse->lock);

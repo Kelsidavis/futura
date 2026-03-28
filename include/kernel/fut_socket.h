@@ -201,6 +201,24 @@ enum fut_socket_state {
 };
 
 /* ============================================================
+ *   TCP Connection States (for /proc/net/tcp)
+ * ============================================================ */
+
+enum fut_tcp_state {
+    TCP_ESTABLISHED = 1,
+    TCP_SYN_SENT    = 2,
+    TCP_SYN_RECV    = 3,
+    TCP_FIN_WAIT1   = 4,
+    TCP_FIN_WAIT2   = 5,
+    TCP_TIME_WAIT   = 6,
+    TCP_CLOSE       = 7,
+    TCP_CLOSE_WAIT  = 8,
+    TCP_LAST_ACK    = 9,
+    TCP_LISTEN      = 10,
+    TCP_CLOSING     = 11,
+};
+
+/* ============================================================
  *   Forward Declarations
  * ============================================================ */
 
@@ -373,6 +391,9 @@ typedef struct fut_socket {
 #define FUT_SO_F_DEBUG      (1u << 6)
 #define FUT_SO_F_TIMESTAMP  (1u << 7)
 #define FUT_SO_F_TIMESTAMPNS (1u << 8)
+
+    /* TCP connection state (for /proc/net/tcp reporting) */
+    uint8_t tcp_state;                      /* enum fut_tcp_state — real TCP FSM state */
 
     /* Shutdown state (Phase 4) */
     bool shutdown_rd;                       /* Read channel shut down (SHUT_RD) */

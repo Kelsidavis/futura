@@ -153,8 +153,11 @@ static ssize_t hwrng_read(void *inode, void *priv, void *buf, size_t n, off_t *p
 
 /* External kernel log buffer (defined in sys_syslog.c) */
 extern char klog_buf[];
+extern size_t klog_head;
+extern size_t klog_tail;
 extern size_t klog_write_pos;
 extern size_t klog_count;
+extern size_t klog_read_buffer(char *dst, size_t len);
 
 #define KLOG_BUF_SIZE (64 * 1024)
 
@@ -172,13 +175,8 @@ static ssize_t kmsg_read(void *inode, void *priv, void *buf, size_t n, off_t *po
     /* Data available = total - consumed */
     size_t available = klog_count - consumed;
 
-    /* Calculate read position: oldest data + consumed */
-    size_t ring_start;
-    if (klog_count < KLOG_BUF_SIZE)
-        ring_start = 0;  /* Ring not full, data starts at 0 */
-    else
-        ring_start = klog_write_pos;  /* Ring full, oldest at write_pos */
-    size_t read_from = (ring_start + consumed) % KLOG_BUF_SIZE;
+    /* Calculate read position: oldest data (klog_head) + consumed */
+    size_t read_from = (klog_head + consumed) % KLOG_BUF_SIZE;
 
     size_t to_read = (n < available) ? n : available;
     char *dst = (char *)buf;

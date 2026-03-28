@@ -5,6 +5,16 @@
  *
  * Implements syslog() for reading and managing the kernel log buffer.
  * Used by dmesg(1) and system logging daemons.
+ *
+ * Ring buffer design:
+ *   - klog_buf[KLOG_BUF_SIZE]: circular buffer holding kernel messages
+ *   - klog_head: index of oldest byte in the ring (start of valid data)
+ *   - klog_tail: index where the next byte will be written
+ *   - klog_count: total valid bytes in the buffer (0..KLOG_BUF_SIZE)
+ *   - klog_read_pos: consumer cursor for SYSLOG_ACTION_READ (advances on read)
+ *
+ * When the buffer is full, new writes overwrite the oldest data by advancing
+ * klog_head (and klog_read_pos if it falls behind klog_head).
  */
 
 #include <kernel/fut_task.h>
@@ -27,8 +37,8 @@ static inline int syslog_copy_to_user(void *dst, const void *src, size_t n) {
 /* syslog command constants (Linux ABI) */
 #define SYSLOG_ACTION_CLOSE          0  /* Close the log (no-op) */
 #define SYSLOG_ACTION_OPEN           1  /* Open the log (no-op) */
-#define SYSLOG_ACTION_READ           2  /* Read from the log */
-#define SYSLOG_ACTION_READ_ALL       3  /* Read all messages in buffer */
+#define SYSLOG_ACTION_READ           2  /* Read from the log (consume) */
+#define SYSLOG_ACTION_READ_ALL       3  /* Read all messages without consuming */
 #define SYSLOG_ACTION_READ_CLEAR     4  /* Read and clear all */
 #define SYSLOG_ACTION_CLEAR          5  /* Clear the ring buffer */
 #define SYSLOG_ACTION_CONSOLE_OFF    6  /* Disable console logging */
@@ -37,33 +47,82 @@ static inline int syslog_copy_to_user(void *dst, const void *src, size_t n) {
 #define SYSLOG_ACTION_SIZE_UNREAD    9  /* Return unread count */
 #define SYSLOG_ACTION_SIZE_BUFFER   10  /* Return total buffer size */
 
-/* Kernel log ring buffer — non-static so /dev/kmsg can access */
+/* ============================================================
+ *   64KB Kernel Log Ring Buffer
+ * ============================================================ */
+
 #define KLOG_BUF_SIZE  (64 * 1024)  /* 64KB ring buffer */
+
+/* Non-static so /dev/kmsg and /proc/kmsg can access */
 char klog_buf[KLOG_BUF_SIZE];
-size_t klog_write_pos = 0;   /* Next write position */
-static size_t klog_read_pos = 0;    /* Next read position for ACTION_READ */
-size_t klog_count = 0;       /* Total bytes in buffer */
+size_t klog_head = 0;        /* Index of oldest valid byte */
+size_t klog_tail = 0;        /* Index where next byte is written */
+size_t klog_count = 0;       /* Total valid bytes in buffer (0..KLOG_BUF_SIZE) */
+
+/* Kept for ABI compatibility with existing /dev/kmsg code */
+size_t klog_write_pos = 0;
+
+/* Consumer read cursor for SYSLOG_ACTION_READ (2) — advances on read */
+static size_t klog_read_pos = 0;
+
 static int klog_console_level = 7;  /* Default: show all but debug */
 
 /* Track whether we're at the start of a new line for timestamp injection */
 static int klog_at_line_start = 1;
 
+/**
+ * klog_unread - Return bytes between read cursor and tail
+ *
+ * This is the number of bytes available for SYSLOG_ACTION_READ (consume).
+ * After a clear, read_pos == tail so unread == 0.
+ * If the ring overflows past read_pos, read_pos is clamped to head.
+ */
+static size_t klog_unread(void) {
+    /* If read cursor fell behind head (ring overflow), snap to oldest data */
+    if (klog_count == KLOG_BUF_SIZE && klog_read_pos != klog_head) {
+        /* Check if read_pos is in the overwritten region.
+         * In a full buffer, the only valid range is [head..tail) mod size.
+         * If read_pos != head and buffer is full, read_pos may be stale. */
+        size_t dist_from_head;
+        if (klog_read_pos >= klog_head)
+            dist_from_head = klog_read_pos - klog_head;
+        else
+            dist_from_head = KLOG_BUF_SIZE - klog_head + klog_read_pos;
+        if (dist_from_head > klog_count) {
+            /* read_pos was overwritten — reset to head */
+            klog_read_pos = klog_head;
+        }
+    }
+
+    if (klog_tail >= klog_read_pos)
+        return klog_tail - klog_read_pos;
+    return KLOG_BUF_SIZE - klog_read_pos + klog_tail;
+}
+
 /* Write a single byte to the ring buffer */
 static void klog_put(char c) {
-    klog_buf[klog_write_pos] = c;
-    klog_write_pos = (klog_write_pos + 1) % KLOG_BUF_SIZE;
+    klog_buf[klog_tail] = c;
+    klog_tail = (klog_tail + 1) % KLOG_BUF_SIZE;
+    klog_write_pos = klog_tail;  /* Keep alias in sync */
+
     if (klog_count < KLOG_BUF_SIZE) {
         klog_count++;
     } else {
-        klog_read_pos = (klog_read_pos + 1) % KLOG_BUF_SIZE;
+        /* Buffer full — oldest byte is overwritten, advance head */
+        klog_head = (klog_head + 1) % KLOG_BUF_SIZE;
+        /* If the consumer read cursor was pointing at the overwritten byte,
+         * advance it too so it stays within valid data. */
+        if (klog_read_pos == ((klog_tail + KLOG_BUF_SIZE - 1) % KLOG_BUF_SIZE)) {
+            klog_read_pos = klog_head;
+        }
     }
 }
 
 /**
  * klog_write - Append data to the kernel log buffer
  *
- * Called by kprintf infrastructure to record kernel messages.
- * This is a ring buffer — old data is overwritten when full.
+ * Called by kprintf infrastructure (via fut_serial_putc) to record kernel
+ * messages.  This is a ring buffer — old data is overwritten when full.
  * Prepends [seconds.microseconds] timestamp at the start of each line.
  */
 void klog_write(const char *data, size_t len) {
@@ -76,7 +135,7 @@ void klog_write(const char *data, size_t len) {
             uint64_t usecs = ((ticks % hz) * 1000000ULL) / hz;
 
             klog_put('[');
-            /* Write seconds (up to 5 digits) */
+            /* Write seconds */
             char numbuf[12];
             int pos = 0;
             uint64_t tmp = secs;
@@ -108,6 +167,26 @@ void klog_write(const char *data, size_t len) {
 }
 
 /**
+ * klog_read_buffer - Read data from the ring buffer without consuming
+ *
+ * Copies up to @len bytes from the ring buffer into @dst, starting from
+ * the oldest data (klog_head).  Used by READ_ALL and /proc/kmsg.
+ *
+ * @dst:    Destination buffer (kernel pointer)
+ * @len:    Maximum bytes to copy
+ * @return: Actual bytes copied
+ */
+size_t klog_read_buffer(char *dst, size_t len) {
+    if (klog_count == 0 || len == 0) return 0;
+    size_t to_copy = (len < klog_count) ? len : klog_count;
+    size_t src = klog_head;
+    for (size_t i = 0; i < to_copy; i++) {
+        dst[i] = klog_buf[(src + i) % KLOG_BUF_SIZE];
+    }
+    return to_copy;
+}
+
+/**
  * sys_syslog - Read and manage kernel log buffer
  *
  * @param type: Command (SYSLOG_ACTION_*)
@@ -131,38 +210,35 @@ long sys_syslog(int type, char *buf, int len) {
         return 0;
 
     case SYSLOG_ACTION_READ: {
-        /* Read and consume from log */
+        /* Read and consume from log (advances read cursor) */
         if (!buf || len <= 0) {
             return -EINVAL;
         }
 
-        size_t to_read = (size_t)len;
-        size_t available = klog_count - (klog_write_pos >= klog_read_pos ?
-            klog_write_pos - klog_read_pos : KLOG_BUF_SIZE - klog_read_pos + klog_write_pos);
-
-        /* If nothing to read, return 0 (would block in real implementation) */
-        if (klog_read_pos == klog_write_pos) {
-            return 0;
+        size_t unread = klog_unread();
+        if (unread == 0) {
+            return 0;  /* Nothing to read */
         }
 
-        (void)available;  /* Used implicitly via ring buffer positions */
+        size_t to_read = (size_t)len;
+        if (to_read > unread) to_read = unread;
+
         size_t bytes_read = 0;
         char kbuf[256];
 
-        while (bytes_read < to_read && klog_read_pos != klog_write_pos) {
+        while (bytes_read < to_read) {
             size_t chunk = to_read - bytes_read;
             if (chunk > sizeof(kbuf)) chunk = sizeof(kbuf);
 
-            size_t i;
-            for (i = 0; i < chunk && klog_read_pos != klog_write_pos; i++) {
+            for (size_t i = 0; i < chunk; i++) {
                 kbuf[i] = klog_buf[klog_read_pos];
                 klog_read_pos = (klog_read_pos + 1) % KLOG_BUF_SIZE;
             }
 
-            if (syslog_copy_to_user(buf + bytes_read, kbuf, i) != 0) {
+            if (syslog_copy_to_user(buf + bytes_read, kbuf, chunk) != 0) {
                 return bytes_read > 0 ? (long)bytes_read : -EFAULT;
             }
-            bytes_read += i;
+            bytes_read += chunk;
         }
 
         return (long)bytes_read;
@@ -170,15 +246,22 @@ long sys_syslog(int type, char *buf, int len) {
 
     case SYSLOG_ACTION_READ_ALL:
     case SYSLOG_ACTION_READ_CLEAR: {
-        /* Read entire buffer (non-destructive for READ_ALL) */
+        /* Read entire buffer contents (oldest to newest).
+         * READ_ALL (3): non-destructive, does not advance any cursor.
+         * READ_CLEAR (4): reads everything then clears the buffer. */
         if (!buf || len <= 0) {
             return -EINVAL;
         }
 
         size_t to_read = ((size_t)len < klog_count) ? (size_t)len : klog_count;
-        size_t start = (klog_write_pos >= to_read) ?
-            klog_write_pos - to_read :
-            KLOG_BUF_SIZE - (to_read - klog_write_pos);
+        /* Start from oldest data (klog_head) */
+        size_t start = klog_head;
+        /* If user buffer is smaller than klog_count, skip oldest to show
+         * the most recent to_read bytes (same as Linux dmesg behavior). */
+        if (to_read < klog_count) {
+            size_t skip = klog_count - to_read;
+            start = (klog_head + skip) % KLOG_BUF_SIZE;
+        }
 
         char kbuf[256];
         size_t bytes_written = 0;
@@ -199,7 +282,8 @@ long sys_syslog(int type, char *buf, int len) {
 
         if (type == SYSLOG_ACTION_READ_CLEAR) {
             klog_count = 0;
-            klog_read_pos = klog_write_pos;
+            klog_head = klog_tail;
+            klog_read_pos = klog_tail;
         }
 
         return (long)bytes_written;
@@ -212,7 +296,8 @@ long sys_syslog(int type, char *buf, int len) {
             return -EPERM;
         }
         klog_count = 0;
-        klog_read_pos = klog_write_pos;
+        klog_head = klog_tail;
+        klog_read_pos = klog_tail;
         return 0;
 
     case SYSLOG_ACTION_CONSOLE_OFF:
@@ -230,13 +315,9 @@ long sys_syslog(int type, char *buf, int len) {
         klog_console_level = len;
         return 0;
 
-    case SYSLOG_ACTION_SIZE_UNREAD: {
-        /* Return bytes available to read */
-        if (klog_write_pos >= klog_read_pos) {
-            return (long)(klog_write_pos - klog_read_pos);
-        }
-        return (long)(KLOG_BUF_SIZE - klog_read_pos + klog_write_pos);
-    }
+    case SYSLOG_ACTION_SIZE_UNREAD:
+        /* Return bytes available to the consume-read cursor */
+        return (long)klog_unread();
 
     case SYSLOG_ACTION_SIZE_BUFFER:
         return KLOG_BUF_SIZE;

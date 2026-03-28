@@ -4927,6 +4927,10 @@ long syscall_entry_c(uint64_t nr,
                      uint64_t a1, uint64_t a2, uint64_t a3,
                      uint64_t a4, uint64_t a5, uint64_t a6,
                      uint64_t *frame_ptr) {
+    /* Mark thread as inside syscall for accurate utime/stime accounting */
+    fut_thread_t *_sc_thread = fut_thread_current();
+    if (_sc_thread) _sc_thread->in_syscall = 1;
+
     /* Trace first N syscalls to help debug userspace bring-up */
     int do_trace = 0;
     if (SYSCALL_TRACE_COUNT > 0 && syscall_trace_remaining > 0) {
@@ -4946,6 +4950,9 @@ long syscall_entry_c(uint64_t nr,
         fut_printf("[SYSCALL-TRACE] nr=%llu -> ret=%ld\n",
                    (unsigned long long)nr, ret);
     }
+
+    /* Clear in_syscall before returning to userspace */
+    if (_sc_thread) _sc_thread->in_syscall = 0;
 
     /* Check for pending signals and deliver them before returning to user */
     extern fut_task_t *fut_task_current(void);

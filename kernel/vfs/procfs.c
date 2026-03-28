@@ -3806,6 +3806,30 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
         return (ssize_t)(entries * 8);
     }
 
+    /* /proc/kmsg: serve directly from the 64KB ring buffer without the
+     * 8KB intermediate allocation.  klog_read_buffer() copies the full
+     * ring contents into a kernel-side buffer we can slice at offset. */
+    if (n->kind == PROC_KMSG) {
+        extern size_t klog_count;
+        extern size_t klog_read_buffer(char *dst, size_t len);
+        size_t cnt = klog_count;
+        if (cnt == 0 || (size_t)offset >= cnt) return 0;
+
+        /* Allocate a buffer large enough for the whole ring content */
+        char *kbuf = fut_malloc(cnt);
+        if (!kbuf) return -ENOMEM;
+        size_t total_k = klog_read_buffer(kbuf, cnt);
+
+        ssize_t ret = 0;
+        if ((size_t)offset < total_k) {
+            size_t avail = total_k - (size_t)offset;
+            ret = (ssize_t)(avail < size ? avail : size);
+            __builtin_memcpy(buf, kbuf + offset, (size_t)ret);
+        }
+        fut_free(kbuf);
+        return ret;
+    }
+
     /* Generate content into a temporary 8KB buffer */
     const size_t GEN_BUF = 8192;
     char *tmp = fut_malloc(GEN_BUF);
@@ -5051,6 +5075,26 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
              * A proper implementation would iterate the NAT table, but for
              * compatibility we return the count from /proc/net/nf_conntrack. */
             total = gen_sysctl_str(tmp, GEN_BUF, "0");
+            break;
+        }
+        /* PROC_KMSG is handled before the GEN_BUF allocation above */
+        case PROC_KMSG: {
+            /* /proc/kmsg — kernel log ring buffer (like dmesg). */
+            extern char klog_buf[];
+            extern size_t klog_write_pos;
+            extern size_t klog_count;
+            size_t klog_sz = 64 * 1024;
+            size_t cnt = klog_count;
+            size_t wpos = klog_write_pos;
+            if (cnt == 0) { total = 0; break; }
+            size_t rstart = (cnt < klog_sz) ? 0 : wpos;
+            size_t tocopy = cnt;
+            if (tocopy > GEN_BUF) tocopy = GEN_BUF;
+            size_t skip = (cnt > GEN_BUF) ? cnt - GEN_BUF : 0;
+            size_t src = (rstart + skip) % klog_sz;
+            for (size_t i = 0; i < tocopy; i++)
+                tmp[i] = klog_buf[(src + i) % klog_sz];
+            total = tocopy;
             break;
         }
         default:

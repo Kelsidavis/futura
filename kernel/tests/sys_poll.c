@@ -874,6 +874,113 @@ static void test_select_timeout_update(void) {
 }
 
 /* ============================================================
+ * Test 18 (ID 2540): select() with all NULL fdsets + timeout acts as sleep
+ *   POSIX: select(0, NULL, NULL, NULL, &tv) sleeps for the given timeout
+ *   and returns 0.  Verify it actually delays and returns 0.
+ * ============================================================ */
+#define POLL_TEST_SELECT_NULL_SLEEP 2540
+
+static void test_select_null_fdsets_sleep(void) {
+    fut_printf("[POLL-TEST] Test 18 (2540): select(0, NULL, NULL, NULL, &tv) acts as sleep\n");
+
+    /* 50ms timeout, no FDs */
+    struct { long tv_sec; long tv_usec; } tv;
+    tv.tv_sec  = 0;
+    tv.tv_usec = 50000;  /* 50ms */
+
+    uint64_t start_ns = fut_get_time_ns();
+    long ret = sys_select(0, NULL, NULL, NULL, &tv);
+    uint64_t end_ns = fut_get_time_ns();
+    uint64_t elapsed_ms = (end_ns - start_ns) / 1000000ULL;
+
+    if (ret != 0) {
+        fut_printf("[POLL-TEST] x select(0, NULL*3, 50ms) returned %ld (expected 0)\n", ret);
+        fut_test_fail(POLL_TEST_SELECT_NULL_SLEEP);
+        return;
+    }
+
+    /* Must have actually slept for at least 10ms (allowing for timer granularity) */
+    if (elapsed_ms < 10) {
+        fut_printf("[POLL-TEST] x select-as-sleep returned too quickly: %llu ms\n",
+                   (unsigned long long)elapsed_ms);
+        fut_test_fail(POLL_TEST_SELECT_NULL_SLEEP);
+        return;
+    }
+
+    /* Timeout should be updated to ~0 on return */
+    long remain_us = tv.tv_sec * 1000000L + tv.tv_usec;
+    if (remain_us > 50000) {
+        fut_printf("[POLL-TEST] x timeout not updated after sleep: remain=%ld us\n",
+                   remain_us);
+        fut_test_fail(POLL_TEST_SELECT_NULL_SLEEP);
+        return;
+    }
+
+    fut_printf("[POLL-TEST] ok select(0, NULL*3, 50ms) slept %llu ms, remain=%ld us\n",
+               (unsigned long long)elapsed_ms, remain_us);
+    fut_test_pass();
+}
+
+/* ============================================================
+ * Test 19 (ID 2541): poll() negative fd with multiple entries
+ *   POSIX: entries with fd<0 are ignored (revents=0, not counted).
+ *   Verify with a mix of valid, negative, and invalid FDs.
+ * ============================================================ */
+#define POLL_TEST_NEGATIVE_FD_MULTI 2541
+
+static void test_poll_negative_fd_multi(void) {
+    fut_printf("[POLL-TEST] Test 19 (2541): poll() multiple negative fds ignored\n");
+
+    /* Create an eventfd with counter=1 (readable) */
+    long efd = sys_eventfd2(1, 0);
+    if (efd < 0) {
+        fut_printf("[POLL-TEST] x eventfd2 failed: %ld\n", efd);
+        fut_test_fail(POLL_TEST_NEGATIVE_FD_MULTI);
+        return;
+    }
+
+    /* Array: fd=-1, fd=-5, fd=efd (readable), fd=-100 */
+    struct pollfd pfds[4] = {
+        { .fd = -1,         .events = POLLIN,  .revents = 0xFFFF },
+        { .fd = -5,         .events = POLLOUT, .revents = 0xFFFF },
+        { .fd = (int)efd,   .events = POLLIN,  .revents = 0 },
+        { .fd = -100,       .events = POLLIN,  .revents = 0xFFFF },
+    };
+    long ret = sys_poll(pfds, 4, 0);
+
+    /* Only the eventfd should count as ready */
+    if (ret != 1) {
+        fut_printf("[POLL-TEST] x poll returned %ld (expected 1)\n", ret);
+        fut_vfs_close((int)efd);
+        fut_test_fail(POLL_TEST_NEGATIVE_FD_MULTI);
+        return;
+    }
+
+    /* All negative-fd entries must have revents == 0 */
+    if (pfds[0].revents != 0 || pfds[1].revents != 0 || pfds[3].revents != 0) {
+        fut_printf("[POLL-TEST] x negative fd entries have non-zero revents: "
+                   "[0]=0x%x [1]=0x%x [3]=0x%x\n",
+                   pfds[0].revents, pfds[1].revents, pfds[3].revents);
+        fut_vfs_close((int)efd);
+        fut_test_fail(POLL_TEST_NEGATIVE_FD_MULTI);
+        return;
+    }
+
+    /* The eventfd entry must have POLLIN */
+    if (!(pfds[2].revents & POLLIN)) {
+        fut_printf("[POLL-TEST] x eventfd entry missing POLLIN: revents=0x%x\n",
+                   pfds[2].revents);
+        fut_vfs_close((int)efd);
+        fut_test_fail(POLL_TEST_NEGATIVE_FD_MULTI);
+        return;
+    }
+
+    fut_vfs_close((int)efd);
+    fut_printf("[POLL-TEST] ok poll() 3 negative fds ignored, 1 eventfd counted\n");
+    fut_test_pass();
+}
+
+/* ============================================================
  * Main test harness
  * ============================================================ */
 void fut_poll_test_thread(void *arg) {
@@ -900,6 +1007,8 @@ void fut_poll_test_thread(void *arg) {
     test_poll_negative_fd();         /* Test 15: negative fd silently ignored (revents=0) */
     test_poll_pollrdnorm();          /* Test 16: POLLRDNORM/POLLWRNORM handled as POLLIN/POLLOUT */
     test_select_timeout_update();    /* Test 17: select() updates timeout to reflect remaining time */
+    test_select_null_fdsets_sleep(); /* Test 18 (2540): select(NULL fdsets) acts as sleep */
+    test_poll_negative_fd_multi();   /* Test 19 (2541): multiple negative fds ignored */
 
     fut_printf("[POLL-TEST] ========================================\n");
     fut_printf("[POLL-TEST] All poll/select tests done\n");

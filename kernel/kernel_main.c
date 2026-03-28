@@ -1458,6 +1458,11 @@ void fut_kernel_main(void) {
 
     bool run_async_selftests = boot_flag_enabled("async-tests", false);
 
+    /* Tests only run when futura.runtests is set (make test passes it).
+     * Normal boots (desktop/server) skip all kernel tests for faster startup. */
+    extern bool fut_boot_arg_flag(const char *key);
+    bool run_tests = fut_boot_arg_flag("futura.runtests");
+
     /* VFS and exec double tests are DISABLED (too much memory), don't count them */
     uint16_t planned_tests = 0u;
     /* FB and input tests are only for Wayland demo mode */
@@ -1488,7 +1493,11 @@ void fut_kernel_main(void) {
         /* perf tests disabled — not included in sequential runner */
     }
     (void)planned_tests;
-    fut_test_plan(planned_tests);
+    if (run_tests) {
+        fut_test_plan(planned_tests);
+    } else {
+        fut_test_plan(0);  /* No tests — skip straight to userspace */
+    }
 
     /* DISABLED: VFS and exec double tests consume too much physical memory */
     /*

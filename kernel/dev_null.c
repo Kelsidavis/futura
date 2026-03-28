@@ -80,12 +80,29 @@ static ssize_t full_write(void *inode, void *priv, const void *buf, size_t n, of
 
 static struct fut_file_ops full_fops;
 
+/* Check if RDRAND is supported via CPUID.01H:ECX.RDRAND[bit 30] */
+static int hwrng_has_rdrand(void) {
+#ifdef __x86_64__
+    uint32_t eax, ebx, ecx, edx;
+    __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(1));
+    return (ecx >> 30) & 1;
+#else
+    return 0;
+#endif
+}
+
 /* /dev/hwrng: hardware random number generator backed by RDRAND (x86_64) */
 static ssize_t hwrng_read(void *inode, void *priv, void *buf, size_t n, off_t *pos) {
     (void)inode; (void)priv; (void)pos;
     uint8_t *out = (uint8_t *)buf;
     size_t filled = 0;
 #ifdef __x86_64__
+    if (!hwrng_has_rdrand()) {
+        /* Fallback: use xorshift from getrandom() */
+        extern long sys_getrandom(void *buf, size_t buflen, unsigned int flags);
+        long r = sys_getrandom(buf, n, 0);
+        return r > 0 ? r : 0;
+    }
     /* Use RDRAND instruction for true hardware entropy */
     while (filled + 8 <= n) {
         uint64_t val;

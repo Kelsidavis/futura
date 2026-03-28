@@ -62,7 +62,7 @@ ifeq ($(DEBUG),1)
 WAYLAND_ENV += DEBUG_WAYLAND=1 DEBUG_NETUNIX=1
 endif
 
-KAPPEND :=
+KAPPEND := futura.runtests
 ifeq ($(ASYNC),1)
 KAPPEND += async-tests=1
 endif

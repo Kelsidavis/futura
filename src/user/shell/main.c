@@ -512,6 +512,16 @@ static void cmd_sc_im(int argc, char *argv[]);
 static void cmd_pandoc(int argc, char *argv[]);
 static void cmd_asciidoctor(int argc, char *argv[]);
 static void cmd_groff(int argc, char *argv[]);
+static void cmd_httpie(int argc, char *argv[]);
+static void cmd_curlie(int argc, char *argv[]);
+static void cmd_xh(int argc, char *argv[]);
+static void cmd_grpcurl(int argc, char *argv[]);
+static void cmd_websocat(int argc, char *argv[]);
+static void cmd_mosquitto_pub(int argc, char *argv[]);
+static void cmd_mosquitto_sub(int argc, char *argv[]);
+static void cmd_kafkacat(int argc, char *argv[]);
+static void cmd_redis_benchmark(int argc, char *argv[]);
+static void cmd_pgbench(int argc, char *argv[]);
 
 /* Forward declaration for prompt */
 static void print_prompt(void);
@@ -15655,6 +15665,36 @@ watch_sleep:
     } else if (strcmp_simple(argv[0], "groff") == 0) {
         cmd_groff(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "httpie") == 0 || strcmp_simple(argv[0], "http") == 0) {
+        cmd_httpie(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "curlie") == 0) {
+        cmd_curlie(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "xh") == 0) {
+        cmd_xh(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "grpcurl") == 0) {
+        cmd_grpcurl(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "websocat") == 0) {
+        cmd_websocat(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "mosquitto_pub") == 0) {
+        cmd_mosquitto_pub(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "mosquitto_sub") == 0) {
+        cmd_mosquitto_sub(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "kafkacat") == 0 || strcmp_simple(argv[0], "kcat") == 0) {
+        cmd_kafkacat(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "redis-benchmark") == 0) {
+        cmd_redis_benchmark(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "pgbench") == 0) {
+        cmd_pgbench(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -16194,6 +16234,18 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "pandoc") == 0 ||
             strcmp_simple(cmd, "asciidoctor") == 0 ||
             strcmp_simple(cmd, "groff") == 0 ||
+            strcmp_simple(cmd, "httpie") == 0 ||
+            strcmp_simple(cmd, "http") == 0 ||
+            strcmp_simple(cmd, "curlie") == 0 ||
+            strcmp_simple(cmd, "xh") == 0 ||
+            strcmp_simple(cmd, "grpcurl") == 0 ||
+            strcmp_simple(cmd, "websocat") == 0 ||
+            strcmp_simple(cmd, "mosquitto_pub") == 0 ||
+            strcmp_simple(cmd, "mosquitto_sub") == 0 ||
+            strcmp_simple(cmd, "kafkacat") == 0 ||
+            strcmp_simple(cmd, "kcat") == 0 ||
+            strcmp_simple(cmd, "redis-benchmark") == 0 ||
+            strcmp_simple(cmd, "pgbench") == 0 ||
             0);
 }
 
@@ -21036,7 +21088,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   550 built-in commands — type 'help'    |\n");
+    write_str(1, "|   560 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");
@@ -48350,6 +48402,639 @@ static void cmd_groff(int argc, char *argv[]) {
         write_str(1, "This is formatted troff output.\n");
         write_str(1, "Processed by GNU groff.\n");
     }
+}
+
+static void cmd_httpie(int argc, char *argv[]) {
+    if (argc < 2 || strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "HTTPie - a user-friendly HTTP client\n\n");
+        write_str(1, "Usage:\n");
+        write_str(1, "  http [METHOD] URL [HEADER:VALUE] [FIELD=VALUE]\n\n");
+        write_str(1, "Methods: GET (default), POST, PUT, DELETE, PATCH, HEAD, OPTIONS\n\n");
+        write_str(1, "Examples:\n");
+        write_str(1, "  http GET http://example.com/api\n");
+        write_str(1, "  http POST http://example.com/api name=John\n");
+        write_str(1, "  http PUT http://example.com/api/1 name=Jane\n");
+        write_str(1, "  http DELETE http://example.com/api/1\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "HTTPie 3.2.2\n");
+        return;
+    }
+    const char *method = "GET";
+    const char *url = NULL;
+    int has_data = 0;
+    int arg_start = 1;
+    if (argc >= 3 && (strcmp_simple(argv[1], "GET") == 0 ||
+        strcmp_simple(argv[1], "POST") == 0 || strcmp_simple(argv[1], "PUT") == 0 ||
+        strcmp_simple(argv[1], "DELETE") == 0 || strcmp_simple(argv[1], "PATCH") == 0 ||
+        strcmp_simple(argv[1], "HEAD") == 0 || strcmp_simple(argv[1], "OPTIONS") == 0)) {
+        method = argv[1];
+        url = argv[2];
+        arg_start = 3;
+    } else {
+        url = argv[1];
+        arg_start = 2;
+    }
+    for (int i = arg_start; i < argc; i++) {
+        /* Check for data fields (contains = but not :) */
+        for (const char *p = argv[i]; *p; p++) {
+            if (*p == '=') { has_data = 1; break; }
+        }
+    }
+    if (has_data && strcmp_simple(method, "GET") == 0) method = "POST";
+    /* Colored output */
+    write_str(1, "\033[32mHTTP/1.1 200 OK\033[0m\n");
+    write_str(1, "\033[36mContent-Type\033[0m: application/json\n");
+    write_str(1, "\033[36mDate\033[0m: Sat, 28 Mar 2026 12:00:00 GMT\n");
+    write_str(1, "\033[36mServer\033[0m: nginx/1.24.0\n");
+    write_str(1, "\033[36mContent-Length\033[0m: 128\n");
+    write_str(1, "\033[36mConnection\033[0m: keep-alive\n\n");
+    if (strcmp_simple(method, "GET") == 0) {
+        write_str(1, "\033[1m{\033[0m\n");
+        write_str(1, "    \033[34m\"status\"\033[0m: \033[33m\"ok\"\033[0m,\n");
+        write_str(1, "    \033[34m\"method\"\033[0m: \033[33m\"GET\"\033[0m,\n");
+        write_str(1, "    \033[34m\"url\"\033[0m: \033[33m\"");
+        write_str(1, url);
+        write_str(1, "\"\033[0m\n\033[1m}\033[0m\n");
+    } else if (strcmp_simple(method, "POST") == 0 || strcmp_simple(method, "PUT") == 0) {
+        write_str(1, "\033[1m{\033[0m\n");
+        write_str(1, "    \033[34m\"status\"\033[0m: \033[33m\"created\"\033[0m,\n");
+        write_str(1, "    \033[34m\"method\"\033[0m: \033[33m\"");
+        write_str(1, method);
+        write_str(1, "\"\033[0m,\n");
+        write_str(1, "    \033[34m\"id\"\033[0m: \033[35m42\033[0m\n\033[1m}\033[0m\n");
+    } else if (strcmp_simple(method, "DELETE") == 0) {
+        write_str(1, "\033[1m{\033[0m\n");
+        write_str(1, "    \033[34m\"status\"\033[0m: \033[33m\"deleted\"\033[0m,\n");
+        write_str(1, "    \033[34m\"method\"\033[0m: \033[33m\"DELETE\"\033[0m\n");
+        write_str(1, "\033[1m}\033[0m\n");
+    } else {
+        write_str(1, "\033[1m{\033[0m\n");
+        write_str(1, "    \033[34m\"status\"\033[0m: \033[33m\"ok\"\033[0m,\n");
+        write_str(1, "    \033[34m\"method\"\033[0m: \033[33m\"");
+        write_str(1, method);
+        write_str(1, "\"\033[0m\n\033[1m}\033[0m\n");
+    }
+}
+
+static void cmd_curlie(int argc, char *argv[]) {
+    if (argc < 2 || strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "curlie - The power of curl, the ease of use of httpie\n\n");
+        write_str(1, "Usage:\n");
+        write_str(1, "  curlie [METHOD] URL [ITEM...]\n\n");
+        write_str(1, "curlie is a frontend to curl that adds the ease of use of httpie,\n");
+        write_str(1, "without compromising on features and performance.\n\n");
+        write_str(1, "Options:\n");
+        write_str(1, "  -v, --verbose    Show request headers\n");
+        write_str(1, "  -H HEADER        Add custom header\n");
+        write_str(1, "  -d DATA          Request body data\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "curlie 1.7.2 (powered by curl 8.5.0)\n");
+        return;
+    }
+    const char *method = "GET";
+    const char *url = argv[1];
+    int verbose = 0;
+    if (argc >= 3 && (strcmp_simple(argv[1], "GET") == 0 || strcmp_simple(argv[1], "POST") == 0 ||
+        strcmp_simple(argv[1], "PUT") == 0 || strcmp_simple(argv[1], "DELETE") == 0)) {
+        method = argv[1];
+        url = argv[2];
+    }
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-v") == 0 || strcmp_simple(argv[i], "--verbose") == 0)
+            verbose = 1;
+    }
+    if (verbose) {
+        write_str(1, "\033[35m> \033[0m");
+        write_str(1, method);
+        write_str(1, " ");
+        write_str(1, url);
+        write_str(1, " HTTP/1.1\n");
+        write_str(1, "\033[35m> \033[0mHost: example.com\n");
+        write_str(1, "\033[35m> \033[0mUser-Agent: curlie/1.7.2\n");
+        write_str(1, "\033[35m> \033[0mAccept: application/json\n\n");
+    }
+    write_str(1, "\033[36mHTTP/1.1\033[0m \033[32m200 OK\033[0m\n");
+    write_str(1, "\033[33mContent-Type\033[0m: application/json\n");
+    write_str(1, "\033[33mServer\033[0m: nginx/1.24.0\n\n");
+    write_str(1, "{\n  \"status\": \"ok\",\n  \"via\": \"curlie\"\n}\n");
+}
+
+static void cmd_xh(int argc, char *argv[]) {
+    if (argc < 2 || strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "xh - Friendly and fast tool for sending HTTP requests\n\n");
+        write_str(1, "Usage:\n");
+        write_str(1, "  xh [OPTIONS] [METHOD] URL [REQUEST_ITEM...]\n\n");
+        write_str(1, "xh is a friendly and fast tool for sending HTTP requests.\n");
+        write_str(1, "It reimplements as much as possible of HTTPie's interface.\n\n");
+        write_str(1, "Options:\n");
+        write_str(1, "  -j, --json      Force JSON serialization\n");
+        write_str(1, "  -f, --form      Force form serialization\n");
+        write_str(1, "  -h, --headers   Print only response headers\n");
+        write_str(1, "  -b, --body      Print only response body\n");
+        write_str(1, "  --offline        Construct request but don't send\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "xh 0.22.0\n");
+        return;
+    }
+    const char *method = "GET";
+    const char *url = argv[1];
+    int headers_only = 0;
+    int body_only = 0;
+    if (argc >= 3 && (strcmp_simple(argv[1], "GET") == 0 || strcmp_simple(argv[1], "POST") == 0 ||
+        strcmp_simple(argv[1], "PUT") == 0 || strcmp_simple(argv[1], "DELETE") == 0)) {
+        method = argv[1];
+        url = argv[2];
+    }
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-h") == 0 || strcmp_simple(argv[i], "--headers") == 0) headers_only = 1;
+        if (strcmp_simple(argv[i], "-b") == 0 || strcmp_simple(argv[i], "--body") == 0) body_only = 1;
+    }
+    if (!body_only) {
+        write_str(1, "\033[32mHTTP/1.1 200 OK\033[0m\n");
+        write_str(1, "\033[36mcontent-type\033[0m: application/json\n");
+        write_str(1, "\033[36mcontent-length\033[0m: 64\n");
+        write_str(1, "\033[36mserver\033[0m: xh-server/1.0\n");
+        write_str(1, "\033[36mx-request-id\033[0m: a1b2c3d4\n");
+    }
+    if (!headers_only) {
+        if (!body_only) write_str(1, "\n");
+        write_str(1, "{\n");
+        write_str(1, "    \"status\": \"ok\",\n");
+        write_str(1, "    \"method\": \"");
+        write_str(1, method);
+        write_str(1, "\",\n");
+        write_str(1, "    \"url\": \"");
+        write_str(1, url);
+        write_str(1, "\"\n}\n");
+    }
+}
+
+static void cmd_grpcurl(int argc, char *argv[]) {
+    if (argc < 2 || strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "grpcurl - Like cURL, but for gRPC\n\n");
+        write_str(1, "Usage:\n");
+        write_str(1, "  grpcurl [flags] address [method]\n\n");
+        write_str(1, "Commands:\n");
+        write_str(1, "  list                    List services\n");
+        write_str(1, "  describe SERVICE        Describe service/method\n\n");
+        write_str(1, "Flags:\n");
+        write_str(1, "  -plaintext              Use plain-text HTTP/2\n");
+        write_str(1, "  -d DATA                 Request data (JSON)\n");
+        write_str(1, "  -proto FILE             Proto source file\n");
+        write_str(1, "  -import-path DIR        Proto import path\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "grpcurl v1.9.1\n");
+        return;
+    }
+    int is_list = 0, is_describe = 0;
+    const char *address = NULL;
+    const char *service = NULL;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "list") == 0) is_list = 1;
+        else if (strcmp_simple(argv[i], "describe") == 0) { is_describe = 1; if (i + 1 < argc) service = argv[i + 1]; }
+        else if (strcmp_simple(argv[i], "-plaintext") == 0) continue;
+        else if (!address) address = argv[i];
+    }
+    if (is_list) {
+        write_str(1, "grpc.health.v1.Health\n");
+        write_str(1, "grpc.reflection.v1alpha.ServerReflection\n");
+        write_str(1, "example.v1.UserService\n");
+        write_str(1, "example.v1.OrderService\n");
+    } else if (is_describe) {
+        if (service) {
+            write_str(1, "service ");
+            write_str(1, service);
+            write_str(1, " {\n");
+        } else {
+            write_str(1, "service UserService {\n");
+        }
+        write_str(1, "  rpc GetUser (.example.v1.GetUserRequest) returns (.example.v1.GetUserResponse);\n");
+        write_str(1, "  rpc ListUsers (.example.v1.ListUsersRequest) returns (.example.v1.ListUsersResponse);\n");
+        write_str(1, "  rpc CreateUser (.example.v1.CreateUserRequest) returns (.example.v1.CreateUserResponse);\n");
+        write_str(1, "}\n");
+    } else {
+        write_str(1, "{\n");
+        write_str(1, "  \"id\": \"usr_123\",\n");
+        write_str(1, "  \"name\": \"John Doe\",\n");
+        write_str(1, "  \"email\": \"john@example.com\",\n");
+        write_str(1, "  \"status\": \"ACTIVE\"\n");
+        write_str(1, "}\n");
+    }
+}
+
+static void cmd_websocat(int argc, char *argv[]) {
+    if (argc < 2 || strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "websocat - Command-line client for WebSockets\n\n");
+        write_str(1, "Usage:\n");
+        write_str(1, "  websocat [OPTIONS] URL\n\n");
+        write_str(1, "Connects to a WebSocket and exchanges messages via stdin/stdout.\n\n");
+        write_str(1, "Options:\n");
+        write_str(1, "  -t, --text            Force text mode\n");
+        write_str(1, "  -b, --binary          Force binary mode\n");
+        write_str(1, "  -n, --no-close        Don't close on EOF\n");
+        write_str(1, "  -1, --one-message     Close after one message\n");
+        write_str(1, "  -E, --exit-on-eof     Close on EOF\n");
+        write_str(1, "  --ping-interval SEC   Send periodic pings\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "websocat 1.13.0\n");
+        return;
+    }
+    const char *url = argv[argc - 1];
+    write_str(1, "\033[32m[connected]\033[0m WebSocket connection established to ");
+    write_str(1, url);
+    write_str(1, "\n");
+    write_str(1, "\033[36m[recv]\033[0m {\"type\":\"welcome\",\"server\":\"ws-server/1.0\"}\n");
+    write_str(1, "\033[33m[send]\033[0m {\"type\":\"ping\"}\n");
+    write_str(1, "\033[36m[recv]\033[0m {\"type\":\"pong\",\"timestamp\":1711627200}\n");
+    write_str(1, "\033[36m[recv]\033[0m {\"type\":\"message\",\"data\":\"Hello from server!\"}\n");
+    write_str(1, "\033[31m[closed]\033[0m Connection closed normally (code 1000)\n");
+}
+
+static void cmd_mosquitto_pub(int argc, char *argv[]) {
+    if (argc < 2 || strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "mosquitto_pub - MQTT message publisher\n\n");
+        write_str(1, "Usage:\n");
+        write_str(1, "  mosquitto_pub -h HOST -t TOPIC -m MESSAGE [OPTIONS]\n\n");
+        write_str(1, "Options:\n");
+        write_str(1, "  -h HOST         MQTT broker hostname (default: localhost)\n");
+        write_str(1, "  -p PORT         MQTT broker port (default: 1883)\n");
+        write_str(1, "  -t TOPIC        MQTT topic to publish to\n");
+        write_str(1, "  -m MESSAGE      Message payload\n");
+        write_str(1, "  -q QOS          Quality of Service (0, 1, 2)\n");
+        write_str(1, "  -r              Retain message\n");
+        write_str(1, "  -u USERNAME     Username for authentication\n");
+        write_str(1, "  -P PASSWORD     Password for authentication\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "mosquitto_pub version 2.0.18\n");
+        return;
+    }
+    const char *host = "localhost";
+    const char *topic = NULL;
+    const char *message = NULL;
+    const char *port = "1883";
+    int qos = 0;
+    int retain = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-h") == 0 && i + 1 < argc) host = argv[++i];
+        else if (strcmp_simple(argv[i], "-t") == 0 && i + 1 < argc) topic = argv[++i];
+        else if (strcmp_simple(argv[i], "-m") == 0 && i + 1 < argc) message = argv[++i];
+        else if (strcmp_simple(argv[i], "-p") == 0 && i + 1 < argc) port = argv[++i];
+        else if (strcmp_simple(argv[i], "-q") == 0 && i + 1 < argc) qos = simple_atoi(argv[++i]);
+        else if (strcmp_simple(argv[i], "-r") == 0) retain = 1;
+    }
+    if (!topic) {
+        write_str(2, "Error: no topic specified (-t)\n");
+        return;
+    }
+    if (!message) {
+        write_str(2, "Error: no message specified (-m)\n");
+        return;
+    }
+    write_str(1, "Connecting to MQTT broker ");
+    write_str(1, host);
+    write_str(1, ":");
+    write_str(1, port);
+    write_str(1, "...\n");
+    write_str(1, "\033[32mConnected.\033[0m\n");
+    write_str(1, "Publishing to topic '\033[36m");
+    write_str(1, topic);
+    write_str(1, "\033[0m' (QoS ");
+    char qbuf[2] = {(char)('0' + qos), '\0'};
+    write_str(1, qbuf);
+    if (retain) write_str(1, ", retain");
+    write_str(1, "):\n  ");
+    write_str(1, message);
+    write_str(1, "\n\033[32mMessage published successfully.\033[0m\n");
+    write_str(1, "Disconnected.\n");
+}
+
+static void cmd_mosquitto_sub(int argc, char *argv[]) {
+    if (argc < 2 || strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "mosquitto_sub - MQTT message subscriber\n\n");
+        write_str(1, "Usage:\n");
+        write_str(1, "  mosquitto_sub -h HOST -t TOPIC [OPTIONS]\n\n");
+        write_str(1, "Options:\n");
+        write_str(1, "  -h HOST         MQTT broker hostname (default: localhost)\n");
+        write_str(1, "  -p PORT         MQTT broker port (default: 1883)\n");
+        write_str(1, "  -t TOPIC        MQTT topic to subscribe to\n");
+        write_str(1, "  -q QOS          Quality of Service (0, 1, 2)\n");
+        write_str(1, "  -C COUNT        Exit after receiving COUNT messages\n");
+        write_str(1, "  -v              Verbose: print topic with message\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "mosquitto_sub version 2.0.18\n");
+        return;
+    }
+    const char *host = "localhost";
+    const char *topic = NULL;
+    int verbose = 0;
+    int count = 5;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-h") == 0 && i + 1 < argc) host = argv[++i];
+        else if (strcmp_simple(argv[i], "-t") == 0 && i + 1 < argc) topic = argv[++i];
+        else if (strcmp_simple(argv[i], "-v") == 0) verbose = 1;
+        else if (strcmp_simple(argv[i], "-C") == 0 && i + 1 < argc) count = simple_atoi(argv[++i]);
+    }
+    if (!topic) {
+        write_str(2, "Error: no topic specified (-t)\n");
+        return;
+    }
+    write_str(1, "Connecting to MQTT broker ");
+    write_str(1, host);
+    write_str(1, "...\n");
+    write_str(1, "\033[32mConnected.\033[0m Subscribed to '\033[36m");
+    write_str(1, topic);
+    write_str(1, "\033[0m'\n");
+    const char *msgs[] = {
+        "sensor/temperature: 23.5",
+        "sensor/humidity: 68.2",
+        "device/status: online",
+        "alert/threshold: exceeded",
+        "system/heartbeat: ok"
+    };
+    for (int i = 0; i < count && i < 5; i++) {
+        if (verbose) {
+            write_str(1, "\033[33m");
+            write_str(1, topic);
+            write_str(1, "\033[0m ");
+        }
+        write_str(1, msgs[i]);
+        write_str(1, "\n");
+    }
+    (void)count;
+    write_str(1, "Disconnected.\n");
+}
+
+static void cmd_kafkacat(int argc, char *argv[]) {
+    if (argc < 2 || strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "kafkacat/kcat - Apache Kafka producer and consumer tool\n\n");
+        write_str(1, "Usage:\n");
+        write_str(1, "  kafkacat -b BROKER -t TOPIC [-P|-C|-L] [OPTIONS]\n\n");
+        write_str(1, "Modes:\n");
+        write_str(1, "  -P              Producer mode\n");
+        write_str(1, "  -C              Consumer mode\n");
+        write_str(1, "  -L              Metadata list mode\n\n");
+        write_str(1, "Options:\n");
+        write_str(1, "  -b BROKER       Kafka broker(s)\n");
+        write_str(1, "  -t TOPIC        Topic name\n");
+        write_str(1, "  -p PARTITION    Partition\n");
+        write_str(1, "  -o OFFSET       Offset (beginning, end, stored, -N)\n");
+        write_str(1, "  -K DELIM        Key delimiter\n");
+        write_str(1, "  -c COUNT        Exit after COUNT messages\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "kcat - Apache Kafka producer and consumer tool\n");
+        write_str(1, "  Version   : 1.8.0\n");
+        write_str(1, "  librdkafka: 2.3.0 (0x020300ff)\n");
+        return;
+    }
+    int mode_produce = 0, mode_consume = 0, mode_list = 0;
+    const char *broker = "localhost:9092";
+    const char *topic = NULL;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-P") == 0) mode_produce = 1;
+        else if (strcmp_simple(argv[i], "-C") == 0) mode_consume = 1;
+        else if (strcmp_simple(argv[i], "-L") == 0) mode_list = 1;
+        else if (strcmp_simple(argv[i], "-b") == 0 && i + 1 < argc) broker = argv[++i];
+        else if (strcmp_simple(argv[i], "-t") == 0 && i + 1 < argc) topic = argv[++i];
+    }
+    if (mode_list) {
+        write_str(1, "Metadata for all topics (from broker ");
+        write_str(1, broker);
+        write_str(1, "):\n");
+        write_str(1, " 3 brokers:\n");
+        write_str(1, "  broker 1 at broker-1:9092\n");
+        write_str(1, "  broker 2 at broker-2:9092\n");
+        write_str(1, "  broker 3 at broker-3:9092 (controller)\n");
+        write_str(1, " 4 topics:\n");
+        write_str(1, "  topic \"events\" with 6 partitions:\n");
+        write_str(1, "    partition 0, leader 1, replicas: 1,2,3, isrs: 1,2,3\n");
+        write_str(1, "  topic \"logs\" with 3 partitions:\n");
+        write_str(1, "    partition 0, leader 2, replicas: 2,3,1, isrs: 2,3,1\n");
+        write_str(1, "  topic \"metrics\" with 12 partitions:\n");
+        write_str(1, "    partition 0, leader 3, replicas: 3,1,2, isrs: 3,1,2\n");
+        write_str(1, "  topic \"__consumer_offsets\" with 50 partitions:\n");
+        write_str(1, "    partition 0, leader 1, replicas: 1,2,3, isrs: 1,2,3\n");
+    } else if (mode_consume) {
+        if (!topic) { write_str(2, "Error: no topic specified (-t)\n"); return; }
+        write_str(1, "% Consuming from topic '");
+        write_str(1, topic);
+        write_str(1, "'\n");
+        write_str(1, "{\"event\":\"page_view\",\"user\":\"u_001\",\"ts\":1711627200}\n");
+        write_str(1, "{\"event\":\"click\",\"user\":\"u_002\",\"element\":\"buy_btn\",\"ts\":1711627201}\n");
+        write_str(1, "{\"event\":\"signup\",\"user\":\"u_003\",\"plan\":\"pro\",\"ts\":1711627202}\n");
+        write_str(1, "{\"event\":\"logout\",\"user\":\"u_001\",\"ts\":1711627210}\n");
+        write_str(1, "% Reached end of partition 0 at offset 4\n");
+    } else if (mode_produce) {
+        if (!topic) { write_str(2, "Error: no topic specified (-t)\n"); return; }
+        write_str(1, "% Producing to topic '");
+        write_str(1, topic);
+        write_str(1, "' (enter messages, Ctrl+D to exit)\n");
+        write_str(1, "% 0 messages produced\n");
+    } else {
+        write_str(2, "Error: no mode specified (-P, -C, or -L)\n");
+    }
+    (void)broker;
+}
+
+static void cmd_redis_benchmark(int argc, char *argv[]) {
+    if (argc >= 2 && strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "redis-benchmark - Redis server benchmark utility\n\n");
+        write_str(1, "Usage:\n");
+        write_str(1, "  redis-benchmark [OPTIONS]\n\n");
+        write_str(1, "Options:\n");
+        write_str(1, "  -h HOST       Server hostname (default: 127.0.0.1)\n");
+        write_str(1, "  -p PORT       Server port (default: 6379)\n");
+        write_str(1, "  -c CLIENTS    Number of parallel connections (default: 50)\n");
+        write_str(1, "  -n REQUESTS   Total number of requests (default: 100000)\n");
+        write_str(1, "  -d SIZE       Data size of SET/GET value in bytes (default: 3)\n");
+        write_str(1, "  -t TESTS      Comma-separated list of tests\n");
+        write_str(1, "  -q            Quiet mode, only show query/sec\n");
+        return;
+    }
+    if (argc >= 2 && strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "redis-benchmark 7.2.4\n");
+        return;
+    }
+    int quiet = 0;
+    int requests = 100000;
+    int clients = 50;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-q") == 0) quiet = 1;
+        else if (strcmp_simple(argv[i], "-n") == 0 && i + 1 < argc) requests = simple_atoi(argv[++i]);
+        else if (strcmp_simple(argv[i], "-c") == 0 && i + 1 < argc) clients = simple_atoi(argv[++i]);
+    }
+    (void)requests; (void)clients;
+    if (quiet) {
+        write_str(1, "PING_INLINE: 142857.14 requests per second, p50=0.175 msec\n");
+        write_str(1, "PING_MBULK: 149253.73 requests per second, p50=0.167 msec\n");
+        write_str(1, "SET: 135135.14 requests per second, p50=0.183 msec\n");
+        write_str(1, "GET: 147058.82 requests per second, p50=0.175 msec\n");
+        write_str(1, "INCR: 144927.54 requests per second, p50=0.175 msec\n");
+        write_str(1, "LPUSH: 133333.33 requests per second, p50=0.191 msec\n");
+        write_str(1, "RPUSH: 136986.30 requests per second, p50=0.183 msec\n");
+        write_str(1, "LPOP: 138888.89 requests per second, p50=0.183 msec\n");
+        write_str(1, "RPOP: 140845.07 requests per second, p50=0.183 msec\n");
+        write_str(1, "SADD: 147058.82 requests per second, p50=0.175 msec\n");
+        write_str(1, "HSET: 131578.95 requests per second, p50=0.191 msec\n");
+        write_str(1, "MSET (10 keys): 93457.94 requests per second, p50=0.295 msec\n");
+    } else {
+        write_str(1, "====== PING_INLINE ======\n");
+        write_str(1, "  100000 requests completed in 0.70 seconds\n");
+        write_str(1, "  50 parallel clients\n");
+        write_str(1, "  3 bytes payload\n");
+        write_str(1, "  keep alive: 1\n");
+        write_str(1, "  multi-thread: no\n\n");
+        write_str(1, "Latency by percentile distribution:\n");
+        write_str(1, "  0.000% <= 0.031 msec (cumulative count 1)\n");
+        write_str(1, "  50.000% <= 0.175 msec (cumulative count 52841)\n");
+        write_str(1, "  99.000% <= 0.399 msec (cumulative count 99012)\n");
+        write_str(1, "  99.900% <= 0.703 msec (cumulative count 99901)\n");
+        write_str(1, "  100.000% <= 1.103 msec (cumulative count 100000)\n\n");
+        write_str(1, "Summary:\n");
+        write_str(1, "  throughput: 142857.14 requests per second\n");
+        write_str(1, "  latency: avg 0.180 msec, p99 0.399 msec\n\n");
+        write_str(1, "====== SET ======\n");
+        write_str(1, "  100000 requests completed in 0.74 seconds\n");
+        write_str(1, "  50 parallel clients\n\n");
+        write_str(1, "Summary:\n");
+        write_str(1, "  throughput: 135135.14 requests per second\n");
+        write_str(1, "  latency: avg 0.190 msec, p99 0.431 msec\n\n");
+        write_str(1, "====== GET ======\n");
+        write_str(1, "  100000 requests completed in 0.68 seconds\n");
+        write_str(1, "  50 parallel clients\n\n");
+        write_str(1, "Summary:\n");
+        write_str(1, "  throughput: 147058.82 requests per second\n");
+        write_str(1, "  latency: avg 0.178 msec, p99 0.391 msec\n");
+    }
+}
+
+static void cmd_pgbench(int argc, char *argv[]) {
+    if (argc >= 2 && strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "pgbench - run a benchmark test on PostgreSQL\n\n");
+        write_str(1, "Usage:\n");
+        write_str(1, "  pgbench [OPTIONS] [DBNAME]\n\n");
+        write_str(1, "Initialization options:\n");
+        write_str(1, "  -i, --initialize     Initialize benchmark tables\n");
+        write_str(1, "  -s, --scale=NUM      Scaling factor (default: 1)\n\n");
+        write_str(1, "Benchmarking options:\n");
+        write_str(1, "  -c, --client=NUM     Number of concurrent clients (default: 1)\n");
+        write_str(1, "  -j, --jobs=NUM       Number of threads (default: 1)\n");
+        write_str(1, "  -t, --transactions=NUM  Number of transactions per client\n");
+        write_str(1, "  -T, --time=NUM       Duration of benchmark in seconds\n");
+        write_str(1, "  -S, --select-only    Perform SELECT-only transactions\n");
+        write_str(1, "  -N, --skip-update    Skip UPDATE of pgbench_tellers and pgbench_branches\n");
+        return;
+    }
+    if (argc >= 2 && strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "pgbench (PostgreSQL) 16.2\n");
+        return;
+    }
+    int init = 0;
+    int clients = 1;
+    int jobs = 1;
+    int transactions = 10;
+    int duration = 0;
+    int scale = 1;
+    int select_only = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-i") == 0 || strcmp_simple(argv[i], "--initialize") == 0) init = 1;
+        else if (strcmp_simple(argv[i], "-c") == 0 && i + 1 < argc) clients = simple_atoi(argv[++i]);
+        else if (strcmp_simple(argv[i], "-j") == 0 && i + 1 < argc) jobs = simple_atoi(argv[++i]);
+        else if (strcmp_simple(argv[i], "-t") == 0 && i + 1 < argc) transactions = simple_atoi(argv[++i]);
+        else if (strcmp_simple(argv[i], "-T") == 0 && i + 1 < argc) duration = simple_atoi(argv[++i]);
+        else if (strcmp_simple(argv[i], "-s") == 0 && i + 1 < argc) scale = simple_atoi(argv[++i]);
+        else if (strcmp_simple(argv[i], "-S") == 0 || strcmp_simple(argv[i], "--select-only") == 0) select_only = 1;
+    }
+    (void)jobs; (void)scale;
+    if (init) {
+        write_str(1, "dropping old tables...\n");
+        write_str(1, "creating tables...\n");
+        write_str(1, "generating data (client-side)...\n");
+        write_str(1, "100000 of 100000 tuples (100%) done\n");
+        write_str(1, "vacuuming...\n");
+        write_str(1, "creating primary keys...\n");
+        write_str(1, "done in 0.42 s (drop 0.01 s, create 0.02 s, generate 0.28 s, vacuum 0.06 s, primary keys 0.05 s).\n");
+        return;
+    }
+    write_str(1, "pgbench (PostgreSQL) 16.2\n");
+    write_str(1, "starting vacuum...end.\n");
+    if (select_only) {
+        write_str(1, "transaction type: <builtin: select only>\n");
+    } else {
+        write_str(1, "transaction type: <builtin: TPC-B (sort of)>\n");
+    }
+    write_str(1, "scaling factor: 1\n");
+    write_str(1, "query mode: simple\n");
+    char cbuf[12];
+    int ci = 0;
+    int cv = clients;
+    if (cv == 0) { cbuf[ci++] = '0'; } else {
+        char tmp[12]; int ti = 0;
+        while (cv > 0) { tmp[ti++] = (char)('0' + cv % 10); cv /= 10; }
+        for (int j = ti - 1; j >= 0; j--) cbuf[ci++] = tmp[j];
+    }
+    cbuf[ci] = '\0';
+    write_str(1, "number of clients: ");
+    write_str(1, cbuf);
+    write_str(1, "\n");
+    write_str(1, "number of threads: 1\n");
+    if (duration > 0) {
+        write_str(1, "duration: ");
+        char dbuf[12]; int di = 0;
+        int dv = duration;
+        if (dv == 0) { dbuf[di++] = '0'; } else {
+            char tmp[12]; int ti = 0;
+            while (dv > 0) { tmp[ti++] = (char)('0' + dv % 10); dv /= 10; }
+            for (int j = ti - 1; j >= 0; j--) dbuf[di++] = tmp[j];
+        }
+        dbuf[di] = '\0';
+        write_str(1, dbuf);
+        write_str(1, " s\n");
+    } else {
+        write_str(1, "number of transactions per client: ");
+        char tbuf[12]; int ti2 = 0;
+        int tv = transactions;
+        if (tv == 0) { tbuf[ti2++] = '0'; } else {
+            char tmp[12]; int ti = 0;
+            while (tv > 0) { tmp[ti++] = (char)('0' + tv % 10); tv /= 10; }
+            for (int j = ti - 1; j >= 0; j--) tbuf[ti2++] = tmp[j];
+        }
+        tbuf[ti2] = '\0';
+        write_str(1, tbuf);
+        write_str(1, "\n");
+        int total = clients * transactions;
+        write_str(1, "number of transactions actually processed: ");
+        char ntbuf[12]; int ni = 0;
+        if (total == 0) { ntbuf[ni++] = '0'; } else {
+            char tmp[12]; int ti = 0;
+            while (total > 0) { tmp[ti++] = (char)('0' + total % 10); total /= 10; }
+            for (int j = ti - 1; j >= 0; j--) ntbuf[ni++] = tmp[j];
+        }
+        ntbuf[ni] = '\0';
+        write_str(1, ntbuf);
+        write_str(1, "/");
+        write_str(1, ntbuf);
+        write_str(1, "\n");
+    }
+    write_str(1, "number of failed transactions: 0 (0.000%)\n");
+    write_str(1, "latency average = 1.284 ms\n");
+    write_str(1, "initial connection time = 3.412 ms\n");
+    write_str(1, "tps = 778.816424 (without initial connection time)\n");
 }
 
 #pragma GCC diagnostic pop

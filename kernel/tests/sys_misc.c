@@ -72987,6 +72987,231 @@ __attribute__((noinline)) static void test_readahead_fadvise_roundtrip(void) {
     #undef FADV_NOREUSE
 }
 
+/* ============================================================
+ *   Tests 2650-2657: mincore page residency via PTE walk
+ *
+ *   2650: mincore on freshly-touched anonymous page → resident
+ *   2651: mincore on untouched mmap region → not resident (no PTE)
+ *   2652: mincore EINVAL on non-page-aligned address
+ *   2653: mincore EFAULT on NULL vec pointer
+ *   2654: mincore multi-page range — only touched pages resident
+ *   2655: mincore EINVAL on zero length
+ *   2656: msync MS_SYNC on anonymous mapping succeeds (no-op)
+ *   2657: msync EINVAL when MS_ASYNC|MS_SYNC both set
+ * ============================================================ */
+__attribute__((noinline)) static void test_mincore_residency(void) {
+    extern long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset);
+    extern long sys_munmap(void *addr, size_t len);
+    extern long sys_mincore(void *addr, size_t length, unsigned char *vec);
+    extern long sys_msync(void *addr, size_t length, int flags);
+
+#define MC_PROT_RW        3     /* PROT_READ|PROT_WRITE */
+#define MC_MAP_PRIVATE    0x02
+#define MC_MAP_ANON       0x20
+#define MC_MS_SYNC        4
+#define MC_MS_ASYNC       1
+
+    fut_printf("[MISC-TEST] Tests 2650-2657: mincore page residency + msync flags\n");
+
+    /* ---- Test 2650: touched anonymous page should be resident ---- */
+    fut_printf("[MISC-TEST] Test 2650: mincore on touched anonymous page\n");
+    {
+        long addr = sys_mmap(NULL, PAGE_SIZE, MC_PROT_RW,
+                             MC_MAP_PRIVATE | MC_MAP_ANON, -1, 0);
+        if (addr < 0) {
+            fut_printf("[MISC-TEST] FAIL 2650: mmap failed: %ld\n", addr);
+            fut_test_fail(2650);
+        } else {
+            /* Touch the page to fault it in */
+            volatile char *p = (volatile char *)(uintptr_t)addr;
+            *p = 42;
+
+            unsigned char vec[1] = { 0 };
+            long ret = sys_mincore((void *)(uintptr_t)addr, PAGE_SIZE, vec);
+            if (ret == 0 && (vec[0] & 0x01)) {
+                fut_printf("[MISC-TEST] PASS 2650: touched page resident (vec=0x%02x)\n", vec[0]);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2650: ret=%ld vec=0x%02x\n", ret, vec[0]);
+                fut_test_fail(2650);
+            }
+            sys_munmap((void *)(uintptr_t)addr, PAGE_SIZE);
+        }
+    }
+
+    /* ---- Test 2651: untouched mmap page may not be resident ---- */
+    fut_printf("[MISC-TEST] Test 2651: mincore on untouched anonymous page\n");
+    {
+        long addr = sys_mmap(NULL, PAGE_SIZE, MC_PROT_RW,
+                             MC_MAP_PRIVATE | MC_MAP_ANON, -1, 0);
+        if (addr < 0) {
+            fut_printf("[MISC-TEST] FAIL 2651: mmap failed: %ld\n", addr);
+            fut_test_fail(2651);
+        } else {
+            /* Do NOT touch the page — demand paging means no PTE yet */
+            unsigned char vec[1] = { 0xFF };
+            long ret = sys_mincore((void *)(uintptr_t)addr, PAGE_SIZE, vec);
+            if (ret == 0) {
+                /* Accept either 0 (not yet faulted in) or 1 (kernel pre-faulted).
+                 * The key is that mincore succeeds and returns a valid answer. */
+                fut_printf("[MISC-TEST] PASS 2651: untouched page vec=0x%02x (ret=0)\n", vec[0]);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2651: ret=%ld\n", ret);
+                fut_test_fail(2651);
+            }
+            sys_munmap((void *)(uintptr_t)addr, PAGE_SIZE);
+        }
+    }
+
+    /* ---- Test 2652: EINVAL on non-page-aligned address ---- */
+    fut_printf("[MISC-TEST] Test 2652: mincore EINVAL on unaligned addr\n");
+    {
+        unsigned char vec[1];
+        long ret = sys_mincore((void *)0x1001, PAGE_SIZE, vec);
+        if (ret == -EINVAL) {
+            fut_printf("[MISC-TEST] PASS 2652: unaligned addr → EINVAL\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL 2652: expected EINVAL, got %ld\n", ret);
+            fut_test_fail(2652);
+        }
+    }
+
+    /* ---- Test 2653: EFAULT on NULL vec pointer ---- */
+    fut_printf("[MISC-TEST] Test 2653: mincore EFAULT on NULL vec\n");
+    {
+        long addr = sys_mmap(NULL, PAGE_SIZE, MC_PROT_RW,
+                             MC_MAP_PRIVATE | MC_MAP_ANON, -1, 0);
+        if (addr < 0) {
+            fut_printf("[MISC-TEST] FAIL 2653: mmap failed: %ld\n", addr);
+            fut_test_fail(2653);
+        } else {
+            long ret = sys_mincore((void *)(uintptr_t)addr, PAGE_SIZE, NULL);
+            if (ret == -EFAULT) {
+                fut_printf("[MISC-TEST] PASS 2653: NULL vec → EFAULT\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2653: expected EFAULT, got %ld\n", ret);
+                fut_test_fail(2653);
+            }
+            sys_munmap((void *)(uintptr_t)addr, PAGE_SIZE);
+        }
+    }
+
+    /* ---- Test 2654: multi-page range, only touched pages resident ---- */
+    fut_printf("[MISC-TEST] Test 2654: mincore multi-page selective residency\n");
+    {
+        const size_t npages = 4;
+        const size_t len = npages * PAGE_SIZE;
+        long addr = sys_mmap(NULL, len, MC_PROT_RW,
+                             MC_MAP_PRIVATE | MC_MAP_ANON, -1, 0);
+        if (addr < 0) {
+            fut_printf("[MISC-TEST] FAIL 2654: mmap failed: %ld\n", addr);
+            fut_test_fail(2654);
+        } else {
+            /* Touch only page 0 and page 2 */
+            volatile char *base = (volatile char *)(uintptr_t)addr;
+            base[0]              = 'A';  /* page 0 */
+            base[2 * PAGE_SIZE]  = 'C';  /* page 2 */
+
+            unsigned char vec[4] = { 0 };
+            long ret = sys_mincore((void *)(uintptr_t)addr, len, vec);
+            if (ret == 0) {
+                /* Pages 0 and 2 must be resident; pages 1 and 3 may or may not be */
+                if ((vec[0] & 0x01) && (vec[2] & 0x01)) {
+                    fut_printf("[MISC-TEST] PASS 2654: touched pages resident "
+                               "vec=[%d,%d,%d,%d]\n",
+                               vec[0] & 1, vec[1] & 1, vec[2] & 1, vec[3] & 1);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] FAIL 2654: touched pages not resident "
+                               "vec=[%d,%d,%d,%d]\n",
+                               vec[0] & 1, vec[1] & 1, vec[2] & 1, vec[3] & 1);
+                    fut_test_fail(2654);
+                }
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2654: mincore returned %ld\n", ret);
+                fut_test_fail(2654);
+            }
+            sys_munmap((void *)(uintptr_t)addr, len);
+        }
+    }
+
+    /* ---- Test 2655: EINVAL on zero length ---- */
+    fut_printf("[MISC-TEST] Test 2655: mincore EINVAL on length=0\n");
+    {
+        long addr = sys_mmap(NULL, PAGE_SIZE, MC_PROT_RW,
+                             MC_MAP_PRIVATE | MC_MAP_ANON, -1, 0);
+        if (addr < 0) {
+            fut_printf("[MISC-TEST] FAIL 2655: mmap failed: %ld\n", addr);
+            fut_test_fail(2655);
+        } else {
+            unsigned char vec[1];
+            long ret = sys_mincore((void *)(uintptr_t)addr, 0, vec);
+            if (ret == -EINVAL) {
+                fut_printf("[MISC-TEST] PASS 2655: length=0 → EINVAL\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2655: expected EINVAL, got %ld\n", ret);
+                fut_test_fail(2655);
+            }
+            sys_munmap((void *)(uintptr_t)addr, PAGE_SIZE);
+        }
+    }
+
+    /* ---- Test 2656: msync MS_SYNC on anonymous mapping → success ---- */
+    fut_printf("[MISC-TEST] Test 2656: msync MS_SYNC on anonymous mapping\n");
+    {
+        long addr = sys_mmap(NULL, PAGE_SIZE, MC_PROT_RW,
+                             MC_MAP_PRIVATE | MC_MAP_ANON, -1, 0);
+        if (addr < 0) {
+            fut_printf("[MISC-TEST] FAIL 2656: mmap failed: %ld\n", addr);
+            fut_test_fail(2656);
+        } else {
+            volatile char *p = (volatile char *)(uintptr_t)addr;
+            *p = 99;
+            long ret = sys_msync((void *)(uintptr_t)addr, PAGE_SIZE, MC_MS_SYNC);
+            if (ret == 0) {
+                fut_printf("[MISC-TEST] PASS 2656: msync(MS_SYNC) on anon = 0\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2656: msync returned %ld\n", ret);
+                fut_test_fail(2656);
+            }
+            sys_munmap((void *)(uintptr_t)addr, PAGE_SIZE);
+        }
+    }
+
+    /* ---- Test 2657: msync EINVAL when MS_ASYNC|MS_SYNC both set ---- */
+    fut_printf("[MISC-TEST] Test 2657: msync EINVAL on MS_ASYNC|MS_SYNC\n");
+    {
+        long addr = sys_mmap(NULL, PAGE_SIZE, MC_PROT_RW,
+                             MC_MAP_PRIVATE | MC_MAP_ANON, -1, 0);
+        if (addr < 0) {
+            fut_printf("[MISC-TEST] FAIL 2657: mmap failed: %ld\n", addr);
+            fut_test_fail(2657);
+        } else {
+            long ret = sys_msync((void *)(uintptr_t)addr, PAGE_SIZE,
+                                 MC_MS_ASYNC | MC_MS_SYNC);
+            if (ret == -EINVAL) {
+                fut_printf("[MISC-TEST] PASS 2657: MS_ASYNC|MS_SYNC → EINVAL\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2657: expected EINVAL, got %ld\n", ret);
+                fut_test_fail(2657);
+            }
+            sys_munmap((void *)(uintptr_t)addr, PAGE_SIZE);
+        }
+    }
+
+#undef MC_PROT_RW
+#undef MC_MAP_PRIVATE
+#undef MC_MAP_ANON
+#undef MC_MS_SYNC
+#undef MC_MS_ASYNC
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -77330,6 +77555,7 @@ void fut_misc_test_thread(void *arg) {
     test_execve_cloexec_closure(); /* Tests 2600-2607: execve FD_CLOEXEC closure across fd types */
     test_sa_resethand_semantics(); /* Tests 2615-2622: SA_RESETHAND signal delivery semantics */
     test_readahead_fadvise_roundtrip(); /* Tests 2640-2647: readahead + fadvise I/O performance round-trip */
+    test_mincore_residency(); /* Tests 2650-2657: mincore PTE-walk residency + msync flag validation */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

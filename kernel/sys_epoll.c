@@ -769,6 +769,8 @@ long sys_epoll_create1(int flags) {
  * Phase 4 (Completed): Performance optimization with memory pooling
  */
 long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
+    epoll_ensure_init();
+
     /* Validate fd is non-negative early */
     if (fd < 0) {
         fut_printf("[EPOLL_CTL] epoll_ctl(epfd=%d, op=%d, fd=%d) -> EBADF (fd is negative)\n",
@@ -987,9 +989,12 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
         return -EBADF;
     }
 
-    /* Get the epoll set */
+    /* Get the epoll set (under lock for thread safety) */
+    fut_spinlock_acquire(&epoll_lock);
     struct epoll_set *set = epoll_get_set(epfd);
     if (!set) {
+        fut_spinlock_release(&epoll_lock);
+
         char msg[256];
         int pos = 0;
         const char *text = "[EPOLL_CTL] epoll_ctl(epfd=";
@@ -1027,6 +1032,7 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
 
         return -EBADF;
     }
+    /* Lock remains held through the switch statement below */
 
     /* Copy event structure from user space (or kernel space) for ADD/MOD */
     struct epoll_event ev;

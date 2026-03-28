@@ -149,6 +149,7 @@ static void cmd_patch(int argc, char *argv[]);
 static void cmd_sha1sum(int argc, char *argv[]);
 static void cmd_vi(int argc, char *argv[]);
 static void cmd_make(int argc, char *argv[]);
+static void cmd_git(int argc, char *argv[]);
 static void strcpy_simple(char *dest, const char *src);
 
 /* Forward declaration for prompt */
@@ -8306,6 +8307,9 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "make") == 0) {
         cmd_make(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "git") == 0) {
+        cmd_git(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "free") == 0) {
         cmd_free(argc, argv);
         return 0;
@@ -11360,6 +11364,7 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "reset") == 0 ||
             strcmp_simple(cmd, "tput") == 0 ||
             strcmp_simple(cmd, "make") == 0 ||
+            strcmp_simple(cmd, "git") == 0 ||
             0);
 }
 
@@ -14113,6 +14118,445 @@ static int make_build(const char *target, struct make_target *targets, int ntarg
         }
     }
     return 0;
+}
+
+/* ── git: minimal git implementation ── */
+
+/* Compute SHA-1 hex digest of a buffer into out[41] */
+static void git_sha1_buf(const unsigned char *data, size_t len, char *out) {
+    uint32_t h0 = 0x67452301, h1 = 0xEFCDAB89, h2 = 0x98BADCFE;
+    uint32_t h3 = 0x10325476, h4 = 0xC3D2E1F0;
+    unsigned char blk[64];
+    int blk_len = 0;
+    uint64_t total_bits = (uint64_t)len * 8;
+
+    #define GIT_ROTL(v,n) (((v)<<(n))|((v)>>(32-(n))))
+    #define GIT_BLOCK() do { \
+        uint32_t w[80]; \
+        for (int i = 0; i < 16; i++) \
+            w[i] = ((uint32_t)blk[i*4]<<24)|((uint32_t)blk[i*4+1]<<16)| \
+                    ((uint32_t)blk[i*4+2]<<8)|((uint32_t)blk[i*4+3]); \
+        for (int i = 16; i < 80; i++) \
+            w[i] = GIT_ROTL(w[i-3]^w[i-8]^w[i-14]^w[i-16], 1); \
+        uint32_t a=h0, b=h1, c=h2, d=h3, e=h4; \
+        for (int i = 0; i < 80; i++) { \
+            uint32_t fv, k; \
+            if (i < 20) { fv=(b&c)|((~b)&d); k=0x5A827999; } \
+            else if (i < 40) { fv=b^c^d; k=0x6ED9EBA1; } \
+            else if (i < 60) { fv=(b&c)|(b&d)|(c&d); k=0x8F1BBCDC; } \
+            else { fv=b^c^d; k=0xCA62C1D6; } \
+            uint32_t tmp = GIT_ROTL(a,5)+fv+e+k+w[i]; \
+            e=d; d=c; c=GIT_ROTL(b,30); b=a; a=tmp; \
+        } \
+        h0+=a; h1+=b; h2+=c; h3+=d; h4+=e; \
+    } while(0)
+
+    for (size_t i = 0; i < len; i++) {
+        blk[blk_len++] = data[i];
+        if (blk_len == 64) { GIT_BLOCK(); blk_len = 0; }
+    }
+    blk[blk_len++] = 0x80;
+    if (blk_len > 56) {
+        while (blk_len < 64) blk[blk_len++] = 0;
+        GIT_BLOCK(); blk_len = 0;
+    }
+    while (blk_len < 56) blk[blk_len++] = 0;
+    for (int i = 7; i >= 0; i--)
+        blk[blk_len++] = (unsigned char)(total_bits >> (i * 8));
+    GIT_BLOCK();
+    #undef GIT_ROTL
+    #undef GIT_BLOCK
+
+    static const char hex[] = "0123456789abcdef";
+    uint32_t hv[5] = {h0, h1, h2, h3, h4};
+    for (int i = 0; i < 5; i++) {
+        out[i*8+0] = hex[(hv[i]>>28)&0xF]; out[i*8+1] = hex[(hv[i]>>24)&0xF];
+        out[i*8+2] = hex[(hv[i]>>20)&0xF]; out[i*8+3] = hex[(hv[i]>>16)&0xF];
+        out[i*8+4] = hex[(hv[i]>>12)&0xF]; out[i*8+5] = hex[(hv[i]>> 8)&0xF];
+        out[i*8+6] = hex[(hv[i]>> 4)&0xF]; out[i*8+7] = hex[(hv[i]>> 0)&0xF];
+    }
+    out[40] = '\0';
+}
+
+/* Write plaintext object to .git/objects/XX/YYYY... */
+static int git_store_object(const char *hash, const char *content, size_t clen) {
+    char path[128];
+    strcpy_simple(path, ".git/objects/");
+    path[13] = hash[0]; path[14] = hash[1]; path[15] = '\0';
+    sys_mkdir(path, 0755);
+    path[15] = '/';
+    for (int i = 2; hash[i]; i++) path[14 + i] = hash[i];
+    path[14 + (int)strlen_simple(hash)] = '\0';
+    int fd = sys_open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) return -1;
+    sys_write(fd, content, clen);
+    sys_close(fd);
+    return 0;
+}
+
+/* Read entire file into buf, return bytes read (-1 on error) */
+static ssize_t git_read_file(const char *path, char *buf, size_t max) {
+    int fd = sys_open(path, O_RDONLY, 0);
+    if (fd < 0) return -1;
+    ssize_t total = 0, nr;
+    while (total < (ssize_t)max && (nr = sys_read(fd, buf + total, max - total)) > 0)
+        total += nr;
+    sys_close(fd);
+    return total;
+}
+
+/* Write string to file (create/truncate) */
+static int git_write_file(const char *path, const char *data, size_t len) {
+    int fd = sys_open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) return -1;
+    sys_write(fd, data, len);
+    sys_close(fd);
+    return 0;
+}
+
+static void cmd_git(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: git <init|add|status|commit|log>\n");
+        return;
+    }
+
+    /* --- git init --- */
+    if (strcmp_simple(argv[1], "init") == 0) {
+        sys_mkdir(".git", 0755);
+        sys_mkdir(".git/objects", 0755);
+        sys_mkdir(".git/refs", 0755);
+        sys_mkdir(".git/refs/heads", 0755);
+        git_write_file(".git/HEAD", "ref: refs/heads/master\n", 23);
+        write_str(1, "Initialized empty Git repository in .git/\n");
+        return;
+    }
+
+    /* --- git add <file> --- */
+    if (strcmp_simple(argv[1], "add") == 0) {
+        if (argc < 3) { write_str(2, "usage: git add <file>\n"); return; }
+        for (int a = 2; a < argc; a++) {
+            static char fbuf[32768];
+            ssize_t flen = git_read_file(argv[a], fbuf, sizeof(fbuf));
+            if (flen < 0) {
+                write_str(2, "git: cannot read "); write_str(2, argv[a]); write_str(2, "\n");
+                continue;
+            }
+            /* Create blob: "blob <size>\0<content>" */
+            char header[64];
+            int hlen = 0;
+            const char *pre = "blob ";
+            for (int i = 0; pre[i]; i++) header[hlen++] = pre[i];
+            /* itoa for size */
+            char numbuf[20]; int ni = 0;
+            size_t sz = (size_t)flen;
+            if (sz == 0) numbuf[ni++] = '0';
+            else { size_t t = sz; while (t) { numbuf[ni++] = '0' + (t % 10); t /= 10; } }
+            for (int i = ni - 1; i >= 0; i--) header[hlen++] = numbuf[i];
+            header[hlen++] = '\0'; /* NUL separator */
+
+            /* Hash the full blob (header + content) */
+            static char blob[33000];
+            for (int i = 0; i < hlen; i++) blob[i] = header[i];
+            for (ssize_t i = 0; i < flen; i++) blob[hlen + i] = fbuf[i];
+            char hash[41];
+            git_sha1_buf((unsigned char *)blob, hlen + flen, hash);
+
+            /* Store object */
+            git_store_object(hash, blob, hlen + flen);
+
+            /* Update index: append "hash filename\n" */
+            /* First check if file already in index, rewrite without old entry */
+            static char idx[16384];
+            ssize_t ilen = git_read_file(".git/index", idx, sizeof(idx) - 200);
+            if (ilen < 0) ilen = 0;
+            /* Remove existing entry for this file */
+            static char newidx[16384];
+            int nlen = 0;
+            int li = 0;
+            while (li < ilen) {
+                int le = li;
+                while (le < ilen && idx[le] != '\n') le++;
+                /* line is idx[li..le-1], find filename after space */
+                int sp = li;
+                while (sp < le && idx[sp] != ' ') sp++;
+                int match = 0;
+                if (sp < le) {
+                    const char *fn = argv[a];
+                    int fi = 0, si = sp + 1;
+                    while (si < le && fn[fi] && idx[si] == fn[fi]) { si++; fi++; }
+                    if (si == le && fn[fi] == '\0') match = 1;
+                }
+                if (!match) {
+                    for (int i = li; i < le; i++) newidx[nlen++] = idx[i];
+                    newidx[nlen++] = '\n';
+                }
+                li = le + 1;
+            }
+            /* Append new entry */
+            for (int i = 0; i < 40; i++) newidx[nlen++] = hash[i];
+            newidx[nlen++] = ' ';
+            for (int i = 0; argv[a][i]; i++) newidx[nlen++] = argv[a][i];
+            newidx[nlen++] = '\n';
+            git_write_file(".git/index", newidx, nlen);
+        }
+        return;
+    }
+
+    /* --- git status --- */
+    if (strcmp_simple(argv[1], "status") == 0) {
+        /* Read index for tracked files */
+        static char idx[16384];
+        ssize_t ilen = git_read_file(".git/index", idx, sizeof(idx));
+        if (ilen < 0) ilen = 0;
+
+        /* Collect tracked filenames */
+        static char tracked[128][64];
+        int tc = 0;
+        int li = 0;
+        while (li < ilen && tc < 128) {
+            int le = li;
+            while (le < ilen && idx[le] != '\n') le++;
+            int sp = li;
+            while (sp < le && idx[sp] != ' ') sp++;
+            if (sp < le) {
+                int fi = 0;
+                for (int i = sp + 1; i < le && fi < 63; i++) tracked[tc][fi++] = idx[i];
+                tracked[tc][fi] = '\0';
+                tc++;
+            }
+            li = le + 1;
+        }
+
+        /* List working directory files */
+        int dfd = sys_open(".", O_RDONLY, 0);
+        if (dfd < 0) { write_str(2, "git: cannot read directory\n"); return; }
+        static char dbuf[4096];
+        ssize_t nr;
+        static char ut_names[128][64];
+        int utc = 0;
+        static char mod_names[128][64];
+        int modc = 0;
+
+        while ((nr = sys_getdents64(dfd, dbuf, sizeof(dbuf))) > 0) {
+            ssize_t pos = 0;
+            while (pos < nr) {
+                uint16_t reclen = *(uint16_t *)(dbuf + pos + 16);
+                char *name = dbuf + pos + 19;
+                if (name[0] == '.' || strcmp_simple(name, "..") == 0) { pos += reclen; continue; }
+                /* Check if tracked */
+                int found = 0;
+                for (int i = 0; i < tc; i++) {
+                    if (strcmp_simple(name, tracked[i]) == 0) { found = 1; break; }
+                }
+                if (!found && utc < 128) {
+                    strcpy_simple(ut_names[utc++], name);
+                } else if (found && modc < 128) {
+                    strcpy_simple(mod_names[modc++], name);
+                }
+                pos += reclen;
+            }
+        }
+        sys_close(dfd);
+
+        if (modc > 0) {
+            write_str(1, "Changes to be committed:\n");
+            for (int i = 0; i < modc; i++) {
+                write_str(1, "\ttracked:  ");
+                write_str(1, mod_names[i]);
+                write_str(1, "\n");
+            }
+            write_str(1, "\n");
+        }
+        if (utc > 0) {
+            write_str(1, "Untracked files:\n");
+            for (int i = 0; i < utc; i++) {
+                write_str(1, "\t");
+                write_str(1, ut_names[i]);
+                write_str(1, "\n");
+            }
+        }
+        if (modc == 0 && utc == 0)
+            write_str(1, "nothing to commit, working tree clean\n");
+        return;
+    }
+
+    /* --- git commit -m "message" --- */
+    if (strcmp_simple(argv[1], "commit") == 0) {
+        const char *msg = "no message";
+        if (argc >= 4 && strcmp_simple(argv[2], "-m") == 0) msg = argv[3];
+
+        /* Read index */
+        static char idx[16384];
+        ssize_t ilen = git_read_file(".git/index", idx, sizeof(idx));
+        if (ilen <= 0) { write_str(2, "nothing to commit\n"); return; }
+
+        /* Build tree object: "tree <size>\0<index contents>" */
+        static char tree[17000];
+        const char *tp = "tree ";
+        int tlen = 0;
+        for (int i = 0; tp[i]; i++) tree[tlen++] = tp[i];
+        char numbuf[20]; int ni = 0; size_t sz = (size_t)ilen;
+        if (sz == 0) numbuf[ni++] = '0';
+        else { size_t t = sz; while (t) { numbuf[ni++] = '0' + (t % 10); t /= 10; } }
+        for (int i = ni - 1; i >= 0; i--) tree[tlen++] = numbuf[i];
+        tree[tlen++] = '\0';
+        for (ssize_t i = 0; i < ilen; i++) tree[tlen + i] = idx[i];
+        char tree_hash[41];
+        git_sha1_buf((unsigned char *)tree, tlen + ilen, tree_hash);
+        git_store_object(tree_hash, tree, tlen + ilen);
+
+        /* Read current HEAD to find parent */
+        static char headbuf[256];
+        ssize_t hlen = git_read_file(".git/HEAD", headbuf, sizeof(headbuf));
+        char parent[41] = {0};
+        int has_parent = 0;
+        if (hlen > 5 && headbuf[0] == 'r' && headbuf[1] == 'e' && headbuf[2] == 'f') {
+            /* Symbolic ref: "ref: refs/heads/master\n" */
+            int rs = 5; while (rs < hlen && headbuf[rs] == ' ') rs++;
+            char refpath[128] = ".git/";
+            int ri = 5;
+            for (int i = rs; i < hlen && headbuf[i] != '\n' && ri < 126; i++)
+                refpath[ri++] = headbuf[i];
+            refpath[ri] = '\0';
+            static char refval[64];
+            ssize_t rl = git_read_file(refpath, refval, sizeof(refval));
+            if (rl >= 40) { for (int i = 0; i < 40; i++) parent[i] = refval[i]; parent[40] = '\0'; has_parent = 1; }
+        }
+
+        /* Build commit object */
+        static char commit_buf[2048];
+        int clen = 0;
+        const char *s;
+        s = "tree "; for (int i = 0; s[i]; i++) commit_buf[clen++] = s[i];
+        for (int i = 0; i < 40; i++) commit_buf[clen++] = tree_hash[i];
+        commit_buf[clen++] = '\n';
+        if (has_parent) {
+            s = "parent "; for (int i = 0; s[i]; i++) commit_buf[clen++] = s[i];
+            for (int i = 0; i < 40; i++) commit_buf[clen++] = parent[i];
+            commit_buf[clen++] = '\n';
+        }
+        s = "author futura <futura@os> 0 +0000\n";
+        for (int i = 0; s[i]; i++) commit_buf[clen++] = s[i];
+        s = "committer futura <futura@os> 0 +0000\n\n";
+        for (int i = 0; s[i]; i++) commit_buf[clen++] = s[i];
+        for (int i = 0; msg[i]; i++) commit_buf[clen++] = msg[i];
+        commit_buf[clen++] = '\n';
+
+        /* Hash as commit object: "commit <size>\0<content>" */
+        static char full[2200];
+        int flen = 0;
+        s = "commit "; for (int i = 0; s[i]; i++) full[flen++] = s[i];
+        ni = 0; sz = (size_t)clen;
+        if (sz == 0) numbuf[ni++] = '0';
+        else { size_t t = sz; while (t) { numbuf[ni++] = '0' + (t % 10); t /= 10; } }
+        for (int i = ni - 1; i >= 0; i--) full[flen++] = numbuf[i];
+        full[flen++] = '\0';
+        for (int i = 0; i < clen; i++) full[flen + i] = commit_buf[i];
+        char commit_hash[41];
+        git_sha1_buf((unsigned char *)full, flen + clen, commit_hash);
+        git_store_object(commit_hash, full, flen + clen);
+
+        /* Update HEAD ref */
+        if (hlen > 5 && headbuf[0] == 'r') {
+            int rs = 5; while (rs < hlen && headbuf[rs] == ' ') rs++;
+            char refpath[128] = ".git/";
+            int ri = 5;
+            for (int i = rs; i < hlen && headbuf[i] != '\n' && ri < 126; i++)
+                refpath[ri++] = headbuf[i];
+            refpath[ri] = '\0';
+            char hashln[42];
+            for (int i = 0; i < 40; i++) hashln[i] = commit_hash[i];
+            hashln[40] = '\n'; hashln[41] = '\0';
+            git_write_file(refpath, hashln, 41);
+        }
+
+        write_str(1, "[master ");
+        char short_hash[8];
+        for (int i = 0; i < 7; i++) short_hash[i] = commit_hash[i];
+        short_hash[7] = '\0';
+        write_str(1, short_hash);
+        write_str(1, "] ");
+        write_str(1, msg);
+        write_str(1, "\n");
+        return;
+    }
+
+    /* --- git log --- */
+    if (strcmp_simple(argv[1], "log") == 0) {
+        static char headbuf[256];
+        ssize_t hlen = git_read_file(".git/HEAD", headbuf, sizeof(headbuf));
+        if (hlen <= 0) { write_str(2, "fatal: not a git repository\n"); return; }
+
+        char cur_hash[41] = {0};
+        if (headbuf[0] == 'r') {
+            int rs = 5; while (rs < hlen && headbuf[rs] == ' ') rs++;
+            char refpath[128] = ".git/";
+            int ri = 5;
+            for (int i = rs; i < hlen && headbuf[i] != '\n' && ri < 126; i++)
+                refpath[ri++] = headbuf[i];
+            refpath[ri] = '\0';
+            static char refval[64];
+            ssize_t rl = git_read_file(refpath, refval, sizeof(refval));
+            if (rl < 40) { write_str(1, "No commits yet\n"); return; }
+            for (int i = 0; i < 40; i++) cur_hash[i] = refval[i];
+            cur_hash[40] = '\0';
+        }
+
+        /* Walk commit chain */
+        for (int depth = 0; depth < 50 && cur_hash[0]; depth++) {
+            /* Read object file */
+            char opath[128] = ".git/objects/";
+            opath[13] = cur_hash[0]; opath[14] = cur_hash[1]; opath[15] = '/';
+            for (int i = 2; i < 40; i++) opath[14 + i] = cur_hash[i];
+            opath[54] = '\0';
+            static char obj[2200];
+            ssize_t olen = git_read_file(opath, obj, sizeof(obj));
+            if (olen <= 0) break;
+
+            /* Skip "commit <size>\0" header */
+            int ci = 0;
+            while (ci < olen && obj[ci] != '\0') ci++;
+            ci++; /* skip NUL */
+
+            write_str(1, "commit ");
+            write_str(1, cur_hash);
+            write_str(1, "\n");
+
+            /* Parse commit body for parent and message */
+            char next_parent[41] = {0};
+            int mi = ci;
+            while (mi < olen) {
+                if (mi + 7 < olen && obj[mi] == 'p' && obj[mi+1] == 'a' &&
+                    obj[mi+2] == 'r' && obj[mi+3] == 'e' && obj[mi+4] == 'n' &&
+                    obj[mi+5] == 't' && obj[mi+6] == ' ') {
+                    for (int i = 0; i < 40 && mi + 7 + i < olen; i++)
+                        next_parent[i] = obj[mi + 7 + i];
+                    next_parent[40] = '\0';
+                }
+                if (obj[mi] == '\n' && mi + 1 < olen && obj[mi+1] == '\n') {
+                    mi += 2; /* skip blank line before message */
+                    write_str(1, "    ");
+                    while (mi < olen && obj[mi] != '\n') { write_char(1, obj[mi]); mi++; }
+                    write_str(1, "\n\n");
+                    break;
+                }
+                while (mi < olen && obj[mi] != '\n') mi++;
+                if (mi < olen) mi++;
+            }
+
+            /* Follow parent */
+            if (next_parent[0]) {
+                for (int i = 0; i < 41; i++) cur_hash[i] = next_parent[i];
+            } else {
+                cur_hash[0] = '\0';
+            }
+        }
+        return;
+    }
+
+    write_str(2, "git: unknown command '");
+    write_str(2, argv[1]);
+    write_str(2, "'\n");
 }
 
 static void cmd_make(int argc, char *argv[]) {

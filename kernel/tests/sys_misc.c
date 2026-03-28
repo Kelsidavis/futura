@@ -27240,12 +27240,12 @@ static void test_sysfs_basic(void) {
             sys_close(fd);
             if (n > 0) {
                 buf[n] = '\0';
-                /* Must contain "[never]" */
+                /* Must contain "[madvise]" (default THP policy) */
                 int found = 0;
-                for (long i = 0; i + 6 < n; i++) {
-                    if (buf[i] == '[' && buf[i+1] == 'n' && buf[i+2] == 'e' &&
-                        buf[i+3] == 'v' && buf[i+4] == 'e' && buf[i+5] == 'r' &&
-                        buf[i+6] == ']') {
+                for (long i = 0; i + 8 < n; i++) {
+                    if (buf[i] == '[' && buf[i+1] == 'm' && buf[i+2] == 'a' &&
+                        buf[i+3] == 'd' && buf[i+4] == 'v' && buf[i+5] == 'i' &&
+                        buf[i+6] == 's' && buf[i+7] == 'e' && buf[i+8] == ']') {
                         found = 1; break;
                     }
                 }
@@ -27253,7 +27253,7 @@ static void test_sysfs_basic(void) {
                     fut_printf("[MISC-TEST] PASS 515: thp/enabled = \"%s\"\n", buf);
                     fut_test_pass();
                 } else {
-                    fut_printf("[MISC-TEST] FAIL 515: expected [never], got \"%s\"\n", buf);
+                    fut_printf("[MISC-TEST] FAIL 515: expected [madvise], got \"%s\"\n", buf);
                     fut_test_fail(515);
                 }
             } else {

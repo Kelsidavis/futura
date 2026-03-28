@@ -895,13 +895,28 @@ static int build_user_stack(fut_mm_t *mm,
 static bool g_stack_exec = false;
 
 static int stage_stack_pages(fut_mm_t *mm, uint64_t *out_stack_top) {
-    uint64_t base = USER_STACK_TOP - (uint64_t)USER_STACK_PAGES * PAGE_SIZE;
-    uint8_t *pages[USER_STACK_PAGES];
-    for (size_t i = 0; i < USER_STACK_PAGES; ++i) {
+    /* Enforce RLIMIT_STACK: use the task's soft stack limit to determine
+     * stack size, capped at USER_STACK_PAGES * PAGE_SIZE.  A minimum of
+     * 4 pages (16 KB) is always allocated so the process can start. */
+    size_t stack_pages = USER_STACK_PAGES;
+    fut_task_t *stask = fut_task_current();
+    if (stask) {
+        uint64_t rlim_stack = stask->rlimits[3].rlim_cur; /* RLIMIT_STACK = 3 */
+        if (rlim_stack != (uint64_t)-1 && rlim_stack > 0) {
+            size_t rlim_pages = (size_t)((rlim_stack + PAGE_SIZE - 1) / PAGE_SIZE);
+            if (rlim_pages < 4) rlim_pages = 4;  /* Minimum 4 pages */
+            if (rlim_pages < stack_pages)
+                stack_pages = rlim_pages;
+        }
+    }
+
+    uint64_t base = USER_STACK_TOP - (uint64_t)stack_pages * PAGE_SIZE;
+    uint8_t *pages[USER_STACK_PAGES];  /* max-sized array for stack */
+    for (size_t i = 0; i < stack_pages; ++i) {
         pages[i] = NULL;
     }
 
-    for (size_t i = 0; i < USER_STACK_PAGES; ++i) {
+    for (size_t i = 0; i < stack_pages; ++i) {
         uint8_t *page = fut_pmm_alloc_page();
         if (!page) {
             for (size_t j = 0; j < i; ++j) {
@@ -2437,15 +2452,30 @@ static int stage_stack_pages(fut_mm_t *mm, uint64_t *out_stack_top) {
     fut_serial_puts("[STACK] stage_stack_pages() called\n");
 #endif
 
+    /* Enforce RLIMIT_STACK: use the task's soft stack limit to determine
+     * stack size, capped at USER_STACK_PAGES * PAGE_SIZE.  A minimum of
+     * 4 pages is always allocated so the process can start. */
+    size_t stack_pages = USER_STACK_PAGES;
+    fut_task_t *stask = fut_task_current();
+    if (stask) {
+        uint64_t rlim_stack = stask->rlimits[3].rlim_cur; /* RLIMIT_STACK = 3 */
+        if (rlim_stack != (uint64_t)-1 && rlim_stack > 0) {
+            size_t rlim_pages = (size_t)((rlim_stack + PAGE_SIZE - 1) / PAGE_SIZE);
+            if (rlim_pages < 4) rlim_pages = 4;  /* Minimum 4 pages */
+            if (rlim_pages < stack_pages)
+                stack_pages = rlim_pages;
+        }
+    }
+
     fut_vmem_context_t *vmem = fut_mm_context(mm);
-    uint64_t stack_addr = USER_STACK_TOP - (USER_STACK_PAGES * PAGE_SIZE);
+    uint64_t stack_addr = USER_STACK_TOP - (stack_pages * PAGE_SIZE);
 
 #ifdef DEBUG_ELF
-    fut_printf("[STACK] Mapping stack: start=0x%llx end=0x%llx pages=%d\n",
-               (unsigned long long)stack_addr, (unsigned long long)USER_STACK_TOP, (int)USER_STACK_PAGES);
+    fut_printf("[STACK] Mapping stack: start=0x%llx end=0x%llx pages=%zu\n",
+               (unsigned long long)stack_addr, (unsigned long long)USER_STACK_TOP, stack_pages);
 #endif
 
-    for (size_t i = 0; i < USER_STACK_PAGES; i++) {
+    for (size_t i = 0; i < stack_pages; i++) {
         uint64_t page_addr = stack_addr + (i * PAGE_SIZE);
         void *page = fut_pmm_alloc_page();
         if (!page) {
@@ -2461,17 +2491,17 @@ static int stage_stack_pages(fut_mm_t *mm, uint64_t *out_stack_top) {
             return -EFAULT;
         }
 
-        if (i == 0 || i == USER_STACK_PAGES - 1) {
+        if (i == 0 || i == stack_pages - 1) {
 #ifdef DEBUG_ELF
-            fut_printf("[STACK] Mapped page %d: vaddr=0x%llx phys=0x%llx\n",
-                       (int)i, (unsigned long long)page_addr, (unsigned long long)phys);
+            fut_printf("[STACK] Mapped page %zu: vaddr=0x%llx phys=0x%llx\n",
+                       i, (unsigned long long)page_addr, (unsigned long long)phys);
 #endif
         }
     }
 
 #ifdef DEBUG_ELF
-    fut_printf("[STACK] Successfully staged %d stack pages, stack_top=0x%llx\n",
-               (int)USER_STACK_PAGES, (unsigned long long)USER_STACK_TOP);
+    fut_printf("[STACK] Successfully staged %zu stack pages, stack_top=0x%llx\n",
+               stack_pages, (unsigned long long)USER_STACK_TOP);
 #endif
 
     /* Register the stack VMA so it appears as [stack] in /proc/pid/maps */

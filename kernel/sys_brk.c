@@ -493,6 +493,24 @@ long sys_brk(uintptr_t new_break) {
                 return -ENOMEM;
             }
         }
+
+        /* RLIMIT_AS: total virtual address space limit (resource index 9).
+         * Linux enforces this in both mmap and brk paths. Sum all current
+         * VMA sizes plus the brk expansion to check the limit. */
+        uint64_t rlim_as = task->rlimits[9].rlim_cur; /* RLIMIT_AS = 9 */
+        if (rlim_as != (uint64_t)-1) {
+            uint64_t total_vsize = 0;
+            for (struct fut_vma *vma = mm->vma_list; vma; vma = vma->next)
+                total_vsize += vma->end - vma->start;
+            uint64_t expansion = local_new_break - current;
+            if (total_vsize + expansion > rlim_as) {
+                brk_printf("[BRK] brk(new_break=0x%lx) -> ENOMEM (RLIMIT_AS exceeded: "
+                           "total_vs=0x%llx + expand=0x%llx > limit=0x%llx, ARM64)\n",
+                           local_new_break, (unsigned long long)total_vsize,
+                           (unsigned long long)expansion, (unsigned long long)rlim_as);
+                return -ENOMEM;
+            }
+        }
     }
 
     /* No-op check */

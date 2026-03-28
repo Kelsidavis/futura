@@ -4637,14 +4637,17 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             __builtin_memcpy(tmp, kconfig, total);
             break;
         }
-        case PROC_LOCKS:
+        case PROC_LOCKS: {
             /* /proc/locks — file lock table.
-             * Futura's file locking is per-vnode (not globally enumerable).
-             * Return empty content: no locks registered with the central lock manager.
-             * Format when locks exist: "N: POSIX  ADVISORY  WRITE PID DEV:INO START END\n"
-             * Empty file is valid and accepted by all callers (lsof, procps, etc.). */
-            total = 0;
+             * Enumerate all active flock() and fcntl() locks from the global
+             * lock registry.  Format matches Linux:
+             *   N: FLOCK  ADVISORY  WRITE PID DEV:INO START END
+             *   N: POSIX  ADVISORY  READ  PID DEV:INO START END
+             */
+            extern int fut_lock_enumerate(char *buf, size_t bufsz);
+            total = (size_t)fut_lock_enumerate(tmp, GEN_BUF);
             break;
+        }
         case PROC_PCI_DEVICES: {
             /* /proc/pci — enumerate PCI devices in lspci-friendly format.
              * Format: BB:DD.F CLASS: vendor:device description */

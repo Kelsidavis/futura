@@ -65727,6 +65727,160 @@ __attribute__((noinline)) static void test_elf_auxv_correctness(void) {
     #undef FIND_AUXV
 }
 
+/* Tests 2340-2345: VFS file locking (flock acquire/release, /proc/locks) */
+__attribute__((noinline)) static void test_vfs_file_locking(void) {
+    extern long sys_flock(int fd, int operation);
+    extern long sys_open(const char *, int, int);
+    extern long sys_close(int);
+    extern long sys_read(int, void *, size_t);
+
+    /* flock operation constants */
+    #define VFL_LOCK_SH  1
+    #define VFL_LOCK_EX  2
+    #define VFL_LOCK_NB  4
+    #define VFL_LOCK_UN  8
+
+    fut_printf("[MISC-TEST] Tests 2340-2345: VFS file locking (flock/fcntl)\n");
+
+    /* Create a test file */
+    int fd = fut_vfs_open("/vfs_lock_test.txt", 0x42 /* O_RDWR|O_CREAT */, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] FAIL: cannot create /vfs_lock_test.txt (%d)\n", fd);
+        fut_test_fail(2340);
+        fut_test_fail(2341);
+        fut_test_fail(2342);
+        fut_test_fail(2343);
+        fut_test_fail(2344);
+        fut_test_fail(2345);
+        return;
+    }
+
+    /* Test 2340: flock(LOCK_SH) acquire and release cycle.
+     * Acquire a shared lock, verify it succeeds (returns 0),
+     * then release with LOCK_UN and verify that also succeeds. */
+    fut_printf("[MISC-TEST] Test 2340: flock LOCK_SH acquire/release\n");
+    {
+        long r1 = sys_flock(fd, VFL_LOCK_SH);
+        long r2 = sys_flock(fd, VFL_LOCK_UN);
+        if (r1 == 0 && r2 == 0) {
+            fut_printf("[MISC-TEST] pass Test 2340\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL Test 2340: SH=%ld UN=%ld\n", r1, r2);
+            fut_test_fail(2340);
+        }
+    }
+
+    /* Test 2341: flock(LOCK_EX) acquire and release cycle.
+     * Acquire an exclusive lock, verify it succeeds, then release. */
+    fut_printf("[MISC-TEST] Test 2341: flock LOCK_EX acquire/release\n");
+    {
+        long r1 = sys_flock(fd, VFL_LOCK_EX);
+        long r2 = sys_flock(fd, VFL_LOCK_UN);
+        if (r1 == 0 && r2 == 0) {
+            fut_printf("[MISC-TEST] pass Test 2341\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL Test 2341: EX=%ld UN=%ld\n", r1, r2);
+            fut_test_fail(2341);
+        }
+    }
+
+    /* Test 2342: flock(LOCK_SH|LOCK_NB) non-blocking shared lock.
+     * Acquire with LOCK_NB when no conflicting lock is held. */
+    fut_printf("[MISC-TEST] Test 2342: flock LOCK_SH|LOCK_NB non-blocking\n");
+    {
+        long r1 = sys_flock(fd, VFL_LOCK_SH | VFL_LOCK_NB);
+        long r2 = sys_flock(fd, VFL_LOCK_UN);
+        if (r1 == 0 && r2 == 0) {
+            fut_printf("[MISC-TEST] pass Test 2342\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL Test 2342: SH|NB=%ld UN=%ld\n", r1, r2);
+            fut_test_fail(2342);
+        }
+    }
+
+    /* Test 2343: flock(LOCK_EX|LOCK_NB) conflict returns EAGAIN.
+     * Open the same file on a second fd, hold LOCK_SH on fd1,
+     * then attempt LOCK_EX|LOCK_NB on fd2 -- must return -EAGAIN. */
+    fut_printf("[MISC-TEST] Test 2343: flock LOCK_EX|LOCK_NB conflict -> EAGAIN\n");
+    {
+        int fd2 = fut_vfs_open("/vfs_lock_test.txt", 2 /* O_RDWR */, 0);
+        if (fd2 < 0) {
+            fut_printf("[MISC-TEST] FAIL Test 2343: cannot reopen file (%d)\n", fd2);
+            fut_test_fail(2343);
+        } else {
+            long r_sh = sys_flock(fd, VFL_LOCK_SH);
+            long r_ex = sys_flock(fd2, VFL_LOCK_EX | VFL_LOCK_NB);
+            sys_flock(fd, VFL_LOCK_UN);
+            if (r_sh == 0 && r_ex == -11 /* -EAGAIN */) {
+                fut_printf("[MISC-TEST] pass Test 2343\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL Test 2343: SH=%ld EX|NB=%ld (expected -11)\n",
+                           r_sh, r_ex);
+                fut_test_fail(2343);
+            }
+            sys_close(fd2);
+        }
+    }
+
+    /* Test 2344: /proc/locks shows active locks.
+     * While holding an exclusive lock, read /proc/locks and verify
+     * it contains at least one entry (non-empty). */
+    fut_printf("[MISC-TEST] Test 2344: /proc/locks enumerates active lock\n");
+    {
+        long r_ex = sys_flock(fd, VFL_LOCK_EX);
+        if (r_ex != 0) {
+            fut_printf("[MISC-TEST] FAIL Test 2344: flock EX=%ld\n", r_ex);
+            fut_test_fail(2344);
+        } else {
+            int pfd = (int)sys_open("/proc/locks", 0 /* O_RDONLY */, 0);
+            if (pfd < 0) {
+                fut_printf("[MISC-TEST] FAIL Test 2344: cannot open /proc/locks (%d)\n", pfd);
+                sys_flock(fd, VFL_LOCK_UN);
+                fut_test_fail(2344);
+            } else {
+                char lockbuf[256];
+                for (int i = 0; i < 256; i++) lockbuf[i] = 0;
+                long nr = sys_read(pfd, lockbuf, 255);
+                sys_close(pfd);
+                sys_flock(fd, VFL_LOCK_UN);
+
+                if (nr > 0) {
+                    fut_printf("[MISC-TEST] pass Test 2344 (%ld bytes in /proc/locks)\n", nr);
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] FAIL Test 2344: /proc/locks empty (read=%ld)\n", nr);
+                    fut_test_fail(2344);
+                }
+            }
+        }
+    }
+
+    /* Test 2345: flock(LOCK_UN) on already-unlocked file is idempotent.
+     * Calling LOCK_UN when no lock is held must succeed (return 0). */
+    fut_printf("[MISC-TEST] Test 2345: flock LOCK_UN idempotent on unlocked file\n");
+    {
+        long r = sys_flock(fd, VFL_LOCK_UN);
+        if (r == 0) {
+            fut_printf("[MISC-TEST] pass Test 2345\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL Test 2345: LOCK_UN on unlocked=%ld\n", r);
+            fut_test_fail(2345);
+        }
+    }
+
+    sys_close(fd);
+
+    #undef VFL_LOCK_SH
+    #undef VFL_LOCK_EX
+    #undef VFL_LOCK_NB
+    #undef VFL_LOCK_UN
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -70043,6 +70197,7 @@ void fut_misc_test_thread(void *arg) {
     test_overlayfs_container(); /* Tests 2315-2320: overlayfs whiteout, upper-first, container support */
     test_elf_auxv_correctness(); /* Tests 2325-2330: auxv AT_UID/AT_EUID/AT_GID/AT_EGID/AT_PLATFORM/AT_SECURE */
     test_pgrp_session_jobctl(); /* Tests 2335-2337: setpgid new group, kill(0) group target, getsid leader */
+    test_vfs_file_locking(); /* Tests 2340-2345: flock acquire/release, /proc/locks, idempotent unlock */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

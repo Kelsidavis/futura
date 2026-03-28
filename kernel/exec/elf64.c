@@ -1602,6 +1602,38 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
         task->comm[clen] = '\0';
     }
 
+    /* Record full argv for /proc/self/cmdline (null-separated Linux format) */
+    {
+        char *dst = task->proc_cmdline;
+        size_t cap = sizeof(task->proc_cmdline);
+        size_t pos = 0;
+        if (kargv) {
+            for (size_t i = 0; i < argc && pos < cap - 1; i++) {
+                const char *arg = kargv[i];
+                while (*arg && pos < cap - 1)
+                    dst[pos++] = *arg++;
+                dst[pos++] = '\0';
+            }
+        }
+        task->proc_cmdline_len = (uint16_t)(pos < cap ? pos : cap);
+    }
+
+    /* Record full envp for /proc/self/environ (null-separated Linux format) */
+    {
+        char *dst = task->proc_environ;
+        size_t cap = sizeof(task->proc_environ);
+        size_t pos = 0;
+        if (kenvp) {
+            for (size_t i = 0; i < envc && pos < cap - 1; i++) {
+                const char *env = kenvp[i];
+                while (*env && pos < cap - 1)
+                    dst[pos++] = *env++;
+                dst[pos++] = '\0';
+            }
+        }
+        task->proc_environ_len = (uint16_t)(pos < cap ? pos : cap);
+    }
+
     EXEC_DEBUG("[EXEC] Creating memory manager...\n");
     fut_mm_t *mm = fut_mm_create();
     if (!mm) {
@@ -2391,6 +2423,11 @@ static int build_user_stack(fut_mm_t *mm,
     const char *const *envp = envp_in;
     uint8_t **envp_ptrs = NULL;
 
+    /* Count environment variables if caller passed envc=0 */
+    if (envp && envc == 0) {
+        while (envp[envc]) envc++;
+    }
+
     if (envp && envc > 0) {
         envp_ptrs = fut_malloc(sizeof(uint8_t *) * envc);
         if (!envp_ptrs) {
@@ -2882,6 +2919,38 @@ int fut_exec_elf_memory(const void *elf_data, size_t elf_size, char *const argv[
         while (envp[envc]) envc++;
     }
 
+    /* Record full argv for /proc/self/cmdline (null-separated Linux format) */
+    {
+        char *dst = task->proc_cmdline;
+        size_t cap = sizeof(task->proc_cmdline);
+        size_t pos = 0;
+        if (argv) {
+            for (size_t i = 0; i < argc && pos < cap - 1; i++) {
+                const char *arg = argv[i];
+                while (*arg && pos < cap - 1)
+                    dst[pos++] = *arg++;
+                dst[pos++] = '\0';
+            }
+        }
+        task->proc_cmdline_len = (uint16_t)(pos < cap ? pos : cap);
+    }
+
+    /* Record full envp for /proc/self/environ (null-separated Linux format) */
+    {
+        char *dst = task->proc_environ;
+        size_t cap = sizeof(task->proc_environ);
+        size_t pos = 0;
+        if (envp) {
+            for (size_t i = 0; i < envc && pos < cap - 1; i++) {
+                const char *env = envp[i];
+                while (*env && pos < cap - 1)
+                    dst[pos++] = *env++;
+                dst[pos++] = '\0';
+            }
+        }
+        task->proc_environ_len = (uint16_t)(pos < cap ? pos : cap);
+    }
+
     /* Set ELF metadata for auxv */
     g_exec_entry = ehdr->e_entry;
     g_exec_phent = ehdr->e_phentsize;
@@ -3042,6 +3111,38 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
         while (basename[clen] && clen < sizeof(task->comm) - 1) clen++;
         for (size_t i = 0; i < clen; i++) task->comm[i] = basename[i];
         task->comm[clen] = '\0';
+    }
+
+    /* Record full argv for /proc/self/cmdline (null-separated Linux format) */
+    {
+        char *dst = task->proc_cmdline;
+        size_t cap = sizeof(task->proc_cmdline);
+        size_t pos = 0;
+        if (argv) {
+            for (int i = 0; argv[i] && pos < cap - 1; i++) {
+                const char *arg = argv[i];
+                while (*arg && pos < cap - 1)
+                    dst[pos++] = *arg++;
+                dst[pos++] = '\0';
+            }
+        }
+        task->proc_cmdline_len = (uint16_t)(pos < cap ? pos : cap);
+    }
+
+    /* Record full envp for /proc/self/environ (null-separated Linux format) */
+    {
+        char *dst = task->proc_environ;
+        size_t cap = sizeof(task->proc_environ);
+        size_t pos = 0;
+        if (envp) {
+            for (int i = 0; envp[i] && pos < cap - 1; i++) {
+                const char *env = envp[i];
+                while (*env && pos < cap - 1)
+                    dst[pos++] = *env++;
+                dst[pos++] = '\0';
+            }
+        }
+        task->proc_environ_len = (uint16_t)(pos < cap ? pos : cap);
     }
 
 #ifdef DEBUG_ELF

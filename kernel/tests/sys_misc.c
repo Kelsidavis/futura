@@ -64976,6 +64976,106 @@ __attribute__((noinline)) static void test_fork_vma_consistency(void) {
     }
 }
 
+/* ============================================================
+ * Tests 2290-2291: /proc/self/environ real environment content
+ * ============================================================
+ *   Test 2290: /proc/self/environ is readable and non-empty
+ *   Test 2291: /proc/self/environ contains expected key=value pairs
+ */
+__attribute__((noinline)) static void test_proc_environ_content(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_close(int);
+
+    /* ── Test 2290: /proc/self/environ is readable and non-empty ── */
+    fut_printf("[MISC-TEST] Test 2290: /proc/self/environ readable and non-empty\n");
+
+    /* Ensure current task has environment data by injecting known entries
+     * (kernel test threads are not launched via execve so proc_environ is
+     * typically empty — seed it with realistic values). */
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        fut_printf("[MISC-TEST] ✗ Test 2290: no current task\n");
+        fut_test_fail(2290);
+        fut_printf("[MISC-TEST] ✗ Test 2291: skipped (no task)\n");
+        fut_test_fail(2291);
+        return;
+    }
+
+    /* Seed a realistic environment if none exists yet */
+    uint16_t saved_len = task->proc_environ_len;
+    char saved_env[64];
+    size_t save_n = saved_len < sizeof(saved_env) ? saved_len : sizeof(saved_env);
+    if (save_n > 0) __builtin_memcpy(saved_env, task->proc_environ, save_n);
+
+    static const char synth_env[] = "PATH=/usr/bin:/bin\0HOME=/root\0TERM=linux\0";
+    size_t synth_len = sizeof(synth_env) - 1; /* exclude trailing C-string NUL */
+    __builtin_memcpy(task->proc_environ, synth_env, synth_len);
+    task->proc_environ_len = (uint16_t)synth_len;
+
+    long fd = sys_open("/proc/self/environ", 0 /* O_RDONLY */, 0);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] ✗ Test 2290: open returned %ld\n", fd);
+        task->proc_environ_len = saved_len;
+        if (save_n > 0) __builtin_memcpy(task->proc_environ, saved_env, save_n);
+        fut_test_fail(2290);
+        fut_printf("[MISC-TEST] ✗ Test 2291: skipped\n");
+        fut_test_fail(2291);
+        return;
+    }
+
+    char buf[128];
+    __builtin_memset(buf, 0, sizeof(buf));
+    long nr = sys_read((int)fd, buf, sizeof(buf));
+    sys_close((int)fd);
+
+    if (nr <= 0) {
+        fut_printf("[MISC-TEST] ✗ Test 2290: read returned %ld (expected >0)\n", nr);
+        task->proc_environ_len = saved_len;
+        if (save_n > 0) __builtin_memcpy(task->proc_environ, saved_env, save_n);
+        fut_test_fail(2290);
+        fut_printf("[MISC-TEST] ✗ Test 2291: skipped\n");
+        fut_test_fail(2291);
+        return;
+    }
+
+    fut_printf("[MISC-TEST] ✓ Test 2290: /proc/self/environ readable, %ld bytes\n", nr);
+    fut_test_pass();
+
+    /* ── Test 2291: content contains PATH= and HOME= ── */
+    fut_printf("[MISC-TEST] Test 2291: /proc/self/environ contains PATH= and HOME=\n");
+
+    /* Scan NUL-separated entries for PATH= and HOME= */
+    int found_path = 0, found_home = 0;
+    size_t pos = 0;
+    while (pos < (size_t)nr) {
+        const char *entry = buf + pos;
+        /* Check prefix match for PATH= */
+        if (entry[0] == 'P' && entry[1] == 'A' && entry[2] == 'T' &&
+            entry[3] == 'H' && entry[4] == '=')
+            found_path = 1;
+        /* Check prefix match for HOME= */
+        if (entry[0] == 'H' && entry[1] == 'O' && entry[2] == 'M' &&
+            entry[3] == 'E' && entry[4] == '=')
+            found_home = 1;
+        /* Advance past this NUL-terminated entry */
+        while (pos < (size_t)nr && buf[pos] != '\0') pos++;
+        pos++; /* skip NUL separator */
+    }
+
+    /* Restore original environment */
+    task->proc_environ_len = saved_len;
+    if (save_n > 0) __builtin_memcpy(task->proc_environ, saved_env, save_n);
+
+    if (found_path && found_home) {
+        fut_printf("[MISC-TEST] ✓ Test 2291: found PATH= and HOME=\n");
+        fut_test_pass();
+    } else {
+        fut_printf("[MISC-TEST] ✗ Test 2291: PATH=%d HOME=%d\n", found_path, found_home);
+        fut_test_fail(2291);
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -69286,6 +69386,7 @@ void fut_misc_test_thread(void *arg) {
     test_memfd_pidfd_advanced(); /* Tests 2240-2259 */
     test_linger_shutdown(); /* Tests 2275-2280: SO_LINGER round-trip and shutdown() behavior */
     test_pty_winsize_ctty(); /* Tests 2285-2288: PTY winsize and controlling terminal ioctls */
+    test_proc_environ_content(); /* Tests 2290-2291: /proc/self/environ content verification */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

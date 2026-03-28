@@ -120,3 +120,10 @@ bool fut_boot_arg_flag(const char *key) {
     }
     return false;
 }
+
+const char *fut_boot_cmdline_get(void) {
+    if (!s_initialized) {
+        return "";
+    }
+    return s_cmdline;
+}

@@ -64,3 +64,11 @@ const char *fut_boot_arg_value(const char *key);
  *   }
  */
 bool fut_boot_arg_flag(const char *key);
+
+/**
+ * Get the raw boot command line string.
+ *
+ * @return Pointer to the internal command line buffer (never NULL after init).
+ *         Returns "" if no command line was provided or init was not called.
+ */
+const char *fut_boot_cmdline_get(void);

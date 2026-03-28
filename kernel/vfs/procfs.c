@@ -20,6 +20,10 @@
  *   /proc/<pid>/stat      -> machine-readable process statistics (ps/top format)
  *   /proc/<pid>/statm     -> memory statistics (size resident shared text lib data dt)
  *   /proc/cpuinfo         -> CPU model/features
+ *   /proc/cmdline         -> kernel boot command line (from bootloader or build)
+ *   /proc/modules         -> compiled-in drivers (per DRIVERS= build config)
+ *   /proc/kallsyms        -> kernel symbol table with real function addresses
+ *   /proc/devices         -> character and block device major numbers
  */
 
 #include <kernel/fut_vfs.h>
@@ -38,6 +42,7 @@
 #include <kernel/eventfd.h>
 #include <kernel/fut_blockdev.h>
 #include <kernel/pci.h>
+#include <kernel/boot_args.h>
 #include <kernel/errno.h>
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
@@ -217,6 +222,7 @@ enum procfs_kind {
     PROC_MODULES,                   /* /proc/modules */
     PROC_BUDDYINFO,                 /* /proc/buddyinfo */
     PROC_ZONEINFO,                  /* /proc/zoneinfo */
+    PROC_PAGETYPEINFO,              /* /proc/pagetypeinfo */
     PROC_SYSVIPC_DIR,               /* /proc/sysvipc/ */
     PROC_SYSVIPC_SHM,               /* /proc/sysvipc/shm */
     PROC_SYSVIPC_SEM,               /* /proc/sysvipc/sem */
@@ -523,6 +529,7 @@ typedef struct {
 #define PROC_INO_CONSOLES                437ULL
 #define PROC_INO_IOMEM                   438ULL
 #define PROC_INO_IOPORTS                 439ULL
+#define PROC_INO_PAGETYPEINFO            441ULL
 /* /proc/sys/kernel/ extended range: 400-429 */
 #define PROC_INO_SYS_KERNEL_NMI_WD     400ULL
 #define PROC_INO_SYS_KERNEL_WATCHDOG   401ULL
@@ -1958,10 +1965,16 @@ static size_t gen_schedstat(char *buf, size_t cap, fut_task_t *task) {
  */
 static size_t gen_cmdline_global(char *buf, size_t cap) {
     struct pbuf b = { buf, 0, cap };
-    pb_str(&b, "console=ttyS0 root=/dev/ram0 rw init=/sbin/init");
+    const char *cmdline = fut_boot_cmdline_get();
+    if (cmdline && cmdline[0]) {
+        pb_str(&b, cmdline);
+    } else {
+        /* Fallback: synthesize a reasonable command line */
+        pb_str(&b, "console=ttyS0 root=/dev/ram0 rw init=/sbin/init");
 #ifdef __aarch64__
-    pb_str(&b, " earlycon=pl011,0x09000000");
+        pb_str(&b, " earlycon=pl011,0x09000000");
 #endif
+    }
     pb_char(&b, '\n');
     return b.pos;
 }
@@ -1986,13 +1999,21 @@ static size_t gen_devices(char *buf, size_t cap) {
     struct pbuf b = { buf, 0, cap };
     pb_str(&b, "Character devices:\n");
     pb_str(&b, "  1 mem\n");
-    pb_str(&b, "  4 /dev/vc/0\n");
+    pb_str(&b, "  4 tty\n");
+    pb_str(&b, "  4 ttyS\n");
     pb_str(&b, "  5 /dev/tty\n");
     pb_str(&b, "  5 /dev/console\n");
     pb_str(&b, "  5 /dev/ptmx\n");
     pb_str(&b, "  7 vcs\n");
     pb_str(&b, " 10 misc\n");
+    pb_str(&b, " 13 input\n");
+    pb_str(&b, " 29 fb\n");
+    pb_str(&b, "136 pts\n");
+    pb_str(&b, "180 usb\n");
+    pb_str(&b, "226 drm\n");
     pb_str(&b, "\nBlock devices:\n");
+    pb_str(&b, "253 virtio-blk\n");
+    pb_str(&b, "259 blkext\n");
     return b.pos;
 }
 
@@ -2011,36 +2032,64 @@ static size_t gen_misc_dev(char *buf, size_t cap) {
 /*
  * gen_buddyinfo() — /proc/buddyinfo
  *
- * Memory buddy allocator free-page counts per order.
+ * Memory buddy allocator free-page counts per order (0..10).
  * glibc malloc reads this on some arches to detect available huge pages.
- * Report one NUMA node with all free pages at order 0.
+ * Scans the PMM bitmap for contiguous free-page runs and decomposes them
+ * into power-of-2 buddy blocks to produce a realistic distribution.
+ *
+ * Format (Linux-compatible):
+ *   Node 0, zone      DMA32  <order0> <order1> ... <order10>
+ *   Node 0, zone     Normal  <order0> <order1> ... <order10>
  */
 static size_t gen_buddyinfo(char *buf, size_t cap) {
     struct pbuf b = { buf, 0, cap };
-    /* Node 0, zone DMA32: one entry per order (0..10), all 0 except order 0 */
+
+    /* Scan PMM bitmap for real per-order free block counts */
+    uint64_t counts[11];
+    fut_pmm_buddy_counts(counts, 10);
+
+    /* DMA32 zone: report the real distribution */
     pb_str(&b, "Node 0, zone      DMA32 ");
-    uint64_t free_pages = fut_pmm_free_pages();
-    pb_u64(&b, free_pages); /* order-0 pages */
-    pb_str(&b, "  0  0  0  0  0  0  0  0  0  0\n");
+    for (int i = 0; i < 11; i++) {
+        if (i > 0) pb_str(&b, " ");
+        pb_d_padded(&b, counts[i], 5);
+    }
+    pb_char(&b, '\n');
+
+    /* Normal zone: report zeros (single-zone system) */
     pb_str(&b, "Node 0, zone     Normal ");
-    pb_u64(&b, 0);
-    pb_str(&b, "  0  0  0  0  0  0  0  0  0  0\n");
+    for (int i = 0; i < 11; i++) {
+        if (i > 0) pb_str(&b, " ");
+        pb_d_padded(&b, 0, 5);
+    }
+    pb_char(&b, '\n');
+
     return b.pos;
 }
 
 /*
  * gen_zoneinfo() — /proc/zoneinfo
  *
- * Memory zone details. Minimal single-zone output for glibc/allocator compat.
+ * Memory zone details in Linux-compatible format.
+ * Reports a single Normal zone with real free/total page counts,
+ * computed watermarks (min/low/high), and per-CPU pageset info.
  */
 static size_t gen_zoneinfo(char *buf, size_t cap) {
     struct pbuf b = { buf, 0, cap };
     uint64_t total_pages = fut_pmm_total_pages();
     uint64_t free_pages  = fut_pmm_free_pages();
+    uint64_t used_pages  = total_pages > free_pages ? total_pages - free_pages : 0;
+
+    /* Compute watermarks from managed pages (similar to Linux min_free_kbytes) */
+    uint64_t wmark_min  = total_pages / 64;
+    if (wmark_min < 16) wmark_min = 16;
+    uint64_t wmark_low  = wmark_min * 5 / 4;
+    uint64_t wmark_high = wmark_min * 3 / 2;
+
     pb_str(&b, "Node 0, zone   Normal\n");
     pb_str(&b, "  per-node stats\n");
     pb_str(&b, "      nr_inactive_anon 0\n");
-    pb_str(&b, "      nr_active_anon "); pb_u64(&b, total_pages - free_pages); pb_char(&b, '\n');
+    pb_str(&b, "      nr_active_anon "); pb_u64(&b, used_pages); pb_char(&b, '\n');
     pb_str(&b, "      nr_inactive_file 0\n");
     pb_str(&b, "      nr_active_file 0\n");
     pb_str(&b, "      nr_unevictable 0\n");
@@ -2051,7 +2100,7 @@ static size_t gen_zoneinfo(char *buf, size_t cap) {
     pb_str(&b, "      workingset_nodes 0\n");
     pb_str(&b, "      workingset_refault_anon 0\n");
     pb_str(&b, "      workingset_refault_file 0\n");
-    pb_str(&b, "      nr_anon_pages "); pb_u64(&b, total_pages - free_pages); pb_char(&b, '\n');
+    pb_str(&b, "      nr_anon_pages "); pb_u64(&b, used_pages); pb_char(&b, '\n');
     pb_str(&b, "      nr_mapped 0\n");
     pb_str(&b, "      nr_file_pages 0\n");
     pb_str(&b, "      nr_dirty 0\n");
@@ -2076,7 +2125,7 @@ static size_t gen_zoneinfo(char *buf, size_t cap) {
     pb_str(&b, "      nr_sec_page_table_pages 0\n");
     pb_str(&b, "      nr_shadow_call_stack 0\n");
     pb_str(&b, "      nr_zone_inactive_anon 0\n");
-    pb_str(&b, "      nr_zone_active_anon "); pb_u64(&b, total_pages - free_pages); pb_char(&b, '\n');
+    pb_str(&b, "      nr_zone_active_anon "); pb_u64(&b, used_pages); pb_char(&b, '\n');
     pb_str(&b, "      nr_zone_inactive_file 0\n");
     pb_str(&b, "      nr_zone_active_file 0\n");
     pb_str(&b, "      nr_zone_unevictable 0\n");
@@ -2087,14 +2136,94 @@ static size_t gen_zoneinfo(char *buf, size_t cap) {
     pb_str(&b, "      nr_free_cma 0\n");
     pb_str(&b, "  pages free     "); pb_u64(&b, free_pages);  pb_char(&b, '\n');
     pb_str(&b, "        boost    0\n");
-    pb_str(&b, "        min      0\n");
-    pb_str(&b, "        low      0\n");
-    pb_str(&b, "        high     0\n");
+    pb_str(&b, "        min      "); pb_u64(&b, wmark_min);  pb_char(&b, '\n');
+    pb_str(&b, "        low      "); pb_u64(&b, wmark_low);  pb_char(&b, '\n');
+    pb_str(&b, "        high     "); pb_u64(&b, wmark_high); pb_char(&b, '\n');
     pb_str(&b, "        spanned  "); pb_u64(&b, total_pages); pb_char(&b, '\n');
     pb_str(&b, "        present  "); pb_u64(&b, total_pages); pb_char(&b, '\n');
     pb_str(&b, "        managed  "); pb_u64(&b, total_pages); pb_char(&b, '\n');
     pb_str(&b, "        cma      0\n");
     pb_str(&b, "        protection: (0, 0)\n");
+
+    /* Per-CPU pageset info (Linux compat) */
+    pb_str(&b, "      pagesets\n");
+    pb_str(&b, "        cpu: 0\n");
+    pb_str(&b, "              count: 0\n");
+    pb_str(&b, "              high:  0\n");
+    pb_str(&b, "              batch: 1\n");
+    pb_str(&b, "  node_unreclaimable:  0\n");
+    pb_str(&b, "  start_pfn:           0\n");
+    pb_str(&b, "  node_scanned:        0\n");
+
+    return b.pos;
+}
+
+/*
+ * gen_pagetypeinfo() — /proc/pagetypeinfo
+ *
+ * Page type information showing free pages by order and migration type.
+ * Linux uses this to report fragmentation details per zone per migration type.
+ * Futura has a single page type ("Unmovable") since the bitmap PMM does not
+ * distinguish migration types.
+ *
+ * Format (Linux-compatible):
+ *   Page block order: 10
+ *   Pages per block:  1024
+ *
+ *   Free pages count per migrate type at order  0  1  2 ... 10
+ *   Node    0, zone   Normal, type    Unmovable  <counts>
+ *   Node    0, zone   Normal, type      Movable  <counts>
+ *   ...
+ */
+static size_t gen_pagetypeinfo(char *buf, size_t cap) {
+    struct pbuf b = { buf, 0, cap };
+
+    /* Header */
+    pb_str(&b, "Page block order: 10\n");
+    pb_str(&b, "Pages per block:  1024\n");
+    pb_str(&b, "\n");
+
+    /* Column header */
+    pb_str(&b, "Free pages count per migrate type at order");
+    for (int i = 0; i < 11; i++) {
+        pb_str(&b, " ");
+        pb_d_padded(&b, (uint64_t)i, 5);
+    }
+    pb_char(&b, '\n');
+
+    /* Get real per-order counts from the PMM bitmap */
+    uint64_t counts[11];
+    fut_pmm_buddy_counts(counts, 10);
+
+    /* Migration types: report real counts under Unmovable, zeros for the rest.
+     * Linux defines: Unmovable, Movable, Reclaimable, HighAtomic, CMA, Isolate */
+    static const char *migrate_types[] = {
+        "Unmovable", "  Movable", "Reclaimable", "HighAtomic",
+        "      CMA", "  Isolate"
+    };
+    for (int t = 0; t < 6; t++) {
+        pb_str(&b, "Node    0, zone   Normal, type ");
+        pb_str(&b, migrate_types[t]);
+        for (int i = 0; i < 11; i++) {
+            pb_str(&b, " ");
+            pb_d_padded(&b, (t == 0) ? counts[i] : 0, 5);
+        }
+        pb_char(&b, '\n');
+    }
+
+    pb_str(&b, "\n");
+    pb_str(&b, "Number of blocks type     Unmovable    Movable  Reclaimable  HighAtomic         CMA     Isolate\n");
+
+    /* Total blocks = managed pages / pages_per_block */
+    uint64_t total_pages = fut_pmm_total_pages();
+    uint64_t total_blocks = (total_pages + 1023) / 1024;
+    pb_str(&b, "Node 0, zone   Normal ");
+    pb_d_padded(&b, total_blocks, 12);
+    for (int t = 1; t < 6; t++) {
+        pb_d_padded(&b, 0, 12);
+    }
+    pb_char(&b, '\n');
+
     return b.pos;
 }
 
@@ -2194,55 +2323,218 @@ static size_t gen_cgroups(char *buf, size_t cap) {
 }
 
 /*
+ * gen_modules() — /proc/modules
+ *
+ * Lists compiled-in drivers as kernel "modules" in Linux /proc/modules format.
+ * Since Futura uses static compilation with Rust driver crates, each driver is
+ * reported as a built-in module with state "Live". Format per module:
+ *   <name> <size> <refcount> <deps> <state> <address>\n
+ *
+ * The set of listed modules depends on the DRIVERS= build config:
+ *   DRIVERS=qemu  — VirtIO only (virtio_blk, virtio_net, virtio_input, virtio_console)
+ *   DRIVERS=amd   — VirtIO + x86 platform + storage + net + AMD chipset
+ *   DRIVERS=intel  — VirtIO + x86 platform + storage + net + Intel chipset
+ *   DRIVERS=all    — Everything
+ */
+static size_t gen_modules(char *buf, size_t cap) {
+    struct pbuf b = { buf, 0, cap };
+
+    /* Module descriptor: name, simulated size (based on typical .a sizes) */
+    struct mod_entry { const char *name; uint32_t size; };
+
+    /* VirtIO drivers — always present on x86_64 */
+    static const struct mod_entry virtio_mods[] = {
+        { "virtio_blk",     16384 },
+        { "virtio_net",     20480 },
+        { "virtio_input",   12288 },
+        { "virtio_console", 12288 },
+    };
+
+#if !defined(DRIVERS_QEMU)
+    /* x86 platform drivers */
+    static const struct mod_entry x86_platform_mods[] = {
+        { "x86_cpuid",      8192  },
+        { "x86_tsc",        8192  },
+        { "hpet",           12288 },
+        { "cmos_rtc",       8192  },
+        { "uart16550",      12288 },
+        { "i8042",          16384 },
+        { "pcie_ecam",      12288 },
+        { "pci_msix",       8192  },
+        { "lapic",          12288 },
+        { "dma_pool",       8192  },
+        { "pci_pm",         8192  },
+        { "vesa_fb",        16384 },
+        { "fb_console",     12288 },
+        { "edid",           8192  },
+        { "acpi_pm",        8192  },
+        { "acpi_ec",        8192  },
+        { "acpi_button",    8192  },
+        { "acpi_thermal",   8192  },
+        { "pci_aer",        8192  },
+        { "pci_sriov",      8192  },
+        { "eth_phy",        8192  },
+        { "tpm_crb",        12288 },
+        { "x86_mce",        8192  },
+    };
+
+    /* Storage + USB + Audio drivers */
+    static const struct mod_entry x86_storage_mods[] = {
+        { "nvme",           24576 },
+        { "ahci",           20480 },
+        { "xhci",           28672 },
+        { "usb_hid",        16384 },
+        { "usb_storage",    16384 },
+        { "usb_net",        12288 },
+        { "usb_hub",        12288 },
+        { "usb_audio",      16384 },
+        { "hda",            20480 },
+        { "hda_realtek",    12288 },
+    };
+
+    /* Network drivers */
+    static const struct mod_entry x86_net_mods[] = {
+        { "rtl8111",        16384 },
+        { "igc",            20480 },
+        { "i211",           16384 },
+    };
+#endif /* !DRIVERS_QEMU */
+
+#if defined(DRIVERS_AMD) || defined(DRIVERS_ALL)
+    /* AMD chipset drivers */
+    static const struct mod_entry amd_mods[] = {
+        { "amd_smbus",      8192  },
+        { "amd_iommu",      16384 },
+        { "amd_smn",        8192  },
+        { "amd_umc",        8192  },
+        { "amd_ccp",        12288 },
+        { "amd_df",         8192  },
+        { "amd_nbio",       8192  },
+        { "amd_i2c",        8192  },
+        { "amd_psp",        12288 },
+        { "amd_sev",        12288 },
+        { "amd_pstate",     12288 },
+        { "amd_sbtsi",      8192  },
+        { "amd_gpio",       8192  },
+        { "amd_spi",        8192  },
+        { "amd_wdt",        8192  },
+        { "amd_mp2",        8192  },
+        { "amd_xgbe",       16384 },
+    };
+#endif
+
+#if defined(DRIVERS_INTEL) || defined(DRIVERS_ALL)
+    /* Intel chipset drivers */
+    static const struct mod_entry intel_mods[] = {
+        { "intel_vtd",      12288 },
+        { "intel_hwp",      8192  },
+        { "intel_lpss",     8192  },
+        { "intel_pmc",      8192  },
+        { "intel_gpio",     8192  },
+        { "intel_wdt",      8192  },
+        { "intel_mei",      12288 },
+        { "intel_tbt",      12288 },
+        { "intel_thermal",  8192  },
+        { "intel_gna",      8192  },
+        { "intel_sst",      8192  },
+        { "intel_hda_hdmi", 8192  },
+        { "intel_cnvi",     8192  },
+        { "intel_dma",      8192  },
+        { "intel_ipu",      12288 },
+        { "intel_p2sb",     8192  },
+        { "intel_smbus",    8192  },
+        { "intel_spi",      8192  },
+    };
+#endif
+
+    /* Helper: emit one module line. Address increments by size each time. */
+    uintptr_t addr = 0xffffffff80100000ULL;
+
+#define EMIT_MOD_ARRAY(arr) do { \
+    for (size_t i = 0; i < sizeof(arr)/sizeof(arr[0]); i++) { \
+        pb_str(&b, arr[i].name); \
+        pb_char(&b, ' '); \
+        pb_u64(&b, (uint64_t)arr[i].size); \
+        pb_str(&b, " 0 - Live 0x"); \
+        pb_hex16(&b, addr); \
+        pb_char(&b, '\n'); \
+        addr += arr[i].size; \
+    } \
+} while (0)
+
+    EMIT_MOD_ARRAY(virtio_mods);
+
+#if !defined(DRIVERS_QEMU)
+    EMIT_MOD_ARRAY(x86_platform_mods);
+    EMIT_MOD_ARRAY(x86_storage_mods);
+    EMIT_MOD_ARRAY(x86_net_mods);
+#endif
+
+#if defined(DRIVERS_AMD) || defined(DRIVERS_ALL)
+    EMIT_MOD_ARRAY(amd_mods);
+#endif
+
+#if defined(DRIVERS_INTEL) || defined(DRIVERS_ALL)
+    EMIT_MOD_ARRAY(intel_mods);
+#endif
+
+#undef EMIT_MOD_ARRAY
+
+    return b.pos;
+}
+
+/*
  * gen_kallsyms() — /proc/kallsyms
  *
- * Kernel symbol table. Addresses are zeroed (all-zeros) per kptr_restrict=1
- * semantics (unprivileged users see zeroed addresses). Format per symbol:
+ * Kernel symbol table with actual function addresses. Addresses are derived
+ * from linker symbols and function pointers where available. Format per symbol:
  *   <16-digit-hex-addr> <type> <name>[\t[module]]\n
  * Type characters: T=text, D=data, B=bss, A=absolute, R=rodata, W=weak.
  * Tools like perf, eBPF loader, ltrace, and kmod read this file.
  */
 static size_t gen_kallsyms(char *buf, size_t cap) {
     struct pbuf b = { buf, 0, cap };
-    /* Emit a representative set of kernel symbols with zeroed addresses.
-     * This is sufficient for tools that probe symbol existence (e.g. perf,
-     * BCC/eBPF loaders, systemtap) without exposing kernel layout. */
-    static const struct { const char *name; char type; } syms[] = {
-        { "_text",                    'T' },
-        { "_stext",                   'T' },
-        { "kernel_main",              'T' },
-        { "fut_task_current",         'T' },
-        { "fut_task_schedule",        'T' },
-        { "fut_task_create",          'T' },
-        { "fut_task_exit",            'T' },
-        { "sys_read",                 'T' },
-        { "sys_write",                'T' },
-        { "sys_open",                 'T' },
-        { "sys_close",                'T' },
-        { "sys_mmap",                 'T' },
-        { "sys_brk",                  'T' },
-        { "sys_fork",                 'T' },
-        { "sys_execve",               'T' },
-        { "sys_exit",                 'T' },
-        { "sys_wait4",                'T' },
-        { "sys_kill",                 'T' },
-        { "sys_getpid",               'T' },
-        { "sys_clone",                'T' },
-        { "sys_socket",               'T' },
-        { "sys_accept",               'T' },
-        { "sys_connect",              'T' },
-        { "sys_sendto",               'T' },
-        { "sys_recvfrom",             'T' },
-        { "sys_epoll_create1",        'T' },
-        { "sys_epoll_ctl",            'T' },
-        { "sys_epoll_wait",           'T' },
-        { "fut_mm_map_anonymous",     'T' },
-        { "fut_mm_unmap",             'T' },
-        { "fut_vfs_open",             'T' },
-        { "fut_vfs_close",            'T' },
-        { "fut_vfs_read",             'T' },
-        { "fut_vfs_write",            'T' },
-        { "fut_printf",               'T' },
+
+    /*
+     * Emit kernel symbols with real addresses derived from function pointers
+     * and linker-provided section boundaries. This gives tools like perf,
+     * BCC/eBPF loaders, and kmod real introspection into the kernel layout.
+     */
+
+    /* Extern declarations for functions we take addresses of */
+    extern void fut_kernel_main(void);
+    extern fut_task_t *fut_task_current(void);
+    extern void fut_schedule(void);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_write(int, const void *, size_t);
+    extern long sys_open(const char *, int, int);
+    extern long sys_close(int);
+    extern long sys_fork(void);
+    extern long sys_execve(const char *, const char *const *, const char *const *);
+    extern void sys_exit(int);
+    extern long sys_kill(int, int);
+    extern long sys_getpid(void);
+
+    /* Dynamic entries: real addresses from function pointers */
+    struct { const char *name; char type; uintptr_t addr; } dyn_syms[] = {
+        { "kernel_main",              'T', (uintptr_t)fut_kernel_main },
+        { "fut_task_current",         'T', (uintptr_t)fut_task_current },
+        { "fut_schedule",             'T', (uintptr_t)fut_schedule },
+        { "sys_read",                 'T', (uintptr_t)sys_read },
+        { "sys_write",                'T', (uintptr_t)sys_write },
+        { "sys_open",                 'T', (uintptr_t)sys_open },
+        { "sys_close",                'T', (uintptr_t)sys_close },
+        { "sys_fork",                 'T', (uintptr_t)sys_fork },
+        { "sys_execve",               'T', (uintptr_t)sys_execve },
+        { "sys_exit",                 'T', (uintptr_t)sys_exit },
+        { "sys_kill",                 'T', (uintptr_t)sys_kill },
+        { "sys_getpid",               'T', (uintptr_t)sys_getpid },
+        { "gen_kallsyms",             'T', (uintptr_t)gen_kallsyms },
+    };
+
+    /* Section-boundary symbols (linker symbols - addresses zeroed since
+     * they are not reliably addressable from C in all toolchains) */
+    static const struct { const char *name; char type; } static_syms[] = {
         { "_etext",                   'T' },
         { "_sdata",                   'D' },
         { "_edata",                   'D' },
@@ -2251,13 +2543,43 @@ static size_t gen_kallsyms(char *buf, size_t cap) {
         { "_ebss",                    'B' },
         { "_end",                     'A' },
     };
-    for (size_t i = 0; i < sizeof(syms)/sizeof(syms[0]); i++) {
-        pb_str(&b, "0000000000000000 ");
-        pb_char(&b, syms[i].type);
+
+    /* Derive _text/_stext from kernel_main address (page-aligned down) */
+    uintptr_t text_base = (uintptr_t)fut_kernel_main & ~(uintptr_t)0xFFF;
+    pb_hex16(&b, (uint64_t)text_base);
+    pb_str(&b, " T _text\n");
+    pb_hex16(&b, (uint64_t)text_base);
+    pb_str(&b, " T _stext\n");
+
+    /* Sort dynamic symbols by address (simple insertion sort on tiny array) */
+    size_t ndyn = sizeof(dyn_syms)/sizeof(dyn_syms[0]);
+    for (size_t i = 1; i < ndyn; i++) {
+        __typeof__(dyn_syms[0]) tmp = dyn_syms[i];
+        size_t j = i;
+        while (j > 0 && dyn_syms[j-1].addr > tmp.addr) {
+            dyn_syms[j] = dyn_syms[j-1];
+            j--;
+        }
+        dyn_syms[j] = tmp;
+    }
+    for (size_t i = 0; i < ndyn; i++) {
+        pb_hex16(&b, (uint64_t)dyn_syms[i].addr);
         pb_char(&b, ' ');
-        pb_str(&b, syms[i].name);
+        pb_char(&b, dyn_syms[i].type);
+        pb_char(&b, ' ');
+        pb_str(&b, dyn_syms[i].name);
         pb_char(&b, '\n');
     }
+
+    /* Emit static section-boundary symbols (zeroed addresses) */
+    for (size_t i = 0; i < sizeof(static_syms)/sizeof(static_syms[0]); i++) {
+        pb_str(&b, "0000000000000000 ");
+        pb_char(&b, static_syms[i].type);
+        pb_char(&b, ' ');
+        pb_str(&b, static_syms[i].name);
+        pb_char(&b, '\n');
+    }
+
     return b.pos;
 }
 
@@ -3763,14 +4085,16 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             break;
         }
         case PROC_MODULES:
-            /* /proc/modules: empty — Futura has no loadable kernel modules */
-            total = 0;
+            total = gen_modules(tmp, GEN_BUF);
             break;
         case PROC_BUDDYINFO:
             total = gen_buddyinfo(tmp, GEN_BUF);
             break;
         case PROC_ZONEINFO:
             total = gen_zoneinfo(tmp, GEN_BUF);
+            break;
+        case PROC_PAGETYPEINFO:
+            total = gen_pagetypeinfo(tmp, GEN_BUF);
             break;
         case PROC_DISKSTATS:
             total = gen_diskstats(tmp, GEN_BUF);
@@ -5268,6 +5592,11 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0100444, PROC_ZONEINFO, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "pagetypeinfo")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_PAGETYPEINFO,
+                                          0100444, PROC_PAGETYPEINFO, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         if (STREQ(name, "diskstats")) {
             *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_DISKSTATS,
                                           0100444, PROC_DISKSTATS, 0, 0);
@@ -6649,7 +6978,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             ".", "..", "self", "thread-self", "meminfo", "version", "uptime", "cpuinfo",
             "loadavg", "mounts", "sys", "stat", "filesystems", "vmstat", "net",
             "interrupts", "cmdline", "swaps", "devices", "misc",
-            "buddyinfo", "zoneinfo", "diskstats", "partitions", "cgroups", "kallsyms",
+            "buddyinfo", "zoneinfo", "pagetypeinfo", "diskstats", "partitions", "cgroups", "kallsyms",
             "locks", "modules", "sysvipc", "pci", "pressure", "config.gz",
             "sysrq-trigger", "crypto", "softirqs", "consoles", "iomem", "ioports"
         };
@@ -6663,7 +6992,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_DIR,
             FUT_VDIR_TYPE_REG,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
-            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
+            FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
             FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
             FUT_VDIR_TYPE_REG,  /* locks */
             FUT_VDIR_TYPE_REG,  /* modules */
@@ -6687,7 +7016,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             PROC_INO_VMSTAT, PROC_INO_NET_DIR,
             PROC_INO_INTERRUPTS,
             PROC_INO_CMDLINE_GLOBAL, PROC_INO_SWAPS, PROC_INO_DEVICES, PROC_INO_MISC_FILE,
-            PROC_INO_BUDDYINFO, PROC_INO_ZONEINFO,
+            PROC_INO_BUDDYINFO, PROC_INO_ZONEINFO, PROC_INO_PAGETYPEINFO,
             PROC_INO_DISKSTATS, PROC_INO_PARTITIONS, PROC_INO_CGROUPS, PROC_INO_KALLSYMS,
             PROC_INO_LOCKS, PROC_INO_MODULES,
             PROC_INO_SYSVIPC_DIR, PROC_INO_PCI,
@@ -6696,7 +7025,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             PROC_INO_SOFTIRQS, PROC_INO_CONSOLES,
             PROC_INO_IOMEM, PROC_INO_IOPORTS
         };
-        if (idx < 38) {
+        if (idx < 39) {
             de->d_ino    = fixed_ino[idx];
             de->d_off    = idx + 1;
             de->d_type   = fixed_type[idx];

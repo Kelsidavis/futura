@@ -5812,6 +5812,11 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0100444, PROC_PCI_DEVICES, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "kmsg")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_KMSG,
+                                          0100444, PROC_KMSG, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         if (STREQ(name, "pressure")) {
             *result = procfs_alloc_vnode(mnt, VN_DIR, PROC_INO_PRESSURE_DIR,
                                           0040555, PROC_PRESSURE_DIR, 0, 0);

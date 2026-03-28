@@ -65323,6 +65323,74 @@ __attribute__((noinline)) static void test_inotify_tmp_watch(void) {
     #undef INO_IGNORED
 }
 
+/* Tests 2305-2309: pivot_root() full implementation */
+__attribute__((noinline)) static void test_pivot_root_full(void) {
+    extern long sys_pivot_root(const char *new_root, const char *put_old);
+    extern int fut_vfs_mkdir(const char *path, uint32_t mode);
+    extern int fut_vfs_open(const char *path, int flags, int mode);
+    extern long sys_close(int fd);
+    extern long sys_stat(const char *path, struct fut_stat *statbuf);
+    fut_task_t *task = fut_task_current();
+
+    /* Test 2305: NULL new_root -> EFAULT */
+    fut_printf("[MISC-TEST] Test 2305: pivot_root(NULL) -> EFAULT\n");
+    long ret = sys_pivot_root(NULL, "/put_old");
+    if (ret == -EFAULT) { fut_printf("[MISC-TEST] pass Test 2305\n"); fut_test_pass(); }
+    else { fut_printf("[MISC-TEST] FAIL Test 2305: %ld\n", ret); fut_test_fail(2305); }
+
+    /* Test 2306: pivot_root to /pivot_test */
+    fut_printf("[MISC-TEST] Test 2306: pivot_root to /pivot_test\n");
+    fut_vfs_mkdir("/pivot_test", 0755);
+    fut_vfs_mkdir("/pivot_test/old_root", 0755);
+    int mfd = fut_vfs_open("/pivot_test/pivot_marker.txt", 0x42, 0644);
+    if (mfd >= 0) sys_close(mfd);
+    struct fut_vnode *saved_chroot = task->chroot_vnode;
+    if (saved_chroot) fut_vnode_ref(saved_chroot);
+    char saved_cwd[256];
+    if (task->cwd_cache) {
+        size_t l = 0;
+        while (task->cwd_cache[l] && l < 255) { saved_cwd[l] = task->cwd_cache[l]; l++; }
+        saved_cwd[l] = '\0';
+    } else { saved_cwd[0] = '/'; saved_cwd[1] = '\0'; }
+    ret = sys_pivot_root("/pivot_test", "/pivot_test/old_root");
+    if (ret == 0) { fut_printf("[MISC-TEST] pass Test 2306\n"); fut_test_pass(); }
+    else { fut_printf("[MISC-TEST] FAIL Test 2306: %ld\n", ret); fut_test_fail(2306); }
+
+    /* Test 2307: marker file at /pivot_marker.txt after pivot */
+    fut_printf("[MISC-TEST] Test 2307: /pivot_marker.txt accessible\n");
+    if (ret == 0) {
+        struct fut_stat st;
+        __builtin_memset(&st, 0, sizeof(st));
+        long sr = sys_stat("/pivot_marker.txt", &st);
+        if (sr == 0) { fut_printf("[MISC-TEST] pass Test 2307\n"); fut_test_pass(); }
+        else { fut_printf("[MISC-TEST] FAIL Test 2307: stat=%ld\n", sr); fut_test_fail(2307); }
+    } else { fut_printf("[MISC-TEST] pass Test 2307: skipped\n"); fut_test_pass(); }
+
+    /* Restore original root */
+    if (task->chroot_vnode) fut_vnode_unref(task->chroot_vnode);
+    task->chroot_vnode = saved_chroot;
+    { size_t i = 0; while (saved_cwd[i] && i < 255) { task->cwd_cache_buf[i] = saved_cwd[i]; i++; }
+      task->cwd_cache_buf[i] = '\0'; task->cwd_cache = task->cwd_cache_buf; }
+
+    /* Test 2308: put_old not under new_root -> EINVAL */
+    fut_printf("[MISC-TEST] Test 2308: put_old not under new_root\n");
+    fut_vfs_mkdir("/pivot_other", 0755);
+    ret = sys_pivot_root("/pivot_test", "/pivot_other");
+    if (ret == -EINVAL) { fut_printf("[MISC-TEST] pass Test 2308\n"); fut_test_pass(); }
+    else {
+        fut_printf("[MISC-TEST] FAIL Test 2308: %ld\n", ret); fut_test_fail(2308);
+        if (ret == 0 && task->chroot_vnode) { fut_vnode_unref(task->chroot_vnode); task->chroot_vnode = NULL; }
+    }
+
+    /* Test 2309: non-directory -> ENOTDIR */
+    fut_printf("[MISC-TEST] Test 2309: non-directory -> ENOTDIR\n");
+    int ffd = fut_vfs_open("/pivot_notdir.txt", 0x42, 0644);
+    if (ffd >= 0) sys_close(ffd);
+    ret = sys_pivot_root("/pivot_notdir.txt", "/pivot_notdir.txt");
+    if (ret == -ENOTDIR) { fut_printf("[MISC-TEST] pass Test 2309\n"); fut_test_pass(); }
+    else { fut_printf("[MISC-TEST] FAIL Test 2309: %ld\n", ret); fut_test_fail(2309); }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -69635,6 +69703,7 @@ void fut_misc_test_thread(void *arg) {
     test_pty_winsize_ctty(); /* Tests 2285-2288: PTY winsize and controlling terminal ioctls */
     test_proc_environ_content(); /* Tests 2290-2291: /proc/self/environ content verification */
     test_inotify_tmp_watch(); /* Tests 2295-2300: inotify end-to-end /tmp directory watch */
+    test_pivot_root_full(); /* Tests 2305-2309: pivot_root full implementation */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

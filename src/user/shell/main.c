@@ -11753,6 +11753,18 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "strace") == 0) {
         cmd_strace(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "split") == 0) {
+        cmd_split(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "join") == 0) {
+        cmd_join(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "tsort") == 0) {
+        cmd_tsort(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "column") == 0) {
+        cmd_column(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {

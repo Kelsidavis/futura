@@ -2055,35 +2055,98 @@ static size_t gen_personality(char *buf, size_t cap, fut_task_t *task) {
 /*
  * gen_mountinfo() — /proc/<pid>/mountinfo (Linux 2.6.26+)
  *
- * Extended mount table: each line has
- *   <id> <parent_id> <major>:<minor> <fs_root> <mountpoint> <options>
- *   [optional-fields] - <fs_type> <source> <super_opts>
+ * Each line:
+ *   <id> <parent_id> <major>:<minor> <root> <mountpoint> <options>
+ *   <optional-fields> - <fstype> <source> <super_options>
+ *
+ * Linux format reference:
+ *   1 0 0:1 / / rw - ramfs ramfs rw
+ *   2 1 0:2 / /tmp rw - ramfs ramfs rw,size=67108864
+ *   3 1 0:3 / /proc rw - proc proc rw
  */
 static size_t gen_mountinfo(char *buf, size_t cap) {
     struct pbuf b = { buf, 0, cap };
+
+    /* Collect mounts into a local array so we can resolve parent IDs.
+     * MAX_MOUNTS in fut_vfs.c is 32; use the same limit here. */
+    #define MOUNTINFO_MAX 64
+    struct {
+        struct fut_mount *m;
+        uint64_t id;           /* mount ID = st_dev */
+        const char *mp;        /* mountpoint string */
+        size_t mp_len;         /* strlen(mp) */
+    } mounts[MOUNTINFO_MAX];
+    int count = 0;
+
     struct fut_mount *m = fut_vfs_first_mount();
-    int mid = 1;
-    while (m) {
-        const char *mp  = (m->mountpoint && m->mountpoint[0]) ? m->mountpoint : "/";
-        const char *fs  = m->fstype_display ? m->fstype_display
-                        : (m->fs && m->fs->name) ? m->fs->name : "unknown";
-        const char *dev = (m->device && m->device[0]) ? m->device : "none";
-        /* id parent major:minor fs_root mountpoint options */
-        pb_u64(&b, (uint64_t)mid); pb_char(&b, ' ');
-        pb_u64(&b, 0);             pb_char(&b, ' ');  /* parent = root (simplified) */
-        pb_str(&b, "0:1 / ");
-        pb_str(&b, mp);
-        pb_str(&b, " rw,relatime shared:1 - ");
-        pb_str(&b, fs);            pb_char(&b, ' ');
-        pb_str(&b, dev);
-        pb_str(&b, " rw\n");
+    while (m && count < MOUNTINFO_MAX) {
+        const char *mp = (m->mountpoint && m->mountpoint[0]) ? m->mountpoint : "/";
+        mounts[count].m      = m;
+        mounts[count].id     = m->st_dev;
+        mounts[count].mp     = mp;
+        mounts[count].mp_len = strlen(mp);
+        count++;
         m = m->next;
-        mid++;
     }
+
+    for (int i = 0; i < count; i++) {
+        struct fut_mount *cur = mounts[i].m;
+        const char *mp  = mounts[i].mp;
+        const char *fs  = cur->fstype_display ? cur->fstype_display
+                        : (cur->fs && cur->fs->name) ? cur->fs->name : "unknown";
+        const char *src = (cur->device && cur->device[0]) ? cur->device : fs;
+
+        /* Determine parent mount: the mount whose mountpoint is the longest
+         * proper prefix of this mount's mountpoint.  "/" has parent 0. */
+        uint64_t parent_id = 0;
+        if (mounts[i].mp_len > 1) {  /* not "/" */
+            size_t best_len = 0;
+            for (int j = 0; j < count; j++) {
+                if (j == i) continue;
+                size_t plen = mounts[j].mp_len;
+                if (plen > mounts[i].mp_len) continue;
+                if (plen <= best_len) continue;
+                /* Check if mounts[j].mp is a prefix of mp */
+                if (plen == 1 && mounts[j].mp[0] == '/') {
+                    /* "/" is always a prefix */
+                    best_len = 1;
+                    parent_id = mounts[j].id;
+                } else if (strncmp(mounts[j].mp, mp, plen) == 0 &&
+                           (mp[plen] == '/' || mp[plen] == '\0')) {
+                    best_len = plen;
+                    parent_id = mounts[j].id;
+                }
+            }
+        }
+
+        /* Mount options from flags */
+        int flags = cur->flags;
+        const char *rw = (flags & 1) ? "ro" : "rw";  /* MS_RDONLY = 1 */
+
+        /* ID PARENT_ID MAJOR:MINOR ROOT MOUNTPOINT OPTIONS */
+        pb_u64(&b, mounts[i].id);   pb_char(&b, ' ');
+        pb_u64(&b, parent_id);      pb_char(&b, ' ');
+        pb_str(&b, "0:");
+        pb_u64(&b, mounts[i].id);   pb_char(&b, ' ');
+        pb_str(&b, "/ ");
+        pb_str(&b, mp);             pb_char(&b, ' ');
+        pb_str(&b, rw);
+
+        /* optional fields */
+        pb_str(&b, " - ");
+
+        /* FSTYPE SOURCE SUPER_OPTIONS */
+        pb_str(&b, fs);             pb_char(&b, ' ');
+        pb_str(&b, src);            pb_char(&b, ' ');
+        pb_str(&b, rw);
+        pb_char(&b, '\n');
+    }
+
     if (b.pos == 0) {
         /* Fallback: at least show rootfs */
-        pb_str(&b, "1 0 0:1 / / rw,relatime shared:1 - ramfs none rw\n");
+        pb_str(&b, "1 0 0:1 / / rw - ramfs ramfs rw\n");
     }
+    #undef MOUNTINFO_MAX
     return b.pos;
 }
 

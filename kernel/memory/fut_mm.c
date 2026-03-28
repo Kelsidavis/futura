@@ -1815,6 +1815,37 @@ int fut_mm_add_vma(fut_mm_t *mm, uintptr_t start, uintptr_t end, int prot, int f
 }
 
 /**
+ * fut_mm_add_vma_file - Add a file-backed VMA to the mm's VMA list
+ * @mm: Memory context
+ * @start: Start address (page-aligned)
+ * @end: End address (page-aligned, exclusive)
+ * @prot: Protection flags (PROT_READ, PROT_WRITE, PROT_EXEC)
+ * @flags: Mapping flags
+ * @vnode: Backing file vnode (takes a reference; NULL for anonymous)
+ * @file_offset: Offset into backing file
+ *
+ * Returns 0 on success, -ENOMEM on failure.
+ */
+int fut_mm_add_vma_file(fut_mm_t *mm, uintptr_t start, uintptr_t end, int prot, int flags,
+                        struct fut_vnode *vnode, uint64_t file_offset) {
+    int rc = fut_mm_add_vma(mm, start, end, prot, flags);
+    if (rc < 0) return rc;
+
+    /* Walk to the VMA we just added (last in list) and set file fields */
+    if (vnode) {
+        struct fut_vma *v = mm->vma_list;
+        while (v && v->next) v = v->next;
+        if (v && v->start == start) {
+            v->vnode = vnode;
+            v->file_offset = file_offset;
+            extern void fut_vnode_ref(struct fut_vnode *);
+            fut_vnode_ref(vnode);
+        }
+    }
+    return 0;
+}
+
+/**
  * fut_mm_clone_vmas - Clone all VMAs from src_mm to dest_mm
  * @dest_mm: Destination memory context
  * @src_mm: Source memory context

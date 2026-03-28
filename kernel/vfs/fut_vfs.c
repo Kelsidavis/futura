@@ -205,20 +205,15 @@ static void close_fd_in_task(fut_task_t *task, int fd) {
     /* Dispatch inotify IN_CLOSE_WRITE or IN_CLOSE_NOWRITE before releasing the file */
     if (file->vnode && file->vnode->name[0]) {
         extern void inotify_dispatch_event(const char *, uint32_t, const char *, uint32_t);
-        /* Determine parent directory path from vnode */
         char close_dir[256];
         const char *vname = file->vnode->name;
-        /* Use vnode parent path if available, otherwise "/" */
+        /* Build parent directory path using fut_vnode_build_path (consistent with
+         * all other inotify dispatch sites in ramfs/VFS) */
         struct fut_vnode *pv = file->vnode->parent;
-        if (pv && pv->name[0]) {
-            int pi = 0;
-            if (pv->parent && pv->parent->name[0]) {
-                const char *pp = pv->name;
-                while (*pp && pi < 254) close_dir[pi++] = *pp++;
-            } else {
-                close_dir[pi++] = '/';
+        if (pv) {
+            if (!fut_vnode_build_path(pv, close_dir, sizeof(close_dir))) {
+                close_dir[0] = '/'; close_dir[1] = '\0';
             }
-            close_dir[pi] = '\0';
         } else {
             close_dir[0] = '/'; close_dir[1] = '\0';
         }

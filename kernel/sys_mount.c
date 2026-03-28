@@ -270,8 +270,17 @@ long sys_mount(const char *source, const char *target, const char *filesystemtyp
         }
     }
 
-    /* Data parameter validated - will be used in Phase 3 options parsing */
-    (void)data;
+    /* Data parameter validated - save a kernel-side copy for passing to fs->mount().
+     * The stack-allocated data_buf above goes out of scope, so re-copy into a
+     * persistent buffer that lives for the remainder of sys_mount. */
+    char mount_data_buf[256];
+    char *mount_data = NULL;
+    if (data) {
+        if (mount_copy_from_user(mount_data_buf, data, sizeof(mount_data_buf)) == 0) {
+            mount_data_buf[sizeof(mount_data_buf) - 1] = '\0';
+            mount_data = mount_data_buf;
+        }
+    }
 
     /* Phase 2: Validate target pointer (required) */
     if (!target) {
@@ -693,7 +702,7 @@ long sys_mount(const char *source, const char *target, const char *filesystemtyp
     memcpy(mountpoint, target_buf, target_len);
 
     int ret = fut_vfs_mount(NULL, mountpoint, kernel_fstype,
-                            (int)(mountflags & 0x7fffffff), NULL,
+                            (int)(mountflags & 0x7fffffff), mount_data,
                             FUT_INVALID_HANDLE);
     if (ret < 0) {
         fut_free(mountpoint);

@@ -22,6 +22,16 @@
  *   RamFS Structures
  * ============================================================ */
 
+/* Per-superblock (per-mount) ramfs metadata.
+ * Tracks size limits, inode limits, and current usage. */
+struct ramfs_sb_info {
+    uint64_t max_bytes;             /* Maximum total bytes (0 = unlimited) */
+    uint64_t bytes_used;            /* Current bytes used across all files */
+    uint64_t max_inodes;            /* Maximum inode count (0 = unlimited) */
+    uint64_t inode_count;           /* Current number of allocated inodes */
+    uint32_t root_mode;             /* Root directory permission mode */
+};
+
 /* Directory entry linking file names to vnodes */
 struct ramfs_dirent {
     char name[64];                  /* File/directory name */
@@ -132,6 +142,14 @@ static int validate_ramfs_node(struct ramfs_node *node) {
     }
 
     return 0;
+}
+
+/* Retrieve per-mount superblock info from a vnode.
+ * Returns NULL if the vnode has no mount or no ramfs_sb_info. */
+static struct ramfs_sb_info *ramfs_get_sb_info(struct fut_vnode *vnode) {
+    if (!vnode || !vnode->mount || !vnode->mount->fs_data)
+        return NULL;
+    return (struct ramfs_sb_info *)vnode->mount->fs_data;
 }
 
 static void str_copy_safe(char *dest, const char *src, size_t max_len) {
@@ -318,6 +336,18 @@ static ssize_t ramfs_write(struct fut_vnode *vnode, const void *buf, size_t size
     /* Check for integer overflow: offset + size */
     if (offset > SIZE_MAX - size) {
         return -ENOSPC;  /* File would be too large */
+    }
+
+    /* Enforce tmpfs size limit: check if this write would push total
+     * bytes_used past max_bytes.  Only the *new* bytes (beyond current
+     * file size) count as additional usage. */
+    uint64_t new_end = offset + size;
+    struct ramfs_sb_info *sbi = ramfs_get_sb_info(vnode);
+    if (sbi && sbi->max_bytes > 0 && new_end > vnode->size) {
+        uint64_t delta = new_end - vnode->size;
+        if (sbi->bytes_used + delta > sbi->max_bytes) {
+            return -ENOSPC;
+        }
     }
 
     /* Calculate required capacity */
@@ -539,9 +569,13 @@ static ssize_t ramfs_write(struct fut_vnode *vnode, const void *buf, size_t size
     }
 #endif
 
-    /* Update size - we already checked for overflow above */
+    /* Update size and per-mount bytes_used tracking */
     if (offset + size > vnode->size) {
+        uint64_t delta = (offset + size) - vnode->size;
         vnode->size = offset + size;
+        if (sbi) {
+            sbi->bytes_used += delta;
+        }
     }
 
     /* Update modification and status change timestamps */
@@ -675,6 +709,12 @@ static int ramfs_create(struct fut_vnode *dir, const char *name, uint32_t mode, 
         return -EIO;
     }
 
+    /* Enforce inode limit */
+    struct ramfs_sb_info *sbi = ramfs_get_sb_info(dir);
+    if (sbi && sbi->max_inodes > 0 && sbi->inode_count >= sbi->max_inodes) {
+        return -ENOSPC;
+    }
+
     /* Check if file already exists */
     struct ramfs_dirent *entry = dir_node->dir.entries;
     while (entry) {
@@ -771,6 +811,11 @@ static int ramfs_create(struct fut_vnode *dir, const char *name, uint32_t mode, 
     new_entry->next = dir_node->dir.entries;
     dir_node->dir.entries = new_entry;
 
+    /* Track inode allocation */
+    if (sbi) {
+        sbi->inode_count++;
+    }
+
     /* Update parent directory mtime and ctime (new entry added) */
     uint64_t now = fut_get_ticks();
     dir_node->mtime_ms = now;
@@ -803,6 +848,12 @@ static int ramfs_mkdir(struct fut_vnode *dir, const char *name, uint32_t mode) {
     struct ramfs_node *dir_node = (struct ramfs_node *)dir->fs_data;
     if (!dir_node) {
         return -EIO;
+    }
+
+    /* Enforce inode limit */
+    struct ramfs_sb_info *sbi_mkdir = ramfs_get_sb_info(dir);
+    if (sbi_mkdir && sbi_mkdir->max_inodes > 0 && sbi_mkdir->inode_count >= sbi_mkdir->max_inodes) {
+        return -ENOSPC;
     }
 
     /* Check if directory already exists */
@@ -892,6 +943,11 @@ static int ramfs_mkdir(struct fut_vnode *dir, const char *name, uint32_t mode) {
     /* Parent gains a link from new child's ".." entry */
     dir->nlinks++;
 
+    /* Track inode allocation */
+    if (sbi_mkdir) {
+        sbi_mkdir->inode_count++;
+    }
+
     /* Update parent directory mtime and ctime (new subdirectory added) */
     uint64_t dir_now = fut_get_ticks();
     dir_node->mtime_ms = dir_now;
@@ -969,6 +1025,18 @@ static int ramfs_unlink(struct fut_vnode *dir, const char *name) {
              * the last FD is closed and fut_vnode_unref drops it to zero. */
             struct ramfs_node *node = (struct ramfs_node *)vnode->fs_data;
             if (vnode->nlinks == 0) {
+                /* Update per-mount usage tracking */
+                struct ramfs_sb_info *sbi_unlink = ramfs_get_sb_info(dir);
+                if (sbi_unlink) {
+                    if (vnode->type == VN_REG && vnode->size > 0) {
+                        sbi_unlink->bytes_used = (sbi_unlink->bytes_used >= vnode->size)
+                            ? sbi_unlink->bytes_used - vnode->size : 0;
+                    }
+                    if (sbi_unlink->inode_count > 0) {
+                        sbi_unlink->inode_count--;
+                    }
+                }
+
                 if (node && node->open_count > 0) {
                     /* Deferred: data freed in ramfs_close when open_count hits 0 */
                     node->deleted = 1;
@@ -1073,6 +1141,12 @@ static int ramfs_rmdir(struct fut_vnode *dir, const char *name) {
             /* Free the ramfs_node */
             fut_free(node);
             vnode->fs_data = NULL;
+
+            /* Track inode deallocation */
+            struct ramfs_sb_info *sbi_rmdir = ramfs_get_sb_info(dir);
+            if (sbi_rmdir && sbi_rmdir->inode_count > 0) {
+                sbi_rmdir->inode_count--;
+            }
 
             /* Release the vnode through the normal refcount path so that
              * vnode->name is freed and refcount accounting stays consistent. */
@@ -1317,9 +1391,15 @@ static int ramfs_truncate(struct fut_vnode *vnode, uint64_t length) {
         return 0;
     }
 
+    struct ramfs_sb_info *sbi = ramfs_get_sb_info(vnode);
+
     /* Case 1: Shrinking file */
     if (length < old_size) {
+        uint64_t freed = old_size - length;
         vnode->size = length;
+        if (sbi) {
+            sbi->bytes_used = (sbi->bytes_used >= freed) ? sbi->bytes_used - freed : 0;
+        }
         /* POSIX: truncate updates mtime and ctime */
         node->mtime_ms = fut_get_ticks();
         node->ctime_ms = node->mtime_ms;
@@ -1327,6 +1407,14 @@ static int ramfs_truncate(struct fut_vnode *vnode, uint64_t length) {
     }
 
     /* Case 2: Extending file - need to ensure capacity and zero-fill */
+    /* Enforce tmpfs size limit */
+    if (sbi && sbi->max_bytes > 0) {
+        uint64_t delta = length - old_size;
+        if (sbi->bytes_used + delta > sbi->max_bytes) {
+            return -ENOSPC;
+        }
+    }
+
     size_t new_capacity = (size_t)length;
 
     /* Reallocate buffer if current capacity is insufficient */
@@ -1366,7 +1454,10 @@ static int ramfs_truncate(struct fut_vnode *vnode, uint64_t length) {
         }
     }
 
-    /* Update file size */
+    /* Update file size and per-mount bytes_used tracking */
+    if (sbi) {
+        sbi->bytes_used += (length - old_size);
+    }
     vnode->size = length;
 
     /* POSIX: truncate updates mtime and ctime */
@@ -1585,6 +1676,12 @@ static int ramfs_symlink(struct fut_vnode *parent, const char *linkpath, const c
         return -EIO;
     }
 
+    /* Enforce inode limit */
+    struct ramfs_sb_info *sbi_sym = ramfs_get_sb_info(parent);
+    if (sbi_sym && sbi_sym->max_inodes > 0 && sbi_sym->inode_count >= sbi_sym->max_inodes) {
+        return -ENOSPC;
+    }
+
     /* Check if linkpath already exists */
     struct ramfs_dirent *existing = parent_node->dir.entries;
     while (existing) {
@@ -1669,6 +1766,11 @@ static int ramfs_symlink(struct fut_vnode *parent, const char *linkpath, const c
     new_entry->vnode = link_vnode;
     new_entry->next = parent_node->dir.entries;
     parent_node->dir.entries = new_entry;
+
+    /* Track inode allocation */
+    if (sbi_sym) {
+        sbi_sym->inode_count++;
+    }
 
     /* POSIX: creating an entry updates parent directory mtime/ctime */
     uint64_t symlink_now = fut_get_ticks();
@@ -2057,6 +2159,57 @@ void ramfs_touch_atime(struct fut_vnode *vnode) {
     node->atime_ms = fut_get_ticks();
 }
 
+/**
+ * ramfs_statfs() - Report filesystem statistics for a ramfs/tmpfs mount.
+ *
+ * Returns used/available space based on the per-mount size limit and
+ * current bytes_used tracking.  If no size limit is set, falls back to
+ * physical memory statistics.
+ */
+static int ramfs_statfs(struct fut_mount *mount, struct fut_statfs *out) {
+    if (!mount || !out) {
+        return -EINVAL;
+    }
+
+    struct ramfs_sb_info *sbi = (struct ramfs_sb_info *)mount->fs_data;
+    const uint64_t block_size = 4096;
+
+    if (sbi && sbi->max_bytes > 0) {
+        /* Size-limited tmpfs: report real usage */
+        uint64_t total_blocks = sbi->max_bytes / block_size;
+        uint64_t used_blocks = sbi->bytes_used / block_size;
+        uint64_t free_blocks = (used_blocks < total_blocks) ? total_blocks - used_blocks : 0;
+
+        out->block_size = block_size;
+        out->blocks_total = total_blocks;
+        out->blocks_free = free_blocks;
+
+        if (sbi->max_inodes > 0) {
+            out->inodes_total = sbi->max_inodes;
+            out->inodes_free = (sbi->inode_count < sbi->max_inodes)
+                ? sbi->max_inodes - sbi->inode_count : 0;
+        } else {
+            out->inodes_total = 65536;
+            out->inodes_free = 65536 - sbi->inode_count;
+        }
+    } else {
+        /* Unlimited ramfs: report physical memory */
+        uint64_t total_pages = fut_pmm_total_pages();
+        uint64_t free_pages  = fut_pmm_free_pages();
+
+        out->block_size = block_size;
+        out->blocks_total = total_pages;
+        out->blocks_free = free_pages;
+        out->inodes_total = 65536;
+        out->inodes_free = sbi ? (65536 - sbi->inode_count) : 32768;
+    }
+
+    out->dir_tombstones = 0;
+    out->features = 0;
+
+    return 0;
+}
+
 static void ramfs_init_vnode_ops(void) {
     ramfs_vnode_ops.open = ramfs_open;
     ramfs_vnode_ops.close = ramfs_close;
@@ -2091,28 +2244,62 @@ static int ramfs_mount(const char *device, int flags, void *data, fut_handle_t b
     (void)device;
     (void)block_device_handle;  /* ramfs doesn't use block devices */
 
-    /* Parse tmpfs size option: "size=NNN" or "size=NNNm" or "size=NNNk" */
-    uint64_t size_limit = 0;  /* 0 = unlimited */
+    /* Parse mount options from comma-separated data string:
+     *   size=<N>[k|m|g]    - maximum total filesystem size
+     *   nr_inodes=<N>      - maximum number of inodes
+     *   mode=<octal>       - root directory permissions (e.g., mode=1777)
+     */
+    uint64_t size_limit = 0;   /* 0 = unlimited */
+    uint64_t max_inodes = 0;   /* 0 = unlimited */
+    uint32_t root_mode  = 0755; /* default root directory mode */
+
     if (data) {
-        const char *opts = (const char *)data;
-        const char *p = opts;
+        const char *p = (const char *)data;
         while (*p) {
+            /* size=<N>[k|m|g] */
             if (p[0] == 's' && p[1] == 'i' && p[2] == 'z' && p[3] == 'e' && p[4] == '=') {
                 p += 5;
+                size_limit = 0;
                 while (*p >= '0' && *p <= '9') { size_limit = size_limit * 10 + (*p - '0'); p++; }
-                if (*p == 'k' || *p == 'K') size_limit *= 1024;
-                else if (*p == 'm' || *p == 'M') size_limit *= 1024 * 1024;
-                else if (*p == 'g' || *p == 'G') size_limit *= 1024ULL * 1024 * 1024;
-                break;
+                if (*p == 'k' || *p == 'K') { size_limit *= 1024; p++; }
+                else if (*p == 'm' || *p == 'M') { size_limit *= 1024 * 1024; p++; }
+                else if (*p == 'g' || *p == 'G') { size_limit *= 1024ULL * 1024 * 1024; p++; }
             }
+            /* nr_inodes=<N> */
+            else if (p[0] == 'n' && p[1] == 'r' && p[2] == '_' && p[3] == 'i' &&
+                     p[4] == 'n' && p[5] == 'o' && p[6] == 'd' && p[7] == 'e' &&
+                     p[8] == 's' && p[9] == '=') {
+                p += 10;
+                max_inodes = 0;
+                while (*p >= '0' && *p <= '9') { max_inodes = max_inodes * 10 + (*p - '0'); p++; }
+            }
+            /* mode=<octal> */
+            else if (p[0] == 'm' && p[1] == 'o' && p[2] == 'd' && p[3] == 'e' && p[4] == '=') {
+                p += 5;
+                root_mode = 0;
+                while (*p >= '0' && *p <= '7') { root_mode = root_mode * 8 + (*p - '0'); p++; }
+            }
+            /* Skip to next option */
             while (*p && *p != ',') p++;
             if (*p == ',') p++;
         }
     }
 
+    /* Allocate per-mount superblock info */
+    struct ramfs_sb_info *sbi = fut_malloc(sizeof(struct ramfs_sb_info));
+    if (!sbi) {
+        return -ENOMEM;
+    }
+    sbi->max_bytes   = size_limit;
+    sbi->bytes_used  = 0;
+    sbi->max_inodes  = max_inodes;
+    sbi->inode_count = 1;  /* root inode */
+    sbi->root_mode   = root_mode;
+
     /* Create mount structure */
     struct fut_mount *mount = fut_malloc(sizeof(struct fut_mount));
     if (!mount) {
+        fut_free(sbi);
         return -ENOMEM;
     }
 
@@ -2120,6 +2307,7 @@ static int ramfs_mount(const char *device, int flags, void *data, fut_handle_t b
     struct ramfs_root_guard *guard = fut_malloc(sizeof(struct ramfs_root_guard));
     if (!guard) {
         fut_free(mount);
+        fut_free(sbi);
         return -ENOMEM;
     }
     guard->before = RAMFS_ROOT_CANARY_BEFORE;
@@ -2131,6 +2319,7 @@ static int ramfs_mount(const char *device, int flags, void *data, fut_handle_t b
     if (!root_node) {
         fut_free(guard);
         fut_free(mount);
+        fut_free(sbi);
         return -ENOMEM;
     }
 
@@ -2148,7 +2337,7 @@ static int ramfs_mount(const char *device, int flags, void *data, fut_handle_t b
     root->parent = NULL;
     root->name = NULL;
     root->ops = &ramfs_vnode_ops;
-    vfs_init_vnode_ownership(root, NULL, 0755);
+    vfs_init_vnode_ownership(root, NULL, root_mode);
     fut_vnode_lock_init(root);
 
     fut_vfs_register_root_canary(&guard->before, &guard->after);
@@ -2173,12 +2362,20 @@ static int ramfs_mount(const char *device, int flags, void *data, fut_handle_t b
     mount->fs = NULL;  /* Set by VFS */
     mount->root = root;
     mount->flags = flags;
-    mount->fs_data = (void *)(uintptr_t)size_limit;  /* tmpfs size limit (0=unlimited) */
+    mount->fs_data = sbi;
     mount->next = NULL;
 
     if (size_limit > 0) {
-        fut_printf("[RAMFS] tmpfs mounted with size limit: %llu bytes\n",
-                   (unsigned long long)size_limit);
+        fut_printf("[RAMFS] tmpfs mounted with size limit: %llu bytes (%llu MB)\n",
+                   (unsigned long long)size_limit,
+                   (unsigned long long)(size_limit / (1024 * 1024)));
+    }
+    if (max_inodes > 0) {
+        fut_printf("[RAMFS] tmpfs inode limit: %llu\n",
+                   (unsigned long long)max_inodes);
+    }
+    if (root_mode != 0755) {
+        fut_printf("[RAMFS] tmpfs root mode: 0%o\n", root_mode);
     }
 
     *mount_out = mount;
@@ -2315,6 +2512,12 @@ static int ramfs_unmount(struct fut_mount *mount) {
     /* Free the root vnode itself */
     ramfs_free_vnode(root);
 
+    /* Free the per-mount superblock info */
+    if (mount->fs_data) {
+        fut_free(mount->fs_data);
+        mount->fs_data = NULL;
+    }
+
     return 0;
 }
 
@@ -2333,6 +2536,7 @@ void fut_ramfs_init(void) {
     ramfs_type.name = "ramfs";
     ramfs_type.mount = ramfs_mount;
     ramfs_type.unmount = ramfs_unmount;
+    ramfs_type.statfs = ramfs_statfs;
 
     fut_vfs_register_fs(&ramfs_type);
 }

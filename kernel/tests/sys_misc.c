@@ -64651,6 +64651,89 @@ __attribute__((noinline)) static void test_fork_vma_consistency(void) {
     }
 }
 
+/* ── Tests 2270-2272: Socket option enforcement round-trip ── */
+__attribute__((noinline)) static void test_socket_option_enforcement(void) {
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_setsockopt(int fd, int level, int optname, const void *optval, unsigned int optlen);
+    extern long sys_getsockopt(int fd, int level, int optname, void *optval, unsigned int *optlen);
+    extern long sys_close(int);
+
+    long sockfd = sys_socket(2 /* AF_INET */, 1 /* SOCK_STREAM */, 0);
+    if (sockfd < 0) {
+        fut_printf("[MISC-TEST] socket option tests: socket() failed (%ld)\n", sockfd);
+        fut_test_fail(2270); fut_test_fail(2271); fut_test_fail(2272);
+        return;
+    }
+
+    /* Test 2270: SO_RCVTIMEO round-trip */
+    fut_printf("[MISC-TEST] Test 2270: SO_RCVTIMEO round-trip\n");
+    {
+        struct { long tv_sec; long tv_usec; } tv_set = { .tv_sec = 5, .tv_usec = 0 };
+        long r = sys_setsockopt((int)sockfd, 1, 20, &tv_set, sizeof(tv_set));
+        if (r != 0) {
+            fut_printf("[MISC-TEST] x Test 2270: setsockopt=%ld\n", r);
+            fut_test_fail(2270);
+        } else {
+            struct { long tv_sec; long tv_usec; } tv_get = {0, 0};
+            unsigned int optlen = sizeof(tv_get);
+            r = sys_getsockopt((int)sockfd, 1, 20, &tv_get, &optlen);
+            if (r == 0 && tv_get.tv_sec == 5 && tv_get.tv_usec == 0) {
+                fut_printf("[MISC-TEST] v Test 2270: SO_RCVTIMEO=%ld.%06ld\n", tv_get.tv_sec, tv_get.tv_usec);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] x Test 2270: ret=%ld sec=%ld usec=%ld\n", r, tv_get.tv_sec, tv_get.tv_usec);
+                fut_test_fail(2270);
+            }
+        }
+    }
+
+    /* Test 2271: TCP_NODELAY round-trip */
+    fut_printf("[MISC-TEST] Test 2271: TCP_NODELAY round-trip\n");
+    {
+        int enable = 1;
+        long r = sys_setsockopt((int)sockfd, 6, 1, &enable, sizeof(int));
+        if (r != 0) {
+            fut_printf("[MISC-TEST] x Test 2271: setsockopt=%ld\n", r);
+            fut_test_fail(2271);
+        } else {
+            int got = 0;
+            unsigned int optlen = sizeof(int);
+            r = sys_getsockopt((int)sockfd, 6, 1, &got, &optlen);
+            if (r == 0 && got == 1) {
+                fut_printf("[MISC-TEST] v Test 2271: TCP_NODELAY=%d\n", got);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] x Test 2271: ret=%ld got=%d\n", r, got);
+                fut_test_fail(2271);
+            }
+        }
+    }
+
+    /* Test 2272: SO_KEEPALIVE round-trip */
+    fut_printf("[MISC-TEST] Test 2272: SO_KEEPALIVE round-trip\n");
+    {
+        int enable = 1;
+        long r = sys_setsockopt((int)sockfd, 1, 9, &enable, sizeof(int));
+        if (r != 0) {
+            fut_printf("[MISC-TEST] x Test 2272: setsockopt=%ld\n", r);
+            fut_test_fail(2272);
+        } else {
+            int got = 0;
+            unsigned int optlen = sizeof(int);
+            r = sys_getsockopt((int)sockfd, 1, 9, &got, &optlen);
+            if (r == 0 && got == 1) {
+                fut_printf("[MISC-TEST] v Test 2272: SO_KEEPALIVE=%d\n", got);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] x Test 2272: ret=%ld got=%d\n", r, got);
+                fut_test_fail(2272);
+            }
+        }
+    }
+
+    sys_close((int)sockfd);
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -68959,6 +69042,7 @@ void fut_misc_test_thread(void *arg) {
     test_io_uring();  /* Tests 1946-1957 */
     test_pty_and_cgroup(); /* Tests 2176-2188 */
     test_memfd_pidfd_advanced(); /* Tests 2240-2259 */
+    test_socket_option_enforcement(); /* Tests 2270-2272 */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

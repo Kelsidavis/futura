@@ -199,6 +199,13 @@ long sys_shutdown(int sockfd, int how) {
     switch (local_how) {
         case SHUT_RD:
             socket->shutdown_rd = true;
+            /* Discard any data currently buffered in the receive direction.
+             * Future recv() calls will return 0 (EOF) via the shutdown_rd flag. */
+            if (socket->pair_reverse) {
+                fut_spinlock_acquire(&socket->pair_reverse->lock);
+                socket->pair_reverse->recv_head = socket->pair_reverse->recv_tail;
+                fut_spinlock_release(&socket->pair_reverse->lock);
+            }
             break;
 
         case SHUT_WR:
@@ -217,6 +224,13 @@ long sys_shutdown(int sockfd, int how) {
         case SHUT_RDWR:
             socket->shutdown_rd = true;
             socket->shutdown_wr = true;
+            /* Discard buffered receive data (SHUT_RD half) */
+            if (socket->pair_reverse) {
+                fut_spinlock_acquire(&socket->pair_reverse->lock);
+                socket->pair_reverse->recv_head = socket->pair_reverse->recv_tail;
+                fut_spinlock_release(&socket->pair_reverse->lock);
+            }
+            /* Signal EOF to peer (SHUT_WR half) */
             if (socket->pair) {
                 fut_spinlock_acquire(&socket->pair->lock);
                 socket->pair->peer = NULL;

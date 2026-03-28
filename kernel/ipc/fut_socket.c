@@ -1606,6 +1606,28 @@ int fut_socket_close(fut_socket_t *socket) {
         fut_spinlock_release(&socket->pair->lock);
     }
 
+    /* SO_LINGER with l_linger>0: graceful linger on close.
+     * Block for up to l_linger seconds waiting for the send buffer to
+     * drain (i.e. the peer reads all pending data).  If the buffer
+     * drains before the timeout, close proceeds immediately.  If the
+     * timeout expires with data still pending, close proceeds anyway
+     * (data may be discarded). */
+    if (socket->linger_onoff && socket->linger_secs > 0 && socket->pair) {
+        uint64_t deadline = fut_get_ticks() +
+            (uint64_t)socket->linger_secs * (1000 / 10); /* ticks at 100 Hz */
+        fut_socket_pair_t *lpair = socket->pair;
+        while (fut_get_ticks() < deadline) {
+            fut_spinlock_acquire(&lpair->lock);
+            bool drained = (lpair->recv_head == lpair->recv_tail);
+            bool peer_gone = (lpair->peer == NULL);
+            fut_spinlock_release(&lpair->lock);
+            if (drained || peer_gone)
+                break;
+            /* Yield and recheck — the peer's recv will drain the buffer */
+            fut_schedule();
+        }
+    }
+
     /* If this is a listening socket, wake all pending connect() callers.
      * They will see the socket is not CONNECTED and return ECONNREFUSED. */
     if (socket->listener) {

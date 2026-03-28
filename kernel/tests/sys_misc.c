@@ -73529,6 +73529,182 @@ __attribute__((noinline)) static void test_copy_file_range_roundtrip(void) {
     }
 }
 
+/* ============================================================
+ *   Tests 2670-2677: sync/fsync/fdatasync/syncfs return values
+ *
+ *   2670: sync() returns 0
+ *   2671: fsync() on a regular file returns 0
+ *   2672: fdatasync() on a regular file returns 0
+ *   2673: syncfs() on a valid fd returns 0
+ *   2674: fsync() with invalid fd returns EBADF
+ *   2675: fdatasync() with invalid fd returns EBADF
+ *   2676: syncfs() with invalid fd returns EBADF
+ *   2677: fsync() after write+close round-trip returns 0
+ * ============================================================ */
+__attribute__((noinline)) static void test_sync_fsync_fdatasync(void) {
+    extern long sys_sync(void);
+    extern long sys_fsync(int fd);
+    extern long sys_fdatasync(int fd);
+    extern long sys_syncfs(int fd);
+
+    fut_printf("[MISC-TEST] Tests 2670-2677: sync/fsync/fdatasync/syncfs return values\n");
+
+    /* ---- Test 2670: sync() returns 0 ---- */
+    fut_printf("[MISC-TEST] Test 2670: sync() returns 0\n");
+    {
+        long ret = sys_sync();
+        if (ret == 0) {
+            fut_printf("[MISC-TEST] PASS 2670: sync() returned 0\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL 2670: sync() returned %ld\n", ret);
+            fut_test_fail(2670);
+        }
+    }
+
+    /* ---- Test 2671: fsync() on a regular file returns 0 ---- */
+    fut_printf("[MISC-TEST] Test 2671: fsync() on regular file\n");
+    {
+        int fd = fut_vfs_open("/sync_test_fsync.txt", 0x42 /* O_RDWR|O_CREAT */, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL 2671: open failed fd=%d\n", fd);
+            fut_test_fail(2671);
+        } else {
+            const char *msg = "fsync test data";
+            fut_vfs_write(fd, msg, 15);
+            long ret = sys_fsync(fd);
+            if (ret == 0) {
+                fut_printf("[MISC-TEST] PASS 2671: fsync() returned 0\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2671: fsync() returned %ld\n", ret);
+                fut_test_fail(2671);
+            }
+            fut_vfs_close(fd);
+        }
+    }
+
+    /* ---- Test 2672: fdatasync() on a regular file returns 0 ---- */
+    fut_printf("[MISC-TEST] Test 2672: fdatasync() on regular file\n");
+    {
+        int fd = fut_vfs_open("/sync_test_fdatasync.txt", 0x42 /* O_RDWR|O_CREAT */, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL 2672: open failed fd=%d\n", fd);
+            fut_test_fail(2672);
+        } else {
+            const char *msg = "fdatasync test data";
+            fut_vfs_write(fd, msg, 19);
+            long ret = sys_fdatasync(fd);
+            if (ret == 0) {
+                fut_printf("[MISC-TEST] PASS 2672: fdatasync() returned 0\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2672: fdatasync() returned %ld\n", ret);
+                fut_test_fail(2672);
+            }
+            fut_vfs_close(fd);
+        }
+    }
+
+    /* ---- Test 2673: syncfs() on a valid fd returns 0 ---- */
+    fut_printf("[MISC-TEST] Test 2673: syncfs() on valid fd\n");
+    {
+        int fd = fut_vfs_open("/sync_test_syncfs.txt", 0x42 /* O_RDWR|O_CREAT */, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL 2673: open failed fd=%d\n", fd);
+            fut_test_fail(2673);
+        } else {
+            long ret = sys_syncfs(fd);
+            if (ret == 0) {
+                fut_printf("[MISC-TEST] PASS 2673: syncfs() returned 0\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2673: syncfs() returned %ld\n", ret);
+                fut_test_fail(2673);
+            }
+            fut_vfs_close(fd);
+        }
+    }
+
+    /* ---- Test 2674: fsync() with invalid fd returns EBADF ---- */
+    fut_printf("[MISC-TEST] Test 2674: fsync() invalid fd\n");
+    {
+        long ret = sys_fsync(9999);
+        if (ret == -EBADF) {
+            fut_printf("[MISC-TEST] PASS 2674: fsync(9999) returned EBADF\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL 2674: fsync(9999) returned %ld (expected %d)\n", ret, -EBADF);
+            fut_test_fail(2674);
+        }
+    }
+
+    /* ---- Test 2675: fdatasync() with invalid fd returns EBADF ---- */
+    fut_printf("[MISC-TEST] Test 2675: fdatasync() invalid fd\n");
+    {
+        long ret = sys_fdatasync(9999);
+        if (ret == -EBADF) {
+            fut_printf("[MISC-TEST] PASS 2675: fdatasync(9999) returned EBADF\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL 2675: fdatasync(9999) returned %ld (expected %d)\n", ret, -EBADF);
+            fut_test_fail(2675);
+        }
+    }
+
+    /* ---- Test 2676: syncfs() with invalid fd returns EBADF ---- */
+    fut_printf("[MISC-TEST] Test 2676: syncfs() invalid fd\n");
+    {
+        long ret = sys_syncfs(-1);
+        if (ret == -EBADF) {
+            fut_printf("[MISC-TEST] PASS 2676: syncfs(-1) returned EBADF\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL 2676: syncfs(-1) returned %ld (expected %d)\n", ret, -EBADF);
+            fut_test_fail(2676);
+        }
+    }
+
+    /* ---- Test 2677: fsync() write-close-reopen round-trip ---- */
+    fut_printf("[MISC-TEST] Test 2677: fsync() write-close-reopen persistence\n");
+    {
+        int fd = fut_vfs_open("/sync_test_roundtrip.txt", 0x42 /* O_RDWR|O_CREAT */, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL 2677: open failed fd=%d\n", fd);
+            fut_test_fail(2677);
+        } else {
+            const char *msg = "round-trip";
+            size_t msg_len = 10;
+            fut_vfs_write(fd, msg, msg_len);
+            long sync_ret = sys_fsync(fd);
+            fut_vfs_close(fd);
+
+            if (sync_ret != 0) {
+                fut_printf("[MISC-TEST] FAIL 2677: fsync returned %ld\n", sync_ret);
+                fut_test_fail(2677);
+            } else {
+                /* Reopen and verify data persisted */
+                fd = fut_vfs_open("/sync_test_roundtrip.txt", 0x00 /* O_RDONLY */, 0);
+                if (fd < 0) {
+                    fut_printf("[MISC-TEST] FAIL 2677: reopen failed fd=%d\n", fd);
+                    fut_test_fail(2677);
+                } else {
+                    char rbuf[16] = {0};
+                    ssize_t nr = fut_vfs_read(fd, rbuf, sizeof(rbuf));
+                    fut_vfs_close(fd);
+                    if (nr == (ssize_t)msg_len && __builtin_memcmp(rbuf, msg, msg_len) == 0) {
+                        fut_printf("[MISC-TEST] PASS 2677: data persisted after fsync+close+reopen\n");
+                        fut_test_pass();
+                    } else {
+                        fut_printf("[MISC-TEST] FAIL 2677: readback mismatch nr=%zd\n", nr);
+                        fut_test_fail(2677);
+                    }
+                }
+            }
+        }
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -77874,6 +78050,7 @@ void fut_misc_test_thread(void *arg) {
     test_readahead_fadvise_roundtrip(); /* Tests 2640-2647: readahead + fadvise I/O performance round-trip */
     test_mincore_residency(); /* Tests 2650-2657: mincore PTE-walk residency + msync flag validation */
     test_copy_file_range_roundtrip(); /* Tests 2660-2667: copy_file_range round-trip */
+    test_sync_fsync_fdatasync(); /* Tests 2670-2677: sync/fsync/fdatasync/syncfs return values */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

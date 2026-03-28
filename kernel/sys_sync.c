@@ -13,9 +13,6 @@
 
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
-#include <stdint.h>
-
-#include <kernel/kprintf.h>
 #include <kernel/fut_vfs.h>
 
 /**

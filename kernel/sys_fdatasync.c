@@ -15,10 +15,7 @@
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
 #include <kernel/fut_task.h>
-#include <kernel/fut_fd_util.h>
 #include <fcntl.h>
-
-#include <kernel/kprintf.h>
 
 /**
  * fdatasync() syscall - Synchronize a file's data (but not metadata) with storage.
@@ -111,182 +108,73 @@ long sys_fdatasync(int fd) {
     /* ARM64 FIX: Copy parameter to local variable */
     int local_fd = fd;
 
-    /* Phase 2: Validate FD number */
+    /* Validate FD number */
     if (local_fd < 0) {
-        fut_printf("[FDATASYNC] fdatasync(fd=%d) -> EBADF (negative fd)\n", local_fd);
         return -EBADF;
     }
 
-    /* Phase 2: Get current task for FD table access */
+    /* Get current task for FD table access */
     fut_task_t *task = fut_task_current();
     if (!task) {
-        fut_printf("[FDATASYNC] fdatasync(fd=%d) -> ESRCH (no current task)\n", local_fd);
         return -ESRCH;
     }
 
-    /* Validate FD upper bound to prevent OOB array access */
+    /* Validate FD upper bound */
     if (local_fd >= task->max_fds) {
-        fut_printf("[FDATASYNC] fdatasync(fd=%d, max_fds=%d) -> EBADF "
-                   "(fd exceeds max_fds, FD bounds validation)\n",
-                   local_fd, task->max_fds);
         return -EBADF;
     }
 
-    /* Phase 2: Categorize FD range - use shared helper */
-    const char *fd_category = fut_fd_category(local_fd);
-
     /* Validate FD table exists */
     if (!task->fd_table) {
-        fut_printf("[FDATASYNC] fdatasync(fd=%d [%s]) -> EBADF (no FD table, pid=%d)\n",
-                   local_fd, fd_category, task->pid);
         return -EBADF;
     }
 
     /* Get the file structure for fd from current task's FD table */
     struct fut_file *file = vfs_get_file_from_task(task, local_fd);
     if (!file) {
-        fut_printf("[FDATASYNC] fdatasync(fd=%d [%s]) -> EBADF (fd not open, pid=%d)\n",
-                   local_fd, fd_category, task->pid);
         return -EBADF;
     }
 
-    /* O_PATH fds cannot be used for I/O — only path-based operations */
+    /* O_PATH fds cannot be used for I/O */
     if (file->flags & O_PATH)
         return -EBADF;
 
-    /* Phase 2: Identify file type */
-    const char *file_type;
-    const char *sync_scope;
-
-    /* fdatasync() not supported on character devices, pipes, or sockets */
+    /* Character devices (via chr_ops) are not syncable */
     if (file->chr_ops) {
-        file_type = "character device";
-        sync_scope = "not syncable";
-        fut_printf("[FDATASYNC] fdatasync(fd=%d [%s], type=%s) -> EINVAL (%s, pid=%d)\n",
-                   local_fd, fd_category, file_type, sync_scope, task->pid);
         return -EINVAL;
     }
 
+    /* Reject unsyncable vnode types: char devices, FIFOs, sockets */
     if (file->vnode) {
         switch (file->vnode->type) {
             case VN_REG:
-                file_type = "regular file";
-                sync_scope = "data+size";
-                break;
             case VN_DIR:
-                file_type = "directory";
-                sync_scope = "directory entries";
-                break;
             case VN_BLK:
-                file_type = "block device";
-                sync_scope = "device cache";
-                break;
             case VN_LNK:
-                file_type = "symbolic link";
-                sync_scope = "link target";
-                break;
+                break;  /* These are syncable */
             case VN_CHR:
-                file_type = "character device";
-                sync_scope = "not syncable";
-                fut_printf("[FDATASYNC] fdatasync(fd=%d [%s], type=%s) -> EINVAL (%s, pid=%d)\n",
-                           local_fd, fd_category, file_type, sync_scope, task->pid);
-                return -EINVAL;
             case VN_FIFO:
-                file_type = "FIFO/pipe";
-                sync_scope = "not syncable";
-                fut_printf("[FDATASYNC] fdatasync(fd=%d [%s], type=%s) -> EINVAL (%s, pid=%d)\n",
-                           local_fd, fd_category, file_type, sync_scope, task->pid);
-                return -EINVAL;
             case VN_SOCK:
-                file_type = "socket";
-                sync_scope = "not syncable";
-                fut_printf("[FDATASYNC] fdatasync(fd=%d [%s], type=%s) -> EINVAL (%s, pid=%d)\n",
-                           local_fd, fd_category, file_type, sync_scope, task->pid);
-                return -EINVAL;
             default:
-                file_type = "unknown";
-                sync_scope = "not syncable";
-                fut_printf("[FDATASYNC] fdatasync(fd=%d [%s], type=%s) -> EINVAL (%s, pid=%d)\n",
-                           local_fd, fd_category, file_type, sync_scope, task->pid);
                 return -EINVAL;
         }
-    } else {
-        file_type = "no vnode";
-        sync_scope = "unknown";
     }
 
-    /*
-     * Phase 3 (Completed): Attempt filesystem-specific datasync() operation first
-     *
-     * fdatasync() should only sync data and critical metadata (file size),
-     * skipping atime/mtime updates for better performance. Phase 3 checks
-     * for a datasync() operation in vnode_ops before falling back to full sync().
-     *
-     * Filesystem-specific behavior:
-     *   - FuturaFS: datasync() syncs data segments only (skips atime/mtime)
-     *   - RamFS: datasync() is no-op (all data in memory)
-     *   - DevFS: datasync() delegates to device driver
-     */
-    uint64_t ino = file->vnode ? file->vnode->ino : 0;
-
-    /* Phase 3: Try datasync() operation if available (data-only sync) */
+    /* Try datasync() first: flushes file data + critical metadata only
+     * (file size, block pointers) but skips non-critical metadata like
+     * timestamps. Faster than fsync() for data-only durability.
+     * For ramfs: no-op.
+     * For FuturaFS: writes dirty inode; only flushes bitmaps/superblock
+     *              if structural changes (block allocation) occurred. */
     if (file->vnode && file->vnode->ops && file->vnode->ops->datasync) {
-        int ret = file->vnode->ops->datasync(file->vnode);
-        if (ret < 0) {
-            const char *error_desc;
-            switch (ret) {
-                case -EIO:
-                    error_desc = "I/O error during datasync";
-                    break;
-                case -EROFS:
-                    error_desc = "read-only filesystem";
-                    break;
-                default:
-                    error_desc = "datasync operation failed";
-                    break;
-            }
-            fut_printf("[FDATASYNC] fdatasync(fd=%d [%s], type=%s, scope=%s, ino=%lu, pid=%d) -> %d "
-                       "(%s, datasync operation, Phase 3)\n",
-                       local_fd, fd_category, file_type, sync_scope, ino, task->pid, ret, error_desc);
-            return ret;
-        }
-
-        return 0;
+        return file->vnode->ops->datasync(file->vnode);
     }
 
-    /* Phase 3: Fall back to full sync() if datasync not available */
+    /* Fall back to full sync if no datasync operation available */
     if (file->vnode && file->vnode->ops && file->vnode->ops->sync) {
-        int ret = file->vnode->ops->sync(file->vnode);
-        if (ret < 0) {
-            const char *error_desc;
-            switch (ret) {
-                case -EIO:
-                    error_desc = "I/O error during sync";
-                    break;
-                case -EROFS:
-                    error_desc = "read-only filesystem";
-                    break;
-                default:
-                    error_desc = "sync operation failed";
-                    break;
-            }
-            fut_printf("[FDATASYNC] fdatasync(fd=%d [%s], type=%s, scope=%s, ino=%lu, pid=%d) -> %d "
-                       "(%s, fallback to full sync, Phase 4: Async optimization)\n",
-                       local_fd, fd_category, file_type, sync_scope, ino, task->pid, ret, error_desc);
-            return ret;
-        }
-
-        return 0;
+        return file->vnode->ops->sync(file->vnode);
     }
 
-    /*
-     * Phase 3 (Completed): No sync operation available - return success for backwards compatibility
-     * This may occur for in-memory filesystems (RamFS) where sync is a no-op.
-     *
-     * Phase 4 additions:
-     *   - Async fdatasync for better performance
-     *   - Per-filesystem performance metrics
-     *   - Selective metadata sync statistics
-     */
+    /* No sync operation available (devfs, procfs, etc.) - success */
     return 0;
 }

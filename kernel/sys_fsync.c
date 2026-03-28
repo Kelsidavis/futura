@@ -16,10 +16,7 @@
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
 #include <kernel/fut_task.h>
-#include <kernel/fut_fd_util.h>
 #include <fcntl.h>
-
-#include <kernel/kprintf.h>
 
 /**
  * fsync() - Synchronize file's in-core state with storage

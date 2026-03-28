@@ -81,7 +81,7 @@ static ssize_t full_write(void *inode, void *priv, const void *buf, size_t n, of
 static struct fut_file_ops full_fops;
 
 /* Check if RDRAND is supported via CPUID.01H:ECX.RDRAND[bit 30] */
-static int hwrng_has_rdrand(void) {
+static int __attribute__((unused)) hwrng_has_rdrand(void) {
 #ifdef __x86_64__
     uint32_t eax, ebx, ecx, edx;
     __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(1));

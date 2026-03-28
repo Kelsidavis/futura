@@ -167,10 +167,10 @@ static size_t dns_decode_domain(const uint8_t *packet, size_t packet_len,
 }
 
 /*
- * Build a DNS query packet
+ * Build a DNS query packet for a given record type
  */
-static size_t dns_build_query(const char *domain, uint8_t *buffer, size_t buffer_len,
-                              uint16_t query_id) {
+static size_t dns_build_query_typed(const char *domain, uint8_t *buffer, size_t buffer_len,
+                                    uint16_t query_id, uint16_t qtype) {
     if (buffer_len < sizeof(dns_header_t) + DNS_MAX_DOMAIN_LEN + 4) {
         return 0;
     }
@@ -196,10 +196,18 @@ static size_t dns_build_query(const char *domain, uint8_t *buffer, size_t buffer
     /* Add question suffix (type and class) */
     dns_question_suffix_t *qsuffix =
         (dns_question_suffix_t *)(buffer + sizeof(dns_header_t) + name_len);
-    qsuffix->qtype = htons(DNS_TYPE_A);      /* IPv4 address */
+    qsuffix->qtype = htons(qtype);
     qsuffix->qclass = htons(DNS_CLASS_IN);   /* Internet */
 
     return sizeof(dns_header_t) + name_len + sizeof(dns_question_suffix_t);
+}
+
+/*
+ * Build a DNS query packet (IPv4 A record - backwards compatible)
+ */
+static size_t dns_build_query(const char *domain, uint8_t *buffer, size_t buffer_len,
+                              uint16_t query_id) {
+    return dns_build_query_typed(domain, buffer, buffer_len, query_id, DNS_TYPE_A);
 }
 
 /*
@@ -283,6 +291,117 @@ static int dns_parse_response(const uint8_t *packet, size_t packet_len,
     }
 
     return -ENOENT;  /* No A record found */
+}
+
+/*
+ * Parse a DNS response for AAAA (IPv6) records
+ */
+static int dns_parse_response6(const uint8_t *packet, size_t packet_len,
+                               uint16_t expected_id, uint8_t *ip6) {
+    if (packet_len < sizeof(dns_header_t))
+        return -EINVAL;
+
+    dns_header_t *header = (dns_header_t *)packet;
+    if (ntohs(header->id) != expected_id)
+        return -EINVAL;
+
+    uint16_t flags = ntohs(header->flags);
+    if ((flags & DNS_FLAG_QR) == 0)
+        return -EINVAL;
+
+    uint16_t rcode = flags & DNS_RCODE_MASK;
+    if (rcode == DNS_RCODE_NXDOMAIN)
+        return -ENOENT;
+    if (rcode != DNS_RCODE_NOERROR)
+        return -EIO;
+
+    uint16_t ancount = ntohs(header->ancount);
+    if (ancount == 0)
+        return -ENOENT;
+
+    /* Skip past questions */
+    size_t offset = sizeof(dns_header_t);
+    uint16_t qdcount = ntohs(header->qdcount);
+    for (uint16_t i = 0; i < qdcount; i++) {
+        char domain[DNS_MAX_DOMAIN_LEN + 1];
+        offset = dns_decode_domain(packet, packet_len, offset, domain, sizeof(domain));
+        if (offset == 0) return -EINVAL;
+        offset += sizeof(dns_question_suffix_t);
+        if (offset > packet_len) return -EINVAL;
+    }
+
+    /* Parse answer records looking for AAAA */
+    for (uint16_t i = 0; i < ancount; i++) {
+        char domain[DNS_MAX_DOMAIN_LEN + 1];
+        size_t name_end = dns_decode_domain(packet, packet_len, offset, domain, sizeof(domain));
+        if (name_end == 0 || name_end + sizeof(dns_rr_suffix_t) > packet_len)
+            return -EINVAL;
+
+        dns_rr_suffix_t *rr = (dns_rr_suffix_t *)(packet + name_end);
+        uint16_t type = ntohs(rr->type);
+        uint16_t rdlength = ntohs(rr->rdlength);
+        size_t rdata_offset = name_end + sizeof(dns_rr_suffix_t);
+        if (rdata_offset + rdlength > packet_len)
+            return -EINVAL;
+
+        if (type == DNS_TYPE_AAAA && rdlength == 16) {
+            dns_memcpy(ip6, packet + rdata_offset, 16);
+            return 0;
+        }
+
+        offset = rdata_offset + rdlength;
+    }
+
+    return -ENOENT;  /* No AAAA record found */
+}
+
+/*
+ * IPv6 DNS Cache
+ */
+
+static void dns_cache6_add(const char *domain, const uint8_t *ip6, uint32_t ttl) {
+    if (!domain || dns_strlen(domain) > DNS_MAX_DOMAIN_LEN) return;
+
+    uint64_t now = fut_get_ticks();
+    if (ttl > 86400 * 365 * 2) ttl = 86400 * 365 * 2;
+    uint64_t expires = now + ((uint64_t)ttl * 100);
+
+    int slot = -1;
+    uint64_t oldest_time = UINT64_MAX;
+    for (int i = 0; i < DNS_CACHE_SIZE; i++) {
+        if (!g_dns.cache6[i].valid || g_dns.cache6[i].expires < now) {
+            slot = i;
+            break;
+        }
+        if (g_dns.cache6[i].expires < oldest_time) {
+            oldest_time = g_dns.cache6[i].expires;
+            slot = i;
+        }
+    }
+    if (slot >= 0) {
+        dns_strcpy(g_dns.cache6[slot].domain, domain);
+        dns_memcpy(g_dns.cache6[slot].ip6, ip6, 16);
+        g_dns.cache6[slot].expires = expires;
+        g_dns.cache6[slot].valid = true;
+    }
+}
+
+static int dns_cache6_lookup(const char *domain, uint8_t *ip6) {
+    if (!domain || !ip6) return -EINVAL;
+
+    uint64_t now = fut_get_ticks();
+    for (int i = 0; i < DNS_CACHE_SIZE; i++) {
+        if (g_dns.cache6[i].valid &&
+            dns_strcmp(g_dns.cache6[i].domain, domain) == 0) {
+            if (g_dns.cache6[i].expires > now) {
+                dns_memcpy(ip6, g_dns.cache6[i].ip6, 16);
+                return 0;
+            }
+            g_dns.cache6[i].valid = false;
+            return -ENOENT;
+        }
+    }
+    return -ENOENT;
 }
 
 /*
@@ -500,6 +619,95 @@ int dns_resolve(const char *domain, uint32_t *ip) {
     }
 
     fut_printf("[DNS] Failed to resolve: %s\n", domain);
+    return -ETIMEDOUT;
+}
+
+/*
+ * DNS Initialization
+ */
+
+void dns_format_ip6(const uint8_t *ip6, char *buf, size_t len) {
+    if (!buf || len < 40 || !ip6) return;
+    size_t pos = 0;
+    for (int i = 0; i < 16; i += 2) {
+        uint8_t hi = ip6[i], lo = ip6[i + 1];
+        static const char hex[] = "0123456789abcdef";
+        if (pos < len - 1) buf[pos++] = hex[(hi >> 4) & 0xF];
+        if (pos < len - 1) buf[pos++] = hex[hi & 0xF];
+        if (pos < len - 1) buf[pos++] = hex[(lo >> 4) & 0xF];
+        if (pos < len - 1) buf[pos++] = hex[lo & 0xF];
+        if (i < 14 && pos < len - 1) buf[pos++] = ':';
+    }
+    buf[pos] = '\0';
+}
+
+/*
+ * Main DNS IPv6 Resolver Function
+ */
+int dns_resolve6(const char *domain, uint8_t *ip6) {
+    if (!g_dns.initialized) return -EINVAL;
+    if (!domain || !ip6) return -EINVAL;
+    if (dns_strlen(domain) > DNS_MAX_DOMAIN_LEN) return -ENAMETOOLONG;
+
+    /* Check IPv6 cache first */
+    if (dns_cache6_lookup(domain, ip6) == 0) {
+        char ip6_str[40];
+        dns_format_ip6(ip6, ip6_str, sizeof(ip6_str));
+        fut_printf("[DNS] Cache hit (AAAA): %s -> %s\n", domain, ip6_str);
+        return 0;
+    }
+
+    /* Build AAAA query */
+    uint8_t query_buffer[512];
+    uint16_t query_id = g_dns.next_id++;
+    size_t query_len = dns_build_query_typed(domain, query_buffer, sizeof(query_buffer),
+                                             query_id, DNS_TYPE_AAAA);
+    if (query_len == 0) return -EINVAL;
+
+    if (!g_dns.udp_socket) {
+        g_dns.udp_socket = tcpip_socket(SOCK_TYPE_UDP);
+        if (!g_dns.udp_socket) return -ENOMEM;
+    }
+
+    fut_printf("[DNS] Querying AAAA %s (ID %u)...\n", domain, query_id);
+
+    uint32_t dns_servers[2] = { g_dns.dns_server, g_dns.dns_server_alt };
+    int num_servers = g_dns.dns_server_alt ? 2 : 1;
+
+    for (int server = 0; server < num_servers; server++) {
+        if (!dns_servers[server]) continue;
+
+        for (int retry = 0; retry < DNS_MAX_RETRIES; retry++) {
+            int rc = tcpip_connect(g_dns.udp_socket, dns_servers[server], DNS_PORT);
+            if (rc != 0) continue;
+
+            rc = tcpip_send(g_dns.udp_socket, query_buffer, query_len);
+            if (rc < 0) continue;
+
+            uint8_t response_buffer[512];
+            uint64_t start_time = fut_get_ticks();
+            uint64_t timeout_ticks = (DNS_TIMEOUT_MS * 100) / 1000;
+
+            while (fut_get_ticks() - start_time < timeout_ticks) {
+                rc = tcpip_recv(g_dns.udp_socket, response_buffer, sizeof(response_buffer));
+                if (rc > 0) {
+                    rc = dns_parse_response6(response_buffer, rc, query_id, ip6);
+                    if (rc == 0) {
+                        dns_cache6_add(domain, ip6, DNS_CACHE_TTL);
+                        char ip6_str[40];
+                        dns_format_ip6(ip6, ip6_str, sizeof(ip6_str));
+                        fut_printf("[DNS] Resolved AAAA: %s -> %s\n", domain, ip6_str);
+                        return 0;
+                    }
+                } else if (rc < 0 && rc != -EAGAIN) {
+                    break;
+                }
+                for (volatile int i = 0; i < 100000; i++);
+            }
+        }
+    }
+
+    fut_printf("[DNS] Failed to resolve AAAA: %s\n", domain);
     return -ETIMEDOUT;
 }
 

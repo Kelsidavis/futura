@@ -116,6 +116,17 @@ static ssize_t vinput_read(void *inode, void *priv,
     return fut_input_queue_read(&f->dev->queue, f->flags, u_buf, n);
 }
 
+static bool vinput_poll(void *inode, void *priv, uint32_t req, uint32_t *ready)
+{
+    (void)inode;
+    struct vinput_file *f = priv;
+    if (!f || !f->dev) return false;
+    *ready = 0;
+    if ((req & 0x001 /* EPOLLIN */) && !fut_input_queue_empty(&f->dev->queue))
+        *ready |= 0x001;
+    return true;
+}
+
 static struct fut_file_ops vkbd_fops;
 static struct fut_file_ops vmouse_fops;
 
@@ -202,10 +213,12 @@ int virtio_input_hw_init(void)
         vkbd_fops.open = vinput_open;
         vkbd_fops.release = vinput_release;
         vkbd_fops.read = vinput_read;
+        vkbd_fops.poll = vinput_poll;
 
         vmouse_fops.open = vinput_open;
         vmouse_fops.release = vinput_release;
         vmouse_fops.read = vinput_read;
+        vmouse_fops.poll = vinput_poll;
 
         vinput_fops_inited = 1;
     }

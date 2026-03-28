@@ -164,6 +164,33 @@ static void erase_last_char(tty_ldisc_t *ldisc) {
 }
 
 /**
+ * Erase the last word from the current line (VWERASE / Ctrl+W).
+ * POSIX behavior: skip trailing whitespace, then erase non-whitespace.
+ */
+static void erase_word(tty_ldisc_t *ldisc) {
+    /* Skip trailing whitespace */
+    while (ldisc->write_pos != ldisc->line_start) {
+        size_t prev = ldisc->write_pos == 0
+                    ? TTY_INPUT_BUFFER_SIZE - 1
+                    : ldisc->write_pos - 1;
+        char ch = ldisc->input_buf[prev];
+        if (ch != ' ' && ch != '\t')
+            break;
+        erase_last_char(ldisc);
+    }
+    /* Erase the word (non-whitespace characters) */
+    while (ldisc->write_pos != ldisc->line_start) {
+        size_t prev = ldisc->write_pos == 0
+                    ? TTY_INPUT_BUFFER_SIZE - 1
+                    : ldisc->write_pos - 1;
+        char ch = ldisc->input_buf[prev];
+        if (ch == ' ' || ch == '\t')
+            break;
+        erase_last_char(ldisc);
+    }
+}
+
+/**
  * Erase the entire current line.
  */
 static void erase_line(tty_ldisc_t *ldisc) {
@@ -200,6 +227,13 @@ void tty_ldisc_input(tty_ldisc_t *ldisc, char c) {
         if (ldisc->flags & TTY_ECHO && ldisc->echo) {
             ldisc_echo_string(ldisc, "^U\r\n");
         }
+        fut_spinlock_release(&ldisc->lock);
+        return;
+    }
+
+    /* Ctrl+W - erase last word (VWERASE) */
+    if (c == ldisc->termios.c_cc[VWERASE]) {
+        erase_word(ldisc);
         fut_spinlock_release(&ldisc->lock);
         return;
     }

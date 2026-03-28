@@ -149,6 +149,16 @@ static ssize_t ps2_mouse_read(void *inode, void *priv, void *u_buf, size_t n, of
     return fut_input_queue_read(&file->dev->queue, file->flags, u_buf, n);
 }
 
+static bool ps2_mouse_poll(void *inode, void *priv, uint32_t req, uint32_t *ready) {
+    (void)inode;
+    struct ps2_mouse_file *file = (struct ps2_mouse_file *)priv;
+    if (!file || !file->dev) return false;
+    *ready = 0;
+    if ((req & 0x001 /* EPOLLIN */) && !fut_input_queue_empty(&file->dev->queue))
+        *ready |= 0x001;
+    return true;
+}
+
 static struct fut_file_ops mouse_fops;
 
 int ps2_mouse_init(void) {
@@ -165,6 +175,7 @@ int ps2_mouse_init(void) {
         mouse_fops.write = NULL;
         mouse_fops.ioctl = NULL;
         mouse_fops.mmap = NULL;
+        mouse_fops.poll = ps2_mouse_poll;
     }
 
     int rc = chrdev_register(MOUSE_MAJOR, MOUSE_MINOR, &mouse_fops, "mouse0", NULL);

@@ -1480,6 +1480,15 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
                     handled = true;
             }
 
+            if (!handled && file->chr_ops && file->chr_ops->poll) {
+                uint32_t chrdev_ready = 0;
+                if (file->chr_ops->poll(file->chr_inode, file->chr_private,
+                                        set->fds[i].events, &chrdev_ready)) {
+                    events_ready |= chrdev_ready;
+                    handled = true;
+                }
+            }
+
             /* For sockets: check get_socket_from_fd first (sockets may not have vnodes) */
             if (!handled) {
                 fut_socket_t *socket = get_socket_from_fd(set->fds[i].fd);

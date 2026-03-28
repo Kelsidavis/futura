@@ -3129,6 +3129,19 @@ void *fut_vfs_mmap(int fd, void *addr, size_t len, int prot, int flags, off_t of
         }
     }
 
+    /* Enforce file seals on mmap.
+     * F_SEAL_WRITE (0x0008): reject any shared writable mapping.
+     * F_SEAL_FUTURE_WRITE (0x0010): reject new PROT_WRITE mappings
+     *   (existing mappings may keep writing, but new ones are denied).
+     * F_SEAL_SEAL (0x0001): does not affect mmap directly. */
+    if (file->seals) {
+        if ((file->seals & 0x0008 /* F_SEAL_WRITE */) && (prot & PROT_WRITE))
+            return (void *)(intptr_t)(-EPERM);
+        if ((file->seals & 0x0010 /* F_SEAL_FUTURE_WRITE */) &&
+            (prot & PROT_WRITE) && (flags & MAP_SHARED))
+            return (void *)(intptr_t)(-EPERM);
+    }
+
     /* Character devices may have custom mmap implementations */
     if (file->chr_ops && file->chr_ops->mmap) {
         return file->chr_ops->mmap(file->chr_inode, file->chr_private, addr, len, off, prot, flags);

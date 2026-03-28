@@ -22,6 +22,7 @@
 #include <kernel/fut_thread.h>
 #include <kernel/fut_timer.h>
 #include <kernel/signal.h>
+#include <kernel/chrdev.h>
 #include <sys/epoll.h>
 
 /* Architecture-specific paging headers for KERNEL_VIRTUAL_BASE */
@@ -161,6 +162,14 @@ static struct poll_scan_stats poll_scan_fds(struct pollfd *kfds, unsigned long n
             extern bool fut_pty_poll(struct fut_file *f, uint32_t req, uint32_t *out);
             if (fut_pty_poll(file, epoll_req, &epoll_ready))
                 handled = true;
+        }
+
+        if (!handled && file->chr_ops && file->chr_ops->poll) {
+            uint32_t chrdev_ready = 0;
+            if (file->chr_ops->poll(file->chr_inode, file->chr_private, epoll_req, &chrdev_ready)) {
+                epoll_ready |= chrdev_ready;
+                handled = true;
+            }
         }
 
         if (!handled) {

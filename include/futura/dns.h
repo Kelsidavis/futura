@@ -106,6 +106,16 @@ typedef struct {
 } dns_cache_entry_t;
 
 /*
+ * DNS IPv6 Cache Entry
+ */
+typedef struct {
+    char domain[DNS_MAX_DOMAIN_LEN + 1];
+    uint8_t ip6[16];
+    uint64_t expires;
+    bool valid;
+} dns_cache6_entry_t;
+
+/*
  * DNS Resolver State
  */
 typedef struct {
@@ -114,6 +124,7 @@ typedef struct {
     uint32_t dns_server_alt;  /* Alternative DNS server IP */
     uint16_t next_id;         /* Next query ID */
     dns_cache_entry_t cache[DNS_CACHE_SIZE];
+    dns_cache6_entry_t cache6[DNS_CACHE_SIZE];
     void *udp_socket;         /* UDP socket for queries */
 } dns_state_t;
 
@@ -159,9 +170,25 @@ int dns_cache_lookup(const char *domain, uint32_t *ip);
 void dns_cache_clear(void);
 
 /**
+ * Resolve a domain name to an IPv6 address (AAAA record)
+ * @param domain Domain name to resolve
+ * @param ip6 Pointer to 16-byte buffer for the resolved IPv6 address
+ * @return 0 on success, negative error code on failure
+ */
+int dns_resolve6(const char *domain, uint8_t *ip6);
+
+/**
  * Format an IP address as a string (for debugging)
  * @param ip IP address in host byte order
  * @param buf Buffer to store formatted string
  * @param len Buffer length
  */
 void dns_format_ip(uint32_t ip, char *buf, size_t len);
+
+/**
+ * Format an IPv6 address as a string (for debugging)
+ * @param ip6 16-byte IPv6 address
+ * @param buf Buffer to store formatted string (needs at least 40 bytes)
+ * @param len Buffer length
+ */
+void dns_format_ip6(const uint8_t *ip6, char *buf, size_t len);

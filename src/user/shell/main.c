@@ -303,9 +303,38 @@ static ssize_t read_bytes(int fd, char *buf, size_t count) {
     return sys_read(fd, buf, count);
 }
 
-/* Read a line with interactive editing support (backspace, arrow keys, history) */
+/* Helper: redraw line from cursor to end, then reposition cursor */
+static void redraw_from_cursor(const char *buf, size_t cursor, size_t len) {
+    /* Write chars from cursor to end */
+    for (size_t i = cursor; i < len; i++)
+        write_char(1, buf[i]);
+    /* Erase any leftover character (for delete operations) */
+    write_char(1, ' ');
+    /* Move cursor back to correct position */
+    for (size_t i = 0; i < len - cursor + 1; i++)
+        write_char(1, '\b');
+}
+
+/* Helper: clear entire displayed line and rewrite */
+static void clear_and_redraw(char *buf, size_t *cursor, size_t *len,
+                              const char *new_text) {
+    /* Move cursor to beginning */
+    while (*cursor > 0) { write_char(1, '\b'); (*cursor)--; }
+    /* Overwrite with spaces */
+    for (size_t i = 0; i < *len; i++) write_char(1, ' ');
+    /* Move back */
+    for (size_t i = 0; i < *len; i++) write_char(1, '\b');
+    /* Write new text */
+    size_t i = 0;
+    while (new_text[i]) { buf[i] = new_text[i]; write_char(1, buf[i]); i++; }
+    *cursor = i;
+    *len = i;
+}
+
+/* Read a line with interactive editing support (backspace, arrow keys, history, cursor movement) */
 static ssize_t read_line(int fd, char *buf, size_t max_len) {
-    size_t pos = 0;
+    size_t cursor = 0;  /* Cursor position within buf */
+    size_t len = 0;     /* Total length of input */
     char c;
     ssize_t nread;
     static int current_history_index = -1;  /* -1 means not browsing history */
@@ -315,19 +344,19 @@ static ssize_t read_line(int fd, char *buf, size_t max_len) {
     current_history_index = -1;
     saved_input[0] = '\0';
 
-    while (pos < max_len - 1) {
+    while (len < max_len - 1) {
         nread = read_bytes(fd, &c, 1);
 
         if (nread <= 0) {
             /* EOF or error */
-            if (pos > 0) {
-                buf[pos] = '\0';
-                return pos;
+            if (len > 0) {
+                buf[len] = '\0';
+                return (ssize_t)len;
             }
             return nread;
         }
 
-        /* Handle escape sequences (arrow keys) */
+        /* Handle escape sequences (arrow keys, Home, End) */
         if (c == 0x1B) {  /* ESC */
             char seq[2];
             if (read_bytes(fd, &seq[0], 1) <= 0) continue;
@@ -337,7 +366,7 @@ static ssize_t read_line(int fd, char *buf, size_t max_len) {
             if (seq[1] == 'A') {  /* Up arrow */
                 /* Save current input if this is first history navigation */
                 if (current_history_index == -1) {
-                    buf[pos] = '\0';
+                    buf[len] = '\0';
                     strncpy_simple(saved_input, buf, MAX_CMD_LEN);
                     current_history_index = history_count;
                 }
@@ -347,55 +376,46 @@ static ssize_t read_line(int fd, char *buf, size_t max_len) {
                     current_history_index--;
                     const char *hist = get_history(current_history_index);
                     if (hist) {
-                        /* Clear current line */
-                        while (pos > 0) {
-                            write_char(1, '\b');
-                            write_char(1, ' ');
-                            write_char(1, '\b');
-                            pos--;
-                        }
-                        /* Copy history entry and display it */
-                        pos = 0;
-                        while (hist[pos] && pos < max_len - 1) {
-                            buf[pos] = hist[pos];
-                            write_char(1, buf[pos]);
-                            pos++;
-                        }
+                        clear_and_redraw(buf, &cursor, &len, hist);
                     }
                 }
             } else if (seq[1] == 'B') {  /* Down arrow */
                 if (current_history_index != -1) {
-                    /* Go to next command */
                     current_history_index++;
-
-                    /* Clear current line */
-                    while (pos > 0) {
-                        write_char(1, '\b');
-                        write_char(1, ' ');
-                        write_char(1, '\b');
-                        pos--;
-                    }
 
                     if (current_history_index >= history_count) {
                         /* Reached end, restore saved input */
                         current_history_index = -1;
-                        pos = 0;
-                        while (saved_input[pos] && pos < max_len - 1) {
-                            buf[pos] = saved_input[pos];
-                            write_char(1, buf[pos]);
-                            pos++;
-                        }
+                        clear_and_redraw(buf, &cursor, &len, saved_input);
                     } else {
-                        /* Show next history entry */
                         const char *hist = get_history(current_history_index);
                         if (hist) {
-                            pos = 0;
-                            while (hist[pos] && pos < max_len - 1) {
-                                buf[pos] = hist[pos];
-                                write_char(1, buf[pos]);
-                                pos++;
-                            }
+                            clear_and_redraw(buf, &cursor, &len, hist);
                         }
+                    }
+                }
+            } else if (seq[1] == 'C') {  /* Right arrow */
+                if (cursor < len) {
+                    write_str(1, "\033[C");
+                    cursor++;
+                }
+            } else if (seq[1] == 'D') {  /* Left arrow */
+                if (cursor > 0) {
+                    write_str(1, "\033[D");
+                    cursor--;
+                }
+            } else if (seq[1] == 'H') {  /* Home */
+                while (cursor > 0) { write_char(1, '\b'); cursor--; }
+            } else if (seq[1] == 'F') {  /* End */
+                while (cursor < len) { write_str(1, "\033[C"); cursor++; }
+            } else if (seq[1] == '3') {  /* Delete key: ESC [ 3 ~ */
+                char tilde;
+                if (read_bytes(fd, &tilde, 1) > 0 && tilde == '~') {
+                    if (cursor < len) {
+                        for (size_t i = cursor; i < len - 1; i++)
+                            buf[i] = buf[i + 1];
+                        len--;
+                        redraw_from_cursor(buf, cursor, len);
                     }
                 }
             }
@@ -404,19 +424,27 @@ static ssize_t read_line(int fd, char *buf, size_t max_len) {
 
         /* Handle different control characters */
         if (c == '\n' || c == '\r') {
-            /* End of line */
+            /* End of line — move cursor to end first */
+            while (cursor < len) { write_str(1, "\033[C"); cursor++; }
             write_char(1, '\n');
-            buf[pos] = '\0';
-            return pos;
+            buf[len] = '\0';
+            return (ssize_t)len;
         } else if (c == 0x7F || c == 0x08) {
             /* Backspace (DEL=0x7F or BS=0x08) */
-            if (pos > 0) {
-                pos--;
-                /* Erase character on screen: backspace, space, backspace */
+            if (cursor > 0) {
+                for (size_t i = cursor - 1; i < len - 1; i++)
+                    buf[i] = buf[i + 1];
+                cursor--;
+                len--;
                 write_char(1, '\b');
-                write_char(1, ' ');
-                write_char(1, '\b');
+                redraw_from_cursor(buf, cursor, len);
             }
+        } else if (c == 0x01) {
+            /* Ctrl+A - beginning of line */
+            while (cursor > 0) { write_char(1, '\b'); cursor--; }
+        } else if (c == 0x05) {
+            /* Ctrl+E - end of line */
+            while (cursor < len) { write_str(1, "\033[C"); cursor++; }
         } else if (c == 0x03) {
             /* Ctrl+C - interrupt */
             write_str(1, "^C\n");
@@ -435,16 +463,39 @@ static ssize_t read_line(int fd, char *buf, size_t max_len) {
             write_str(1, "\033[2J\033[H");
             print_prompt();
             /* Redraw current input */
-            buf[pos] = '\0';
-            write_str(1, buf);
+            buf[len] = '\0';
+            for (size_t i = 0; i < len; i++) write_char(1, buf[i]);
+            /* Reposition cursor */
+            for (size_t i = len; i > cursor; i--) write_char(1, '\b');
         } else if (c == 0x09) {
-            /* Tab - command completion */
-            buf[pos] = '\0';  /* Null-terminate for completion */
-            complete_command(buf, &pos, max_len);
+            /* Tab - command completion (operates at end of input) */
+            buf[len] = '\0';
+            size_t old_len = len;
+            complete_command(buf, &len, max_len);
+            cursor = len;  /* completion moves cursor to end */
+            (void)old_len;
+        } else if (c == 0x0B) {
+            /* Ctrl+K - kill to end of line */
+            /* Erase from cursor to end on screen */
+            for (size_t i = cursor; i < len; i++) write_char(1, ' ');
+            for (size_t i = cursor; i < len; i++) write_char(1, '\b');
+            len = cursor;
         } else if (c >= 0x20 && c < 0x7F) {
-            /* Printable character - echo it and add to buffer */
-            buf[pos++] = c;
-            write_char(1, c);
+            /* Printable character - insert at cursor position */
+            if (len < max_len - 1) {
+                /* Shift chars right to make room */
+                for (size_t i = len; i > cursor; i--)
+                    buf[i] = buf[i - 1];
+                buf[cursor] = c;
+                len++;
+                cursor++;
+                /* Redraw from inserted position */
+                for (size_t i = cursor - 1; i < len; i++)
+                    write_char(1, buf[i]);
+                /* Move cursor back to correct position */
+                for (size_t i = cursor; i < len; i++)
+                    write_char(1, '\b');
+            }
         }
         /* Ignore other control characters */
     }
@@ -551,7 +602,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     const char *builtins[] = {
         "arp", "bg", "brctl", "cal", "cd", "chgrp", "chmod", "chroot", "clear", "cmp", "comm", "conntrack", "date", "dd", "df", "dhclient", "dmesg", "echo", "edit", "ethtool", "expand", "expr", "factor", "file", "fold", "hexdump", "install", "locale", "lsof", "md5sum", "mkfifo", "nc", "nice", "nohup", "patch", "pgrep", "pidof", "pkill", "poweroff", "reboot", "renice", "reset", "seq", "sha1sum", "sleep", "strings", "tac", "time", "timeout", "tput", "traceroute", "tty", "unexpand", "wget", "xxd", "exit", "export", "fg", "free",
         "help", "hostname", "httpd", "id", "ifconfig", "iostat", "ipcs", "iptables", "jobs", "kill", "logger", "losetup", "ls", "lsblk", "lspci", "mkfs", "mount", "netstat",
-        ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "getconf", "history", "ip", "ln", "mktemp", "more", "nproc", "nslookup", "ping", "printf", "ps", "pwd", "read", "readlink", "set", "sha1sum", "sha256sum", "shutdown", "source", "ss", "stat", "stty", "sync", "sysctl", "sysinfo", "tc", "test", "top", "trap", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "vi", "vmstat", "wait", "watch", "wdctl", "which", "whoami", "xargs", "yes", NULL
+        ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "getconf", "history", "ip", "ln", "mktemp", "more", "nproc", "nslookup", "ping", "printf", "ps", "pwd", "read", "readlink", "realpath", "set", "sha1sum", "sha256sum", "shutdown", "source", "ss", "stat", "stty", "sync", "sysctl", "sysinfo", "tc", "test", "top", "trap", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "vi", "vmstat", "wait", "watch", "wdctl", "which", "whoami", "xargs", "yes", NULL
     };
 
     /* External commands we might have */
@@ -7778,6 +7829,138 @@ static void cmd_readlink(int argc, char *argv[]) {
     }
 }
 
+/* Built-in: realpath - Resolve canonical absolute path */
+static void cmd_realpath(int argc, char *argv[]) {
+    int quiet = 0;
+    int no_symlinks = 0;
+    int start = 1;
+    for (int i = 1; i < argc && argv[i][0] == '-'; i++) {
+        if (strcmp_simple(argv[i], "-q") == 0 || strcmp_simple(argv[i], "--quiet") == 0)
+            quiet = 1;
+        else if (strcmp_simple(argv[i], "-s") == 0 || strcmp_simple(argv[i], "--no-symlinks") == 0)
+            no_symlinks = 1;
+        else if (strcmp_simple(argv[i], "--") == 0) { start = i + 1; break; }
+        else { write_str(2, "realpath: unknown option: "); write_str(2, argv[i]); write_str(2, "\n"); return; }
+        start = i + 1;
+    }
+    if (start >= argc) {
+        write_str(2, "usage: realpath [-q] [-s] <path>...\n");
+        return;
+    }
+    int ret = 0;
+    for (int a = start; a < argc; a++) {
+        const char *input = argv[a];
+        char resolved[1024];
+        int rlen = 0;
+
+        /* Start with cwd for relative paths */
+        if (input[0] != '/') {
+            char cwd[256];
+            long cret = sys_getcwd(cwd, sizeof(cwd));
+            if (cret <= 0) { write_str(2, "realpath: cannot get cwd\n"); ret = 1; continue; }
+            for (int i = 0; cwd[i]; i++) {
+                if (rlen < 1022) resolved[rlen++] = cwd[i];
+            }
+            if (rlen > 0 && resolved[rlen - 1] != '/')
+                resolved[rlen++] = '/';
+        }
+        /* Append input path */
+        for (int i = 0; input[i]; i++) {
+            if (rlen < 1022) resolved[rlen++] = input[i];
+        }
+        resolved[rlen] = '\0';
+
+        /* Normalize: resolve ., .., collapse slashes, follow symlinks */
+        char out[1024];
+        int olen = 0;
+        out[0] = '/'; olen = 1;
+        int i = 0;
+        int symlink_limit = 40;
+        while (resolved[i]) {
+            /* Skip slashes */
+            while (resolved[i] == '/') i++;
+            if (!resolved[i]) break;
+            /* Extract component */
+            int cstart = i;
+            while (resolved[i] && resolved[i] != '/') i++;
+            int clen = i - cstart;
+
+            if (clen == 1 && resolved[cstart] == '.') {
+                /* Current dir — skip */
+                continue;
+            } else if (clen == 2 && resolved[cstart] == '.' && resolved[cstart + 1] == '.') {
+                /* Parent dir — pop last component */
+                if (olen > 1) {
+                    olen--; /* remove trailing slash or char */
+                    while (olen > 1 && out[olen - 1] != '/') olen--;
+                }
+                continue;
+            }
+
+            /* Append component */
+            if (olen > 1) out[olen++] = '/';
+            for (int j = 0; j < clen && olen < 1020; j++)
+                out[olen++] = resolved[cstart + j];
+            out[olen] = '\0';
+
+            /* Try to resolve symlink */
+            if (!no_symlinks && symlink_limit > 0) {
+                char lnk[256];
+                long lr = sys_call3(89 /* readlink */, (long)out, (long)lnk, 255);
+                if (lr > 0) {
+                    symlink_limit--;
+                    lnk[lr] = '\0';
+                    /* Build new resolved: symlink target + remaining */
+                    char tmp[1024];
+                    int tlen = 0;
+                    if (lnk[0] == '/') {
+                        /* Absolute symlink — restart from root */
+                        for (int j = 0; lnk[j] && tlen < 1020; j++)
+                            tmp[tlen++] = lnk[j];
+                        /* Reset output to root */
+                        olen = 1; out[0] = '/';
+                    } else {
+                        /* Relative symlink — pop current component, prepend parent */
+                        if (olen > 1) {
+                            olen--;
+                            while (olen > 1 && out[olen - 1] != '/') olen--;
+                        }
+                        out[olen] = '\0';
+                        for (int j = 0; lnk[j] && tlen < 1020; j++)
+                            tmp[tlen++] = lnk[j];
+                    }
+                    /* Append remaining unprocessed path */
+                    while (resolved[i] && tlen < 1020)
+                        tmp[tlen++] = resolved[i++];
+                    tmp[tlen] = '\0';
+                    /* Replace resolved with tmp and restart parsing */
+                    for (int j = 0; j <= tlen; j++) resolved[j] = tmp[j];
+                    rlen = tlen;
+                    i = 0;
+                    continue;
+                }
+            }
+        }
+        if (olen == 0) { out[0] = '/'; olen = 1; }
+        out[olen] = '\0';
+
+        /* Verify path exists */
+        struct stat st;
+        if (sys_call2(__NR_stat, (long)out, (long)&st) < 0) {
+            if (!quiet) {
+                write_str(2, "realpath: ");
+                write_str(2, argv[a]);
+                write_str(2, ": No such file or directory\n");
+            }
+            ret = 1;
+            continue;
+        }
+        write_str(1, out);
+        write_str(1, "\n");
+    }
+    (void)ret;
+}
+
 /* Built-in: dd - Copy and convert data */
 static void cmd_dd(int argc, char *argv[]) {
     const char *if_path = NULL;
@@ -8432,7 +8615,14 @@ static int execute_command(int argc, char *argv[]) {
         return 0;
     } else if (strcmp_simple(argv[0], "nslookup") == 0) {
         /* DNS lookup via UDP socket to DNS server */
-        if (argc < 2) { write_str(2, "usage: nslookup <domain>\n"); return 1; }
+        if (argc < 2) { write_str(2, "usage: nslookup [-aaaa] <domain>\n"); return 1; }
+        /* Check for -aaaa flag */
+        int qtype_hi = 0x00, qtype_lo = 0x01; /* default: A record (type 1) */
+        int domain_arg = 1;
+        if (argc >= 3 && strcmp_simple(argv[1], "-aaaa") == 0) {
+            qtype_hi = 0x00; qtype_lo = 0x1C; /* AAAA record (type 28) */
+            domain_arg = 2;
+        }
         /* Build DNS query packet */
         uint8_t pkt[512];
         int pos = 0;
@@ -8444,7 +8634,7 @@ static int execute_command(int argc, char *argv[]) {
         pkt[pos++] = 0x00; pkt[pos++] = 0x00; /* NSCOUNT=0 */
         pkt[pos++] = 0x00; pkt[pos++] = 0x00; /* ARCOUNT=0 */
         /* Encode domain name */
-        const char *d = argv[1];
+        const char *d = argv[domain_arg];
         while (*d) {
             const char *dot = d;
             while (*dot && *dot != '.') dot++;
@@ -8455,7 +8645,7 @@ static int execute_command(int argc, char *argv[]) {
             if (*d == '.') d++;
         }
         pkt[pos++] = 0; /* Root label */
-        pkt[pos++] = 0x00; pkt[pos++] = 0x01; /* QTYPE=A */
+        pkt[pos++] = (uint8_t)qtype_hi; pkt[pos++] = (uint8_t)qtype_lo; /* QTYPE */
         pkt[pos++] = 0x00; pkt[pos++] = 0x01; /* QCLASS=IN */
 
         /* Send to DNS server 10.0.2.3 (QEMU default) */
@@ -8497,12 +8687,30 @@ static int execute_command(int argc, char *argv[]) {
                     int rdlen = (resp[rp] << 8) | resp[rp+1]; rp += 2;
                     if (atype == 1 && rdlen == 4 && rp + 4 <= (int)rn) {
                         write_str(1, "Server:  10.0.2.3\nName:    ");
-                        write_str(1, argv[1]);
+                        write_str(1, argv[domain_arg]);
                         write_str(1, "\nAddress: ");
                         char nb[4]; int_to_str(resp[rp], nb, 4); write_str(1, nb); write_char(1, '.');
                         int_to_str(resp[rp+1], nb, 4); write_str(1, nb); write_char(1, '.');
                         int_to_str(resp[rp+2], nb, 4); write_str(1, nb); write_char(1, '.');
                         int_to_str(resp[rp+3], nb, 4); write_str(1, nb); write_char(1, '\n');
+                        return 0;
+                    } else if (atype == 28 && rdlen == 16 && rp + 16 <= (int)rn) {
+                        /* AAAA record — IPv6 address */
+                        write_str(1, "Server:  10.0.2.3\nName:    ");
+                        write_str(1, argv[domain_arg]);
+                        write_str(1, "\nAddress: ");
+                        static const char hx[] = "0123456789abcdef";
+                        for (int g = 0; g < 16; g += 2) {
+                            char h[5];
+                            h[0] = hx[(resp[rp+g] >> 4) & 0xF];
+                            h[1] = hx[resp[rp+g] & 0xF];
+                            h[2] = hx[(resp[rp+g+1] >> 4) & 0xF];
+                            h[3] = hx[resp[rp+g+1] & 0xF];
+                            h[4] = '\0';
+                            write_str(1, h);
+                            if (g < 14) write_char(1, ':');
+                        }
+                        write_char(1, '\n');
                         return 0;
                     }
                 }
@@ -10960,6 +11168,9 @@ static int execute_command(int argc, char *argv[]) {
         else { for (int i = 0; i < last_slash; i++) write_char(1, p[i]); }
         write_char(1, '\n');
         return 0;
+    } else if (strcmp_simple(argv[0], "realpath") == 0) {
+        cmd_realpath(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "export") == 0) {
         cmd_export(argc, argv);
         return 0;
@@ -11320,6 +11531,7 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "printf") == 0 ||
             strcmp_simple(cmd, "basename") == 0 ||
             strcmp_simple(cmd, "dirname") == 0 ||
+            strcmp_simple(cmd, "realpath") == 0 ||
             strcmp_simple(cmd, "dd") == 0 ||
             strcmp_simple(cmd, "mv") == 0 ||
             strcmp_simple(cmd, "test") == 0 ||

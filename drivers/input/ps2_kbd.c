@@ -135,6 +135,16 @@ static ssize_t ps2_kbd_read(void *inode, void *priv, void *u_buf, size_t n, off_
     return fut_input_queue_read(&file->dev->queue, file->flags, u_buf, n);
 }
 
+static bool ps2_kbd_poll(void *inode, void *priv, uint32_t req, uint32_t *ready) {
+    (void)inode;
+    struct ps2_kbd_file *file = (struct ps2_kbd_file *)priv;
+    if (!file || !file->dev) return false;
+    *ready = 0;
+    if ((req & 0x001 /* EPOLLIN */) && !fut_input_queue_empty(&file->dev->queue))
+        *ready |= 0x001;
+    return true;
+}
+
 static struct fut_file_ops kbd_fops;
 
 int ps2_kbd_init(void) {
@@ -150,6 +160,7 @@ int ps2_kbd_init(void) {
         kbd_fops.write = NULL;
         kbd_fops.ioctl = NULL;
         kbd_fops.mmap = NULL;
+        kbd_fops.poll = ps2_kbd_poll;
     }
 
     int rc = chrdev_register(KBD_MAJOR, KBD_MINOR, &kbd_fops, "kbd0", NULL);

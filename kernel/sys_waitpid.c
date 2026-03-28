@@ -392,6 +392,7 @@ long sys_wait4(int pid, int *u_status, int flags, void *rusage_ptr) {
     uint64_t pre_child_minflt  = w4_task ? w4_task->child_minflt : 0;
     uint64_t pre_child_majflt  = w4_task ? w4_task->child_majflt : 0;
     uint64_t pre_child_nvcsw   = w4_task ? w4_task->child_context_switches : 0;
+    uint64_t pre_child_vol     = w4_task ? w4_task->child_voluntary_switches : 0;
     uint64_t pre_child_maxrss  = w4_task ? w4_task->child_maxrss_kb : 0;
 
     int status = 0;
@@ -433,7 +434,7 @@ long sys_wait4(int pid, int *u_status, int flags, void *rusage_ptr) {
      *   [112] long ru_msgrcv    (0)
      *   [120] long ru_nsignals  (0)
      *   [128] long ru_nvcsw
-     *   [136] long ru_nivcsw    (0)
+     *   [136] long ru_nivcsw
      */
     if (rusage_ptr) {
         char rusage_buf[144];
@@ -451,11 +452,15 @@ long sys_wait4(int pid, int *u_status, int flags, void *rusage_ptr) {
             long maxrss = (long)(w4_task->child_maxrss_kb - pre_child_maxrss);
             long minflt = (long)(w4_task->child_minflt - pre_child_minflt);
             long majflt = (long)(w4_task->child_majflt - pre_child_majflt);
-            long nvcsw  = (long)(w4_task->child_context_switches - pre_child_nvcsw);
+            long total_sw = (long)(w4_task->child_context_switches - pre_child_nvcsw);
+            long vol_sw   = (long)(w4_task->child_voluntary_switches - pre_child_vol);
+            long nvcsw    = vol_sw;
+            long nivcsw   = total_sw > vol_sw ? total_sw - vol_sw : 0;
             __builtin_memcpy(rusage_buf + 32, &maxrss, 8);  /* ru_maxrss */
             __builtin_memcpy(rusage_buf + 64, &minflt, 8);  /* ru_minflt */
             __builtin_memcpy(rusage_buf + 72, &majflt, 8);  /* ru_majflt */
             __builtin_memcpy(rusage_buf + 128, &nvcsw, 8);  /* ru_nvcsw */
+            __builtin_memcpy(rusage_buf + 136, &nivcsw, 8); /* ru_nivcsw */
         }
 
         if (use_memcpy_rusage)

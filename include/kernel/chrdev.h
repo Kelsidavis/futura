@@ -106,6 +106,16 @@ struct fut_file_ops {
      * @return Mapped address on success, NULL on failure
      */
     void   *(*mmap)(void *inode, void *private_data, void *u_addr, size_t len, off_t off, int prot, int flags);
+
+    /**
+     * Poll the device for I/O readiness.
+     * @param inode         Device inode
+     * @param private_data  Driver-private data from open()
+     * @param req_events    Requested events (EPOLLIN, EPOLLOUT, etc.)
+     * @param ready_events  Output: ready events mask
+     * @return true if this device handled the poll, false otherwise
+     */
+    bool    (*poll)(void *inode, void *private_data, uint32_t req_events, uint32_t *ready_events);
 };
 
 /**

@@ -94,7 +94,32 @@ static uint32_t ext2_block_for_offset(struct ext2_mount_info *mi,
         return ptr;
     }
 
-    return 0; /* Triple indirect not implemented */
+    block_index -= ptrs_per_block * ptrs_per_block;
+
+    /* Triple indirect (14) */
+    uint64_t tind_capacity = (uint64_t)ptrs_per_block * ptrs_per_block * ptrs_per_block;
+    if (block_index < tind_capacity) {
+        uint32_t tind_block = inode->i_block[14];
+        if (tind_block == 0) return 0;
+        uint32_t first  = (uint32_t)(block_index / ((uint64_t)ptrs_per_block * ptrs_per_block));
+        uint32_t rem    = (uint32_t)(block_index % ((uint64_t)ptrs_per_block * ptrs_per_block));
+        uint32_t second = rem / ptrs_per_block;
+        uint32_t third  = rem % ptrs_per_block;
+        uint32_t dind;
+        ext2_read_bytes(mi, (uint64_t)tind_block * mi->block_size +
+                        (uint64_t)first * 4, 4, &dind);
+        if (dind == 0) return 0;
+        uint32_t ind;
+        ext2_read_bytes(mi, (uint64_t)dind * mi->block_size +
+                        (uint64_t)second * 4, 4, &ind);
+        if (ind == 0) return 0;
+        uint32_t ptr;
+        ext2_read_bytes(mi, (uint64_t)ind * mi->block_size +
+                        (uint64_t)third * 4, 4, &ptr);
+        return ptr;
+    }
+
+    return 0; /* Block index exceeds maximum ext2 file size */
 }
 
 /* ============================================================

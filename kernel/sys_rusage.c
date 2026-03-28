@@ -129,7 +129,8 @@ long sys_getrusage(int who, struct rusage *usage) {
      * Phase 3 (Completed): Populate CPU time and context switch counts from scheduler stats.
      * cpu_ticks is in timer ticks (FUT_TIMER_HZ = 100 Hz, so each tick = 10ms).
      * Since user/kernel time is not tracked separately, all attributed to ru_utime.
-     * context_switches is used for ru_nvcsw (voluntary not separated from involuntary).
+     * context_switches = total switches, voluntary_yields = voluntary;
+     * involuntary = context_switches - voluntary_yields.
      */
     struct rusage ru;
     memset(&ru, 0, sizeof(ru));
@@ -137,19 +138,22 @@ long sys_getrusage(int who, struct rusage *usage) {
     if (who == RUSAGE_SELF || who == RUSAGE_THREAD) {
         uint64_t total_ticks = 0;
         uint64_t total_switches = 0;
+        uint64_t total_voluntary = 0;
 
         if (who == RUSAGE_THREAD) {
             /* Single calling thread */
             fut_thread_t *t = fut_thread_current();
             if (t) {
-                total_ticks   = t->stats.cpu_ticks;
-                total_switches = t->stats.context_switches;
+                total_ticks     = t->stats.cpu_ticks;
+                total_switches  = t->stats.context_switches;
+                total_voluntary = t->stats.voluntary_yields;
             }
         } else {
             /* All threads of the task — use per-task ->next link, not global list */
             for (fut_thread_t *t = task->threads; t != nullptr; t = t->next) {
-                total_ticks   += t->stats.cpu_ticks;
-                total_switches += t->stats.context_switches;
+                total_ticks     += t->stats.cpu_ticks;
+                total_switches  += t->stats.context_switches;
+                total_voluntary += t->stats.voluntary_yields;
             }
         }
 
@@ -157,7 +161,10 @@ long sys_getrusage(int who, struct rusage *usage) {
         uint64_t usec_total = total_ticks * (1000000UL / FUT_TIMER_HZ);
         ru.ru_utime.tv_sec  = (long)(usec_total / 1000000UL);
         ru.ru_utime.tv_usec = (long)(usec_total % 1000000UL);
-        ru.ru_nvcsw = (long)total_switches;
+        ru.ru_nvcsw  = (long)total_voluntary;
+        uint64_t invol = total_switches > total_voluntary
+                       ? total_switches - total_voluntary : 0;
+        ru.ru_nivcsw = (long)invol;
     }
     if (who == RUSAGE_CHILDREN) {
         /* Accumulated by waitpid when reaping zombie children */
@@ -165,7 +172,10 @@ long sys_getrusage(int who, struct rusage *usage) {
         uint64_t child_usec = child_ticks * (1000000UL / FUT_TIMER_HZ);
         ru.ru_utime.tv_sec  = (long)(child_usec / 1000000UL);
         ru.ru_utime.tv_usec = (long)(child_usec % 1000000UL);
-        ru.ru_nvcsw  = (long)task->child_context_switches;
+        ru.ru_nvcsw  = (long)task->child_voluntary_switches;
+        uint64_t child_invol = task->child_context_switches > task->child_voluntary_switches
+                             ? task->child_context_switches - task->child_voluntary_switches : 0;
+        ru.ru_nivcsw = (long)child_invol;
         ru.ru_maxrss = (long)task->child_maxrss_kb;
     }
 

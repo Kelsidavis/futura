@@ -238,6 +238,7 @@ struct fut_task {
     uint64_t child_cpu_ticks;
     uint64_t child_stime_ticks;     /* Child system-mode ticks (for cstime in /proc/pid/stat) */
     uint64_t child_context_switches;
+    uint64_t child_voluntary_switches;
     uint64_t child_maxrss_kb;
 
     /* Monotonic tick count when the task was created (for /proc/pid/stat starttime field) */

@@ -4090,6 +4090,96 @@ static int futurafs_vnode_sync(struct fut_vnode *vnode) {
 }
 
 /**
+ * Create a hard link to an existing file.
+ *
+ * @old_vnode: Vnode of existing file (source)
+ * @oldpath:   Path to existing file (unused — inode info comes from old_vnode)
+ * @newpath:   Absolute path where the hard link should be created
+ *
+ * Creates a new directory entry in the parent of newpath that points to the
+ * same on-disk inode as old_vnode. Increments nlinks on the target inode.
+ */
+static int futurafs_vnode_link(struct fut_vnode *old_vnode, const char *oldpath,
+                                const char *newpath) {
+    (void)oldpath;
+
+    if (!old_vnode || !newpath) return FUTURAFS_EINVAL;
+
+    /* Cannot hard-link directories (POSIX: EPERM, not EISDIR) */
+    if (old_vnode->type == VN_DIR) return -EPERM;
+
+    struct futurafs_inode_info *old_info =
+        (struct futurafs_inode_info *)old_vnode->fs_data;
+    if (!old_info) return FUTURAFS_EIO;
+
+    struct futurafs_mount *mount = old_info->mount;
+
+    /* Extract parent directory path and basename from newpath */
+    char parent_path[256];
+    const char *basename = NULL;
+    int last_slash = -1;
+    for (int i = 0; newpath[i]; i++) {
+        if (newpath[i] == '/') last_slash = i;
+    }
+    if (last_slash < 0) return FUTURAFS_EINVAL;
+
+    /* Copy parent directory path */
+    int plen = (last_slash == 0) ? 1 : last_slash;
+    if (plen >= (int)sizeof(parent_path)) return FUTURAFS_EINVAL;
+    for (int i = 0; i < plen; i++) parent_path[i] = newpath[i];
+    parent_path[plen] = '\0';
+    basename = &newpath[last_slash + 1];
+
+    size_t name_len = strnlen(basename, FUTURAFS_NAME_MAX);
+    if (name_len == 0 || name_len > FUTURAFS_NAME_MAX) return FUTURAFS_EINVAL;
+
+    /* Look up parent directory */
+    struct fut_vnode *parent_vnode = NULL;
+    int ret = fut_vfs_lookup(parent_path, &parent_vnode);
+    if (ret < 0) return ret;
+    if (parent_vnode->type != VN_DIR) return FUTURAFS_ENOTDIR;
+
+    struct futurafs_inode_info *dir_info =
+        (struct futurafs_inode_info *)parent_vnode->fs_data;
+    if (!dir_info) return FUTURAFS_EIO;
+
+    /* Ensure both inodes are on the same filesystem */
+    if (dir_info->mount != mount) return -EXDEV;
+
+    /* Check if newpath entry already exists */
+    uint8_t tmp_buf[FUTURAFS_BLOCK_SIZE];
+    struct futurafs_dirent tmp_entry = {0};
+    uint64_t tmp_blk = 0;
+    size_t tmp_off = 0;
+    if (futurafs_dir_lookup_entry(dir_info, basename, name_len,
+                                   &tmp_blk, &tmp_off, &tmp_entry,
+                                   tmp_buf) >= 0) {
+        return FUTURAFS_EEXIST;
+    }
+
+    /* Add directory entry pointing to the existing inode */
+    ret = futurafs_dir_add_entry(parent_vnode, dir_info, basename, name_len,
+                                  old_info->ino,
+                                  futurafs_mode_to_filetype(old_info->disk_inode.mode));
+    if (ret < 0) return ret;
+
+    /* Update parent directory size and write parent inode */
+    parent_vnode->size = dir_info->disk_inode.size;
+    if (futurafs_write_inode(mount, dir_info->ino, &dir_info->disk_inode) < 0) {
+        return FUTURAFS_EIO;
+    }
+    dir_info->dirty = false;
+
+    /* Increment nlinks on the target inode */
+    old_info->disk_inode.nlinks++;
+    old_vnode->nlinks++;
+    ret = futurafs_write_inode(mount, old_info->ino, &old_info->disk_inode);
+    if (ret < 0) return ret;
+
+    return futurafs_sync_metadata(mount);
+}
+
+/**
  * Rename a file or directory within the same FuturaFS directory.
  */
 static int futurafs_vnode_rename(struct fut_vnode *dir, const char *oldname,
@@ -4188,6 +4278,7 @@ static void futurafs_init_vnode_ops(void) {
     futurafs_vnode_ops.getattr = futurafs_vnode_getattr;
     futurafs_vnode_ops.setattr = futurafs_vnode_setattr;
     futurafs_vnode_ops.truncate = futurafs_vnode_truncate;
+    futurafs_vnode_ops.link = futurafs_vnode_link;
     futurafs_vnode_ops.symlink = futurafs_vnode_symlink;
     futurafs_vnode_ops.readlink = futurafs_vnode_readlink;
     futurafs_vnode_ops.rename = futurafs_vnode_rename;

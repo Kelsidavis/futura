@@ -22,6 +22,7 @@
 #include <kernel/fut_thread.h>
 #include <kernel/fut_timer.h>
 #include <kernel/signal.h>
+#include <kernel/chrdev.h>
 #include <sys/epoll.h>
 
 /* Architecture-specific paging headers for KERNEL_VIRTUAL_BASE */
@@ -385,6 +386,13 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
                 if (fut_pty_poll(file, epoll_req, &epoll_ready))
                     handled = true;
             }
+            if (!handled && file->chr_ops && file->chr_ops->poll) {
+                uint32_t chrdev_ready = 0;
+                if (file->chr_ops->poll(file->chr_inode, file->chr_private, epoll_req, &chrdev_ready)) {
+                    epoll_ready |= chrdev_ready;
+                    handled = true;
+                }
+            }
             if (!handled) {
                 fut_socket_t *socket = get_socket_from_fd(fd);
                 if (socket) {
@@ -514,6 +522,7 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
                 if (!handled) { extern bool fut_pidfd_poll(struct fut_file *f, uint32_t req, uint32_t *out); if (fut_pidfd_poll(file, epoll_req, &epoll_ready)) handled = true; }
                 if (!handled) { extern bool fut_inotify_poll(struct fut_file *f, uint32_t req, uint32_t *out); if (fut_inotify_poll(file, epoll_req, &epoll_ready)) handled = true; }
                 if (!handled) { extern bool fut_pty_poll(struct fut_file *f, uint32_t req, uint32_t *out); if (fut_pty_poll(file, epoll_req, &epoll_ready)) handled = true; }
+                if (!handled && file->chr_ops && file->chr_ops->poll) { uint32_t cr = 0; if (file->chr_ops->poll(file->chr_inode, file->chr_private, epoll_req, &cr)) { epoll_ready |= cr; handled = true; } }
                 if (!handled) {
                     fut_socket_t *socket = get_socket_from_fd(fd);
                     if (socket) {
@@ -889,6 +898,13 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
                 if (fut_pty_poll(file, epoll_req, &epoll_ready))
                     handled = true;
             }
+            if (!handled && file->chr_ops && file->chr_ops->poll) {
+                uint32_t chrdev_ready = 0;
+                if (file->chr_ops->poll(file->chr_inode, file->chr_private, epoll_req, &chrdev_ready)) {
+                    epoll_ready |= chrdev_ready;
+                    handled = true;
+                }
+            }
             if (!handled) {
                 fut_socket_t *socket = get_socket_from_fd(fd);
                 if (socket) {
@@ -1007,6 +1023,7 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
                 if (!handled) { extern bool fut_pidfd_poll(struct fut_file *f, uint32_t req, uint32_t *out); if (fut_pidfd_poll(file, epoll_req, &epoll_ready)) handled = true; }
                 if (!handled) { extern bool fut_inotify_poll(struct fut_file *f, uint32_t req, uint32_t *out); if (fut_inotify_poll(file, epoll_req, &epoll_ready)) handled = true; }
                 if (!handled) { extern bool fut_pty_poll(struct fut_file *f, uint32_t req, uint32_t *out); if (fut_pty_poll(file, epoll_req, &epoll_ready)) handled = true; }
+                if (!handled && file->chr_ops && file->chr_ops->poll) { uint32_t cr = 0; if (file->chr_ops->poll(file->chr_inode, file->chr_private, epoll_req, &cr)) { epoll_ready |= cr; handled = true; } }
                 if (!handled) {
                     fut_socket_t *socket = get_socket_from_fd(fd);
                     if (socket) {

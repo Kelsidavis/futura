@@ -532,6 +532,16 @@ static void cmd_cppfilt(int argc, char *argv[]);
 static void cmd_elfedit(int argc, char *argv[]);
 static void cmd_cc(int argc, char *argv[]);
 static void cmd_ld_cmd(int argc, char *argv[]);
+static void cmd_as(int argc, char *argv[]);
+static void cmd_nasm(int argc, char *argv[]);
+static void cmd_gprof(int argc, char *argv[]);
+static void cmd_gcov(int argc, char *argv[]);
+static void cmd_indent(int argc, char *argv[]);
+static void cmd_astyle(int argc, char *argv[]);
+static void cmd_clang_format(int argc, char *argv[]);
+static void cmd_clang_tidy(int argc, char *argv[]);
+static void cmd_cppcheck(int argc, char *argv[]);
+static void cmd_shellcheck(int argc, char *argv[]);
 
 /* Forward declaration for prompt */
 static void print_prompt(void);
@@ -15815,6 +15825,36 @@ watch_sleep:
     } else if (strcmp_simple(argv[0], "ld") == 0) {
         cmd_ld_cmd(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "as") == 0 || strcmp_simple(argv[0], "gas") == 0) {
+        cmd_as(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "nasm") == 0) {
+        cmd_nasm(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "gprof") == 0) {
+        cmd_gprof(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "gcov") == 0) {
+        cmd_gcov(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "indent") == 0) {
+        cmd_indent(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "astyle") == 0) {
+        cmd_astyle(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "clang-format") == 0) {
+        cmd_clang_format(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "clang-tidy") == 0) {
+        cmd_clang_tidy(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "cppcheck") == 0) {
+        cmd_cppcheck(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "shellcheck") == 0) {
+        cmd_shellcheck(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -16377,6 +16417,17 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "cc") == 0 ||
             strcmp_simple(cmd, "gcc") == 0 ||
             strcmp_simple(cmd, "ld") == 0 ||
+            strcmp_simple(cmd, "as") == 0 ||
+            strcmp_simple(cmd, "gas") == 0 ||
+            strcmp_simple(cmd, "nasm") == 0 ||
+            strcmp_simple(cmd, "gprof") == 0 ||
+            strcmp_simple(cmd, "gcov") == 0 ||
+            strcmp_simple(cmd, "indent") == 0 ||
+            strcmp_simple(cmd, "astyle") == 0 ||
+            strcmp_simple(cmd, "clang-format") == 0 ||
+            strcmp_simple(cmd, "clang-tidy") == 0 ||
+            strcmp_simple(cmd, "cppcheck") == 0 ||
+            strcmp_simple(cmd, "shellcheck") == 0 ||
             0);
 }
 
@@ -21219,7 +21270,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   570 built-in commands — type 'help'    |\n");
+    write_str(1, "|   580 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");
@@ -50890,6 +50941,726 @@ static void cmd_ld_cmd(int argc, char *argv[]) {
         write_str(1, "  RPATH:         "); write_str(1, rpath); write_str(1, "\n");
     }
     write_str(1, "  (simulated - no actual linking performed)\n");
+}
+
+/* as - GNU assembler (simulated) */
+static void cmd_as(int argc, char *argv[]) {
+    if (argc < 2 || strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "Usage: as [options] file...\n");
+        write_str(1, "Options:\n");
+        write_str(1, "  -o <file>     Set output object file\n");
+        write_str(1, "  -g            Generate debug info\n");
+        write_str(1, "  -march=<arch> Set target architecture\n");
+        write_str(1, "  --32/--64     Generate 32/64-bit code\n");
+        write_str(1, "  -W            Suppress warnings\n");
+        write_str(1, "  --version     Show version\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "GNU assembler (Futura Binutils) 2.42\n");
+        write_str(1, "Copyright (C) 2026 Futura Software Foundation, Inc.\n");
+        write_str(1, "This assembler was configured for a target of `x86_64-futura-elf'.\n");
+        return;
+    }
+
+    const char *input = (const char *)0;
+    const char *output = "a.out";
+    int gen_debug = 0;
+    int bits = 64;
+    const char *march = "x86-64";
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-o") == 0 && i + 1 < argc) {
+            output = argv[++i];
+        } else if (strcmp_simple(argv[i], "-g") == 0) {
+            gen_debug = 1;
+        } else if (strcmp_simple(argv[i], "--32") == 0) {
+            bits = 32;
+        } else if (strcmp_simple(argv[i], "--64") == 0) {
+            bits = 64;
+        } else if (argv[i][0] == '-' && argv[i][1] == 'm') {
+            march = argv[i] + 7; /* skip -march= */
+        } else if (argv[i][0] != '-') {
+            input = argv[i];
+        }
+    }
+
+    if (!input) {
+        write_str(2, "as: no input file specified\n");
+        return;
+    }
+
+    write_str(1, "\033[1mGNU Assembler Output:\033[0m\n");
+    write_str(1, "  Input:         "); write_str(1, input); write_str(1, "\n");
+    write_str(1, "  Output:        "); write_str(1, output); write_str(1, "\n");
+    write_str(1, "  Architecture:  "); write_str(1, march); write_str(1, "\n");
+    char bstr[8];
+    int_to_str(bits, bstr, sizeof(bstr));
+    write_str(1, "  Mode:          "); write_str(1, bstr); write_str(1, "-bit\n");
+    if (gen_debug) write_str(1, "  Debug info:    enabled\n");
+    write_str(1, "\n  Assembling...\n");
+    write_str(1, "  Pass 1: reading source, building symbol table\n");
+    write_str(1, "    .text    section, alignment 16\n");
+    write_str(1, "    .data    section, alignment 8\n");
+    write_str(1, "    .bss     section, alignment 32\n");
+    write_str(1, "  Pass 2: resolving symbols, emitting code\n");
+    write_str(1, "    Symbols defined: 12\n");
+    write_str(1, "    Symbols undefined (external): 3\n");
+    write_str(1, "    Relocations emitted: 8\n");
+    write_str(1, "\n  \033[1;32mAssembly complete:\033[0m ");
+    write_str(1, output); write_str(1, " (ELF ");
+    write_str(1, bstr); write_str(1, "-bit object)\n");
+    write_str(1, "  .text: 256 bytes, .data: 48 bytes, .bss: 128 bytes\n");
+    write_str(1, "  (simulated - no actual assembly performed)\n");
+}
+
+/* nasm - NASM assembler (simulated) */
+static void cmd_nasm(int argc, char *argv[]) {
+    if (argc < 2 || strcmp_simple(argv[1], "-h") == 0 || strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "Usage: nasm [options] file\n");
+        write_str(1, "Options:\n");
+        write_str(1, "  -f <format>   Set output format (elf64, elf32, bin, macho64)\n");
+        write_str(1, "  -o <file>     Set output file\n");
+        write_str(1, "  -g            Generate debug info (DWARF)\n");
+        write_str(1, "  -l <file>     Generate listing file\n");
+        write_str(1, "  -D<macro>     Define preprocessor macro\n");
+        write_str(1, "  -I<dir>       Add include search directory\n");
+        write_str(1, "  -w+<warn>     Enable warning class\n");
+        write_str(1, "  -v            Show version\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "-v") == 0 || strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "NASM version 2.16.03 compiled on Futura OS\n");
+        return;
+    }
+
+    const char *input = (const char *)0;
+    const char *output = (const char *)0;
+    const char *format = "elf64";
+    const char *listing = (const char *)0;
+    int gen_debug = 0;
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-f") == 0 && i + 1 < argc) {
+            format = argv[++i];
+        } else if (strcmp_simple(argv[i], "-o") == 0 && i + 1 < argc) {
+            output = argv[++i];
+        } else if (strcmp_simple(argv[i], "-l") == 0 && i + 1 < argc) {
+            listing = argv[++i];
+        } else if (strcmp_simple(argv[i], "-g") == 0) {
+            gen_debug = 1;
+        } else if (argv[i][0] != '-') {
+            input = argv[i];
+        }
+    }
+
+    if (!input) {
+        write_str(2, "nasm: error: no input file specified\n");
+        return;
+    }
+
+    write_str(1, "\033[1mNASM - Netwide Assembler\033[0m\n");
+    write_str(1, "  Input:    "); write_str(1, input); write_str(1, "\n");
+    write_str(1, "  Format:   "); write_str(1, format); write_str(1, "\n");
+    if (output) {
+        write_str(1, "  Output:   "); write_str(1, output); write_str(1, "\n");
+    } else {
+        write_str(1, "  Output:   (default based on format)\n");
+    }
+    if (gen_debug) write_str(1, "  Debug:    DWARF format enabled\n");
+    if (listing) {
+        write_str(1, "  Listing:  "); write_str(1, listing); write_str(1, "\n");
+    }
+
+    write_str(1, "\n  Processing Intel-syntax assembly...\n");
+    write_str(1, "  Pass 1: preprocessing and macro expansion\n");
+    write_str(1, "    Macros expanded: 4\n");
+    write_str(1, "    Includes processed: 1\n");
+    write_str(1, "  Pass 2: code generation\n");
+    write_str(1, "    Instructions assembled: 87\n");
+    write_str(1, "    Data directives: 12\n");
+    write_str(1, "    Labels resolved: 23\n");
+
+    if (listing) {
+        write_str(1, "\n  \033[1mListing excerpt:\033[0m\n");
+        write_str(1, "     1 00000000 55               push rbp\n");
+        write_str(1, "     2 00000001 4889E5           mov rbp, rsp\n");
+        write_str(1, "     3 00000004 4883EC10         sub rsp, 16\n");
+        write_str(1, "     4 00000008 BF01000000       mov edi, 1\n");
+        write_str(1, "     5 0000000D E8[00000000]     call printf\n");
+    }
+
+    write_str(1, "\n  \033[1;32mAssembly complete.\033[0m\n");
+    write_str(1, "  Output size: 1248 bytes ("); write_str(1, format); write_str(1, " format)\n");
+    write_str(1, "  (simulated - no actual assembly performed)\n");
+}
+
+/* gprof - GNU profiler (simulated) */
+static void cmd_gprof(int argc, char *argv[]) {
+    if (argc < 2 || strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "Usage: gprof [options] [executable [profile-data]]\n");
+        write_str(1, "Options:\n");
+        write_str(1, "  -b             Suppress verbose blurbs\n");
+        write_str(1, "  -p             Print flat profile only\n");
+        write_str(1, "  -q             Print call graph only\n");
+        write_str(1, "  -A             Annotated source listing\n");
+        write_str(1, "  -z             Show unused functions\n");
+        write_str(1, "  -c             Discover child times from call graph\n");
+        write_str(1, "  --version      Show version\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "GNU gprof (Futura Binutils) 2.42\n");
+        write_str(1, "Based on BSD gprof, copyright 1983 Regents of the University of California.\n");
+        return;
+    }
+
+    int flat_only = 0, graph_only = 0, brief = 0;
+    const char *executable = (const char *)0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-b") == 0) brief = 1;
+        else if (strcmp_simple(argv[i], "-p") == 0) flat_only = 1;
+        else if (strcmp_simple(argv[i], "-q") == 0) graph_only = 1;
+        else if (argv[i][0] != '-') executable = argv[i];
+    }
+    if (!executable) executable = "a.out";
+
+    write_str(1, "\033[1mGNU gprof — Profile Report\033[0m\n");
+    write_str(1, "  Executable: "); write_str(1, executable); write_str(1, "\n\n");
+
+    if (!graph_only) {
+        write_str(1, "\033[1mFlat profile:\033[0m\n\n");
+        if (!brief) {
+            write_str(1, "Each sample counts as 0.01 seconds.\n");
+            write_str(1, "  %%    cumulative  self              self    total\n");
+            write_str(1, " time   seconds   seconds   calls  ms/call  ms/call  name\n");
+        }
+        write_str(1, " 42.31    0.55     0.55      1200    0.46     0.78    process_data\n");
+        write_str(1, " 23.08    0.85     0.30     58400    0.01     0.01    hash_lookup\n");
+        write_str(1, " 15.38    1.05     0.20       800    0.25     0.52    parse_input\n");
+        write_str(1, "  7.69    1.15     0.10     12000    0.01     0.01    alloc_node\n");
+        write_str(1, "  5.38    1.22     0.07      3200    0.02     0.03    sort_entries\n");
+        write_str(1, "  3.85    1.27     0.05     24000    0.00     0.00    strcmp_fast\n");
+        write_str(1, "  2.31    1.30     0.03         1   30.00    1300.00  main\n");
+        write_str(1, "\n");
+    }
+
+    if (!flat_only) {
+        write_str(1, "\033[1mCall graph:\033[0m\n\n");
+        if (!brief) {
+            write_str(1, "                          called/total    parents\n");
+            write_str(1, "index  %%time   self  children  called   name\n");
+        }
+        write_str(1, "                0.03    1.27       1/1       <spontaneous>\n");
+        write_str(1, "[1]   100.0    0.03    1.27       1         main [1]\n");
+        write_str(1, "                0.55    0.28    1200/1200      process_data [2]\n");
+        write_str(1, "                0.20    0.12     800/800       parse_input [3]\n");
+        write_str(1, "-----------------------------------------------\n");
+        write_str(1, "                0.55    0.28    1200/1200      main [1]\n");
+        write_str(1, "[2]    63.8    0.55    0.28    1200         process_data [2]\n");
+        write_str(1, "                0.18    0.00   35000/58400     hash_lookup [4]\n");
+        write_str(1, "                0.07    0.00    3200/3200      sort_entries [5]\n");
+        write_str(1, "                0.03    0.00    8000/12000     alloc_node [6]\n");
+        write_str(1, "-----------------------------------------------\n");
+        write_str(1, "                0.20    0.12     800/800       main [1]\n");
+        write_str(1, "[3]    24.6    0.20    0.12     800         parse_input [3]\n");
+        write_str(1, "                0.12    0.00   23400/58400     hash_lookup [4]\n");
+        write_str(1, "-----------------------------------------------\n");
+        write_str(1, "\n");
+    }
+
+    write_str(1, "\033[1mIndex by function name:\033[0m\n");
+    write_str(1, "  [6] alloc_node        [4] hash_lookup       [2] process_data\n");
+    write_str(1, "  [1] main              [3] parse_input        [5] sort_entries\n");
+    write_str(1, "  [7] strcmp_fast\n");
+    write_str(1, "\n  (simulated - no actual profiling data read)\n");
+}
+
+/* gcov - Code coverage tool (simulated) */
+static void cmd_gcov(int argc, char *argv[]) {
+    if (argc < 2 || strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "Usage: gcov [options] file.c\n");
+        write_str(1, "Options:\n");
+        write_str(1, "  -b             Show branch probabilities\n");
+        write_str(1, "  -c             Show branch counts instead of percentages\n");
+        write_str(1, "  -f             Show per-function summaries\n");
+        write_str(1, "  -n             Do not create output file\n");
+        write_str(1, "  -a             Show all basic blocks\n");
+        write_str(1, "  -l             Use long file names\n");
+        write_str(1, "  --version      Show version\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "gcov (Futura GCC) 14.2.0\n");
+        write_str(1, "Copyright (C) 2026 Futura Software Foundation, Inc.\n");
+        return;
+    }
+
+    int show_branch = 0, per_func = 0;
+    const char *source = (const char *)0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-b") == 0) show_branch = 1;
+        else if (strcmp_simple(argv[i], "-f") == 0) per_func = 1;
+        else if (argv[i][0] != '-') source = argv[i];
+    }
+    if (!source) {
+        write_str(2, "gcov: no source file specified\n");
+        return;
+    }
+
+    write_str(1, "\033[1mgcov — Code Coverage Report\033[0m\n");
+    write_str(1, "  File: "); write_str(1, source); write_str(1, "\n\n");
+
+    if (per_func) {
+        write_str(1, "\033[1mPer-function coverage:\033[0m\n");
+        write_str(1, "  Function 'main'           Lines executed: 100.00%% of 12\n");
+        write_str(1, "  Function 'process_data'   Lines executed:  92.31%% of 26\n");
+        write_str(1, "  Function 'parse_input'    Lines executed:  85.71%% of 14\n");
+        write_str(1, "  Function 'hash_lookup'    Lines executed: 100.00%% of 8\n");
+        write_str(1, "  Function 'error_handler'  Lines executed:   0.00%% of 6\n");
+        write_str(1, "\n");
+    }
+
+    write_str(1, "\033[1mAnnotated source:\033[0m\n");
+    write_str(1, "        -:    1:#include <stdio.h>\n");
+    write_str(1, "        -:    2:#include <stdlib.h>\n");
+    write_str(1, "        -:    3:\n");
+    write_str(1, "     1200:    4:int process_data(int *buf, int n) {\n");
+    write_str(1, "     1200:    5:    int sum = 0;\n");
+    write_str(1, "   144000:    6:    for (int i = 0; i < n; i++) {\n");
+    write_str(1, "   142800:    7:        sum += buf[i];\n");
+    write_str(1, "   142800:    8:        if (buf[i] < 0)\n");
+    write_str(1, "    #####:    9:            return -1;\n");
+    write_str(1, "        -:   10:    }\n");
+    write_str(1, "     1200:   11:    return sum;\n");
+    write_str(1, "        -:   12:}\n");
+
+    if (show_branch) {
+        write_str(1, "\n\033[1mBranch coverage:\033[0m\n");
+        write_str(1, "  branch  0 taken 99%% (fallthrough)\n");
+        write_str(1, "  branch  1 taken 1%%\n");
+        write_str(1, "  branch  2 never executed\n");
+    }
+
+    write_str(1, "\n\033[1mSummary:\033[0m\n");
+    write_str(1, "  Lines executed:     87.88%% of 66\n");
+    write_str(1, "  Branches executed:  80.00%% of 20\n");
+    write_str(1, "  Creating '"); write_str(1, source); write_str(1, ".gcov'\n");
+    write_str(1, "  (simulated - no actual coverage data read)\n");
+}
+
+/* indent - C code formatter (simulated) */
+static void cmd_indent(int argc, char *argv[]) {
+    if (argc < 2 || strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "Usage: indent [options] file [...]\n");
+        write_str(1, "Options:\n");
+        write_str(1, "  -kr            K&R style\n");
+        write_str(1, "  -gnu           GNU style (default)\n");
+        write_str(1, "  -linux         Linux kernel style\n");
+        write_str(1, "  -orig          Berkeley style\n");
+        write_str(1, "  -i<n>          Set indentation level to n spaces\n");
+        write_str(1, "  -ts<n>         Set tab size\n");
+        write_str(1, "  -nut           Use spaces instead of tabs\n");
+        write_str(1, "  -o <file>      Set output file\n");
+        write_str(1, "  --version      Show version\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "GNU indent 2.2.13 (Futura)\n");
+        return;
+    }
+
+    const char *style = "GNU";
+    const char *input = (const char *)0;
+    const char *output = (const char *)0;
+    int indent_size = 2;
+    int use_tabs = 1;
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-kr") == 0) { style = "K&R"; indent_size = 4; }
+        else if (strcmp_simple(argv[i], "-gnu") == 0) { style = "GNU"; indent_size = 2; }
+        else if (strcmp_simple(argv[i], "-linux") == 0) { style = "Linux"; indent_size = 8; }
+        else if (strcmp_simple(argv[i], "-orig") == 0) { style = "Berkeley"; indent_size = 4; }
+        else if (strcmp_simple(argv[i], "-nut") == 0) use_tabs = 0;
+        else if (strcmp_simple(argv[i], "-o") == 0 && i + 1 < argc) output = argv[++i];
+        else if (argv[i][0] != '-') input = argv[i];
+    }
+
+    if (!input) {
+        write_str(2, "indent: no input file specified\n");
+        return;
+    }
+
+    write_str(1, "\033[1mGNU indent — C Code Formatter\033[0m\n");
+    write_str(1, "  Input:    "); write_str(1, input); write_str(1, "\n");
+    if (output) {
+        write_str(1, "  Output:   "); write_str(1, output); write_str(1, "\n");
+    } else {
+        write_str(1, "  Output:   (in-place)\n");
+    }
+    write_str(1, "  Style:    "); write_str(1, style); write_str(1, "\n");
+    char ibuf[8];
+    int_to_str(indent_size, ibuf, sizeof(ibuf));
+    write_str(1, "  Indent:   "); write_str(1, ibuf);
+    write_str(1, use_tabs ? " (tabs)\n" : " (spaces)\n");
+    write_str(1, "\n  Reformatting...\n");
+    write_str(1, "    Lines processed:    142\n");
+    write_str(1, "    Braces realigned:   18\n");
+    write_str(1, "    Comments reflowed:  5\n");
+    write_str(1, "    Blank lines added:  3\n");
+    write_str(1, "    Blank lines removed:2\n");
+    write_str(1, "\n  \033[1;32mFormatting complete.\033[0m\n");
+    write_str(1, "  (simulated - no actual formatting performed)\n");
+}
+
+/* astyle - Artistic Style formatter (simulated) */
+static void cmd_astyle(int argc, char *argv[]) {
+    if (argc < 2 || strcmp_simple(argv[1], "--help") == 0 || strcmp_simple(argv[1], "-h") == 0) {
+        write_str(1, "Usage: astyle [options] file [...]\n");
+        write_str(1, "Options:\n");
+        write_str(1, "  --style=allman    Allman/BSD style\n");
+        write_str(1, "  --style=kr        K&R style\n");
+        write_str(1, "  --style=google    Google style\n");
+        write_str(1, "  --style=linux     Linux kernel style\n");
+        write_str(1, "  --style=gnu       GNU style\n");
+        write_str(1, "  --indent=spaces=<n>  Use n spaces\n");
+        write_str(1, "  --indent=tab=<n>     Use tabs of width n\n");
+        write_str(1, "  --pad-oper        Pad around operators\n");
+        write_str(1, "  --pad-header      Pad after if/for/while\n");
+        write_str(1, "  -n                Do not create backup\n");
+        write_str(1, "  --suffix=<ext>    Set backup suffix\n");
+        write_str(1, "  --version / -V    Show version\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0 || strcmp_simple(argv[1], "-V") == 0) {
+        write_str(1, "Artistic Style Version 3.4.12 (Futura)\n");
+        return;
+    }
+
+    const char *style = "allman";
+    int file_count = 0;
+    const char *files[16];
+
+    for (int i = 1; i < argc && file_count < 16; i++) {
+        if (argv[i][0] == '-' && argv[i][1] == '-' && argv[i][2] == 's') {
+            /* --style=... */
+            const char *p = argv[i];
+            while (*p && *p != '=') p++;
+            if (*p == '=') style = p + 1;
+        } else if (argv[i][0] != '-') {
+            files[file_count++] = argv[i];
+        }
+    }
+
+    if (file_count == 0) {
+        write_str(2, "astyle: no input files specified\n");
+        return;
+    }
+
+    write_str(1, "\033[1mArtistic Style — Code Formatter\033[0m\n");
+    write_str(1, "  Style: "); write_str(1, style); write_str(1, "\n\n");
+
+    for (int i = 0; i < file_count; i++) {
+        write_str(1, "  Formatting: "); write_str(1, files[i]); write_str(1, "\n");
+        write_str(1, "    Brace style adjusted:     8 changes\n");
+        write_str(1, "    Indentation corrected:   14 lines\n");
+        write_str(1, "    Whitespace normalized:    6 changes\n");
+        write_str(1, "    \033[1;32mFormatted\033[0m "); write_str(1, files[i]); write_str(1, "\n");
+    }
+
+    write_str(1, "\n");
+    char nbuf[8];
+    int_to_str(file_count, nbuf, sizeof(nbuf));
+    write_str(1, "  "); write_str(1, nbuf); write_str(1, " file(s) formatted.\n");
+    write_str(1, "  (simulated - no actual formatting performed)\n");
+}
+
+/* clang-format - Clang code formatter (simulated) */
+static void cmd_clang_format(int argc, char *argv[]) {
+    if (argc >= 2 && (strcmp_simple(argv[1], "--help") == 0 || strcmp_simple(argv[1], "-h") == 0)) {
+        write_str(1, "Usage: clang-format [options] [file ...]\n");
+        write_str(1, "Options:\n");
+        write_str(1, "  --style=<style>    Set style (LLVM, Google, Chromium, Mozilla, WebKit)\n");
+        write_str(1, "  --style=file       Read style from .clang-format\n");
+        write_str(1, "  -i                 Inplace edit\n");
+        write_str(1, "  --dry-run          Show changes without applying\n");
+        write_str(1, "  --Werror           Treat warnings as errors\n");
+        write_str(1, "  --dump-config      Dump configuration\n");
+        write_str(1, "  --version          Show version\n");
+        return;
+    }
+    if (argc >= 2 && strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "clang-format version 18.1.0 (Futura)\n");
+        return;
+    }
+    if (argc >= 2 && strcmp_simple(argv[1], "--dump-config") == 0) {
+        write_str(1, "---\n");
+        write_str(1, "Language: Cpp\n");
+        write_str(1, "BasedOnStyle: LLVM\n");
+        write_str(1, "IndentWidth: 4\n");
+        write_str(1, "ColumnLimit: 120\n");
+        write_str(1, "BreakBeforeBraces: Attach\n");
+        write_str(1, "AllowShortFunctionsOnASingleLine: Empty\n");
+        write_str(1, "SortIncludes: CaseSensitive\n");
+        write_str(1, "...\n");
+        return;
+    }
+
+    const char *style = "LLVM";
+    int inplace = 0, dry_run = 0;
+    int file_count = 0;
+    const char *files[16];
+
+    for (int i = 1; i < argc && file_count < 16; i++) {
+        if (argv[i][0] == '-' && argv[i][1] == '-' && argv[i][2] == 's') {
+            const char *p = argv[i];
+            while (*p && *p != '=') p++;
+            if (*p == '=') style = p + 1;
+        } else if (strcmp_simple(argv[i], "-i") == 0) {
+            inplace = 1;
+        } else if (strcmp_simple(argv[i], "--dry-run") == 0) {
+            dry_run = 1;
+        } else if (argv[i][0] != '-') {
+            files[file_count++] = argv[i];
+        }
+    }
+
+    if (file_count == 0) {
+        write_str(1, "clang-format: reading from stdin (use --help for usage)\n");
+        write_str(1, "  (simulated - provide files as arguments)\n");
+        return;
+    }
+
+    write_str(1, "\033[1mclang-format — LLVM Code Formatter\033[0m\n");
+    write_str(1, "  Style: "); write_str(1, style); write_str(1, "\n");
+    if (dry_run) write_str(1, "  Mode:  dry-run (no changes)\n");
+    else if (inplace) write_str(1, "  Mode:  in-place edit\n");
+    else write_str(1, "  Mode:  stdout\n");
+    write_str(1, "\n");
+
+    for (int i = 0; i < file_count; i++) {
+        write_str(1, "  Processing: "); write_str(1, files[i]); write_str(1, "\n");
+        if (dry_run) {
+            write_str(1, "    Would reformat: 3 blocks, 12 lines\n");
+        } else {
+            write_str(1, "    Reformatted:    3 blocks, 12 lines\n");
+        }
+        write_str(1, "    Include sort:   2 headers reordered\n");
+        write_str(1, "    Brace wrapping: 4 adjustments\n");
+    }
+
+    char nbuf[8];
+    int_to_str(file_count, nbuf, sizeof(nbuf));
+    write_str(1, "\n  "); write_str(1, nbuf);
+    write_str(1, " file(s) processed.\n");
+    write_str(1, "  (simulated - no actual formatting performed)\n");
+}
+
+/* clang-tidy - Clang linter (simulated) */
+static void cmd_clang_tidy(int argc, char *argv[]) {
+    if (argc < 2 || strcmp_simple(argv[1], "--help") == 0 || strcmp_simple(argv[1], "-h") == 0) {
+        write_str(1, "Usage: clang-tidy [options] file -- [compiler options]\n");
+        write_str(1, "Options:\n");
+        write_str(1, "  --checks=<list>       Comma-separated list of checks\n");
+        write_str(1, "  --fix                 Apply suggested fixes\n");
+        write_str(1, "  --fix-errors          Apply fixes even if there are errors\n");
+        write_str(1, "  --list-checks         List enabled checks\n");
+        write_str(1, "  -p <dir>              Set build path for compile_commands.json\n");
+        write_str(1, "  --warnings-as-errors  Treat warnings as errors\n");
+        write_str(1, "  --version             Show version\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "Futura LLVM (https://futura-os.dev/):\n");
+        write_str(1, "  LLVM version 18.1.0\n");
+        write_str(1, "  Optimized build.\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--list-checks") == 0) {
+        write_str(1, "Enabled checks:\n");
+        write_str(1, "    bugprone-argument-comment\n");
+        write_str(1, "    bugprone-assert-side-effect\n");
+        write_str(1, "    bugprone-use-after-move\n");
+        write_str(1, "    cert-dcl21-cpp\n");
+        write_str(1, "    clang-analyzer-core.NullDereference\n");
+        write_str(1, "    clang-analyzer-deadcode.DeadStores\n");
+        write_str(1, "    modernize-use-auto\n");
+        write_str(1, "    modernize-use-nullptr\n");
+        write_str(1, "    performance-unnecessary-copy-initialization\n");
+        write_str(1, "    readability-identifier-naming\n");
+        return;
+    }
+
+    const char *source = (const char *)0;
+    int fix_mode = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "--fix") == 0) fix_mode = 1;
+        else if (strcmp_simple(argv[i], "--") == 0) break;
+        else if (argv[i][0] != '-') source = argv[i];
+    }
+    if (!source) {
+        write_str(2, "clang-tidy: error: no input file specified\n");
+        return;
+    }
+
+    write_str(1, "\033[1mclang-tidy — LLVM Linter/Static Analyzer\033[0m\n");
+    write_str(1, "  Analyzing: "); write_str(1, source); write_str(1, "\n");
+    if (fix_mode) write_str(1, "  Mode: fix (auto-apply corrections)\n");
+    write_str(1, "\n");
+
+    write_str(1, source); write_str(1, ":12:5: \033[1;33mwarning:\033[0m use 'nullptr' instead of 'NULL' [modernize-use-nullptr]\n");
+    write_str(1, "    void *p = NULL;\n");
+    write_str(1, "              ^~~~\n");
+    write_str(1, "              nullptr\n");
+    write_str(1, source); write_str(1, ":28:9: \033[1;33mwarning:\033[0m variable 'result' is not initialized [bugprone-uninitialized]\n");
+    write_str(1, "    int result;\n");
+    write_str(1, "        ^~~~~~\n");
+    write_str(1, source); write_str(1, ":45:12: \033[1;33mwarning:\033[0m use auto when initializing with a cast [modernize-use-auto]\n");
+    write_str(1, "    char *buf = (char *)malloc(256);\n");
+    write_str(1, "    ^~~~\n");
+    write_str(1, "    auto\n");
+    write_str(1, source); write_str(1, ":67:3: \033[1;33mwarning:\033[0m function 'process' has cognitive complexity of 32 [readability-function-cognitive-complexity]\n");
+    write_str(1, "  int process(int *data, int n) {\n");
+    write_str(1, "  ^\n");
+
+    if (fix_mode) {
+        write_str(1, "\n  Applied 2 of 4 suggested fixes.\n");
+    }
+    write_str(1, "\n  4 warnings generated.\n");
+    write_str(1, "  Suppressed 0 warnings (0 NOLINT).\n");
+    write_str(1, "  (simulated - no actual analysis performed)\n");
+}
+
+/* cppcheck - C/C++ static analysis (simulated) */
+static void cmd_cppcheck(int argc, char *argv[]) {
+    if (argc < 2 || strcmp_simple(argv[1], "--help") == 0 || strcmp_simple(argv[1], "-h") == 0) {
+        write_str(1, "Usage: cppcheck [options] path\n");
+        write_str(1, "Options:\n");
+        write_str(1, "  --enable=<id>       Enable additional checks (all,warning,style,performance,portability)\n");
+        write_str(1, "  --std=<std>         Set C/C++ standard (c11, c++17, etc.)\n");
+        write_str(1, "  --suppress=<id>     Suppress specific check\n");
+        write_str(1, "  --xml               XML output\n");
+        write_str(1, "  --output-file=<f>   Write results to file\n");
+        write_str(1, "  -j <n>              Number of threads\n");
+        write_str(1, "  -I <dir>            Include path\n");
+        write_str(1, "  --quiet             Suppress progress messages\n");
+        write_str(1, "  --version           Show version\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "Cppcheck 2.14.0 (Futura)\n");
+        return;
+    }
+
+    const char *target = (const char *)0;
+    int quiet = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "--quiet") == 0) quiet = 1;
+        else if (argv[i][0] != '-') target = argv[i];
+    }
+    if (!target) {
+        write_str(2, "cppcheck: error: no input files or directories given\n");
+        return;
+    }
+
+    write_str(1, "\033[1mCppcheck — C/C++ Static Analyzer\033[0m\n");
+    if (!quiet) {
+        write_str(1, "Checking "); write_str(1, target); write_str(1, " ...\n");
+        write_str(1, "  1/5 files checked  20%% done\n");
+        write_str(1, "  2/5 files checked  40%% done\n");
+        write_str(1, "  3/5 files checked  60%% done\n");
+        write_str(1, "  4/5 files checked  80%% done\n");
+        write_str(1, "  5/5 files checked 100%% done\n\n");
+    }
+
+    write_str(1, "["); write_str(1, target); write_str(1, "/main.c:23]: \033[1;31m(error)\033[0m Memory leak: buf\n");
+    write_str(1, "  char *buf = malloc(1024);\n");
+    write_str(1, "  if (error) return -1;  // leaked\n\n");
+    write_str(1, "["); write_str(1, target); write_str(1, "/util.c:45]: \033[1;33m(warning)\033[0m Possible null pointer dereference: ptr\n");
+    write_str(1, "  if (ptr != NULL) { ... }\n");
+    write_str(1, "  ptr->field = 0;  // outside null check\n\n");
+    write_str(1, "["); write_str(1, target); write_str(1, "/parser.c:112]: \033[1;36m(style)\033[0m Variable 'i' is assigned in condition\n");
+    write_str(1, "  if (i = get_value()) { ... }  // likely ==\n\n");
+    write_str(1, "["); write_str(1, target); write_str(1, "/io.c:78]: \033[1;35m(performance)\033[0m Variable 'str' is assigned in condition. Consider using std::string_view.\n\n");
+    write_str(1, "["); write_str(1, target); write_str(1, "/net.c:201]: \033[1;33m(warning)\033[0m Buffer access out-of-bounds: buf[1024]\n");
+    write_str(1, "  Array index 1024 is out of bounds (size: 1024)\n\n");
+
+    write_str(1, "\033[1mSummary:\033[0m\n");
+    write_str(1, "  Files checked:     5\n");
+    write_str(1, "  Errors:            1\n");
+    write_str(1, "  Warnings:          2\n");
+    write_str(1, "  Style issues:      1\n");
+    write_str(1, "  Performance:       1\n");
+    write_str(1, "  (simulated - no actual analysis performed)\n");
+}
+
+/* shellcheck - Shell script analysis (simulated) */
+static void cmd_shellcheck(int argc, char *argv[]) {
+    if (argc < 2 || strcmp_simple(argv[1], "--help") == 0 || strcmp_simple(argv[1], "-h") == 0) {
+        write_str(1, "Usage: shellcheck [options] file...\n");
+        write_str(1, "Options:\n");
+        write_str(1, "  -s <shell>     Specify shell dialect (sh, bash, dash, ksh)\n");
+        write_str(1, "  -f <format>    Output format (tty, gcc, json, checkstyle, diff)\n");
+        write_str(1, "  -e <code>      Exclude specific warning (e.g. SC2034)\n");
+        write_str(1, "  -S <severity>  Minimum severity (error, warning, info, style)\n");
+        write_str(1, "  -x             Follow 'source' directives\n");
+        write_str(1, "  --version / -V Show version\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0 || strcmp_simple(argv[1], "-V") == 0) {
+        write_str(1, "ShellCheck - shell script analysis tool\n");
+        write_str(1, "version: 0.10.0 (Futura)\n");
+        write_str(1, "license: GNU General Public License, version 3\n");
+        return;
+    }
+
+    const char *shell = "bash";
+    const char *source = (const char *)0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-s") == 0 && i + 1 < argc) {
+            shell = argv[++i];
+        } else if (argv[i][0] != '-') {
+            source = argv[i];
+        }
+    }
+    if (!source) {
+        write_str(2, "shellcheck: no input files\n");
+        return;
+    }
+
+    write_str(1, "\033[1mShellCheck — Shell Script Analyzer\033[0m\n");
+    write_str(1, "  File:    "); write_str(1, source); write_str(1, "\n");
+    write_str(1, "  Dialect: "); write_str(1, shell); write_str(1, "\n\n");
+
+    write_str(1, "In "); write_str(1, source); write_str(1, " line 3:\n");
+    write_str(1, "  for f in $(ls *.txt)\n");
+    write_str(1, "           \033[1;33m^-----------^\033[0m SC2045 (error): Iterating over ls output is fragile. Use globs.\n");
+    write_str(1, "                       \033[1;36m^----^\033[0m SC2035 (info): Use ./*.txt to avoid problems with leading dashes.\n\n");
+
+    write_str(1, "In "); write_str(1, source); write_str(1, " line 7:\n");
+    write_str(1, "  [ $foo == \"bar\" ]\n");
+    write_str(1, "    \033[1;33m^--^\033[0m SC2086 (info): Double quote to prevent globbing and word splitting.\n");
+    write_str(1, "         \033[1;33m^^\033[0m SC2039 (warning): In POSIX sh, == is undefined. Use =.\n\n");
+
+    write_str(1, "In "); write_str(1, source); write_str(1, " line 12:\n");
+    write_str(1, "  echo $1\n");
+    write_str(1, "       \033[1;33m^^\033[0m SC2086 (info): Double quote to prevent globbing and word splitting.\n\n");
+
+    write_str(1, "In "); write_str(1, source); write_str(1, " line 18:\n");
+    write_str(1, "  cat file | grep pattern\n");
+    write_str(1, "  \033[1;36m^-^\033[0m SC2002 (style): Useless use of cat. Consider 'grep pattern file'.\n\n");
+
+    write_str(1, "In "); write_str(1, source); write_str(1, " line 24:\n");
+    write_str(1, "  cd /some/dir\n");
+    write_str(1, "  \033[1;33m^^\033[0m SC2164 (warning): Use 'cd ... || exit' in case cd fails.\n\n");
+
+    write_str(1, "\033[1mSummary:\033[0m\n");
+    write_str(1, "  Found 7 issues in "); write_str(1, source); write_str(1, ":\n");
+    write_str(1, "    1 error\n");
+    write_str(1, "    2 warnings\n");
+    write_str(1, "    3 info\n");
+    write_str(1, "    1 style\n");
+    write_str(1, "  (simulated - no actual script analysis performed)\n");
 }
 
 #pragma GCC diagnostic pop

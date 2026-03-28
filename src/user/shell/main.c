@@ -284,6 +284,17 @@ static void cmd_tset(int argc, char *argv[]);
 static void cmd_infocmp(int argc, char *argv[]);
 static void cmd_tic(int argc, char *argv[]);
 static void cmd_toe(int argc, char *argv[]);
+static void cmd_runlevel(int argc, char *argv[]);
+static void cmd_telinit(int argc, char *argv[]);
+static void cmd_service(int argc, char *argv[]);
+static void cmd_update_rc_d(int argc, char *argv[]);
+static void cmd_chkconfig(int argc, char *argv[]);
+static void cmd_cfdisk(int argc, char *argv[]);
+static void cmd_fdisk(int argc, char *argv[]);
+static void cmd_parted(int argc, char *argv[]);
+static void cmd_blkdiscard(int argc, char *argv[]);
+static void cmd_tune2fs(int argc, char *argv[]);
+static void cmd_resize2fs(int argc, char *argv[]);
 
 /* Forward declaration for prompt */
 static void print_prompt(void);
@@ -13994,6 +14005,39 @@ watch_sleep:
     } else if (strcmp_simple(argv[0], "toe") == 0) {
         cmd_toe(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "runlevel") == 0) {
+        cmd_runlevel(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "telinit") == 0) {
+        cmd_telinit(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "service") == 0) {
+        cmd_service(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "update-rc.d") == 0) {
+        cmd_update_rc_d(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "chkconfig") == 0) {
+        cmd_chkconfig(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "cfdisk") == 0) {
+        cmd_cfdisk(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "fdisk") == 0) {
+        cmd_fdisk(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "parted") == 0) {
+        cmd_parted(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "blkdiscard") == 0) {
+        cmd_blkdiscard(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "tune2fs") == 0) {
+        cmd_tune2fs(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "resize2fs") == 0) {
+        cmd_resize2fs(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -14292,6 +14336,17 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "infocmp") == 0 ||
             strcmp_simple(cmd, "tic") == 0 ||
             strcmp_simple(cmd, "toe") == 0 ||
+            strcmp_simple(cmd, "runlevel") == 0 ||
+            strcmp_simple(cmd, "telinit") == 0 ||
+            strcmp_simple(cmd, "service") == 0 ||
+            strcmp_simple(cmd, "update-rc.d") == 0 ||
+            strcmp_simple(cmd, "chkconfig") == 0 ||
+            strcmp_simple(cmd, "cfdisk") == 0 ||
+            strcmp_simple(cmd, "fdisk") == 0 ||
+            strcmp_simple(cmd, "parted") == 0 ||
+            strcmp_simple(cmd, "blkdiscard") == 0 ||
+            strcmp_simple(cmd, "tune2fs") == 0 ||
+            strcmp_simple(cmd, "resize2fs") == 0 ||
             0);
 }
 
@@ -18471,6 +18526,7 @@ struct sctl_service {
     char  name[SCTL_NAME_LEN];
     pid_t pid;
     int   enabled;
+    int   masked;
     int   used;
 };
 
@@ -18662,12 +18718,19 @@ static void sctl_disable(const char *name) {
 
 static void cmd_systemctl(int argc, char *argv[]) {
     if (argc < 2) {
-        write_str(2, "Usage: systemctl {start|stop|restart|status|list-units|enable|disable} [service]\n");
+        write_str(2, "Usage: systemctl {start|stop|restart|status|list-units|enable|disable|mask|unmask} [service]\n");
         return;
     }
     const char *sub = argv[1];
     if (strcmp_simple(sub, "start") == 0) {
         if (argc < 3) { write_str(2, "systemctl start: missing service name\n"); return; }
+        struct sctl_service *svc = sctl_find(argv[2]);
+        if (svc && svc->masked) {
+            write_str(2, "Failed to start ");
+            write_str(2, argv[2]);
+            write_str(2, ": Unit is masked.\n");
+            return;
+        }
         sctl_start(argv[2]);
     } else if (strcmp_simple(sub, "stop") == 0) {
         if (argc < 3) { write_str(2, "systemctl stop: missing service name\n"); return; }
@@ -18675,6 +18738,13 @@ static void cmd_systemctl(int argc, char *argv[]) {
     } else if (strcmp_simple(sub, "restart") == 0) {
         if (argc < 3) { write_str(2, "systemctl restart: missing service name\n"); return; }
         struct sctl_service *svc = sctl_find(argv[2]);
+        if (svc && svc->masked) {
+            write_str(2, "Failed to restart ");
+            write_str(2, argv[2]);
+            write_str(2, ": Unit is masked.\n");
+            return;
+        }
+        svc = sctl_find(argv[2]);
         if (svc && sctl_is_running(svc)) sctl_stop(argv[2]);
         sctl_start(argv[2]);
     } else if (strcmp_simple(sub, "status") == 0) {
@@ -18687,10 +18757,42 @@ static void cmd_systemctl(int argc, char *argv[]) {
         sctl_list_units();
     } else if (strcmp_simple(sub, "enable") == 0) {
         if (argc < 3) { write_str(2, "systemctl enable: missing service name\n"); return; }
+        struct sctl_service *svc = sctl_find(argv[2]);
+        if (svc && svc->masked) {
+            write_str(2, "Failed to enable ");
+            write_str(2, argv[2]);
+            write_str(2, ": Unit is masked.\n");
+            return;
+        }
         sctl_enable(argv[2]);
     } else if (strcmp_simple(sub, "disable") == 0) {
         if (argc < 3) { write_str(2, "systemctl disable: missing service name\n"); return; }
         sctl_disable(argv[2]);
+    } else if (strcmp_simple(sub, "mask") == 0) {
+        if (argc < 3) { write_str(2, "systemctl mask: missing unit name\n"); return; }
+        struct sctl_service *svc = sctl_find(argv[2]);
+        if (!svc) {
+            svc = sctl_alloc(argv[2]);
+            if (!svc) { write_str(2, "systemctl: service table full\n"); return; }
+        }
+        svc->masked = 1;
+        svc->enabled = 0;
+        write_str(1, "Created symlink /etc/systemd/system/");
+        write_str(1, argv[2]);
+        write_str(1, " -> /dev/null.\n");
+    } else if (strcmp_simple(sub, "unmask") == 0) {
+        if (argc < 3) { write_str(2, "systemctl unmask: missing unit name\n"); return; }
+        struct sctl_service *svc = sctl_find(argv[2]);
+        if (svc) {
+            svc->masked = 0;
+            write_str(1, "Removed /etc/systemd/system/");
+            write_str(1, argv[2]);
+            write_str(1, ".\n");
+        } else {
+            write_str(1, "Unit ");
+            write_str(1, argv[2]);
+            write_str(1, " is not masked.\n");
+        }
     } else {
         write_str(2, "systemctl: unknown command '");
         write_str(2, sub);
@@ -18833,7 +18935,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   320 built-in commands — type 'help'    |\n");
+    write_str(1, "|   330 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");
@@ -27872,6 +27974,492 @@ __attribute__((used)) static void cmd_toe(int argc, char *argv[]) {
         write_str(1, "foot             foot terminal emulator\n");
         write_str(1, "st               suckless simple terminal\n");
     }
+}
+
+/* Built-in: runlevel - Show current system runlevel */
+__attribute__((used)) static void cmd_runlevel(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    write_str(1, "N 5\n");
+}
+
+/* Built-in: telinit - Change system runlevel (simulated) */
+__attribute__((used)) static void cmd_telinit(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "Usage: telinit RUNLEVEL\n");
+        write_str(2, "RUNLEVEL is one of 0-6, S, s, Q, q, a, b, c, u, U\n");
+        return;
+    }
+    const char *rl = argv[1];
+    if (rl[0] == '0') {
+        write_str(1, "telinit: switching to runlevel 0 (halt)\n");
+    } else if (rl[0] == '1' || rl[0] == 'S' || rl[0] == 's') {
+        write_str(1, "telinit: switching to runlevel 1 (single-user)\n");
+    } else if (rl[0] == '2') {
+        write_str(1, "telinit: switching to runlevel 2 (multi-user)\n");
+    } else if (rl[0] == '3') {
+        write_str(1, "telinit: switching to runlevel 3 (multi-user with networking)\n");
+    } else if (rl[0] == '4') {
+        write_str(1, "telinit: switching to runlevel 4 (user-defined)\n");
+    } else if (rl[0] == '5') {
+        write_str(1, "telinit: switching to runlevel 5 (graphical)\n");
+    } else if (rl[0] == '6') {
+        write_str(1, "telinit: switching to runlevel 6 (reboot)\n");
+    } else if (rl[0] == 'Q' || rl[0] == 'q') {
+        write_str(1, "telinit: re-reading /etc/inittab\n");
+    } else {
+        write_str(2, "telinit: invalid runlevel: ");
+        write_str(2, rl);
+        write_str(2, "\n");
+    }
+}
+
+/* Built-in: service - Manage system services (SysV-style) */
+__attribute__((used)) static void cmd_service(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "Usage: service SERVICE COMMAND\n");
+        write_str(2, "       service --status-all\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--status-all") == 0) {
+        write_str(1, " [ + ]  cron\n");
+        write_str(1, " [ + ]  dbus\n");
+        write_str(1, " [ + ]  networking\n");
+        write_str(1, " [ + ]  ssh\n");
+        write_str(1, " [ + ]  syslog\n");
+        write_str(1, " [ - ]  bluetooth\n");
+        write_str(1, " [ - ]  cups\n");
+        write_str(1, " [ ? ]  hwclock\n");
+        /* Also show any registered sctl services */
+        for (int i = 0; i < SCTL_MAX_SERVICES; i++) {
+            if (sctl_services[i].used) {
+                if (sctl_is_running(&sctl_services[i]))
+                    write_str(1, " [ + ]  ");
+                else
+                    write_str(1, " [ - ]  ");
+                write_str(1, sctl_services[i].name);
+                write_str(1, "\n");
+            }
+        }
+        return;
+    }
+    if (argc < 3) {
+        write_str(2, "Usage: service ");
+        write_str(2, argv[1]);
+        write_str(2, " {start|stop|restart|status}\n");
+        return;
+    }
+    const char *svc_name = argv[1];
+    const char *action = argv[2];
+    if (strcmp_simple(action, "start") == 0) {
+        write_str(1, " * Starting ");
+        write_str(1, svc_name);
+        write_str(1, "...\n");
+        sctl_start(svc_name);
+    } else if (strcmp_simple(action, "stop") == 0) {
+        write_str(1, " * Stopping ");
+        write_str(1, svc_name);
+        write_str(1, "...\n");
+        sctl_stop(svc_name);
+    } else if (strcmp_simple(action, "restart") == 0) {
+        write_str(1, " * Restarting ");
+        write_str(1, svc_name);
+        write_str(1, "...\n");
+        struct sctl_service *svc = sctl_find(svc_name);
+        if (svc && sctl_is_running(svc)) sctl_stop(svc_name);
+        sctl_start(svc_name);
+    } else if (strcmp_simple(action, "status") == 0) {
+        sctl_status(svc_name);
+    } else {
+        write_str(2, "service: unrecognized action '");
+        write_str(2, action);
+        write_str(2, "'\n");
+    }
+}
+
+/* Built-in: update-rc.d - Manage SysV init script links (simulated) */
+__attribute__((used)) static void cmd_update_rc_d(int argc, char *argv[]) {
+    if (argc < 3) {
+        write_str(2, "Usage: update-rc.d SERVICE defaults|enable|disable|remove\n");
+        return;
+    }
+    const char *svc_name = argv[1];
+    const char *action = argv[2];
+    if (strcmp_simple(action, "defaults") == 0) {
+        write_str(1, "Adding system startup links for /etc/init.d/");
+        write_str(1, svc_name);
+        write_str(1, " ...\n");
+        write_str(1, "   /etc/rc0.d/K20");
+        write_str(1, svc_name);
+        write_str(1, " -> ../init.d/");
+        write_str(1, svc_name);
+        write_str(1, "\n");
+        write_str(1, "   /etc/rc2.d/S20");
+        write_str(1, svc_name);
+        write_str(1, " -> ../init.d/");
+        write_str(1, svc_name);
+        write_str(1, "\n");
+        write_str(1, "   /etc/rc3.d/S20");
+        write_str(1, svc_name);
+        write_str(1, " -> ../init.d/");
+        write_str(1, svc_name);
+        write_str(1, "\n");
+        write_str(1, "   /etc/rc5.d/S20");
+        write_str(1, svc_name);
+        write_str(1, " -> ../init.d/");
+        write_str(1, svc_name);
+        write_str(1, "\n");
+    } else if (strcmp_simple(action, "enable") == 0) {
+        write_str(1, "update-rc.d: enabling ");
+        write_str(1, svc_name);
+        write_str(1, "\n");
+        sctl_enable(svc_name);
+    } else if (strcmp_simple(action, "disable") == 0) {
+        write_str(1, "update-rc.d: disabling ");
+        write_str(1, svc_name);
+        write_str(1, "\n");
+        sctl_disable(svc_name);
+    } else if (strcmp_simple(action, "remove") == 0) {
+        write_str(1, "Removing any system startup links for /etc/init.d/");
+        write_str(1, svc_name);
+        write_str(1, " ...\n");
+        write_str(1, "   /etc/rc0.d/K20");
+        write_str(1, svc_name);
+        write_str(1, "\n");
+        write_str(1, "   /etc/rc2.d/S20");
+        write_str(1, svc_name);
+        write_str(1, "\n");
+    } else {
+        write_str(2, "update-rc.d: unknown action '");
+        write_str(2, action);
+        write_str(2, "'\n");
+    }
+}
+
+/* Built-in: chkconfig - Manage service autostart (simulated, RHEL-style) */
+__attribute__((used)) static void cmd_chkconfig(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "chkconfig version 1.0 - Copyright (C) Futura OS\n\n");
+        write_str(2, "Usage: chkconfig --list [name]\n");
+        write_str(2, "       chkconfig --add name\n");
+        write_str(2, "       chkconfig --del name\n");
+        write_str(2, "       chkconfig name on|off\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--list") == 0) {
+        const char *filter = (argc >= 3) ? argv[2] : NULL;
+        /* Show built-in services */
+        const char *defaults[][2] = {
+            {"cron",       "0:off  1:off  2:on   3:on   4:on   5:on   6:off"},
+            {"networking", "0:off  1:off  2:on   3:on   4:on   5:on   6:off"},
+            {"ssh",        "0:off  1:off  2:on   3:on   4:on   5:on   6:off"},
+            {"syslog",     "0:off  1:off  2:on   3:on   4:on   5:on   6:off"},
+            {"bluetooth",  "0:off  1:off  2:off  3:off  4:off  5:off  6:off"},
+        };
+        for (int i = 0; i < 5; i++) {
+            if (filter && strcmp_simple(defaults[i][0], filter) != 0) continue;
+            write_str(1, defaults[i][0]);
+            /* Pad to column 16 */
+            int len = (int)strlen_simple(defaults[i][0]);
+            for (int p = len; p < 16; p++) write_str(1, " ");
+            write_str(1, defaults[i][1]);
+            write_str(1, "\n");
+        }
+        /* Also show registered sctl services */
+        for (int i = 0; i < SCTL_MAX_SERVICES; i++) {
+            if (!sctl_services[i].used) continue;
+            if (filter && strcmp_simple(sctl_services[i].name, filter) != 0) continue;
+            write_str(1, sctl_services[i].name);
+            int len = (int)strlen_simple(sctl_services[i].name);
+            for (int p = len; p < 16; p++) write_str(1, " ");
+            if (sctl_services[i].enabled)
+                write_str(1, "0:off  1:off  2:on   3:on   4:on   5:on   6:off\n");
+            else
+                write_str(1, "0:off  1:off  2:off  3:off  4:off  5:off  6:off\n");
+        }
+    } else if (strcmp_simple(argv[1], "--add") == 0) {
+        if (argc < 3) { write_str(2, "chkconfig --add: missing service name\n"); return; }
+        write_str(1, "chkconfig: adding ");
+        write_str(1, argv[2]);
+        write_str(1, " to startup\n");
+        sctl_enable(argv[2]);
+    } else if (strcmp_simple(argv[1], "--del") == 0) {
+        if (argc < 3) { write_str(2, "chkconfig --del: missing service name\n"); return; }
+        write_str(1, "chkconfig: removing ");
+        write_str(1, argv[2]);
+        write_str(1, " from startup\n");
+        sctl_disable(argv[2]);
+    } else if (argc >= 3 && strcmp_simple(argv[2], "on") == 0) {
+        sctl_enable(argv[1]);
+    } else if (argc >= 3 && strcmp_simple(argv[2], "off") == 0) {
+        sctl_disable(argv[1]);
+    } else {
+        write_str(2, "chkconfig: unknown option or service '");
+        write_str(2, argv[1]);
+        write_str(2, "'\n");
+    }
+}
+
+/* Built-in: cfdisk - Curses-based disk partition editor (simulated) */
+__attribute__((used)) static void cmd_cfdisk(int argc, char *argv[]) {
+    const char *dev = "/dev/sda";
+    if (argc >= 2 && argv[1][0] != '-') dev = argv[1];
+    write_str(1, "                           cfdisk (futura-utils)\n\n");
+    write_str(1, "                           Disk: ");
+    write_str(1, dev);
+    write_str(1, "\n");
+    write_str(1, "                    Size: 64 GiB, 68719476736 bytes\n");
+    write_str(1, "                Label type: gpt\n");
+    write_str(1, "          Identifier: 01234567-89AB-CDEF-0123-456789ABCDEF\n\n");
+    write_str(1, "    Device            Start        End    Sectors   Size Type\n");
+    write_str(1, "    ");
+    write_str(1, dev);
+    write_str(1, "1          2048    1050623    1048576   512M EFI System\n");
+    write_str(1, "    ");
+    write_str(1, dev);
+    write_str(1, "2       1050624  134217727  133167104  63.5G Linux filesystem\n\n");
+    write_str(1, "  [  New  ]  [ Delete ]  [  Quit  ]  [  Type  ]  [  Help  ]  [ Write ]\n");
+    write_str(1, "\n                     (simulated - no changes written)\n");
+}
+
+/* Built-in: fdisk - Disk partition editor */
+__attribute__((used)) static void cmd_fdisk(int argc, char *argv[]) {
+    int list = 0;
+    const char *dev = NULL;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-l") == 0) list = 1;
+        else if (argv[i][0] != '-') dev = argv[i];
+    }
+    if (!list && !dev) {
+        write_str(2, "Usage: fdisk [-l] [device]\n");
+        return;
+    }
+    if (list) {
+        /* Try to read /proc/partitions */
+        long fd = sys_open("/proc/partitions", 0, 0);
+        if (fd >= 0) {
+            char buf[2048];
+            ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
+            sys_close(fd);
+            if (n > 0) {
+                buf[n] = '\0';
+                write_str(1, "Disk /dev/sda: 64 GiB, 68719476736 bytes, 134217728 sectors\n");
+                write_str(1, "Disk model: QEMU HARDDISK\n");
+                write_str(1, "Units: sectors of 1 * 512 = 512 bytes\n");
+                write_str(1, "Sector size (logical/physical): 512 bytes / 512 bytes\n\n");
+                write_str(1, buf);
+                return;
+            }
+        }
+        /* Fallback: simulated output */
+        write_str(1, "Disk /dev/sda: 64 GiB, 68719476736 bytes, 134217728 sectors\n");
+        write_str(1, "Disk model: QEMU HARDDISK\n");
+        write_str(1, "Units: sectors of 1 * 512 = 512 bytes\n");
+        write_str(1, "Sector size (logical/physical): 512 bytes / 512 bytes\n");
+        write_str(1, "I/O size (minimum/optimal): 512 bytes / 512 bytes\n");
+        write_str(1, "Disklabel type: gpt\n\n");
+        write_str(1, "Device       Start       End   Sectors  Size Type\n");
+        write_str(1, "/dev/sda1     2048   1050623   1048576  512M EFI System\n");
+        write_str(1, "/dev/sda2  1050624 134217727 133167104 63.5G Linux filesystem\n");
+    } else {
+        write_str(1, "fdisk: interactive mode not supported (read-only)\n");
+        write_str(1, "Use fdisk -l to list partitions.\n");
+    }
+}
+
+/* Built-in: parted - GNU parted (simulated) */
+__attribute__((used)) static void cmd_parted(int argc, char *argv[]) {
+    const char *dev = "/dev/sda";
+    const char *subcmd = NULL;
+    for (int i = 1; i < argc; i++) {
+        if (argv[i][0] == '-') continue; /* skip flags like -s */
+        if (!subcmd && (strcmp_simple(argv[i], "print") == 0 ||
+                        strcmp_simple(argv[i], "mklabel") == 0 ||
+                        strcmp_simple(argv[i], "mkpart") == 0 ||
+                        strcmp_simple(argv[i], "help") == 0)) {
+            subcmd = argv[i];
+        } else if (argv[i][0] == '/') {
+            dev = argv[i];
+        }
+    }
+    if (!subcmd) {
+        write_str(2, "Usage: parted [device] {print|mklabel|mkpart|help}\n");
+        return;
+    }
+    if (strcmp_simple(subcmd, "help") == 0) {
+        write_str(1, "  print           Display the partition table\n");
+        write_str(1, "  mklabel TYPE    Create a new disklabel (gpt, msdos)\n");
+        write_str(1, "  mkpart          Create a new partition\n");
+        write_str(1, "  help            Display this help\n");
+        return;
+    }
+    if (strcmp_simple(subcmd, "print") == 0) {
+        write_str(1, "Model: QEMU QEMU HARDDISK (scsi)\n");
+        write_str(1, "Disk ");
+        write_str(1, dev);
+        write_str(1, ": 68.7GB\n");
+        write_str(1, "Sector size (logical/physical): 512B/512B\n");
+        write_str(1, "Partition Table: gpt\n");
+        write_str(1, "Disk Flags: \n\n");
+        write_str(1, "Number  Start   End     Size    File system  Name     Flags\n");
+        write_str(1, " 1      1049kB  538MB   537MB   fat32        EFI      boot, esp\n");
+        write_str(1, " 2      538MB   68.7GB  68.2GB  ext4         primary\n");
+        return;
+    }
+    if (strcmp_simple(subcmd, "mklabel") == 0) {
+        write_str(1, "parted: simulated -- would create new partition label on ");
+        write_str(1, dev);
+        write_str(1, "\n");
+        write_str(1, "Warning: The existing disk label will be destroyed.\n");
+        return;
+    }
+    if (strcmp_simple(subcmd, "mkpart") == 0) {
+        write_str(1, "parted: simulated -- would create new partition on ");
+        write_str(1, dev);
+        write_str(1, "\n");
+        return;
+    }
+}
+
+/* Built-in: blkdiscard - Discard device sectors (simulated) */
+__attribute__((used)) static void cmd_blkdiscard(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "Usage: blkdiscard [-f] [-o offset] [-l length] [-s] [-z] device\n");
+        return;
+    }
+    const char *dev = NULL;
+    int secure = 0, zero = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-s") == 0) secure = 1;
+        else if (strcmp_simple(argv[i], "-z") == 0) zero = 1;
+        else if (strcmp_simple(argv[i], "-o") == 0 || strcmp_simple(argv[i], "-l") == 0) {
+            i++; /* skip value */
+        } else if (strcmp_simple(argv[i], "-f") == 0) {
+            /* force */
+        } else if (argv[i][0] != '-') {
+            dev = argv[i];
+        }
+    }
+    if (!dev) {
+        write_str(2, "blkdiscard: no device specified\n");
+        return;
+    }
+    if (zero)
+        write_str(1, "blkdiscard: zero-fill ");
+    else if (secure)
+        write_str(1, "blkdiscard: secure discard ");
+    else
+        write_str(1, "blkdiscard: discarding ");
+    write_str(1, dev);
+    write_str(1, ": simulated (no changes made)\n");
+}
+
+/* Built-in: tune2fs - Adjust ext2/3/4 filesystem parameters (simulated) */
+__attribute__((used)) static void cmd_tune2fs(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "Usage: tune2fs [-l] [-c max-mount-counts] [-i interval]\n");
+        write_str(2, "               [-L volume-label] [-O feature] device\n");
+        return;
+    }
+    int list = 0;
+    const char *dev = NULL;
+    const char *label = NULL;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-l") == 0) {
+            list = 1;
+        } else if (strcmp_simple(argv[i], "-L") == 0 && i + 1 < argc) {
+            label = argv[++i];
+        } else if (strcmp_simple(argv[i], "-c") == 0 || strcmp_simple(argv[i], "-i") == 0 ||
+                   strcmp_simple(argv[i], "-O") == 0 || strcmp_simple(argv[i], "-o") == 0 ||
+                   strcmp_simple(argv[i], "-e") == 0) {
+            i++; /* skip value */
+        } else if (argv[i][0] != '-') {
+            dev = argv[i];
+        }
+    }
+    if (!dev) {
+        write_str(2, "tune2fs: no device specified\n");
+        return;
+    }
+    if (list) {
+        write_str(1, "tune2fs 1.46.5 (Futura OS)\n");
+        write_str(1, "Filesystem volume name:   <none>\n");
+        write_str(1, "Last mounted on:          /\n");
+        write_str(1, "Filesystem UUID:          01234567-89ab-cdef-0123-456789abcdef\n");
+        write_str(1, "Filesystem magic number:  0xEF53\n");
+        write_str(1, "Filesystem revision #:    1 (dynamic)\n");
+        write_str(1, "Filesystem features:      has_journal ext_attr resize_inode dir_index\n");
+        write_str(1, "                          filetype extent 64bit flex_bg sparse_super\n");
+        write_str(1, "                          large_file huge_file dir_nlink extra_isize\n");
+        write_str(1, "Filesystem state:         clean\n");
+        write_str(1, "Errors behavior:          Continue\n");
+        write_str(1, "Filesystem OS type:       Futura\n");
+        write_str(1, "Inode count:              4194304\n");
+        write_str(1, "Block count:              16777216\n");
+        write_str(1, "Block size:               4096\n");
+        write_str(1, "Fragment size:            4096\n");
+        write_str(1, "Blocks per group:         32768\n");
+        write_str(1, "Inodes per group:         8192\n");
+        write_str(1, "Maximum mount count:      -1\n");
+        write_str(1, "Check interval:           0 (<none>)\n");
+        return;
+    }
+    if (label) {
+        write_str(1, "tune2fs: setting volume label to '");
+        write_str(1, label);
+        write_str(1, "' on ");
+        write_str(1, dev);
+        write_str(1, " (simulated)\n");
+        return;
+    }
+    write_str(1, "tune2fs: adjusting filesystem parameters on ");
+    write_str(1, dev);
+    write_str(1, " (simulated)\n");
+}
+
+/* Built-in: resize2fs - Resize ext2/3/4 filesystem (simulated) */
+__attribute__((used)) static void cmd_resize2fs(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "Usage: resize2fs [-fFpPMbs] [-d debug-flags] [-S RAID-stride]\n");
+        write_str(2, "                 [-z undo_file] device [new-size]\n");
+        return;
+    }
+    const char *dev = NULL;
+    const char *newsize = NULL;
+    int print_min = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-M") == 0) {
+            print_min = 1;
+        } else if (strcmp_simple(argv[i], "-p") == 0 || strcmp_simple(argv[i], "-f") == 0 ||
+                   strcmp_simple(argv[i], "-F") == 0) {
+            /* flags */
+        } else if (argv[i][0] != '-') {
+            if (!dev) dev = argv[i];
+            else newsize = argv[i];
+        }
+    }
+    if (!dev) {
+        write_str(2, "resize2fs: no device specified\n");
+        return;
+    }
+    write_str(1, "resize2fs 1.46.5 (Futura OS)\n");
+    if (print_min) {
+        write_str(1, "Estimated minimum size of the filesystem: 524288 (4k blocks)\n");
+        return;
+    }
+    if (newsize) {
+        write_str(1, "Resizing the filesystem on ");
+        write_str(1, dev);
+        write_str(1, " to ");
+        write_str(1, newsize);
+        write_str(1, " blocks.\n");
+    } else {
+        write_str(1, "Resizing the filesystem on ");
+        write_str(1, dev);
+        write_str(1, " to full device size.\n");
+    }
+    write_str(1, "The filesystem on ");
+    write_str(1, dev);
+    write_str(1, " is now 16777216 (4k) blocks long. (simulated)\n");
 }
 
 #pragma GCC diagnostic pop

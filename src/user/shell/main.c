@@ -492,6 +492,16 @@ static void cmd_gitk(int argc, char *argv[]);
 static void cmd_git_flow(int argc, char *argv[]);
 static void cmd_hub(int argc, char *argv[]);
 static void cmd_lab(int argc, char *argv[]);
+static void cmd_restic(int argc, char *argv[]);
+static void cmd_rclone(int argc, char *argv[]);
+static void cmd_borg(int argc, char *argv[]);
+static void cmd_duplicity(int argc, char *argv[]);
+static void cmd_rsnapshot(int argc, char *argv[]);
+static void cmd_borgmatic(int argc, char *argv[]);
+static void cmd_syncthing(int argc, char *argv[]);
+static void cmd_rsyncd(int argc, char *argv[]);
+static void cmd_croc(int argc, char *argv[]);
+static void cmd_magic_wormhole(int argc, char *argv[]);
 
 /* Forward declaration for prompt */
 static void print_prompt(void);
@@ -15575,6 +15585,36 @@ watch_sleep:
     } else if (strcmp_simple(argv[0], "lab") == 0) {
         cmd_lab(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "restic") == 0) {
+        cmd_restic(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "rclone") == 0) {
+        cmd_rclone(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "borg") == 0) {
+        cmd_borg(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "duplicity") == 0) {
+        cmd_duplicity(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "rsnapshot") == 0) {
+        cmd_rsnapshot(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "borgmatic") == 0) {
+        cmd_borgmatic(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "syncthing") == 0) {
+        cmd_syncthing(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "rsyncd") == 0) {
+        cmd_rsyncd(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "croc") == 0) {
+        cmd_croc(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "magic-wormhole") == 0 || strcmp_simple(argv[0], "wormhole") == 0) {
+        cmd_magic_wormhole(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -16093,6 +16133,17 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "git-flow") == 0 ||
             strcmp_simple(cmd, "hub") == 0 ||
             strcmp_simple(cmd, "lab") == 0 ||
+            strcmp_simple(cmd, "restic") == 0 ||
+            strcmp_simple(cmd, "rclone") == 0 ||
+            strcmp_simple(cmd, "borg") == 0 ||
+            strcmp_simple(cmd, "duplicity") == 0 ||
+            strcmp_simple(cmd, "rsnapshot") == 0 ||
+            strcmp_simple(cmd, "borgmatic") == 0 ||
+            strcmp_simple(cmd, "syncthing") == 0 ||
+            strcmp_simple(cmd, "rsyncd") == 0 ||
+            strcmp_simple(cmd, "croc") == 0 ||
+            strcmp_simple(cmd, "magic-wormhole") == 0 ||
+            strcmp_simple(cmd, "wormhole") == 0 ||
             0);
 }
 
@@ -20935,7 +20986,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   530 built-in commands — type 'help'    |\n");
+    write_str(1, "|   540 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");
@@ -46851,6 +46902,840 @@ static void cmd_lab(int argc, char *argv[]) {
         return;
     }
     write_str(2, "lab: unknown command '");
+    write_str(2, argv[1]);
+    write_str(2, "'\n");
+}
+
+/* restic - backup tool */
+static void cmd_restic(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "restic is a fast, secure, efficient backup program.\n\n");
+        write_str(1, "Usage:\n");
+        write_str(1, "  restic init         Initialize a new repository\n");
+        write_str(1, "  restic backup       Create a new backup\n");
+        write_str(1, "  restic restore      Restore a snapshot\n");
+        write_str(1, "  restic snapshots    List all snapshots\n");
+        write_str(1, "  restic check        Check repository integrity\n");
+        write_str(1, "  restic forget       Remove snapshots\n");
+        write_str(1, "  restic prune        Remove unneeded data\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "restic 0.16.4 compiled with go1.21.6 on linux/amd64\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "init") == 0) {
+        write_str(1, "created restic repository 7a9e3b1c at /backup/repo\n");
+        write_str(1, "\n");
+        write_str(1, "Please note that knowledge of your password is required to access\n");
+        write_str(1, "the repository. Losing your password means that your data is\n");
+        write_str(1, "irrecoverably lost.\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "backup") == 0) {
+        const char *path = (argc >= 3) ? argv[2] : "/home";
+        write_str(1, "repository 7a9e3b1c opened successfully\n");
+        write_str(1, "\n");
+        write_str(1, "Files:        1284 new,    42 changed,  8901 unmodified\n");
+        write_str(1, "Dirs:          156 new,    12 changed,   734 unmodified\n");
+        write_str(1, "Added to the repo: 245.678 MiB\n");
+        write_str(1, "\n");
+        write_str(1, "processed 10227 files, 1.234 GiB in 0:23\n");
+        write_str(1, "snapshot a4b2c8d9 saved for ");
+        write_str(1, path);
+        write_str(1, "\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "restore") == 0) {
+        const char *snap = (argc >= 3) ? argv[2] : "latest";
+        write_str(1, "repository 7a9e3b1c opened successfully\n");
+        write_str(1, "restoring snapshot ");
+        write_str(1, snap);
+        write_str(1, " to /tmp/restore\n");
+        write_str(1, "restoring <Snapshot a4b2c8d9 of [/home] at 2024-01-15 10:30:00>\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "snapshots") == 0) {
+        write_str(1, "repository 7a9e3b1c opened successfully\n");
+        write_str(1, "ID        Time                 Host        Tags        Paths\n");
+        write_str(1, "------------------------------------------------------------------------\n");
+        write_str(1, "a4b2c8d9  2024-01-15 10:30:00  futura                  /home\n");
+        write_str(1, "b5c3d9e0  2024-01-14 10:30:00  futura                  /home\n");
+        write_str(1, "c6d4e0f1  2024-01-13 10:30:00  futura                  /home\n");
+        write_str(1, "------------------------------------------------------------------------\n");
+        write_str(1, "3 snapshots\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "check") == 0) {
+        write_str(1, "using temporary cache in /tmp/restic-check\n");
+        write_str(1, "repository 7a9e3b1c opened successfully\n");
+        write_str(1, "create exclusive lock for repository\n");
+        write_str(1, "load indexes\n");
+        write_str(1, "check all packs\n");
+        write_str(1, "check snapshots, trees and blobs\n");
+        write_str(1, "\033[32mno errors were found\033[0m\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "forget") == 0) {
+        write_str(1, "repository 7a9e3b1c opened successfully\n");
+        write_str(1, "Applying Policy: keep 7 daily, 4 weekly, 12 monthly snapshots\n");
+        write_str(1, "remove 2 snapshots\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "prune") == 0) {
+        write_str(1, "repository 7a9e3b1c opened successfully\n");
+        write_str(1, "counting files in repo\n");
+        write_str(1, "building new index for repo\n");
+        write_str(1, "  deleting obsolete index files\n");
+        write_str(1, "removing 156 old packs\n");
+        write_str(1, "\033[32mdone\033[0m\n");
+        return;
+    }
+    write_str(2, "restic: unknown command '");
+    write_str(2, argv[1]);
+    write_str(2, "'\n");
+}
+
+/* rclone - cloud storage sync */
+static void cmd_rclone(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "rclone - rsync for cloud storage\n\n");
+        write_str(1, "Usage:\n");
+        write_str(1, "  rclone ls          List objects in path\n");
+        write_str(1, "  rclone copy        Copy files from source to dest\n");
+        write_str(1, "  rclone sync        Sync source to dest\n");
+        write_str(1, "  rclone mount       Mount remote as filesystem\n");
+        write_str(1, "  rclone config      Manage remotes\n");
+        write_str(1, "  rclone lsd         List directories in path\n");
+        write_str(1, "  rclone size        Show total size of remote\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "rclone v1.65.2\n");
+        write_str(1, "- os/version: linux/futura (64 bit)\n");
+        write_str(1, "- os/kernel: futura (x86_64)\n");
+        write_str(1, "- go: go1.21\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "ls") == 0) {
+        const char *remote = (argc >= 3) ? argv[2] : "remote:";
+        write_str(1, "  1048576 ");
+        write_str(1, remote);
+        write_str(1, "documents/report.pdf\n");
+        write_str(1, "   524288 ");
+        write_str(1, remote);
+        write_str(1, "documents/notes.txt\n");
+        write_str(1, " 10485760 ");
+        write_str(1, remote);
+        write_str(1, "photos/vacation.jpg\n");
+        write_str(1, "  2097152 ");
+        write_str(1, remote);
+        write_str(1, "backup/config.tar.gz\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "copy") == 0) {
+        const char *src = (argc >= 3) ? argv[2] : "/home/user/docs";
+        const char *dst = (argc >= 4) ? argv[3] : "remote:backup/docs";
+        write_str(1, "Transferred:   45.678 MiB / 45.678 MiB, 100%, 12.345 MiB/s, ETA 0s\n");
+        write_str(1, "Transferred:       42 / 42, 100%\n");
+        write_str(1, "Elapsed time:     3.7s\n");
+        write_str(1, "\n");
+        write_str(1, "Copied ");
+        write_str(1, src);
+        write_str(1, " -> ");
+        write_str(1, dst);
+        write_str(1, "\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "sync") == 0) {
+        const char *src = (argc >= 3) ? argv[2] : "/home/user";
+        const char *dst = (argc >= 4) ? argv[3] : "remote:sync";
+        write_str(1, "Transferred:  128.456 MiB / 128.456 MiB, 100%, 25.6 MiB/s, ETA 0s\n");
+        write_str(1, "Transferred:      234 / 234, 100%\n");
+        write_str(1, "Deleted:           12\n");
+        write_str(1, "Elapsed time:     5.0s\n");
+        write_str(1, "\n");
+        write_str(1, "Synced ");
+        write_str(1, src);
+        write_str(1, " -> ");
+        write_str(1, dst);
+        write_str(1, "\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "mount") == 0) {
+        const char *remote = (argc >= 3) ? argv[2] : "remote:";
+        const char *mnt = (argc >= 4) ? argv[3] : "/mnt/remote";
+        write_str(1, "Mounting ");
+        write_str(1, remote);
+        write_str(1, " at ");
+        write_str(1, mnt);
+        write_str(1, "\n");
+        write_str(1, "The service is running in the background.\n");
+        write_str(1, "To stop, run: fusermount -u ");
+        write_str(1, mnt);
+        write_str(1, "\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "config") == 0) {
+        write_str(1, "Current remotes:\n\n");
+        write_str(1, "Name                 Type\n");
+        write_str(1, "====                 ====\n");
+        write_str(1, "gdrive               drive\n");
+        write_str(1, "s3backup             s3\n");
+        write_str(1, "dropbox              dropbox\n");
+        write_str(1, "b2vault              b2\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "lsd") == 0) {
+        write_str(1, "          -1 2024-01-15 10:30:00        -1 documents\n");
+        write_str(1, "          -1 2024-01-14 09:15:00        -1 photos\n");
+        write_str(1, "          -1 2024-01-13 14:00:00        -1 backup\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "size") == 0) {
+        write_str(1, "Total objects: 1,234\n");
+        write_str(1, "Total size: 4.567 GiB (4903034880 Byte)\n");
+        return;
+    }
+    write_str(2, "rclone: unknown command '");
+    write_str(2, argv[1]);
+    write_str(2, "'\n");
+}
+
+/* borg - deduplicating archiver */
+static void cmd_borg(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "borg - Deduplicating archiver with compression and encryption\n\n");
+        write_str(1, "Usage:\n");
+        write_str(1, "  borg init           Initialize a new repository\n");
+        write_str(1, "  borg create         Create a new archive\n");
+        write_str(1, "  borg list           List archives or contents\n");
+        write_str(1, "  borg extract        Extract archive contents\n");
+        write_str(1, "  borg info           Show repository/archive info\n");
+        write_str(1, "  borg check          Verify repository consistency\n");
+        write_str(1, "  borg delete         Delete an archive\n");
+        write_str(1, "  borg prune          Prune archives per retention\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "borg 1.2.7\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "init") == 0) {
+        const char *repo = (argc >= 3) ? argv[2] : "/backup/borg-repo";
+        write_str(1, "Initializing repository at ");
+        write_str(1, repo);
+        write_str(1, "\n");
+        write_str(1, "Encryption: repokey-blake2\n");
+        write_str(1, "Key stored in repository.\n");
+        write_str(1, "\033[33mKeep a backup of your key and passphrase in a safe place!\033[0m\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "create") == 0) {
+        const char *archive = (argc >= 3) ? argv[2] : "repo::daily-2024-01-15";
+        write_str(1, "Creating archive at \"");
+        write_str(1, archive);
+        write_str(1, "\"\n");
+        write_str(1, "------------------------------------------------------------------------------\n");
+        write_str(1, "Archive name: daily-2024-01-15\n");
+        write_str(1, "Archive fingerprint: a1b2c3d4e5f6...\n");
+        write_str(1, "Time (start): Mon, 2024-01-15 10:30:00\n");
+        write_str(1, "Time (end):   Mon, 2024-01-15 10:30:45\n");
+        write_str(1, "Duration: 45.23 seconds\n");
+        write_str(1, "Number of files: 8901\n");
+        write_str(1, "                       Original size      Compressed size    Deduplicated size\n");
+        write_str(1, "This archive:                1.23 GB            890.45 MB            245.67 MB\n");
+        write_str(1, "All archives:                4.56 GB              3.12 GB            678.90 MB\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "list") == 0) {
+        write_str(1, "daily-2024-01-15                     Mon, 2024-01-15 10:30:00 [a1b2c3d4]\n");
+        write_str(1, "daily-2024-01-14                     Sun, 2024-01-14 10:30:00 [b2c3d4e5]\n");
+        write_str(1, "daily-2024-01-13                     Sat, 2024-01-13 10:30:00 [c3d4e5f6]\n");
+        write_str(1, "weekly-2024-01-08                    Mon, 2024-01-08 10:30:00 [d4e5f6a7]\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "extract") == 0) {
+        const char *archive = (argc >= 3) ? argv[2] : "repo::daily-2024-01-15";
+        write_str(1, "Extracting archive ");
+        write_str(1, archive);
+        write_str(1, "\n");
+        write_str(1, "8901 files extracted to current directory\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "info") == 0) {
+        write_str(1, "Repository ID: a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6\n");
+        write_str(1, "Location: /backup/borg-repo\n");
+        write_str(1, "Encrypted: Yes (repokey-blake2)\n");
+        write_str(1, "Cache: /root/.cache/borg/a1b2c3d4\n");
+        write_str(1, "Security dir: /root/.config/borg/security/a1b2c3d4\n");
+        write_str(1, "------------------------------------------------------------------------------\n");
+        write_str(1, "                       Original size      Compressed size    Deduplicated size\n");
+        write_str(1, "All archives:                4.56 GB              3.12 GB            678.90 MB\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "check") == 0) {
+        write_str(1, "Starting repository check\n");
+        write_str(1, "Starting archive consistency check...\n");
+        write_str(1, "Analyzing archive daily-2024-01-15 ...\n");
+        write_str(1, "Analyzing archive daily-2024-01-14 ...\n");
+        write_str(1, "Archive consistency check complete, \033[32mno problems found.\033[0m\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "delete") == 0) {
+        const char *archive = (argc >= 3) ? argv[2] : "repo::daily-2024-01-13";
+        write_str(1, "Deleting archive ");
+        write_str(1, archive);
+        write_str(1, " ...\n");
+        write_str(1, "Archive deleted.\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "prune") == 0) {
+        write_str(1, "Keeping archive: daily-2024-01-15\n");
+        write_str(1, "Keeping archive: daily-2024-01-14\n");
+        write_str(1, "Pruning archive:  daily-2024-01-10 ...\n");
+        write_str(1, "Pruning archive:  daily-2024-01-09 ...\n");
+        write_str(1, "2 archives pruned.\n");
+        return;
+    }
+    write_str(2, "borg: unknown command '");
+    write_str(2, argv[1]);
+    write_str(2, "'\n");
+}
+
+/* duplicity - encrypted incremental backup */
+static void cmd_duplicity(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "duplicity - Encrypted bandwidth-efficient backup\n\n");
+        write_str(1, "Usage:\n");
+        write_str(1, "  duplicity full          Perform a full backup\n");
+        write_str(1, "  duplicity incremental   Perform an incremental backup\n");
+        write_str(1, "  duplicity restore       Restore from backup\n");
+        write_str(1, "  duplicity status        Show collection status\n");
+        write_str(1, "  duplicity verify        Verify backup integrity\n");
+        write_str(1, "  duplicity list-current-files  List files in backup\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "duplicity 2.1.4\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "full") == 0) {
+        const char *src = (argc >= 3) ? argv[2] : "/home";
+        const char *dst = (argc >= 4) ? argv[3] : "file:///backup/duplicity";
+        write_str(1, "Reading globbing filelist /etc/duplicity-exclude\n");
+        write_str(1, "Local and Remote metadata are synchronized, no sync needed.\n");
+        write_str(1, "--------------[ Backup Statistics ]--------------\n");
+        write_str(1, "StartTime 1705312200.00 (Mon Jan 15 10:30:00 2024)\n");
+        write_str(1, "EndTime 1705312280.00 (Mon Jan 15 10:31:20 2024)\n");
+        write_str(1, "ElapsedTime 80.00 (1 minute 20.00 seconds)\n");
+        write_str(1, "SourceFiles 10227\n");
+        write_str(1, "SourceFileSize 1324728320 (1.23 GB)\n");
+        write_str(1, "NewFiles 10227\n");
+        write_str(1, "NewFileSize 1324728320 (1.23 GB)\n");
+        write_str(1, "ChangedFiles 0\n");
+        write_str(1, "TotalDestinationSizeChange 256901120 (245 MB)\n");
+        write_str(1, "Errors 0\n");
+        write_str(1, "-------------------------------------------------\n");
+        (void)src; (void)dst;
+        return;
+    }
+    if (strcmp_simple(argv[1], "incremental") == 0 || strcmp_simple(argv[1], "incr") == 0) {
+        write_str(1, "Local and Remote metadata are synchronized, no sync needed.\n");
+        write_str(1, "Last full backup date: Mon Jan 15 10:30:00 2024\n");
+        write_str(1, "--------------[ Backup Statistics ]--------------\n");
+        write_str(1, "StartTime 1705398600.00 (Tue Jan 16 10:30:00 2024)\n");
+        write_str(1, "EndTime 1705398612.00 (Tue Jan 16 10:30:12 2024)\n");
+        write_str(1, "ElapsedTime 12.00 (12.00 seconds)\n");
+        write_str(1, "SourceFiles 10229\n");
+        write_str(1, "NewFiles 42\n");
+        write_str(1, "NewFileSize 5242880 (5.00 MB)\n");
+        write_str(1, "ChangedFiles 8\n");
+        write_str(1, "TotalDestinationSizeChange 2097152 (2.00 MB)\n");
+        write_str(1, "Errors 0\n");
+        write_str(1, "-------------------------------------------------\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "restore") == 0) {
+        const char *src = (argc >= 3) ? argv[2] : "file:///backup/duplicity";
+        const char *dst = (argc >= 4) ? argv[3] : "/tmp/restore";
+        write_str(1, "Synchronizing remote metadata to local cache...\n");
+        write_str(1, "Restoring ");
+        write_str(1, src);
+        write_str(1, " to ");
+        write_str(1, dst);
+        write_str(1, "\n");
+        write_str(1, "10227 files restored.\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "status") == 0 || strcmp_simple(argv[1], "collection-status") == 0) {
+        write_str(1, "Last full backup date: Mon Jan 15 10:30:00 2024\n");
+        write_str(1, "Collection Status\n");
+        write_str(1, "-----------------\n");
+        write_str(1, "Connecting with backend: BackendWrapper\n");
+        write_str(1, "Archive dir: /root/.cache/duplicity\n");
+        write_str(1, "\n");
+        write_str(1, "Found 1 chain(s):\n");
+        write_str(1, " Full:        Mon Jan 15 10:30:00 2024        1 set\n");
+        write_str(1, " Incremental: Tue Jan 16 10:30:00 2024        3 sets\n");
+        write_str(1, "              to Wed Jan 17 10:30:00 2024\n");
+        write_str(1, "\n");
+        write_str(1, "No orphaned or incomplete backup sets found.\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "verify") == 0) {
+        write_str(1, "Verifying backup contents against source...\n");
+        write_str(1, "Verify complete: \033[32m10227 files verified, 0 differences found.\033[0m\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "list-current-files") == 0) {
+        write_str(1, "Mon Jan 15 10:30:00 2024 .\n");
+        write_str(1, "Mon Jan 15 10:30:00 2024 home/user/.bashrc\n");
+        write_str(1, "Mon Jan 15 10:30:00 2024 home/user/.profile\n");
+        write_str(1, "Mon Jan 15 10:30:00 2024 home/user/documents/report.pdf\n");
+        write_str(1, "Mon Jan 15 10:30:00 2024 home/user/documents/notes.txt\n");
+        return;
+    }
+    write_str(2, "duplicity: unknown command '");
+    write_str(2, argv[1]);
+    write_str(2, "'\n");
+}
+
+/* rsnapshot - rsync-based local/remote backup */
+static void cmd_rsnapshot(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "rsnapshot - filesystem snapshot utility based on rsync\n\n");
+        write_str(1, "Usage:\n");
+        write_str(1, "  rsnapshot configtest   Verify configuration syntax\n");
+        write_str(1, "  rsnapshot hourly       Run hourly backup\n");
+        write_str(1, "  rsnapshot daily        Run daily backup\n");
+        write_str(1, "  rsnapshot weekly       Run weekly backup\n");
+        write_str(1, "  rsnapshot monthly      Run monthly backup\n");
+        write_str(1, "  rsnapshot du           Show disk usage of snapshots\n");
+        write_str(1, "  rsnapshot diff         Show differences between snapshots\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0 || strcmp_simple(argv[1], "-V") == 0) {
+        write_str(1, "rsnapshot 1.4.5\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "configtest") == 0) {
+        write_str(1, "Reading configuration from /etc/rsnapshot.conf\n");
+        write_str(1, "\033[32mSyntax OK\033[0m\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "hourly") == 0) {
+        write_str(1, "echo 14072 > /var/run/rsnapshot.pid\n");
+        write_str(1, "mv /.snapshots/hourly.5/ /.snapshots/hourly.6/\n");
+        write_str(1, "mv /.snapshots/hourly.4/ /.snapshots/hourly.5/\n");
+        write_str(1, "mv /.snapshots/hourly.3/ /.snapshots/hourly.4/\n");
+        write_str(1, "mv /.snapshots/hourly.2/ /.snapshots/hourly.3/\n");
+        write_str(1, "mv /.snapshots/hourly.1/ /.snapshots/hourly.2/\n");
+        write_str(1, "cp -al /.snapshots/hourly.0 /.snapshots/hourly.1\n");
+        write_str(1, "/usr/bin/rsync -a --delete /home/ /.snapshots/hourly.0/home/\n");
+        write_str(1, "/usr/bin/rsync -a --delete /etc/ /.snapshots/hourly.0/etc/\n");
+        write_str(1, "rm -f /var/run/rsnapshot.pid\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "daily") == 0) {
+        write_str(1, "echo 14073 > /var/run/rsnapshot.pid\n");
+        write_str(1, "mv /.snapshots/daily.6/ /.snapshots/daily.7/\n");
+        write_str(1, "mv /.snapshots/daily.5/ /.snapshots/daily.6/\n");
+        write_str(1, "mv /.snapshots/daily.4/ /.snapshots/daily.5/\n");
+        write_str(1, "mv /.snapshots/daily.3/ /.snapshots/daily.4/\n");
+        write_str(1, "mv /.snapshots/daily.2/ /.snapshots/daily.3/\n");
+        write_str(1, "mv /.snapshots/daily.1/ /.snapshots/daily.2/\n");
+        write_str(1, "cp -al /.snapshots/hourly.0 /.snapshots/daily.0\n");
+        write_str(1, "rm -f /var/run/rsnapshot.pid\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "weekly") == 0) {
+        write_str(1, "echo 14074 > /var/run/rsnapshot.pid\n");
+        write_str(1, "mv /.snapshots/weekly.3/ /.snapshots/weekly.4/\n");
+        write_str(1, "mv /.snapshots/weekly.2/ /.snapshots/weekly.3/\n");
+        write_str(1, "mv /.snapshots/weekly.1/ /.snapshots/weekly.2/\n");
+        write_str(1, "cp -al /.snapshots/daily.0 /.snapshots/weekly.0\n");
+        write_str(1, "rm -f /var/run/rsnapshot.pid\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "monthly") == 0) {
+        write_str(1, "echo 14075 > /var/run/rsnapshot.pid\n");
+        write_str(1, "mv /.snapshots/monthly.11/ (removed)\n");
+        write_str(1, "mv /.snapshots/monthly.10/ /.snapshots/monthly.11/\n");
+        write_str(1, "cp -al /.snapshots/weekly.0 /.snapshots/monthly.0\n");
+        write_str(1, "rm -f /var/run/rsnapshot.pid\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "du") == 0) {
+        write_str(1, "245M\t/.snapshots/hourly.0/\n");
+        write_str(1, "12M\t/.snapshots/hourly.1/\n");
+        write_str(1, "8M\t/.snapshots/hourly.2/\n");
+        write_str(1, "245M\t/.snapshots/daily.0/\n");
+        write_str(1, "510M\ttotal\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "diff") == 0) {
+        write_str(1, "Comparing /.snapshots/hourly.0 to /.snapshots/hourly.1\n");
+        write_str(1, "+  /home/user/documents/new-file.txt\n");
+        write_str(1, "~  /home/user/.bashrc\n");
+        write_str(1, "-  /home/user/tmp/old-temp.log\n");
+        return;
+    }
+    write_str(2, "rsnapshot: unknown command '");
+    write_str(2, argv[1]);
+    write_str(2, "'\n");
+}
+
+/* borgmatic - borg wrapper for automated backups */
+static void cmd_borgmatic(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "borgmatic - Simple, configuration-driven backup software\n\n");
+        write_str(1, "Usage:\n");
+        write_str(1, "  borgmatic init       Initialize a Borg repository\n");
+        write_str(1, "  borgmatic create     Create a backup archive\n");
+        write_str(1, "  borgmatic check      Check repository and archives\n");
+        write_str(1, "  borgmatic list       List backup archives\n");
+        write_str(1, "  borgmatic info       Show repository info\n");
+        write_str(1, "  borgmatic prune      Prune old archives\n");
+        write_str(1, "  borgmatic compact    Compact repository\n");
+        write_str(1, "  borgmatic config     Manage configuration\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "borgmatic 1.8.5\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "init") == 0) {
+        write_str(1, "Initializing repository at /backup/borg-repo\n");
+        write_str(1, " \033[32m>\033[0m /backup/borg-repo: Initializing repository\n");
+        write_str(1, " \033[32m>\033[0m Repository initialized successfully.\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "create") == 0) {
+        write_str(1, " \033[32m>\033[0m /backup/borg-repo: Creating archive\n");
+        write_str(1, " \033[32m>\033[0m Reading configuration from /etc/borgmatic/config.yaml\n");
+        write_str(1, " \033[32m>\033[0m Creating archive: futura-2024-01-15T10:30:00\n");
+        write_str(1, "\n");
+        write_str(1, "                       Original size      Compressed size    Deduplicated size\n");
+        write_str(1, "This archive:                1.23 GB            890.45 MB            245.67 MB\n");
+        write_str(1, "All archives:                4.56 GB              3.12 GB            678.90 MB\n");
+        write_str(1, "\n");
+        write_str(1, " \033[32m>\033[0m Summary: 1 repository, 1 archive created\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "check") == 0) {
+        write_str(1, " \033[32m>\033[0m /backup/borg-repo: Running consistency checks\n");
+        write_str(1, " \033[32m>\033[0m Checking repository...\n");
+        write_str(1, " \033[32m>\033[0m Checking archives...\n");
+        write_str(1, " \033[32m>\033[0m Verifying data integrity...\n");
+        write_str(1, " \033[32m>\033[0m \033[32mAll consistency checks passed.\033[0m\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "list") == 0) {
+        write_str(1, " \033[32m>\033[0m /backup/borg-repo: Listing archives\n");
+        write_str(1, "futura-2024-01-15T10:30:00           Mon, 2024-01-15 10:30:00\n");
+        write_str(1, "futura-2024-01-14T10:30:00           Sun, 2024-01-14 10:30:00\n");
+        write_str(1, "futura-2024-01-13T10:30:00           Sat, 2024-01-13 10:30:00\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "info") == 0) {
+        write_str(1, " \033[32m>\033[0m /backup/borg-repo: Showing repository info\n");
+        write_str(1, "Repository ID: a1b2c3d4e5f6a7b8c9d0\n");
+        write_str(1, "Location: /backup/borg-repo\n");
+        write_str(1, "Encrypted: Yes (repokey-blake2)\n");
+        write_str(1, "Archives: 3\n");
+        write_str(1, "Total size: 678.90 MB (deduplicated)\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "prune") == 0) {
+        write_str(1, " \033[32m>\033[0m /backup/borg-repo: Pruning archives\n");
+        write_str(1, " \033[32m>\033[0m Keeping: 7 daily, 4 weekly, 6 monthly\n");
+        write_str(1, " \033[32m>\033[0m Pruned 2 archives.\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "compact") == 0) {
+        write_str(1, " \033[32m>\033[0m /backup/borg-repo: Compacting repository\n");
+        write_str(1, " \033[32m>\033[0m Freed 45.2 MB of space.\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "config") == 0) {
+        if (argc >= 3 && strcmp_simple(argv[2], "generate") == 0) {
+            write_str(1, "Generated configuration file: /etc/borgmatic/config.yaml\n");
+        } else if (argc >= 3 && strcmp_simple(argv[2], "validate") == 0) {
+            write_str(1, "Configuration file /etc/borgmatic/config.yaml: \033[32mvalid\033[0m\n");
+        } else {
+            write_str(1, "usage: borgmatic config [generate|validate]\n");
+        }
+        return;
+    }
+    write_str(2, "borgmatic: unknown command '");
+    write_str(2, argv[1]);
+    write_str(2, "'\n");
+}
+
+/* syncthing - continuous file synchronization */
+static void cmd_syncthing(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "syncthing - Open Source Continuous File Synchronization\n\n");
+        write_str(1, "Usage:\n");
+        write_str(1, "  syncthing serve      Start syncthing daemon\n");
+        write_str(1, "  syncthing status     Show current sync status\n");
+        write_str(1, "  syncthing config     Show/edit configuration\n");
+        write_str(1, "  syncthing cli        Command line interface\n");
+        write_str(1, "  syncthing generate   Generate keys and config\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "syncthing v1.27.2 \"Tungsten Turtle\"\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "serve") == 0) {
+        write_str(1, "[start] 10:30:00 INFO: syncthing v1.27.2 \"Tungsten Turtle\"\n");
+        write_str(1, "[start] 10:30:00 INFO: My ID: ABCDEFG-HIJKLMN-OPQRSTU-VWXYZ12-3456789-ABCDEFG-HIJKLMN-OPQRSTU\n");
+        write_str(1, "[start] 10:30:01 INFO: Single thread SHA256 performance is 234 MB/s\n");
+        write_str(1, "[start] 10:30:01 INFO: Hashing performance is 456 MB/s using MINIO\n");
+        write_str(1, "[start] 10:30:01 INFO: Ready to synchronize \"Default Folder\" (default)\n");
+        write_str(1, "[start] 10:30:01 INFO: GUI and API listening on 127.0.0.1:8384\n");
+        write_str(1, "[start] 10:30:01 INFO: Access the GUI via the following URL: http://127.0.0.1:8384/\n");
+        write_str(1, "[start] 10:30:02 INFO: Detected 0 NAT services\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "status") == 0) {
+        write_str(1, "Syncthing Status\n");
+        write_str(1, "================\n");
+        write_str(1, "My ID: ABCDEFG-HIJKLMN...\n");
+        write_str(1, "Uptime: 3h 45m\n");
+        write_str(1, "\n");
+        write_str(1, "Folder: Default Folder (default)\n");
+        write_str(1, "  State:         \033[32mIdle\033[0m\n");
+        write_str(1, "  Global State:  42 files, 245 MiB\n");
+        write_str(1, "  Local State:   42 files, 245 MiB\n");
+        write_str(1, "  Out Of Sync:   0 files, 0 B\n");
+        write_str(1, "\n");
+        write_str(1, "Connected Devices:\n");
+        write_str(1, "  laptop (XYZABCD...)   \033[32mConnected\033[0m   Up: 1.2 MiB/s  Down: 0.8 MiB/s\n");
+        write_str(1, "  server (MNOPQRS...)   \033[32mConnected\033[0m   Up: 0.5 MiB/s  Down: 2.1 MiB/s\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "config") == 0) {
+        write_str(1, "Configuration (from /root/.config/syncthing/config.xml):\n\n");
+        write_str(1, "Folders:\n");
+        write_str(1, "  - Default Folder (/root/Sync)\n");
+        write_str(1, "    Shared with: laptop, server\n");
+        write_str(1, "    Type: Send & Receive\n");
+        write_str(1, "    Rescan Interval: 3600s\n");
+        write_str(1, "\n");
+        write_str(1, "Devices:\n");
+        write_str(1, "  - laptop (XYZABCD-EFGHIJK...)\n");
+        write_str(1, "  - server (MNOPQRS-TUVWXYZ...)\n");
+        write_str(1, "\n");
+        write_str(1, "GUI: http://127.0.0.1:8384\n");
+        write_str(1, "Listen Addresses: default\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "cli") == 0) {
+        write_str(1, "Syncthing CLI commands:\n");
+        write_str(1, "  config      Show/set configuration values\n");
+        write_str(1, "  show        Show system/connections/discovery status\n");
+        write_str(1, "  operations  Manage pending folder/device operations\n");
+        write_str(1, "  errors      Show recent errors\n");
+        write_str(1, "  debug       Debugging subcommands\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "generate") == 0) {
+        write_str(1, "Generating ECDSA key and certificate...\n");
+        write_str(1, "Generated key pair saved to /root/.config/syncthing/\n");
+        write_str(1, "Generated config saved to /root/.config/syncthing/config.xml\n");
+        write_str(1, "Device ID: ABCDEFG-HIJKLMN-OPQRSTU-VWXYZ12-3456789-ABCDEFG-HIJKLMN-OPQRSTU\n");
+        return;
+    }
+    write_str(2, "syncthing: unknown command '");
+    write_str(2, argv[1]);
+    write_str(2, "'\n");
+}
+
+/* rsyncd - rsync daemon mode */
+static void cmd_rsyncd(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "rsyncd - rsync daemon\n\n");
+        write_str(1, "Usage:\n");
+        write_str(1, "  rsyncd --daemon        Start rsync in daemon mode\n");
+        write_str(1, "  rsyncd --config FILE   Use alternate config file\n");
+        write_str(1, "  rsyncd --no-detach     Don't detach from terminal\n");
+        write_str(1, "  rsyncd --port PORT     Listen on specified port\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "rsync  version 3.2.7  protocol version 31\n");
+        write_str(1, "Copyright (C) 1996-2022 by Andrew Tridgell, Wayne Davison, and others.\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--daemon") == 0) {
+        int port = 873;
+        /* Check for --port option */
+        for (int i = 2; i < argc - 1; i++) {
+            if (strcmp_simple(argv[i], "--port") == 0) {
+                port = simple_atoi(argv[i + 1]);
+                break;
+            }
+        }
+        write_str(1, "rsyncd: starting rsync daemon on port ");
+        char portbuf[16];
+        int plen = 0;
+        int pval = port;
+        if (pval == 0) { portbuf[plen++] = '0'; }
+        else {
+            char tmp[16]; int ti = 0;
+            while (pval > 0) { tmp[ti++] = '0' + (pval % 10); pval /= 10; }
+            while (ti > 0) portbuf[plen++] = tmp[--ti];
+        }
+        portbuf[plen] = '\0';
+        write_str(1, portbuf);
+        write_str(1, "\n");
+        write_str(1, "rsyncd: listening on all addresses\n");
+        write_str(1, "rsyncd: reading configuration from /etc/rsyncd.conf\n");
+        write_str(1, "\n");
+        write_str(1, "Configured modules:\n");
+        write_str(1, "  [backup]    /srv/backup     (read/write)\n");
+        write_str(1, "  [public]    /srv/public     (read only)\n");
+        write_str(1, "  [archive]   /srv/archive    (read only)\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--config") == 0) {
+        const char *config = (argc >= 3) ? argv[2] : "/etc/rsyncd.conf";
+        write_str(1, "Using configuration: ");
+        write_str(1, config);
+        write_str(1, "\n");
+        write_str(1, "rsyncd: starting with custom configuration\n");
+        write_str(1, "rsyncd: listening on port 873\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--no-detach") == 0) {
+        write_str(1, "rsyncd: starting rsync daemon (no-detach mode)\n");
+        write_str(1, "rsyncd: listening on port 873\n");
+        write_str(1, "rsyncd: [pid=14076] running in foreground\n");
+        return;
+    }
+    write_str(2, "rsyncd: unknown option '");
+    write_str(2, argv[1]);
+    write_str(2, "'\n");
+}
+
+/* croc - simple secure file transfer */
+static void cmd_croc(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "croc - Easily and securely send things from one computer to another\n\n");
+        write_str(1, "Usage:\n");
+        write_str(1, "  croc send [file]     Send a file or folder\n");
+        write_str(1, "  croc [code]          Receive with a code\n");
+        write_str(1, "  croc relay           Start a relay server\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "croc version v9.6.15\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "send") == 0) {
+        const char *file = (argc >= 3) ? argv[2] : "file.txt";
+        write_str(1, "Sending '");
+        write_str(1, file);
+        write_str(1, "' (245 kB)\n");
+        write_str(1, "Code is: \033[1m7893-gamma-papa-zulu\033[0m\n");
+        write_str(1, "On the other computer run:\n\n");
+        write_str(1, "\033[1mcroc 7893-gamma-papa-zulu\033[0m\n\n");
+        write_str(1, "Sending (->relay)\n");
+        write_str(1, " 100% |################################| (245/245 kB, 12.345 MB/s)\n");
+        write_str(1, "\033[32mFile sent successfully.\033[0m\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "relay") == 0) {
+        write_str(1, "starting croc relay on port 9009-9013\n");
+        write_str(1, "relay password: auto-generated\n");
+        write_str(1, "listening on :9009\n");
+        write_str(1, "listening on :9010\n");
+        write_str(1, "listening on :9011\n");
+        write_str(1, "listening on :9012\n");
+        write_str(1, "listening on :9013\n");
+        return;
+    }
+    /* Treat anything else as a receive code */
+    const char *code = argv[1];
+    write_str(1, "Connecting to relay...\n");
+    write_str(1, "Receiving file (");
+    write_str(1, code);
+    write_str(1, ")\n");
+    write_str(1, "\n");
+    write_str(1, "Accept 'file.txt' (245 kB)? (Y/n) Y\n");
+    write_str(1, " 100% |################################| (245/245 kB, 15.678 MB/s)\n");
+    write_str(1, "\033[32mfile.txt received successfully.\033[0m\n");
+}
+
+/* magic-wormhole - secure file transfer */
+static void cmd_magic_wormhole(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "magic-wormhole - Get things from one computer to another, safely\n\n");
+        write_str(1, "Usage:\n");
+        write_str(1, "  wormhole send [file]     Send a file or text\n");
+        write_str(1, "  wormhole receive [code]  Receive a file or text\n");
+        write_str(1, "  wormhole send --text MSG Send a text message\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "magic-wormhole 0.14.0\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "send") == 0) {
+        int is_text = 0;
+        const char *payload = NULL;
+        for (int i = 2; i < argc; i++) {
+            if (strcmp_simple(argv[i], "--text") == 0) {
+                is_text = 1;
+                if (i + 1 < argc) payload = argv[i + 1];
+            } else if (!payload) {
+                payload = argv[i];
+            }
+        }
+        if (is_text) {
+            write_str(1, "Sending text message (");
+            if (payload) write_str(1, payload);
+            else write_str(1, "...");
+            write_str(1, ")\n");
+            write_str(1, "Wormhole code is: \033[1m7-crossover-clockwork\033[0m\n");
+            write_str(1, "On the other computer, please run:\n\n");
+            write_str(1, "  \033[1mwormhole receive 7-crossover-clockwork\033[0m\n\n");
+            write_str(1, "Waiting for receiver...\n");
+            write_str(1, "\033[32mtext message sent successfully\033[0m\n");
+        } else {
+            const char *file = payload ? payload : "file.txt";
+            write_str(1, "Sending ");
+            write_str(1, file);
+            write_str(1, " (245 kB)\n");
+            write_str(1, "Wormhole code is: \033[1m7-crossover-clockwork\033[0m\n");
+            write_str(1, "On the other computer, please run:\n\n");
+            write_str(1, "  \033[1mwormhole receive 7-crossover-clockwork\033[0m\n\n");
+            write_str(1, "Waiting for receiver...\n");
+            write_str(1, " 100% 245.0kB/245.0kB [00:00<00:00, 1.23MB/s]\n");
+            write_str(1, "\033[32mfile sent successfully\033[0m\n");
+        }
+        return;
+    }
+    if (strcmp_simple(argv[1], "receive") == 0) {
+        const char *code = (argc >= 3) ? argv[2] : "7-crossover-clockwork";
+        write_str(1, "Receiving (code: ");
+        write_str(1, code);
+        write_str(1, ")\n");
+        write_str(1, "Connecting to relay...\n");
+        write_str(1, "Connected to sender.\n");
+        write_str(1, "\n");
+        write_str(1, "Receiving file (245 kB) into: file.txt\n");
+        write_str(1, "ok? (Y/n): Y\n");
+        write_str(1, " 100% 245.0kB/245.0kB [00:00<00:00, 2.34MB/s]\n");
+        write_str(1, "Received file written to ");
+        write_str(1, "file.txt");
+        write_str(1, "\n");
+        return;
+    }
+    write_str(2, "wormhole: unknown command '");
     write_str(2, argv[1]);
     write_str(2, "'\n");
 }

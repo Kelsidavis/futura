@@ -542,6 +542,25 @@ static void cmd_clang_format(int argc, char *argv[]);
 static void cmd_clang_tidy(int argc, char *argv[]);
 static void cmd_cppcheck(int argc, char *argv[]);
 static void cmd_shellcheck(int argc, char *argv[]);
+static void cmd_ctags(int argc, char *argv[]);
+static void cmd_etags(int argc, char *argv[]);
+static void cmd_cscope(int argc, char *argv[]);
+static void cmd_global(int argc, char *argv[]);
+static void cmd_flex(int argc, char *argv[]);
+static void cmd_bison(int argc, char *argv[]);
+static void cmd_m4(int argc, char *argv[]);
+static void cmd_autoconf(int argc, char *argv[]);
+static void cmd_automake(int argc, char *argv[]);
+static void cmd_libtool(int argc, char *argv[]);
+static void cmd_swig(int argc, char *argv[]);
+static void cmd_protoc(int argc, char *argv[]);
+static void cmd_thrift(int argc, char *argv[]);
+static void cmd_flatc(int argc, char *argv[]);
+static void cmd_capnp(int argc, char *argv[]);
+static void cmd_msgpack(int argc, char *argv[]);
+static void cmd_avro(int argc, char *argv[]);
+static void cmd_jsonnet(int argc, char *argv[]);
+static void cmd_dhall(int argc, char *argv[]);
 
 /* Forward declaration for prompt */
 static void print_prompt(void);
@@ -15855,6 +15874,63 @@ watch_sleep:
     } else if (strcmp_simple(argv[0], "shellcheck") == 0) {
         cmd_shellcheck(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "ctags") == 0) {
+        cmd_ctags(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "etags") == 0) {
+        cmd_etags(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "cscope") == 0) {
+        cmd_cscope(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "global") == 0 || strcmp_simple(argv[0], "gtags") == 0) {
+        cmd_global(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "flex") == 0) {
+        cmd_flex(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "bison") == 0 || strcmp_simple(argv[0], "yacc") == 0) {
+        cmd_bison(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "m4") == 0) {
+        cmd_m4(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "autoconf") == 0) {
+        cmd_autoconf(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "automake") == 0) {
+        cmd_automake(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "libtool") == 0) {
+        cmd_libtool(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "swig") == 0) {
+        cmd_swig(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "protoc") == 0) {
+        cmd_protoc(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "thrift") == 0) {
+        cmd_thrift(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "flatc") == 0) {
+        cmd_flatc(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "capnp") == 0) {
+        cmd_capnp(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "msgpack") == 0) {
+        cmd_msgpack(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "avro") == 0) {
+        cmd_avro(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "jsonnet") == 0) {
+        cmd_jsonnet(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "dhall") == 0) {
+        cmd_dhall(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -16428,6 +16504,27 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "clang-tidy") == 0 ||
             strcmp_simple(cmd, "cppcheck") == 0 ||
             strcmp_simple(cmd, "shellcheck") == 0 ||
+            strcmp_simple(cmd, "ctags") == 0 ||
+            strcmp_simple(cmd, "etags") == 0 ||
+            strcmp_simple(cmd, "cscope") == 0 ||
+            strcmp_simple(cmd, "global") == 0 ||
+            strcmp_simple(cmd, "gtags") == 0 ||
+            strcmp_simple(cmd, "flex") == 0 ||
+            strcmp_simple(cmd, "bison") == 0 ||
+            strcmp_simple(cmd, "yacc") == 0 ||
+            strcmp_simple(cmd, "m4") == 0 ||
+            strcmp_simple(cmd, "autoconf") == 0 ||
+            strcmp_simple(cmd, "automake") == 0 ||
+            strcmp_simple(cmd, "libtool") == 0 ||
+            strcmp_simple(cmd, "swig") == 0 ||
+            strcmp_simple(cmd, "protoc") == 0 ||
+            strcmp_simple(cmd, "thrift") == 0 ||
+            strcmp_simple(cmd, "flatc") == 0 ||
+            strcmp_simple(cmd, "capnp") == 0 ||
+            strcmp_simple(cmd, "msgpack") == 0 ||
+            strcmp_simple(cmd, "avro") == 0 ||
+            strcmp_simple(cmd, "jsonnet") == 0 ||
+            strcmp_simple(cmd, "dhall") == 0 ||
             0);
 }
 
@@ -21270,7 +21367,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   580 built-in commands — type 'help'    |\n");
+    write_str(1, "|   600 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");
@@ -51661,6 +51758,635 @@ static void cmd_shellcheck(int argc, char *argv[]) {
     write_str(1, "    3 info\n");
     write_str(1, "    1 style\n");
     write_str(1, "  (simulated - no actual script analysis performed)\n");
+}
+
+/* ── ctags: generate tags file for source code navigation ── */
+static void cmd_ctags(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: ctags [options] <file...>\n");
+        write_str(2, "  -R              Recurse into directories\n");
+        write_str(2, "  -f <tagfile>    Output to <tagfile> (default: tags)\n");
+        write_str(2, "  --languages=<list>  Restrict to languages\n");
+        return;
+    }
+    int recurse = 0;
+    const char *tagfile = "tags";
+    int file_count = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-R") == 0) recurse = 1;
+        else if (strcmp_simple(argv[i], "-f") == 0 && i + 1 < argc) tagfile = argv[++i];
+        else if (argv[i][0] == '-') { /* skip flags */ }
+        else file_count++;
+    }
+    write_str(1, "ctags: scanning ");
+    if (recurse) write_str(1, "recursively ");
+    char buf[32];
+    if (file_count == 0) file_count = 1;
+    int_to_str(file_count, buf, sizeof(buf));
+    write_str(1, buf);
+    write_str(1, " file(s) for tags...\n");
+    write_str(1, "  Parsing C functions, structs, enums, typedefs, macros...\n");
+    write_str(1, "  Found 247 tags\n");
+    write_str(1, "  Writing "); write_str(1, tagfile); write_str(1, "\n");
+    write_str(1, "  (simulated - no actual tags generated)\n");
+}
+
+/* ── etags: generate Emacs TAGS file ── */
+static void cmd_etags(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: etags [options] <file...>\n");
+        write_str(2, "  -o <tagfile>    Output to <tagfile> (default: TAGS)\n");
+        write_str(2, "  --append        Append to existing TAGS file\n");
+        write_str(2, "  --language=<lang>  Force language\n");
+        return;
+    }
+    const char *tagfile = "TAGS";
+    int file_count = 0;
+    int appending = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-o") == 0 && i + 1 < argc) tagfile = argv[++i];
+        else if (strcmp_simple(argv[i], "--append") == 0) appending = 1;
+        else if (argv[i][0] == '-') { /* skip */ }
+        else file_count++;
+    }
+    if (appending) write_str(1, "etags: appending to ");
+    else write_str(1, "etags: writing ");
+    write_str(1, tagfile); write_str(1, "\n");
+    char buf[32];
+    if (file_count == 0) file_count = 1;
+    int_to_str(file_count, buf, sizeof(buf));
+    write_str(1, "  Scanned "); write_str(1, buf); write_str(1, " file(s)\n");
+    write_str(1, "  Found 183 definitions (functions, variables, types)\n");
+    write_str(1, "  (simulated - no actual TAGS generated)\n");
+}
+
+/* ── cscope: interactive code browser (simulated) ── */
+static void cmd_cscope(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: cscope [options]\n");
+        write_str(2, "  -b              Build cross-reference only\n");
+        write_str(2, "  -R              Recurse into subdirectories\n");
+        write_str(2, "  -q              Build inverted index for quick symbol lookup\n");
+        write_str(2, "  -k              Kernel mode (no /usr/include)\n");
+        write_str(2, "  -f <reffile>    Use <reffile> (default: cscope.out)\n");
+        return;
+    }
+    int build_only = 0, recurse = 0, quick = 0;
+    const char *reffile = "cscope.out";
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-b") == 0) build_only = 1;
+        else if (strcmp_simple(argv[i], "-R") == 0) recurse = 1;
+        else if (strcmp_simple(argv[i], "-q") == 0) quick = 1;
+        else if (strcmp_simple(argv[i], "-f") == 0 && i + 1 < argc) reffile = argv[++i];
+    }
+    write_str(1, "cscope: building cross-reference");
+    if (recurse) write_str(1, " (recursive)");
+    write_str(1, "...\n");
+    if (quick) write_str(1, "  Building inverted index for quick symbol lookup\n");
+    write_str(1, "  Scanning files...\n");
+    write_str(1, "  Found 42 source files\n");
+    write_str(1, "  Building symbol cross-reference: 1,847 symbols\n");
+    write_str(1, "  Writing "); write_str(1, reffile); write_str(1, "\n");
+    if (build_only) {
+        write_str(1, "  Cross-reference built successfully\n");
+    } else {
+        write_str(1, "  (interactive mode not available, use -b for batch)\n");
+    }
+    write_str(1, "  (simulated - no actual cross-reference built)\n");
+}
+
+/* ── global/gtags: GNU Global source code tagging ── */
+static void cmd_global(int argc, char *argv[]) {
+    const char *cmd_name = argv[0];
+    if (strcmp_simple(cmd_name, "gtags") == 0) {
+        /* gtags: create tag files */
+        write_str(1, "gtags: creating tag files...\n");
+        write_str(1, "  [1/3] GTAGS  (definition tags)\n");
+        write_str(1, "  [2/3] GRTAGS (reference tags)\n");
+        write_str(1, "  [3/3] GPATH  (path index)\n");
+        write_str(1, "  Indexed 42 files, 1,523 symbols\n");
+        write_str(1, "  (simulated - no actual tag files created)\n");
+        return;
+    }
+    /* global: query tags */
+    if (argc < 2) {
+        write_str(2, "usage: global [options] <pattern>\n");
+        write_str(2, "  -d    Find definition\n");
+        write_str(2, "  -r    Find references\n");
+        write_str(2, "  -s    Find symbols (not defined in tags)\n");
+        write_str(2, "  -g    Grep pattern in source files\n");
+        write_str(2, "  -x    Show details (file, line, content)\n");
+        return;
+    }
+    const char *pattern = ((void *)0);
+    int detail = 0;
+    for (int i = 1; i < argc; i++) {
+        if (argv[i][0] != '-') { pattern = argv[i]; break; }
+        if (strcmp_simple(argv[i], "-x") == 0) detail = 1;
+    }
+    if (!pattern) { write_str(2, "global: no pattern specified\n"); return; }
+    write_str(1, "global: searching for '"); write_str(1, pattern); write_str(1, "'\n");
+    if (detail) {
+        write_str(1, "  main              42 src/main.c        int main(int argc, char *argv[])\n");
+        write_str(1, "  main              18 tests/test.c      int main(void)\n");
+    } else {
+        write_str(1, "  src/main.c\n");
+        write_str(1, "  tests/test.c\n");
+    }
+    write_str(1, "  (simulated - no actual tag lookup performed)\n");
+}
+
+/* ── flex: lexer generator (simulated) ── */
+static void cmd_flex(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: flex [options] <input.l>\n");
+        write_str(2, "  -o <outfile>    Specify output file (default: lex.yy.c)\n");
+        write_str(2, "  -t              Write to stdout\n");
+        write_str(2, "  --header-file=<file>  Generate header file\n");
+        write_str(2, "  -l              Maximum POSIX lex compatibility\n");
+        return;
+    }
+    const char *infile = ((void *)0);
+    const char *outfile = "lex.yy.c";
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-o") == 0 && i + 1 < argc) outfile = argv[++i];
+        else if (argv[i][0] != '-') infile = argv[i];
+    }
+    if (!infile) { write_str(2, "flex: no input file\n"); return; }
+    write_str(1, "flex: reading "); write_str(1, infile); write_str(1, "\n");
+    write_str(1, "  Parsing scanner specification...\n");
+    write_str(1, "  12 rules, 3 start conditions\n");
+    write_str(1, "  Generating NFA: 48 states\n");
+    write_str(1, "  Converting to DFA: 31 states\n");
+    write_str(1, "  Minimizing DFA: 24 states\n");
+    write_str(1, "  Writing scanner to "); write_str(1, outfile); write_str(1, "\n");
+    write_str(1, "  (simulated - no actual scanner generated)\n");
+}
+
+/* ── bison/yacc: parser generator (simulated) ── */
+static void cmd_bison(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: bison [options] <input.y>\n");
+        write_str(2, "  -d              Generate header file\n");
+        write_str(2, "  -o <outfile>    Specify output file\n");
+        write_str(2, "  -v              Generate verbose description (.output)\n");
+        write_str(2, "  --defines=<file>  Header output file\n");
+        return;
+    }
+    const char *infile = ((void *)0);
+    const char *outfile = ((void *)0);
+    int gen_header = 0, verbose = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-d") == 0) gen_header = 1;
+        else if (strcmp_simple(argv[i], "-v") == 0) verbose = 1;
+        else if (strcmp_simple(argv[i], "-o") == 0 && i + 1 < argc) outfile = argv[++i];
+        else if (argv[i][0] != '-') infile = argv[i];
+    }
+    if (!infile) { write_str(2, "bison: no input file\n"); return; }
+    write_str(1, "bison: reading grammar from "); write_str(1, infile); write_str(1, "\n");
+    write_str(1, "  25 rules, 14 nonterminals, 18 terminals\n");
+    write_str(1, "  Generating LALR(1) parser...\n");
+    write_str(1, "  42 states, 0 shift/reduce conflicts, 0 reduce/reduce conflicts\n");
+    if (outfile) {
+        write_str(1, "  Writing parser to "); write_str(1, outfile); write_str(1, "\n");
+    } else {
+        write_str(1, "  Writing parser to y.tab.c\n");
+    }
+    if (gen_header) write_str(1, "  Writing header to y.tab.h\n");
+    if (verbose) write_str(1, "  Writing description to y.output\n");
+    write_str(1, "  (simulated - no actual parser generated)\n");
+}
+
+/* ── m4: macro processor (simulated) ── */
+static void cmd_m4(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: m4 [options] [file...]\n");
+        write_str(2, "  -D name[=val]   Define macro\n");
+        write_str(2, "  -U name         Undefine macro\n");
+        write_str(2, "  -I dir          Add to include path\n");
+        write_str(2, "  -P              Prefix builtins with 'm4_'\n");
+        return;
+    }
+    const char *infile = ((void *)0);
+    int define_count = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-D") == 0 && i + 1 < argc) { define_count++; i++; }
+        else if (argv[i][0] != '-') infile = argv[i];
+    }
+    if (infile) {
+        write_str(1, "m4: processing "); write_str(1, infile); write_str(1, "\n");
+    } else {
+        write_str(1, "m4: processing stdin\n");
+    }
+    if (define_count > 0) {
+        char buf[32];
+        int_to_str(define_count, buf, sizeof(buf));
+        write_str(1, "  "); write_str(1, buf); write_str(1, " macro(s) defined from command line\n");
+    }
+    write_str(1, "  Expanding macros: define, ifdef, ifelse, dnl, changequote...\n");
+    write_str(1, "  Processing complete: 3 macro expansions performed\n");
+    write_str(1, "  (simulated - no actual macro processing performed)\n");
+}
+
+/* ── autoconf: generate configure script (simulated) ── */
+static void cmd_autoconf(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    write_str(1, "autoconf: generating configure script...\n");
+    write_str(1, "  Reading configure.ac\n");
+    write_str(1, "  Expanding AC_INIT, AC_CONFIG_SRCDIR, AC_CONFIG_HEADERS...\n");
+    write_str(1, "  Checking AC_PROG_CC, AC_PROG_INSTALL, AC_PROG_MAKE_SET\n");
+    write_str(1, "  Processing AC_CHECK_HEADERS, AC_CHECK_FUNCS\n");
+    write_str(1, "  Processing AC_CONFIG_FILES: Makefile, src/Makefile\n");
+    write_str(1, "  Writing configure (12,847 lines)\n");
+    write_str(1, "  (simulated - no actual configure script generated)\n");
+}
+
+/* ── automake: generate Makefile.in (simulated) ── */
+static void cmd_automake(int argc, char *argv[]) {
+    int add_missing = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "--add-missing") == 0 || strcmp_simple(argv[i], "-a") == 0)
+            add_missing = 1;
+    }
+    write_str(1, "automake: generating Makefile.in files...\n");
+    write_str(1, "  Reading Makefile.am\n");
+    write_str(1, "  Processing bin_PROGRAMS, lib_LIBRARIES, SOURCES\n");
+    if (add_missing) {
+        write_str(1, "  Installing missing auxiliary files:\n");
+        write_str(1, "    install-sh, missing, depcomp, compile\n");
+    }
+    write_str(1, "  Writing Makefile.in (483 lines)\n");
+    write_str(1, "  Writing src/Makefile.in (327 lines)\n");
+    write_str(1, "  (simulated - no actual Makefile.in generated)\n");
+}
+
+/* ── libtool: shared library build helper (simulated) ── */
+static void cmd_libtool(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: libtool [--mode=MODE] [options]\n");
+        write_str(2, "  --mode=compile   Compile a source file\n");
+        write_str(2, "  --mode=link      Link a library or executable\n");
+        write_str(2, "  --mode=install   Install library\n");
+        write_str(2, "  --mode=clean     Remove built files\n");
+        write_str(2, "  --version        Show version\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "libtool (GNU libtool) 2.4.7 (simulated)\n");
+        return;
+    }
+    const char *mode = "compile";
+    for (int i = 1; i < argc; i++) {
+        if (argv[i][0]=='-'&&argv[i][1]=='-'&&argv[i][2]=='m'&&argv[i][3]=='o'&&argv[i][4]=='d'&&argv[i][5]=='e'&&argv[i][6]=='=') mode = argv[i] + 7;
+    }
+    write_str(1, "libtool: mode="); write_str(1, mode); write_str(1, "\n");
+    if (strcmp_simple(mode, "compile") == 0) {
+        write_str(1, "  Compiling source with position-independent code (-fPIC)\n");
+        write_str(1, "  Creating .lo wrapper object\n");
+    } else if (strcmp_simple(mode, "link") == 0) {
+        write_str(1, "  Linking shared library (.so) and static archive (.a)\n");
+        write_str(1, "  Creating .la libtool archive\n");
+    } else if (strcmp_simple(mode, "install") == 0) {
+        write_str(1, "  Installing library to destination\n");
+        write_str(1, "  Running ldconfig\n");
+    } else if (strcmp_simple(mode, "clean") == 0) {
+        write_str(1, "  Removing .lo, .la, .libs/ build artifacts\n");
+    }
+    write_str(1, "  (simulated - no actual build operation performed)\n");
+}
+
+/* ── swig: simplified wrapper and interface generator (simulated) ── */
+static void cmd_swig(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: swig [options] <interface.i>\n");
+        write_str(2, "  -python         Generate Python wrappers\n");
+        write_str(2, "  -java           Generate Java wrappers\n");
+        write_str(2, "  -lua            Generate Lua wrappers\n");
+        write_str(2, "  -ruby           Generate Ruby wrappers\n");
+        write_str(2, "  -o <outfile>    Output file\n");
+        return;
+    }
+    const char *lang = "python";
+    const char *infile = ((void *)0);
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-python") == 0) lang = "Python";
+        else if (strcmp_simple(argv[i], "-java") == 0) lang = "Java";
+        else if (strcmp_simple(argv[i], "-lua") == 0) lang = "Lua";
+        else if (strcmp_simple(argv[i], "-ruby") == 0) lang = "Ruby";
+        else if (strcmp_simple(argv[i], "-o") == 0 && i + 1 < argc) i++;
+        else if (argv[i][0] != '-') infile = argv[i];
+    }
+    if (!infile) { write_str(2, "swig: no interface file specified\n"); return; }
+    write_str(1, "swig: reading "); write_str(1, infile); write_str(1, "\n");
+    write_str(1, "  Target language: "); write_str(1, lang); write_str(1, "\n");
+    write_str(1, "  Parsing interface: 5 functions, 2 classes, 3 typemaps\n");
+    write_str(1, "  Generating wrapper code...\n");
+    write_str(1, "  Writing _wrap.c (847 lines)\n");
+    write_str(1, "  (simulated - no actual wrappers generated)\n");
+}
+
+/* ── protoc: Protocol Buffers compiler (simulated) ── */
+static void cmd_protoc(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: protoc [options] <file.proto>\n");
+        write_str(2, "  --cpp_out=<dir>     Generate C++ code\n");
+        write_str(2, "  --python_out=<dir>  Generate Python code\n");
+        write_str(2, "  --java_out=<dir>    Generate Java code\n");
+        write_str(2, "  --go_out=<dir>      Generate Go code\n");
+        write_str(2, "  -I <dir>            Add import path\n");
+        write_str(2, "  --version           Show version\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "libprotoc 25.1 (simulated)\n");
+        return;
+    }
+    const char *proto_file = ((void *)0);
+    const char *lang = "C++";
+    for (int i = 1; i < argc; i++) {
+        if (argv[i][0]=='-'&&argv[i][1]=='-'&&argv[i][2]=='c'&&argv[i][3]=='p'&&argv[i][4]=='p'&&argv[i][5]=='_') lang = "C++";
+        else if (argv[i][0]=='-'&&argv[i][1]=='-'&&argv[i][2]=='p'&&argv[i][3]=='y'&&argv[i][4]=='t') lang = "Python";
+        else if (argv[i][0]=='-'&&argv[i][1]=='-'&&argv[i][2]=='j'&&argv[i][3]=='a'&&argv[i][4]=='v') lang = "Java";
+        else if (argv[i][0]=='-'&&argv[i][1]=='-'&&argv[i][2]=='g'&&argv[i][3]=='o'&&argv[i][4]=='_') lang = "Go";
+        else if (argv[i][0] != '-') proto_file = argv[i];
+    }
+    if (!proto_file) { write_str(2, "protoc: no .proto file specified\n"); return; }
+    write_str(1, "protoc: compiling "); write_str(1, proto_file); write_str(1, "\n");
+    write_str(1, "  Target: "); write_str(1, lang); write_str(1, "\n");
+    write_str(1, "  Parsing: 4 messages, 2 enums, 3 services, 8 RPCs\n");
+    write_str(1, "  Generating serialization/deserialization code...\n");
+    write_str(1, "  Output written successfully\n");
+    write_str(1, "  (simulated - no actual protobuf code generated)\n");
+}
+
+/* ── thrift: Apache Thrift compiler (simulated) ── */
+static void cmd_thrift(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: thrift [options] <file.thrift>\n");
+        write_str(2, "  --gen <lang>    Generate code for language (cpp, java, py, go)\n");
+        write_str(2, "  -o <dir>        Output directory\n");
+        write_str(2, "  -I <dir>        Add include path\n");
+        write_str(2, "  --version       Show version\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "Thrift version 0.19.0 (simulated)\n");
+        return;
+    }
+    const char *thrift_file = ((void *)0);
+    const char *lang = "cpp";
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "--gen") == 0 && i + 1 < argc) lang = argv[++i];
+        else if (strcmp_simple(argv[i], "-o") == 0 && i + 1 < argc) i++;
+        else if (argv[i][0] != '-') thrift_file = argv[i];
+    }
+    if (!thrift_file) { write_str(2, "thrift: no .thrift file specified\n"); return; }
+    write_str(1, "thrift: compiling "); write_str(1, thrift_file); write_str(1, "\n");
+    write_str(1, "  Target language: "); write_str(1, lang); write_str(1, "\n");
+    write_str(1, "  Parsing: 3 structs, 2 services, 6 methods, 1 enum\n");
+    write_str(1, "  Generating types, service stubs, and client code...\n");
+    write_str(1, "  Output written to gen-"); write_str(1, lang); write_str(1, "/\n");
+    write_str(1, "  (simulated - no actual Thrift code generated)\n");
+}
+
+/* ── flatc: FlatBuffers compiler (simulated) ── */
+static void cmd_flatc(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: flatc [options] <file.fbs>\n");
+        write_str(2, "  -c              Generate C++ code\n");
+        write_str(2, "  -j              Generate Java code\n");
+        write_str(2, "  -p              Generate Python code\n");
+        write_str(2, "  -g              Generate Go code\n");
+        write_str(2, "  -b              Generate binary (.bfbs)\n");
+        write_str(2, "  --json          Generate JSON schema\n");
+        write_str(2, "  --version       Show version\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "flatc version 23.5.26 (simulated)\n");
+        return;
+    }
+    const char *fbs_file = ((void *)0);
+    const char *lang = "C++";
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-c") == 0) lang = "C++";
+        else if (strcmp_simple(argv[i], "-j") == 0) lang = "Java";
+        else if (strcmp_simple(argv[i], "-p") == 0) lang = "Python";
+        else if (strcmp_simple(argv[i], "-g") == 0) lang = "Go";
+        else if (argv[i][0] != '-') fbs_file = argv[i];
+    }
+    if (!fbs_file) { write_str(2, "flatc: no .fbs file specified\n"); return; }
+    write_str(1, "flatc: compiling "); write_str(1, fbs_file); write_str(1, "\n");
+    write_str(1, "  Target: "); write_str(1, lang); write_str(1, "\n");
+    write_str(1, "  Parsing: 3 tables, 1 enum, 1 union, 2 structs\n");
+    write_str(1, "  Generating zero-copy serialization code...\n");
+    write_str(1, "  Output written successfully\n");
+    write_str(1, "  (simulated - no actual FlatBuffers code generated)\n");
+}
+
+/* ── capnp: Cap'n Proto compiler (simulated) ── */
+static void cmd_capnp(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: capnp <command> [options] <file.capnp>\n");
+        write_str(2, "  compile         Compile schema\n");
+        write_str(2, "  decode          Decode binary message\n");
+        write_str(2, "  encode          Encode to binary\n");
+        write_str(2, "  eval            Evaluate constants\n");
+        write_str(2, "  --version       Show version\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "Cap'n Proto version 1.0.1 (simulated)\n");
+        return;
+    }
+    const char *subcmd = argv[1];
+    const char *schema_file = ((void *)0);
+    for (int i = 2; i < argc; i++) {
+        if (argv[i][0] != '-') { schema_file = argv[i]; break; }
+    }
+    write_str(1, "capnp "); write_str(1, subcmd);
+    if (schema_file) { write_str(1, ": "); write_str(1, schema_file); }
+    write_str(1, "\n");
+    if (strcmp_simple(subcmd, "compile") == 0) {
+        write_str(1, "  Parsing schema: 4 structs, 2 interfaces, 5 methods\n");
+        write_str(1, "  Generating C++ code with zero-copy semantics...\n");
+        write_str(1, "  Output written successfully\n");
+    } else if (strcmp_simple(subcmd, "decode") == 0) {
+        write_str(1, "  Decoding binary message to human-readable form...\n");
+        write_str(1, "  (id = 12345, name = \"example\", data = [1, 2, 3])\n");
+    } else {
+        write_str(1, "  Command '"); write_str(1, subcmd); write_str(1, "' executed\n");
+    }
+    write_str(1, "  (simulated - no actual Cap'n Proto operation performed)\n");
+}
+
+/* ── msgpack: MessagePack tool (simulated) ── */
+static void cmd_msgpack(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: msgpack <command> [options]\n");
+        write_str(2, "  encode <json>   Encode JSON to MessagePack\n");
+        write_str(2, "  decode <file>   Decode MessagePack to JSON\n");
+        write_str(2, "  inspect <file>  Inspect MessagePack structure\n");
+        write_str(2, "  --version       Show version\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "msgpack-tools 0.6 (simulated)\n");
+        return;
+    }
+    const char *subcmd = argv[1];
+    write_str(1, "msgpack: "); write_str(1, subcmd); write_str(1, "\n");
+    if (strcmp_simple(subcmd, "encode") == 0) {
+        write_str(1, "  Encoding JSON to MessagePack binary format...\n");
+        write_str(1, "  Input:  {\"name\":\"test\",\"value\":42,\"list\":[1,2,3]}\n");
+        write_str(1, "  Output: 23 bytes (compact binary)\n");
+    } else if (strcmp_simple(subcmd, "decode") == 0) {
+        write_str(1, "  Decoding MessagePack to JSON...\n");
+        write_str(1, "  {\"name\":\"test\",\"value\":42,\"list\":[1,2,3]}\n");
+    } else if (strcmp_simple(subcmd, "inspect") == 0) {
+        write_str(1, "  fixmap(3):\n");
+        write_str(1, "    \"name\" => fixstr(4) \"test\"\n");
+        write_str(1, "    \"value\" => positive fixint 42\n");
+        write_str(1, "    \"list\" => fixarray(3): [1, 2, 3]\n");
+    }
+    write_str(1, "  (simulated - no actual MessagePack operation performed)\n");
+}
+
+/* ── avro: Apache Avro tool (simulated) ── */
+static void cmd_avro(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: avro <command> [options]\n");
+        write_str(2, "  compile schema <file.avsc>   Generate code from schema\n");
+        write_str(2, "  compile protocol <file.avpr>  Generate from protocol\n");
+        write_str(2, "  tojson <file.avro>           Convert to JSON\n");
+        write_str(2, "  fromjson <file.json>         Convert from JSON\n");
+        write_str(2, "  cat <file.avro>              Print Avro container\n");
+        return;
+    }
+    const char *subcmd = argv[1];
+    write_str(1, "avro: "); write_str(1, subcmd); write_str(1, "\n");
+    if (strcmp_simple(subcmd, "compile") == 0) {
+        const char *what = (argc > 2) ? argv[2] : "schema";
+        const char *file = (argc > 3) ? argv[3] : "<file>";
+        write_str(1, "  Compiling "); write_str(1, what); write_str(1, " from "); write_str(1, file); write_str(1, "\n");
+        write_str(1, "  Parsing: 2 records, 1 enum, 3 fields per record\n");
+        write_str(1, "  Generating Java classes with serialization support...\n");
+        write_str(1, "  Output written successfully\n");
+    } else if (strcmp_simple(subcmd, "tojson") == 0) {
+        write_str(1, "  Converting Avro container to JSON...\n");
+        write_str(1, "  {\"name\":\"Alice\",\"age\":30,\"emails\":[\"alice@example.com\"]}\n");
+        write_str(1, "  {\"name\":\"Bob\",\"age\":25,\"emails\":[]}\n");
+        write_str(1, "  2 records converted\n");
+    } else if (strcmp_simple(subcmd, "cat") == 0) {
+        write_str(1, "  Schema: {\"type\":\"record\",\"name\":\"User\",...}\n");
+        write_str(1, "  Codec: deflate\n");
+        write_str(1, "  Records: 2\n");
+    } else {
+        write_str(1, "  Command '"); write_str(1, subcmd); write_str(1, "' executed\n");
+    }
+    write_str(1, "  (simulated - no actual Avro operation performed)\n");
+}
+
+/* ── jsonnet: Jsonnet data templating language (simulated) ── */
+static void cmd_jsonnet(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: jsonnet [options] <file.jsonnet>\n");
+        write_str(2, "  -e <code>       Evaluate expression\n");
+        write_str(2, "  -V <var>=<val>  External variable\n");
+        write_str(2, "  -m <dir>        Multi-file output\n");
+        write_str(2, "  -S              String output (no JSON)\n");
+        write_str(2, "  --version       Show version\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "Jsonnet commandline interpreter v0.20.0 (simulated)\n");
+        return;
+    }
+    const char *infile = ((void *)0);
+    const char *expr = ((void *)0);
+    int var_count = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-e") == 0 && i + 1 < argc) expr = argv[++i];
+        else if (strcmp_simple(argv[i], "-V") == 0 && i + 1 < argc) { var_count++; i++; }
+        else if (argv[i][0] != '-') infile = argv[i];
+    }
+    if (expr) {
+        write_str(1, "jsonnet: evaluating expression\n");
+        write_str(1, "  {\n");
+        write_str(1, "    \"result\": \"evaluated\",\n");
+        write_str(1, "    \"expression\": true\n");
+        write_str(1, "  }\n");
+    } else if (infile) {
+        write_str(1, "jsonnet: evaluating "); write_str(1, infile); write_str(1, "\n");
+        if (var_count > 0) {
+            char buf[32];
+            int_to_str(var_count, buf, sizeof(buf));
+            write_str(1, "  "); write_str(1, buf); write_str(1, " external variable(s) bound\n");
+        }
+        write_str(1, "  {\n");
+        write_str(1, "    \"apiVersion\": \"v1\",\n");
+        write_str(1, "    \"kind\": \"ConfigMap\",\n");
+        write_str(1, "    \"metadata\": { \"name\": \"example\" },\n");
+        write_str(1, "    \"data\": { \"key\": \"value\" }\n");
+        write_str(1, "  }\n");
+    } else {
+        write_str(2, "jsonnet: no input file or expression\n");
+        return;
+    }
+    write_str(1, "  (simulated - no actual Jsonnet evaluation performed)\n");
+}
+
+/* ── dhall: Dhall programmable configuration language (simulated) ── */
+static void cmd_dhall(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: dhall [command] [options]\n");
+        write_str(2, "  (no command)    Evaluate and normalize Dhall expression\n");
+        write_str(2, "  type            Infer type of expression\n");
+        write_str(2, "  format          Format Dhall source\n");
+        write_str(2, "  freeze          Add integrity checks to imports\n");
+        write_str(2, "  lint            Improve Dhall expression\n");
+        write_str(2, "  diff            Show difference between expressions\n");
+        write_str(2, "  to-json         Convert Dhall to JSON\n");
+        write_str(2, "  to-yaml         Convert Dhall to YAML\n");
+        write_str(2, "  --version       Show version\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "dhall 1.42.0 (simulated)\n");
+        return;
+    }
+    const char *subcmd = argv[1];
+    if (strcmp_simple(subcmd, "type") == 0) {
+        write_str(1, "dhall type:\n");
+        write_str(1, "  { name : Text, port : Natural, debug : Bool }\n");
+    } else if (strcmp_simple(subcmd, "format") == 0) {
+        write_str(1, "dhall format:\n");
+        write_str(1, "  Formatted 1 file(s)\n");
+    } else if (strcmp_simple(subcmd, "to-json") == 0) {
+        write_str(1, "dhall to-json:\n");
+        write_str(1, "  {\n");
+        write_str(1, "    \"name\": \"my-service\",\n");
+        write_str(1, "    \"port\": 8080,\n");
+        write_str(1, "    \"debug\": false\n");
+        write_str(1, "  }\n");
+    } else if (strcmp_simple(subcmd, "to-yaml") == 0) {
+        write_str(1, "dhall to-yaml:\n");
+        write_str(1, "  name: my-service\n");
+        write_str(1, "  port: 8080\n");
+        write_str(1, "  debug: false\n");
+    } else if (strcmp_simple(subcmd, "lint") == 0) {
+        write_str(1, "dhall lint:\n");
+        write_str(1, "  Removed unused let binding 'x'\n");
+        write_str(1, "  Simplified merge expression on line 12\n");
+    } else if (strcmp_simple(subcmd, "freeze") == 0) {
+        write_str(1, "dhall freeze:\n");
+        write_str(1, "  Added integrity check to 1 import(s)\n");
+    } else {
+        /* default: evaluate/normalize */
+        write_str(1, "dhall: normalizing expression\n");
+        write_str(1, "  { name = \"my-service\", port = 8080, debug = False }\n");
+    }
+    write_str(1, "  (simulated - no actual Dhall evaluation performed)\n");
 }
 
 #pragma GCC diagnostic pop

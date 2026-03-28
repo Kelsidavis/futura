@@ -69269,6 +69269,232 @@ __attribute__((noinline)) static void test_execve_shebang_comprehensive(void) {
 }
 
 /* ============================================================
+ * Tests 2475-2482: Extended attribute container compat
+ *
+ * Verifies the generic per-vnode xattr storage and multi-namespace
+ * support critical for Docker overlay2 and container runtimes:
+ *
+ *   2475: setxattr + getxattr round-trip on user.* namespace
+ *   2476: security.* namespace xattr (requires root/CAP_SYS_ADMIN)
+ *   2477: trusted.* namespace xattr (Docker overlay.opaque)
+ *   2478: system.* namespace xattr
+ *   2479: listxattr returns all names NUL-separated
+ *   2480: removexattr removes attr; subsequent getxattr -> ENODATA
+ *   2481: XATTR_CREATE on existing -> EEXIST; XATTR_REPLACE on missing -> ENODATA
+ *   2482: getxattr size query (size=0) returns value length
+ * ============================================================ */
+static void test_xattr_container_compat(void) {
+    extern long sys_setxattr(const char *path, const char *name,
+                             const void *value, long size, int flags);
+    extern long sys_getxattr(const char *path, const char *name,
+                             void *value, long size);
+    extern long sys_listxattr(const char *path, char *list, long size);
+    extern long sys_removexattr(const char *path, const char *name);
+
+#define XCC_XATTR_CREATE  1
+#define XCC_XATTR_REPLACE 2
+
+    const char *path = "/tmp/xattr_container_test.txt";
+
+    fut_vfs_unlink(path);
+    int fd = fut_vfs_open(path, O_CREAT | O_RDWR, 0644);
+    if (fd < 0) {
+        fut_printf("[MISC-TEST] FAIL: xattr_container_compat: cannot create test file: %d\n", fd);
+        for (int t = 2475; t <= 2482; t++) fut_test_fail(t);
+        return;
+    }
+    fut_vfs_close(fd);
+
+    /* ---- Test 2475: user.* namespace round-trip ---- */
+    fut_printf("[MISC-TEST] Test 2475: user.docker.label setxattr+getxattr\n");
+    {
+        const char *xname = "user.docker.label";
+        const char *xval = "container=myapp";
+        long r = sys_setxattr(path, xname, xval, 15, 0);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] FAIL 2475: setxattr returned %ld\n", r);
+            fut_test_fail(2475);
+        } else {
+            char buf[64];
+            __builtin_memset(buf, 0, sizeof(buf));
+            long n = sys_getxattr(path, xname, buf, sizeof(buf));
+            if (n == 15 && __builtin_memcmp(buf, xval, 15) == 0) {
+                fut_printf("[MISC-TEST] pass 2475: user.docker.label round-trip ok\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2475: getxattr returned %ld\n", n);
+                fut_test_fail(2475);
+            }
+        }
+    }
+
+    /* ---- Test 2476: security.* namespace ---- */
+    fut_printf("[MISC-TEST] Test 2476: security.selinux xattr\n");
+    {
+        const char *xname = "security.selinux";
+        const char *xval = "system_u:object_r:container_file_t:s0";
+        long r = sys_setxattr(path, xname, xval, 37, 0);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] FAIL 2476: setxattr security.selinux returned %ld\n", r);
+            fut_test_fail(2476);
+        } else {
+            char buf[64];
+            __builtin_memset(buf, 0, sizeof(buf));
+            long n = sys_getxattr(path, xname, buf, sizeof(buf));
+            if (n == 37 && __builtin_memcmp(buf, xval, 37) == 0) {
+                fut_printf("[MISC-TEST] pass 2476: security.selinux round-trip ok\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2476: getxattr returned %ld\n", n);
+                fut_test_fail(2476);
+            }
+        }
+    }
+
+    /* ---- Test 2477: trusted.* namespace (Docker overlay.opaque) ---- */
+    fut_printf("[MISC-TEST] Test 2477: trusted.overlay.opaque xattr\n");
+    {
+        const char *xname = "trusted.overlay.opaque";
+        const char *xval = "y";
+        long r = sys_setxattr(path, xname, xval, 1, 0);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] FAIL 2477: setxattr trusted.overlay.opaque returned %ld\n", r);
+            fut_test_fail(2477);
+        } else {
+            char buf[16];
+            __builtin_memset(buf, 0, sizeof(buf));
+            long n = sys_getxattr(path, xname, buf, sizeof(buf));
+            if (n == 1 && buf[0] == 'y') {
+                fut_printf("[MISC-TEST] pass 2477: trusted.overlay.opaque='y'\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2477: getxattr returned %ld buf[0]=%d\n", n, buf[0]);
+                fut_test_fail(2477);
+            }
+        }
+    }
+
+    /* ---- Test 2478: system.* namespace ---- */
+    fut_printf("[MISC-TEST] Test 2478: system.posix_acl_access xattr\n");
+    {
+        const char *xname = "system.posix_acl_access";
+        const char *xval = "\x02\x00\x00\x00";  /* minimal ACL header */
+        long r = sys_setxattr(path, xname, xval, 4, 0);
+        if (r != 0) {
+            fut_printf("[MISC-TEST] FAIL 2478: setxattr system.posix_acl_access returned %ld\n", r);
+            fut_test_fail(2478);
+        } else {
+            char buf[16];
+            __builtin_memset(buf, 0, sizeof(buf));
+            long n = sys_getxattr(path, xname, buf, sizeof(buf));
+            if (n == 4 && buf[0] == '\x02') {
+                fut_printf("[MISC-TEST] pass 2478: system.posix_acl_access round-trip ok\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2478: getxattr returned %ld\n", n);
+                fut_test_fail(2478);
+            }
+        }
+    }
+
+    /* ---- Test 2479: listxattr returns all names NUL-separated ---- */
+    fut_printf("[MISC-TEST] Test 2479: listxattr multi-namespace enumeration\n");
+    {
+        char list[512];
+        __builtin_memset(list, 0, sizeof(list));
+        long n = sys_listxattr(path, list, sizeof(list));
+        if (n <= 0) {
+            fut_printf("[MISC-TEST] FAIL 2479: listxattr returned %ld\n", n);
+            fut_test_fail(2479);
+        } else {
+            /* Check that all four xattr names are present in the list */
+            int found = 0;
+            const char *p = list;
+            const char *end = list + n;
+            while (p < end && *p) {
+                size_t elen = 0;
+                while (p + elen < end && p[elen]) elen++;
+                if (elen == 17 && __builtin_memcmp(p, "user.docker.label", 17) == 0) found |= 1;
+                if (elen == 16 && __builtin_memcmp(p, "security.selinux", 16) == 0) found |= 2;
+                if (elen == 22 && __builtin_memcmp(p, "trusted.overlay.opaque", 22) == 0) found |= 4;
+                if (elen == 23 && __builtin_memcmp(p, "system.posix_acl_access", 23) == 0) found |= 8;
+                p += elen + 1;
+            }
+            if (found == 15) {
+                fut_printf("[MISC-TEST] pass 2479: listxattr found all 4 namespaces (total=%ld bytes)\n", n);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2479: listxattr missing some names (found=0x%x)\n", found);
+                fut_test_fail(2479);
+            }
+        }
+    }
+
+    /* ---- Test 2480: removexattr + getxattr -> ENODATA ---- */
+    fut_printf("[MISC-TEST] Test 2480: removexattr then getxattr -> ENODATA\n");
+    {
+        long r = sys_removexattr(path, "user.docker.label");
+        if (r != 0) {
+            fut_printf("[MISC-TEST] FAIL 2480: removexattr returned %ld\n", r);
+            fut_test_fail(2480);
+        } else {
+            char buf[16];
+            long n = sys_getxattr(path, "user.docker.label", buf, sizeof(buf));
+            if (n == -61) {  /* ENODATA = 61 */
+                fut_printf("[MISC-TEST] pass 2480: removed attr -> ENODATA\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2480: getxattr after remove returned %ld (expected -61)\n", n);
+                fut_test_fail(2480);
+            }
+        }
+    }
+
+    /* ---- Test 2481: XATTR_CREATE + XATTR_REPLACE semantics ---- */
+    fut_printf("[MISC-TEST] Test 2481: XATTR_CREATE/REPLACE flag enforcement\n");
+    {
+        /* Set a fresh attr first */
+        sys_setxattr(path, "user.flagtest", "v1", 2, 0);
+
+        /* XATTR_CREATE on existing -> EEXIST */
+        long r1 = sys_setxattr(path, "user.flagtest", "v2", 2, XCC_XATTR_CREATE);
+        /* XATTR_REPLACE on missing -> ENODATA */
+        long r2 = sys_setxattr(path, "user.nonexistent", "v3", 2, XCC_XATTR_REPLACE);
+
+        if (r1 == -17 /* EEXIST */ && r2 == -61 /* ENODATA */) {
+            fut_printf("[MISC-TEST] pass 2481: CREATE->EEXIST=%ld REPLACE->ENODATA=%ld\n", r1, r2);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL 2481: CREATE=%ld (expect -17) REPLACE=%ld (expect -61)\n", r1, r2);
+            fut_test_fail(2481);
+        }
+
+        /* Clean up */
+        sys_removexattr(path, "user.flagtest");
+    }
+
+    /* ---- Test 2482: getxattr size query (size=0) ---- */
+    fut_printf("[MISC-TEST] Test 2482: getxattr size=0 returns value length\n");
+    {
+        /* trusted.overlay.opaque = "y" (1 byte) still set from Test 2477 */
+        long n = sys_getxattr(path, "trusted.overlay.opaque", (void *)0, 0);
+        if (n == 1) {
+            fut_printf("[MISC-TEST] pass 2482: size query returned %ld\n", n);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL 2482: size query returned %ld (expected 1)\n", n);
+            fut_test_fail(2482);
+        }
+    }
+
+    /* Clean up */
+    sys_removexattr(path, "security.selinux");
+    sys_removexattr(path, "trusted.overlay.opaque");
+    sys_removexattr(path, "system.posix_acl_access");
+    fut_vfs_unlink(path);
+}
+
+/* ============================================================
  * Tests 2464-2471: SCM_RIGHTS comprehensive FD passing
  *
  * Verifies:
@@ -69763,6 +69989,254 @@ t2471:
     }
 
 t_scm_done:
+    (void)0;
+}
+
+/* ============================================================
+ * Tests 2495-2502: dup3 O_CLOEXEC and F_DUPFD_CLOEXEC POSIX compliance
+ *
+ * Verifies:
+ *   2495: dup3(fd, newfd, O_CLOEXEC) sets FD_CLOEXEC on newfd
+ *   2496: dup3(fd, newfd, 0) clears FD_CLOEXEC on newfd
+ *   2497: dup3 with invalid flags returns EINVAL
+ *   2498: F_DUPFD_CLOEXEC sets FD_CLOEXEC on duplicated fd
+ *   2499: F_DUPFD (no CLOEXEC) clears FD_CLOEXEC on duplicated fd
+ *   2500: dup2(oldfd, newfd) clears FD_CLOEXEC on newfd
+ *   2501: F_DUPFD_CLOEXEC respects minfd argument
+ *   2502: dup3 O_CLOEXEC survives subsequent F_GETFD query
+ * ============================================================ */
+static void test_dup3_fcntl_cloexec_compliance(void) {
+    extern long sys_dup3(int oldfd, int newfd, int flags);
+    extern long sys_dup2(int oldfd, int newfd);
+    extern long sys_fcntl(int fd, int cmd, uint64_t arg);
+    extern long sys_close(int fd);
+
+    /* ---- Test 2495: dup3 with O_CLOEXEC sets FD_CLOEXEC ---- */
+    fut_printf("[MISC-TEST] Test 2495: dup3(fd, newfd, O_CLOEXEC) sets FD_CLOEXEC\n");
+    {
+        int fd = fut_vfs_open("/test_dup3_cloexec_2495.txt", 0x42 /* O_RDWR|O_CREAT */, 0644);
+        if (fd < 0) { fut_test_fail(2495); goto t2496; }
+
+        long newfd = sys_dup3(fd, 40, 0x80000 /* O_CLOEXEC */);
+        if (newfd < 0) {
+            fut_printf("[MISC-TEST] FAIL 2495: dup3 returned %ld\n", newfd);
+            sys_close(fd); fut_test_fail(2495); goto t2496;
+        }
+
+        long flags = sys_fcntl((int)newfd, 1 /* F_GETFD */, 0);
+        sys_close((int)newfd);
+        sys_close(fd);
+
+        if (flags >= 0 && (flags & 1 /* FD_CLOEXEC */)) {
+            fut_printf("[MISC-TEST] pass Test 2495: dup3 O_CLOEXEC set FD_CLOEXEC\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL 2495: F_GETFD=0x%lx, expected FD_CLOEXEC\n", flags);
+            fut_test_fail(2495);
+        }
+    }
+
+t2496:
+    /* ---- Test 2496: dup3 with flags=0 clears FD_CLOEXEC ---- */
+    fut_printf("[MISC-TEST] Test 2496: dup3(fd, newfd, 0) clears FD_CLOEXEC\n");
+    {
+        int fd = fut_vfs_open("/test_dup3_nocloexec_2496.txt", 0x42, 0644);
+        if (fd < 0) { fut_test_fail(2496); goto t2497; }
+
+        /* First set FD_CLOEXEC on fd so we can verify dup3 does NOT inherit it */
+        sys_fcntl(fd, 2 /* F_SETFD */, 1 /* FD_CLOEXEC */);
+
+        long newfd = sys_dup3(fd, 41, 0 /* no flags */);
+        if (newfd < 0) {
+            fut_printf("[MISC-TEST] FAIL 2496: dup3 returned %ld\n", newfd);
+            sys_close(fd); fut_test_fail(2496); goto t2497;
+        }
+
+        long flags = sys_fcntl((int)newfd, 1 /* F_GETFD */, 0);
+        sys_close((int)newfd);
+        sys_close(fd);
+
+        if (flags >= 0 && !(flags & 1 /* FD_CLOEXEC */)) {
+            fut_printf("[MISC-TEST] pass Test 2496: dup3 flags=0 cleared FD_CLOEXEC\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL 2496: F_GETFD=0x%lx, expected no FD_CLOEXEC\n", flags);
+            fut_test_fail(2496);
+        }
+    }
+
+t2497:
+    /* ---- Test 2497: dup3 with invalid flags returns EINVAL ---- */
+    fut_printf("[MISC-TEST] Test 2497: dup3(fd, newfd, invalid_flags) -> EINVAL\n");
+    {
+        int fd = fut_vfs_open("/test_dup3_badflags_2497.txt", 0x42, 0644);
+        if (fd < 0) { fut_test_fail(2497); goto t2498; }
+
+        /* Use a flag that is NOT O_CLOEXEC */
+        long ret = sys_dup3(fd, 42, 0x100 /* invalid flag */);
+        sys_close(fd);
+
+        if (ret == -22 /* -EINVAL */) {
+            fut_printf("[MISC-TEST] pass Test 2497: dup3 invalid flags -> EINVAL\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL 2497: expected -EINVAL, got %ld\n", ret);
+            if (ret >= 0) sys_close((int)ret);
+            fut_test_fail(2497);
+        }
+    }
+
+t2498:
+    /* ---- Test 2498: F_DUPFD_CLOEXEC sets FD_CLOEXEC on new fd ---- */
+    fut_printf("[MISC-TEST] Test 2498: fcntl(F_DUPFD_CLOEXEC) sets FD_CLOEXEC\n");
+    {
+        int fd = fut_vfs_open("/test_dupfd_cloexec_2498.txt", 0x42, 0644);
+        if (fd < 0) { fut_test_fail(2498); goto t2499; }
+
+        long newfd = sys_fcntl(fd, 1030 /* F_DUPFD_CLOEXEC */, 0);
+        if (newfd < 0) {
+            fut_printf("[MISC-TEST] FAIL 2498: F_DUPFD_CLOEXEC returned %ld\n", newfd);
+            sys_close(fd); fut_test_fail(2498); goto t2499;
+        }
+
+        long flags = sys_fcntl((int)newfd, 1 /* F_GETFD */, 0);
+        sys_close((int)newfd);
+        sys_close(fd);
+
+        if (flags >= 0 && (flags & 1 /* FD_CLOEXEC */)) {
+            fut_printf("[MISC-TEST] pass Test 2498: F_DUPFD_CLOEXEC set FD_CLOEXEC\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL 2498: F_GETFD=0x%lx, expected FD_CLOEXEC\n", flags);
+            fut_test_fail(2498);
+        }
+    }
+
+t2499:
+    /* ---- Test 2499: F_DUPFD (plain) does NOT set FD_CLOEXEC ---- */
+    fut_printf("[MISC-TEST] Test 2499: fcntl(F_DUPFD) clears FD_CLOEXEC\n");
+    {
+        int fd = fut_vfs_open("/test_dupfd_nocloexec_2499.txt", 0x42, 0644);
+        if (fd < 0) { fut_test_fail(2499); goto t2500; }
+
+        /* Set FD_CLOEXEC on source to verify it is NOT inherited */
+        sys_fcntl(fd, 2 /* F_SETFD */, 1 /* FD_CLOEXEC */);
+
+        long newfd = sys_fcntl(fd, 0 /* F_DUPFD */, 0);
+        if (newfd < 0) {
+            fut_printf("[MISC-TEST] FAIL 2499: F_DUPFD returned %ld\n", newfd);
+            sys_close(fd); fut_test_fail(2499); goto t2500;
+        }
+
+        long flags = sys_fcntl((int)newfd, 1 /* F_GETFD */, 0);
+        sys_close((int)newfd);
+        sys_close(fd);
+
+        if (flags >= 0 && !(flags & 1 /* FD_CLOEXEC */)) {
+            fut_printf("[MISC-TEST] pass Test 2499: F_DUPFD does not inherit FD_CLOEXEC\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL 2499: F_GETFD=0x%lx, expected no FD_CLOEXEC\n", flags);
+            fut_test_fail(2499);
+        }
+    }
+
+t2500:
+    /* ---- Test 2500: dup2 clears FD_CLOEXEC on newfd ---- */
+    fut_printf("[MISC-TEST] Test 2500: dup2(oldfd, newfd) clears FD_CLOEXEC\n");
+    {
+        int fd = fut_vfs_open("/test_dup2_cloexec_2500.txt", 0x42, 0644);
+        if (fd < 0) { fut_test_fail(2500); goto t2501; }
+
+        /* Set FD_CLOEXEC on source */
+        sys_fcntl(fd, 2 /* F_SETFD */, 1 /* FD_CLOEXEC */);
+
+        long newfd = sys_dup2(fd, 43);
+        if (newfd < 0) {
+            fut_printf("[MISC-TEST] FAIL 2500: dup2 returned %ld\n", newfd);
+            sys_close(fd); fut_test_fail(2500); goto t2501;
+        }
+
+        /* Per POSIX, dup2 must NOT set FD_CLOEXEC on newfd */
+        long flags = sys_fcntl((int)newfd, 1 /* F_GETFD */, 0);
+        sys_close((int)newfd);
+        sys_close(fd);
+
+        if (flags >= 0 && !(flags & 1 /* FD_CLOEXEC */)) {
+            fut_printf("[MISC-TEST] pass Test 2500: dup2 cleared FD_CLOEXEC on newfd\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL 2500: F_GETFD=0x%lx, expected no FD_CLOEXEC\n", flags);
+            fut_test_fail(2500);
+        }
+    }
+
+t2501:
+    /* ---- Test 2501: F_DUPFD_CLOEXEC respects minfd argument ---- */
+    fut_printf("[MISC-TEST] Test 2501: F_DUPFD_CLOEXEC(minfd=50) returns fd >= 50\n");
+    {
+        int fd = fut_vfs_open("/test_dupfd_minfd_2501.txt", 0x42, 0644);
+        if (fd < 0) { fut_test_fail(2501); goto t2502; }
+
+        long newfd = sys_fcntl(fd, 1030 /* F_DUPFD_CLOEXEC */, 50);
+        if (newfd < 0) {
+            fut_printf("[MISC-TEST] FAIL 2501: F_DUPFD_CLOEXEC(50) returned %ld\n", newfd);
+            sys_close(fd); fut_test_fail(2501); goto t2502;
+        }
+
+        long flags = sys_fcntl((int)newfd, 1 /* F_GETFD */, 0);
+        int pass = (newfd >= 50) && (flags >= 0) && (flags & 1 /* FD_CLOEXEC */);
+        sys_close((int)newfd);
+        sys_close(fd);
+
+        if (pass) {
+            fut_printf("[MISC-TEST] pass Test 2501: F_DUPFD_CLOEXEC(50) -> fd=%ld with FD_CLOEXEC\n", newfd);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL 2501: fd=%ld flags=0x%lx\n", newfd, flags);
+            fut_test_fail(2501);
+        }
+    }
+
+t2502:
+    /* ---- Test 2502: dup3 O_CLOEXEC survives F_GETFD round-trip ---- */
+    fut_printf("[MISC-TEST] Test 2502: dup3 O_CLOEXEC -> F_GETFD -> F_SETFD round-trip\n");
+    {
+        int fd = fut_vfs_open("/test_dup3_roundtrip_2502.txt", 0x42, 0644);
+        if (fd < 0) { fut_test_fail(2502); goto t_dup3_done; }
+
+        long newfd = sys_dup3(fd, 44, 0x80000 /* O_CLOEXEC */);
+        if (newfd < 0) {
+            fut_printf("[MISC-TEST] FAIL 2502: dup3 returned %ld\n", newfd);
+            sys_close(fd); fut_test_fail(2502); goto t_dup3_done;
+        }
+
+        /* Read FD_CLOEXEC, clear it, verify cleared, set it again, verify set */
+        long f1 = sys_fcntl((int)newfd, 1 /* F_GETFD */, 0);
+        int step1_ok = (f1 >= 0 && (f1 & 1));
+
+        sys_fcntl((int)newfd, 2 /* F_SETFD */, 0);
+        long f2 = sys_fcntl((int)newfd, 1 /* F_GETFD */, 0);
+        int step2_ok = (f2 >= 0 && !(f2 & 1));
+
+        sys_fcntl((int)newfd, 2 /* F_SETFD */, 1 /* FD_CLOEXEC */);
+        long f3 = sys_fcntl((int)newfd, 1 /* F_GETFD */, 0);
+        int step3_ok = (f3 >= 0 && (f3 & 1));
+
+        sys_close((int)newfd);
+        sys_close(fd);
+
+        if (step1_ok && step2_ok && step3_ok) {
+            fut_printf("[MISC-TEST] pass Test 2502: FD_CLOEXEC round-trip correct\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL 2502: steps=%d/%d/%d f1=0x%lx f2=0x%lx f3=0x%lx\n",
+                       step1_ok, step2_ok, step3_ok, f1, f2, f3);
+            fut_test_fail(2502);
+        }
+    }
+
+t_dup3_done:
     (void)0;
 }
 
@@ -74096,6 +74570,8 @@ void fut_misc_test_thread(void *arg) {
     test_rlimit_nofile_enforcement(); /* Tests 2441-2446: RLIMIT_NOFILE enforcement deep coverage */
     test_execve_shebang_comprehensive(); /* Tests 2455-2463: shebang #! comprehensive coverage */
     test_scm_rights_comprehensive(); /* Tests 2464-2471: SCM_RIGHTS comprehensive FD passing */
+    test_xattr_container_compat(); /* Tests 2475-2482: xattr container compat (multi-namespace, generic storage) */
+    test_dup3_fcntl_cloexec_compliance(); /* Tests 2495-2502: dup3 O_CLOEXEC and F_DUPFD_CLOEXEC POSIX compliance */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

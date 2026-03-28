@@ -436,10 +436,14 @@ long sys_dup3(int oldfd, int newfd, int flags) {
         return ret;
     }
 
-    /* Apply O_CLOEXEC if requested (set per-FD flag directly) */
-    if (local_flags & O_CLOEXEC) {
-        if (task->fd_flags)
-            task->fd_flags[local_newfd] |= FD_CLOEXEC;
+    /* Apply FD_CLOEXEC atomically: set if O_CLOEXEC requested, clear otherwise.
+     * vfs_alloc_specific_fd_for_task() already clears fd_flags to 0, but be
+     * explicit here so the POSIX contract is obvious in the dup3 code path. */
+    if (task->fd_flags) {
+        if (local_flags & O_CLOEXEC)
+            task->fd_flags[local_newfd] = FD_CLOEXEC;
+        else
+            task->fd_flags[local_newfd] = 0;
     }
 
     /* Propagate socket ownership if oldfd is a socket */

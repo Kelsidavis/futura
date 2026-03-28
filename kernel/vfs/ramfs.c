@@ -755,6 +755,7 @@ static int ramfs_create(struct fut_vnode *dir, const char *name, uint32_t mode, 
     vnode->ops = dir->ops;  /* Same ops as parent */
     vnode->uid = 0;  /* Will be set by vfs_init_vnode_ownership */
     vnode->gid = 0;  /* Will be set by vfs_init_vnode_ownership */
+    vnode->xattrs = NULL;  /* Generic xattr list (ramfs uses node->xattrs instead) */
     vnode->parent = dir;  /* Link to parent for '..' traversal */
     /* Store name for path reconstruction */
     {
@@ -889,6 +890,7 @@ static int ramfs_mkdir(struct fut_vnode *dir, const char *name, uint32_t mode) {
     vnode->ops = dir->ops;
     vnode->uid = 0;  /* Will be set by vfs_init_vnode_ownership */
     vnode->gid = 0;  /* Will be set by vfs_init_vnode_ownership */
+    vnode->xattrs = NULL;  /* Generic xattr list */
     vnode->parent = dir;  /* Link to parent for '..' traversal */
     /* Store name for path reconstruction (getcwd) */
     {
@@ -1748,6 +1750,7 @@ static int ramfs_symlink(struct fut_vnode *parent, const char *linkpath, const c
     link_vnode->gid = 0;  /* Will be set by vfs_init_vnode_ownership */
     link_vnode->parent = NULL;
     link_vnode->name = NULL;
+    link_vnode->xattrs = NULL;
     link_vnode->ops = &ramfs_vnode_ops;
     vfs_init_vnode_ownership(link_vnode, parent, 0777);
     /* Initialize lock fields to prevent garbage from uninitialized memory */
@@ -2336,6 +2339,7 @@ static int ramfs_mount(const char *device, int flags, void *data, fut_handle_t b
     root->gid = 0;
     root->parent = NULL;
     root->name = NULL;
+    root->xattrs = NULL;
     root->ops = &ramfs_vnode_ops;
     vfs_init_vnode_ownership(root, NULL, root_mode);
     fut_vnode_lock_init(root);

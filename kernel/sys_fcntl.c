@@ -764,10 +764,13 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
             return ret;
         }
 
-        /* Set close-on-exec if F_DUPFD_CLOEXEC (per-FD flag) */
+        /* Set close-on-exec atomically if F_DUPFD_CLOEXEC (per-FD flag).
+         * For plain F_DUPFD the fd_flags are already cleared to 0 by
+         * vfs_alloc_specific_fd_for_task(), matching POSIX (new FD does
+         * not inherit FD_CLOEXEC). */
         if (local_cmd == F_DUPFD_CLOEXEC) {
             if (task->fd_flags)
-                task->fd_flags[newfd] |= FD_CLOEXEC;
+                task->fd_flags[newfd] = FD_CLOEXEC;
         }
 
         /* Propagate socket ownership if oldfd is a socket */

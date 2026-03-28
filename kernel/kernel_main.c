@@ -1288,10 +1288,10 @@ void fut_kernel_main(void) {
                   "nobody:x:65534:\n");
         ETC_WRITE("/etc/os-release",
                   "NAME=\"Futura OS\"\n"
-                  "VERSION=\"0.7.0\"\n"
+                  "VERSION=\"0.7.4\"\n"
                   "ID=futura\n"
-                  "VERSION_ID=0.7.0\n"
-                  "PRETTY_NAME=\"Futura OS 0.7.0\"\n"
+                  "VERSION_ID=0.7.4\n"
+                  "PRETTY_NAME=\"Futura OS 0.7.4\"\n"
                   "HOME_URL=\"https://github.com/netrunner-labs/futura\"\n");
         ETC_WRITE("/etc/profile",
                   "# Futura OS system profile\n"
@@ -1320,9 +1320,9 @@ void fut_kernel_main(void) {
                   "cat /etc/motd\n");
         ETC_WRITE("/etc/motd",
                   "\n"
-                  "  Futura OS 0.7.0\n"
+                  "  Futura OS 0.7.4\n"
                   "\n"
-                  "  360 built-in commands — type 'help' or 'man <cmd>'\n"
+                  "  361 built-in commands — type 'help' or 'man <cmd>'\n"
                   "\n"
                   "  Development:  vi, make, git, patch, bc, curl, tar, less\n"
                   "  Networking:   ping, wget, curl, nc, netstat, ss, httpd\n"

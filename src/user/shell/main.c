@@ -316,6 +316,16 @@ static void cmd_sqlite3(int argc, char *argv[]);
 static void cmd_mysql(int argc, char *argv[]);
 static void cmd_psql(int argc, char *argv[]);
 static void cmd_redis_cli(int argc, char *argv[]);
+static void cmd_docker(int argc, char *argv[]);
+static void cmd_kubectl(int argc, char *argv[]);
+static void cmd_terraform(int argc, char *argv[]);
+static void cmd_ansible(int argc, char *argv[]);
+static void cmd_vagrant(int argc, char *argv[]);
+static void cmd_helm(int argc, char *argv[]);
+static void cmd_podman(int argc, char *argv[]);
+static void cmd_crictl(int argc, char *argv[]);
+static void cmd_ctr(int argc, char *argv[]);
+static void cmd_buildah(int argc, char *argv[]);
 
 /* Forward declaration for prompt */
 static void print_prompt(void);
@@ -767,7 +777,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     const char *builtins[] = {
         "ab", "arp", "ascii", "base32", "bg", "blockdev", "brctl", "cal", "cd", "chgrp", "chmod", "chroot", "chrt", "clear", "cmp", "comm", "conntrack", "cpupower", "date", "depmod", "dd", "df", "dhclient", "dig", "dmesg", "echo", "edit", "ethtool", "expand", "expr", "factor", "file", "fold", "fuser", "hdparm", "hexdump", "host", "install", "ionice", "iperf3", "locale", "lsmod", "lsns", "lsof", "md5sum", "mkfifo", "modprobe", "mtr", "nameif", "nc", "nice", "nohup", "numactl", "partprobe", "patch", "perf", "pgrep", "pidof", "pkill", "poweroff", "prlimit", "reboot", "renice", "reset", "route", "seq", "sha1sum", "sha512sum", "sleep", "smartctl", "stdbuf", "strings", "swapon", "swapoff", "tac", "taskset", "time", "timeout", "tput", "traceroute", "tty", "unexpand", "wget", "whatis", "whois", "xxd", "exit", "export", "fg", "free",
         "help", "hostname", "httpd", "id", "ifconfig", "iostat", "ipcs", "iptables", "jobs", "kill", "logger", "losetup", "ls", "lsblk", "lspci", "mkfs", "mount", "netstat",
-        ".", "adduser", "alias", "arch", "basename", "blkid", "bridge", "busctl", "certutil", "chage", "coredumpctl", "deluser", "dialog", "dirname", "du", "exec", "false", "fmt", "getconf", "gpg", "groupadd", "groupdel", "groups", "history", "hostnamectl", "infocmp", "ip", "ipcmk", "ipcrm", "journalctl", "ln", "localectl", "loginctl", "logname", "lscpu", "machinectl", "mkswap", "mktemp", "more", "nawk", "networkctl", "nft", "nproc", "nslookup", "openssl", "passwd", "ping", "printenv", "printf", "ps", "pwd", "read", "readlink", "realpath", "resolvectl", "set", "sha1sum", "sha256sum", "shutdown", "source", "ss", "ssh-keygen", "stat", "strace", "stty", "su", "sync", "sysctl", "sysinfo", "systemd-analyze", "tc", "test", "tic", "timedatectl", "toe", "top", "trap", "tree", "true", "tset", "type", "umask", "unalias", "uname", "uptime", "users", "version", "vi", "vipw", "vmstat", "w", "wait", "watch", "wdctl", "whiptail", "which", "whoami", "xargs", "yes", NULL
+        ".", "adduser", "alias", "ansible", "ansible-playbook", "arch", "basename", "blkid", "bridge", "buildah", "busctl", "certutil", "chage", "coredumpctl", "crictl", "ctr", "deluser", "dialog", "dirname", "docker", "du", "exec", "false", "fmt", "getconf", "gpg", "groupadd", "groupdel", "groups", "helm", "history", "hostnamectl", "infocmp", "ip", "ipcmk", "ipcrm", "journalctl", "kubectl", "ln", "localectl", "loginctl", "logname", "lscpu", "machinectl", "mkswap", "mktemp", "more", "nawk", "networkctl", "nft", "nproc", "nslookup", "openssl", "passwd", "ping", "podman", "printenv", "printf", "ps", "pwd", "read", "readlink", "realpath", "resolvectl", "set", "sha1sum", "sha256sum", "shutdown", "source", "ss", "ssh-keygen", "stat", "strace", "stty", "su", "sync", "sysctl", "sysinfo", "systemd-analyze", "tc", "terraform", "test", "tic", "timedatectl", "toe", "top", "trap", "tree", "true", "tset", "type", "umask", "unalias", "uname", "uptime", "users", "vagrant", "version", "vi", "vipw", "vmstat", "w", "wait", "watch", "wdctl", "whiptail", "which", "whoami", "xargs", "yes", NULL
     };
 
     /* External commands we might have */
@@ -14266,6 +14276,36 @@ watch_sleep:
     } else if (strcmp_simple(argv[0], "redis-cli") == 0) {
         cmd_redis_cli(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "docker") == 0) {
+        cmd_docker(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "kubectl") == 0) {
+        cmd_kubectl(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "terraform") == 0) {
+        cmd_terraform(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "ansible") == 0 || strcmp_simple(argv[0], "ansible-playbook") == 0) {
+        cmd_ansible(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "vagrant") == 0) {
+        cmd_vagrant(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "helm") == 0) {
+        cmd_helm(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "podman") == 0) {
+        cmd_podman(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "crictl") == 0) {
+        cmd_crictl(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "ctr") == 0) {
+        cmd_ctr(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "buildah") == 0) {
+        cmd_buildah(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -14598,6 +14638,17 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "mysql") == 0 ||
             strcmp_simple(cmd, "psql") == 0 ||
             strcmp_simple(cmd, "redis-cli") == 0 ||
+            strcmp_simple(cmd, "docker") == 0 ||
+            strcmp_simple(cmd, "kubectl") == 0 ||
+            strcmp_simple(cmd, "terraform") == 0 ||
+            strcmp_simple(cmd, "ansible") == 0 ||
+            strcmp_simple(cmd, "ansible-playbook") == 0 ||
+            strcmp_simple(cmd, "vagrant") == 0 ||
+            strcmp_simple(cmd, "helm") == 0 ||
+            strcmp_simple(cmd, "podman") == 0 ||
+            strcmp_simple(cmd, "crictl") == 0 ||
+            strcmp_simple(cmd, "ctr") == 0 ||
+            strcmp_simple(cmd, "buildah") == 0 ||
             0);
 }
 
@@ -19186,7 +19237,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   350 built-in commands — type 'help'    |\n");
+    write_str(1, "|   360 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");
@@ -30642,6 +30693,817 @@ static void cmd_redis_cli(int argc, char *argv[]) {
             write_str(1, "'\n");
         }
     }
+}
+
+/* docker - Simulated Docker CLI */
+static void cmd_docker(int argc, char *argv[]) {
+    if (argc < 2 || strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "Usage: docker [OPTIONS] COMMAND\n\n");
+        write_str(1, "A self-sufficient runtime for containers\n\n");
+        write_str(1, "Commands:\n");
+        write_str(1, "  build       Build an image from a Dockerfile\n");
+        write_str(1, "  images      List images\n");
+        write_str(1, "  ps          List containers\n");
+        write_str(1, "  pull        Download an image from a registry\n");
+        write_str(1, "  run         Create and run a new container\n");
+        write_str(1, "  stop        Stop running containers\n");
+        write_str(1, "  version     Show the Docker version information\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "version") == 0 || strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "Docker version 27.1.1, build 6312585 (futura)\n");
+        write_str(1, "  API version:  1.46\n");
+        write_str(1, "  Go version:   go1.22.5\n");
+        write_str(1, "  OS/Arch:      futura/amd64\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "ps") == 0) {
+        write_str(1, "CONTAINER ID   IMAGE     COMMAND   CREATED   STATUS    PORTS     NAMES\n");
+        if (argc >= 3 && strcmp_simple(argv[2], "-a") == 0) {
+            write_str(1, "a1b2c3d4e5f6   nginx:latest   \"/docker-entry...\"   2 hours ago   Exited (0)             web-server\n");
+            write_str(1, "f6e5d4c3b2a1   redis:7        \"redis-server\"       3 hours ago   Exited (0)             cache\n");
+        }
+        return;
+    }
+    if (strcmp_simple(argv[1], "images") == 0) {
+        write_str(1, "REPOSITORY   TAG       IMAGE ID       CREATED        SIZE\n");
+        write_str(1, "nginx        latest    a8758716bb6a   2 weeks ago    187MB\n");
+        write_str(1, "redis        7         7614ae9453d1   3 weeks ago    116MB\n");
+        write_str(1, "alpine       3.19      05455a08881e   4 weeks ago    7.38MB\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "run") == 0) {
+        if (argc < 3) {
+            write_str(2, "docker: requires at least 1 argument.\n");
+            return;
+        }
+        write_str(1, "Unable to find image '");
+        write_str(1, argv[argc - 1]);
+        write_str(1, "' locally\n");
+        write_str(1, "Pulling from library/");
+        write_str(1, argv[argc - 1]);
+        write_str(1, "\nDigest: sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2\n");
+        write_str(1, "Status: Downloaded newer image\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "build") == 0) {
+        if (argc < 3) {
+            write_str(2, "docker build requires exactly 1 argument.\n");
+            return;
+        }
+        write_str(1, "[+] Building 0.0s (0/0)\n");
+        write_str(1, " => [internal] load build definition from Dockerfile\n");
+        write_str(1, " => [internal] load metadata\n");
+        write_str(1, " => CACHED [1/1] FROM docker.io/library/alpine:3.19\n");
+        write_str(1, " => exporting to image\n");
+        write_str(1, " => => naming to docker.io/library/myimage:latest\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "pull") == 0) {
+        if (argc < 3) {
+            write_str(2, "docker pull requires exactly 1 argument.\n");
+            return;
+        }
+        write_str(1, "Using default tag: latest\n");
+        write_str(1, "latest: Pulling from library/");
+        write_str(1, argv[2]);
+        write_str(1, "\nDigest: sha256:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890\n");
+        write_str(1, "Status: Image is up to date for ");
+        write_str(1, argv[2]);
+        write_str(1, ":latest\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "stop") == 0) {
+        if (argc < 3) {
+            write_str(2, "docker stop requires at least 1 argument.\n");
+            return;
+        }
+        write_str(1, argv[2]);
+        write_str(1, "\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "info") == 0) {
+        write_str(1, "Client: Docker Engine - Community\n");
+        write_str(1, " Version:    27.1.1\n");
+        write_str(1, "Server:\n");
+        write_str(1, " Containers: 2\n  Running: 0\n  Paused: 0\n  Stopped: 2\n");
+        write_str(1, " Images: 3\n");
+        write_str(1, " Storage Driver: overlay2\n");
+        write_str(1, " Operating System: Futura OS\n");
+        write_str(1, " Architecture: x86_64\n");
+        return;
+    }
+    write_str(2, "docker: '");
+    write_str(2, argv[1]);
+    write_str(2, "' is not a docker command.\n");
+}
+
+/* kubectl - Simulated Kubernetes CLI */
+static void cmd_kubectl(int argc, char *argv[]) {
+    if (argc < 2 || strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "kubectl controls the Kubernetes cluster manager.\n\n");
+        write_str(1, "Usage: kubectl [command]\n\n");
+        write_str(1, "Commands:\n");
+        write_str(1, "  apply       Apply a configuration to a resource\n");
+        write_str(1, "  create      Create a resource\n");
+        write_str(1, "  delete      Delete resources\n");
+        write_str(1, "  describe    Show details of a resource\n");
+        write_str(1, "  get         Display one or many resources\n");
+        write_str(1, "  logs        Print the logs for a container\n");
+        write_str(1, "  version     Print client and server version\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "version") == 0) {
+        write_str(1, "Client Version: v1.30.2\n");
+        write_str(1, "Kustomize Version: v5.0.4-0\n");
+        write_str(1, "Server Version: v1.30.2\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "get") == 0) {
+        if (argc < 3) {
+            write_str(2, "error: Required resource not specified.\n");
+            return;
+        }
+        if (strcmp_simple(argv[2], "pods") == 0 || strcmp_simple(argv[2], "pod") == 0) {
+            write_str(1, "NAME                        READY   STATUS    RESTARTS   AGE\n");
+            write_str(1, "nginx-deployment-abc12       1/1     Running   0          24h\n");
+            write_str(1, "redis-master-def34           1/1     Running   0          12h\n");
+            write_str(1, "api-server-ghi56             1/1     Running   1          3d\n");
+        } else if (strcmp_simple(argv[2], "nodes") == 0 || strcmp_simple(argv[2], "node") == 0) {
+            write_str(1, "NAME           STATUS   ROLES           AGE   VERSION\n");
+            write_str(1, "futura-node1   Ready    control-plane   30d   v1.30.2\n");
+            write_str(1, "futura-node2   Ready    <none>          30d   v1.30.2\n");
+        } else if (strcmp_simple(argv[2], "services") == 0 || strcmp_simple(argv[2], "svc") == 0) {
+            write_str(1, "NAME         TYPE        CLUSTER-IP     EXTERNAL-IP   PORT(S)   AGE\n");
+            write_str(1, "kubernetes   ClusterIP   10.96.0.1      <none>        443/TCP   30d\n");
+            write_str(1, "nginx-svc    ClusterIP   10.96.45.12    <none>        80/TCP    24h\n");
+        } else if (strcmp_simple(argv[2], "namespaces") == 0 || strcmp_simple(argv[2], "ns") == 0) {
+            write_str(1, "NAME              STATUS   AGE\n");
+            write_str(1, "default           Active   30d\n");
+            write_str(1, "kube-system       Active   30d\n");
+            write_str(1, "kube-public       Active   30d\n");
+        } else if (strcmp_simple(argv[2], "deployments") == 0 || strcmp_simple(argv[2], "deploy") == 0) {
+            write_str(1, "NAME               READY   UP-TO-DATE   AVAILABLE   AGE\n");
+            write_str(1, "nginx-deployment   1/1     1            1           24h\n");
+            write_str(1, "api-server         1/1     1            1           3d\n");
+        } else {
+            write_str(1, "No resources found in default namespace.\n");
+        }
+        return;
+    }
+    if (strcmp_simple(argv[1], "describe") == 0) {
+        if (argc < 3) {
+            write_str(2, "error: Required resource not specified.\n");
+            return;
+        }
+        if (strcmp_simple(argv[2], "pod") == 0 || strcmp_simple(argv[2], "pods") == 0) {
+            const char *name = (argc >= 4) ? argv[3] : "nginx-deployment-abc12";
+            write_str(1, "Name:         ");
+            write_str(1, name);
+            write_str(1, "\nNamespace:    default\n");
+            write_str(1, "Node:         futura-node1/10.0.0.1\n");
+            write_str(1, "Status:       Running\n");
+            write_str(1, "IP:           10.244.0.5\n");
+            write_str(1, "Containers:\n");
+            write_str(1, "  nginx:\n    Image:   nginx:latest\n    Port:    80/TCP\n    State:   Running\n");
+        } else if (strcmp_simple(argv[2], "node") == 0 || strcmp_simple(argv[2], "nodes") == 0) {
+            write_str(1, "Name:         futura-node1\n");
+            write_str(1, "Roles:        control-plane\n");
+            write_str(1, "OS Image:     Futura OS\n");
+            write_str(1, "Kernel:       futura 1.0\n");
+            write_str(1, "CPU:          4\n");
+            write_str(1, "Memory:       8192Mi\n");
+        } else {
+            write_str(1, "Name:         ");
+            write_str(1, argv[2]);
+            write_str(1, "\nNamespace:    default\n");
+        }
+        return;
+    }
+    if (strcmp_simple(argv[1], "apply") == 0) {
+        if (argc >= 4 && strcmp_simple(argv[2], "-f") == 0) {
+            write_str(1, "resource configured from '");
+            write_str(1, argv[3]);
+            write_str(1, "'\n");
+        } else {
+            write_str(2, "error: must specify -f <filename>\n");
+        }
+        return;
+    }
+    if (strcmp_simple(argv[1], "delete") == 0) {
+        if (argc < 3) {
+            write_str(2, "error: Required resource not specified.\n");
+            return;
+        }
+        write_str(1, argv[2]);
+        if (argc >= 4) {
+            write_str(1, " \"");
+            write_str(1, argv[3]);
+            write_str(1, "\" deleted\n");
+        } else {
+            write_str(1, " deleted\n");
+        }
+        return;
+    }
+    if (strcmp_simple(argv[1], "logs") == 0) {
+        if (argc < 3) {
+            write_str(2, "error: expected pod name\n");
+            return;
+        }
+        write_str(1, "2024-01-15T10:30:00Z Starting application...\n");
+        write_str(1, "2024-01-15T10:30:01Z Listening on port 8080\n");
+        write_str(1, "2024-01-15T10:30:05Z Ready to accept connections\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "cluster-info") == 0) {
+        write_str(1, "Kubernetes control plane is running at https://10.0.0.1:6443\n");
+        write_str(1, "CoreDNS is running at https://10.0.0.1:6443/api/v1/namespaces/kube-system/services/kube-dns:dns/proxy\n");
+        return;
+    }
+    write_str(2, "error: unknown command \"");
+    write_str(2, argv[1]);
+    write_str(2, "\"\n");
+}
+
+/* terraform - Simulated IaC CLI */
+static void cmd_terraform(int argc, char *argv[]) {
+    if (argc < 2 || strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "Usage: terraform [global options] <subcommand> [args]\n\n");
+        write_str(1, "Main commands:\n");
+        write_str(1, "  init          Prepare your working directory\n");
+        write_str(1, "  validate      Check whether the configuration is valid\n");
+        write_str(1, "  plan          Show changes required by the current configuration\n");
+        write_str(1, "  apply         Create or update infrastructure\n");
+        write_str(1, "  destroy       Destroy previously-created infrastructure\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "version") == 0 || strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "Terraform v1.9.2\non futura_amd64\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "init") == 0) {
+        write_str(1, "\n\033[1mInitializing the backend...\033[0m\n\n");
+        write_str(1, "\033[1mInitializing provider plugins...\033[0m\n");
+        write_str(1, "- Finding latest version of hashicorp/aws...\n");
+        write_str(1, "- Installing hashicorp/aws v5.60.0...\n");
+        write_str(1, "- Installed hashicorp/aws v5.60.0 (signed by HashiCorp)\n\n");
+        write_str(1, "\033[32m\033[1mTerraform has been successfully initialized!\033[0m\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "plan") == 0) {
+        write_str(1, "\nTerraform used the selected providers to generate the following execution plan.\n\n");
+        write_str(1, "  \033[32m+\033[0m aws_instance.web\n");
+        write_str(1, "      + ami           = \"ami-0abcdef1234567890\"\n");
+        write_str(1, "      + instance_type = \"t3.micro\"\n");
+        write_str(1, "      + tags          = { Name = \"web-server\" }\n\n");
+        write_str(1, "\033[1mPlan:\033[0m 1 to add, 0 to change, 0 to destroy.\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "apply") == 0) {
+        write_str(1, "\n\033[1maws_instance.web: Creating...\033[0m\n");
+        write_str(1, "\033[1maws_instance.web: Still creating... [10s elapsed]\033[0m\n");
+        write_str(1, "\033[1maws_instance.web: Creation complete after 15s [id=i-0abcdef1234567890]\033[0m\n\n");
+        write_str(1, "\033[32m\033[1mApply complete! Resources: 1 added, 0 changed, 0 destroyed.\033[0m\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "destroy") == 0) {
+        write_str(1, "\n\033[1maws_instance.web: Destroying... [id=i-0abcdef1234567890]\033[0m\n");
+        write_str(1, "\033[1maws_instance.web: Destruction complete after 5s\033[0m\n\n");
+        write_str(1, "\033[32m\033[1mDestroy complete! Resources: 1 destroyed.\033[0m\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "validate") == 0) {
+        write_str(1, "\033[32m\033[1mSuccess!\033[0m The configuration is valid.\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "fmt") == 0) {
+        write_str(1, "main.tf\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "output") == 0) {
+        write_str(1, "instance_ip = \"10.0.1.42\"\n");
+        write_str(1, "instance_id = \"i-0abcdef1234567890\"\n");
+        return;
+    }
+    write_str(2, "Terraform has no command named \"");
+    write_str(2, argv[1]);
+    write_str(2, "\".\n");
+}
+
+/* ansible - Simulated config management CLI */
+static void cmd_ansible(int argc, char *argv[]) {
+    int is_playbook = (strcmp_simple(argv[0], "ansible-playbook") == 0);
+
+    if (is_playbook) {
+        if (argc < 2) {
+            write_str(2, "usage: ansible-playbook [-h] playbook.yml\n");
+            return;
+        }
+        if (strcmp_simple(argv[1], "--version") == 0) {
+            write_str(1, "ansible-playbook [core 2.17.1] (futura)\n");
+            write_str(1, "  config file = /etc/ansible/ansible.cfg\n");
+            write_str(1, "  python version = 3.12.0\n");
+            return;
+        }
+        write_str(1, "\nPLAY [all] *****************************************************************\n\n");
+        write_str(1, "TASK [Gathering Facts] ****************************************************\n");
+        write_str(1, "\033[32mok: [localhost]\033[0m\n\n");
+        write_str(1, "TASK [Install packages] ***************************************************\n");
+        write_str(1, "\033[33mchanged: [localhost]\033[0m\n\n");
+        write_str(1, "PLAY RECAP ****************************************************************\n");
+        write_str(1, "\033[33mlocalhost\033[0m : ok=2  changed=1  unreachable=0  failed=0  skipped=0\n\n");
+        return;
+    }
+
+    /* ansible command */
+    if (argc < 2 || strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "usage: ansible [-h] [--version] [-m MODULE] [-a ARGS] pattern\n\n");
+        write_str(1, "Define and run a single task 'playbook' against a set of hosts.\n\n");
+        write_str(1, "Options:\n");
+        write_str(1, "  --version       show program's version number and exit\n");
+        write_str(1, "  -m MODULE       Name of the module to execute\n");
+        write_str(1, "  -a ARGS         Module arguments\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "ansible [core 2.17.1] (futura)\n");
+        write_str(1, "  config file = /etc/ansible/ansible.cfg\n");
+        write_str(1, "  python version = 3.12.0\n");
+        write_str(1, "  jinja version = 3.1.4\n");
+        write_str(1, "  libyaml = True\n");
+        return;
+    }
+    /* ansible <host> -m <module> -a <args> */
+    const char *host = argv[1];
+    const char *module = "command";
+    for (int i = 2; i < argc - 1; i++) {
+        if (strcmp_simple(argv[i], "-m") == 0) module = argv[i + 1];
+    }
+    write_str(1, "\033[32m");
+    write_str(1, host);
+    write_str(1, " | SUCCESS => {\n");
+    write_str(1, "    \"changed\": false,\n");
+    write_str(1, "    \"module\": \"");
+    write_str(1, module);
+    write_str(1, "\",\n");
+    write_str(1, "    \"rc\": 0\n");
+    write_str(1, "}\033[0m\n");
+}
+
+/* vagrant - Simulated VM management CLI */
+static void cmd_vagrant(int argc, char *argv[]) {
+    if (argc < 2 || strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "Usage: vagrant [options] <command> [<args>]\n\n");
+        write_str(1, "Common commands:\n");
+        write_str(1, "  destroy       stops and deletes all traces of the vagrant machine\n");
+        write_str(1, "  halt          stops the vagrant machine\n");
+        write_str(1, "  init          initializes a new Vagrant environment\n");
+        write_str(1, "  ssh           connects to machine via SSH\n");
+        write_str(1, "  status        outputs status of the vagrant machine\n");
+        write_str(1, "  up            starts and provisions the vagrant environment\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "version") == 0 || strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "Vagrant 2.4.1 (futura)\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "up") == 0) {
+        write_str(1, "Bringing machine 'default' up with 'virtualbox' provider...\n");
+        write_str(1, "==> default: Importing base box 'ubuntu/jammy64'...\n");
+        write_str(1, "==> default: Matching MAC address for NAT networking...\n");
+        write_str(1, "==> default: Setting the name of the VM: project_default\n");
+        write_str(1, "==> default: Booting VM...\n");
+        write_str(1, "==> default: Waiting for machine to boot...\n");
+        write_str(1, "    default: SSH address: 127.0.0.1:2222\n");
+        write_str(1, "==> default: Machine booted and ready!\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "ssh") == 0) {
+        write_str(1, "Welcome to Ubuntu 22.04 LTS (GNU/Linux 5.15.0-generic x86_64)\n\n");
+        write_str(1, "vagrant@default:~$ (use 'exit' to leave)\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "halt") == 0) {
+        write_str(1, "==> default: Attempting graceful shutdown of VM...\n");
+        write_str(1, "==> default: Forcing shutdown of VM...\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "status") == 0) {
+        write_str(1, "Current machine states:\n\n");
+        write_str(1, "default                   running (virtualbox)\n\n");
+        write_str(1, "The VM is running. To stop this VM, you can run `vagrant halt`.\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "destroy") == 0) {
+        write_str(1, "==> default: Destroying VM and associated drives...\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "init") == 0) {
+        write_str(1, "A `Vagrantfile` has been placed in this directory. You are now\n");
+        write_str(1, "ready to `vagrant up` your first virtual environment!\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "global-status") == 0) {
+        write_str(1, "id       name    provider   state    directory\n");
+        write_str(1, "-----------------------------------------------------------------------\n");
+        write_str(1, "a1b2c3d  default virtualbox running  /home/user/project\n\n");
+        write_str(1, "The above shows information about all known Vagrant environments.\n");
+        return;
+    }
+    write_str(2, "Unknown command: ");
+    write_str(2, argv[1]);
+    write_str(2, "\n");
+}
+
+/* helm - Simulated Kubernetes package manager */
+static void cmd_helm(int argc, char *argv[]) {
+    if (argc < 2 || strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "The Kubernetes package manager\n\n");
+        write_str(1, "Usage: helm [command]\n\n");
+        write_str(1, "Commands:\n");
+        write_str(1, "  install     install a chart\n");
+        write_str(1, "  list        list releases\n");
+        write_str(1, "  repo        add, list, remove, update chart repositories\n");
+        write_str(1, "  search      search for a keyword in charts\n");
+        write_str(1, "  uninstall   uninstall a release\n");
+        write_str(1, "  upgrade     upgrade a release\n");
+        write_str(1, "  version     print the client version\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "version") == 0 || strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "version.BuildInfo{Version:\"v3.15.3\", GitCommit:\"abc123\", GoVersion:\"go1.22.5\"}\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "list") == 0 || strcmp_simple(argv[1], "ls") == 0) {
+        write_str(1, "NAME          \tNAMESPACE\tREVISION\tSTATUS  \tCHART              \tAPP VERSION\n");
+        write_str(1, "ingress-nginx \tdefault  \t1       \tdeployed\tnginx-ingress-4.7.1\t1.8.1      \n");
+        write_str(1, "cert-manager  \tcert-mgr \t2       \tdeployed\tcert-manager-1.15.1\t1.15.1     \n");
+        write_str(1, "prometheus    \tmonitoring\t1       \tdeployed\tprometheus-25.21.0 \t2.53.1     \n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "install") == 0) {
+        if (argc < 4) {
+            write_str(2, "Error: \"helm install\" requires at least 2 arguments\n");
+            write_str(2, "Usage: helm install [NAME] [CHART]\n");
+            return;
+        }
+        write_str(1, "NAME: ");
+        write_str(1, argv[2]);
+        write_str(1, "\nLAST DEPLOYED: 2024-01-15 10:30:00\n");
+        write_str(1, "NAMESPACE: default\n");
+        write_str(1, "STATUS: deployed\n");
+        write_str(1, "REVISION: 1\n");
+        write_str(1, "NOTES:\nThe ");
+        write_str(1, argv[3]);
+        write_str(1, " chart has been installed.\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "repo") == 0) {
+        if (argc < 3) {
+            write_str(1, "Usage: helm repo [add|list|remove|update]\n");
+            return;
+        }
+        if (strcmp_simple(argv[2], "list") == 0) {
+            write_str(1, "NAME    \tURL\n");
+            write_str(1, "stable  \thttps://charts.helm.sh/stable\n");
+            write_str(1, "bitnami \thttps://charts.bitnami.com/bitnami\n");
+        } else if (strcmp_simple(argv[2], "add") == 0) {
+            if (argc >= 5) {
+                write_str(1, "\"");
+                write_str(1, argv[3]);
+                write_str(1, "\" has been added to your repositories\n");
+            } else {
+                write_str(2, "Error: expected NAME and URL\n");
+            }
+        } else if (strcmp_simple(argv[2], "update") == 0) {
+            write_str(1, "Hang tight while we grab the latest from your chart repositories...\n");
+            write_str(1, "...Successfully got an update from the \"stable\" chart repository\n");
+            write_str(1, "...Successfully got an update from the \"bitnami\" chart repository\n");
+            write_str(1, "Update Complete. Happy Helming!\n");
+        }
+        return;
+    }
+    if (strcmp_simple(argv[1], "search") == 0) {
+        if (argc >= 4 && strcmp_simple(argv[2], "repo") == 0) {
+            write_str(1, "NAME                 \tCHART VERSION\tAPP VERSION\tDESCRIPTION\n");
+            write_str(1, "bitnami/nginx        \t18.1.5       \t1.27.0     \tNGINX web server\n");
+            write_str(1, "bitnami/redis        \t19.6.1       \t7.2.5      \tRedis key-value store\n");
+        } else {
+            write_str(2, "Usage: helm search repo [keyword]\n");
+        }
+        return;
+    }
+    if (strcmp_simple(argv[1], "uninstall") == 0) {
+        if (argc < 3) {
+            write_str(2, "Error: \"helm uninstall\" requires at least 1 argument\n");
+            return;
+        }
+        write_str(1, "release \"");
+        write_str(1, argv[2]);
+        write_str(1, "\" uninstalled\n");
+        return;
+    }
+    write_str(2, "Error: unknown command \"");
+    write_str(2, argv[1]);
+    write_str(2, "\" for \"helm\"\n");
+}
+
+/* podman - Simulated container runtime */
+static void cmd_podman(int argc, char *argv[]) {
+    if (argc < 2 || strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "Manage pods, containers and images\n\n");
+        write_str(1, "Usage: podman [options] [command]\n\n");
+        write_str(1, "Commands:\n");
+        write_str(1, "  images      List images in local storage\n");
+        write_str(1, "  ps          List containers\n");
+        write_str(1, "  pull        Pull an image from a registry\n");
+        write_str(1, "  run         Run a command in a new container\n");
+        write_str(1, "  stop        Stop one or more containers\n");
+        write_str(1, "  version     Display the Podman version information\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "version") == 0 || strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "Client:       Podman Engine\n");
+        write_str(1, "Version:      5.1.2 (futura)\n");
+        write_str(1, "API Version:  5.1.2\n");
+        write_str(1, "Go Version:   go1.22.5\n");
+        write_str(1, "OS/Arch:      futura/amd64\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "ps") == 0) {
+        write_str(1, "CONTAINER ID  IMAGE                    COMMAND     CREATED        STATUS      PORTS  NAMES\n");
+        if (argc >= 3 && strcmp_simple(argv[2], "-a") == 0) {
+            write_str(1, "abc123def456  docker.io/library/nginx  nginx -g..  2 hours ago    Exited (0)         web\n");
+            write_str(1, "789ghi012jkl  docker.io/library/redis  redis-se..  3 hours ago    Exited (0)         cache\n");
+        }
+        return;
+    }
+    if (strcmp_simple(argv[1], "images") == 0) {
+        write_str(1, "REPOSITORY                TAG       IMAGE ID      CREATED        SIZE\n");
+        write_str(1, "docker.io/library/nginx   latest    a8758716bb6a  2 weeks ago    191 MB\n");
+        write_str(1, "docker.io/library/redis   7         7614ae9453d1  3 weeks ago    120 MB\n");
+        write_str(1, "docker.io/library/alpine  3.19      05455a08881e  4 weeks ago    7.67 MB\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "run") == 0) {
+        if (argc < 3) {
+            write_str(2, "Error: requires at least 1 argument.\n");
+            return;
+        }
+        write_str(1, "Trying to pull ");
+        write_str(1, argv[argc - 1]);
+        write_str(1, "...\n");
+        write_str(1, "Getting image source signatures\n");
+        write_str(1, "Copying blob sha256:a1b2c3d4e5f6 done\n");
+        write_str(1, "Writing manifest to image destination\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "pull") == 0) {
+        if (argc < 3) {
+            write_str(2, "Error: requires at least 1 argument.\n");
+            return;
+        }
+        write_str(1, "Trying to pull docker.io/library/");
+        write_str(1, argv[2]);
+        write_str(1, "...\n");
+        write_str(1, "Getting image source signatures\n");
+        write_str(1, "Copying blob sha256:a1b2c3 done\n");
+        write_str(1, "Writing manifest to image destination\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "info") == 0) {
+        write_str(1, "host:\n  os: futura\n  arch: amd64\n  cpus: 4\n  memTotal: 8192MiB\n");
+        write_str(1, "  ociRuntime:\n    name: crun\n    version: 1.15\n");
+        write_str(1, "version:\n  APIVersion: 5.1.2\n  Version: 5.1.2\n");
+        return;
+    }
+    write_str(2, "Error: unknown command \"");
+    write_str(2, argv[1]);
+    write_str(2, "\" for \"podman\"\n");
+}
+
+/* crictl - Container runtime interface CLI */
+static void cmd_crictl(int argc, char *argv[]) {
+    if (argc < 2 || strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "NAME:\n   crictl - client for CRI\n\n");
+        write_str(1, "USAGE:\n   crictl [global options] command [command options] [arguments...]\n\n");
+        write_str(1, "COMMANDS:\n");
+        write_str(1, "   images, image    List images\n");
+        write_str(1, "   info             Display information of the container runtime\n");
+        write_str(1, "   ps               List containers\n");
+        write_str(1, "   pods             List pods\n");
+        write_str(1, "   stats            List container stats\n");
+        write_str(1, "   version          Display runtime version\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "version") == 0 || strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "Version:  0.1.0\n");
+        write_str(1, "RuntimeName:  containerd\n");
+        write_str(1, "RuntimeVersion:  1.7.18\n");
+        write_str(1, "RuntimeApiVersion:  v1\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "ps") == 0) {
+        write_str(1, "CONTAINER       IMAGE           CREATED         STATE       NAME            POD ID\n");
+        write_str(1, "abc123def456    nginx:latest    2 hours ago     Running     web-server      pod-aaa111\n");
+        write_str(1, "789ghi012jkl    redis:7         3 hours ago     Running     cache           pod-bbb222\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "images") == 0 || strcmp_simple(argv[1], "image") == 0) {
+        write_str(1, "IMAGE                    TAG       IMAGE ID       SIZE\n");
+        write_str(1, "docker.io/library/nginx  latest    a8758716bb6a   67.5MB\n");
+        write_str(1, "docker.io/library/redis  7         7614ae9453d1   41.2MB\n");
+        write_str(1, "registry.k8s.io/pause   3.9       e6f181688397   744kB\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "pods") == 0) {
+        write_str(1, "POD ID          CREATED         STATE       NAME                    NAMESPACE\n");
+        write_str(1, "pod-aaa111      2 hours ago     Ready       nginx-deployment-abc12  default\n");
+        write_str(1, "pod-bbb222      3 hours ago     Ready       redis-master-def34      default\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "info") == 0) {
+        write_str(1, "{\n  \"status\": {\n    \"conditions\": [\n");
+        write_str(1, "      {\"type\": \"RuntimeReady\", \"status\": true},\n");
+        write_str(1, "      {\"type\": \"NetworkReady\", \"status\": true}\n");
+        write_str(1, "    ]\n  }\n}\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "stats") == 0) {
+        write_str(1, "CONTAINER       CPU %   MEM USAGE / LIMIT   MEM %   DISK      INODES\n");
+        write_str(1, "abc123def456    0.15%   24.5MB / 512MB      4.79%   12.3MB    1234\n");
+        write_str(1, "789ghi012jkl    0.08%   18.2MB / 256MB      7.11%   8.7MB     567\n");
+        return;
+    }
+    write_str(2, "crictl: unknown command \"");
+    write_str(2, argv[1]);
+    write_str(2, "\"\n");
+}
+
+/* ctr - containerd CLI */
+static void cmd_ctr(int argc, char *argv[]) {
+    if (argc < 2 || strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "NAME:\n   ctr - containerd CLI\n\n");
+        write_str(1, "USAGE:\n   ctr [global options] command [command options] [arguments...]\n\n");
+        write_str(1, "COMMANDS:\n");
+        write_str(1, "   containers, c   Manage containers\n");
+        write_str(1, "   images, i       Manage images\n");
+        write_str(1, "   namespaces, ns  Manage namespaces\n");
+        write_str(1, "   tasks, t        Manage tasks\n");
+        write_str(1, "   version         Print the client and server versions\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "version") == 0 || strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "Client:\n  Version:  1.7.18\n  Revision: abc123def\n  Go version: go1.22.5\n");
+        write_str(1, "Server:\n  Version:  1.7.18\n  Revision: abc123def\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "images") == 0 || strcmp_simple(argv[1], "i") == 0) {
+        if (argc >= 3 && (strcmp_simple(argv[2], "list") == 0 || strcmp_simple(argv[2], "ls") == 0)) {
+            write_str(1, "REF                              TYPE                                       DIGEST                                                                  SIZE\n");
+            write_str(1, "docker.io/library/nginx:latest   application/vnd.docker.distribution.v2     sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2 67.5 MiB\n");
+            write_str(1, "docker.io/library/alpine:3.19    application/vnd.docker.distribution.v2     sha256:f6e5d4c3b2a1f6e5d4c3b2a1f6e5d4c3b2a1f6e5d4c3b2a1f6e5d4c3b2a1f6e5 3.4 MiB\n");
+        } else if (argc >= 3 && strcmp_simple(argv[2], "pull") == 0) {
+            if (argc >= 4) {
+                write_str(1, argv[3]);
+                write_str(1, ": resolved\n");
+                write_str(1, "elapsed: 2.1s\ttotal:  28.0M\n");
+                write_str(1, "unpacking ");
+                write_str(1, argv[3]);
+                write_str(1, "...done\n");
+            } else {
+                write_str(2, "ctr: image ref must be provided\n");
+            }
+        } else {
+            write_str(1, "Usage: ctr images [list|pull|remove|check]\n");
+        }
+        return;
+    }
+    if (strcmp_simple(argv[1], "containers") == 0 || strcmp_simple(argv[1], "c") == 0) {
+        if (argc >= 3 && (strcmp_simple(argv[2], "list") == 0 || strcmp_simple(argv[2], "ls") == 0)) {
+            write_str(1, "CONTAINER    IMAGE                           RUNTIME\n");
+            write_str(1, "web-nginx    docker.io/library/nginx:latest  io.containerd.runc.v2\n");
+            write_str(1, "cache-redis  docker.io/library/redis:7       io.containerd.runc.v2\n");
+        } else {
+            write_str(1, "Usage: ctr containers [list|create|delete|info]\n");
+        }
+        return;
+    }
+    if (strcmp_simple(argv[1], "namespaces") == 0 || strcmp_simple(argv[1], "ns") == 0) {
+        if (argc >= 3 && (strcmp_simple(argv[2], "list") == 0 || strcmp_simple(argv[2], "ls") == 0)) {
+            write_str(1, "NAME    LABELS\n");
+            write_str(1, "default\n");
+            write_str(1, "k8s.io\n");
+            write_str(1, "moby\n");
+        } else {
+            write_str(1, "Usage: ctr namespaces [list|create|remove]\n");
+        }
+        return;
+    }
+    if (strcmp_simple(argv[1], "tasks") == 0 || strcmp_simple(argv[1], "t") == 0) {
+        if (argc >= 3 && (strcmp_simple(argv[2], "list") == 0 || strcmp_simple(argv[2], "ls") == 0)) {
+            write_str(1, "TASK         PID     STATUS\n");
+            write_str(1, "web-nginx    1234    RUNNING\n");
+            write_str(1, "cache-redis  5678    RUNNING\n");
+        } else {
+            write_str(1, "Usage: ctr tasks [list|start|kill|delete]\n");
+        }
+        return;
+    }
+    write_str(2, "ctr: unknown command \"");
+    write_str(2, argv[1]);
+    write_str(2, "\"\n");
+}
+
+/* buildah - Container image builder */
+static void cmd_buildah(int argc, char *argv[]) {
+    if (argc < 2 || strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "A tool that facilitates building OCI images\n\n");
+        write_str(1, "Usage: buildah [options] [command]\n\n");
+        write_str(1, "Commands:\n");
+        write_str(1, "  bud         Build an image using a Dockerfile\n");
+        write_str(1, "  commit      Create an image from a working container\n");
+        write_str(1, "  containers  List working containers\n");
+        write_str(1, "  from        Create a working container from an image\n");
+        write_str(1, "  images      List images in local storage\n");
+        write_str(1, "  run         Run a command inside a working container\n");
+        write_str(1, "  version     Display the Buildah version information\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "version") == 0 || strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "Version:         1.36.0 (futura)\n");
+        write_str(1, "Go Version:      go1.22.5\n");
+        write_str(1, "Image Spec:      1.1.0\n");
+        write_str(1, "Runtime Spec:    1.2.0\n");
+        write_str(1, "CNI Spec:        1.0.0\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "from") == 0) {
+        if (argc < 3) {
+            write_str(2, "Error: requires at least 1 argument\n");
+            return;
+        }
+        /* Generate a working container name from the image */
+        write_str(1, argv[2]);
+        write_str(1, "-working-container\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "run") == 0) {
+        if (argc < 4) {
+            write_str(2, "Error: requires container name and command\n");
+            return;
+        }
+        /* Simulate running a command in the container */
+        write_str(1, "(simulated output from ");
+        write_str(1, argv[2]);
+        write_str(1, ")\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "commit") == 0) {
+        if (argc < 3) {
+            write_str(2, "Error: requires at least a container name\n");
+            return;
+        }
+        const char *name = (argc >= 4) ? argv[3] : "localhost/myimage:latest";
+        write_str(1, "Getting image source signatures\n");
+        write_str(1, "Copying blob sha256:a1b2c3 done\n");
+        write_str(1, "Writing manifest to image destination\n");
+        write_str(1, "Storing signatures\n");
+        write_str(1, "--> ");
+        write_str(1, name);
+        write_str(1, "\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "images") == 0) {
+        write_str(1, "REPOSITORY                TAG       IMAGE ID       CREATED        SIZE\n");
+        write_str(1, "docker.io/library/alpine  3.19      05455a08881e   4 weeks ago    7.67 MB\n");
+        write_str(1, "localhost/myimage         latest    c3d4e5f6a1b2   1 minute ago   12.3 MB\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "containers") == 0) {
+        write_str(1, "CONTAINER ID  BUILDER  IMAGE ID       IMAGE NAME                CONTAINER NAME\n");
+        write_str(1, "a1b2c3d4e5f6  *        05455a08881e   docker.io/library/alpine  alpine-working-container\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "bud") == 0 || strcmp_simple(argv[1], "build") == 0) {
+        write_str(1, "STEP 1: FROM alpine:3.19\n");
+        write_str(1, "STEP 2: RUN apk add --no-cache nginx\n");
+        write_str(1, "STEP 3: COPY . /usr/share/nginx/html\n");
+        write_str(1, "STEP 4: COMMIT\n");
+        write_str(1, "Getting image source signatures\n");
+        write_str(1, "Writing manifest to image destination\n");
+        write_str(1, "Storing signatures\n");
+        write_str(1, "--> localhost/myimage:latest\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "info") == 0) {
+        write_str(1, "host:\n  os: futura\n  arch: amd64\n  cpus: 4\n  memTotal: 8192MB\n");
+        write_str(1, "store:\n  graphDriverName: overlay\n  imageStore: 3\n  containerStore: 1\n");
+        return;
+    }
+    write_str(2, "Error: unknown command \"");
+    write_str(2, argv[1]);
+    write_str(2, "\" for \"buildah\"\n");
 }
 
 #pragma GCC diagnostic pop

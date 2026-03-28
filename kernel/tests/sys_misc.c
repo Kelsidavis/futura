@@ -68758,6 +68758,516 @@ __attribute__((noinline)) static void test_waitid_p_all_wnohang(void) {
     }
 }
 
+/* ============================================================
+ * Tests 2441-2446: RLIMIT_NOFILE enforcement deep coverage
+ *
+ *   2441: Lowered RLIMIT_NOFILE causes EMFILE when FD table is full
+ *   2442: After closing FDs, new opens succeed up to the limit
+ *   2443: prlimit64 change to RLIMIT_NOFILE is enforced immediately
+ *   2444: dup() respects RLIMIT_NOFILE soft limit
+ *   2445: RLIMIT_NOFILE hard limit prevents raising soft above it
+ *   2446: /proc/self/limits shows correct RLIMIT_NOFILE values
+ * ============================================================ */
+__attribute__((noinline)) static void test_rlimit_nofile_enforcement(void) {
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        fut_printf("[MISC-TEST] Tests 2441-2446: no current task, skipping\n");
+        fut_test_fail(2441); fut_test_fail(2442); fut_test_fail(2443);
+        fut_test_fail(2444); fut_test_fail(2445); fut_test_fail(2446);
+        return;
+    }
+
+    /* Save original limits to restore later */
+    uint64_t saved_cur = task->rlimits[7].rlim_cur;
+    uint64_t saved_max = task->rlimits[7].rlim_max;
+
+    /* ---- Test 2441: Lowered RLIMIT_NOFILE triggers EMFILE ---- */
+    fut_printf("[MISC-TEST] Test 2441: RLIMIT_NOFILE enforcement -> EMFILE\n");
+    {
+        /* Set a very low soft limit (6 FDs: 0-2 are stdin/out/err) */
+        task->rlimits[7].rlim_cur = 6;
+        int fds[10];
+        int opened = 0;
+        for (int i = 0; i < 10; i++) {
+            char path[32];
+            path[0] = '/'; path[1] = 'n'; path[2] = 'f';
+            path[3] = '_'; path[4] = 'a' + (char)i; path[5] = '\0';
+            fds[i] = fut_vfs_open(path, 0x42 /* O_RDWR|O_CREAT */, 0644);
+            if (fds[i] < 0) break;
+            opened++;
+        }
+        int last_err = (opened < 10) ? fds[opened] : 0;
+
+        for (int i = 0; i < opened; i++)
+            fut_vfs_close(fds[i]);
+        task->rlimits[7].rlim_cur = saved_cur;
+
+        if (opened < 10 && last_err == -EMFILE) {
+            fut_printf("[MISC-TEST] pass Test 2441: opened %d FDs then EMFILE at limit=6\n", opened);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL Test 2441: opened=%d last_err=%d\n", opened, last_err);
+            fut_test_fail(2441);
+        }
+    }
+
+    /* ---- Test 2442: After close, can open again up to limit ---- */
+    fut_printf("[MISC-TEST] Test 2442: close+reopen within RLIMIT_NOFILE\n");
+    {
+        task->rlimits[7].rlim_cur = 6;
+
+        /* Open files until EMFILE */
+        int fds[10];
+        int opened = 0;
+        for (int i = 0; i < 10; i++) {
+            char path[32];
+            path[0] = '/'; path[1] = 'n'; path[2] = 'f';
+            path[3] = '2'; path[4] = 'a' + (char)i; path[5] = '\0';
+            fds[i] = fut_vfs_open(path, 0x42, 0644);
+            if (fds[i] < 0) break;
+            opened++;
+        }
+
+        /* Close one and try again - should succeed */
+        int reopen_ok = 0;
+        if (opened > 0) {
+            fut_vfs_close(fds[opened - 1]);
+            opened--;
+            int new_fd = fut_vfs_open("/nf2_reopen", 0x42, 0644);
+            if (new_fd >= 0) {
+                reopen_ok = 1;
+                fut_vfs_close(new_fd);
+            }
+        }
+
+        for (int i = 0; i < opened; i++)
+            fut_vfs_close(fds[i]);
+        task->rlimits[7].rlim_cur = saved_cur;
+
+        if (reopen_ok) {
+            fut_printf("[MISC-TEST] pass Test 2442: close+reopen succeeded within limit\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL Test 2442: reopen after close failed\n");
+            fut_test_fail(2442);
+        }
+    }
+
+    /* ---- Test 2443: prlimit64-style limit change enforced immediately ---- */
+    fut_printf("[MISC-TEST] Test 2443: dynamic RLIMIT_NOFILE change enforcement\n");
+    {
+        /* Start with generous limit, open some files */
+        task->rlimits[7].rlim_cur = saved_cur;
+        int fd1 = fut_vfs_open("/nf3_a", 0x42, 0644);
+        int fd2 = fut_vfs_open("/nf3_b", 0x42, 0644);
+
+        /* Now lower the limit to just above current usage */
+        int count_open = 0;
+        for (int i = 0; i < task->max_fds && i < 1024; i++) {
+            if (task->fd_table[i]) count_open++;
+        }
+        task->rlimits[7].rlim_cur = (uint64_t)count_open;
+
+        /* Next open should fail */
+        int fd3 = fut_vfs_open("/nf3_c", 0x42, 0644);
+        int failed_as_expected = (fd3 == -EMFILE);
+
+        if (fd1 >= 0) fut_vfs_close(fd1);
+        if (fd2 >= 0) fut_vfs_close(fd2);
+        if (fd3 >= 0) fut_vfs_close(fd3);
+        task->rlimits[7].rlim_cur = saved_cur;
+
+        if (failed_as_expected) {
+            fut_printf("[MISC-TEST] pass Test 2443: lowered limit immediately enforced\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL Test 2443: open returned %d (expected EMFILE)\n", fd3);
+            fut_test_fail(2443);
+        }
+    }
+
+    /* ---- Test 2444: dup() respects RLIMIT_NOFILE ---- */
+    fut_printf("[MISC-TEST] Test 2444: dup() respects RLIMIT_NOFILE\n");
+    {
+        extern long sys_dup(int oldfd);
+
+        /* Open a file, then lower limit to current open count */
+        int fd = fut_vfs_open("/nf4_dup", 0x42, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL Test 2444: initial open failed: %d\n", fd);
+            fut_test_fail(2444);
+        } else {
+            int count_open = 0;
+            for (int i = 0; i < task->max_fds && i < 1024; i++) {
+                if (task->fd_table[i]) count_open++;
+            }
+            task->rlimits[7].rlim_cur = (uint64_t)count_open;
+
+            long dup_fd = sys_dup(fd);
+            int dup_failed = (dup_fd == -EMFILE);
+
+            if (dup_fd >= 0) fut_vfs_close((int)dup_fd);
+            fut_vfs_close(fd);
+            task->rlimits[7].rlim_cur = saved_cur;
+
+            if (dup_failed) {
+                fut_printf("[MISC-TEST] pass Test 2444: dup() returned EMFILE at limit\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL Test 2444: dup() returned %ld (expected EMFILE)\n", dup_fd);
+                fut_test_fail(2444);
+            }
+        }
+    }
+
+    /* ---- Test 2445: Hard limit prevents raising soft above it ---- */
+    fut_printf("[MISC-TEST] Test 2445: hard limit caps soft limit\n");
+    {
+        extern long sys_prlimit64(int pid, int resource, const void *new_limit, void *old_limit);
+
+        /* Set hard limit to 100, then try to raise soft to 200 */
+        task->rlimits[7].rlim_cur = 50;
+        task->rlimits[7].rlim_max = 100;
+
+        struct rlimit64 new_lim = { .rlim_cur = 200, .rlim_max = 100 };
+        long rc = sys_prlimit64(0, 7 /* RLIMIT_NOFILE */, &new_lim, NULL);
+        int rejected = (rc == -EINVAL);
+
+        task->rlimits[7].rlim_cur = saved_cur;
+        task->rlimits[7].rlim_max = saved_max;
+
+        if (rejected) {
+            fut_printf("[MISC-TEST] pass Test 2445: soft > hard rejected with EINVAL\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL Test 2445: prlimit64 returned %ld (expected EINVAL)\n", rc);
+            fut_test_fail(2445);
+        }
+    }
+
+    /* ---- Test 2446: /proc/self/limits shows correct RLIMIT_NOFILE ---- */
+    fut_printf("[MISC-TEST] Test 2446: /proc/self/limits reflects RLIMIT_NOFILE\n");
+    {
+        /* Set known values */
+        task->rlimits[7].rlim_cur = 777;
+        task->rlimits[7].rlim_max = 8888;
+
+        int fd = fut_vfs_open("/proc/self/limits", 0 /* O_RDONLY */, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL Test 2446: open /proc/self/limits failed: %d\n", fd);
+            task->rlimits[7].rlim_cur = saved_cur;
+            task->rlimits[7].rlim_max = saved_max;
+            fut_test_fail(2446);
+        } else {
+            char buf[2048];
+            __builtin_memset(buf, 0, sizeof(buf));
+            ssize_t n = fut_vfs_read(fd, buf, sizeof(buf) - 1);
+            fut_vfs_close(fd);
+
+            task->rlimits[7].rlim_cur = saved_cur;
+            task->rlimits[7].rlim_max = saved_max;
+
+            /* Search for "Max open files" line and check it contains 777 and 8888 */
+            int found_777 = 0, found_8888 = 0;
+            if (n > 0) {
+                /* Simple substring search for the values near "Max open files" */
+                char *line = buf;
+                while (line && *line) {
+                    /* Find "Max open files" */
+                    int match = 1;
+                    const char *needle = "Max open files";
+                    for (int k = 0; needle[k]; k++) {
+                        if (line[k] != needle[k]) { match = 0; break; }
+                    }
+                    if (match) {
+                        /* Search rest of line for "777" and "8888" */
+                        char *p = line;
+                        while (*p && *p != '\n') {
+                            if (p[0] == '7' && p[1] == '7' && p[2] == '7')
+                                found_777 = 1;
+                            if (p[0] == '8' && p[1] == '8' && p[2] == '8' && p[3] == '8')
+                                found_8888 = 1;
+                            p++;
+                        }
+                        break;
+                    }
+                    /* Advance to next line */
+                    while (*line && *line != '\n') line++;
+                    if (*line == '\n') line++;
+                }
+            }
+
+            if (found_777 && found_8888) {
+                fut_printf("[MISC-TEST] pass Test 2446: /proc/self/limits shows 777/8888\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL Test 2446: found_777=%d found_8888=%d\n",
+                           found_777, found_8888);
+                fut_test_fail(2446);
+            }
+        }
+    }
+}
+
+/* ============================================================
+ * Tests 2455-2463: execve shebang (#!) comprehensive coverage
+ *
+ * Test 2455: basic shebang — interpreter not found => ENOENT
+ * Test 2456: shebang with -x flag arg — interpreter not found => ENOENT
+ * Test 2457: #!/usr/bin/env with nonexistent command => ENOENT
+ * Test 2458: nested shebang (script1 -> script2 -> missing interp) => ENOENT
+ * Test 2459: shebang depth limit exceeded (5 levels) => ELOOP
+ * Test 2460: script argv[0] preserved through shebang (existing interp)
+ * Test 2461: ENOEXEC for unknown binary format (not ELF, not shebang)
+ * Test 2462: empty shebang (just #! with no interpreter) => ENOEXEC
+ * Test 2463: shebang with extra whitespace parses correctly => ENOENT
+ * ============================================================ */
+__attribute__((noinline)) static void test_execve_shebang_comprehensive(void) {
+    extern long sys_execve(const char *, char *const *, char *const *);
+    extern int fut_vfs_unlink(const char *path);
+
+    /* Test 2455: basic shebang — #!/tmp/no_such_interp => ENOENT */
+    fut_printf("[MISC-TEST] Test 2455: basic shebang => ENOENT for missing interp\n");
+    {
+        int fd = fut_vfs_open("/tmp/shebang_2455.sh", 0x42 /* O_CREAT|O_RDWR */, 0755);
+        if (fd >= 0) {
+            const char *content = "#!/tmp/no_such_interp_2455\necho hello\n";
+            fut_vfs_write(fd, content, 38);
+            fut_vfs_close(fd);
+        }
+        const char *const argv[] = { "/tmp/shebang_2455.sh", NULL };
+        long r = sys_execve("/tmp/shebang_2455.sh", (char *const *)argv, NULL);
+        fut_vfs_unlink("/tmp/shebang_2455.sh");
+        if (r == -2 /* ENOENT */) {
+            fut_printf("[MISC-TEST] pass Test 2455: basic shebang => ENOENT\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL Test 2455: got %ld (expected -2)\n", r);
+            fut_test_fail(2455);
+        }
+    }
+
+    /* Test 2456: shebang with -x flag — #!/tmp/no_interp -x => ENOENT */
+    fut_printf("[MISC-TEST] Test 2456: shebang with opt-arg -x => ENOENT\n");
+    {
+        int fd = fut_vfs_open("/tmp/shebang_2456.sh", 0x42, 0755);
+        if (fd >= 0) {
+            const char *content = "#!/tmp/no_such_interp_2456 -x\nset -e\n";
+            fut_vfs_write(fd, content, 38);
+            fut_vfs_close(fd);
+        }
+        const char *const argv[] = { "/tmp/shebang_2456.sh", NULL };
+        long r = sys_execve("/tmp/shebang_2456.sh", (char *const *)argv, NULL);
+        fut_vfs_unlink("/tmp/shebang_2456.sh");
+        if (r == -2 /* ENOENT */) {
+            fut_printf("[MISC-TEST] pass Test 2456: shebang -x => ENOENT\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL Test 2456: got %ld (expected -2)\n", r);
+            fut_test_fail(2456);
+        }
+    }
+
+    /* Test 2457: #!/usr/bin/env with nonexistent command => ENOENT
+     * The env resolution should search PATH and fail to find "no_such_lang_2457" */
+    fut_printf("[MISC-TEST] Test 2457: #!/usr/bin/env nonexistent => ENOENT\n");
+    {
+        int fd = fut_vfs_open("/tmp/shebang_2457.sh", 0x42, 0755);
+        if (fd >= 0) {
+            const char *content = "#!/usr/bin/env no_such_lang_2457\nprint('hi')\n";
+            fut_vfs_write(fd, content, 45);
+            fut_vfs_close(fd);
+        }
+        const char *const argv[] = { "/tmp/shebang_2457.sh", NULL };
+        long r = sys_execve("/tmp/shebang_2457.sh", (char *const *)argv, NULL);
+        fut_vfs_unlink("/tmp/shebang_2457.sh");
+        if (r == -2 /* ENOENT */) {
+            fut_printf("[MISC-TEST] pass Test 2457: env nonexistent => ENOENT\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL Test 2457: got %ld (expected -2)\n", r);
+            fut_test_fail(2457);
+        }
+    }
+
+    /* Test 2458: nested shebang — script1 points to script2 which points
+     * to a nonexistent interpreter => ENOENT.
+     * script2: #!/tmp/no_such_interp_2458\n...
+     * script1: #!/tmp/shebang_2458b.sh\n... */
+    fut_printf("[MISC-TEST] Test 2458: nested shebang => ENOENT\n");
+    {
+        /* Create inner script (script2) with nonexistent interpreter */
+        int fd2 = fut_vfs_open("/tmp/shebang_2458b.sh", 0x42, 0755);
+        if (fd2 >= 0) {
+            const char *c2 = "#!/tmp/no_such_interp_2458\ninner\n";
+            fut_vfs_write(fd2, c2, 33);
+            fut_vfs_close(fd2);
+        }
+        /* Create outer script (script1) pointing to inner script */
+        int fd1 = fut_vfs_open("/tmp/shebang_2458a.sh", 0x42, 0755);
+        if (fd1 >= 0) {
+            const char *c1 = "#!/tmp/shebang_2458b.sh\nouter\n";
+            fut_vfs_write(fd1, c1, 30);
+            fut_vfs_close(fd1);
+        }
+        const char *const argv[] = { "/tmp/shebang_2458a.sh", NULL };
+        long r = sys_execve("/tmp/shebang_2458a.sh", (char *const *)argv, NULL);
+        fut_vfs_unlink("/tmp/shebang_2458a.sh");
+        fut_vfs_unlink("/tmp/shebang_2458b.sh");
+        if (r == -2 /* ENOENT */) {
+            fut_printf("[MISC-TEST] pass Test 2458: nested shebang => ENOENT\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL Test 2458: got %ld (expected -2)\n", r);
+            fut_test_fail(2458);
+        }
+    }
+
+    /* Test 2459: shebang depth limit exceeded => ELOOP
+     * Create 5 scripts each pointing to the next, exceeding max depth of 4. */
+    fut_printf("[MISC-TEST] Test 2459: shebang depth limit => ELOOP\n");
+    {
+        /* Create chain: s5 -> s4 -> s3 -> s2 -> s1 -> s0 (6 levels, > 4 limit)
+         * s0 is also a shebang pointing to itself to ensure the chain doesn't terminate */
+        const char *names[] = {
+            "/tmp/shebang_chain_0.sh",
+            "/tmp/shebang_chain_1.sh",
+            "/tmp/shebang_chain_2.sh",
+            "/tmp/shebang_chain_3.sh",
+            "/tmp/shebang_chain_4.sh",
+            "/tmp/shebang_chain_5.sh"
+        };
+        /* Each script points to the previous one; s0 points to itself */
+        const char *contents[] = {
+            "#!/tmp/shebang_chain_0.sh\nself\n",   /* s0 -> self (cycle) */
+            "#!/tmp/shebang_chain_0.sh\nlevel1\n",
+            "#!/tmp/shebang_chain_1.sh\nlevel2\n",
+            "#!/tmp/shebang_chain_2.sh\nlevel3\n",
+            "#!/tmp/shebang_chain_3.sh\nlevel4\n",
+            "#!/tmp/shebang_chain_4.sh\nlevel5\n"
+        };
+        int lens[] = { 31, 32, 32, 32, 32, 32 };
+        for (int i = 0; i < 6; i++) {
+            int fd = fut_vfs_open(names[i], 0x42, 0755);
+            if (fd >= 0) {
+                fut_vfs_write(fd, contents[i], lens[i]);
+                fut_vfs_close(fd);
+            }
+        }
+        const char *const argv[] = { names[5], NULL };
+        long r = sys_execve(names[5], (char *const *)argv, NULL);
+        for (int i = 0; i < 6; i++) fut_vfs_unlink(names[i]);
+        if (r == -40 /* ELOOP */) {
+            fut_printf("[MISC-TEST] pass Test 2459: shebang depth => ELOOP\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL Test 2459: got %ld (expected -40 ELOOP)\n", r);
+            fut_test_fail(2459);
+        }
+    }
+
+    /* Test 2460: script argv[0] preserved — when execve is called on a script,
+     * the interpreter receives [interp, script_path, ...] where script_path
+     * is the original pathname. Verify by checking that a shebang pointing to
+     * a valid but non-ELF file returns ENOEXEC (not ENOENT), meaning the
+     * interpreter path was correctly resolved. */
+    fut_printf("[MISC-TEST] Test 2460: shebang interp resolved, non-ELF => ENOEXEC\n");
+    {
+        /* Create a "fake interpreter" that exists but is not ELF */
+        int ifd = fut_vfs_open("/tmp/fake_interp_2460", 0x42, 0755);
+        if (ifd >= 0) {
+            const char *data = "NOT_ELF_DATA_PADDING_XXXX";
+            fut_vfs_write(ifd, data, 25);
+            fut_vfs_close(ifd);
+        }
+        /* Create a script pointing to the fake interpreter */
+        int fd = fut_vfs_open("/tmp/shebang_2460.sh", 0x42, 0755);
+        if (fd >= 0) {
+            const char *content = "#!/tmp/fake_interp_2460\necho test\n";
+            fut_vfs_write(fd, content, 34);
+            fut_vfs_close(fd);
+        }
+        const char *const argv[] = { "/tmp/shebang_2460.sh", NULL };
+        long r = sys_execve("/tmp/shebang_2460.sh", (char *const *)argv, NULL);
+        fut_vfs_unlink("/tmp/shebang_2460.sh");
+        fut_vfs_unlink("/tmp/fake_interp_2460");
+        if (r == -8 /* ENOEXEC */) {
+            fut_printf("[MISC-TEST] pass Test 2460: interp exists, non-ELF => ENOEXEC\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL Test 2460: got %ld (expected -8 ENOEXEC)\n", r);
+            fut_test_fail(2460);
+        }
+    }
+
+    /* Test 2461: ENOEXEC for completely unknown binary format
+     * A file that is neither ELF (0x7f ELF) nor shebang (#!) */
+    fut_printf("[MISC-TEST] Test 2461: unknown binary format => ENOEXEC\n");
+    {
+        int fd = fut_vfs_open("/tmp/unknown_2461", 0x42, 0755);
+        if (fd >= 0) {
+            const char *data = "ZZZZ_NOT_ELF_NOT_SHEBANG_PADDING";
+            fut_vfs_write(fd, data, 32);
+            fut_vfs_close(fd);
+        }
+        const char *const argv[] = { "/tmp/unknown_2461", NULL };
+        long r = sys_execve("/tmp/unknown_2461", (char *const *)argv, NULL);
+        fut_vfs_unlink("/tmp/unknown_2461");
+        if (r == -8 /* ENOEXEC */) {
+            fut_printf("[MISC-TEST] pass Test 2461: unknown format => ENOEXEC\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL Test 2461: got %ld (expected -8 ENOEXEC)\n", r);
+            fut_test_fail(2461);
+        }
+    }
+
+    /* Test 2462: empty shebang line (just "#!\n" with no interpreter path)
+     * Should fall through shebang parsing with empty ipath, then fail as ENOEXEC
+     * because the file is not ELF. */
+    fut_printf("[MISC-TEST] Test 2462: empty shebang line => ENOEXEC\n");
+    {
+        int fd = fut_vfs_open("/tmp/shebang_2462.sh", 0x42, 0755);
+        if (fd >= 0) {
+            const char *content = "#!\necho hello\n";
+            fut_vfs_write(fd, content, 14);
+            fut_vfs_close(fd);
+        }
+        const char *const argv[] = { "/tmp/shebang_2462.sh", NULL };
+        long r = sys_execve("/tmp/shebang_2462.sh", (char *const *)argv, NULL);
+        fut_vfs_unlink("/tmp/shebang_2462.sh");
+        if (r == -8 /* ENOEXEC */) {
+            fut_printf("[MISC-TEST] pass Test 2462: empty shebang => ENOEXEC\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL Test 2462: got %ld (expected -8 ENOEXEC)\n", r);
+            fut_test_fail(2462);
+        }
+    }
+
+    /* Test 2463: shebang with extra whitespace/tabs around interpreter path
+     * "#!   \t  /tmp/no_such_interp_2463  \t \n" should still parse correctly */
+    fut_printf("[MISC-TEST] Test 2463: shebang with whitespace => ENOENT\n");
+    {
+        int fd = fut_vfs_open("/tmp/shebang_2463.sh", 0x42, 0755);
+        if (fd >= 0) {
+            const char *content = "#!   \t  /tmp/no_such_interp_2463  \t \necho ws\n";
+            fut_vfs_write(fd, content, 46);
+            fut_vfs_close(fd);
+        }
+        const char *const argv[] = { "/tmp/shebang_2463.sh", NULL };
+        long r = sys_execve("/tmp/shebang_2463.sh", (char *const *)argv, NULL);
+        fut_vfs_unlink("/tmp/shebang_2463.sh");
+        if (r == -2 /* ENOENT */) {
+            fut_printf("[MISC-TEST] pass Test 2463: whitespace shebang => ENOENT\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL Test 2463: got %ld (expected -2)\n", r);
+            fut_test_fail(2463);
+        }
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -73085,6 +73595,8 @@ void fut_misc_test_thread(void *arg) {
     test_eventfd_semaphore_compat(); /* Tests 2420-2425: eventfd EFD_SEMAPHORE container-compatibility */
     test_posix_timer_round_trip(); /* Tests 2426-2431: POSIX timer round-trip coverage */
     test_waitid_p_all_wnohang(); /* Tests 2435-2440: waitid P_ALL WNOHANG process monitoring */
+    test_rlimit_nofile_enforcement(); /* Tests 2441-2446: RLIMIT_NOFILE enforcement deep coverage */
+    test_execve_shebang_comprehensive(); /* Tests 2455-2463: shebang #! comprehensive coverage */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

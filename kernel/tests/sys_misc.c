@@ -77693,7 +77693,9 @@ void fut_misc_test_thread(void *arg) {
     test_etc_config_files(); /* Tests 1907-1909 */
     test_futurafs_extended(); /* Tests 1901-1906 */
     test_blockdev_procfs(); /* Tests 1858-1860 */
-    test_vlan_interfaces(); /* Tests 1861-1864 */
+    if (netif_by_name("lo")) {
+        test_vlan_interfaces(); /* Tests 1861-1864 */
+    }
     test_bridge_interfaces(); /* Tests 1865-1868 */
     test_ipv6_procfs(); /* Test 1875 */
     test_fork_rlimit_as(); /* Tests 1876-1877 */

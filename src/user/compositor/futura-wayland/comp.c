@@ -646,8 +646,12 @@ static void draw_title_text(struct backbuffer *dst,
         return;
     }
 
-    /* Title text starts after the 3 traffic-light buttons */
-    int text_x = surface->x + 3 * (WINDOW_BTN_WIDTH + WINDOW_BTN_PADDING) + 8;
+    /* Center title text in the title bar (between buttons on left and right edge) */
+    int btn_area = 3 * (WINDOW_BTN_WIDTH + WINDOW_BTN_PADDING) + 8;
+    int title_pixel_width = draw_len * UI_FONT_WIDTH;
+    int text_x = surface->x + (surface->width - title_pixel_width) / 2;
+    /* Clamp: don't overlap with traffic-light buttons */
+    if (text_x < surface->x + btn_area) text_x = surface->x + btn_area;
     int text_y = surface->y + (surface->bar_height - UI_FONT_HEIGHT) / 2;
     if (text_y < surface->y) {
         text_y = surface->y;

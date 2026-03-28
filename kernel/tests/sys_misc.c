@@ -70655,6 +70655,247 @@ static void test_futex_bitset_selective_wakeup(void) {
 }
 
 /* ============================================================
+ * Tests 2535-2537: epoll_wait timeout=0 immediate return and oneshot suppression
+ *
+ *   2535: epoll_wait(timeout=0) with no ready fd returns 0 immediately
+ *   2536: epoll_wait(timeout=0) with a ready eventfd returns 1 immediately
+ *   2537: EPOLLONESHOT suppresses all events (incl. EPOLLERR/EPOLLHUP) after fire
+ * ============================================================ */
+static void test_epoll_wait_timeout_zero_immediate(void) {
+    fut_printf("[MISC-TEST] Tests 2535-2537: epoll_wait timeout=0 immediate return\n");
+
+    extern long sys_epoll_create1(int flags);
+    extern long sys_epoll_ctl(int epfd, int op, int fd, void *event);
+    extern long sys_epoll_wait(int epfd, void *events, int maxevents, int timeout);
+    extern long sys_eventfd2(unsigned int initval, int flags);
+    extern long sys_close(int fd);
+
+    /* ---- Test 2535: timeout=0, no ready fd, returns 0 immediately ---- */
+    fut_printf("[MISC-TEST] Test 2535: epoll_wait(timeout=0) no ready fd -> 0\n");
+    {
+        /* eventfd with count=0 is not readable */
+        long efd = sys_eventfd2(0, 0);
+        if (efd < 0) {
+            fut_printf("[MISC-TEST] x Test 2535: eventfd2 failed: %ld\n", efd);
+            fut_test_fail(2535);
+            fut_test_fail(2536);
+            fut_test_fail(2537);
+            return;
+        }
+
+        long epfd = sys_epoll_create1(0);
+        if (epfd < 0) {
+            fut_printf("[MISC-TEST] x Test 2535: epoll_create1 failed: %ld\n", epfd);
+            sys_close((int)efd);
+            fut_test_fail(2535);
+            fut_test_fail(2536);
+            fut_test_fail(2537);
+            return;
+        }
+
+        struct {
+            uint32_t events;
+            uint64_t data;
+        } __attribute__((packed)) ev;
+        ev.events = 0x001; /* EPOLLIN */
+        ev.data = (uint64_t)efd;
+        sys_epoll_ctl((int)epfd, 1 /* EPOLL_CTL_ADD */, (int)efd, &ev);
+
+        struct {
+            uint32_t events;
+            uint64_t data;
+        } __attribute__((packed)) out[4];
+
+        /* Record tick count to verify it returns quickly */
+        extern uint64_t fut_get_ticks(void);
+        uint64_t before = fut_get_ticks();
+        long n = sys_epoll_wait((int)epfd, out, 4, 0);
+        uint64_t after = fut_get_ticks();
+
+        if (n != 0) {
+            fut_printf("[MISC-TEST] x Test 2535: epoll_wait(timeout=0) returned %ld (expected 0)\n", n);
+            sys_close((int)epfd);
+            sys_close((int)efd);
+            fut_test_fail(2535);
+            fut_test_fail(2536);
+            fut_test_fail(2537);
+            return;
+        }
+
+        /* Verify it returned within 2 ticks (20ms at 100Hz) -- truly non-blocking */
+        uint64_t elapsed = after - before;
+        if (elapsed > 2) {
+            fut_printf("[MISC-TEST] x Test 2535: took %llu ticks (expected <=2 for non-blocking)\n",
+                       (unsigned long long)elapsed);
+            sys_close((int)epfd);
+            sys_close((int)efd);
+            fut_test_fail(2535);
+            fut_test_fail(2536);
+            fut_test_fail(2537);
+            return;
+        }
+
+        fut_printf("[MISC-TEST] ok Test 2535: timeout=0 returned 0 in %llu ticks\n",
+                   (unsigned long long)elapsed);
+        fut_test_pass();
+
+        sys_close((int)epfd);
+        sys_close((int)efd);
+    }
+
+    /* ---- Test 2536: timeout=0 with ready eventfd, returns 1 immediately ---- */
+    fut_printf("[MISC-TEST] Test 2536: epoll_wait(timeout=0) ready eventfd -> 1\n");
+    {
+        /* eventfd with count=1 is immediately readable */
+        long efd = sys_eventfd2(1, 0);
+        if (efd < 0) {
+            fut_printf("[MISC-TEST] x Test 2536: eventfd2 failed: %ld\n", efd);
+            fut_test_fail(2536);
+            fut_test_fail(2537);
+            return;
+        }
+
+        long epfd = sys_epoll_create1(0);
+        if (epfd < 0) {
+            fut_printf("[MISC-TEST] x Test 2536: epoll_create1 failed: %ld\n", epfd);
+            sys_close((int)efd);
+            fut_test_fail(2536);
+            fut_test_fail(2537);
+            return;
+        }
+
+        struct {
+            uint32_t events;
+            uint64_t data;
+        } __attribute__((packed)) ev;
+        ev.events = 0x001; /* EPOLLIN */
+        ev.data = (uint64_t)efd;
+        sys_epoll_ctl((int)epfd, 1 /* EPOLL_CTL_ADD */, (int)efd, &ev);
+
+        struct {
+            uint32_t events;
+            uint64_t data;
+        } __attribute__((packed)) out[4];
+
+        extern uint64_t fut_get_ticks(void);
+        uint64_t before = fut_get_ticks();
+        long n = sys_epoll_wait((int)epfd, out, 4, 0);
+        uint64_t after = fut_get_ticks();
+
+        if (n != 1) {
+            fut_printf("[MISC-TEST] x Test 2536: epoll_wait returned %ld (expected 1)\n", n);
+            sys_close((int)epfd);
+            sys_close((int)efd);
+            fut_test_fail(2536);
+            fut_test_fail(2537);
+            return;
+        }
+
+        if (!(out[0].events & 0x001)) { /* EPOLLIN */
+            fut_printf("[MISC-TEST] x Test 2536: events=0x%x missing EPOLLIN\n", out[0].events);
+            sys_close((int)epfd);
+            sys_close((int)efd);
+            fut_test_fail(2536);
+            fut_test_fail(2537);
+            return;
+        }
+
+        uint64_t elapsed = after - before;
+        if (elapsed > 2) {
+            fut_printf("[MISC-TEST] x Test 2536: took %llu ticks (expected <=2)\n",
+                       (unsigned long long)elapsed);
+            sys_close((int)epfd);
+            sys_close((int)efd);
+            fut_test_fail(2536);
+            fut_test_fail(2537);
+            return;
+        }
+
+        fut_printf("[MISC-TEST] ok Test 2536: timeout=0 returned 1 event in %llu ticks\n",
+                   (unsigned long long)elapsed);
+        fut_test_pass();
+
+        sys_close((int)epfd);
+        sys_close((int)efd);
+    }
+
+    /* ---- Test 2537: EPOLLONESHOT suppresses events after firing ---- */
+    fut_printf("[MISC-TEST] Test 2537: EPOLLONESHOT suppresses events after first delivery\n");
+    {
+        /* eventfd with count=1, will be readable */
+        long efd = sys_eventfd2(1, 0);
+        if (efd < 0) {
+            fut_printf("[MISC-TEST] x Test 2537: eventfd2 failed: %ld\n", efd);
+            fut_test_fail(2537);
+            return;
+        }
+
+        long epfd = sys_epoll_create1(0);
+        if (epfd < 0) {
+            fut_printf("[MISC-TEST] x Test 2537: epoll_create1 failed: %ld\n", epfd);
+            sys_close((int)efd);
+            fut_test_fail(2537);
+            return;
+        }
+
+        struct {
+            uint32_t events;
+            uint64_t data;
+        } __attribute__((packed)) ev;
+        /* EPOLLIN=0x001 | EPOLLONESHOT=0x40000000 */
+        ev.events = 0x001 | 0x40000000;
+        ev.data = (uint64_t)efd;
+        sys_epoll_ctl((int)epfd, 1 /* EPOLL_CTL_ADD */, (int)efd, &ev);
+
+        struct {
+            uint32_t events;
+            uint64_t data;
+        } __attribute__((packed)) out[4];
+
+        /* First wait: should return 1 event (EPOLLIN) */
+        long n = sys_epoll_wait((int)epfd, out, 4, 0);
+        if (n != 1) {
+            fut_printf("[MISC-TEST] x Test 2537: first wait returned %ld (expected 1)\n", n);
+            sys_close((int)epfd);
+            sys_close((int)efd);
+            fut_test_fail(2537);
+            return;
+        }
+
+        /* Second wait: EPOLLONESHOT should suppress -- even though eventfd is still
+         * readable (count=1), the oneshot_disabled flag prevents any events. */
+        n = sys_epoll_wait((int)epfd, out, 4, 0);
+        if (n != 0) {
+            fut_printf("[MISC-TEST] x Test 2537: second wait returned %ld (expected 0 after oneshot)\n", n);
+            sys_close((int)epfd);
+            sys_close((int)efd);
+            fut_test_fail(2537);
+            return;
+        }
+
+        /* Re-arm via EPOLL_CTL_MOD and verify events fire again */
+        ev.events = 0x001 | 0x40000000; /* EPOLLIN | EPOLLONESHOT */
+        ev.data = (uint64_t)efd;
+        sys_epoll_ctl((int)epfd, 3 /* EPOLL_CTL_MOD */, (int)efd, &ev);
+
+        n = sys_epoll_wait((int)epfd, out, 4, 0);
+        if (n != 1) {
+            fut_printf("[MISC-TEST] x Test 2537: after re-arm returned %ld (expected 1)\n", n);
+            sys_close((int)epfd);
+            sys_close((int)efd);
+            fut_test_fail(2537);
+            return;
+        }
+
+        fut_printf("[MISC-TEST] ok Test 2537: EPOLLONESHOT: fire, suppress, re-arm works\n");
+        fut_test_pass();
+
+        sys_close((int)epfd);
+        sys_close((int)efd);
+    }
+}
+
+/* ============================================================
  * Tests 2545-2550: sendmsg/recvmsg MSG_DONTWAIT and MSG_PEEK
  *
  *   2545: MSG_DONTWAIT on empty socket returns EAGAIN
@@ -75218,6 +75459,7 @@ void fut_misc_test_thread(void *arg) {
     test_dup3_fcntl_cloexec_compliance(); /* Tests 2495-2502: dup3 O_CLOEXEC and F_DUPFD_CLOEXEC POSIX compliance */
     test_sockopt_enforcement_roundtrip(); /* Tests 2510-2517: socket option enforcement round-trip */
     test_futex_bitset_selective_wakeup(); /* Tests 2525-2526: FUTEX_WAIT_BITSET / FUTEX_WAKE_BITSET selective wakeup */
+    test_epoll_wait_timeout_zero_immediate(); /* Tests 2535-2537: epoll_wait timeout=0 immediate return, oneshot suppression */
     test_sendmsg_recvmsg_flags(); /* Tests 2545-2550: sendmsg/recvmsg MSG_DONTWAIT, MSG_PEEK, MSG_NOSIGNAL, scatter-gather */
 
     fut_printf("[MISC-TEST] ========================================\n");

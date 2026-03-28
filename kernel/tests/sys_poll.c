@@ -939,12 +939,13 @@ static void test_poll_negative_fd_multi(void) {
         return;
     }
 
-    /* Array: fd=-1, fd=-5, fd=efd (readable), fd=-100 */
+    /* Array: fd=-1, fd=-5, fd=efd (readable), fd=-100
+     * Pre-set revents to a non-zero sentinel to verify poll clears them. */
     struct pollfd pfds[4] = {
-        { .fd = -1,         .events = POLLIN,  .revents = 0xFFFF },
-        { .fd = -5,         .events = POLLOUT, .revents = 0xFFFF },
+        { .fd = -1,         .events = POLLIN,  .revents = 0x7F },
+        { .fd = -5,         .events = POLLOUT, .revents = 0x7F },
         { .fd = (int)efd,   .events = POLLIN,  .revents = 0 },
-        { .fd = -100,       .events = POLLIN,  .revents = 0xFFFF },
+        { .fd = -100,       .events = POLLIN,  .revents = 0x7F },
     };
     long ret = sys_poll(pfds, 4, 0);
 

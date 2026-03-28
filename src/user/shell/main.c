@@ -1162,6 +1162,7 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  mv <src> <dst>  - Move/rename file\n");
     write_str(1, "  chmod <mode> <file> - Change permissions (octal)\n");
     write_str(1, "  stat <file>     - Show file information\n");
+    write_str(1, "  vi <file>       - Vi text editor (h/j/k/l, i, dd, :wq)\n");
     write_str(1, "  dd [if=] [of=] [bs=] [count=] - Copy data\n");
     write_str(1, "\n");
     write_str(1, "System:\n");
@@ -11347,7 +11348,8 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "cal") == 0 ||
             strcmp_simple(cmd, "locale") == 0 ||
             strcmp_simple(cmd, "reset") == 0 ||
-            strcmp_simple(cmd, "tput") == 0);
+            strcmp_simple(cmd, "tput") == 0 ||
+            0);
 }
 
 /* Parse command line into pipeline stages separated by '|' */

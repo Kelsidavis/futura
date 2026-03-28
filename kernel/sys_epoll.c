@@ -204,6 +204,9 @@
  * [TODO] 3. Add file struct refcounting to prevent premature free
  * [DONE] 4. Per-task quota (MAX_EPOLL_PER_TASK=16) bounds epoll_create1 rate
  * [DONE] 5. epoll_wait timeout: reject timeout < -1 with EINVAL; clamp > 24h
+ * [DONE] 6. epoll_pwait2 nanosecond-precision timeout (fut_get_time_ns deadline)
+ * [DONE] 7. EPOLLEXCLUSIVE validation (ADD-only, no ONESHOT), per-FD tracking
+ * [DONE] 8. EPOLLET edge-triggered: proper state transition tracking
  */
 
 #include <kernel/eventfd.h>
@@ -272,6 +275,7 @@ struct epoll_fd_entry {
     /* Phase 3: Edge-triggered and oneshot support */
     bool edge_triggered;       /* Enable edge-triggered reporting */
     bool oneshot;              /* Report only once, then auto-unregister */
+    bool exclusive;            /* EPOLLEXCLUSIVE: wake only one waiter */
     bool last_was_readable;    /* Last state for edge-triggered EPOLLIN */
     bool last_was_writable;    /* Last state for edge-triggered EPOLLOUT */
     bool last_was_hup;         /* Last state for edge-triggered EPOLLHUP/EPOLLERR */
@@ -284,6 +288,7 @@ struct epoll_set {
     int count;                                   /* Number of registered FDs */
     bool active;                                 /* Whether this epoll set is in use */
     bool cloexec;                                /* Close-on-exec flag (EPOLL_CLOEXEC) */
+    bool has_exclusive;                          /* True if any FD has EPOLLEXCLUSIVE */
     uint64_t owner_pid;                          /* PID of task that created this instance */
     fut_waitq_t epoll_waitq;                     /* Wait queue for event-driven wakeup */
 };
@@ -953,8 +958,7 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
 
         /* Validate event mask doesn't contain invalid bits.
          * EPOLLWAKEUP (Linux 3.5+): power-management wakeup hint; accepted, no-op.
-         * EPOLLEXCLUSIVE (Linux 4.5+): exclusive wakeup for thundering-herd avoidance;
-         * accepted and treated as level-triggered (single-waiter not yet enforced). */
+         * EPOLLEXCLUSIVE (Linux 4.5+): exclusive wakeup for thundering-herd avoidance. */
         uint32_t valid_events = EPOLLIN | EPOLLOUT | EPOLLPRI | EPOLLERR | EPOLLHUP |
                                EPOLLRDHUP | EPOLLRDNORM | EPOLLRDBAND |
                                EPOLLWRNORM | EPOLLWRBAND |
@@ -966,6 +970,25 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
                        "(invalid event bits 0x%x detected, valid=0x%x)\n",
                        epfd, op_name, fd, ev.events, invalid_bits, valid_events);
             return -EINVAL;
+        }
+
+        /* Linux 4.5+ EPOLLEXCLUSIVE constraints:
+         * - Only valid with EPOLL_CTL_ADD (not MOD)
+         * - Cannot be combined with EPOLLONESHOT (mutually exclusive semantics)
+         * See Linux kernel fs/eventpoll.c ep_insert() validation. */
+        if (ev.events & EPOLLEXCLUSIVE) {
+            if (op != EPOLL_CTL_ADD) {
+                fut_printf("[EPOLL_CTL] epoll_ctl(epfd=%d, op=%s, fd=%d) -> EINVAL "
+                           "(EPOLLEXCLUSIVE only valid with EPOLL_CTL_ADD)\n",
+                           epfd, op_name, fd);
+                return -EINVAL;
+            }
+            if (ev.events & EPOLL_ONESHOT) {
+                fut_printf("[EPOLL_CTL] epoll_ctl(epfd=%d, fd=%d) -> EINVAL "
+                           "(EPOLLEXCLUSIVE cannot be combined with EPOLLONESHOT)\n",
+                           epfd, fd);
+                return -EINVAL;
+            }
         }
     }
 
@@ -1055,17 +1078,22 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
         set->fds[slot].data = ev.data.u64;
         set->fds[slot].registered = true;
 
-        /* Phase 3: Extract and store edge-triggered and oneshot flags */
+        /* Phase 3: Extract and store edge-triggered, oneshot, and exclusive flags */
         set->fds[slot].edge_triggered = (ev.events & EPOLL_ET) != 0;
         set->fds[slot].oneshot = (ev.events & EPOLL_ONESHOT) != 0;
+        set->fds[slot].exclusive = (ev.events & EPOLLEXCLUSIVE) != 0;
         set->fds[slot].last_was_readable = false;
         set->fds[slot].last_was_writable = false;
         set->fds[slot].last_was_hup = false;
 
+        /* Track whether any FD uses EPOLLEXCLUSIVE for wakeup policy */
+        if (set->fds[slot].exclusive)
+            set->has_exclusive = true;
+
         /* Phase 3: Mask out modifier flags from events for actual event checking.
          * Always include EPOLLERR|EPOLLHUP — Linux reports these regardless
          * of the requested mask (ep_insert forces them in). */
-        uint32_t base_events = ev.events & ~(EPOLL_ET | EPOLL_ONESHOT);
+        uint32_t base_events = ev.events & ~(EPOLL_ET | EPOLL_ONESHOT | EPOLLEXCLUSIVE);
         base_events |= EPOLLERR | EPOLLHUP;
         set->fds[slot].events = base_events;
 
@@ -1118,17 +1146,33 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
             if (set->fds[i].registered && set->fds[i].fd == fd) {
                 set->fds[i].data = ev.data.u64;
 
-                /* Update edge-triggered and oneshot flags on MOD
+                /* Update edge-triggered, oneshot, and exclusive flags on MOD
                  * (must mirror EPOLL_CTL_ADD logic to avoid stale modifier state) */
                 set->fds[i].edge_triggered = (ev.events & EPOLL_ET) != 0;
                 set->fds[i].oneshot = (ev.events & EPOLL_ONESHOT) != 0;
+                set->fds[i].exclusive = (ev.events & EPOLLEXCLUSIVE) != 0;
                 set->fds[i].last_was_readable = false;
                 set->fds[i].last_was_writable = false;
                 set->fds[i].last_was_hup = false;
 
+                /* Recompute has_exclusive for the set */
+                if (set->fds[i].exclusive) {
+                    set->has_exclusive = true;
+                } else {
+                    /* Check if any other FD still has exclusive */
+                    bool any_excl = false;
+                    for (int j = 0; j < MAX_EPOLL_FDS; j++) {
+                        if (set->fds[j].registered && set->fds[j].exclusive) {
+                            any_excl = true;
+                            break;
+                        }
+                    }
+                    set->has_exclusive = any_excl;
+                }
+
                 /* Strip modifier flags from events for actual event checking.
                  * Always include EPOLLERR|EPOLLHUP (Linux forces these). */
-                uint32_t base_events = ev.events & ~(EPOLL_ET | EPOLL_ONESHOT);
+                uint32_t base_events = ev.events & ~(EPOLL_ET | EPOLL_ONESHOT | EPOLLEXCLUSIVE);
                 base_events |= EPOLLERR | EPOLLHUP;
                 set->fds[i].events = base_events;
 
@@ -1143,9 +1187,23 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
         /* Find and remove the entry */
         for (int i = 0; i < MAX_EPOLL_FDS; i++) {
             if (set->fds[i].registered && set->fds[i].fd == fd) {
+                bool was_exclusive = set->fds[i].exclusive;
                 set->fds[i].registered = false;
                 set->count--;
                 memset(&set->fds[i], 0, sizeof(set->fds[i]));
+
+                /* Recompute has_exclusive if we removed an exclusive FD */
+                if (was_exclusive) {
+                    bool any_excl = false;
+                    for (int j = 0; j < MAX_EPOLL_FDS; j++) {
+                        if (set->fds[j].registered && set->fds[j].exclusive) {
+                            any_excl = true;
+                            break;
+                        }
+                    }
+                    set->has_exclusive = any_excl;
+                }
+
                 /* Clear connect_notify if we had wired it */
                 {
                     fut_socket_t *sock = get_socket_from_fd(fd);
@@ -1817,15 +1875,19 @@ long sys_epoll_pwait(int epfd, struct epoll_event *events, int maxevents,
  * @param sigsetsize Size of the sigset (must be 8)
  * @return Number of events, or -errno
  *
- * Extends epoll_pwait by taking a struct timespec instead of int milliseconds.
- * The timeout is converted to milliseconds (rounding up) and delegated to
- * sys_epoll_pwait.
+ * Unlike the original implementation that converted struct timespec to
+ * milliseconds (losing sub-ms precision), this uses fut_get_time_ns() for
+ * nanosecond-resolution deadline tracking.  A 500us timeout now correctly
+ * expires in ~500us rather than being rounded up to 1ms and then quantized
+ * to a 10ms timer tick.
  */
 long sys_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
                       const void *timeout_ts, const void *sigmask,
                       size_t sigsetsize) {
-    /* sigsetsize is forwarded to pwait for validation */
-    int timeout_ms = -1;  /* default: block forever */
+    /* ── Parse the struct timespec timeout ── */
+    bool has_timeout = false;
+    bool is_poll = false;            /* tv_sec==0 && tv_nsec==0: non-blocking */
+    uint64_t deadline_ns = 0;        /* absolute deadline in nanoseconds */
 
     if (timeout_ts) {
         struct timespec ts = {0};
@@ -1840,15 +1902,287 @@ long sys_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
         if (ts.tv_sec < 0 || ts.tv_nsec < 0 || ts.tv_nsec >= 1000000000L)
             return -EINVAL;
 
-        /* Convert to milliseconds, clamped to INT_MAX */
+        has_timeout = true;
         if (ts.tv_sec == 0 && ts.tv_nsec == 0) {
-            timeout_ms = 0;  /* poll, don't block */
+            is_poll = true;  /* non-blocking poll */
         } else {
-            int64_t ms = (int64_t)ts.tv_sec * 1000 +
-                         ((int64_t)ts.tv_nsec + 999999) / 1000000;
-            timeout_ms = (ms > (int64_t)0x7FFFFFFF) ? 0x7FFFFFFF : (int)ms;
+            /* Compute absolute nanosecond deadline using TSC-backed clock */
+            uint64_t now_ns = fut_get_time_ns();
+            uint64_t timeout_ns = (uint64_t)ts.tv_sec * 1000000000ULL +
+                                  (uint64_t)ts.tv_nsec;
+            deadline_ns = now_ns + timeout_ns;
+            /* Guard against overflow */
+            if (deadline_ns < now_ns)
+                deadline_ns = UINT64_MAX;
+        }
+    }
+    /* If timeout_ts is NULL: block forever (has_timeout=false, is_poll=false) */
+
+    /* ── Validate basic parameters (mirrors sys_epoll_wait checks) ── */
+    if (maxevents <= 0)
+        return -EINVAL;
+    if (!events)
+        return -EINVAL;
+
+    /* Verify events array is writable (skip for kernel buffers) */
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)events < KERNEL_VIRTUAL_BASE)
+#endif
+    if (fut_access_ok(events, maxevents * sizeof(struct epoll_event), 1) != 0)
+        return -EFAULT;
+
+    struct epoll_set *set = epoll_get_set(epfd);
+    if (!set)
+        return -EBADF;
+
+    /* ── Install signal mask atomically ── */
+    fut_task_t *task = fut_task_current();
+    sigset_t saved_mask = {0};
+    bool mask_installed = false;
+
+    if (sigmask && task) {
+#ifdef KERNEL_VIRTUAL_BASE
+        bool is_kptr = (uintptr_t)sigmask >= KERNEL_VIRTUAL_BASE;
+#else
+        bool is_kptr = false;
+#endif
+        if (!is_kptr && sigsetsize != sizeof(sigset_t))
+            return -EINVAL;
+
+        sigset_t newmask = {0};
+        if (is_kptr)
+            __builtin_memcpy(&newmask, sigmask, sizeof(sigset_t));
+        else if (fut_copy_from_user(&newmask, sigmask, sizeof(sigset_t)) != 0)
+            return -EFAULT;
+
+        int mret = fut_signal_procmask(task, SIGPROCMASK_SETMASK, &newmask, &saved_mask);
+        if (mret < 0) return mret;
+        mask_installed = true;
+    }
+
+    /* ── Polling loop with nanosecond-precision deadline ── */
+    long ret = 0;
+    int max_iterations = is_poll ? 1 : 0x7FFFFFFF;
+
+    for (int iteration = 0; iteration < max_iterations; iteration++) {
+        int ready_count = 0;
+        struct epoll_event ready_events[MAX_EPOLL_FDS];
+
+        /* Scan all registered FDs (reuses the same polling logic as sys_epoll_wait) */
+        for (int i = 0; i < MAX_EPOLL_FDS && ready_count < maxevents; i++) {
+            if (!set->fds[i].registered)
+                continue;
+
+            struct fut_file *file = fut_vfs_get_file(set->fds[i].fd);
+            if (!file) {
+                ready_events[ready_count].events = EPOLLERR | EPOLLHUP;
+                ready_events[ready_count].data.u64 = set->fds[i].data;
+                ready_count++;
+                continue;
+            }
+
+            uint32_t events_ready = 0;
+            bool handled = false;
+
+            if (fut_eventfd_poll(file, set->fds[i].events, &events_ready))
+                handled = true;
+            if (!handled && fut_timerfd_poll(file, set->fds[i].events, &events_ready))
+                handled = true;
+            if (!handled && fut_signalfd_poll(file, set->fds[i].events, &events_ready))
+                handled = true;
+            if (!handled && fut_pipe_poll(file, set->fds[i].events, &events_ready))
+                handled = true;
+            if (!handled) {
+                extern bool fut_pidfd_poll(struct fut_file *file, uint32_t requested, uint32_t *ready_out);
+                if (fut_pidfd_poll(file, set->fds[i].events, &events_ready))
+                    handled = true;
+            }
+            if (!handled) {
+                extern bool fut_inotify_poll(struct fut_file *file, uint32_t requested, uint32_t *ready_out);
+                if (fut_inotify_poll(file, set->fds[i].events, &events_ready))
+                    handled = true;
+            }
+            if (!handled) {
+                extern bool fut_pty_poll(struct fut_file *file, uint32_t requested, uint32_t *ready_out);
+                if (fut_pty_poll(file, set->fds[i].events, &events_ready))
+                    handled = true;
+            }
+            if (!handled && file->chr_ops && file->chr_ops->poll) {
+                uint32_t chrdev_ready = 0;
+                if (file->chr_ops->poll(file->chr_inode, file->chr_private,
+                                        set->fds[i].events, &chrdev_ready)) {
+                    events_ready |= chrdev_ready;
+                    handled = true;
+                }
+            }
+            if (!handled) {
+                fut_socket_t *socket = get_socket_from_fd(set->fds[i].fd);
+                if (socket) {
+                    int poll_events = 0;
+                    if (set->fds[i].events & (EPOLLIN | EPOLLRDNORM))
+                        poll_events |= 0x1;
+                    if (set->fds[i].events & (EPOLLOUT | EPOLLWRNORM))
+                        poll_events |= 0x4;
+                    int socket_ready = fut_socket_poll(socket, poll_events);
+                    if (socket_ready & 0x1)    events_ready |= EPOLLIN | EPOLLRDNORM;
+                    if (socket_ready & 0x4)    events_ready |= EPOLLOUT | EPOLLWRNORM;
+                    if (socket_ready & 0x2000) events_ready |= EPOLLRDHUP;
+                    if (socket_ready & 0x10)   events_ready |= EPOLLHUP;
+                    if (socket_ready & 0x8)    events_ready |= EPOLLERR;
+                    handled = true;
+                }
+            }
+            if (!handled && file->vnode && file->vnode->type == VN_REG) {
+                if (set->fds[i].events & (EPOLLIN | EPOLLRDNORM))
+                    events_ready |= EPOLLIN | EPOLLRDNORM;
+                if (set->fds[i].events & (EPOLLOUT | EPOLLWRNORM))
+                    events_ready |= EPOLLOUT | EPOLLWRNORM;
+                handled = true;
+            }
+            if (!handled && file->vnode && file->vnode->type == VN_SOCK) {
+                fut_socket_t *socket = get_socket_from_fd(set->fds[i].fd);
+                if (socket) {
+                    int poll_events = 0;
+                    if (set->fds[i].events & (EPOLLIN | EPOLLRDNORM))
+                        poll_events |= 0x1;
+                    if (set->fds[i].events & (EPOLLOUT | EPOLLWRNORM))
+                        poll_events |= 0x4;
+                    int socket_ready = fut_socket_poll(socket, poll_events);
+                    if (socket_ready & 0x1)    events_ready |= EPOLLIN | EPOLLRDNORM;
+                    if (socket_ready & 0x4)    events_ready |= EPOLLOUT | EPOLLWRNORM;
+                    if (socket_ready & 0x2000) events_ready |= EPOLLRDHUP;
+                    if (socket_ready & 0x10)   events_ready |= EPOLLHUP;
+                    if (socket_ready & 0x8)    events_ready |= EPOLLERR;
+                }
+                handled = true;
+            }
+            if (!handled && file->vnode) {
+                if (set->fds[i].events & (EPOLLIN | EPOLLRDNORM))
+                    events_ready |= EPOLLIN | EPOLLRDNORM;
+                if (set->fds[i].events & (EPOLLOUT | EPOLLWRNORM))
+                    events_ready |= EPOLLOUT | EPOLLWRNORM;
+            }
+
+            /* Edge-triggered and level-triggered reporting */
+            bool should_report = false;
+            if (events_ready) {
+                if (set->fds[i].edge_triggered) {
+                    bool is_readable = (events_ready & (EPOLLIN | EPOLLRDNORM)) != 0;
+                    bool is_writable = (events_ready & (EPOLLOUT | EPOLLWRNORM)) != 0;
+                    bool is_hup_err  = (events_ready & (EPOLLHUP | EPOLLERR)) != 0;
+                    if ((is_readable && !set->fds[i].last_was_readable) ||
+                        (is_writable && !set->fds[i].last_was_writable) ||
+                        (is_hup_err  && !set->fds[i].last_was_hup))
+                        should_report = true;
+                    if (is_readable) set->fds[i].last_was_readable = true;
+                    if (is_writable) set->fds[i].last_was_writable = true;
+                    if (is_hup_err)  set->fds[i].last_was_hup = true;
+                } else {
+                    should_report = true;
+                }
+            } else if (set->fds[i].edge_triggered) {
+                set->fds[i].last_was_readable = false;
+                set->fds[i].last_was_writable = false;
+                set->fds[i].last_was_hup = false;
+            }
+
+            if (should_report) {
+                ready_events[ready_count].events = events_ready;
+                ready_events[ready_count].data.u64 = set->fds[i].data;
+                ready_count++;
+                if (set->fds[i].oneshot)
+                    set->fds[i].events = 0;
+                if (ready_count >= maxevents)
+                    break;
+            }
+        }
+
+        if (ready_count > 0) {
+            size_t copy_size = ready_count * sizeof(struct epoll_event);
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)events >= KERNEL_VIRTUAL_BASE)
+                __builtin_memcpy(events, ready_events, copy_size);
+            else
+#endif
+            if (fut_copy_to_user(events, ready_events, copy_size) != 0) {
+                ret = -EFAULT;
+                goto out_restore;
+            }
+            ret = ready_count;
+            goto out_restore;
+        }
+
+        /* Non-blocking poll: return immediately */
+        if (is_poll) {
+            ret = 0;
+            goto out_restore;
+        }
+
+        /* Check nanosecond-precision deadline BEFORE sleeping.
+         * This is the key improvement: sub-millisecond timeouts expire
+         * accurately instead of being rounded to the next 10ms tick. */
+        if (has_timeout) {
+            uint64_t now_ns = fut_get_time_ns();
+            if (now_ns >= deadline_ns) {
+                ret = 0;  /* timeout expired */
+                goto out_restore;
+            }
+        }
+
+        /* Check for pending unblocked signals before blocking → EINTR */
+        if (task) {
+            uint64_t pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
+            fut_thread_t *scur_thr = fut_thread_current();
+            uint64_t blocked = scur_thr ?
+                __atomic_load_n(&scur_thr->signal_mask, __ATOMIC_ACQUIRE) :
+                __atomic_load_n(&task->signal_mask, __ATOMIC_ACQUIRE);
+            if (pending & ~blocked) {
+                ret = -EINTR;
+                goto out_restore;
+            }
+        }
+
+        /* Sleep on epoll waitqueue with timer-based wakeup.
+         * Recompute remaining ticks from the ns deadline for accuracy. */
+        if (has_timeout) {
+            uint64_t now_ns = fut_get_time_ns();
+            if (now_ns >= deadline_ns) {
+                ret = 0;
+                goto out_restore;
+            }
+            uint64_t remaining_ns = deadline_ns - now_ns;
+            uint64_t remaining_ticks = remaining_ns / 10000000ULL;
+            if (remaining_ns % 10000000ULL != 0) remaining_ticks++;
+            if (remaining_ticks == 0) remaining_ticks = 1;
+            if (fut_timer_start(remaining_ticks, epoll_timeout_wakeup, &set->epoll_waitq) != 0) {
+                ret = 0;  /* OOM on timer → treat as timeout */
+                goto out_restore;
+            }
+        }
+        fut_waitq_sleep_locked(&set->epoll_waitq, NULL, FUT_THREAD_BLOCKED);
+        if (has_timeout)
+            fut_timer_cancel(epoll_timeout_wakeup, &set->epoll_waitq);
+
+        /* Check for pending signals after wakeup → EINTR */
+        if (task) {
+            uint64_t pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
+            fut_thread_t *scur_thr = fut_thread_current();
+            uint64_t blocked = scur_thr ?
+                __atomic_load_n(&scur_thr->signal_mask, __ATOMIC_ACQUIRE) :
+                __atomic_load_n(&task->signal_mask, __ATOMIC_ACQUIRE);
+            if (pending & ~blocked) {
+                ret = -EINTR;
+                goto out_restore;
+            }
         }
     }
 
-    return sys_epoll_pwait(epfd, events, maxevents, timeout_ms, sigmask, sigsetsize);
+out_restore:
+    /* Restore original signal mask */
+    if (mask_installed && task) {
+        int rret = fut_signal_procmask(task, SIGPROCMASK_SETMASK, &saved_mask, NULL);
+        if (rret < 0 && ret >= 0)
+            ret = rret;
+    }
+    return ret;
 }

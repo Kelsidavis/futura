@@ -263,6 +263,9 @@ static void cmd_ftp(int argc, char *argv[]);
 static void cmd_sftp(int argc, char *argv[]);
 static void cmd_telnet(int argc, char *argv[]);
 static void cmd_nmap(int argc, char *argv[]);
+static void cmd_apropos(int argc, char *argv[]);
+static void cmd_info(int argc, char *argv[]);
+static void cmd_getent(int argc, char *argv[]);
 
 /* Forward declaration for prompt */
 static void print_prompt(void);
@@ -13854,6 +13857,15 @@ watch_sleep:
     } else if (strcmp_simple(argv[0], "nmap") == 0) {
         cmd_nmap(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "apropos") == 0) {
+        cmd_apropos(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "info") == 0) {
+        cmd_info(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "getent") == 0) {
+        cmd_getent(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -14131,6 +14143,9 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "sftp") == 0 ||
             strcmp_simple(cmd, "telnet") == 0 ||
             strcmp_simple(cmd, "nmap") == 0 ||
+            strcmp_simple(cmd, "apropos") == 0 ||
+            strcmp_simple(cmd, "info") == 0 ||
+            strcmp_simple(cmd, "getent") == 0 ||
             0);
 }
 
@@ -16985,6 +17000,29 @@ static void cmd_cal(int argc, char *argv[]) {
 
 /* ── locale: display locale settings ── */
 static void cmd_locale(int argc, char *argv[]) {
+    /* Handle -a (list all available locales) */
+    if (argc >= 2 && argv[1][0] == '-' && argv[1][1] == 'a' && argv[1][2] == '\0') {
+        write_str(1, "C\n");
+        write_str(1, "C.UTF-8\n");
+        write_str(1, "POSIX\n");
+        write_str(1, "en_US\n");
+        write_str(1, "en_US.UTF-8\n");
+        write_str(1, "en_GB.UTF-8\n");
+        write_str(1, "de_DE.UTF-8\n");
+        write_str(1, "fr_FR.UTF-8\n");
+        write_str(1, "ja_JP.UTF-8\n");
+        write_str(1, "zh_CN.UTF-8\n");
+        return;
+    }
+    /* Handle -m / charmap (list available character maps) */
+    if (argc >= 2 && ((argv[1][0] == '-' && argv[1][1] == 'm' && argv[1][2] == '\0') ||
+                       strcmp_simple(argv[1], "charmap") == 0)) {
+        write_str(1, "ANSI_X3.4-1968\n");
+        write_str(1, "ISO-8859-1\n");
+        write_str(1, "ISO-8859-15\n");
+        write_str(1, "UTF-8\n");
+        return;
+    }
     (void)argc; (void)argv;
     const char *lang = get_var("LANG");
     const char *lc_all = get_var("LC_ALL");
@@ -21786,6 +21824,7 @@ static void cmd_whatis(int argc, char *argv[]) {
     }
     static const struct { const char *name; const char *desc; } whatis_db[] = {
         {"adduser",   "adduser (8)         - add a user to the system"},
+        {"apropos",   "apropos (1)         - search the manual page names and descriptions"},
         {"ascii",     "ascii (1)           - display ASCII character table"},
         {"awk",       "awk (1)             - pattern scanning and processing language"},
         {"base32",    "base32 (1)          - encode/decode data in base32"},
@@ -21844,6 +21883,7 @@ static void cmd_whatis(int argc, char *argv[]) {
         {"fstrim",    "fstrim (8)          - discard unused blocks on a mounted filesystem"},
         {"fuser",     "fuser (1)           - identify processes using files or sockets"},
         {"free",      "free (1)            - display amount of free and used memory"},
+        {"getent",    "getent (1)          - get entries from administrative databases"},
         {"git",       "git (1)             - the stupid content tracker"},
         {"gpg",       "gpg (1)             - OpenPGP encryption and signing tool"},
         {"grep",      "grep (1)            - print lines matching a pattern"},
@@ -21860,6 +21900,7 @@ static void cmd_whatis(int argc, char *argv[]) {
         {"iconv",     "iconv (1)           - convert text from one character encoding to another"},
         {"id",        "id (1)              - print real and effective user and group IDs"},
         {"ifconfig",  "ifconfig (8)        - configure a network interface"},
+        {"info",      "info (1)            - read Info documents"},
         {"ionice",    "ionice (1)          - set or get process I/O scheduling class and priority"},
         {"ip",        "ip (8)              - show/manipulate routing, devices, tunnels"},
         {"journalctl","journalctl (1)      - read the systemd journal"},
@@ -25641,6 +25682,74 @@ static void cmd_vipw(int argc, char *argv[]) {
     vi_argv[1] = passwd_path;
     vi_argv[2] = (char *)0;
     cmd_vi(2, vi_argv);
+}
+
+/* ── apropos: search manual page names and descriptions ── */
+static void cmd_apropos(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: apropos <keyword>\n");
+        return;
+    }
+    const char *keyword = argv[1];
+    /* Simulated manual page search results */
+    write_str(1, keyword); write_str(1, " (1)          - "); write_str(1, keyword); write_str(1, " command\n");
+    write_str(1, keyword); write_str(1, " (7)          - "); write_str(1, keyword); write_str(1, " overview\n");
+}
+
+/* ── info: read Info documents ── */
+static void cmd_info(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "info: GNU Info document reader\n");
+        write_str(1, "usage: info <topic>\n");
+        return;
+    }
+    write_str(1, "File: "); write_str(1, argv[1]); write_str(1, ".info\n");
+    write_str(1, "This is "); write_str(1, argv[1]); write_str(1, ", produced by Futura.\n\n");
+    write_str(1, "  No info documentation available for '");
+    write_str(1, argv[1]); write_str(1, "'. Try 'man "); write_str(1, argv[1]); write_str(1, "'.\n");
+}
+
+/* ── getent: get entries from administrative databases ── */
+static void cmd_getent(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: getent <database> [key]\n");
+        write_str(2, "  databases: passwd, group, hosts, services, protocols\n");
+        return;
+    }
+    const char *db = argv[1];
+    if (strcmp_simple(db, "passwd") == 0) {
+        if (argc >= 3) {
+            write_str(1, argv[2]); write_str(1, ":x:0:0:"); write_str(1, argv[2]);
+            write_str(1, ":/root:/bin/sh\n");
+        } else {
+            write_str(1, "root:x:0:0:root:/root:/bin/sh\n");
+            write_str(1, "nobody:x:65534:65534:nobody:/nonexistent:/usr/sbin/nologin\n");
+        }
+    } else if (strcmp_simple(db, "group") == 0) {
+        if (argc >= 3) {
+            write_str(1, argv[2]); write_str(1, ":x:0:\n");
+        } else {
+            write_str(1, "root:x:0:\n");
+            write_str(1, "nogroup:x:65534:\n");
+        }
+    } else if (strcmp_simple(db, "hosts") == 0) {
+        if (argc >= 3) {
+            write_str(1, "127.0.0.1       "); write_str(1, argv[2]); write_str(1, "\n");
+        } else {
+            write_str(1, "127.0.0.1       localhost\n");
+            write_str(1, "::1             localhost ip6-localhost\n");
+        }
+    } else if (strcmp_simple(db, "services") == 0) {
+        write_str(1, "ssh                 22/tcp\n");
+        write_str(1, "http                80/tcp\n");
+        write_str(1, "https               443/tcp\n");
+    } else if (strcmp_simple(db, "protocols") == 0) {
+        write_str(1, "tcp     6  TCP\n");
+        write_str(1, "udp    17  UDP\n");
+        write_str(1, "icmp    1  ICMP\n");
+    } else {
+        write_str(2, "getent: unknown database: "); write_str(2, db); write_str(2, "\n");
+    }
 }
 
 /* ── ar: archive manager ── */

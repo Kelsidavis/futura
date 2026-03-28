@@ -83,7 +83,7 @@ static void shared_page_cache_init(void) {
     shared_page_cache_inited = true;
 }
 
-static phys_addr_t shared_page_lookup(struct fut_vnode *vnode, uint64_t offset) {
+phys_addr_t shared_page_lookup(struct fut_vnode *vnode, uint64_t offset) {
     shared_page_cache_init();
     int bucket = SHARED_PAGE_CACHE_HASH(vnode, offset);
     fut_spinlock_acquire(&shared_page_locks[bucket]);
@@ -100,7 +100,7 @@ static phys_addr_t shared_page_lookup(struct fut_vnode *vnode, uint64_t offset) 
     return 0;
 }
 
-static void shared_page_insert(struct fut_vnode *vnode, uint64_t offset, phys_addr_t phys) {
+void shared_page_insert(struct fut_vnode *vnode, uint64_t offset, phys_addr_t phys) {
     shared_page_cache_init();
     int bucket = SHARED_PAGE_CACHE_HASH(vnode, offset);
     fut_spinlock_acquire(&shared_page_locks[bucket]);

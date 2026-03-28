@@ -72743,6 +72743,250 @@ __attribute__((noinline)) static void test_pmm_task_hardening(void) {
     }
 }
 
+/* ============================================================
+ *   Tests 2640-2647: readahead + fadvise I/O performance round-trip
+ * ============================================================ */
+__attribute__((noinline)) static void test_readahead_fadvise_roundtrip(void) {
+    extern long sys_readahead(int fd, int64_t offset, size_t count);
+    extern long sys_fadvise64(int fd, int64_t offset, int64_t len, int advice);
+    extern long sys_open(const char *path, int flags, int mode);
+    extern long sys_write(int fd, const void *buf, size_t count);
+    extern long sys_read(int fd, void *buf, size_t count);
+    extern long sys_close(int fd);
+    extern long sys_lseek(int fd, int64_t offset, int whence);
+
+    /* POSIX_FADV_* constants */
+    #define FADV_NORMAL     0
+    #define FADV_RANDOM     1
+    #define FADV_SEQUENTIAL 2
+    #define FADV_WILLNEED   3
+    #define FADV_DONTNEED   4
+    #define FADV_NOREUSE    5
+
+    /* ---- Test 2640: readahead on a file with data succeeds ---- */
+    fut_printf("[MISC-TEST] Test 2640: readahead prefetch round-trip\n");
+    {
+        /* Create a file with known content */
+        long fd = sys_open("/tmp/.ra_test_2640", 0x42 /* O_RDWR|O_CREAT */, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL 2640: open=%ld\n", fd);
+            fut_test_fail(2640);
+        } else {
+            static char wbuf[128];
+            for (int i = 0; i < 128; i++) wbuf[i] = (char)('A' + (i % 26));
+            sys_write((int)fd, wbuf, 128);
+
+            /* readahead the entire file */
+            long ret = sys_readahead((int)fd, 0, 128);
+            if (ret == 0) {
+                /* Verify we can still read the data back correctly */
+                sys_lseek((int)fd, 0, 0 /* SEEK_SET */);
+                static char rbuf[128];
+                long n = sys_read((int)fd, rbuf, 128);
+                if (n == 128 && rbuf[0] == 'A' && rbuf[25] == 'Z') {
+                    fut_printf("[MISC-TEST] PASS 2640: readahead + read verified\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] FAIL 2640: read-back n=%ld data[0]=%d\n", n, (int)rbuf[0]);
+                    fut_test_fail(2640);
+                }
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2640: readahead returned %ld\n", ret);
+                fut_test_fail(2640);
+            }
+            sys_close((int)fd);
+        }
+    }
+
+    /* ---- Test 2641: readahead with zero count is no-op ---- */
+    fut_printf("[MISC-TEST] Test 2641: readahead count=0 no-op\n");
+    {
+        long fd = sys_open("/tmp/.ra_test_2641", 0x42, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL 2641: open=%ld\n", fd);
+            fut_test_fail(2641);
+        } else {
+            sys_write((int)fd, "hello", 5);
+            long ret = sys_readahead((int)fd, 0, 0);
+            if (ret == 0) {
+                fut_printf("[MISC-TEST] PASS 2641: readahead(count=0) = 0\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2641: readahead(count=0) = %ld\n", ret);
+                fut_test_fail(2641);
+            }
+            sys_close((int)fd);
+        }
+    }
+
+    /* ---- Test 2642: readahead past EOF succeeds (clamps to file size) ---- */
+    fut_printf("[MISC-TEST] Test 2642: readahead past EOF succeeds\n");
+    {
+        long fd = sys_open("/tmp/.ra_test_2642", 0x42, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL 2642: open=%ld\n", fd);
+            fut_test_fail(2642);
+        } else {
+            sys_write((int)fd, "data", 4);
+            long ret = sys_readahead((int)fd, 0, 1048576);  /* 1 MB, well past EOF */
+            if (ret == 0) {
+                fut_printf("[MISC-TEST] PASS 2642: readahead past EOF = 0\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2642: readahead past EOF = %ld\n", ret);
+                fut_test_fail(2642);
+            }
+            sys_close((int)fd);
+        }
+    }
+
+    /* ---- Test 2643: fadvise SEQUENTIAL sets flag, data still readable ---- */
+    fut_printf("[MISC-TEST] Test 2643: fadvise SEQUENTIAL round-trip\n");
+    {
+        long fd = sys_open("/tmp/.ra_test_2643", 0x42, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL 2643: open=%ld\n", fd);
+            fut_test_fail(2643);
+        } else {
+            sys_write((int)fd, "sequential", 10);
+
+            /* Set sequential access pattern */
+            long ret = sys_fadvise64((int)fd, 0, 0, FADV_SEQUENTIAL);
+            if (ret == 0) {
+                /* Verify file is still readable */
+                sys_lseek((int)fd, 0, 0);
+                static char rbuf[16];
+                long n = sys_read((int)fd, rbuf, 10);
+                if (n == 10 && rbuf[0] == 's') {
+                    fut_printf("[MISC-TEST] PASS 2643: fadvise(SEQUENTIAL) + read ok\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] FAIL 2643: read n=%ld\n", n);
+                    fut_test_fail(2643);
+                }
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2643: fadvise(SEQUENTIAL) = %ld\n", ret);
+                fut_test_fail(2643);
+            }
+            sys_close((int)fd);
+        }
+    }
+
+    /* ---- Test 2644: fadvise RANDOM accepted ---- */
+    fut_printf("[MISC-TEST] Test 2644: fadvise RANDOM accepted\n");
+    {
+        long fd = sys_open("/tmp/.ra_test_2644", 0x42, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL 2644: open=%ld\n", fd);
+            fut_test_fail(2644);
+        } else {
+            sys_write((int)fd, "random", 6);
+            long ret = sys_fadvise64((int)fd, 0, 4096, FADV_RANDOM);
+            if (ret == 0) {
+                fut_printf("[MISC-TEST] PASS 2644: fadvise(RANDOM) = 0\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2644: fadvise(RANDOM) = %ld\n", ret);
+                fut_test_fail(2644);
+            }
+            sys_close((int)fd);
+        }
+    }
+
+    /* ---- Test 2645: fadvise WILLNEED triggers readahead, data readable ---- */
+    fut_printf("[MISC-TEST] Test 2645: fadvise WILLNEED triggers prefetch\n");
+    {
+        long fd = sys_open("/tmp/.ra_test_2645", 0x42, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL 2645: open=%ld\n", fd);
+            fut_test_fail(2645);
+        } else {
+            sys_write((int)fd, "willneed_data_here", 18);
+
+            /* WILLNEED should prefetch the range into page cache */
+            long ret = sys_fadvise64((int)fd, 0, 4096, FADV_WILLNEED);
+            if (ret == 0) {
+                /* Read to verify data integrity after prefetch */
+                sys_lseek((int)fd, 0, 0);
+                static char rbuf[32];
+                long n = sys_read((int)fd, rbuf, 18);
+                if (n == 18 && rbuf[0] == 'w' && rbuf[8] == '_') {
+                    fut_printf("[MISC-TEST] PASS 2645: fadvise(WILLNEED) + read ok\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] FAIL 2645: read n=%ld d[0]=%c\n", n, rbuf[0]);
+                    fut_test_fail(2645);
+                }
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2645: fadvise(WILLNEED) = %ld\n", ret);
+                fut_test_fail(2645);
+            }
+            sys_close((int)fd);
+        }
+    }
+
+    /* ---- Test 2646: fadvise DONTNEED accepted (evict is best-effort) ---- */
+    fut_printf("[MISC-TEST] Test 2646: fadvise DONTNEED accepted\n");
+    {
+        long fd = sys_open("/tmp/.ra_test_2646", 0x42, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL 2646: open=%ld\n", fd);
+            fut_test_fail(2646);
+        } else {
+            sys_write((int)fd, "dontneed", 8);
+
+            /* First prefetch, then evict — both should succeed */
+            long ret1 = sys_fadvise64((int)fd, 0, 4096, FADV_WILLNEED);
+            long ret2 = sys_fadvise64((int)fd, 0, 4096, FADV_DONTNEED);
+            if (ret1 == 0 && ret2 == 0) {
+                /* Data should still be readable from the file itself */
+                sys_lseek((int)fd, 0, 0);
+                static char rbuf[16];
+                long n = sys_read((int)fd, rbuf, 8);
+                if (n == 8 && rbuf[0] == 'd') {
+                    fut_printf("[MISC-TEST] PASS 2646: WILLNEED+DONTNEED round-trip ok\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] FAIL 2646: read n=%ld\n", n);
+                    fut_test_fail(2646);
+                }
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2646: willneed=%ld dontneed=%ld\n", ret1, ret2);
+                fut_test_fail(2646);
+            }
+            sys_close((int)fd);
+        }
+    }
+
+    /* ---- Test 2647: fadvise NOREUSE accepted (no-op) ---- */
+    fut_printf("[MISC-TEST] Test 2647: fadvise NOREUSE accepted\n");
+    {
+        long fd = sys_open("/tmp/.ra_test_2647", 0x42, 0644);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL 2647: open=%ld\n", fd);
+            fut_test_fail(2647);
+        } else {
+            sys_write((int)fd, "noreuse", 7);
+            long ret = sys_fadvise64((int)fd, 0, 4096, FADV_NOREUSE);
+            if (ret == 0) {
+                fut_printf("[MISC-TEST] PASS 2647: fadvise(NOREUSE) = 0\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2647: fadvise(NOREUSE) = %ld\n", ret);
+                fut_test_fail(2647);
+            }
+            sys_close((int)fd);
+        }
+    }
+
+    #undef FADV_NORMAL
+    #undef FADV_RANDOM
+    #undef FADV_SEQUENTIAL
+    #undef FADV_WILLNEED
+    #undef FADV_DONTNEED
+    #undef FADV_NOREUSE
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -77085,6 +77329,7 @@ void fut_misc_test_thread(void *arg) {
     test_socketpair_cloexec_accept4_lifecycle(); /* Tests 2580-2587: socketpair SOCK_CLOEXEC lifecycle + accept4 flag combinations */
     test_execve_cloexec_closure(); /* Tests 2600-2607: execve FD_CLOEXEC closure across fd types */
     test_sa_resethand_semantics(); /* Tests 2615-2622: SA_RESETHAND signal delivery semantics */
+    test_readahead_fadvise_roundtrip(); /* Tests 2640-2647: readahead + fadvise I/O performance round-trip */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

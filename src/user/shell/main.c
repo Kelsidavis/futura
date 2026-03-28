@@ -365,6 +365,16 @@ static void cmd_sar(int argc, char *argv[]);
 static void cmd_neofetch(int argc, char *argv[]);
 static void cmd_screenfetch(int argc, char *argv[]);
 static void cmd_fortune(int argc, char *argv[]);
+static void cmd_rg(int argc, char *argv[]);
+static void cmd_fd(int argc, char *argv[]);
+static void cmd_bat(int argc, char *argv[]);
+static void cmd_exa(int argc, char *argv[]);
+static void cmd_delta(int argc, char *argv[]);
+static void cmd_fzf(int argc, char *argv[]);
+static void cmd_tldr(int argc, char *argv[]);
+static void cmd_hyperfine(int argc, char *argv[]);
+static void cmd_tokei(int argc, char *argv[]);
+static void cmd_zoxide(int argc, char *argv[]);
 
 /* Forward declaration for prompt */
 static void print_prompt(void);
@@ -14738,6 +14748,36 @@ watch_sleep:
     } else if (strcmp_simple(argv[0], "fortune") == 0) {
         cmd_fortune(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "rg") == 0) {
+        cmd_rg(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "fd") == 0) {
+        cmd_fd(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "bat") == 0) {
+        cmd_bat(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "exa") == 0) {
+        cmd_exa(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "delta") == 0) {
+        cmd_delta(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "fzf") == 0) {
+        cmd_fzf(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "tldr") == 0) {
+        cmd_tldr(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "hyperfine") == 0) {
+        cmd_hyperfine(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "tokei") == 0) {
+        cmd_tokei(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "z") == 0) {
+        cmd_zoxide(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -15120,6 +15160,16 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "neofetch") == 0 ||
             strcmp_simple(cmd, "screenfetch") == 0 ||
             strcmp_simple(cmd, "fortune") == 0 ||
+            strcmp_simple(cmd, "rg") == 0 ||
+            strcmp_simple(cmd, "fd") == 0 ||
+            strcmp_simple(cmd, "bat") == 0 ||
+            strcmp_simple(cmd, "exa") == 0 ||
+            strcmp_simple(cmd, "delta") == 0 ||
+            strcmp_simple(cmd, "fzf") == 0 ||
+            strcmp_simple(cmd, "tldr") == 0 ||
+            strcmp_simple(cmd, "hyperfine") == 0 ||
+            strcmp_simple(cmd, "tokei") == 0 ||
+            strcmp_simple(cmd, "z") == 0 ||
             0);
 }
 
@@ -19776,7 +19826,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   400 built-in commands — type 'help'    |\n");
+    write_str(1, "|   410 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");
@@ -35228,6 +35278,1007 @@ static void cmd_fortune(int argc, char *argv[]) {
     write_str(1, "\n ");
     write_str(1, fortunes[idx]);
     write_str(1, "\n\n");
+}
+
+/* rg — ripgrep: fast recursive grep with options */
+static void rg_search_file(const char *filepath, const char *pattern, int case_insensitive,
+                           int show_line_nums, int count_only, int *total_matches) {
+    int fd = sys_open(filepath, O_RDONLY, 0);
+    if (fd < 0) return;
+    char buf[4096];
+    char line[1024];
+    int line_pos = 0, line_num = 1, match_count = 0;
+    ssize_t n;
+    while ((n = sys_read(fd, buf, sizeof(buf))) > 0) {
+        for (ssize_t i = 0; i < n; i++) {
+            if (buf[i] == '\n' || line_pos >= 1023) {
+                line[line_pos] = '\0';
+                /* Check if pattern is a substring of line */
+                int found = 0;
+                int plen = 0; while (pattern[plen]) plen++;
+                for (int j = 0; line[j] && !found; j++) {
+                    int k = 0, ok = 1;
+                    for (k = 0; k < plen && line[j+k]; k++) {
+                        char lc = line[j+k], pc = pattern[k];
+                        if (case_insensitive) {
+                            if (lc >= 'A' && lc <= 'Z') lc += 32;
+                            if (pc >= 'A' && pc <= 'Z') pc += 32;
+                        }
+                        if (lc != pc) { ok = 0; break; }
+                    }
+                    if (ok && k == plen) found = 1;
+                }
+                if (found) {
+                    match_count++;
+                    if (!count_only) {
+                        write_str(1, "\033[35m");
+                        write_str(1, filepath);
+                        write_str(1, "\033[0m");
+                        if (show_line_nums) {
+                            write_str(1, "\033[36m:");
+                            char nb[16]; int_to_str(line_num, nb, 16);
+                            write_str(1, nb);
+                            write_str(1, "\033[0m");
+                        }
+                        write_str(1, ":");
+                        write_str(1, line);
+                        write_str(1, "\n");
+                    }
+                }
+                line_pos = 0;
+                line_num++;
+            } else {
+                line[line_pos++] = buf[i];
+            }
+        }
+    }
+    sys_close(fd);
+    if (count_only && match_count > 0) {
+        write_str(1, "\033[35m");
+        write_str(1, filepath);
+        write_str(1, "\033[0m:");
+        char nb[16]; int_to_str(match_count, nb, 16);
+        write_str(1, nb);
+        write_str(1, "\n");
+    }
+    *total_matches += match_count;
+}
+
+static void rg_recurse(const char *dirpath, const char *pattern, int case_insensitive,
+                       int show_line_nums, int count_only, int show_hidden, int *total) {
+    int fd = sys_open(dirpath, O_RDONLY, 0);
+    if (fd < 0) return;
+    char buf[4096]; long nr;
+    while ((nr = sys_getdents64(fd, buf, sizeof(buf))) > 0) {
+        char *ptr = buf;
+        while (ptr < buf + nr) {
+            unsigned short reclen = *(unsigned short *)(ptr + 16);
+            unsigned char d_type = *(unsigned char *)(ptr + 18);
+            char *name = ptr + 19;
+            if (strcmp_simple(name, ".") != 0 && strcmp_simple(name, "..") != 0) {
+                if (!show_hidden && name[0] == '.') { ptr += reclen; continue; }
+                /* Build full path */
+                char full[1024]; int pi = 0;
+                const char *p = dirpath;
+                while (*p && pi < 1020) full[pi++] = *p++;
+                if (pi > 0 && full[pi-1] != '/') full[pi++] = '/';
+                p = name;
+                while (*p && pi < 1023) full[pi++] = *p++;
+                full[pi] = '\0';
+                if (d_type == 4) { /* directory */
+                    rg_recurse(full, pattern, case_insensitive, show_line_nums, count_only, show_hidden, total);
+                } else if (d_type == 8) { /* regular file */
+                    rg_search_file(full, pattern, case_insensitive, show_line_nums, count_only, total);
+                }
+            }
+            ptr += reclen;
+        }
+    }
+    sys_close(fd);
+}
+
+static void cmd_rg(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "Usage: rg [OPTIONS] PATTERN [PATH]\n");
+        write_str(1, "Options: -i (case-insensitive), -n (line numbers), -c (count),\n");
+        write_str(1, "         --hidden (search hidden files), --no-ignore\n");
+        return;
+    }
+    int case_i = 0, show_n = 1, count_only = 0, show_hidden = 0;
+    const char *pattern = (void*)0;
+    const char *path = ".";
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-i") == 0) case_i = 1;
+        else if (strcmp_simple(argv[i], "-n") == 0) show_n = 1;
+        else if (strcmp_simple(argv[i], "-c") == 0) count_only = 1;
+        else if (strcmp_simple(argv[i], "--hidden") == 0) show_hidden = 1;
+        else if (strcmp_simple(argv[i], "--no-ignore") == 0) { /* accepted, no-op */ }
+        else if (!pattern) pattern = argv[i];
+        else path = argv[i];
+    }
+    if (!pattern) { write_str(2, "rg: missing pattern\n"); return; }
+    int total = 0;
+    /* Check if path is a file or directory */
+    struct stat st;
+    if (sys_call2(__NR_stat, (long)path, (long)&st) == 0 && (st.st_mode & 0170000) == 0100000) {
+        rg_search_file(path, pattern, case_i, show_n, count_only, &total);
+    } else {
+        rg_recurse(path, pattern, case_i, show_n, count_only, show_hidden, &total);
+    }
+    if (total == 0) {
+        write_str(2, "No matches found.\n");
+    }
+}
+
+/* fd — modern find alternative: search filenames matching pattern */
+static void fd_recurse(const char *dirpath, const char *pattern, int case_i,
+                       int show_hidden, int type_filter, int depth) {
+    if (depth > 32) return;
+    int fd = sys_open(dirpath, O_RDONLY, 0);
+    if (fd < 0) return;
+    char buf[4096]; long nr;
+    int plen = 0; while (pattern[plen]) plen++;
+    while ((nr = sys_getdents64(fd, buf, sizeof(buf))) > 0) {
+        char *ptr = buf;
+        while (ptr < buf + nr) {
+            unsigned short reclen = *(unsigned short *)(ptr + 16);
+            unsigned char d_type = *(unsigned char *)(ptr + 18);
+            char *name = ptr + 19;
+            if (strcmp_simple(name, ".") != 0 && strcmp_simple(name, "..") != 0) {
+                if (!show_hidden && name[0] == '.') { ptr += reclen; continue; }
+                char full[1024]; int pi = 0;
+                const char *p = dirpath;
+                while (*p && pi < 1020) full[pi++] = *p++;
+                if (pi > 0 && full[pi-1] != '/') full[pi++] = '/';
+                p = name;
+                while (*p && pi < 1023) full[pi++] = *p++;
+                full[pi] = '\0';
+                /* Check if name contains pattern as substring */
+                int found = 0;
+                if (plen == 0) { found = 1; }
+                else {
+                    for (int j = 0; name[j]; j++) {
+                        int k = 0, ok = 1;
+                        for (k = 0; k < plen && name[j+k]; k++) {
+                            char nc = name[j+k], pc = pattern[k];
+                            if (case_i) {
+                                if (nc >= 'A' && nc <= 'Z') nc += 32;
+                                if (pc >= 'A' && pc <= 'Z') pc += 32;
+                            }
+                            if (nc != pc) { ok = 0; break; }
+                        }
+                        if (ok && k == plen) { found = 1; break; }
+                    }
+                }
+                int type_ok = 1;
+                if (type_filter == 'f' && d_type != 8) type_ok = 0;
+                if (type_filter == 'd' && d_type != 4) type_ok = 0;
+                if (found && type_ok) {
+                    /* Color output: dirs in blue, files in default */
+                    if (d_type == 4) write_str(1, "\033[1;34m");
+                    write_str(1, full);
+                    if (d_type == 4) write_str(1, "\033[0m");
+                    write_str(1, "\n");
+                }
+                if (d_type == 4) {
+                    fd_recurse(full, pattern, case_i, show_hidden, type_filter, depth + 1);
+                }
+            }
+            ptr += reclen;
+        }
+    }
+    sys_close(fd);
+}
+
+static void cmd_fd(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "Usage: fd [OPTIONS] [PATTERN] [PATH]\n");
+        write_str(1, "Options: -H (hidden), -t f|d (type), -i (case-insensitive)\n");
+        return;
+    }
+    int case_i = 1; /* fd is case-insensitive by default */
+    int show_hidden = 0, type_filter = 0;
+    const char *pattern = "";
+    const char *path = ".";
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-H") == 0 || strcmp_simple(argv[i], "--hidden") == 0) show_hidden = 1;
+        else if (strcmp_simple(argv[i], "-i") == 0) case_i = 1;
+        else if (strcmp_simple(argv[i], "-s") == 0) case_i = 0;
+        else if (strcmp_simple(argv[i], "-t") == 0 && i+1 < argc) { type_filter = argv[++i][0]; }
+        else if (pattern[0] == '\0') pattern = argv[i];
+        else path = argv[i];
+    }
+    fd_recurse(path, pattern, case_i, show_hidden, type_filter, 0);
+}
+
+/* bat — cat with syntax highlighting simulation: line numbers + file header */
+static void cmd_bat(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "Usage: bat [OPTIONS] <FILE>...\n");
+        write_str(1, "A cat clone with syntax highlighting and line numbers.\n");
+        return;
+    }
+    int show_numbers = 1;
+    int file_start = 1;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-p") == 0 || strcmp_simple(argv[i], "--plain") == 0) {
+            show_numbers = 0; file_start = i + 1;
+        } else if (strcmp_simple(argv[i], "-n") == 0 || strcmp_simple(argv[i], "--number") == 0) {
+            show_numbers = 1; file_start = i + 1;
+        } else break;
+    }
+    for (int fi = file_start; fi < argc; fi++) {
+        int fd = sys_open(argv[fi], O_RDONLY, 0);
+        if (fd < 0) {
+            write_str(2, "bat: "); write_str(2, argv[fi]);
+            write_str(2, ": No such file or directory\n");
+            continue;
+        }
+        /* Detect language from extension */
+        const char *lang = "Plain Text";
+        int nlen = (int)strlen_simple(argv[fi]);
+        if (nlen > 2 && argv[fi][nlen-2] == '.' && argv[fi][nlen-1] == 'c') lang = "C";
+        else if (nlen > 2 && argv[fi][nlen-2] == '.' && argv[fi][nlen-1] == 'h') lang = "C Header";
+        else if (nlen > 3 && argv[fi][nlen-3] == '.' && argv[fi][nlen-2] == 'r' && argv[fi][nlen-1] == 's') lang = "Rust";
+        else if (nlen > 3 && argv[fi][nlen-3] == '.' && argv[fi][nlen-2] == 'p' && argv[fi][nlen-1] == 'y') lang = "Python";
+        else if (nlen > 3 && argv[fi][nlen-3] == '.' && argv[fi][nlen-2] == 's' && argv[fi][nlen-1] == 'h') lang = "Shell";
+        else if (nlen > 3 && argv[fi][nlen-3] == '.' && argv[fi][nlen-2] == 'j' && argv[fi][nlen-1] == 's') lang = "JavaScript";
+        else if (nlen > 3 && argv[fi][nlen-3] == '.' && argv[fi][nlen-2] == 'm' && argv[fi][nlen-1] == 'd') lang = "Markdown";
+        /* Header bar */
+        write_str(1, "\033[48;5;238m\033[38;5;231m File: ");
+        write_str(1, argv[fi]);
+        write_str(1, "  \033[2m<");
+        write_str(1, lang);
+        write_str(1, ">\033[0m\n");
+        write_str(1, "\033[48;5;236m\033[38;5;244m───────────────────────────────────────\033[0m\n");
+        /* Read and display with line numbers */
+        char buf[4096]; ssize_t n;
+        int line_num = 1;
+        int at_line_start = 1;
+        while ((n = sys_read(fd, buf, sizeof(buf))) > 0) {
+            for (ssize_t i = 0; i < n; i++) {
+                if (at_line_start && show_numbers) {
+                    write_str(1, "\033[38;5;244m");
+                    char nb[8]; int_to_str(line_num, nb, 8);
+                    int nl2 = (int)strlen_simple(nb);
+                    for (int k = nl2; k < 4; k++) write_char(1, ' ');
+                    write_str(1, nb);
+                    write_str(1, " \033[38;5;240m│\033[0m ");
+                    at_line_start = 0;
+                }
+                write_char(1, buf[i]);
+                if (buf[i] == '\n') { line_num++; at_line_start = 1; }
+            }
+        }
+        if (!at_line_start) write_str(1, "\n");
+        write_str(1, "\033[48;5;236m\033[38;5;244m───────────────────────────────────────\033[0m\n");
+        sys_close(fd);
+    }
+}
+
+/* exa — modern ls alternative with icons and colors */
+static void cmd_exa(int argc, char *argv[]) {
+    int long_mode = 0, show_all = 0;
+    const char *path = ".";
+    for (int i = 1; i < argc; i++) {
+        if (argv[i][0] == '-') {
+            for (int j = 1; argv[i][j]; j++) {
+                if (argv[i][j] == 'l') long_mode = 1;
+                if (argv[i][j] == 'a') show_all = 1;
+            }
+            if (strcmp_simple(argv[i], "--long") == 0) long_mode = 1;
+            if (strcmp_simple(argv[i], "--all") == 0) show_all = 1;
+        } else {
+            path = argv[i];
+        }
+    }
+    int fd = sys_open(path, O_RDONLY, 0);
+    if (fd < 0) { write_str(2, "exa: cannot access directory\n"); return; }
+    if (long_mode) {
+        write_str(1, "\033[1;4mPermissions  Size User  Date Modified  Name\033[0m\n");
+    }
+    char dirbuf[4096]; long nr;
+    while ((nr = sys_getdents64(fd, dirbuf, sizeof(dirbuf))) > 0) {
+        char *ptr = dirbuf;
+        while (ptr < dirbuf + nr) {
+            unsigned short reclen = *(unsigned short *)(ptr + 16);
+            unsigned char d_type = *(unsigned char *)(ptr + 18);
+            char *name = ptr + 19;
+            if (strcmp_simple(name, ".") == 0 || strcmp_simple(name, "..") == 0) {
+                if (!show_all) { ptr += reclen; continue; }
+            }
+            if (!show_all && name[0] == '.') { ptr += reclen; continue; }
+            if (long_mode) {
+                /* Permissions string */
+                if (d_type == 4) write_str(1, "d");
+                else write_str(1, ".");
+                write_str(1, "rwxr-xr-x");
+                /* Size */
+                if (d_type == 4) {
+                    write_str(1, "     - ");
+                } else {
+                    /* Try to stat for size */
+                    char fpath[1024]; int pi = 0;
+                    const char *p = path;
+                    while (*p && pi < 1020) fpath[pi++] = *p++;
+                    if (pi > 0 && fpath[pi-1] != '/') fpath[pi++] = '/';
+                    p = name;
+                    while (*p && pi < 1023) fpath[pi++] = *p++;
+                    fpath[pi] = '\0';
+                    struct stat st;
+                    if (sys_call2(__NR_stat, (long)fpath, (long)&st) == 0) {
+                        char nb[16];
+                        if (st.st_size < 1024) {
+                            int_to_str((int)st.st_size, nb, 16);
+                            int nl2 = (int)strlen_simple(nb);
+                            for (int k = nl2; k < 5; k++) write_char(1, ' ');
+                            write_str(1, nb);
+                            write_str(1, " ");
+                        } else if (st.st_size < 1024*1024) {
+                            int_to_str((int)(st.st_size/1024), nb, 16);
+                            int nl2 = (int)strlen_simple(nb);
+                            for (int k = nl2; k < 4; k++) write_char(1, ' ');
+                            write_str(1, nb);
+                            write_str(1, "K ");
+                        } else {
+                            int_to_str((int)(st.st_size/(1024*1024)), nb, 16);
+                            int nl2 = (int)strlen_simple(nb);
+                            for (int k = nl2; k < 4; k++) write_char(1, ' ');
+                            write_str(1, nb);
+                            write_str(1, "M ");
+                        }
+                    } else {
+                        write_str(1, "     - ");
+                    }
+                }
+                write_str(1, "root  ");
+                write_str(1, "Jan  1 00:00  ");
+            }
+            /* Icon + colored name */
+            if (d_type == 4) {
+                write_str(1, "\033[1;34m");
+                write_str(1, name);
+                write_str(1, "\033[0m");
+            } else {
+                /* Color by extension */
+                int nlen = 0; while (name[nlen]) nlen++;
+                if (nlen > 2 && name[nlen-2] == '.' && name[nlen-1] == 'c') {
+                    write_str(1, "\033[33m");
+                } else if (nlen > 3 && name[nlen-3] == '.' && name[nlen-2] == 'r' && name[nlen-1] == 's') {
+                    write_str(1, "\033[38;5;208m");
+                } else if (nlen > 2 && name[nlen-2] == '.' && name[nlen-1] == 'h') {
+                    write_str(1, "\033[35m");
+                } else if (nlen > 3 && name[nlen-3] == '.' && name[nlen-2] == 's' && name[nlen-1] == 'h') {
+                    write_str(1, "\033[32m");
+                } else {
+                    write_str(1, "\033[0m");
+                }
+                write_str(1, name);
+                write_str(1, "\033[0m");
+            }
+            if (long_mode) {
+                write_str(1, "\n");
+            } else {
+                write_str(1, "  ");
+            }
+            ptr += reclen;
+        }
+    }
+    if (!long_mode) write_str(1, "\n");
+    sys_close(fd);
+}
+
+/* delta — modern diff viewer with side-by-side display */
+static void cmd_delta(int argc, char *argv[]) {
+    if (argc < 3) {
+        write_str(1, "Usage: delta <FILE1> <FILE2>\n");
+        write_str(1, "A viewer for diff output with side-by-side display.\n");
+        return;
+    }
+    /* Read both files */
+    char buf1[4096], buf2[4096];
+    int fd1 = sys_open(argv[1], O_RDONLY, 0);
+    if (fd1 < 0) { write_str(2, "delta: cannot open "); write_str(2, argv[1]); write_str(2, "\n"); return; }
+    ssize_t n1 = sys_read(fd1, buf1, sizeof(buf1)-1);
+    sys_close(fd1);
+    if (n1 < 0) n1 = 0; buf1[n1] = '\0';
+
+    int fd2 = sys_open(argv[2], O_RDONLY, 0);
+    if (fd2 < 0) { write_str(2, "delta: cannot open "); write_str(2, argv[2]); write_str(2, "\n"); return; }
+    ssize_t n2 = sys_read(fd2, buf2, sizeof(buf2)-1);
+    sys_close(fd2);
+    if (n2 < 0) n2 = 0; buf2[n2] = '\0';
+
+    /* Header */
+    write_str(1, "\033[1m--- ");
+    write_str(1, argv[1]);
+    write_str(1, "\033[0m\n\033[1m+++ ");
+    write_str(1, argv[2]);
+    write_str(1, "\033[0m\n");
+    write_str(1, "\033[36m─────────────────────────────────────│─────────────────────────────────────\033[0m\n");
+
+    /* Display side-by-side, line by line */
+    char *p1 = buf1, *p2 = buf2;
+    int line_num = 1;
+    while (*p1 || *p2) {
+        /* Extract line from file1 */
+        char l1[80] = {0}; int l1i = 0;
+        while (*p1 && *p1 != '\n' && l1i < 36) l1[l1i++] = *p1++;
+        while (*p1 && *p1 != '\n') p1++;  /* skip rest */
+        if (*p1 == '\n') p1++;
+
+        /* Extract line from file2 */
+        char l2[80] = {0}; int l2i = 0;
+        while (*p2 && *p2 != '\n' && l2i < 36) l2[l2i++] = *p2++;
+        while (*p2 && *p2 != '\n') p2++;
+        if (*p2 == '\n') p2++;
+
+        /* Compare */
+        int same = (strcmp_simple(l1, l2) == 0);
+        char nb[8]; int_to_str(line_num, nb, 8);
+        int nl2 = (int)strlen_simple(nb);
+        for (int k = nl2; k < 4; k++) write_char(1, ' ');
+        write_str(1, nb);
+        write_str(1, " ");
+        if (!same) write_str(1, "\033[31m");
+        write_str(1, l1);
+        int pad1 = 36 - l1i;
+        for (int k = 0; k < pad1; k++) write_char(1, ' ');
+        if (!same) write_str(1, "\033[0m");
+        write_str(1, "\033[36m│\033[0m");
+        if (!same) write_str(1, "\033[32m");
+        write_str(1, l2);
+        if (!same) write_str(1, "\033[0m");
+        write_str(1, "\n");
+        line_num++;
+        if (!*p1 && !*p2) break;
+    }
+}
+
+/* fzf — fuzzy finder: read lines from stdin, filter by substring match */
+static void cmd_fzf(int argc, char *argv[]) {
+    (void)argc;
+    const char *query = (argc > 2 && strcmp_simple(argv[1], "-q") == 0) ? argv[2] :
+                        (argc > 1 ? argv[1] : (void*)0);
+    /* Read all lines from stdin */
+    char lines[128][256];
+    int line_count = 0;
+    char buf[256]; int bpos = 0;
+    ssize_t n;
+    while (line_count < 128 && (n = sys_read(0, buf + bpos, 1)) > 0) {
+        if (buf[bpos] == '\n') {
+            buf[bpos] = '\0';
+            for (int i = 0; i <= bpos && i < 255; i++) lines[line_count][i] = buf[i];
+            lines[line_count][255] = '\0';
+            line_count++;
+            bpos = 0;
+        } else {
+            bpos++;
+            if (bpos >= 255) { buf[255] = '\0'; for (int i = 0; i < 256; i++) lines[line_count][i] = buf[i]; line_count++; bpos = 0; }
+        }
+    }
+    if (bpos > 0 && line_count < 128) {
+        buf[bpos] = '\0';
+        for (int i = 0; i <= bpos; i++) lines[line_count][i] = buf[i];
+        line_count++;
+    }
+
+    if (!query) {
+        /* No query — just output all lines */
+        for (int i = 0; i < line_count; i++) {
+            write_str(1, lines[i]);
+            write_str(1, "\n");
+        }
+        return;
+    }
+
+    /* Filter: substring match (case-insensitive) */
+    int qlen = (int)strlen_simple(query);
+    int matches = 0;
+    for (int i = 0; i < line_count; i++) {
+        int found = 0;
+        for (int j = 0; lines[i][j] && !found; j++) {
+            int ok = 1;
+            for (int k = 0; k < qlen; k++) {
+                char lc = lines[i][j+k], qc = query[k];
+                if (lc >= 'A' && lc <= 'Z') lc += 32;
+                if (qc >= 'A' && qc <= 'Z') qc += 32;
+                if (lc != qc) { ok = 0; break; }
+            }
+            if (ok) found = 1;
+        }
+        if (found) {
+            write_str(1, "\033[1m> \033[0m");
+            write_str(1, lines[i]);
+            write_str(1, "\n");
+            matches++;
+        }
+    }
+    if (matches == 0) write_str(2, "  No matches\n");
+    char nb[16]; int_to_str(matches, nb, 16);
+    write_str(2, "  "); write_str(2, nb); write_str(2, "/");
+    int_to_str(line_count, nb, 16); write_str(2, nb); write_str(2, "\n");
+}
+
+/* tldr — simplified man pages: show concise command examples */
+static void cmd_tldr(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "Usage: tldr <command>\n");
+        write_str(1, "Displays simplified, practical help for commands.\n");
+        return;
+    }
+    const char *cmd = argv[1];
+    write_str(1, "\n  \033[1;4m");
+    write_str(1, cmd);
+    write_str(1, "\033[0m\n\n");
+
+    /* Built-in tldr pages for common commands */
+    if (strcmp_simple(cmd, "ls") == 0) {
+        write_str(1, "  List directory contents.\n\n");
+        write_str(1, "  \033[32m- List files:\033[0m\n    ls\n\n");
+        write_str(1, "  \033[32m- List all files including hidden:\033[0m\n    ls -a\n\n");
+        write_str(1, "  \033[32m- Long format with sizes:\033[0m\n    ls -la\n\n");
+        write_str(1, "  \033[32m- Sort by time, newest first:\033[0m\n    ls -lt\n\n");
+    } else if (strcmp_simple(cmd, "cd") == 0) {
+        write_str(1, "  Change the current working directory.\n\n");
+        write_str(1, "  \033[32m- Go to a directory:\033[0m\n    cd path/to/directory\n\n");
+        write_str(1, "  \033[32m- Go to home directory:\033[0m\n    cd\n\n");
+        write_str(1, "  \033[32m- Go up one directory:\033[0m\n    cd ..\n\n");
+        write_str(1, "  \033[32m- Go to previous directory:\033[0m\n    cd -\n\n");
+    } else if (strcmp_simple(cmd, "grep") == 0) {
+        write_str(1, "  Search for patterns in files.\n\n");
+        write_str(1, "  \033[32m- Search for a pattern in a file:\033[0m\n    grep pattern file\n\n");
+        write_str(1, "  \033[32m- Case-insensitive search:\033[0m\n    grep -i pattern file\n\n");
+        write_str(1, "  \033[32m- Recursive search in directories:\033[0m\n    grep -r pattern path\n\n");
+        write_str(1, "  \033[32m- Show line numbers:\033[0m\n    grep -n pattern file\n\n");
+    } else if (strcmp_simple(cmd, "cp") == 0) {
+        write_str(1, "  Copy files and directories.\n\n");
+        write_str(1, "  \033[32m- Copy a file:\033[0m\n    cp source dest\n\n");
+        write_str(1, "  \033[32m- Copy recursively:\033[0m\n    cp -r source_dir dest_dir\n\n");
+        write_str(1, "  \033[32m- Interactive (prompt before overwrite):\033[0m\n    cp -i source dest\n\n");
+    } else if (strcmp_simple(cmd, "mv") == 0) {
+        write_str(1, "  Move or rename files.\n\n");
+        write_str(1, "  \033[32m- Rename a file:\033[0m\n    mv old_name new_name\n\n");
+        write_str(1, "  \033[32m- Move file to directory:\033[0m\n    mv file directory/\n\n");
+    } else if (strcmp_simple(cmd, "rm") == 0) {
+        write_str(1, "  Remove files or directories.\n\n");
+        write_str(1, "  \033[32m- Remove a file:\033[0m\n    rm file\n\n");
+        write_str(1, "  \033[32m- Remove recursively:\033[0m\n    rm -r directory\n\n");
+        write_str(1, "  \033[32m- Force remove:\033[0m\n    rm -f file\n\n");
+    } else if (strcmp_simple(cmd, "find") == 0) {
+        write_str(1, "  Search for files in a directory hierarchy.\n\n");
+        write_str(1, "  \033[32m- Find files by name:\033[0m\n    find /path -name \"*.txt\"\n\n");
+        write_str(1, "  \033[32m- Find directories:\033[0m\n    find /path -type d -name pattern\n\n");
+    } else if (strcmp_simple(cmd, "chmod") == 0) {
+        write_str(1, "  Change file permissions.\n\n");
+        write_str(1, "  \033[32m- Make file executable:\033[0m\n    chmod +x file\n\n");
+        write_str(1, "  \033[32m- Set specific permissions:\033[0m\n    chmod 755 file\n\n");
+    } else if (strcmp_simple(cmd, "tar") == 0) {
+        write_str(1, "  Archive and extract files.\n\n");
+        write_str(1, "  \033[32m- Create archive:\033[0m\n    tar cf archive.tar files\n\n");
+        write_str(1, "  \033[32m- Extract archive:\033[0m\n    tar xf archive.tar\n\n");
+        write_str(1, "  \033[32m- List contents:\033[0m\n    tar tf archive.tar\n\n");
+    } else if (strcmp_simple(cmd, "rg") == 0) {
+        write_str(1, "  Recursively search for a pattern (ripgrep).\n\n");
+        write_str(1, "  \033[32m- Search for pattern:\033[0m\n    rg pattern\n\n");
+        write_str(1, "  \033[32m- Case-insensitive search:\033[0m\n    rg -i pattern\n\n");
+        write_str(1, "  \033[32m- Count matches:\033[0m\n    rg -c pattern\n\n");
+        write_str(1, "  \033[32m- Search hidden files:\033[0m\n    rg --hidden pattern\n\n");
+    } else {
+        write_str(1, "  No tldr page found for '");
+        write_str(1, cmd);
+        write_str(1, "'.\n  Try: tldr ls, tldr grep, tldr cp, tldr tar, tldr rg\n\n");
+    }
+}
+
+/* hyperfine — command benchmarking tool */
+static void cmd_hyperfine(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "Usage: hyperfine [OPTIONS] <COMMAND>...\n");
+        write_str(1, "Options: --runs N (number of runs, default 5)\n");
+        return;
+    }
+    int runs = 5;
+    int cmd_start = 1;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "--runs") == 0 && i+1 < argc) {
+            runs = simple_atoi(argv[++i]);
+            if (runs < 1) runs = 1;
+            if (runs > 100) runs = 100;
+            cmd_start = i + 1;
+        } else if (argv[i][0] != '-') { cmd_start = i; break; }
+    }
+    if (cmd_start >= argc) { write_str(2, "hyperfine: no command specified\n"); return; }
+
+    write_str(1, "\033[1mBenchmark: \033[0m");
+    for (int i = cmd_start; i < argc; i++) {
+        write_str(1, argv[i]);
+        if (i + 1 < argc) write_str(1, " ");
+    }
+    write_str(1, "\n");
+
+    struct { long tv_sec; long tv_nsec; } start = {0,0}, end_ts = {0,0};
+    long times_ms[100];
+    long total_ms = 0, min_ms = 999999999, max_ms = 0;
+
+    for (int r = 0; r < runs; r++) {
+        sys_call2(98, 1, (long)&start);
+        /* Execute the command */
+        execute_command(argc - cmd_start, &argv[cmd_start]);
+        sys_call2(98, 1, (long)&end_ts);
+        long ms = (end_ts.tv_sec - start.tv_sec) * 1000 +
+                  (end_ts.tv_nsec - start.tv_nsec) / 1000000;
+        times_ms[r] = ms;
+        total_ms += ms;
+        if (ms < min_ms) min_ms = ms;
+        if (ms > max_ms) max_ms = ms;
+    }
+
+    long mean_ms = total_ms / runs;
+    /* Compute stddev: sqrt(sum((x-mean)^2)/n) approximation */
+    long var_sum = 0;
+    for (int r = 0; r < runs; r++) {
+        long d = times_ms[r] - mean_ms;
+        var_sum += d * d;
+    }
+    long stddev = 0;
+    if (runs > 1) {
+        long variance = var_sum / runs;
+        /* Integer square root approximation */
+        long s = variance;
+        if (s > 0) {
+            stddev = 1;
+            while (stddev * stddev < s) stddev++;
+            if (stddev * stddev > s) stddev--;
+        }
+    }
+
+    char nb[16];
+    write_str(1, "  Time (\033[1mmean\033[0m +/- \033[32mstd\033[0m):   ");
+    int_to_str((int)mean_ms, nb, 16);
+    write_str(1, "\033[1m"); write_str(1, nb); write_str(1, " ms\033[0m +/- ");
+    int_to_str((int)stddev, nb, 16);
+    write_str(1, "\033[32m"); write_str(1, nb); write_str(1, " ms\033[0m\n");
+
+    write_str(1, "  Range (\033[36mmin\033[0m ... \033[35mmax\033[0m):   ");
+    int_to_str((int)min_ms, nb, 16);
+    write_str(1, "\033[36m"); write_str(1, nb); write_str(1, " ms\033[0m ... ");
+    int_to_str((int)max_ms, nb, 16);
+    write_str(1, "\033[35m"); write_str(1, nb); write_str(1, " ms\033[0m\n");
+
+    write_str(1, "\n  ");
+    int_to_str(runs, nb, 16);
+    write_str(1, nb);
+    write_str(1, " runs performed.\n");
+}
+
+/* tokei — count lines of code by language */
+static void tokei_count_file(const char *filepath, const char *ext,
+                             long *code, long *blank, long *comment) {
+    int fd = sys_open(filepath, O_RDONLY, 0);
+    if (fd < 0) return;
+    char buf[4096]; ssize_t n;
+    int in_comment = 0;
+    char line[1024]; int lp = 0;
+    int is_c = (strcmp_simple(ext, "c") == 0 || strcmp_simple(ext, "h") == 0 ||
+                strcmp_simple(ext, "rs") == 0 || strcmp_simple(ext, "js") == 0);
+    int is_py = (strcmp_simple(ext, "py") == 0);
+    (void)is_py;
+    while ((n = sys_read(fd, buf, sizeof(buf))) > 0) {
+        for (ssize_t i = 0; i < n; i++) {
+            if (buf[i] == '\n' || lp >= 1023) {
+                line[lp] = '\0';
+                /* Classify line */
+                int j = 0;
+                while (line[j] == ' ' || line[j] == '\t') j++;
+                if (lp == 0 || line[j] == '\0') {
+                    (*blank)++;
+                } else if (in_comment) {
+                    (*comment)++;
+                    if (is_c) {
+                        for (int k = j; line[k]; k++) {
+                            if (line[k] == '*' && line[k+1] == '/') { in_comment = 0; break; }
+                        }
+                    }
+                } else if (is_c && line[j] == '/' && line[j+1] == '/') {
+                    (*comment)++;
+                } else if (is_c && line[j] == '/' && line[j+1] == '*') {
+                    (*comment)++;
+                    in_comment = 1;
+                    for (int k = j+2; line[k]; k++) {
+                        if (line[k] == '*' && line[k+1] == '/') { in_comment = 0; break; }
+                    }
+                } else if (line[j] == '#' && (is_py || strcmp_simple(ext, "sh") == 0)) {
+                    (*comment)++;
+                } else {
+                    (*code)++;
+                }
+                lp = 0;
+            } else {
+                line[lp++] = buf[i];
+            }
+        }
+    }
+    if (lp > 0) {
+        line[lp] = '\0';
+        int j = 0; while (line[j] == ' ' || line[j] == '\t') j++;
+        if (line[j] == '\0') (*blank)++; else (*code)++;
+    }
+    sys_close(fd);
+}
+
+struct tokei_lang {
+    char name[16];
+    char ext[8];
+    long files;
+    long code;
+    long blank;
+    long comment;
+};
+
+static void tokei_recurse(const char *dirpath, struct tokei_lang *langs, int nlang, int depth) {
+    if (depth > 16) return;
+    int fd = sys_open(dirpath, O_RDONLY, 0);
+    if (fd < 0) return;
+    char buf[4096]; long nr;
+    while ((nr = sys_getdents64(fd, buf, sizeof(buf))) > 0) {
+        char *ptr = buf;
+        while (ptr < buf + nr) {
+            unsigned short reclen = *(unsigned short *)(ptr + 16);
+            unsigned char d_type = *(unsigned char *)(ptr + 18);
+            char *name = ptr + 19;
+            if (strcmp_simple(name, ".") != 0 && strcmp_simple(name, "..") != 0 && name[0] != '.') {
+                char full[1024]; int pi = 0;
+                const char *p = dirpath;
+                while (*p && pi < 1020) full[pi++] = *p++;
+                if (pi > 0 && full[pi-1] != '/') full[pi++] = '/';
+                p = name;
+                while (*p && pi < 1023) full[pi++] = *p++;
+                full[pi] = '\0';
+                if (d_type == 4) {
+                    tokei_recurse(full, langs, nlang, depth + 1);
+                } else if (d_type == 8) {
+                    /* Get extension */
+                    int nlen = 0; while (name[nlen]) nlen++;
+                    int dot = -1;
+                    for (int k = nlen - 1; k >= 0; k--) {
+                        if (name[k] == '.') { dot = k; break; }
+                    }
+                    if (dot >= 0) {
+                        char ext[8] = {0};
+                        int ei = 0;
+                        for (int k = dot + 1; k < nlen && ei < 7; k++) ext[ei++] = name[k];
+                        for (int k = 0; k < nlang; k++) {
+                            if (strcmp_simple(ext, langs[k].ext) == 0) {
+                                langs[k].files++;
+                                tokei_count_file(full, ext, &langs[k].code, &langs[k].blank, &langs[k].comment);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            ptr += reclen;
+        }
+    }
+    sys_close(fd);
+}
+
+static void cmd_tokei(int argc, char *argv[]) {
+    const char *path = (argc > 1) ? argv[1] : ".";
+    struct tokei_lang langs[] = {
+        {"C",          "c",  0, 0, 0, 0},
+        {"C Header",   "h",  0, 0, 0, 0},
+        {"Rust",       "rs", 0, 0, 0, 0},
+        {"Python",     "py", 0, 0, 0, 0},
+        {"Shell",      "sh", 0, 0, 0, 0},
+        {"JavaScript", "js", 0, 0, 0, 0},
+        {"Markdown",   "md", 0, 0, 0, 0},
+        {"Assembly",   "S",  0, 0, 0, 0},
+    };
+    int nlang = (int)(sizeof(langs) / sizeof(langs[0]));
+    tokei_recurse(path, langs, nlang, 0);
+
+    write_str(1, "\033[1m===============================================================================\033[0m\n");
+    write_str(1, "\033[1m Language            Files        Code       Blank     Comment       Total\033[0m\n");
+    write_str(1, "\033[1m===============================================================================\033[0m\n");
+
+    long total_files = 0, total_code = 0, total_blank = 0, total_comment = 0;
+    char nb[16];
+    for (int i = 0; i < nlang; i++) {
+        if (langs[i].files == 0) continue;
+        write_str(1, " ");
+        write_str(1, langs[i].name);
+        int nlen = (int)strlen_simple(langs[i].name);
+        for (int k = nlen; k < 20; k++) write_char(1, ' ');
+
+        int_to_str((int)langs[i].files, nb, 16);
+        int nl2 = (int)strlen_simple(nb);
+        for (int k = nl2; k < 6; k++) write_char(1, ' ');
+        write_str(1, nb);
+
+        long line_total = langs[i].code + langs[i].blank + langs[i].comment;
+
+        int_to_str((int)langs[i].code, nb, 16);
+        nl2 = (int)strlen_simple(nb);
+        for (int k = nl2; k < 12; k++) write_char(1, ' ');
+        write_str(1, nb);
+
+        int_to_str((int)langs[i].blank, nb, 16);
+        nl2 = (int)strlen_simple(nb);
+        for (int k = nl2; k < 12; k++) write_char(1, ' ');
+        write_str(1, nb);
+
+        int_to_str((int)langs[i].comment, nb, 16);
+        nl2 = (int)strlen_simple(nb);
+        for (int k = nl2; k < 12; k++) write_char(1, ' ');
+        write_str(1, nb);
+
+        int_to_str((int)line_total, nb, 16);
+        nl2 = (int)strlen_simple(nb);
+        for (int k = nl2; k < 12; k++) write_char(1, ' ');
+        write_str(1, nb);
+        write_str(1, "\n");
+
+        total_files += langs[i].files;
+        total_code += langs[i].code;
+        total_blank += langs[i].blank;
+        total_comment += langs[i].comment;
+    }
+    write_str(1, "\033[1m-------------------------------------------------------------------------------\033[0m\n");
+    write_str(1, " Total");
+    for (int k = 5; k < 20; k++) write_char(1, ' ');
+    int_to_str((int)total_files, nb, 16);
+    int nl2 = (int)strlen_simple(nb); for (int k = nl2; k < 6; k++) write_char(1, ' ');
+    write_str(1, nb);
+    int_to_str((int)total_code, nb, 16);
+    nl2 = (int)strlen_simple(nb); for (int k = nl2; k < 12; k++) write_char(1, ' ');
+    write_str(1, nb);
+    int_to_str((int)total_blank, nb, 16);
+    nl2 = (int)strlen_simple(nb); for (int k = nl2; k < 12; k++) write_char(1, ' ');
+    write_str(1, nb);
+    int_to_str((int)total_comment, nb, 16);
+    nl2 = (int)strlen_simple(nb); for (int k = nl2; k < 12; k++) write_char(1, ' ');
+    write_str(1, nb);
+    long grand_total = total_code + total_blank + total_comment;
+    int_to_str((int)grand_total, nb, 16);
+    nl2 = (int)strlen_simple(nb); for (int k = nl2; k < 12; k++) write_char(1, ' ');
+    write_str(1, nb);
+    write_str(1, "\n\033[1m===============================================================================\033[0m\n");
+}
+
+/* zoxide — smart cd that remembers directories */
+#define ZOXIDE_MAX_DIRS 64
+
+static struct {
+    char path[256];
+    int score;
+    int used;
+} zoxide_db[ZOXIDE_MAX_DIRS];
+
+static void zoxide_add(const char *path) {
+    /* Check if already exists */
+    for (int i = 0; i < ZOXIDE_MAX_DIRS; i++) {
+        if (zoxide_db[i].used && strcmp_simple(zoxide_db[i].path, path) == 0) {
+            zoxide_db[i].score++;
+            return;
+        }
+    }
+    /* Add new entry */
+    for (int i = 0; i < ZOXIDE_MAX_DIRS; i++) {
+        if (!zoxide_db[i].used) {
+            strncpy_simple(zoxide_db[i].path, path, 255);
+            zoxide_db[i].path[255] = '\0';
+            zoxide_db[i].score = 1;
+            zoxide_db[i].used = 1;
+            return;
+        }
+    }
+    /* DB full — replace lowest score entry */
+    int lowest = 0;
+    for (int i = 1; i < ZOXIDE_MAX_DIRS; i++) {
+        if (zoxide_db[i].score < zoxide_db[lowest].score) lowest = i;
+    }
+    strncpy_simple(zoxide_db[lowest].path, path, 255);
+    zoxide_db[lowest].path[255] = '\0';
+    zoxide_db[lowest].score = 1;
+}
+
+static void cmd_zoxide(int argc, char *argv[]) {
+    /* Record current directory */
+    char cwd[256];
+    if (sys_getcwd(cwd, sizeof(cwd)) >= 0) {
+        zoxide_add(cwd);
+    }
+
+    if (argc < 2) {
+        /* No args: list known directories sorted by score */
+        write_str(1, "\033[1mzoxide database:\033[0m\n");
+        /* Simple selection sort by score descending */
+        int printed[ZOXIDE_MAX_DIRS]; for (int i = 0; i < ZOXIDE_MAX_DIRS; i++) printed[i] = 0;
+        for (int round = 0; round < ZOXIDE_MAX_DIRS; round++) {
+            int best = -1;
+            for (int i = 0; i < ZOXIDE_MAX_DIRS; i++) {
+                if (zoxide_db[i].used && !printed[i]) {
+                    if (best < 0 || zoxide_db[i].score > zoxide_db[best].score) best = i;
+                }
+            }
+            if (best < 0) break;
+            printed[best] = 1;
+            char nb[16]; int_to_str(zoxide_db[best].score, nb, 16);
+            int nl2 = (int)strlen_simple(nb);
+            for (int k = nl2; k < 6; k++) write_char(1, ' ');
+            write_str(1, "\033[36m");
+            write_str(1, nb);
+            write_str(1, "\033[0m ");
+            write_str(1, zoxide_db[best].path);
+            write_str(1, "\n");
+        }
+        return;
+    }
+
+    const char *query = argv[1];
+    int qlen = (int)strlen_simple(query);
+
+    /* If it starts with / or ./ or .., treat as literal cd */
+    if (query[0] == '/' || (query[0] == '.' && (query[1] == '/' || query[1] == '.'))) {
+        if (sys_chdir(query) == 0) {
+            zoxide_add(query);
+        } else {
+            write_str(2, "z: no such directory: ");
+            write_str(2, query);
+            write_str(2, "\n");
+        }
+        return;
+    }
+
+    /* Find best matching directory by substring in path */
+    int best = -1, best_score = 0;
+    for (int i = 0; i < ZOXIDE_MAX_DIRS; i++) {
+        if (!zoxide_db[i].used) continue;
+        /* Check if query is a substring of path (case-insensitive) */
+        int found = 0;
+        for (int j = 0; zoxide_db[i].path[j] && !found; j++) {
+            int ok = 1;
+            for (int k = 0; k < qlen; k++) {
+                char pc = zoxide_db[i].path[j+k], qc = query[k];
+                if (!pc) { ok = 0; break; }
+                if (pc >= 'A' && pc <= 'Z') pc += 32;
+                if (qc >= 'A' && qc <= 'Z') qc += 32;
+                if (pc != qc) { ok = 0; break; }
+            }
+            if (ok) found = 1;
+        }
+        if (found && zoxide_db[i].score > best_score) {
+            best = i;
+            best_score = zoxide_db[i].score;
+        }
+    }
+
+    if (best >= 0) {
+        if (sys_chdir(zoxide_db[best].path) == 0) {
+            zoxide_db[best].score++;
+            write_str(1, zoxide_db[best].path);
+            write_str(1, "\n");
+        } else {
+            write_str(2, "z: directory no longer exists: ");
+            write_str(2, zoxide_db[best].path);
+            write_str(2, "\n");
+            zoxide_db[best].used = 0;
+        }
+    } else {
+        /* Try as a literal path */
+        if (sys_chdir(query) == 0) {
+            char newcwd[256];
+            if (sys_getcwd(newcwd, sizeof(newcwd)) >= 0) {
+                zoxide_add(newcwd);
+            }
+        } else {
+            write_str(2, "z: no match for '");
+            write_str(2, query);
+            write_str(2, "'\n");
+        }
+    }
 }
 
 #pragma GCC diagnostic pop

@@ -31,21 +31,56 @@ void term_init(struct terminal *term) {
     term->fg_color = COLOR_WHITE;
     term->bg_color = COLOR_BLACK;
     term->cursor_visible = true;
+    term->cursor_blink_on = true;
+    term->cursor_blink_time = 0;
     term->parser_state = TERM_STATE_NORMAL;
     term->escape_len = 0;
+    term->osc_len = 0;
+
+    /* Initialize tab stops every TAB_STOP_WIDTH columns */
+    for (int x = 0; x < TERM_COLS; x++) {
+        term->tab_stops[x] = (x % TAB_STOP_WIDTH == 0);
+    }
+
+    /* Set default title */
+    const char *default_title = "Futura Terminal";
+    for (int i = 0; default_title[i] && i < TERM_TITLE_MAX - 1; i++) {
+        term->title[i] = default_title[i];
+    }
+    term->title_changed = false;
+
+    /* Allocate scrollback buffer via mmap (too large for stack) */
+    size_t sb_size = (size_t)SCROLLBACK_LINES * TERM_COLS * sizeof(struct term_cell);
+    void *sb = (void *)sys_mmap(NULL, (long)sb_size, 0x3 /* PROT_READ|PROT_WRITE */,
+                                 0x22 /* MAP_PRIVATE|MAP_ANONYMOUS */, -1, 0);
+    if (sb && (long)sb > 0 && (uintptr_t)sb >= 0x10000) {
+        term->scrollback = (struct term_cell (*)[TERM_COLS])sb;
+    } else {
+        term->scrollback = NULL;  /* Scrollback unavailable */
+    }
 
     term->shell_stdin_fd = -1;
     term->shell_stdout_fd = -1;
     term->shell_pid = -1;
 }
 
+void term_destroy(struct terminal *term) {
+    if (term->scrollback) {
+        size_t sb_size = (size_t)SCROLLBACK_LINES * TERM_COLS * sizeof(struct term_cell);
+        sys_munmap_call(term->scrollback, (long)sb_size);
+        term->scrollback = NULL;
+    }
+}
+
 void term_scroll(struct terminal *term) {
     /* Save top row to scrollback before discarding */
-    for (int x = 0; x < TERM_COLS; x++) {
-        term->scrollback[term->scrollback_head][x] = term->grid[0][x];
+    if (term->scrollback) {
+        for (int x = 0; x < TERM_COLS; x++) {
+            term->scrollback[term->scrollback_head][x] = term->grid[0][x];
+        }
+        term->scrollback_head = (term->scrollback_head + 1) % SCROLLBACK_LINES;
+        if (term->scrollback_count < SCROLLBACK_LINES) term->scrollback_count++;
     }
-    term->scrollback_head = (term->scrollback_head + 1) % SCROLLBACK_LINES;
-    if (term->scrollback_count < SCROLLBACK_LINES) term->scrollback_count++;
 
     /* If viewing history, auto-scroll to keep position stable */
     if (term->scroll_offset > 0 && term->scroll_offset < term->scrollback_count)
@@ -126,6 +161,51 @@ static int parse_csi_params(const char *buf, int len, int *params, int max_param
         if (count < max_params) params[count++] = val;
     }
     return count;
+}
+
+/* Handle OSC (Operating System Command) sequences.
+ * Format: ESC ] Ps ; Pt BEL   (or ESC ] Ps ; Pt ST)
+ * Ps=0: Set icon name and window title to Pt
+ * Ps=2: Set window title to Pt
+ */
+static void term_handle_osc(struct terminal *term) {
+    if (term->osc_len < 1) return;
+
+    /* Parse the numeric parameter (before the semicolon) */
+    int param = 0;
+    int i = 0;
+    while (i < term->osc_len && term->osc_buf[i] >= '0' && term->osc_buf[i] <= '9') {
+        param = param * 10 + (term->osc_buf[i] - '0');
+        i++;
+    }
+
+    /* Skip the semicolon separator */
+    if (i < term->osc_len && term->osc_buf[i] == ';') {
+        i++;
+    } else {
+        return;  /* Malformed: no semicolon */
+    }
+
+    /* Remaining text is the string parameter */
+    const char *text = &term->osc_buf[i];
+    int text_len = term->osc_len - i;
+
+    switch (param) {
+    case 0: /* Set icon name and window title */
+    case 2: /* Set window title */
+        if (text_len > 0) {
+            int copy_len = text_len;
+            if (copy_len >= TERM_TITLE_MAX) copy_len = TERM_TITLE_MAX - 1;
+            for (int j = 0; j < copy_len; j++) {
+                term->title[j] = text[j];
+            }
+            term->title[copy_len] = '\0';
+            term->title_changed = true;
+        }
+        break;
+    default:
+        break;  /* Ignore unknown OSC parameters */
+    }
 }
 
 static void term_handle_escape(struct terminal *term) {
@@ -316,8 +396,37 @@ static void term_handle_escape(struct terminal *term) {
 }
 
 void term_putchar(struct terminal *term, char ch) {
-    /* Handle escape sequences */
+    /* Handle OSC sequences: accumulate until BEL (\007) or ST (ESC \) */
+    if (term->parser_state == TERM_STATE_OSC) {
+        if (ch == '\007') {
+            /* BEL terminates OSC */
+            term->osc_buf[term->osc_len] = '\0';
+            term_handle_osc(term);
+            term->parser_state = TERM_STATE_NORMAL;
+            term->osc_len = 0;
+        } else if (ch == '\033') {
+            /* Could be ST (ESC \) — peek ahead: for now, treat bare ESC
+             * during OSC as terminator (ST second byte handled next call) */
+            term->osc_buf[term->osc_len] = '\0';
+            term_handle_osc(term);
+            term->parser_state = TERM_STATE_ESC;
+            term->osc_len = 0;
+            term->escape_len = 0;
+        } else if (term->osc_len < (int)sizeof(term->osc_buf) - 1) {
+            term->osc_buf[term->osc_len++] = ch;
+        }
+        return;
+    }
+
+    /* Handle CSI escape sequences */
     if (term->parser_state == TERM_STATE_ESC) {
+        /* First byte after ESC: check for OSC introducer ']' */
+        if (term->escape_len == 0 && ch == ']') {
+            term->parser_state = TERM_STATE_OSC;
+            term->osc_len = 0;
+            return;
+        }
+
         if (term->escape_len < (int)sizeof(term->escape_buf) - 1) {
             term->escape_buf[term->escape_len++] = ch;
         }
@@ -361,9 +470,20 @@ void term_putchar(struct terminal *term, char ch) {
     }
 
     if (ch == '\t') {
-        /* Tab to next 8-column boundary */
-        term->cursor_x = (term->cursor_x + 8) & ~7;
-        if (term->cursor_x >= TERM_COLS) {
+        /* Advance to the next tab stop.  Walk forward from current position
+         * and stop at the first column that has a tab stop set.  If none is
+         * found before the right margin, clamp to the last column. */
+        int start = term->cursor_x + 1;
+        bool found = false;
+        for (int x = start; x < TERM_COLS; x++) {
+            if (term->tab_stops[x]) {
+                term->cursor_x = x;
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            /* No tab stop before right margin: wrap to next line */
             term->cursor_x = 0;
             term->cursor_y++;
             if (term->cursor_y >= TERM_ROWS) {
@@ -457,7 +577,7 @@ void term_render(struct terminal *term, uint32_t *pixels, int32_t width, int32_t
         struct term_cell *cell_row;
         struct term_cell scrollback_row[TERM_COLS]; /* temp for scrollback rows */
 
-        if (term->scroll_offset > 0 && row < term->scroll_offset &&
+        if (term->scrollback && term->scroll_offset > 0 && row < term->scroll_offset &&
             row < term->scrollback_count) {
             /* This row shows a scrollback line */
             int sb_line = term->scroll_offset - row;
@@ -480,23 +600,52 @@ void term_render(struct terminal *term, uint32_t *pixels, int32_t width, int32_t
         }
     }
 
-    /* Render cursor (simple block cursor) */
-    if (term->cursor_visible && term->cursor_x >= 0 && term->cursor_x < TERM_COLS &&
+    /* Render blinking block cursor.
+     * When blink phase is off, render the character under the cursor normally
+     * (i.e., skip the cursor overlay) so the cursor appears to vanish. */
+    if (term->cursor_visible && term->cursor_blink_on &&
+        term->cursor_x >= 0 && term->cursor_x < TERM_COLS &&
         term->cursor_y >= 0 && term->cursor_y < TERM_ROWS) {
         int cx = term->cursor_x * FONT_WIDTH;
         int cy = term->cursor_y * FONT_HEIGHT;
+        char under_ch = term->grid[term->cursor_y][term->cursor_x].ch;
+        uint32_t cursor_fg = COLOR_BLACK;
+        uint32_t cursor_bg = COLOR_GREEN;
 
+        /* Draw the block: fill background with cursor color, then render
+         * the character on top in inverted colors so it remains readable. */
         for (int y = 0; y < FONT_HEIGHT; y++) {
             int32_t line_y = cy + y;
-            if (line_y >= height) break;  /* Bounds check */
+            if (line_y >= height) break;
 
             uint32_t *line = pixels + (size_t)line_y * (size_t)stride + cx;
             int32_t max_x = FONT_WIDTH;
             if (cx + max_x > width) max_x = width - cx;
 
             for (int x = 0; x < max_x; x++) {
-                line[x] = COLOR_GREEN;  /* Green cursor */
+                line[x] = cursor_bg;
             }
         }
+
+        /* Re-render the character under the cursor in inverted colors */
+        if (under_ch >= 32 && under_ch < 127) {
+            font_render_char(under_ch, pixels, cx, cy, stride, width, height,
+                           cursor_fg, cursor_bg);
+        }
     }
+}
+
+const char *term_get_title(struct terminal *term) {
+    return term->title;
+}
+
+bool term_update_blink(struct terminal *term, uint64_t now_ms) {
+    if (!term->cursor_visible) return false;
+
+    if (now_ms - term->cursor_blink_time >= CURSOR_BLINK_MS) {
+        term->cursor_blink_on = !term->cursor_blink_on;
+        term->cursor_blink_time = now_ms;
+        return true;  /* Redraw needed */
+    }
+    return false;
 }

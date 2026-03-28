@@ -14,7 +14,16 @@
 /* Terminal dimensions */
 #define TERM_COLS 80
 #define TERM_ROWS 25
-#define SCROLLBACK_LINES 200  /* Lines of scrollback history */
+#define SCROLLBACK_LINES 1000  /* Lines of scrollback history */
+
+/* Tab stop interval */
+#define TAB_STOP_WIDTH 8
+
+/* Maximum window title length */
+#define TERM_TITLE_MAX 256
+
+/* Cursor blink interval in milliseconds */
+#define CURSOR_BLINK_MS 500
 
 /* Character cell structure */
 struct term_cell {
@@ -32,11 +41,22 @@ struct terminal {
     uint32_t bg_color;
     bool cursor_visible;
 
-    /* Scrollback buffer (circular) */
-    struct term_cell scrollback[SCROLLBACK_LINES][TERM_COLS];
+    /* Cursor blink state */
+    bool cursor_blink_on;        /* Current blink phase (on/off) */
+    uint64_t cursor_blink_time;  /* Last blink toggle timestamp (ms) */
+
+    /* Scrollback buffer (circular, dynamically allocated) */
+    struct term_cell (*scrollback)[TERM_COLS];
     int scrollback_count;   /* Number of lines stored (0..SCROLLBACK_LINES) */
     int scrollback_head;    /* Next write position (circular) */
     int scroll_offset;      /* Lines scrolled back (0 = at bottom, >0 = viewing history) */
+
+    /* Tab stops (one bool per column) */
+    bool tab_stops[TERM_COLS];
+
+    /* Window title (set by OSC 0/2) */
+    char title[TERM_TITLE_MAX];
+    bool title_changed;  /* Flag for main.c to pick up title updates */
 
     /* Shell process pipes */
     int shell_stdin_fd;     /* Write to shell */
@@ -48,10 +68,15 @@ struct terminal {
         TERM_STATE_NORMAL,
         TERM_STATE_ESC,
         TERM_STATE_CSI,
+        TERM_STATE_OSC,
     } parser_state;
 
     char escape_buf[64];
     int escape_len;
+
+    /* OSC sequence buffer */
+    char osc_buf[TERM_TITLE_MAX + 16];
+    int osc_len;
 };
 
 /* Initialize terminal state */
@@ -83,5 +108,14 @@ void term_scroll_view(struct terminal *term, int delta);
 
 /* Reset scroll to bottom (live view) */
 void term_scroll_to_bottom(struct terminal *term);
+
+/* Get current window title (set by OSC 0/2 sequences) */
+const char *term_get_title(struct terminal *term);
+
+/* Update cursor blink state; call each frame. Returns true if redraw needed. */
+bool term_update_blink(struct terminal *term, uint64_t now_ms);
+
+/* Free dynamically allocated scrollback buffer */
+void term_destroy(struct terminal *term);
 
 #endif /* WL_TERM_TERMINAL_H */

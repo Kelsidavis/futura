@@ -52,6 +52,7 @@ struct client_state {
     struct xdg_wm_base *xdg_wm_base;
     struct wl_seat *seat;
     struct wl_keyboard *keyboard;
+    struct wl_pointer *pointer;
     struct wl_surface *surface;
     struct xdg_surface *xdg_surface;
     struct xdg_toplevel *toplevel;
@@ -279,6 +280,61 @@ static const struct wl_keyboard_listener keyboard_listener = {
     .repeat_info = keyboard_repeat,
 };
 
+/* Pointer (mouse) listener — used for scroll wheel scrollback */
+static void pointer_enter(void *data, struct wl_pointer *pointer, uint32_t serial,
+                         struct wl_surface *surface, wl_fixed_t sx, wl_fixed_t sy) {
+    (void)data; (void)pointer; (void)serial; (void)surface; (void)sx; (void)sy;
+}
+
+static void pointer_leave(void *data, struct wl_pointer *pointer, uint32_t serial,
+                         struct wl_surface *surface) {
+    (void)data; (void)pointer; (void)serial; (void)surface;
+}
+
+static void pointer_motion(void *data, struct wl_pointer *pointer, uint32_t time,
+                          wl_fixed_t sx, wl_fixed_t sy) {
+    (void)data; (void)pointer; (void)time; (void)sx; (void)sy;
+}
+
+static void pointer_button(void *data, struct wl_pointer *pointer, uint32_t serial,
+                          uint32_t time, uint32_t button, uint32_t button_state) {
+    (void)data; (void)pointer; (void)serial; (void)time; (void)button; (void)button_state;
+}
+
+static void pointer_axis(void *data, struct wl_pointer *pointer, uint32_t time,
+                        uint32_t axis, wl_fixed_t value) {
+    (void)pointer; (void)time;
+    struct client_state *state = data;
+    if (!state) return;
+
+    /* axis 0 = vertical scroll.  Positive value = scroll down, negative = scroll up.
+     * wl_fixed_t is 24.8 fixed point; divide by 256 to get integer pixels,
+     * then convert to lines (each scroll notch is typically +-10.0 = 2560). */
+    if (axis == 0) {
+        int scroll_pixels = wl_fixed_to_int(value);
+        /* Each "notch" of the scroll wheel is about 10 pixels worth.
+         * Scroll 3 lines per notch for comfortable reading. */
+        int lines = 0;
+        if (scroll_pixels < 0) {
+            lines = 3;   /* Scroll wheel up: view older history */
+        } else if (scroll_pixels > 0) {
+            lines = -3;  /* Scroll wheel down: view newer content */
+        }
+        if (lines != 0) {
+            term_scroll_view(&state->term, lines);
+            state->needs_redraw = true;
+        }
+    }
+}
+
+static const struct wl_pointer_listener pointer_listener = {
+    .enter = pointer_enter,
+    .leave = pointer_leave,
+    .motion = pointer_motion,
+    .button = pointer_button,
+    .axis = pointer_axis,
+};
+
 /* Seat listener */
 static void seat_capabilities(void *data, struct wl_seat *seat, uint32_t capabilities) {
     struct client_state *state = data;
@@ -295,6 +351,17 @@ static void seat_capabilities(void *data, struct wl_seat *seat, uint32_t capabil
     } else if (!want_keyboard && state->keyboard) {
         wl_keyboard_destroy(state->keyboard);
         state->keyboard = NULL;
+    }
+
+    bool want_pointer = (capabilities & WL_SEAT_CAPABILITY_POINTER) != 0;
+    if (want_pointer && !state->pointer) {
+        state->pointer = wl_seat_get_pointer(seat);
+        if (state->pointer) {
+            wl_pointer_add_listener(state->pointer, &pointer_listener, state);
+        }
+    } else if (!want_pointer && state->pointer) {
+        wl_pointer_destroy(state->pointer);
+        state->pointer = NULL;
     }
 }
 

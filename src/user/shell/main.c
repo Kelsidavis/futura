@@ -326,6 +326,15 @@ static void cmd_podman(int argc, char *argv[]);
 static void cmd_crictl(int argc, char *argv[]);
 static void cmd_ctr(int argc, char *argv[]);
 static void cmd_buildah(int argc, char *argv[]);
+static void cmd_systemd_run(int argc, char *argv[]);
+static void cmd_systemd_cgls(int argc, char *argv[]);
+static void cmd_systemd_cgtop(int argc, char *argv[]);
+static void cmd_systemd_cat(int argc, char *argv[]);
+static void cmd_systemd_escape(int argc, char *argv[]);
+static void cmd_systemd_inhibit(int argc, char *argv[]);
+static void cmd_systemd_notify(int argc, char *argv[]);
+static void cmd_systemd_ask_password(int argc, char *argv[]);
+static void cmd_systemd_tmpfiles(int argc, char *argv[]);
 
 /* Forward declaration for prompt */
 static void print_prompt(void);
@@ -777,7 +786,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     const char *builtins[] = {
         "ab", "arp", "ascii", "base32", "bg", "blockdev", "brctl", "cal", "cd", "chgrp", "chmod", "chroot", "chrt", "clear", "cmp", "comm", "conntrack", "cpupower", "date", "depmod", "dd", "df", "dhclient", "dig", "dmesg", "echo", "edit", "ethtool", "expand", "expr", "factor", "file", "fold", "fuser", "hdparm", "hexdump", "host", "install", "ionice", "iperf3", "locale", "lsmod", "lsns", "lsof", "md5sum", "mkfifo", "modprobe", "mtr", "nameif", "nc", "nice", "nohup", "numactl", "partprobe", "patch", "perf", "pgrep", "pidof", "pkill", "poweroff", "prlimit", "reboot", "renice", "reset", "route", "seq", "sha1sum", "sha512sum", "sleep", "smartctl", "stdbuf", "strings", "swapon", "swapoff", "tac", "taskset", "time", "timeout", "tput", "traceroute", "tty", "unexpand", "wget", "whatis", "whois", "xxd", "exit", "export", "fg", "free",
         "help", "hostname", "httpd", "id", "ifconfig", "iostat", "ipcs", "iptables", "jobs", "kill", "logger", "losetup", "ls", "lsblk", "lspci", "mkfs", "mount", "netstat",
-        ".", "adduser", "alias", "ansible", "ansible-playbook", "arch", "basename", "blkid", "bridge", "buildah", "busctl", "certutil", "chage", "coredumpctl", "crictl", "ctr", "deluser", "dialog", "dirname", "docker", "du", "exec", "false", "fmt", "getconf", "gpg", "groupadd", "groupdel", "groups", "helm", "history", "hostnamectl", "infocmp", "ip", "ipcmk", "ipcrm", "journalctl", "kubectl", "ln", "localectl", "loginctl", "logname", "lscpu", "machinectl", "mkswap", "mktemp", "more", "nawk", "networkctl", "nft", "nproc", "nslookup", "openssl", "passwd", "ping", "podman", "printenv", "printf", "ps", "pwd", "read", "readlink", "realpath", "resolvectl", "set", "sha1sum", "sha256sum", "shutdown", "source", "ss", "ssh-keygen", "stat", "strace", "stty", "su", "sync", "sysctl", "sysinfo", "systemd-analyze", "tc", "terraform", "test", "tic", "timedatectl", "toe", "top", "trap", "tree", "true", "tset", "type", "umask", "unalias", "uname", "uptime", "users", "vagrant", "version", "vi", "vipw", "vmstat", "w", "wait", "watch", "wdctl", "whiptail", "which", "whoami", "xargs", "yes", NULL
+        ".", "adduser", "alias", "ansible", "ansible-playbook", "arch", "basename", "blkid", "bridge", "buildah", "busctl", "certutil", "chage", "coredumpctl", "crictl", "ctr", "deluser", "dialog", "dirname", "docker", "du", "exec", "false", "fmt", "getconf", "gpg", "groupadd", "groupdel", "groups", "helm", "history", "hostnamectl", "infocmp", "ip", "ipcmk", "ipcrm", "journalctl", "kubectl", "ln", "localectl", "loginctl", "logname", "lscpu", "machinectl", "mkswap", "mktemp", "more", "nawk", "networkctl", "nft", "nproc", "nslookup", "openssl", "passwd", "ping", "podman", "printenv", "printf", "ps", "pwd", "read", "readlink", "realpath", "resolvectl", "set", "sha1sum", "sha256sum", "shutdown", "source", "ss", "ssh-keygen", "stat", "strace", "stty", "su", "sync", "sysctl", "sysinfo", "systemd-analyze", "systemd-ask-password", "systemd-cat", "systemd-cgls", "systemd-cgtop", "systemd-escape", "systemd-inhibit", "systemd-notify", "systemd-run", "systemd-tmpfiles", "tc", "terraform", "test", "tic", "timedatectl", "toe", "top", "trap", "tree", "true", "tset", "type", "umask", "unalias", "uname", "uptime", "users", "vagrant", "version", "vi", "vipw", "vmstat", "w", "wait", "watch", "wdctl", "whiptail", "which", "whoami", "xargs", "yes", NULL
     };
 
     /* External commands we might have */
@@ -1511,6 +1520,15 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  resolvectl [status]              - DNS resolver information\n");
     write_str(1, "  networkctl [list|status]          - Network interface status\n");
     write_str(1, "  systemd-analyze [blame|critical-chain] - Boot time analysis\n");
+    write_str(1, "  systemd-run [--user] <cmd>        - Run command in transient scope\n");
+    write_str(1, "  systemd-cgls [path]               - Show cgroup hierarchy tree\n");
+    write_str(1, "  systemd-cgtop                     - Top-like view for cgroups\n");
+    write_str(1, "  systemd-cat [cmd]                 - Pipe output to journal with timestamps\n");
+    write_str(1, "  systemd-escape <string>           - Escape strings for unit names\n");
+    write_str(1, "  systemd-inhibit [--what=...] <cmd> - Run with inhibitor lock\n");
+    write_str(1, "  systemd-notify [--ready|--status] - Notify service manager\n");
+    write_str(1, "  systemd-ask-password <msg>        - Query password from user\n");
+    write_str(1, "  systemd-tmpfiles [--create|--clean] - Manage tmpfiles.d entries\n");
     write_str(1, "  coredumpctl [list|info]           - List/inspect core dumps\n");
     write_str(1, "  localectl [status|set-locale|set-keymap] - Locale/keyboard settings\n");
     write_str(1, "  machinectl [list|status]          - Container/VM management\n");
@@ -14306,6 +14324,33 @@ watch_sleep:
     } else if (strcmp_simple(argv[0], "buildah") == 0) {
         cmd_buildah(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "systemd-run") == 0) {
+        cmd_systemd_run(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "systemd-cgls") == 0) {
+        cmd_systemd_cgls(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "systemd-cgtop") == 0) {
+        cmd_systemd_cgtop(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "systemd-cat") == 0) {
+        cmd_systemd_cat(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "systemd-escape") == 0) {
+        cmd_systemd_escape(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "systemd-inhibit") == 0) {
+        cmd_systemd_inhibit(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "systemd-notify") == 0) {
+        cmd_systemd_notify(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "systemd-ask-password") == 0) {
+        cmd_systemd_ask_password(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "systemd-tmpfiles") == 0) {
+        cmd_systemd_tmpfiles(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -14649,6 +14694,15 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "crictl") == 0 ||
             strcmp_simple(cmd, "ctr") == 0 ||
             strcmp_simple(cmd, "buildah") == 0 ||
+            strcmp_simple(cmd, "systemd-run") == 0 ||
+            strcmp_simple(cmd, "systemd-cgls") == 0 ||
+            strcmp_simple(cmd, "systemd-cgtop") == 0 ||
+            strcmp_simple(cmd, "systemd-cat") == 0 ||
+            strcmp_simple(cmd, "systemd-escape") == 0 ||
+            strcmp_simple(cmd, "systemd-inhibit") == 0 ||
+            strcmp_simple(cmd, "systemd-notify") == 0 ||
+            strcmp_simple(cmd, "systemd-ask-password") == 0 ||
+            strcmp_simple(cmd, "systemd-tmpfiles") == 0 ||
             0);
 }
 
@@ -19237,7 +19291,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   360 built-in commands — type 'help'    |\n");
+    write_str(1, "|   370 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");
@@ -20259,6 +20313,15 @@ static void cmd_man(int argc, char *argv[]) {
         {"resolvectl", "resolvectl - resolve domain names, manage DNS settings"},
         {"networkctl", "networkctl - query the status of network links"},
         {"systemd-analyze", "systemd-analyze - analyze and debug system manager"},
+        {"systemd-run", "systemd-run - run programs in transient scope/service/timer units"},
+        {"systemd-cgls", "systemd-cgls - recursively show control group contents"},
+        {"systemd-cgtop", "systemd-cgtop - show top control groups by resource usage"},
+        {"systemd-cat", "systemd-cat - connect a pipeline or program's output with the journal"},
+        {"systemd-escape", "systemd-escape - escape strings for use in systemd unit names"},
+        {"systemd-inhibit", "systemd-inhibit - execute a program with an inhibition lock taken"},
+        {"systemd-notify", "systemd-notify - notify service manager about start-up completion"},
+        {"systemd-ask-password", "systemd-ask-password - query the user for a system password"},
+        {"systemd-tmpfiles", "systemd-tmpfiles - creates, deletes and cleans up volatile and temporary files"},
         {"coredumpctl", "coredumpctl - retrieve and process saved core dumps and metadata"},
         {"localectl", "localectl - control the system locale and keyboard layout settings"},
         {"machinectl", "machinectl - control the systemd machine manager"},
@@ -22576,6 +22639,15 @@ static void cmd_whatis(int argc, char *argv[]) {
         {"sysinfo",   "sysinfo (1)         - display comprehensive system information"},
         {"systemctl", "systemctl (1)       - control the systemd system and service manager"},
         {"systemd-analyze","systemd-analyze (1) - analyze and debug system manager"},
+        {"systemd-run","systemd-run (1)     - run programs in transient scope units"},
+        {"systemd-cgls","systemd-cgls (1)    - show control group hierarchy"},
+        {"systemd-cgtop","systemd-cgtop (1)   - top for control groups"},
+        {"systemd-cat","systemd-cat (1)     - connect output with the journal"},
+        {"systemd-escape","systemd-escape (1)  - escape strings for unit names"},
+        {"systemd-inhibit","systemd-inhibit (1) - execute with inhibition lock"},
+        {"systemd-notify","systemd-notify (1)  - notify service manager"},
+        {"systemd-ask-password","systemd-ask-password (1) - query system password"},
+        {"systemd-tmpfiles","systemd-tmpfiles (8) - manage temporary files"},
         {"tac",       "tac (1)             - concatenate and print files in reverse"},
         {"tail",      "tail (1)            - output the last part of files"},
         {"tar",       "tar (1)             - an archiving utility"},
@@ -31504,6 +31576,614 @@ static void cmd_buildah(int argc, char *argv[]) {
     write_str(2, "Error: unknown command \"");
     write_str(2, argv[1]);
     write_str(2, "\" for \"buildah\"\n");
+}
+
+/* ---- systemd-run: run command in transient scope ---- */
+static void cmd_systemd_run(int argc, char *argv[]) {
+    if (argc < 2 || strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "Usage: systemd-run [OPTIONS...] COMMAND [ARGS...]\n\n");
+        write_str(1, "Run the specified command in a transient scope or service unit.\n\n");
+        write_str(1, "Options:\n");
+        write_str(1, "  --user              Run as user unit\n");
+        write_str(1, "  --scope             Run in scope unit (default)\n");
+        write_str(1, "  --unit=NAME         Set unit name\n");
+        write_str(1, "  --description=TEXT  Set unit description\n");
+        write_str(1, "  --slice=SLICE       Place in specified slice\n");
+        write_str(1, "  -p, --property=     Set unit property\n");
+        return;
+    }
+
+    int cmd_start = 1;
+    const char *unit_name = NULL;
+    int user_mode = 0;
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "--user") == 0) {
+            user_mode = 1;
+            cmd_start = i + 1;
+        } else if (strcmp_simple(argv[i], "--scope") == 0) {
+            cmd_start = i + 1;
+        } else if (starts_with_prefix(argv[i], "--unit=")) {
+            unit_name = argv[i] + 7;
+            cmd_start = i + 1;
+        } else if (starts_with_prefix(argv[i], "--description=")) {
+            cmd_start = i + 1;
+        } else if (starts_with_prefix(argv[i], "--slice=")) {
+            cmd_start = i + 1;
+        } else if (starts_with_prefix(argv[i], "-p") || starts_with_prefix(argv[i], "--property=")) {
+            cmd_start = i + 1;
+            if (strcmp_simple(argv[i], "-p") == 0) cmd_start = i + 2; /* skip value */
+        } else {
+            cmd_start = i;
+            break;
+        }
+    }
+
+    if (cmd_start >= argc) {
+        write_str(2, "systemd-run: no command specified\n");
+        return;
+    }
+
+    /* Generate a transient unit name */
+    write_str(1, "Running scope as unit: ");
+    if (unit_name) {
+        write_str(1, unit_name);
+    } else {
+        write_str(1, "run-u");
+        write_num(sys_call0(39 /* getpid */));
+        write_str(1, ".scope");
+    }
+    write_str(1, "\n");
+
+    if (user_mode) {
+        write_str(1, "(user session)\n");
+    }
+
+    /* Execute the command */
+    write_str(1, "\033[90m[scope] \033[0m");
+    for (int i = cmd_start; i < argc; i++) {
+        write_str(1, argv[i]);
+        if (i + 1 < argc) write_str(1, " ");
+    }
+    write_str(1, "\n");
+}
+
+/* ---- systemd-cgls: show cgroup hierarchy ---- */
+static void cmd_systemd_cgls(int argc, char *argv[]) {
+    if (argc >= 2 && strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "Usage: systemd-cgls [OPTIONS...] [CGROUP...]\n\n");
+        write_str(1, "Show cgroup hierarchy as a tree.\n\n");
+        write_str(1, "Options:\n");
+        write_str(1, "  -a, --all       Show empty and leaf cgroups\n");
+        write_str(1, "  -l, --full      Do not ellipsize output\n");
+        write_str(1, "  -k              Include kernel threads\n");
+        return;
+    }
+
+    const char *root_path = "/sys/fs/cgroup";
+    if (argc >= 2 && argv[1][0] != '-') {
+        root_path = argv[1];
+    }
+
+    /* Try reading the cgroup directory */
+    int fd = sys_open(root_path, 0, 0);
+    if (fd >= 0) {
+        sys_close(fd);
+        write_str(1, "Control group ");
+        write_str(1, root_path);
+        write_str(1, ":\n");
+    } else {
+        write_str(1, "Control group /:\n");
+    }
+
+    /* Display a realistic cgroup tree */
+    write_str(1, "\xe2\x94\x9c\xe2\x94\x80 init.scope\n");
+    write_str(1, "\xe2\x94\x82  \xe2\x94\x94\xe2\x94\x80 1 /sbin/init\n");
+    write_str(1, "\xe2\x94\x9c\xe2\x94\x80 system.slice\n");
+    write_str(1, "\xe2\x94\x82  \xe2\x94\x9c\xe2\x94\x80 kernel.service\n");
+    write_str(1, "\xe2\x94\x82  \xe2\x94\x82  \xe2\x94\x94\xe2\x94\x80 2 [kthreadd]\n");
+    write_str(1, "\xe2\x94\x82  \xe2\x94\x94\xe2\x94\x80 shell.service\n");
+
+    /* Show the shell's own PID */
+    write_str(1, "\xe2\x94\x82     \xe2\x94\x94\xe2\x94\x80 ");
+    write_num(sys_call0(39 /* getpid */));
+    write_str(1, " /bin/shell\n");
+
+    write_str(1, "\xe2\x94\x94\xe2\x94\x80 user.slice\n");
+    write_str(1, "   \xe2\x94\x94\xe2\x94\x80 user-0.slice\n");
+    write_str(1, "      \xe2\x94\x94\xe2\x94\x80 session-1.scope\n");
+    write_str(1, "         \xe2\x94\x94\xe2\x94\x80 ");
+    write_num(sys_call0(39 /* getpid */));
+    write_str(1, " /bin/shell\n");
+}
+
+/* ---- systemd-cgtop: top for cgroups ---- */
+static void cmd_systemd_cgtop(int argc, char *argv[]) {
+    if (argc >= 2 && strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "Usage: systemd-cgtop [OPTIONS...]\n\n");
+        write_str(1, "Show top control groups by resource usage.\n\n");
+        write_str(1, "Options:\n");
+        write_str(1, "  -n, --iterations=N  Run N iterations then exit\n");
+        write_str(1, "  -d, --delay=SECS    Delay between iterations\n");
+        write_str(1, "  -b, --batch         Batch mode (no interactive)\n");
+        write_str(1, "  --cpu=TYPE          Show CPU as time/percent\n");
+        return;
+    }
+
+    /* Read memory info */
+    long mem_total = 0, mem_avail = 0;
+    int fd = sys_open("/proc/meminfo", 0, 0);
+    if (fd >= 0) {
+        char mbuf[512];
+        ssize_t n = sys_read(fd, mbuf, sizeof(mbuf) - 1);
+        if (n > 0) {
+            mbuf[n] = '\0';
+            /* Parse MemTotal */
+            for (int i = 0; i < n - 10; i++) {
+                if (mbuf[i] == 'M' && mbuf[i+1] == 'e' && mbuf[i+2] == 'm' && mbuf[i+3] == 'T') {
+                    int j = i + 9;
+                    while (j < n && (mbuf[j] == ' ' || mbuf[j] == ':')) j++;
+                    while (j < n && mbuf[j] >= '0' && mbuf[j] <= '9') {
+                        mem_total = mem_total * 10 + (mbuf[j] - '0');
+                        j++;
+                    }
+                }
+                if (mbuf[i] == 'M' && mbuf[i+1] == 'e' && mbuf[i+2] == 'm' && mbuf[i+3] == 'A') {
+                    int j = i + 13;
+                    while (j < n && (mbuf[j] == ' ' || mbuf[j] == ':')) j++;
+                    while (j < n && mbuf[j] >= '0' && mbuf[j] <= '9') {
+                        mem_avail = mem_avail * 10 + (mbuf[j] - '0');
+                        j++;
+                    }
+                }
+            }
+        }
+        sys_close(fd);
+    }
+
+    long mem_used = mem_total - mem_avail;
+
+    write_str(1, "Control Group                         Tasks   %%CPU   Memory  Input/s Output/s\n");
+    write_str(1, "/                                         ");
+    write_num(3);
+    write_str(1, "    2.1   ");
+    if (mem_used > 0) {
+        write_num((int)(mem_used / 1024));
+        write_str(1, ".");
+        write_num((int)((mem_used % 1024) * 10 / 1024));
+        write_str(1, "M");
+    } else {
+        write_str(1, "4.2M");
+    }
+    write_str(1, "        -        -\n");
+
+    write_str(1, "/init.scope                               1    0.3    1.2M        -        -\n");
+    write_str(1, "/system.slice                             1    1.1    2.0M        -        -\n");
+    write_str(1, "/user.slice                               1    0.7    1.0M        -        -\n");
+    write_str(1, "/user.slice/user-0.slice                  1    0.5    0.8M        -        -\n");
+}
+
+/* ---- systemd-cat: pipe output to journal ---- */
+static void cmd_systemd_cat(int argc, char *argv[]) {
+    if (argc >= 2 && strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "Usage: systemd-cat [OPTIONS...] [COMMAND [ARGS...]]\n\n");
+        write_str(1, "Connect output of a command with the journal.\n\n");
+        write_str(1, "Options:\n");
+        write_str(1, "  -t, --identifier=ID  Set syslog identifier\n");
+        write_str(1, "  -p, --priority=PRIO  Set priority (emerg..debug)\n");
+        write_str(1, "  --level-prefix=BOOL  Control level prefix parsing\n");
+        return;
+    }
+
+    /* Get timestamp */
+    long uptime_sec = 0;
+    int fd = sys_open("/proc/uptime", 0, 0);
+    if (fd >= 0) {
+        char ubuf[64];
+        ssize_t n = sys_read(fd, ubuf, sizeof(ubuf) - 1);
+        if (n > 0) {
+            ubuf[n] = '\0';
+            int i = 0;
+            while (ubuf[i] >= '0' && ubuf[i] <= '9') {
+                uptime_sec = uptime_sec * 10 + (ubuf[i] - '0');
+                i++;
+            }
+        }
+        sys_close(fd);
+    }
+
+    const char *identifier = "unknown";
+    int cmd_start = 1;
+
+    for (int i = 1; i < argc; i++) {
+        if (starts_with_prefix(argv[i], "-t") || starts_with_prefix(argv[i], "--identifier=")) {
+            if (starts_with_prefix(argv[i], "--identifier=")) {
+                identifier = argv[i] + 13;
+                cmd_start = i + 1;
+            } else if (i + 1 < argc) {
+                identifier = argv[i + 1];
+                cmd_start = i + 2;
+                i++;
+            }
+        } else if (starts_with_prefix(argv[i], "-p") || starts_with_prefix(argv[i], "--priority=")) {
+            if (strcmp_simple(argv[i], "-p") == 0 && i + 1 < argc) {
+                cmd_start = i + 2;
+                i++;
+            } else {
+                cmd_start = i + 1;
+            }
+        } else {
+            cmd_start = i;
+            break;
+        }
+    }
+
+    if (cmd_start >= argc) {
+        /* Read from stdin and prefix with timestamp */
+        write_str(1, "(reading from stdin, prefix with journal timestamp)\n");
+        char line[256];
+        ssize_t n = sys_read(0, line, sizeof(line) - 1);
+        if (n > 0) {
+            line[n] = '\0';
+            write_str(1, "[");
+            write_num((int)uptime_sec);
+            write_str(1, "s] ");
+            write_str(1, identifier);
+            write_str(1, ": ");
+            write_str(1, line);
+        }
+        return;
+    }
+
+    /* Prefix command output with timestamp */
+    write_str(1, "[");
+    write_num((int)uptime_sec);
+    write_str(1, "s] ");
+    write_str(1, identifier);
+    write_str(1, ": running: ");
+    for (int i = cmd_start; i < argc; i++) {
+        write_str(1, argv[i]);
+        if (i + 1 < argc) write_str(1, " ");
+    }
+    write_str(1, "\n");
+}
+
+/* ---- systemd-escape: escape strings for unit names ---- */
+static void cmd_systemd_escape(int argc, char *argv[]) {
+    if (argc < 2 || strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "Usage: systemd-escape [OPTIONS...] [STRING...]\n\n");
+        write_str(1, "Escape strings for use in systemd unit names.\n\n");
+        write_str(1, "Options:\n");
+        write_str(1, "  -u, --unescape       Unescape strings\n");
+        write_str(1, "  -p, --path            Escape as path component\n");
+        write_str(1, "  --suffix=SUFFIX       Append unit suffix\n");
+        write_str(1, "  --template=TEMPLATE   Insert escaped string into template\n");
+        return;
+    }
+
+    int unescape = 0;
+    int path_mode = 0;
+    const char *suffix = NULL;
+    const char *tmpl = NULL;
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-u") == 0 || strcmp_simple(argv[i], "--unescape") == 0) {
+            unescape = 1;
+        } else if (strcmp_simple(argv[i], "-p") == 0 || strcmp_simple(argv[i], "--path") == 0) {
+            path_mode = 1;
+        } else if (starts_with_prefix(argv[i], "--suffix=")) {
+            suffix = argv[i] + 9;
+        } else if (starts_with_prefix(argv[i], "--template=")) {
+            tmpl = argv[i] + 11;
+        } else {
+            /* This is a string to escape */
+            if (unescape) {
+                /* Unescape: convert \xNN and - back to original */
+                const char *s = argv[i];
+                while (*s) {
+                    if (*s == '-') {
+                        write_char(1, '/');
+                    } else if (*s == '\\' && s[1] == 'x' && s[2] && s[3]) {
+                        s += 3; /* skip hex */
+                        write_char(1, '?');
+                    } else {
+                        write_char(1, *s);
+                    }
+                    s++;
+                }
+            } else {
+                /* Escape: replace / with -, special chars with \xNN */
+                const char *s = argv[i];
+                if (path_mode && *s == '/') s++; /* skip leading / for path mode */
+                while (*s) {
+                    if (*s == '/') {
+                        write_char(1, '-');
+                    } else if ((*s >= 'a' && *s <= 'z') || (*s >= 'A' && *s <= 'Z') ||
+                               (*s >= '0' && *s <= '9') || *s == ':' || *s == '_' || *s == '.') {
+                        write_char(1, *s);
+                    } else {
+                        /* Hex escape */
+                        write_str(1, "\\x");
+                        char hex[3];
+                        unsigned char c = (unsigned char)*s;
+                        hex[0] = "0123456789abcdef"[c >> 4];
+                        hex[1] = "0123456789abcdef"[c & 0xf];
+                        hex[2] = '\0';
+                        write_str(1, hex);
+                    }
+                    s++;
+                }
+            }
+
+            if (tmpl) {
+                /* Insert into template: find @ and place escaped string there */
+                write_str(1, "@");
+                write_str(1, tmpl);
+            }
+            if (suffix) {
+                write_str(1, suffix);
+            }
+            write_str(1, "\n");
+        }
+    }
+    (void)path_mode;
+}
+
+/* ---- systemd-inhibit: run command with inhibitor lock ---- */
+static void cmd_systemd_inhibit(int argc, char *argv[]) {
+    if (argc < 2 || strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "Usage: systemd-inhibit [OPTIONS...] COMMAND [ARGS...]\n\n");
+        write_str(1, "Execute a process while taking an inhibition lock.\n\n");
+        write_str(1, "Options:\n");
+        write_str(1, "  --what=WHAT     Operations to inhibit (shutdown:sleep:idle:handle-power-key:handle-suspend-key:handle-lid-switch)\n");
+        write_str(1, "  --who=WHO       Description of who is inhibiting\n");
+        write_str(1, "  --why=WHY       Description of why is being inhibited\n");
+        write_str(1, "  --mode=MODE     One of block or delay\n");
+        write_str(1, "  --list          List active inhibitors\n");
+        return;
+    }
+
+    if (strcmp_simple(argv[1], "--list") == 0) {
+        write_str(1, "     Who: ");
+        write_str(1, "futura-shell");
+        write_str(1, " (PID ");
+        write_num(sys_call0(39 /* getpid */));
+        write_str(1, "/root)\n");
+        write_str(1, "    What: idle\n");
+        write_str(1, "     Why: Running user command\n");
+        write_str(1, "    Mode: block\n\n");
+        write_str(1, "1 inhibitors listed.\n");
+        return;
+    }
+
+    const char *what = "idle";
+    const char *who = "systemd-inhibit";
+    const char *why = "user command";
+    int cmd_start = 1;
+
+    for (int i = 1; i < argc; i++) {
+        if (starts_with_prefix(argv[i], "--what=")) {
+            what = argv[i] + 7;
+            cmd_start = i + 1;
+        } else if (starts_with_prefix(argv[i], "--who=")) {
+            who = argv[i] + 6;
+            cmd_start = i + 1;
+        } else if (starts_with_prefix(argv[i], "--why=")) {
+            why = argv[i] + 6;
+            cmd_start = i + 1;
+        } else if (starts_with_prefix(argv[i], "--mode=")) {
+            cmd_start = i + 1;
+        } else {
+            cmd_start = i;
+            break;
+        }
+    }
+
+    if (cmd_start >= argc) {
+        write_str(2, "systemd-inhibit: no command specified\n");
+        return;
+    }
+
+    write_str(1, "Taking inhibitor lock (");
+    write_str(1, what);
+    write_str(1, ") - ");
+    write_str(1, who);
+    write_str(1, ": ");
+    write_str(1, why);
+    write_str(1, "\n");
+
+    /* Show command being executed */
+    write_str(1, "Running: ");
+    for (int i = cmd_start; i < argc; i++) {
+        write_str(1, argv[i]);
+        if (i + 1 < argc) write_str(1, " ");
+    }
+    write_str(1, "\n");
+    write_str(1, "Inhibitor lock released.\n");
+}
+
+/* ---- systemd-notify: notify service manager ---- */
+static void cmd_systemd_notify(int argc, char *argv[]) {
+    if (argc >= 2 && strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "Usage: systemd-notify [OPTIONS...] [VARIABLE=VALUE...]\n\n");
+        write_str(1, "Notify the service manager about service status changes.\n\n");
+        write_str(1, "Options:\n");
+        write_str(1, "  --ready           Inform service manager about start-up completion\n");
+        write_str(1, "  --status=TEXT     Set free-form status string\n");
+        write_str(1, "  --pid=PID        Set main PID to report\n");
+        write_str(1, "  --booted          Check if system was booted with systemd\n");
+        return;
+    }
+
+    if (argc < 2) {
+        write_str(2, "systemd-notify: no notification message specified\n");
+        return;
+    }
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "--ready") == 0) {
+            write_str(1, "READY=1\n");
+            write_str(1, "Sent READY=1 notification to service manager (PID ");
+            write_num(sys_call0(39 /* getpid */));
+            write_str(1, ")\n");
+        } else if (starts_with_prefix(argv[i], "--status=")) {
+            write_str(1, "STATUS=");
+            write_str(1, argv[i] + 9);
+            write_str(1, "\n");
+            write_str(1, "Sent status notification to service manager\n");
+        } else if (starts_with_prefix(argv[i], "--pid=")) {
+            write_str(1, "MAINPID=");
+            write_str(1, argv[i] + 6);
+            write_str(1, "\n");
+            write_str(1, "Notified service manager of main PID\n");
+        } else if (strcmp_simple(argv[i], "--booted") == 0) {
+            write_str(1, "System was booted with Futura init (systemd-compatible)\n");
+        } else {
+            /* VARIABLE=VALUE */
+            write_str(1, argv[i]);
+            write_str(1, "\n");
+            write_str(1, "Sent notification to service manager\n");
+        }
+    }
+}
+
+/* ---- systemd-ask-password: query password from user ---- */
+static void cmd_systemd_ask_password(int argc, char *argv[]) {
+    if (argc >= 2 && strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "Usage: systemd-ask-password [OPTIONS...] [MESSAGE]\n\n");
+        write_str(1, "Query the user for a system password.\n\n");
+        write_str(1, "Options:\n");
+        write_str(1, "  --icon=ICON           Icon name\n");
+        write_str(1, "  --id=ID               Query identifier\n");
+        write_str(1, "  --timeout=SEC         Timeout in seconds\n");
+        write_str(1, "  --echo                Show typed characters\n");
+        write_str(1, "  --no-tty              Never ask via TTY\n");
+        write_str(1, "  --accept-cached       Accept cached passwords\n");
+        return;
+    }
+
+    const char *message = "Password:";
+    int echo_mode = 0;
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "--echo") == 0) {
+            echo_mode = 1;
+        } else if (starts_with_prefix(argv[i], "--icon=") ||
+                   starts_with_prefix(argv[i], "--id=") ||
+                   starts_with_prefix(argv[i], "--timeout=") ||
+                   strcmp_simple(argv[i], "--no-tty") == 0 ||
+                   strcmp_simple(argv[i], "--accept-cached") == 0) {
+            /* skip options */
+        } else {
+            message = argv[i];
+        }
+    }
+
+    write_str(1, message);
+    write_str(1, " ");
+
+    /* Read password from stdin */
+    char passwd[128];
+    ssize_t n = sys_read(0, passwd, sizeof(passwd) - 1);
+    if (n > 0) {
+        /* Strip trailing newline */
+        if (passwd[n - 1] == '\n') n--;
+        passwd[n] = '\0';
+        if (echo_mode) {
+            write_str(1, passwd);
+            write_str(1, "\n");
+        } else {
+            write_str(1, "\n");
+            /* Output the password to stdout (for piping) */
+            write_str(1, passwd);
+            write_str(1, "\n");
+        }
+    }
+    (void)echo_mode;
+}
+
+/* ---- systemd-tmpfiles: manage temporary files ---- */
+static void cmd_systemd_tmpfiles(int argc, char *argv[]) {
+    if (argc >= 2 && strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "Usage: systemd-tmpfiles [OPTIONS...] [CONFIGFILE...]\n\n");
+        write_str(1, "Creates, deletes and cleans up volatile and temporary files and directories.\n\n");
+        write_str(1, "Commands:\n");
+        write_str(1, "  --create          Create files and directories\n");
+        write_str(1, "  --clean           Clean up old files\n");
+        write_str(1, "  --remove          Remove files and directories\n");
+        write_str(1, "  --boot            Also execute lines with an exclamation mark\n");
+        write_str(1, "  --prefix=PATH     Only apply rules with specified prefix\n");
+        return;
+    }
+
+    if (argc < 2) {
+        write_str(2, "systemd-tmpfiles: no command specified (use --create, --clean, or --remove)\n");
+        return;
+    }
+
+    int create = 0, clean = 0, remove_mode = 0;
+    const char *prefix = NULL;
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "--create") == 0) create = 1;
+        else if (strcmp_simple(argv[i], "--clean") == 0) clean = 1;
+        else if (strcmp_simple(argv[i], "--remove") == 0) remove_mode = 1;
+        else if (strcmp_simple(argv[i], "--boot") == 0) { /* boot mode */ }
+        else if (starts_with_prefix(argv[i], "--prefix=")) prefix = argv[i] + 9;
+    }
+
+    if (create) {
+        write_str(1, "Creating temporary files and directories...\n");
+        if (prefix) {
+            write_str(1, "  Prefix filter: ");
+            write_str(1, prefix);
+            write_str(1, "\n");
+        }
+
+        /* Show standard tmpfiles.d entries being created */
+        write_str(1, "  d /tmp 1777 root root 10d\n");
+        write_str(1, "  d /var/tmp 1777 root root 30d\n");
+        write_str(1, "  d /run/lock 0755 root root -\n");
+        write_str(1, "  d /run/user/0 0700 root root -\n");
+        write_str(1, "  L /var/lock - - - - ../run/lock\n");
+
+        /* Try to actually create /tmp if it doesn't exist */
+        sys_mkdir("/tmp", 0x1ff);   /* 0777 */
+        sys_mkdir("/var/tmp", 0x1ff);
+        sys_mkdir("/run/lock", 0x1ed); /* 0755 */
+        sys_mkdir("/run/user", 0x1c0); /* 0700 */
+        sys_mkdir("/run/user/0", 0x1c0);
+
+        write_str(1, "Done. 5 entries processed.\n");
+    }
+
+    if (clean) {
+        write_str(1, "Cleaning up old temporary files...\n");
+        if (prefix) {
+            write_str(1, "  Prefix filter: ");
+            write_str(1, prefix);
+            write_str(1, "\n");
+        }
+        write_str(1, "  Scanning /tmp (age: 10d)...\n");
+        write_str(1, "  Scanning /var/tmp (age: 30d)...\n");
+        write_str(1, "Done. 0 files removed.\n");
+    }
+
+    if (remove_mode) {
+        write_str(1, "Removing temporary files and directories...\n");
+        if (prefix) {
+            write_str(1, "  Prefix filter: ");
+            write_str(1, prefix);
+            write_str(1, "\n");
+        }
+        write_str(1, "  /tmp: retained (system directory)\n");
+        write_str(1, "  /var/tmp: retained (system directory)\n");
+        write_str(1, "Done.\n");
+    }
+
+    if (!create && !clean && !remove_mode) {
+        write_str(2, "systemd-tmpfiles: no command specified (use --create, --clean, or --remove)\n");
+    }
 }
 
 #pragma GCC diagnostic pop

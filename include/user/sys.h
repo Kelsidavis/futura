@@ -37,6 +37,11 @@ static inline long sys_call4(long nr, long a1, long a2, long a3, long a4) {
     return __SYSCALL_4(nr, a1, a2, a3, a4);
 }
 
+static inline long sys_call5(long nr, long a1, long a2, long a3,
+                             long a4, long a5) {
+    return __SYSCALL_5(nr, a1, a2, a3, a4, a5);
+}
+
 static inline long sys_call6(long nr, long a1, long a2, long a3,
                              long a4, long a5, long a6) {
     return __SYSCALL_6(nr, a1, a2, a3, a4, a5, a6);

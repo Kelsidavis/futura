@@ -93,6 +93,7 @@
  * Phase 3 (Completed): Implement shrinking (unmap tail) and same-size no-op
  * Phase 4 (Completed): Implement MREMAP_MAYMOVE (allocate-copy-free) and MREMAP_FIXED
  * Phase 5 (Completed): MREMAP_DONTUNMAP support (keep source mapping after remap)
+ * Phase 6 (Completed): MREMAP_MAYMOVE tries in-place expansion first for realloc() perf
  *
  * Performance notes:
  * - In-place expansion is much faster (no page copying)
@@ -315,8 +316,10 @@ long sys_mremap(void *old_address, size_t old_size, size_t new_size,
         return (long)(uintptr_t)mapped;
     }
 
-    if (!(flags & MREMAP_MAYMOVE)) {
-        /* In-place only: check if extension range is free, then map it */
+    /* Try in-place expansion first (both with and without MREMAP_MAYMOVE).
+     * In-place is much faster: no memcpy, no page table rebuild, no TLB flush.
+     * This is the critical optimization for realloc() performance. */
+    {
         uintptr_t ext_start = (uintptr_t)old_address + old_aligned;
         uintptr_t ext_end   = (uintptr_t)old_address + new_aligned;
         int range_free = 1;
@@ -328,34 +331,35 @@ long sys_mremap(void *old_address, size_t old_size, size_t new_size,
             }
             v = v->next;
         }
-        if (!range_free) {
-            fut_printf("[MREMAP] mremap(%p, %zu->%zu, %s) -> ENOMEM (extension range occupied)\n",
-                       old_address, old_pages, new_pages, flags_str);
-            return -ENOMEM;
+        if (range_free) {
+            /* Extension range is free: map the extra pages in-place */
+            void *ext;
+            int eflags = (vma->flags & ~0x2000) | MAP_FIXED;
+            if (vma->vnode) {
+                uint64_t ext_offset = vma->file_offset + old_aligned;
+                ext = fut_mm_map_file(mm, vma->vnode, ext_start,
+                                       new_aligned - old_aligned, vma->prot,
+                                       eflags, ext_offset);
+            } else {
+                ext = fut_mm_map_anonymous(mm, ext_start, new_aligned - old_aligned,
+                                            vma->prot, eflags);
+            }
+            if (ext && (intptr_t)ext >= 0) {
+                fut_printf("[MREMAP] mremap(%p, %zu->%zu pages, %s) -> %p (in-place expand)\n",
+                           old_address, old_pages, new_pages, flags_str, old_address);
+                return (long)(uintptr_t)old_address;
+            }
         }
-        /* Extension range is free: map the extra pages in-place */
-        void *ext;
-        int eflags = (vma->flags & ~0x2000) | MAP_FIXED;
-        if (vma->vnode) {
-            uint64_t ext_offset = vma->file_offset + old_aligned;
-            ext = fut_mm_map_file(mm, vma->vnode, ext_start,
-                                   new_aligned - old_aligned, vma->prot,
-                                   eflags, ext_offset);
-        } else {
-            ext = fut_mm_map_anonymous(mm, ext_start, new_aligned - old_aligned,
-                                        vma->prot, eflags);
-        }
-        if (!ext || (intptr_t)ext < 0) {
-            fut_printf("[MREMAP] mremap(%p, %zu->%zu, %s) -> ENOMEM (in-place ext failed)\n",
-                       old_address, old_pages, new_pages, flags_str);
-            return -ENOMEM;
-        }
-        fut_printf("[MREMAP] mremap(%p, %zu->%zu pages, %s) -> %p (in-place expand)\n",
-                   old_address, old_pages, new_pages, flags_str, old_address);
-        return (long)(uintptr_t)old_address;
     }
 
-    /* MREMAP_MAYMOVE: allocate new region, copy, free old.
+    /* In-place expansion failed. Without MREMAP_MAYMOVE we cannot relocate. */
+    if (!(flags & MREMAP_MAYMOVE)) {
+        fut_printf("[MREMAP] mremap(%p, %zu->%zu, %s) -> ENOMEM (extension range occupied)\n",
+                   old_address, old_pages, new_pages, flags_str);
+        return -ENOMEM;
+    }
+
+    /* MREMAP_MAYMOVE: in-place failed, so allocate new region, copy, free old.
      * Preserve file backing and original VMA flags. */
     void *new_addr;
     int nflags = (vma->flags & ~0x2000) & ~MAP_FIXED;

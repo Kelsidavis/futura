@@ -482,6 +482,16 @@ static void cmd_netlify(int argc, char *argv[]);
 static void cmd_heroku(int argc, char *argv[]);
 static void cmd_cf(int argc, char *argv[]);
 static void cmd_eksctl(int argc, char *argv[]);
+static void cmd_git_crypt(int argc, char *argv[]);
+static void cmd_git_secret(int argc, char *argv[]);
+static void cmd_pre_commit(int argc, char *argv[]);
+static void cmd_commitizen(int argc, char *argv[]);
+static void cmd_lazygit(int argc, char *argv[]);
+static void cmd_tig(int argc, char *argv[]);
+static void cmd_gitk(int argc, char *argv[]);
+static void cmd_git_flow(int argc, char *argv[]);
+static void cmd_hub(int argc, char *argv[]);
+static void cmd_lab(int argc, char *argv[]);
 
 /* Forward declaration for prompt */
 static void print_prompt(void);
@@ -15535,6 +15545,36 @@ watch_sleep:
     } else if (strcmp_simple(argv[0], "eksctl") == 0) {
         cmd_eksctl(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "git-crypt") == 0) {
+        cmd_git_crypt(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "git-secret") == 0) {
+        cmd_git_secret(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "pre-commit") == 0) {
+        cmd_pre_commit(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "commitizen") == 0 || strcmp_simple(argv[0], "cz") == 0) {
+        cmd_commitizen(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "lazygit") == 0) {
+        cmd_lazygit(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "tig") == 0) {
+        cmd_tig(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "gitk") == 0) {
+        cmd_gitk(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "git-flow") == 0) {
+        cmd_git_flow(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "hub") == 0) {
+        cmd_hub(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "lab") == 0) {
+        cmd_lab(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -16042,6 +16082,17 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "heroku") == 0 ||
             strcmp_simple(cmd, "cf") == 0 ||
             strcmp_simple(cmd, "eksctl") == 0 ||
+            strcmp_simple(cmd, "git-crypt") == 0 ||
+            strcmp_simple(cmd, "git-secret") == 0 ||
+            strcmp_simple(cmd, "pre-commit") == 0 ||
+            strcmp_simple(cmd, "commitizen") == 0 ||
+            strcmp_simple(cmd, "cz") == 0 ||
+            strcmp_simple(cmd, "lazygit") == 0 ||
+            strcmp_simple(cmd, "tig") == 0 ||
+            strcmp_simple(cmd, "gitk") == 0 ||
+            strcmp_simple(cmd, "git-flow") == 0 ||
+            strcmp_simple(cmd, "hub") == 0 ||
+            strcmp_simple(cmd, "lab") == 0 ||
             0);
 }
 
@@ -20884,7 +20935,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   520 built-in commands — type 'help'    |\n");
+    write_str(1, "|   530 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");
@@ -45881,6 +45932,925 @@ static void cmd_eksctl(int argc, char *argv[]) {
         return;
     }
     write_str(2, "eksctl: unknown command '");
+    write_str(2, argv[1]);
+    write_str(2, "'\n");
+}
+
+/* git-crypt - transparent file encryption in git */
+static void cmd_git_crypt(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "usage: git-crypt <command> [args]\n");
+        write_str(1, "\nCommands:\n");
+        write_str(1, "  init          Initialize git-crypt in the current repo\n");
+        write_str(1, "  lock          Lock encrypted files\n");
+        write_str(1, "  unlock        Unlock encrypted files with key\n");
+        write_str(1, "  export-key    Export the symmetric key\n");
+        write_str(1, "  status        Display encrypted file status\n");
+        write_str(1, "  add-gpg-user  Add a GPG user to the key\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "git-crypt 0.7.0\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "init") == 0) {
+        write_str(1, "Generating key...\n");
+        write_str(1, "git-crypt: initialized with new symmetric key\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "lock") == 0) {
+        write_str(1, "git-crypt: locking encrypted files...\n");
+        write_str(1, "git-crypt: 3 files locked\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "unlock") == 0) {
+        if (argc < 3) {
+            write_str(1, "git-crypt: unlocking with default key...\n");
+        } else {
+            write_str(1, "git-crypt: unlocking with key '");
+            write_str(1, argv[2]);
+            write_str(1, "'...\n");
+        }
+        write_str(1, "git-crypt: 3 files unlocked\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "export-key") == 0) {
+        const char *outfile = (argc >= 3) ? argv[2] : "git-crypt-key";
+        write_str(1, "git-crypt: exporting key to '");
+        write_str(1, outfile);
+        write_str(1, "'\n");
+        write_str(1, "git-crypt: key exported successfully\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "status") == 0) {
+        write_str(1, "    encrypted: secrets/api-key.txt\n");
+        write_str(1, "    encrypted: secrets/database.yml\n");
+        write_str(1, "    encrypted: .env.production\n");
+        write_str(1, "not encrypted: README.md\n");
+        write_str(1, "not encrypted: src/main.c\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "add-gpg-user") == 0) {
+        if (argc < 3) {
+            write_str(2, "usage: git-crypt add-gpg-user <GPG-USER-ID>\n");
+            return;
+        }
+        write_str(1, "git-crypt: adding GPG user '");
+        write_str(1, argv[2]);
+        write_str(1, "' as collaborator...\n");
+        write_str(1, "git-crypt: 1 GPG user added\n");
+        return;
+    }
+    write_str(2, "git-crypt: unknown command '");
+    write_str(2, argv[1]);
+    write_str(2, "'\n");
+}
+
+/* git-secret - store secrets inside a git repo */
+static void cmd_git_secret(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "usage: git-secret <command> [args]\n");
+        write_str(1, "\nCommands:\n");
+        write_str(1, "  init      Initialize git-secret in repo\n");
+        write_str(1, "  tell      Add a person's GPG public key\n");
+        write_str(1, "  add       Add file to secret list\n");
+        write_str(1, "  hide      Encrypt all secret files\n");
+        write_str(1, "  reveal    Decrypt all secret files\n");
+        write_str(1, "  list      List all secret files\n");
+        write_str(1, "  whoknows  List who has access\n");
+        write_str(1, "  remove    Remove file from secret list\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "git-secret 0.5.0\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "init") == 0) {
+        write_str(1, "git-secret: created .gitsecret/ directory\n");
+        write_str(1, "git-secret: initialized\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "tell") == 0) {
+        if (argc < 3) {
+            write_str(1, "git-secret: adding current user's key\n");
+        } else {
+            write_str(1, "git-secret: adding key for '");
+            write_str(1, argv[2]);
+            write_str(1, "'\n");
+        }
+        write_str(1, "git-secret: done. 1 user(s) in keyring.\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "add") == 0) {
+        if (argc < 3) {
+            write_str(2, "usage: git-secret add <file>...\n");
+            return;
+        }
+        for (int i = 2; i < argc; i++) {
+            write_str(1, "git-secret: added '");
+            write_str(1, argv[i]);
+            write_str(1, "' to secret list\n");
+        }
+        write_str(1, "git-secret: cleaning up...\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "hide") == 0) {
+        write_str(1, "git-secret: encrypting secret files...\n");
+        write_str(1, "git-secret: done. 2 of 2 files encrypted.\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "reveal") == 0) {
+        write_str(1, "git-secret: decrypting secret files...\n");
+        write_str(1, "git-secret: done. 2 of 2 files decrypted.\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "list") == 0) {
+        write_str(1, "secrets/api-key.txt\n");
+        write_str(1, "config/database.yml\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "whoknows") == 0) {
+        write_str(1, "user@example.com\n");
+        write_str(1, "admin@example.com\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "remove") == 0) {
+        if (argc < 3) {
+            write_str(2, "usage: git-secret remove <file>...\n");
+            return;
+        }
+        write_str(1, "git-secret: removed '");
+        write_str(1, argv[2]);
+        write_str(1, "' from secret list\n");
+        return;
+    }
+    write_str(2, "git-secret: unknown command '");
+    write_str(2, argv[1]);
+    write_str(2, "'\n");
+}
+
+/* pre-commit - framework for managing git pre-commit hooks */
+static void cmd_pre_commit(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "usage: pre-commit <command> [options]\n");
+        write_str(1, "\nCommands:\n");
+        write_str(1, "  run           Run hooks on staged files\n");
+        write_str(1, "  install       Install the pre-commit hook\n");
+        write_str(1, "  uninstall     Uninstall the pre-commit hook\n");
+        write_str(1, "  autoupdate    Update hook revisions\n");
+        write_str(1, "  clean         Clean cached pre-commit files\n");
+        write_str(1, "  sample-config Print sample configuration\n");
+        write_str(1, "  validate-config  Validate .pre-commit-config.yaml\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "pre-commit 3.7.0\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "run") == 0) {
+        int all = 0;
+        for (int i = 2; i < argc; i++) {
+            if (strcmp_simple(argv[i], "--all-files") == 0) all = 1;
+        }
+        if (all) {
+            write_str(1, "trim trailing whitespace...............................\033[32mPassed\033[0m\n");
+            write_str(1, "fix end of files.......................................\033[32mPassed\033[0m\n");
+            write_str(1, "check yaml.............................................\033[32mPassed\033[0m\n");
+            write_str(1, "check for added large files............................\033[32mPassed\033[0m\n");
+            write_str(1, "black..................................................\033[32mPassed\033[0m\n");
+            write_str(1, "flake8.................................................\033[32mPassed\033[0m\n");
+        } else {
+            write_str(1, "trim trailing whitespace...............................\033[32mPassed\033[0m\n");
+            write_str(1, "fix end of files.......................................\033[32mPassed\033[0m\n");
+            write_str(1, "check yaml.............................................\033[32mPassed\033[0m\n");
+        }
+        return;
+    }
+    if (strcmp_simple(argv[1], "install") == 0) {
+        write_str(1, "pre-commit installed at .git/hooks/pre-commit\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "uninstall") == 0) {
+        write_str(1, "pre-commit uninstalled\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "autoupdate") == 0) {
+        write_str(1, "Updating https://github.com/pre-commit/pre-commit-hooks...\n");
+        write_str(1, "  already up to date.\n");
+        write_str(1, "Updating https://github.com/psf/black...\n");
+        write_str(1, "  updating 23.12.1 -> 24.3.0.\n");
+        write_str(1, "Updating https://github.com/pycqa/flake8...\n");
+        write_str(1, "  already up to date.\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "clean") == 0) {
+        write_str(1, "Cleaned 12.5 MiB from ~/.cache/pre-commit\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "sample-config") == 0) {
+        write_str(1, "# See https://pre-commit.com for more information\n");
+        write_str(1, "repos:\n");
+        write_str(1, "-   repo: https://github.com/pre-commit/pre-commit-hooks\n");
+        write_str(1, "    rev: v4.5.0\n");
+        write_str(1, "    hooks:\n");
+        write_str(1, "    -   id: trailing-whitespace\n");
+        write_str(1, "    -   id: end-of-file-fixer\n");
+        write_str(1, "    -   id: check-yaml\n");
+        write_str(1, "    -   id: check-added-large-files\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "validate-config") == 0) {
+        write_str(1, ".pre-commit-config.yaml is valid\n");
+        return;
+    }
+    write_str(2, "pre-commit: unknown command '");
+    write_str(2, argv[1]);
+    write_str(2, "'\n");
+}
+
+/* commitizen (cz) - conventional commits tool */
+static void cmd_commitizen(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "usage: cz <command> [options]\n");
+        write_str(1, "\nCommands:\n");
+        write_str(1, "  commit (c)    Create a commit with conventional format\n");
+        write_str(1, "  init          Initialize commitizen config\n");
+        write_str(1, "  bump          Bump version based on commits\n");
+        write_str(1, "  changelog     Generate changelog\n");
+        write_str(1, "  check         Check commit message format\n");
+        write_str(1, "  ls            List available commit types\n");
+        write_str(1, "  version       Show version\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0 || strcmp_simple(argv[1], "version") == 0) {
+        write_str(1, "commitizen 3.21.0\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "commit") == 0 || strcmp_simple(argv[1], "c") == 0) {
+        write_str(1, "? Select the type of change you are committing:\n");
+        write_str(1, "  feat:     A new feature\n");
+        write_str(1, "  fix:      A bug fix\n");
+        write_str(1, "  docs:     Documentation only changes\n");
+        write_str(1, "  style:    Code style changes (formatting)\n");
+        write_str(1, "  refactor: Code refactoring\n");
+        write_str(1, "  perf:     Performance improvements\n");
+        write_str(1, "  test:     Adding tests\n");
+        write_str(1, "  chore:    Build process or tooling changes\n");
+        write_str(1, "\n(interactive mode not available in simulated environment)\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "init") == 0) {
+        write_str(1, "? Do you want to install pre-commit hook? (Y/n): Y\n");
+        write_str(1, "commitizen: configuration created in .cz.toml\n");
+        write_str(1, "commitizen: pre-commit hook installed\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "bump") == 0) {
+        int dry_run = 0;
+        for (int i = 2; i < argc; i++) {
+            if (strcmp_simple(argv[i], "--dry-run") == 0) dry_run = 1;
+        }
+        if (dry_run) {
+            write_str(1, "commitizen: [dry-run] bump: 1.2.0 -> 1.3.0\n");
+            write_str(1, "commitizen: [dry-run] tag: v1.3.0\n");
+        } else {
+            write_str(1, "commitizen: bump: 1.2.0 -> 1.3.0\n");
+            write_str(1, "commitizen: tag to create: v1.3.0\n");
+            write_str(1, "commitizen: version updated in pyproject.toml\n");
+        }
+        return;
+    }
+    if (strcmp_simple(argv[1], "changelog") == 0) {
+        write_str(1, "## 1.2.0 (2024-03-15)\n\n");
+        write_str(1, "### Feat\n\n");
+        write_str(1, "- add user authentication\n");
+        write_str(1, "- implement search API\n\n");
+        write_str(1, "### Fix\n\n");
+        write_str(1, "- resolve null pointer in handler\n");
+        write_str(1, "- fix timezone parsing\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "check") == 0) {
+        if (argc >= 3) {
+            write_str(1, "commitizen: checking message: '");
+            write_str(1, argv[2]);
+            write_str(1, "'\n");
+        }
+        write_str(1, "commitizen: commit message is \033[32mvalid\033[0m\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "ls") == 0) {
+        write_str(1, "cz_conventional_commits\n");
+        write_str(1, "  feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert\n");
+        return;
+    }
+    write_str(2, "cz: unknown command '");
+    write_str(2, argv[1]);
+    write_str(2, "'\n");
+}
+
+/* lazygit - simple terminal UI for git commands */
+static void cmd_lazygit(int argc, char *argv[]) {
+    if (argc >= 2 && strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "lazygit version=0.41.0, build date=2024-03-01\n");
+        return;
+    }
+    if (argc >= 2 && strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "usage: lazygit [options]\n");
+        write_str(1, "\nOptions:\n");
+        write_str(1, "  -f, --filter <path>    Filter files by path\n");
+        write_str(1, "  -p, --path <path>      Path to git repo\n");
+        write_str(1, "  --version              Show version\n");
+        return;
+    }
+    write_str(1, "\033[2J\033[H");
+    write_str(1, "\033[1;36mlazygit\033[0m — terminal UI for git\n");
+    write_str(1, "\033[90m" "─────────────────────────────────────────\033[0m\n");
+    write_str(1, "\n\033[1m Status \033[0m\n");
+    write_str(1, "\033[90m" "───────\033[0m\n");
+    write_str(1, " \033[32mM\033[0m  src/main.c\n");
+    write_str(1, " \033[32m??\033[0m docs/README.md\n");
+    write_str(1, " \033[31mD\033[0m  old/deprecated.h\n");
+    write_str(1, "\n\033[1m Branches \033[0m\n");
+    write_str(1, "\033[90m" "──────────\033[0m\n");
+    write_str(1, " \033[32m* main\033[0m\n");
+    write_str(1, "   feature/new-ui\n");
+    write_str(1, "   bugfix/login\n");
+    write_str(1, "\n\033[1m Recent Commits \033[0m\n");
+    write_str(1, "\033[90m" "────────────────\033[0m\n");
+    write_str(1, " \033[33mabcdef1\033[0m feat: add new feature\n");
+    write_str(1, " \033[33m1234567\033[0m fix: resolve crash on startup\n");
+    write_str(1, " \033[33m89abcde\033[0m docs: update README\n");
+    write_str(1, " \033[33mfedcba9\033[0m refactor: clean up handlers\n");
+    write_str(1, "\n\033[90m(q: quit, space: stage, c: commit, p: push)\033[0m\n");
+}
+
+/* tig - text-mode interface for git */
+static void cmd_tig(int argc, char *argv[]) {
+    if (argc >= 2 && strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "tig version 2.5.8\n");
+        return;
+    }
+    if (argc >= 2 && strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "usage: tig [options] [revs] [--] [paths]\n");
+        write_str(1, "   or: tig log    [options] [revs] [--] [paths]\n");
+        write_str(1, "   or: tig show   [options] [revs] [--] [paths]\n");
+        write_str(1, "   or: tig blame  [options] [rev] [--] path\n");
+        write_str(1, "   or: tig stash\n");
+        write_str(1, "   or: tig status\n");
+        write_str(1, "   or: tig refs\n");
+        write_str(1, "   or: tig grep   [options] pattern\n");
+        return;
+    }
+    if (argc >= 2 && strcmp_simple(argv[1], "status") == 0) {
+        write_str(1, "\033[2J\033[H");
+        write_str(1, "\033[1;33mtig status\033[0m\n");
+        write_str(1, "\033[90m" "──────────────────────────────────────\033[0m\n");
+        write_str(1, "\n\033[1mChanges to be committed:\033[0m\n");
+        write_str(1, "  \033[32mmodified:   src/main.c\033[0m\n");
+        write_str(1, "  \033[32mnew file:   src/utils.c\033[0m\n");
+        write_str(1, "\n\033[1mChanges not staged for commit:\033[0m\n");
+        write_str(1, "  \033[31mmodified:   Makefile\033[0m\n");
+        write_str(1, "\n\033[1mUntracked files:\033[0m\n");
+        write_str(1, "  \033[90mtmp/build.log\033[0m\n");
+        write_str(1, "\n\033[90m[u]pdate  [r]evert  [o]pen  [!]stage  [q]uit\033[0m\n");
+        return;
+    }
+    if (argc >= 2 && strcmp_simple(argv[1], "blame") == 0) {
+        if (argc < 3) {
+            write_str(2, "tig blame: no file specified\n");
+            return;
+        }
+        write_str(1, "\033[2J\033[H");
+        write_str(1, "\033[1;33mtig blame\033[0m — ");
+        write_str(1, argv[2]);
+        write_str(1, "\n\033[90m" "──────────────────────────────────────\033[0m\n");
+        write_str(1, "\033[33mabcdef1\033[0m \033[36mJohn Doe   \033[0m 2024-03-10  1) #include <stdio.h>\n");
+        write_str(1, "\033[33mabcdef1\033[0m \033[36mJohn Doe   \033[0m 2024-03-10  2) \n");
+        write_str(1, "\033[33m1234567\033[0m \033[36mJane Smith \033[0m 2024-03-12  3) int main(void) {\n");
+        write_str(1, "\033[33m89abcde\033[0m \033[36mJohn Doe   \033[0m 2024-03-14  4)     printf(\"hello\\n\");\n");
+        write_str(1, "\033[33m1234567\033[0m \033[36mJane Smith \033[0m 2024-03-12  5)     return 0;\n");
+        write_str(1, "\033[33m1234567\033[0m \033[36mJane Smith \033[0m 2024-03-12  6) }\n");
+        return;
+    }
+    /* Default: tig log view */
+    if (argc >= 2 && strcmp_simple(argv[1], "log") == 0) {
+        /* fall through to log display */
+    }
+    write_str(1, "\033[2J\033[H");
+    write_str(1, "\033[1;33mtig\033[0m — text-mode interface for git\n");
+    write_str(1, "\033[90m" "──────────────────────────────────────\033[0m\n\n");
+    write_str(1, "\033[33mabcdef1\033[0m 2024-03-15 \033[1mfeat: add new feature\033[0m \033[36m(John Doe)\033[0m\n");
+    write_str(1, "\033[33m1234567\033[0m 2024-03-14 \033[1mfix: resolve crash on startup\033[0m \033[36m(Jane Smith)\033[0m\n");
+    write_str(1, "\033[33m89abcde\033[0m 2024-03-13 \033[1mdocs: update README\033[0m \033[36m(John Doe)\033[0m\n");
+    write_str(1, "\033[33mfedcba9\033[0m 2024-03-12 \033[1mrefactor: clean up handlers\033[0m \033[36m(Jane Smith)\033[0m\n");
+    write_str(1, "\033[33m5678abc\033[0m 2024-03-11 \033[1mtest: add unit tests\033[0m \033[36m(John Doe)\033[0m\n");
+    write_str(1, "\n\033[90m[enter] view  [d]iff  [t]ree  [q]uit\033[0m\n");
+}
+
+/* gitk - graphical git history viewer */
+static void cmd_gitk(int argc, char *argv[]) {
+    if (argc >= 2 && strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "usage: gitk [options] [revs] [--] [paths]\n");
+        write_str(1, "\nOptions:\n");
+        write_str(1, "  --all       Show all branches\n");
+        write_str(1, "  --since=    Show commits since date\n");
+        write_str(1, "  --until=    Show commits until date\n");
+        return;
+    }
+    int show_all = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "--all") == 0) show_all = 1;
+    }
+    write_str(1, "\033[2J\033[H");
+    write_str(1, "\033[1;35mgitk\033[0m — Git history viewer (text mode)\n");
+    write_str(1, "\033[90m" "──────────────────────────────────────────────────\033[0m\n\n");
+    if (show_all) {
+        write_str(1, " \033[32m*\033[0m \033[33mabcdef1\033[0m feat: add new feature \033[32m(HEAD -> main)\033[0m\n");
+        write_str(1, " \033[32m|\033[0m\\\n");
+        write_str(1, " \033[32m|\033[0m \033[34m*\033[0m \033[33m2345678\033[0m implement search \033[34m(feature/search)\033[0m\n");
+        write_str(1, " \033[32m|\033[0m \033[34m*\033[0m \033[33m3456789\033[0m add search index\n");
+        write_str(1, " \033[32m*\033[0m \033[34m|\033[0m \033[33m1234567\033[0m fix: resolve crash \033[31m(origin/main)\033[0m\n");
+        write_str(1, " \033[32m|\033[0m\033[34m/\033[0m\n");
+        write_str(1, " \033[32m*\033[0m \033[33m89abcde\033[0m docs: update README\n");
+        write_str(1, " \033[32m*\033[0m \033[33mfedcba9\033[0m refactor: clean up handlers\n");
+    } else {
+        write_str(1, " \033[32m*\033[0m \033[33mabcdef1\033[0m feat: add new feature \033[32m(HEAD -> main)\033[0m\n");
+        write_str(1, " \033[32m*\033[0m \033[33m1234567\033[0m fix: resolve crash on startup\n");
+        write_str(1, " \033[32m*\033[0m \033[33m89abcde\033[0m docs: update README\n");
+        write_str(1, " \033[32m*\033[0m \033[33mfedcba9\033[0m refactor: clean up handlers\n");
+        write_str(1, " \033[32m*\033[0m \033[33m5678abc\033[0m test: add unit tests\n");
+    }
+    write_str(1, "\n\033[90m" "──────────────────────────────────────────────────\033[0m\n");
+    write_str(1, "\033[1mCommit:\033[0m abcdef1234567890abcdef1234567890abcdef12\n");
+    write_str(1, "\033[1mAuthor:\033[0m John Doe <john@example.com>\n");
+    write_str(1, "\033[1mDate:\033[0m   Fri Mar 15 10:30:00 2024 +0000\n");
+    write_str(1, "\n    feat: add new feature\n");
+}
+
+/* git-flow - git branching model support */
+static void cmd_git_flow(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "usage: git-flow <subcommand>\n");
+        write_str(1, "\nAvailable subcommands:\n");
+        write_str(1, "   init      Initialize git-flow branching model\n");
+        write_str(1, "   feature   Manage feature branches\n");
+        write_str(1, "   release   Manage release branches\n");
+        write_str(1, "   hotfix    Manage hotfix branches\n");
+        write_str(1, "   bugfix    Manage bugfix branches\n");
+        write_str(1, "   support   Manage support branches\n");
+        write_str(1, "   version   Show version\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "version") == 0) {
+        write_str(1, "git-flow (AVH Edition) 1.12.3\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "init") == 0) {
+        int force = 0;
+        for (int i = 2; i < argc; i++) {
+            if (strcmp_simple(argv[i], "-f") == 0) force = 1;
+        }
+        if (force) {
+            write_str(1, "git-flow: reinitializing with defaults...\n");
+        }
+        write_str(1, "Branch name for production releases: [main]\n");
+        write_str(1, "Branch name for development: [develop]\n");
+        write_str(1, "Feature branch prefix: [feature/]\n");
+        write_str(1, "Release branch prefix: [release/]\n");
+        write_str(1, "Hotfix branch prefix: [hotfix/]\n");
+        write_str(1, "Bugfix branch prefix: [bugfix/]\n");
+        write_str(1, "Version tag prefix: [v]\n");
+        write_str(1, "\ngit-flow: initialized with default configuration\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "feature") == 0) {
+        if (argc < 3) {
+            write_str(1, "usage: git-flow feature [list|start|finish|publish|pull]\n");
+            return;
+        }
+        if (strcmp_simple(argv[2], "list") == 0) {
+            write_str(1, "  feature/login-page\n");
+            write_str(1, "* feature/user-profile\n");
+            write_str(1, "  feature/dashboard\n");
+            return;
+        }
+        if (strcmp_simple(argv[2], "start") == 0) {
+            if (argc < 4) {
+                write_str(2, "usage: git-flow feature start <name>\n");
+                return;
+            }
+            write_str(1, "Switched to a new branch 'feature/");
+            write_str(1, argv[3]);
+            write_str(1, "'\n\nSummary of actions:\n");
+            write_str(1, "- A new branch 'feature/");
+            write_str(1, argv[3]);
+            write_str(1, "' was created, based on 'develop'\n");
+            write_str(1, "- You are now on branch 'feature/");
+            write_str(1, argv[3]);
+            write_str(1, "'\n");
+            return;
+        }
+        if (strcmp_simple(argv[2], "finish") == 0) {
+            if (argc < 4) {
+                write_str(2, "usage: git-flow feature finish <name>\n");
+                return;
+            }
+            write_str(1, "Switched to branch 'develop'\n");
+            write_str(1, "Merge made by the 'recursive' strategy.\n");
+            write_str(1, "Deleted branch feature/");
+            write_str(1, argv[3]);
+            write_str(1, "\n\nSummary of actions:\n");
+            write_str(1, "- Branch 'feature/");
+            write_str(1, argv[3]);
+            write_str(1, "' was merged into 'develop'\n");
+            write_str(1, "- Branch 'feature/");
+            write_str(1, argv[3]);
+            write_str(1, "' has been locally deleted\n");
+            write_str(1, "- You are now on branch 'develop'\n");
+            return;
+        }
+        if (strcmp_simple(argv[2], "publish") == 0) {
+            if (argc < 4) {
+                write_str(2, "usage: git-flow feature publish <name>\n");
+                return;
+            }
+            write_str(1, "Enumerating objects: 5, done.\n");
+            write_str(1, "Branch 'feature/");
+            write_str(1, argv[3]);
+            write_str(1, "' set up to track remote branch.\n");
+            return;
+        }
+        write_str(2, "git-flow feature: unknown action '");
+        write_str(2, argv[2]);
+        write_str(2, "'\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "release") == 0) {
+        if (argc < 3) {
+            write_str(1, "usage: git-flow release [list|start|finish|publish]\n");
+            return;
+        }
+        if (strcmp_simple(argv[2], "list") == 0) {
+            write_str(1, "  release/1.0.0\n");
+            write_str(1, "* release/1.1.0\n");
+            return;
+        }
+        if (strcmp_simple(argv[2], "start") == 0) {
+            if (argc < 4) {
+                write_str(2, "usage: git-flow release start <version>\n");
+                return;
+            }
+            write_str(1, "Switched to a new branch 'release/");
+            write_str(1, argv[3]);
+            write_str(1, "'\n\nSummary of actions:\n");
+            write_str(1, "- A new branch 'release/");
+            write_str(1, argv[3]);
+            write_str(1, "' was created, based on 'develop'\n");
+            write_str(1, "- You are now on branch 'release/");
+            write_str(1, argv[3]);
+            write_str(1, "'\n");
+            return;
+        }
+        if (strcmp_simple(argv[2], "finish") == 0) {
+            if (argc < 4) {
+                write_str(2, "usage: git-flow release finish <version>\n");
+                return;
+            }
+            write_str(1, "Switched to branch 'main'\n");
+            write_str(1, "Merge made by the 'recursive' strategy.\n");
+            write_str(1, "Deleted branch release/");
+            write_str(1, argv[3]);
+            write_str(1, "\n\nSummary of actions:\n");
+            write_str(1, "- Release branch merged into 'main'\n");
+            write_str(1, "- Release was tagged 'v");
+            write_str(1, argv[3]);
+            write_str(1, "'\n");
+            write_str(1, "- Release branch merged back into 'develop'\n");
+            write_str(1, "- Release branch 'release/");
+            write_str(1, argv[3]);
+            write_str(1, "' has been locally deleted\n");
+            return;
+        }
+        write_str(2, "git-flow release: unknown action '");
+        write_str(2, argv[2]);
+        write_str(2, "'\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "hotfix") == 0) {
+        if (argc < 3) {
+            write_str(1, "usage: git-flow hotfix [list|start|finish]\n");
+            return;
+        }
+        if (strcmp_simple(argv[2], "start") == 0) {
+            if (argc < 4) {
+                write_str(2, "usage: git-flow hotfix start <version>\n");
+                return;
+            }
+            write_str(1, "Switched to a new branch 'hotfix/");
+            write_str(1, argv[3]);
+            write_str(1, "'\n\nSummary of actions:\n");
+            write_str(1, "- A new branch 'hotfix/");
+            write_str(1, argv[3]);
+            write_str(1, "' was created, based on 'main'\n");
+            write_str(1, "- You are now on branch 'hotfix/");
+            write_str(1, argv[3]);
+            write_str(1, "'\n");
+            return;
+        }
+        if (strcmp_simple(argv[2], "finish") == 0) {
+            if (argc < 4) {
+                write_str(2, "usage: git-flow hotfix finish <version>\n");
+                return;
+            }
+            write_str(1, "Switched to branch 'main'\n");
+            write_str(1, "Merge made by the 'recursive' strategy.\n");
+            write_str(1, "\nSummary of actions:\n");
+            write_str(1, "- Hotfix branch merged into 'main'\n");
+            write_str(1, "- Hotfix was tagged 'v");
+            write_str(1, argv[3]);
+            write_str(1, "'\n");
+            write_str(1, "- Hotfix branch merged back into 'develop'\n");
+            write_str(1, "- Hotfix branch 'hotfix/");
+            write_str(1, argv[3]);
+            write_str(1, "' has been locally deleted\n");
+            return;
+        }
+        if (strcmp_simple(argv[2], "list") == 0) {
+            write_str(1, "(no active hotfix branches)\n");
+            return;
+        }
+        write_str(2, "git-flow hotfix: unknown action '");
+        write_str(2, argv[2]);
+        write_str(2, "'\n");
+        return;
+    }
+    write_str(2, "git-flow: unknown subcommand '");
+    write_str(2, argv[1]);
+    write_str(2, "'\n");
+}
+
+/* hub - GitHub CLI (legacy) */
+static void cmd_hub(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "usage: hub <command> [options]\n");
+        write_str(1, "\nCommands:\n");
+        write_str(1, "  create      Create a new GitHub repository\n");
+        write_str(1, "  fork        Fork a repository on GitHub\n");
+        write_str(1, "  pull-request  Create a pull request\n");
+        write_str(1, "  browse      Open repository page in browser\n");
+        write_str(1, "  compare     Open compare view in browser\n");
+        write_str(1, "  release     Manage GitHub releases\n");
+        write_str(1, "  issue       Manage GitHub issues\n");
+        write_str(1, "  ci-status   Show CI status for a commit\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "hub version 2.14.2\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "create") == 0) {
+        int private_repo = 0;
+        const char *name = (void *)0;
+        for (int i = 2; i < argc; i++) {
+            if (strcmp_simple(argv[i], "-p") == 0) private_repo = 1;
+            else name = argv[i];
+        }
+        if (name) {
+            write_str(1, "https://github.com/user/");
+            write_str(1, name);
+        } else {
+            write_str(1, "https://github.com/user/my-project");
+        }
+        write_str(1, "\n");
+        if (private_repo) {
+            write_str(1, "created \033[1mprivate\033[0m repository\n");
+        } else {
+            write_str(1, "created repository\n");
+        }
+        return;
+    }
+    if (strcmp_simple(argv[1], "fork") == 0) {
+        write_str(1, "Updating user\n");
+        write_str(1, "From https://github.com/owner/repo\n");
+        write_str(1, " * [new branch]      main -> user/main\n");
+        write_str(1, "new remote: user\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "pull-request") == 0 || strcmp_simple(argv[1], "pr") == 0) {
+        write_str(1, "https://github.com/user/repo/pull/42\n");
+        write_str(1, "pull request created\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "browse") == 0) {
+        write_str(1, "Opening https://github.com/user/repo in browser...\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "compare") == 0) {
+        write_str(1, "Opening https://github.com/user/repo/compare/main...feature in browser...\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "release") == 0) {
+        if (argc >= 3 && strcmp_simple(argv[2], "create") == 0) {
+            const char *tag = (argc >= 4) ? argv[3] : "v1.0.0";
+            write_str(1, "https://github.com/user/repo/releases/tag/");
+            write_str(1, tag);
+            write_str(1, "\n");
+            write_str(1, "release created\n");
+        } else {
+            write_str(1, "v1.0.0  2024-03-15  Latest\n");
+            write_str(1, "v0.9.0  2024-02-20\n");
+            write_str(1, "v0.8.0  2024-01-10\n");
+        }
+        return;
+    }
+    if (strcmp_simple(argv[1], "issue") == 0) {
+        if (argc >= 3 && strcmp_simple(argv[2], "create") == 0) {
+            write_str(1, "https://github.com/user/repo/issues/15\n");
+            write_str(1, "issue created\n");
+        } else {
+            write_str(1, "#15  Bug: crash on startup       \033[31mopen\033[0m\n");
+            write_str(1, "#14  Feature: add dark mode       \033[32mclosed\033[0m\n");
+            write_str(1, "#13  Improve documentation         \033[31mopen\033[0m\n");
+        }
+        return;
+    }
+    if (strcmp_simple(argv[1], "ci-status") == 0) {
+        write_str(1, "\033[32m+\033[0m  build         success\n");
+        write_str(1, "\033[32m+\033[0m  test          success\n");
+        write_str(1, "\033[32m+\033[0m  lint          success\n");
+        return;
+    }
+    write_str(2, "hub: unknown command '");
+    write_str(2, argv[1]);
+    write_str(2, "'\n");
+}
+
+/* lab - GitLab CLI tool */
+static void cmd_lab(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "usage: lab <command> [options]\n");
+        write_str(1, "\nCommands:\n");
+        write_str(1, "  mr          Manage merge requests\n");
+        write_str(1, "  issue       Manage issues\n");
+        write_str(1, "  ci          Manage CI/CD pipelines\n");
+        write_str(1, "  project     Manage projects\n");
+        write_str(1, "  snippet     Manage snippets\n");
+        write_str(1, "  label       Manage labels\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "lab version 0.25.1\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "mr") == 0) {
+        if (argc < 3) {
+            write_str(1, "usage: lab mr [list|create|show|close|merge|approve]\n");
+            return;
+        }
+        if (strcmp_simple(argv[2], "list") == 0) {
+            write_str(1, "!42  \033[32mopen\033[0m    feat: add user authentication     @alice\n");
+            write_str(1, "!41  \033[32mopen\033[0m    fix: resolve memory leak           @bob\n");
+            write_str(1, "!40  \033[35mmerged\033[0m  refactor: improve error handling   @charlie\n");
+            return;
+        }
+        if (strcmp_simple(argv[2], "create") == 0) {
+            write_str(1, "https://gitlab.com/user/repo/-/merge_requests/43\n");
+            write_str(1, "merge request !43 created\n");
+            return;
+        }
+        if (strcmp_simple(argv[2], "show") == 0) {
+            const char *mr_id = (argc >= 4) ? argv[3] : "42";
+            write_str(1, "MR !");
+            write_str(1, mr_id);
+            write_str(1, " — feat: add user authentication\n");
+            write_str(1, "  State:    \033[32mopened\033[0m\n");
+            write_str(1, "  Author:   alice\n");
+            write_str(1, "  Branch:   feature/auth -> main\n");
+            write_str(1, "  Pipeline: \033[32mpassed\033[0m\n");
+            write_str(1, "  Approvals: 1/2 required\n");
+            return;
+        }
+        if (strcmp_simple(argv[2], "close") == 0) {
+            write_str(1, "merge request closed\n");
+            return;
+        }
+        if (strcmp_simple(argv[2], "merge") == 0) {
+            write_str(1, "Merging merge request...\n");
+            write_str(1, "merge request merged successfully\n");
+            return;
+        }
+        if (strcmp_simple(argv[2], "approve") == 0) {
+            write_str(1, "merge request approved\n");
+            return;
+        }
+        write_str(2, "lab mr: unknown action '");
+        write_str(2, argv[2]);
+        write_str(2, "'\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "issue") == 0) {
+        if (argc < 3) {
+            write_str(1, "usage: lab issue [list|create|show|close]\n");
+            return;
+        }
+        if (strcmp_simple(argv[2], "list") == 0) {
+            write_str(1, "#25  \033[31mopen\033[0m    Bug: login fails with SSO         \033[33mP1\033[0m\n");
+            write_str(1, "#24  \033[31mopen\033[0m    Feature: dark mode support         \033[36mP3\033[0m\n");
+            write_str(1, "#23  \033[35mclosed\033[0m  Docs: update API reference         \033[36mP3\033[0m\n");
+            return;
+        }
+        if (strcmp_simple(argv[2], "create") == 0) {
+            write_str(1, "https://gitlab.com/user/repo/-/issues/26\n");
+            write_str(1, "issue #26 created\n");
+            return;
+        }
+        if (strcmp_simple(argv[2], "show") == 0) {
+            const char *issue_id = (argc >= 4) ? argv[3] : "25";
+            write_str(1, "Issue #");
+            write_str(1, issue_id);
+            write_str(1, " — Bug: login fails with SSO\n");
+            write_str(1, "  State:    \033[31mopened\033[0m\n");
+            write_str(1, "  Author:   alice\n");
+            write_str(1, "  Assignee: bob\n");
+            write_str(1, "  Labels:   bug, priority::1\n");
+            write_str(1, "  Milestone: v2.0\n");
+            return;
+        }
+        if (strcmp_simple(argv[2], "close") == 0) {
+            write_str(1, "issue closed\n");
+            return;
+        }
+        write_str(2, "lab issue: unknown action '");
+        write_str(2, argv[2]);
+        write_str(2, "'\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "ci") == 0) {
+        if (argc < 3) {
+            write_str(1, "usage: lab ci [status|view|retry|cancel|lint]\n");
+            return;
+        }
+        if (strcmp_simple(argv[2], "status") == 0) {
+            write_str(1, "Pipeline #1234 for branch main\n");
+            write_str(1, "  Status: \033[32mpassed\033[0m\n");
+            write_str(1, "\n");
+            write_str(1, "  \033[32m+\033[0m  build         passed    (1m 23s)\n");
+            write_str(1, "  \033[32m+\033[0m  test          passed    (3m 45s)\n");
+            write_str(1, "  \033[32m+\033[0m  lint          passed    (0m 30s)\n");
+            write_str(1, "  \033[32m+\033[0m  deploy:staging passed   (0m 55s)\n");
+            return;
+        }
+        if (strcmp_simple(argv[2], "view") == 0) {
+            write_str(1, "Opening pipeline in browser...\n");
+            write_str(1, "https://gitlab.com/user/repo/-/pipelines/1234\n");
+            return;
+        }
+        if (strcmp_simple(argv[2], "retry") == 0) {
+            write_str(1, "Retrying pipeline #1234...\n");
+            write_str(1, "pipeline restarted\n");
+            return;
+        }
+        if (strcmp_simple(argv[2], "cancel") == 0) {
+            write_str(1, "Cancelling pipeline #1234...\n");
+            write_str(1, "pipeline cancelled\n");
+            return;
+        }
+        if (strcmp_simple(argv[2], "lint") == 0) {
+            write_str(1, "Validating .gitlab-ci.yml...\n");
+            write_str(1, "\033[32mSyntax is correct\033[0m\n");
+            return;
+        }
+        write_str(2, "lab ci: unknown action '");
+        write_str(2, argv[2]);
+        write_str(2, "'\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "project") == 0) {
+        if (argc >= 3 && strcmp_simple(argv[2], "create") == 0) {
+            const char *name = (argc >= 4) ? argv[3] : "new-project";
+            write_str(1, "https://gitlab.com/user/");
+            write_str(1, name);
+            write_str(1, "\n");
+            write_str(1, "project created\n");
+        } else {
+            write_str(1, "user/my-project       \033[32mprivate\033[0m\n");
+            write_str(1, "user/web-app          \033[33minternal\033[0m\n");
+            write_str(1, "user/oss-library      \033[36mpublic\033[0m\n");
+        }
+        return;
+    }
+    if (strcmp_simple(argv[1], "snippet") == 0) {
+        if (argc >= 3 && strcmp_simple(argv[2], "create") == 0) {
+            write_str(1, "https://gitlab.com/snippets/12345\n");
+            write_str(1, "snippet created\n");
+        } else {
+            write_str(1, "#101  Shell script for deployment    @alice\n");
+            write_str(1, "#100  Docker compose template        @bob\n");
+        }
+        return;
+    }
+    write_str(2, "lab: unknown command '");
     write_str(2, argv[1]);
     write_str(2, "'\n");
 }

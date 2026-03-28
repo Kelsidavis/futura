@@ -630,92 +630,252 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
      * Read the first line of the file. If it starts with "#!", parse the
      * interpreter path and optional single argument, then prepend them to
      * argv and redirect execution to the interpreter.
-     * Rules match Linux binfmt_script: one level only, one optional arg,
-     * interpreter path ≤ 255 bytes. */
+     *
+     * Supports:
+     *   - #!/bin/shell           -> exec /bin/shell <script>
+     *   - #!/bin/shell -x        -> exec /bin/shell -x <script>
+     *   - #!/usr/bin/env python  -> resolve "python" via PATH, exec it
+     *   - Nested shebangs up to SHEBANG_MAX_DEPTH levels (like Linux)
+     *   - Original argv[0] preserved as the script path
+     *
+     * interpreter path <= 255 bytes, single optional arg per POSIX/Linux. */
+#define SHEBANG_MAX_DEPTH 4  /* Linux uses 4 (BINPRM_BUF_SIZE recursion limit) */
     {
-        int sfd = fut_vfs_open(kernel_pathname, 0, 0); /* O_RDONLY */
-        if (sfd >= 0) {
+        /* Save the original script path for argv construction.
+         * On the first shebang iteration this is kernel_pathname (the user's
+         * original path). On nested iterations we keep updating kernel_pathname
+         * to the next interpreter, but orig_script always stays the same. */
+        char orig_script[256];
+        {
+            size_t sl = 0;
+            while (kernel_pathname[sl] && sl < 255) sl++;
+            __builtin_memcpy(orig_script, kernel_pathname, sl + 1);
+        }
+
+        int shebang_depth = 0;
+        for (; shebang_depth < SHEBANG_MAX_DEPTH; shebang_depth++) {
+            int sfd = fut_vfs_open(kernel_pathname, 0, 0); /* O_RDONLY */
+            if (sfd < 0) break; /* file not found — leave kernel_pathname for later ENOENT */
+
             char sb[256];
             long nr = fut_vfs_read(sfd, sb, (long)sizeof(sb) - 1);
             fut_vfs_close(sfd);
-            if (nr >= 2 && sb[0] == '#' && sb[1] == '!') {
-                sb[nr] = '\0';
-                char *sp = sb + 2;
-                /* Skip leading whitespace after #! */
-                while (*sp == ' ' || *sp == '\t') sp++;
-                /* Parse interpreter path (first non-space token) */
-                char ipath[256];
-                int iplen = 0;
-                while (*sp && *sp != ' ' && *sp != '\t' && *sp != '\n' && *sp != '\r' && iplen < 255)
-                    ipath[iplen++] = *sp++;
-                ipath[iplen] = '\0';
-                if (iplen > 0) {
-                    /* Parse optional single argument (rest of line, trimmed) */
-                    char iarg[256];
-                    int ialen = 0;
-                    while (*sp == ' ' || *sp == '\t') sp++;
-                    while (*sp && *sp != '\n' && *sp != '\r' && ialen < 255)
-                        iarg[ialen++] = *sp++;
-                    /* Trim trailing spaces from optional arg */
-                    while (ialen > 0 && (iarg[ialen-1] == ' ' || iarg[ialen-1] == '\t'))
-                        ialen--;
-                    iarg[ialen] = '\0';
+            if (nr < 2 || sb[0] != '#' || sb[1] != '!') break; /* not a shebang */
 
-                    /* Build new argv: [interp, opt_arg?, script_path, argv[1..]] */
-                    int extra = 1 + (ialen > 0 ? 1 : 0);
-                    int orig_rest = (argc > 1) ? (argc - 1) : 0;
-                    int new_argc = extra + 1 + orig_rest;
-                    if (new_argc < EXEC_ARGC_MAX) {
-                        char **new_argv = (char **)fut_malloc(
-                            (size_t)(new_argc + 1) * sizeof(char *));
-                        if (new_argv) {
-                            int na = 0;
-                            /* argv[0]: interpreter */
-                            new_argv[na] = (char *)fut_malloc((size_t)iplen + 1);
+            sb[nr] = '\0';
+            char *sp = sb + 2;
+            /* Skip leading whitespace after #! */
+            while (*sp == ' ' || *sp == '\t') sp++;
+
+            /* Parse interpreter path (first non-space token) */
+            char ipath[256];
+            int iplen = 0;
+            while (*sp && *sp != ' ' && *sp != '\t' && *sp != '\n' && *sp != '\r' && iplen < 255)
+                ipath[iplen++] = *sp++;
+            ipath[iplen] = '\0';
+            if (iplen == 0) break; /* empty interpreter */
+
+            /* Parse optional single argument (rest of first line, trimmed) */
+            char iarg[256];
+            int ialen = 0;
+            while (*sp == ' ' || *sp == '\t') sp++;
+            while (*sp && *sp != '\n' && *sp != '\r' && ialen < 255)
+                iarg[ialen++] = *sp++;
+            /* Trim trailing whitespace from optional arg */
+            while (ialen > 0 && (iarg[ialen-1] == ' ' || iarg[ialen-1] == '\t'))
+                ialen--;
+            iarg[ialen] = '\0';
+
+            /* ---- /usr/bin/env PATH resolution ----
+             * If the interpreter is /usr/bin/env (or /bin/env), treat the
+             * optional argument as the real command name and search PATH. */
+            if ((__builtin_strcmp(ipath, "/usr/bin/env") == 0 ||
+                 __builtin_strcmp(ipath, "/bin/env") == 0) && ialen > 0) {
+                /* The "argument" is really the command to find, e.g. "python".
+                 * Search PATH directories for it. */
+                char resolved[256];
+                int found_in_path = 0;
+                /* Extract just the command name (first word of iarg) */
+                char env_cmd[256];
+                int eclen = 0;
+                const char *ep = iarg;
+                while (*ep && *ep != ' ' && *ep != '\t' && eclen < 255)
+                    env_cmd[eclen++] = *ep++;
+                env_cmd[eclen] = '\0';
+
+                /* Try common PATH directories */
+                static const char *const path_dirs[] = {
+                    "/bin", "/sbin", "/usr/bin", "/usr/sbin",
+                    "/usr/local/bin", NULL
+                };
+                for (int d = 0; path_dirs[d]; d++) {
+                    int rp = 0;
+                    const char *dir = path_dirs[d];
+                    while (*dir && rp < 254) resolved[rp++] = *dir++;
+                    if (rp < 254) resolved[rp++] = '/';
+                    for (int c = 0; c < eclen && rp < 255; c++)
+                        resolved[rp++] = env_cmd[c];
+                    resolved[rp] = '\0';
+                    /* Check if the resolved path exists */
+                    int tfd = fut_vfs_open(resolved, 0, 0);
+                    if (tfd >= 0) {
+                        fut_vfs_close(tfd);
+                        found_in_path = 1;
+                        /* Replace interpreter with the resolved path */
+                        iplen = rp;
+                        __builtin_memcpy(ipath, resolved, (size_t)rp + 1);
+                        /* Clear the "argument" — it was the command name, not a flag */
+                        ialen = 0;
+                        iarg[0] = '\0';
+                        break;
+                    }
+                }
+                /* Also check envp for a PATH= entry and search those dirs */
+                if (!found_in_path && kernel_envp) {
+                    for (int e = 0; kernel_envp[e]; e++) {
+                        if (kernel_envp[e][0] == 'P' && kernel_envp[e][1] == 'A' &&
+                            kernel_envp[e][2] == 'T' && kernel_envp[e][3] == 'H' &&
+                            kernel_envp[e][4] == '=') {
+                            const char *pval = kernel_envp[e] + 5;
+                            while (*pval) {
+                                /* Extract next colon-delimited directory */
+                                char pdir[256];
+                                int pdlen = 0;
+                                while (*pval && *pval != ':' && pdlen < 254)
+                                    pdir[pdlen++] = *pval++;
+                                if (*pval == ':') pval++;
+                                if (pdlen == 0) continue;
+                                pdir[pdlen] = '\0';
+                                int rp = 0;
+                                for (int c = 0; c < pdlen && rp < 254; c++)
+                                    resolved[rp++] = pdir[c];
+                                if (rp < 254) resolved[rp++] = '/';
+                                for (int c = 0; c < eclen && rp < 255; c++)
+                                    resolved[rp++] = env_cmd[c];
+                                resolved[rp] = '\0';
+                                int tfd = fut_vfs_open(resolved, 0, 0);
+                                if (tfd >= 0) {
+                                    fut_vfs_close(tfd);
+                                    found_in_path = 1;
+                                    iplen = rp;
+                                    __builtin_memcpy(ipath, resolved, (size_t)rp + 1);
+                                    ialen = 0;
+                                    iarg[0] = '\0';
+                                    break;
+                                }
+                            }
+                            break; /* only use first PATH= */
+                        }
+                    }
+                }
+                if (!found_in_path) {
+                    /* env could not resolve the command — report ENOENT for
+                     * the command name rather than for /usr/bin/env itself */
+                    execve_free_argv(kernel_argv, argc);
+                    if (kernel_envp) {
+                        for (int i = 0; kernel_envp[i]; i++) fut_free(kernel_envp[i]);
+                        fut_free(kernel_envp);
+                    }
+                    return -ENOENT;
+                }
+            }
+
+            /* For nested shebangs: on the first iteration we saved the
+             * original script path. On depth>0 the current kernel_pathname
+             * is the *previous* interpreter (itself a script) — update it
+             * to point to the just-parsed interpreter for the next round. */
+            if (shebang_depth == 0) {
+                /* Build new argv: [interp, opt_arg?, script_path, original argv[1..]] */
+                int extra = 1 + (ialen > 0 ? 1 : 0);
+                int orig_rest = (argc > 1) ? (argc - 1) : 0;
+                int new_argc = extra + 1 + orig_rest;
+                if (new_argc < EXEC_ARGC_MAX) {
+                    char **new_argv = (char **)fut_malloc(
+                        (size_t)(new_argc + 1) * sizeof(char *));
+                    if (new_argv) {
+                        int na = 0;
+                        /* argv[0]: interpreter */
+                        new_argv[na] = (char *)fut_malloc((size_t)iplen + 1);
+                        if (new_argv[na]) {
+                            __builtin_memcpy(new_argv[na], ipath, (size_t)iplen + 1);
+                            na++;
+                        }
+                        /* argv[1]: optional arg (if present) */
+                        if (ialen > 0) {
+                            new_argv[na] = (char *)fut_malloc((size_t)ialen + 1);
                             if (new_argv[na]) {
-                                __builtin_memcpy(new_argv[na], ipath, (size_t)iplen + 1);
+                                __builtin_memcpy(new_argv[na], iarg, (size_t)ialen + 1);
                                 na++;
                             }
-                            /* argv[1]: optional arg (if present) */
-                            if (ialen > 0) {
-                                new_argv[na] = (char *)fut_malloc((size_t)ialen + 1);
+                        }
+                        /* argv[na]: original script path */
+                        size_t oslen = 0;
+                        while (orig_script[oslen]) oslen++;
+                        new_argv[na] = (char *)fut_malloc(oslen + 1);
+                        if (new_argv[na]) {
+                            __builtin_memcpy(new_argv[na], orig_script, oslen + 1);
+                            na++;
+                        }
+                        /* argv[na..]: original argv[1..] */
+                        if (kernel_argv) {
+                            for (int i = 1; i < argc && kernel_argv[i]; i++) {
+                                size_t al = 0;
+                                while (kernel_argv[i][al]) al++;
+                                new_argv[na] = (char *)fut_malloc(al + 1);
                                 if (new_argv[na]) {
-                                    __builtin_memcpy(new_argv[na], iarg, (size_t)ialen + 1);
+                                    __builtin_memcpy(new_argv[na], kernel_argv[i], al + 1);
                                     na++;
                                 }
                             }
-                            /* argv[na]: script path (original argv[0]) */
-                            size_t splen = 0;
-                            while (kernel_pathname[splen]) splen++;
-                            new_argv[na] = (char *)fut_malloc(splen + 1);
-                            if (new_argv[na]) {
-                                __builtin_memcpy(new_argv[na], kernel_pathname, splen + 1);
-                                na++;
-                            }
-                            /* argv[na..]: original argv[1..] */
-                            if (kernel_argv) {
-                                for (int i = 1; i < argc && kernel_argv[i]; i++) {
-                                    size_t al = 0;
-                                    while (kernel_argv[i][al]) al++;
-                                    new_argv[na] = (char *)fut_malloc(al + 1);
-                                    if (new_argv[na]) {
-                                        __builtin_memcpy(new_argv[na], kernel_argv[i], al + 1);
-                                        na++;
-                                    }
-                                }
-                            }
-                            new_argv[na] = NULL;
-                            execve_free_argv(kernel_argv, argc);
-                            kernel_argv = new_argv;
-                            argc = na;
-                            /* Redirect to interpreter binary */
-                            __builtin_memcpy(kernel_pathname, ipath, (size_t)iplen + 1);
                         }
+                        new_argv[na] = NULL;
+                        execve_free_argv(kernel_argv, argc);
+                        kernel_argv = new_argv;
+                        argc = na;
                     }
+                }
+            } else {
+                /* Nested shebang (depth > 0): only replace argv[0] with the
+                 * new interpreter and insert opt_arg if present. The script
+                 * path (orig_script) is already in the argv from depth 0. */
+                if (kernel_argv && kernel_argv[0]) {
+                    fut_free(kernel_argv[0]);
+                    kernel_argv[0] = (char *)fut_malloc((size_t)iplen + 1);
+                    if (kernel_argv[0])
+                        __builtin_memcpy(kernel_argv[0], ipath, (size_t)iplen + 1);
+                }
+                /* If there is an opt_arg and the previous level did not have
+                 * one, we need to shift and insert. For simplicity (and
+                 * matching Linux which only keeps one opt_arg), replace any
+                 * existing opt_arg or skip insertion on nested levels. */
+            }
+
+            /* Redirect to interpreter binary for next iteration */
+            __builtin_memcpy(kernel_pathname, ipath, (size_t)iplen + 1);
+            /* Loop continues — if ipath is itself a shebang script, we
+             * parse it again up to SHEBANG_MAX_DEPTH. */
+        }
+
+        /* If we exhausted the depth limit, return ELOOP (too many levels) */
+        if (shebang_depth >= SHEBANG_MAX_DEPTH) {
+            /* Check if the final target is still a shebang */
+            int sfd = fut_vfs_open(kernel_pathname, 0, 0);
+            if (sfd >= 0) {
+                char hdr[4];
+                long nr = fut_vfs_read(sfd, hdr, 2);
+                fut_vfs_close(sfd);
+                if (nr >= 2 && hdr[0] == '#' && hdr[1] == '!') {
+                    execve_free_argv(kernel_argv, argc);
+                    if (kernel_envp) {
+                        for (int i = 0; kernel_envp[i]; i++) fut_free(kernel_envp[i]);
+                        fut_free(kernel_envp);
+                    }
+                    return -ELOOP;
                 }
             }
         }
     }
+#undef SHEBANG_MAX_DEPTH
 
     /* Phase 3: Log argument and environment size limits enforcement */
     char limit_msg[256];

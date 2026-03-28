@@ -472,6 +472,16 @@ static void cmd_ssh_add(int argc, char *argv[]);
 static void cmd_ssh_copy_id(int argc, char *argv[]);
 static void cmd_keyctl(int argc, char *argv[]);
 static void cmd_p11_kit(int argc, char *argv[]);
+static void cmd_aws(int argc, char *argv[]);
+static void cmd_gcloud(int argc, char *argv[]);
+static void cmd_az(int argc, char *argv[]);
+static void cmd_doctl(int argc, char *argv[]);
+static void cmd_fly(int argc, char *argv[]);
+static void cmd_vercel(int argc, char *argv[]);
+static void cmd_netlify(int argc, char *argv[]);
+static void cmd_heroku(int argc, char *argv[]);
+static void cmd_cf(int argc, char *argv[]);
+static void cmd_eksctl(int argc, char *argv[]);
 
 /* Forward declaration for prompt */
 static void print_prompt(void);
@@ -15495,6 +15505,36 @@ watch_sleep:
     } else if (strcmp_simple(argv[0], "p11-kit") == 0) {
         cmd_p11_kit(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "aws") == 0) {
+        cmd_aws(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "gcloud") == 0) {
+        cmd_gcloud(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "az") == 0) {
+        cmd_az(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "doctl") == 0) {
+        cmd_doctl(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "fly") == 0) {
+        cmd_fly(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "vercel") == 0) {
+        cmd_vercel(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "netlify") == 0) {
+        cmd_netlify(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "heroku") == 0) {
+        cmd_heroku(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "cf") == 0) {
+        cmd_cf(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "eksctl") == 0) {
+        cmd_eksctl(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -15992,6 +16032,16 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "ssh-copy-id") == 0 ||
             strcmp_simple(cmd, "keyctl") == 0 ||
             strcmp_simple(cmd, "p11-kit") == 0 ||
+            strcmp_simple(cmd, "aws") == 0 ||
+            strcmp_simple(cmd, "gcloud") == 0 ||
+            strcmp_simple(cmd, "az") == 0 ||
+            strcmp_simple(cmd, "doctl") == 0 ||
+            strcmp_simple(cmd, "fly") == 0 ||
+            strcmp_simple(cmd, "vercel") == 0 ||
+            strcmp_simple(cmd, "netlify") == 0 ||
+            strcmp_simple(cmd, "heroku") == 0 ||
+            strcmp_simple(cmd, "cf") == 0 ||
+            strcmp_simple(cmd, "eksctl") == 0 ||
             0);
 }
 
@@ -20834,7 +20884,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   510 built-in commands — type 'help'    |\n");
+    write_str(1, "|   520 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");
@@ -44612,6 +44662,1227 @@ __attribute__((used)) static void cmd_p11_kit(int argc, char *argv[]) {
         write_str(2, argv[1]);
         write_str(2, "'\n");
     }
+}
+
+/* aws - simulated AWS CLI */
+static void cmd_aws(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "usage: aws <service> <command> [options]\n");
+        write_str(1, "\nAvailable services:\n");
+        write_str(1, "  s3              Simple Storage Service\n");
+        write_str(1, "  ec2             Elastic Compute Cloud\n");
+        write_str(1, "  iam             Identity and Access Management\n");
+        write_str(1, "  sts             Security Token Service\n");
+        write_str(1, "  configure       Configure AWS credentials\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "aws-cli/2.15.30 Python/3.11.8 Linux/6.1.0 source/x86_64\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "configure") == 0) {
+        write_str(1, "AWS Access Key ID [****************XMPL]: \n");
+        write_str(1, "AWS Secret Access Key [****************XMPL]: \n");
+        write_str(1, "Default region name [us-east-1]: \n");
+        write_str(1, "Default output format [json]: \n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "s3") == 0) {
+        if (argc < 3 || strcmp_simple(argv[2], "ls") == 0) {
+            write_str(1, "2024-01-15 08:23:41 my-app-bucket\n");
+            write_str(1, "2024-03-02 14:11:09 my-logs-bucket\n");
+            write_str(1, "2024-06-18 22:45:33 my-backups-bucket\n");
+            write_str(1, "2024-09-07 10:30:17 my-static-assets\n");
+        } else if (strcmp_simple(argv[2], "mb") == 0) {
+            if (argc < 4) {
+                write_str(2, "usage: aws s3 mb s3://bucket-name\n");
+            } else {
+                write_str(1, "make_bucket: ");
+                write_str(1, argv[3]);
+                write_str(1, "\n");
+            }
+        } else if (strcmp_simple(argv[2], "rb") == 0) {
+            if (argc < 4) {
+                write_str(2, "usage: aws s3 rb s3://bucket-name\n");
+            } else {
+                write_str(1, "remove_bucket: ");
+                write_str(1, argv[3]);
+                write_str(1, "\n");
+            }
+        } else if (strcmp_simple(argv[2], "cp") == 0) {
+            write_str(1, "upload: ./file.txt to s3://my-app-bucket/file.txt\n");
+        } else if (strcmp_simple(argv[2], "sync") == 0) {
+            write_str(1, "upload: ./index.html to s3://my-static-assets/index.html\n");
+            write_str(1, "upload: ./style.css to s3://my-static-assets/style.css\n");
+            write_str(1, "upload: ./app.js to s3://my-static-assets/app.js\n");
+        } else {
+            write_str(2, "aws s3: unknown command '");
+            write_str(2, argv[2]);
+            write_str(2, "'\n");
+        }
+        return;
+    }
+    if (strcmp_simple(argv[1], "ec2") == 0) {
+        if (argc < 3) {
+            write_str(2, "usage: aws ec2 <command>\n");
+            return;
+        }
+        if (strcmp_simple(argv[2], "describe-instances") == 0) {
+            write_str(1, "{\n");
+            write_str(1, "    \"Reservations\": [\n");
+            write_str(1, "        {\n");
+            write_str(1, "            \"Instances\": [\n");
+            write_str(1, "                {\n");
+            write_str(1, "                    \"InstanceId\": \"i-0abcdef1234567890\",\n");
+            write_str(1, "                    \"InstanceType\": \"t3.medium\",\n");
+            write_str(1, "                    \"State\": {\"Name\": \"running\"},\n");
+            write_str(1, "                    \"PublicIpAddress\": \"54.123.45.67\",\n");
+            write_str(1, "                    \"PrivateIpAddress\": \"10.0.1.42\",\n");
+            write_str(1, "                    \"Tags\": [{\"Key\": \"Name\", \"Value\": \"web-server-1\"}]\n");
+            write_str(1, "                },\n");
+            write_str(1, "                {\n");
+            write_str(1, "                    \"InstanceId\": \"i-0fedcba0987654321\",\n");
+            write_str(1, "                    \"InstanceType\": \"t3.large\",\n");
+            write_str(1, "                    \"State\": {\"Name\": \"running\"},\n");
+            write_str(1, "                    \"PublicIpAddress\": \"54.123.45.68\",\n");
+            write_str(1, "                    \"PrivateIpAddress\": \"10.0.1.43\",\n");
+            write_str(1, "                    \"Tags\": [{\"Key\": \"Name\", \"Value\": \"api-server-1\"}]\n");
+            write_str(1, "                }\n");
+            write_str(1, "            ]\n");
+            write_str(1, "        }\n");
+            write_str(1, "    ]\n");
+            write_str(1, "}\n");
+        } else if (strcmp_simple(argv[2], "describe-vpcs") == 0) {
+            write_str(1, "{\n");
+            write_str(1, "    \"Vpcs\": [\n");
+            write_str(1, "        {\"VpcId\": \"vpc-0abc123def456\", \"CidrBlock\": \"10.0.0.0/16\", \"State\": \"available\"}\n");
+            write_str(1, "    ]\n");
+            write_str(1, "}\n");
+        } else if (strcmp_simple(argv[2], "describe-security-groups") == 0) {
+            write_str(1, "{\n");
+            write_str(1, "    \"SecurityGroups\": [\n");
+            write_str(1, "        {\"GroupId\": \"sg-0abc123\", \"GroupName\": \"web-sg\", \"Description\": \"Web security group\"}\n");
+            write_str(1, "    ]\n");
+            write_str(1, "}\n");
+        } else {
+            write_str(2, "aws ec2: unknown command '");
+            write_str(2, argv[2]);
+            write_str(2, "'\n");
+        }
+        return;
+    }
+    if (strcmp_simple(argv[1], "iam") == 0) {
+        if (argc < 3) {
+            write_str(2, "usage: aws iam <command>\n");
+            return;
+        }
+        if (strcmp_simple(argv[2], "list-users") == 0) {
+            write_str(1, "{\n");
+            write_str(1, "    \"Users\": [\n");
+            write_str(1, "        {\n");
+            write_str(1, "            \"UserName\": \"admin\",\n");
+            write_str(1, "            \"UserId\": \"AIDA0EXAMPLE11111111\",\n");
+            write_str(1, "            \"Arn\": \"arn:aws:iam::123456789012:user/admin\",\n");
+            write_str(1, "            \"CreateDate\": \"2023-01-15T10:30:00Z\"\n");
+            write_str(1, "        },\n");
+            write_str(1, "        {\n");
+            write_str(1, "            \"UserName\": \"deploy-bot\",\n");
+            write_str(1, "            \"UserId\": \"AIDA0EXAMPLE22222222\",\n");
+            write_str(1, "            \"Arn\": \"arn:aws:iam::123456789012:user/deploy-bot\",\n");
+            write_str(1, "            \"CreateDate\": \"2023-06-20T14:45:00Z\"\n");
+            write_str(1, "        }\n");
+            write_str(1, "    ]\n");
+            write_str(1, "}\n");
+        } else if (strcmp_simple(argv[2], "list-roles") == 0) {
+            write_str(1, "{\n");
+            write_str(1, "    \"Roles\": [\n");
+            write_str(1, "        {\"RoleName\": \"EC2FullAccess\", \"Arn\": \"arn:aws:iam::123456789012:role/EC2FullAccess\"},\n");
+            write_str(1, "        {\"RoleName\": \"LambdaExec\", \"Arn\": \"arn:aws:iam::123456789012:role/LambdaExec\"}\n");
+            write_str(1, "    ]\n");
+            write_str(1, "}\n");
+        } else if (strcmp_simple(argv[2], "get-user") == 0) {
+            write_str(1, "{\n");
+            write_str(1, "    \"User\": {\n");
+            write_str(1, "        \"UserName\": \"admin\",\n");
+            write_str(1, "        \"UserId\": \"AIDA0EXAMPLE11111111\",\n");
+            write_str(1, "        \"Arn\": \"arn:aws:iam::123456789012:user/admin\"\n");
+            write_str(1, "    }\n");
+            write_str(1, "}\n");
+        } else {
+            write_str(2, "aws iam: unknown command '");
+            write_str(2, argv[2]);
+            write_str(2, "'\n");
+        }
+        return;
+    }
+    if (strcmp_simple(argv[1], "sts") == 0) {
+        if (argc >= 3 && strcmp_simple(argv[2], "get-caller-identity") == 0) {
+            write_str(1, "{\n");
+            write_str(1, "    \"UserId\": \"AIDA0EXAMPLE11111111\",\n");
+            write_str(1, "    \"Account\": \"123456789012\",\n");
+            write_str(1, "    \"Arn\": \"arn:aws:iam::123456789012:user/admin\"\n");
+            write_str(1, "}\n");
+        } else {
+            write_str(2, "usage: aws sts get-caller-identity\n");
+        }
+        return;
+    }
+    write_str(2, "aws: unknown service '");
+    write_str(2, argv[1]);
+    write_str(2, "'\n");
+}
+
+/* gcloud - simulated Google Cloud CLI */
+static void cmd_gcloud(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "usage: gcloud <group> <command> [options]\n");
+        write_str(1, "\nAvailable groups:\n");
+        write_str(1, "  compute         Compute Engine resources\n");
+        write_str(1, "  storage         Cloud Storage\n");
+        write_str(1, "  config          Configuration management\n");
+        write_str(1, "  projects        Project management\n");
+        write_str(1, "  auth            Authentication\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0 || strcmp_simple(argv[1], "version") == 0) {
+        write_str(1, "Google Cloud SDK 467.0.0\n");
+        write_str(1, "bq 2.0.101\n");
+        write_str(1, "core 2024.03.15\n");
+        write_str(1, "gcloud-crc32c 1.0.0\n");
+        write_str(1, "gsutil 5.27\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "auth") == 0) {
+        if (argc >= 3 && strcmp_simple(argv[2], "list") == 0) {
+            write_str(1, "       Credentialed Accounts\n");
+            write_str(1, "ACTIVE  ACCOUNT\n");
+            write_str(1, "*       user@example.com\n");
+            write_str(1, "        service-account@project.iam.gserviceaccount.com\n");
+        } else if (argc >= 3 && strcmp_simple(argv[2], "login") == 0) {
+            write_str(1, "Your browser has been opened to visit:\n");
+            write_str(1, "    https://accounts.google.com/o/oauth2/auth?...\n");
+            write_str(1, "\nYou are now logged in as [user@example.com].\n");
+        } else {
+            write_str(2, "usage: gcloud auth list|login\n");
+        }
+        return;
+    }
+    if (strcmp_simple(argv[1], "config") == 0) {
+        if (argc >= 3 && strcmp_simple(argv[2], "list") == 0) {
+            write_str(1, "[core]\n");
+            write_str(1, "account = user@example.com\n");
+            write_str(1, "project = my-gcp-project-123\n");
+            write_str(1, "\n[compute]\n");
+            write_str(1, "region = us-central1\n");
+            write_str(1, "zone = us-central1-a\n");
+        } else if (argc >= 4 && strcmp_simple(argv[2], "set") == 0) {
+            write_str(1, "Updated property [");
+            write_str(1, argv[3]);
+            write_str(1, "].\n");
+        } else {
+            write_str(2, "usage: gcloud config list|set <property> <value>\n");
+        }
+        return;
+    }
+    if (strcmp_simple(argv[1], "compute") == 0) {
+        if (argc < 3) {
+            write_str(2, "usage: gcloud compute <command>\n");
+            return;
+        }
+        if (strcmp_simple(argv[2], "instances") == 0) {
+            if (argc >= 4 && strcmp_simple(argv[3], "list") == 0) {
+                write_str(1, "NAME            ZONE            MACHINE_TYPE   PREEMPTIBLE  INTERNAL_IP  EXTERNAL_IP    STATUS\n");
+                write_str(1, "web-server-1    us-central1-a   e2-medium                   10.128.0.2   35.192.0.1     RUNNING\n");
+                write_str(1, "api-server-1    us-central1-b   e2-standard-2               10.128.0.3   35.192.0.2     RUNNING\n");
+                write_str(1, "db-server-1     us-central1-c   n2-standard-4               10.128.0.4                  RUNNING\n");
+            } else if (argc >= 4 && strcmp_simple(argv[3], "create") == 0) {
+                write_str(1, "Created [https://compute.googleapis.com/compute/v1/projects/my-project/zones/us-central1-a/instances/new-instance].\n");
+                write_str(1, "NAME           ZONE            MACHINE_TYPE  PREEMPTIBLE  INTERNAL_IP  EXTERNAL_IP  STATUS\n");
+                write_str(1, "new-instance   us-central1-a   e2-medium                  10.128.0.5   35.192.0.3   RUNNING\n");
+            } else {
+                write_str(1, "NAME            ZONE            MACHINE_TYPE   PREEMPTIBLE  INTERNAL_IP  EXTERNAL_IP    STATUS\n");
+                write_str(1, "web-server-1    us-central1-a   e2-medium                   10.128.0.2   35.192.0.1     RUNNING\n");
+                write_str(1, "api-server-1    us-central1-b   e2-standard-2               10.128.0.3   35.192.0.2     RUNNING\n");
+            }
+        } else if (strcmp_simple(argv[2], "zones") == 0) {
+            write_str(1, "NAME             REGION          STATUS\n");
+            write_str(1, "us-central1-a    us-central1     UP\n");
+            write_str(1, "us-central1-b    us-central1     UP\n");
+            write_str(1, "us-east1-b       us-east1        UP\n");
+            write_str(1, "europe-west1-b   europe-west1    UP\n");
+        } else {
+            write_str(2, "gcloud compute: unknown command '");
+            write_str(2, argv[2]);
+            write_str(2, "'\n");
+        }
+        return;
+    }
+    if (strcmp_simple(argv[1], "storage") == 0) {
+        if (argc >= 3 && strcmp_simple(argv[2], "ls") == 0) {
+            write_str(1, "gs://my-app-data/\n");
+            write_str(1, "gs://my-app-logs/\n");
+            write_str(1, "gs://my-app-backups/\n");
+            write_str(1, "gs://my-static-site/\n");
+        } else if (argc >= 3 && strcmp_simple(argv[2], "buckets") == 0) {
+            write_str(1, "gs://my-app-data/\n");
+            write_str(1, "gs://my-app-logs/\n");
+            write_str(1, "gs://my-app-backups/\n");
+        } else if (argc >= 3 && strcmp_simple(argv[2], "cp") == 0) {
+            write_str(1, "Copying file://local-file to gs://my-app-data/local-file\n");
+            write_str(1, "  Completed 1/1\n");
+        } else {
+            write_str(2, "usage: gcloud storage ls|buckets|cp\n");
+        }
+        return;
+    }
+    if (strcmp_simple(argv[1], "projects") == 0) {
+        if (argc >= 3 && strcmp_simple(argv[2], "list") == 0) {
+            write_str(1, "PROJECT_ID            NAME              PROJECT_NUMBER\n");
+            write_str(1, "my-gcp-project-123    My GCP Project    123456789012\n");
+            write_str(1, "staging-project-456   Staging Env       456789012345\n");
+        } else {
+            write_str(2, "usage: gcloud projects list\n");
+        }
+        return;
+    }
+    write_str(2, "gcloud: unknown group '");
+    write_str(2, argv[1]);
+    write_str(2, "'\n");
+}
+
+/* az - simulated Azure CLI */
+static void cmd_az(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "usage: az <group> <command> [options]\n");
+        write_str(1, "\nAvailable groups:\n");
+        write_str(1, "  vm              Virtual Machines\n");
+        write_str(1, "  storage         Storage accounts\n");
+        write_str(1, "  group           Resource groups\n");
+        write_str(1, "  account         Subscription management\n");
+        write_str(1, "  network         Networking\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "azure-cli                         2.58.0\n");
+        write_str(1, "core                              2.58.0\n");
+        write_str(1, "telemetry                         1.1.0\n");
+        write_str(1, "\nPython (Linux) 3.11.8\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "login") == 0) {
+        write_str(1, "A web browser has been opened at https://login.microsoftonline.com/...\n");
+        write_str(1, "[\n");
+        write_str(1, "  {\n");
+        write_str(1, "    \"cloudName\": \"AzureCloud\",\n");
+        write_str(1, "    \"id\": \"12345678-1234-1234-1234-123456789012\",\n");
+        write_str(1, "    \"isDefault\": true,\n");
+        write_str(1, "    \"name\": \"My Azure Subscription\",\n");
+        write_str(1, "    \"state\": \"Enabled\",\n");
+        write_str(1, "    \"user\": {\"name\": \"user@example.com\", \"type\": \"user\"}\n");
+        write_str(1, "  }\n");
+        write_str(1, "]\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "account") == 0) {
+        if (argc >= 3 && strcmp_simple(argv[2], "list") == 0) {
+            write_str(1, "Name                    CloudName    SubscriptionId                        State    IsDefault\n");
+            write_str(1, "----------------------  -----------  ------------------------------------  -------  ---------\n");
+            write_str(1, "My Azure Subscription   AzureCloud   12345678-1234-1234-1234-123456789012  Enabled  True\n");
+            write_str(1, "Dev Subscription        AzureCloud   87654321-4321-4321-4321-210987654321  Enabled  False\n");
+        } else if (argc >= 3 && strcmp_simple(argv[2], "show") == 0) {
+            write_str(1, "{\n");
+            write_str(1, "  \"id\": \"/subscriptions/12345678-1234-1234-1234-123456789012\",\n");
+            write_str(1, "  \"name\": \"My Azure Subscription\",\n");
+            write_str(1, "  \"state\": \"Enabled\"\n");
+            write_str(1, "}\n");
+        } else {
+            write_str(2, "usage: az account list|show\n");
+        }
+        return;
+    }
+    if (strcmp_simple(argv[1], "vm") == 0) {
+        if (argc < 3 || strcmp_simple(argv[2], "list") == 0) {
+            write_str(1, "Name          ResourceGroup    Location      VmSize           OsType    ProvisioningState\n");
+            write_str(1, "------------  ---------------  ------------  ---------------  --------  -----------------\n");
+            write_str(1, "web-vm-01     my-rg            eastus        Standard_B2ms    Linux     Succeeded\n");
+            write_str(1, "api-vm-01     my-rg            eastus        Standard_D2s_v3  Linux     Succeeded\n");
+            write_str(1, "db-vm-01      my-rg            eastus        Standard_E4s_v3  Linux     Succeeded\n");
+        } else if (strcmp_simple(argv[2], "show") == 0) {
+            write_str(1, "{\n");
+            write_str(1, "  \"name\": \"web-vm-01\",\n");
+            write_str(1, "  \"location\": \"eastus\",\n");
+            write_str(1, "  \"hardwareProfile\": {\"vmSize\": \"Standard_B2ms\"},\n");
+            write_str(1, "  \"provisioningState\": \"Succeeded\",\n");
+            write_str(1, "  \"osProfile\": {\"computerName\": \"web-vm-01\", \"adminUsername\": \"azureuser\"}\n");
+            write_str(1, "}\n");
+        } else if (strcmp_simple(argv[2], "create") == 0) {
+            write_str(1, "{\n");
+            write_str(1, "  \"name\": \"new-vm\",\n");
+            write_str(1, "  \"provisioningState\": \"Succeeded\",\n");
+            write_str(1, "  \"publicIpAddress\": \"20.123.45.67\"\n");
+            write_str(1, "}\n");
+        } else if (strcmp_simple(argv[2], "start") == 0) {
+            write_str(1, "Starting VM... done.\n");
+        } else if (strcmp_simple(argv[2], "stop") == 0) {
+            write_str(1, "Stopping VM... done.\n");
+        } else {
+            write_str(2, "az vm: unknown command '");
+            write_str(2, argv[2]);
+            write_str(2, "'\n");
+        }
+        return;
+    }
+    if (strcmp_simple(argv[1], "storage") == 0) {
+        if (argc < 3) {
+            write_str(2, "usage: az storage <command>\n");
+            return;
+        }
+        if (strcmp_simple(argv[2], "account") == 0) {
+            if (argc >= 4 && strcmp_simple(argv[3], "list") == 0) {
+                write_str(1, "Name                ResourceGroup    Location    Kind         AccessTier    ProvisioningState\n");
+                write_str(1, "------------------  ---------------  ----------  -----------  ------------  -----------------\n");
+                write_str(1, "myappstorage01      my-rg            eastus      StorageV2    Hot           Succeeded\n");
+                write_str(1, "mylogsstorage       my-rg            eastus      BlobStorage  Cool          Succeeded\n");
+            } else {
+                write_str(1, "Name                ResourceGroup    Location    Kind         ProvisioningState\n");
+                write_str(1, "------------------  ---------------  ----------  -----------  -----------------\n");
+                write_str(1, "myappstorage01      my-rg            eastus      StorageV2    Succeeded\n");
+            }
+        } else if (strcmp_simple(argv[2], "blob") == 0) {
+            write_str(1, "Name              Content Length    Type       Last Modified\n");
+            write_str(1, "----------------  ----------------  ---------  ----------------------\n");
+            write_str(1, "backup-2024.tar   1073741824        BlockBlob  2024-03-15T10:30:00Z\n");
+            write_str(1, "config.json       2048              BlockBlob  2024-03-20T14:22:00Z\n");
+        } else if (strcmp_simple(argv[2], "container") == 0) {
+            write_str(1, "Name         Lease Status    Last Modified\n");
+            write_str(1, "-----------  --------------  ----------------------\n");
+            write_str(1, "backups      unlocked        2024-03-15T10:30:00Z\n");
+            write_str(1, "logs         unlocked        2024-03-20T14:22:00Z\n");
+            write_str(1, "uploads      unlocked        2024-03-18T09:15:00Z\n");
+        } else {
+            write_str(2, "az storage: unknown command '");
+            write_str(2, argv[2]);
+            write_str(2, "'\n");
+        }
+        return;
+    }
+    if (strcmp_simple(argv[1], "group") == 0) {
+        if (argc >= 3 && strcmp_simple(argv[2], "list") == 0) {
+            write_str(1, "Name             Location    Status\n");
+            write_str(1, "---------------  ----------  ---------\n");
+            write_str(1, "my-rg            eastus      Succeeded\n");
+            write_str(1, "staging-rg       westus2     Succeeded\n");
+        } else {
+            write_str(2, "usage: az group list\n");
+        }
+        return;
+    }
+    if (strcmp_simple(argv[1], "network") == 0) {
+        if (argc >= 3 && strcmp_simple(argv[2], "vnet") == 0) {
+            write_str(1, "Name         ResourceGroup    Location    AddressPrefixes\n");
+            write_str(1, "-----------  ---------------  ----------  ---------------\n");
+            write_str(1, "my-vnet      my-rg            eastus      10.0.0.0/16\n");
+        } else {
+            write_str(2, "usage: az network vnet list\n");
+        }
+        return;
+    }
+    write_str(2, "az: unknown group '");
+    write_str(2, argv[1]);
+    write_str(2, "'\n");
+}
+
+/* doctl - simulated DigitalOcean CLI */
+static void cmd_doctl(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "usage: doctl <command> [options]\n");
+        write_str(1, "\nAvailable commands:\n");
+        write_str(1, "  compute         Compute resources\n");
+        write_str(1, "  databases       Database clusters\n");
+        write_str(1, "  kubernetes      Kubernetes clusters\n");
+        write_str(1, "  account         Account info\n");
+        write_str(1, "  auth            Authentication\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "version") == 0 || strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "doctl version 1.104.0-release\n");
+        write_str(1, "Git commit hash: abc1234\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "auth") == 0) {
+        if (argc >= 3 && strcmp_simple(argv[2], "init") == 0) {
+            write_str(1, "Please authenticate doctl by providing your API token.\n");
+            write_str(1, "Validating token... OK\n");
+        } else {
+            write_str(2, "usage: doctl auth init\n");
+        }
+        return;
+    }
+    if (strcmp_simple(argv[1], "account") == 0) {
+        if (argc >= 3 && strcmp_simple(argv[2], "get") == 0) {
+            write_str(1, "Email                    Droplet Limit    Email Verified    UUID                                    Status\n");
+            write_str(1, "-----------------------  ---------------  ----------------  --------------------------------------  ------\n");
+            write_str(1, "user@example.com         25               true              a1b2c3d4-e5f6-7890-abcd-ef1234567890    active\n");
+        } else {
+            write_str(1, "Email: user@example.com\n");
+            write_str(1, "Status: active\n");
+            write_str(1, "Droplet Limit: 25\n");
+        }
+        return;
+    }
+    if (strcmp_simple(argv[1], "compute") == 0) {
+        if (argc < 3) {
+            write_str(2, "usage: doctl compute <resource> <command>\n");
+            return;
+        }
+        if (strcmp_simple(argv[2], "droplet") == 0) {
+            if (argc >= 4 && strcmp_simple(argv[3], "list") == 0) {
+                write_str(1, "ID          Name            Public IPv4      Private IPv4    vcpus    Memory    Disk    Region    Image            VPC UUID    Status\n");
+                write_str(1, "----------  --------------  ---------------  --------------  -------  --------  ------  --------  ---------------  ----------  ------\n");
+                write_str(1, "12345678    web-droplet-1   165.232.10.1     10.132.0.2      2        4096      80      nyc3      Ubuntu 22.04     vpc-abc     active\n");
+                write_str(1, "23456789    api-droplet-1   165.232.10.2     10.132.0.3      4        8192      160     nyc3      Ubuntu 22.04     vpc-abc     active\n");
+                write_str(1, "34567890    worker-1        165.232.10.3     10.132.0.4      2        4096      80      sfo3      Debian 12        vpc-def     active\n");
+            } else if (argc >= 4 && strcmp_simple(argv[3], "create") == 0) {
+                write_str(1, "ID          Name         Public IPv4     Region    Image           VPC UUID    Status\n");
+                write_str(1, "----------  -----------  --------------  --------  --------------  ----------  ------\n");
+                write_str(1, "45678901    new-droplet  165.232.10.4    nyc3      Ubuntu 22.04    vpc-abc     new\n");
+                write_str(1, "\nDroplet creation is in progress.\n");
+            } else if (argc >= 4 && strcmp_simple(argv[3], "delete") == 0) {
+                write_str(1, "Warning: Are you sure you want to delete this droplet? (y/N): y\n");
+                write_str(1, "Droplet deleted.\n");
+            } else {
+                write_str(1, "ID          Name            Public IPv4      Status\n");
+                write_str(1, "----------  --------------  ---------------  ------\n");
+                write_str(1, "12345678    web-droplet-1   165.232.10.1     active\n");
+                write_str(1, "23456789    api-droplet-1   165.232.10.2     active\n");
+            }
+        } else if (strcmp_simple(argv[2], "region") == 0) {
+            write_str(1, "Slug    Name                Available\n");
+            write_str(1, "------  ------------------  ---------\n");
+            write_str(1, "nyc1    New York 1           true\n");
+            write_str(1, "nyc3    New York 3           true\n");
+            write_str(1, "sfo3    San Francisco 3      true\n");
+            write_str(1, "lon1    London 1             true\n");
+            write_str(1, "ams3    Amsterdam 3          true\n");
+        } else if (strcmp_simple(argv[2], "size") == 0) {
+            write_str(1, "Slug              Memory    VCPUs    Disk    Price Monthly\n");
+            write_str(1, "----------------  --------  -------  ------  ------------\n");
+            write_str(1, "s-1vcpu-1gb       1024      1        25      $6.00\n");
+            write_str(1, "s-2vcpu-4gb       4096      2        80      $24.00\n");
+            write_str(1, "s-4vcpu-8gb       8192      4        160     $48.00\n");
+        } else {
+            write_str(2, "doctl compute: unknown resource '");
+            write_str(2, argv[2]);
+            write_str(2, "'\n");
+        }
+        return;
+    }
+    if (strcmp_simple(argv[1], "databases") == 0) {
+        write_str(1, "ID                                    Name        Engine    Version    Region    Status    Size\n");
+        write_str(1, "------------------------------------  ----------  --------  ---------  --------  --------  --------\n");
+        write_str(1, "aabb1122-3344-5566-7788-99aabbccddee  my-pg-db    pg        16         nyc3      online    db-s-1vcpu-1gb\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "kubernetes") == 0) {
+        write_str(1, "ID                                    Name         Region    Version    Auto Upgrade    Status\n");
+        write_str(1, "------------------------------------  -----------  --------  ---------  --------------  -------\n");
+        write_str(1, "ddee1122-3344-5566-7788-aabbccddeeff  my-k8s       nyc3      1.29.1     true            running\n");
+        return;
+    }
+    write_str(2, "doctl: unknown command '");
+    write_str(2, argv[1]);
+    write_str(2, "'\n");
+}
+
+/* fly - simulated Fly.io CLI */
+static void cmd_fly(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "usage: fly <command> [options]\n");
+        write_str(1, "\nAvailable commands:\n");
+        write_str(1, "  apps            Manage Fly apps\n");
+        write_str(1, "  deploy          Deploy an app\n");
+        write_str(1, "  status          Show app status\n");
+        write_str(1, "  logs            View app logs\n");
+        write_str(1, "  scale           Scale app resources\n");
+        write_str(1, "  secrets         Manage app secrets\n");
+        write_str(1, "  regions         Manage app regions\n");
+        write_str(1, "  auth            Authentication\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "version") == 0 || strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "flyctl v0.2.52 linux/amd64 Commit: abc1234d BuildDate: 2024-03-15\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "auth") == 0) {
+        if (argc >= 3 && strcmp_simple(argv[2], "whoami") == 0) {
+            write_str(1, "Current user: user@example.com\n");
+        } else if (argc >= 3 && strcmp_simple(argv[2], "login") == 0) {
+            write_str(1, "Opening https://fly.io/app/auth/cli/...\n");
+            write_str(1, "Waiting for session... Done\n");
+            write_str(1, "Successfully logged in as user@example.com\n");
+        } else {
+            write_str(2, "usage: fly auth whoami|login\n");
+        }
+        return;
+    }
+    if (strcmp_simple(argv[1], "apps") == 0) {
+        if (argc >= 3 && strcmp_simple(argv[2], "list") == 0) {
+            write_str(1, "NAME                OWNER           STATUS      LATEST DEPLOY\n");
+            write_str(1, "my-web-app          personal        deployed    2024-03-15T10:30:00Z\n");
+            write_str(1, "my-api-service      personal        deployed    2024-03-14T08:15:00Z\n");
+            write_str(1, "staging-app         personal        suspended   2024-03-10T12:00:00Z\n");
+        } else if (argc >= 3 && strcmp_simple(argv[2], "create") == 0) {
+            write_str(1, "New app created: ");
+            if (argc >= 4) write_str(1, argv[3]);
+            else write_str(1, "nameless-cloud-1234");
+            write_str(1, "\n");
+        } else if (argc >= 3 && strcmp_simple(argv[2], "destroy") == 0) {
+            write_str(1, "Destroying app... done\n");
+        } else {
+            write_str(1, "NAME                OWNER           STATUS      LATEST DEPLOY\n");
+            write_str(1, "my-web-app          personal        deployed    2024-03-15T10:30:00Z\n");
+            write_str(1, "my-api-service      personal        deployed    2024-03-14T08:15:00Z\n");
+        }
+        return;
+    }
+    if (strcmp_simple(argv[1], "deploy") == 0) {
+        write_str(1, "==> Verifying app config\n");
+        write_str(1, "--> Verified app config\n");
+        write_str(1, "==> Building image\n");
+        write_str(1, "--> Building image done\n");
+        write_str(1, "image: registry.fly.io/my-web-app:deployment-01HQXYZ\n");
+        write_str(1, "image size: 87 MB\n");
+        write_str(1, "==> Creating release\n");
+        write_str(1, "--> release v12 created\n");
+        write_str(1, "==> Monitoring deployment\n");
+        write_str(1, " 1 desired, 1 placed, 1 healthy, 0 unhealthy [health checks: 3 total, 3 passing]\n");
+        write_str(1, "--> v12 deployed successfully\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "status") == 0) {
+        write_str(1, "App\n");
+        write_str(1, "  Name     = my-web-app\n");
+        write_str(1, "  Owner    = personal\n");
+        write_str(1, "  Hostname = my-web-app.fly.dev\n");
+        write_str(1, "  Platform = machines\n");
+        write_str(1, "\nMachines\n");
+        write_str(1, "ID              PROCESS   REGION  STATE    CHECKS              LAST UPDATED\n");
+        write_str(1, "e784079b100358  app       iad     started  3 total, 3 passing  2024-03-15T10:30:00Z\n");
+        write_str(1, "148ed726c12768  app       lhr     started  3 total, 3 passing  2024-03-15T10:30:00Z\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "logs") == 0) {
+        write_str(1, "2024-03-15T10:30:01Z app[e784079b] iad [info] Starting server on 0.0.0.0:8080\n");
+        write_str(1, "2024-03-15T10:30:02Z app[e784079b] iad [info] Server ready, accepting connections\n");
+        write_str(1, "2024-03-15T10:30:15Z app[e784079b] iad [info] GET /health 200 1.2ms\n");
+        write_str(1, "2024-03-15T10:31:00Z app[e784079b] iad [info] GET /api/v1/users 200 45.3ms\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "scale") == 0) {
+        if (argc >= 3 && strcmp_simple(argv[2], "show") == 0) {
+            write_str(1, "VM Resources for my-web-app\n");
+            write_str(1, "  Groups:\n");
+            write_str(1, "    app:  CPU Kind: shared, CPUs: 1, Memory: 256 MB\n");
+        } else if (argc >= 3 && strcmp_simple(argv[2], "count") == 0) {
+            write_str(1, "Count changed to ");
+            if (argc >= 4) write_str(1, argv[3]);
+            else write_str(1, "2");
+            write_str(1, "\n");
+        } else {
+            write_str(2, "usage: fly scale show|count <n>\n");
+        }
+        return;
+    }
+    if (strcmp_simple(argv[1], "secrets") == 0) {
+        if (argc >= 3 && strcmp_simple(argv[2], "list") == 0) {
+            write_str(1, "NAME                DIGEST              CREATED AT\n");
+            write_str(1, "DATABASE_URL        abc123def456        2024-01-15T10:00:00Z\n");
+            write_str(1, "SECRET_KEY          789abc012def        2024-01-15T10:00:00Z\n");
+            write_str(1, "REDIS_URL           456def789abc        2024-02-20T14:30:00Z\n");
+        } else {
+            write_str(2, "usage: fly secrets list|set|unset\n");
+        }
+        return;
+    }
+    if (strcmp_simple(argv[1], "regions") == 0) {
+        if (argc >= 3 && strcmp_simple(argv[2], "list") == 0) {
+            write_str(1, "Region Pool:\n");
+            write_str(1, "  iad (Ashburn, Virginia, US)\n");
+            write_str(1, "  lhr (London, UK)\n");
+            write_str(1, "\nBackup Region:\n");
+            write_str(1, "  ord (Chicago, Illinois, US)\n");
+        } else {
+            write_str(2, "usage: fly regions list|add|remove\n");
+        }
+        return;
+    }
+    write_str(2, "fly: unknown command '");
+    write_str(2, argv[1]);
+    write_str(2, "'\n");
+}
+
+/* vercel - simulated Vercel CLI */
+static void cmd_vercel(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "usage: vercel <command> [options]\n");
+        write_str(1, "\nAvailable commands:\n");
+        write_str(1, "  deploy          Deploy a project\n");
+        write_str(1, "  ls              List deployments\n");
+        write_str(1, "  env             Manage environment variables\n");
+        write_str(1, "  domains         Manage domains\n");
+        write_str(1, "  logs            View deployment logs\n");
+        write_str(1, "  dev             Start local development\n");
+        write_str(1, "  whoami          Show current user\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "Vercel CLI 33.5.5\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "whoami") == 0) {
+        write_str(1, "user@example.com\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "deploy") == 0) {
+        write_str(1, "Vercel CLI 33.5.5\n");
+        write_str(1, "Deploying my-project...\n");
+        write_str(1, "  Uploading [====================] 100%\n");
+        write_str(1, "  Building...\n");
+        write_str(1, "  Build completed in 12.4s\n");
+        write_str(1, "  Deployed to production\n");
+        write_str(1, "\n  Production: https://my-project.vercel.app\n");
+        write_str(1, "  Preview:    https://my-project-abc123.vercel.app\n");
+        write_str(1, "  Inspect:    https://vercel.com/user/my-project/deployment/dpl_abc123\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "ls") == 0) {
+        write_str(1, "  Age   Status     URL                                         Created\n");
+        write_str(1, "  3h    Ready      https://my-project-abc123.vercel.app        2024-03-15T10:30:00Z\n");
+        write_str(1, "  1d    Ready      https://my-project-def456.vercel.app        2024-03-14T08:15:00Z\n");
+        write_str(1, "  3d    Ready      https://my-project-ghi789.vercel.app        2024-03-12T16:45:00Z\n");
+        write_str(1, "  7d    Ready      https://my-project-jkl012.vercel.app        2024-03-08T12:00:00Z\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "env") == 0) {
+        if (argc >= 3 && strcmp_simple(argv[2], "ls") == 0) {
+            write_str(1, "  Environment Variables for my-project\n\n");
+            write_str(1, "  Name              Environment    Value\n");
+            write_str(1, "  DATABASE_URL      Production     ●●●●●●●●●●●●\n");
+            write_str(1, "  API_KEY           Production     ●●●●●●●●●●●●\n");
+            write_str(1, "  NODE_ENV          Production     production\n");
+            write_str(1, "  DATABASE_URL      Preview        ●●●●●●●●●●●●\n");
+            write_str(1, "  API_KEY           Preview        ●●●●●●●●●●●●\n");
+        } else if (argc >= 3 && strcmp_simple(argv[2], "add") == 0) {
+            write_str(1, "What's the value of ");
+            if (argc >= 4) write_str(1, argv[3]);
+            else write_str(1, "ENV_VAR");
+            write_str(1, "? ");
+            write_str(1, "\nAdded Environment Variable to project.\n");
+        } else if (argc >= 3 && strcmp_simple(argv[2], "rm") == 0) {
+            write_str(1, "Removed Environment Variable.\n");
+        } else if (argc >= 3 && strcmp_simple(argv[2], "pull") == 0) {
+            write_str(1, "Downloading `development` Environment Variables for Project my-project\n");
+            write_str(1, "Created .env.local file [3 entries]\n");
+        } else {
+            write_str(2, "usage: vercel env ls|add|rm|pull\n");
+        }
+        return;
+    }
+    if (strcmp_simple(argv[1], "domains") == 0) {
+        if (argc >= 3 && strcmp_simple(argv[2], "ls") == 0) {
+            write_str(1, "  Domain                   DNS     Verified    Age\n");
+            write_str(1, "  myapp.com                Valid   Yes         120d\n");
+            write_str(1, "  www.myapp.com            Valid   Yes         120d\n");
+            write_str(1, "  staging.myapp.com        Valid   Yes         45d\n");
+        } else {
+            write_str(2, "usage: vercel domains ls|add|rm|inspect\n");
+        }
+        return;
+    }
+    if (strcmp_simple(argv[1], "logs") == 0) {
+        write_str(1, "2024-03-15T10:30:01Z  [info]   Ready on port 3000\n");
+        write_str(1, "2024-03-15T10:30:15Z  [info]   GET /api/hello 200 in 12ms\n");
+        write_str(1, "2024-03-15T10:31:00Z  [info]   GET / 200 in 5ms\n");
+        write_str(1, "2024-03-15T10:31:30Z  [info]   POST /api/data 201 in 89ms\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "dev") == 0) {
+        write_str(1, "Vercel CLI 33.5.5 — dev command\n");
+        write_str(1, "Running \"npm run dev\"\n");
+        write_str(1, "Ready! Available at http://localhost:3000\n");
+        return;
+    }
+    write_str(2, "vercel: unknown command '");
+    write_str(2, argv[1]);
+    write_str(2, "'\n");
+}
+
+/* netlify - simulated Netlify CLI */
+static void cmd_netlify(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "usage: netlify <command> [options]\n");
+        write_str(1, "\nAvailable commands:\n");
+        write_str(1, "  deploy          Deploy to Netlify\n");
+        write_str(1, "  sites:list      List all sites\n");
+        write_str(1, "  status          Show site status\n");
+        write_str(1, "  dev             Start local dev server\n");
+        write_str(1, "  env:list        List environment variables\n");
+        write_str(1, "  login           Login to Netlify\n");
+        write_str(1, "  build           Build the site locally\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "netlify-cli/17.19.0 linux-x64 node-v20.11.1\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "login") == 0) {
+        write_str(1, "Opening https://app.netlify.com/authorize?...\n");
+        write_str(1, "Waiting for authorization...\n");
+        write_str(1, "You are now logged in!\n");
+        write_str(1, "Run netlify status for account details.\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "deploy") == 0) {
+        write_str(1, "Deploy path:        ./dist\n");
+        write_str(1, "Configuration path: ./netlify.toml\n");
+        write_str(1, "Deploying to draft URL...\n");
+        write_str(1, "  Uploading files [====================] 100% (42 files)\n");
+        write_str(1, "  Deploy complete!\n\n");
+        write_str(1, "  Logs:              https://app.netlify.com/sites/my-site/deploys/abc123\n");
+        write_str(1, "  Website draft URL: https://abc123--my-site.netlify.app\n");
+        write_str(1, "\nIf everything looks good, deploy to production with --prod flag.\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "sites:list") == 0) {
+        write_str(1, "  my-portfolio-site - https://my-portfolio.netlify.app\n");
+        write_str(1, "    id: a1b2c3d4-e5f6-7890-abcd-ef1234567890\n");
+        write_str(1, "\n  my-blog - https://my-blog.netlify.app\n");
+        write_str(1, "    id: f6e5d4c3-b2a1-0987-dcba-0fedcba98765\n");
+        write_str(1, "\n  company-landing - https://company-landing.netlify.app\n");
+        write_str(1, "    id: 11223344-5566-7788-99aa-bbccddeeff00\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "status") == 0) {
+        write_str(1, "──────────────────────\n");
+        write_str(1, " Current Netlify User \n");
+        write_str(1, "──────────────────────\n");
+        write_str(1, "Name:   User\n");
+        write_str(1, "Email:  user@example.com\n");
+        write_str(1, "Teams:  User's team\n\n");
+        write_str(1, "────────────────────\n");
+        write_str(1, " Netlify Site Info  \n");
+        write_str(1, "────────────────────\n");
+        write_str(1, "Current site: my-portfolio-site\n");
+        write_str(1, "Admin URL:    https://app.netlify.com/sites/my-portfolio-site\n");
+        write_str(1, "Site URL:     https://my-portfolio.netlify.app\n");
+        write_str(1, "Site Id:      a1b2c3d4-e5f6-7890-abcd-ef1234567890\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "dev") == 0) {
+        write_str(1, "Netlify Dev\n");
+        write_str(1, "Starting dev server...\n");
+        write_str(1, "  Functions server is listening on 8888\n");
+        write_str(1, "  Server now ready on http://localhost:8888\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "env:list") == 0) {
+        write_str(1, "  .-----------------------------.-------------------------------------------.\n");
+        write_str(1, "  | Key                         | Value                                     |\n");
+        write_str(1, "  |-----------------------------|-------------------------------------------|\n");
+        write_str(1, "  | DATABASE_URL                | ●●●●●●●●●●●●                              |\n");
+        write_str(1, "  | API_SECRET                  | ●●●●●●●●●●●●                              |\n");
+        write_str(1, "  | SITE_URL                    | https://my-portfolio.netlify.app           |\n");
+        write_str(1, "  '-----------------------------'-------------------------------------------'\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "build") == 0) {
+        write_str(1, "Netlify Build\n");
+        write_str(1, "  Build command: npm run build\n");
+        write_str(1, "  Publish directory: dist\n");
+        write_str(1, "  Build completed in 8.2s\n");
+        write_str(1, "  42 files uploaded\n");
+        return;
+    }
+    write_str(2, "netlify: unknown command '");
+    write_str(2, argv[1]);
+    write_str(2, "'\n");
+}
+
+/* heroku - simulated Heroku CLI */
+static void cmd_heroku(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "usage: heroku <command> [options]\n");
+        write_str(1, "\nAvailable commands:\n");
+        write_str(1, "  apps            List or manage apps\n");
+        write_str(1, "  ps              Manage dynos\n");
+        write_str(1, "  logs            View app logs\n");
+        write_str(1, "  config          Manage config vars\n");
+        write_str(1, "  addons          Manage add-ons\n");
+        write_str(1, "  run             Run one-off process\n");
+        write_str(1, "  releases        List releases\n");
+        write_str(1, "  auth:whoami     Show current user\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "heroku/8.11.1 linux-x64 node-v20.11.1\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "auth:whoami") == 0) {
+        write_str(1, "user@example.com\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "apps") == 0) {
+        write_str(1, "=== user@example.com Apps\n");
+        write_str(1, "my-web-app (us)\n");
+        write_str(1, "my-api-backend (eu)\n");
+        write_str(1, "staging-app (us)\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "apps:info") == 0) {
+        write_str(1, "=== my-web-app\n");
+        write_str(1, "Addons:         heroku-postgresql:essential-0\n");
+        write_str(1, "                heroku-redis:mini\n");
+        write_str(1, "Auto Cert Mgmt: true\n");
+        write_str(1, "Dynos:          web: 1, worker: 1\n");
+        write_str(1, "Git URL:        https://git.heroku.com/my-web-app.git\n");
+        write_str(1, "Owner:          user@example.com\n");
+        write_str(1, "Region:         us\n");
+        write_str(1, "Repo Size:      12 MB\n");
+        write_str(1, "Slug Size:      45 MB\n");
+        write_str(1, "Stack:          heroku-22\n");
+        write_str(1, "Web URL:        https://my-web-app.herokuapp.com/\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "ps") == 0) {
+        write_str(1, "=== web (Standard-1X): node server.js (1)\n");
+        write_str(1, "web.1: up 2024/03/15 10:30:00 +0000 (~ 3h ago)\n");
+        write_str(1, "\n=== worker (Standard-1X): node worker.js (1)\n");
+        write_str(1, "worker.1: up 2024/03/15 10:30:00 +0000 (~ 3h ago)\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "logs") == 0) {
+        write_str(1, "2024-03-15T10:30:01.000000+00:00 heroku[web.1]: Starting process with command `node server.js`\n");
+        write_str(1, "2024-03-15T10:30:02.000000+00:00 app[web.1]: Listening on port 3000\n");
+        write_str(1, "2024-03-15T10:30:15.000000+00:00 heroku[router]: at=info method=GET path=\"/\" dyno=web.1 status=200 bytes=1234\n");
+        write_str(1, "2024-03-15T10:31:00.000000+00:00 heroku[router]: at=info method=GET path=\"/api/users\" dyno=web.1 status=200 bytes=5678\n");
+        write_str(1, "2024-03-15T10:32:00.000000+00:00 app[worker.1]: Processing job queue: 12 jobs completed\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "config") == 0) {
+        write_str(1, "=== my-web-app Config Vars\n");
+        write_str(1, "DATABASE_URL:     postgres://user:pass@host:5432/db\n");
+        write_str(1, "REDIS_URL:        redis://host:6379\n");
+        write_str(1, "NODE_ENV:         production\n");
+        write_str(1, "SECRET_KEY:       ●●●●●●●●●●●●\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "addons") == 0) {
+        write_str(1, "=== Resources for my-web-app\n");
+        write_str(1, "Plan                     Name                     Price/mo  State\n");
+        write_str(1, "───────────────────────  ───────────────────────  ────────  ─────\n");
+        write_str(1, "heroku-postgresql:essential-0  postgresql-round-12345   $5        created\n");
+        write_str(1, "heroku-redis:mini             redis-flat-67890         $3        created\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "run") == 0) {
+        if (argc >= 3) {
+            write_str(1, "Running ");
+            write_str(1, argv[2]);
+            write_str(1, " on my-web-app... up, run.1234 (Standard-1X)\n");
+        } else {
+            write_str(2, "usage: heroku run <command>\n");
+        }
+        return;
+    }
+    if (strcmp_simple(argv[1], "releases") == 0) {
+        write_str(1, "=== my-web-app Releases - Current: v42\n");
+        write_str(1, "v42  Deploy abc1234                        user@example.com  2024/03/15 10:30:00 +0000\n");
+        write_str(1, "v41  Set DATABASE_URL config vars           user@example.com  2024/03/14 08:15:00 +0000\n");
+        write_str(1, "v40  Deploy def5678                        user@example.com  2024/03/13 14:00:00 +0000\n");
+        write_str(1, "v39  Add heroku-redis:mini resource         user@example.com  2024/03/12 09:30:00 +0000\n");
+        return;
+    }
+    write_str(2, "heroku: unknown command '");
+    write_str(2, argv[1]);
+    write_str(2, "'\n");
+}
+
+/* cf - simulated Cloud Foundry CLI */
+static void cmd_cf(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "usage: cf <command> [options]\n");
+        write_str(1, "\nAvailable commands:\n");
+        write_str(1, "  apps            List all apps\n");
+        write_str(1, "  push            Push an app\n");
+        write_str(1, "  logs            View app logs\n");
+        write_str(1, "  services        List service instances\n");
+        write_str(1, "  spaces          List spaces\n");
+        write_str(1, "  orgs            List organizations\n");
+        write_str(1, "  target          Set org/space target\n");
+        write_str(1, "  scale           Scale an app\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0 || strcmp_simple(argv[1], "-v") == 0) {
+        write_str(1, "cf version 8.7.10+6a70e8e.2024-03-01\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "login") == 0) {
+        write_str(1, "API endpoint: https://api.cf.example.com\n");
+        write_str(1, "Authenticating...\n");
+        write_str(1, "OK\n\n");
+        write_str(1, "Targeted org my-org.\n");
+        write_str(1, "Targeted space development.\n\n");
+        write_str(1, "API endpoint:   https://api.cf.example.com\n");
+        write_str(1, "User:           user@example.com\n");
+        write_str(1, "Org:            my-org\n");
+        write_str(1, "Space:          development\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "target") == 0) {
+        write_str(1, "API endpoint:   https://api.cf.example.com\n");
+        write_str(1, "User:           user@example.com\n");
+        write_str(1, "Org:            my-org\n");
+        write_str(1, "Space:          development\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "apps") == 0) {
+        write_str(1, "Getting apps in org my-org / space development as user@example.com...\n\n");
+        write_str(1, "name              requested state   processes           routes\n");
+        write_str(1, "my-web-app        started          web:1/1, worker:1/1  my-web-app.cf.example.com\n");
+        write_str(1, "my-api            started          web:2/2              my-api.cf.example.com\n");
+        write_str(1, "staging-app       stopped          web:0/1              staging-app.cf.example.com\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "push") == 0) {
+        write_str(1, "Pushing app ");
+        if (argc >= 3) write_str(1, argv[2]);
+        else write_str(1, "my-web-app");
+        write_str(1, " to org my-org / space development...\n\n");
+        write_str(1, "Staging app and tracing logs...\n");
+        write_str(1, "   Downloading staticfile_buildpack...\n");
+        write_str(1, "   Downloaded staticfile_buildpack\n");
+        write_str(1, "   Cell abc123 creating container for instance def456\n");
+        write_str(1, "   Cell abc123 successfully created container for instance def456\n");
+        write_str(1, "   Uploading droplet, build artifacts cache...\n");
+        write_str(1, "   Uploaded build artifacts cache (215B)\n");
+        write_str(1, "   Uploaded droplet (25.6M)\n\n");
+        write_str(1, "Waiting for app to start...\n\n");
+        write_str(1, "Instances starting...\n");
+        write_str(1, "OK\n\n");
+        write_str(1, "name:              my-web-app\n");
+        write_str(1, "requested state:   started\n");
+        write_str(1, "routes:            my-web-app.cf.example.com\n");
+        write_str(1, "stack:             cflinuxfs4\n");
+        write_str(1, "buildpacks:        staticfile\n\n");
+        write_str(1, "     state     since                  cpu    memory        disk\n");
+        write_str(1, "#0   running   2024-03-15T10:30:00Z   0.2%   32M of 256M   120M of 1G\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "logs") == 0) {
+        write_str(1, "Retrieving logs for app ");
+        if (argc >= 3) write_str(1, argv[2]);
+        else write_str(1, "my-web-app");
+        write_str(1, " in org my-org / space development...\n\n");
+        write_str(1, "2024-03-15T10:30:01.00+0000 [APP/PROC/WEB/0] OUT Server starting on port 8080\n");
+        write_str(1, "2024-03-15T10:30:02.00+0000 [APP/PROC/WEB/0] OUT Server ready\n");
+        write_str(1, "2024-03-15T10:30:15.00+0000 [RTR/0] OUT my-web-app.cf.example.com - [200/1.2ms]\n");
+        write_str(1, "2024-03-15T10:31:00.00+0000 [RTR/0] OUT my-web-app.cf.example.com - [200/45.3ms]\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "services") == 0) {
+        write_str(1, "Getting service instances in org my-org / space development...\n\n");
+        write_str(1, "name          offering          plan       bound apps     last operation\n");
+        write_str(1, "my-pg-db      postgresql        small      my-web-app     create succeeded\n");
+        write_str(1, "my-redis      redis             micro      my-web-app     create succeeded\n");
+        write_str(1, "my-rabbitmq   rabbitmq          standard   my-api         create succeeded\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "spaces") == 0) {
+        write_str(1, "Getting spaces in org my-org as user@example.com...\n\n");
+        write_str(1, "name\n");
+        write_str(1, "development\n");
+        write_str(1, "staging\n");
+        write_str(1, "production\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "orgs") == 0) {
+        write_str(1, "Getting orgs as user@example.com...\n\n");
+        write_str(1, "name\n");
+        write_str(1, "my-org\n");
+        write_str(1, "sandbox-org\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "scale") == 0) {
+        if (argc >= 3) {
+            write_str(1, "Scaling app ");
+            write_str(1, argv[2]);
+            write_str(1, " in org my-org / space development...\n");
+            write_str(1, "OK\n");
+        } else {
+            write_str(2, "usage: cf scale <app-name> [-i instances] [-m memory] [-k disk]\n");
+        }
+        return;
+    }
+    write_str(2, "cf: unknown command '");
+    write_str(2, argv[1]);
+    write_str(2, "'\n");
+}
+
+/* eksctl - simulated EKS cluster manager */
+static void cmd_eksctl(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "usage: eksctl <command> [options]\n");
+        write_str(1, "\nAvailable commands:\n");
+        write_str(1, "  create          Create resource(s)\n");
+        write_str(1, "  get             Get resource(s)\n");
+        write_str(1, "  delete          Delete resource(s)\n");
+        write_str(1, "  scale           Scale resources\n");
+        write_str(1, "  upgrade         Upgrade resource(s)\n");
+        write_str(1, "  utils           Various utilities\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "version") == 0 || strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "0.175.0\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "info") == 0) {
+        write_str(1, "eksctl version: 0.175.0\n");
+        write_str(1, "kubectl version: v1.29.2\n");
+        write_str(1, "OS: linux\n");
+        write_str(1, "Architecture: amd64\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "create") == 0) {
+        if (argc < 3) {
+            write_str(2, "usage: eksctl create cluster|nodegroup [options]\n");
+            return;
+        }
+        if (strcmp_simple(argv[2], "cluster") == 0) {
+            write_str(1, "[i]  eksctl version 0.175.0\n");
+            write_str(1, "[i]  using region us-east-1\n");
+            write_str(1, "[i]  setting availability zones to [us-east-1a us-east-1b us-east-1c]\n");
+            write_str(1, "[i]  subnets for us-east-1a - public:192.168.0.0/19 private:192.168.96.0/19\n");
+            write_str(1, "[i]  subnets for us-east-1b - public:192.168.32.0/19 private:192.168.128.0/19\n");
+            write_str(1, "[i]  subnets for us-east-1c - public:192.168.64.0/19 private:192.168.160.0/19\n");
+            write_str(1, "[i]  using Kubernetes version 1.29\n");
+            write_str(1, "[i]  creating EKS cluster \"");
+            if (argc >= 5 && strcmp_simple(argv[3], "--name") == 0)
+                write_str(1, argv[4]);
+            else
+                write_str(1, "my-cluster");
+            write_str(1, "\" in \"us-east-1\" region...\n");
+            write_str(1, "[i]  2 sequential tasks: { create cluster control plane, 2 sequential sub-tasks: { wait for control plane, create managed nodegroup } }\n");
+            write_str(1, "[i]  building cluster stack \"eksctl-my-cluster-cluster\"...\n");
+            write_str(1, "[i]  waiting for CloudFormation stack...\n");
+            write_str(1, "[i]  building managed nodegroup stack...\n");
+            write_str(1, "[i]  waiting for CloudFormation stack...\n");
+            write_str(1, "[i]  waiting for the control plane to become ready...\n");
+            write_str(1, "[+]  EKS cluster \"my-cluster\" in \"us-east-1\" region is ready\n");
+        } else if (strcmp_simple(argv[2], "nodegroup") == 0) {
+            write_str(1, "[i]  creating managed nodegroup in cluster my-cluster...\n");
+            write_str(1, "[i]  building managed nodegroup stack...\n");
+            write_str(1, "[i]  waiting for CloudFormation stack...\n");
+            write_str(1, "[+]  managed nodegroup \"ng-workers\" created\n");
+        } else {
+            write_str(2, "eksctl create: unknown resource '");
+            write_str(2, argv[2]);
+            write_str(2, "'\n");
+        }
+        return;
+    }
+    if (strcmp_simple(argv[1], "get") == 0) {
+        if (argc < 3) {
+            write_str(2, "usage: eksctl get cluster|nodegroup [options]\n");
+            return;
+        }
+        if (strcmp_simple(argv[2], "cluster") == 0) {
+            write_str(1, "NAME            REGION      EKSCTL CREATED\n");
+            write_str(1, "my-cluster      us-east-1   True\n");
+            write_str(1, "staging-cluster us-west-2   True\n");
+        } else if (strcmp_simple(argv[2], "nodegroup") == 0) {
+            write_str(1, "CLUSTER         NODEGROUP       STATUS    CREATED                 MIN SIZE    MAX SIZE    DESIRED CAPACITY    INSTANCE TYPE    IMAGE ID\n");
+            write_str(1, "my-cluster      ng-workers      ACTIVE    2024-03-15T10:30:00Z    2           5           3                   t3.medium        AL2_x86_64\n");
+            write_str(1, "my-cluster      ng-gpu          ACTIVE    2024-03-14T08:15:00Z    1           3           1                   g4dn.xlarge      AL2_x86_64_GPU\n");
+        } else if (strcmp_simple(argv[2], "addon") == 0) {
+            write_str(1, "NAME            VERSION                 STATUS    ISSUES    IAMROLE    UPDATE AVAILABLE\n");
+            write_str(1, "vpc-cni         v1.16.4-eksbuild.2      ACTIVE    0                    \n");
+            write_str(1, "coredns         v1.11.1-eksbuild.6      ACTIVE    0                    v1.11.1-eksbuild.8\n");
+            write_str(1, "kube-proxy      v1.29.1-eksbuild.2      ACTIVE    0                    \n");
+        } else if (strcmp_simple(argv[2], "iamidentitymapping") == 0) {
+            write_str(1, "ARN                                                     USERNAME        GROUPS                          ACCOUNT\n");
+            write_str(1, "arn:aws:iam::123456789012:role/eksctl-NodeInstanceRole   system:node:{{EC2PrivateDNSName}}  system:bootstrappers,system:nodes\n");
+        } else {
+            write_str(2, "eksctl get: unknown resource '");
+            write_str(2, argv[2]);
+            write_str(2, "'\n");
+        }
+        return;
+    }
+    if (strcmp_simple(argv[1], "delete") == 0) {
+        if (argc < 3) {
+            write_str(2, "usage: eksctl delete cluster|nodegroup [options]\n");
+            return;
+        }
+        if (strcmp_simple(argv[2], "cluster") == 0) {
+            write_str(1, "[i]  deleting EKS cluster \"");
+            if (argc >= 5 && strcmp_simple(argv[3], "--name") == 0)
+                write_str(1, argv[4]);
+            else
+                write_str(1, "my-cluster");
+            write_str(1, "\"...\n");
+            write_str(1, "[i]  deleting managed nodegroup(s)...\n");
+            write_str(1, "[i]  waiting for CloudFormation stack...\n");
+            write_str(1, "[i]  deleting cluster stack...\n");
+            write_str(1, "[i]  waiting for CloudFormation stack...\n");
+            write_str(1, "[+]  all cluster resources were deleted\n");
+        } else if (strcmp_simple(argv[2], "nodegroup") == 0) {
+            write_str(1, "[i]  deleting nodegroup...\n");
+            write_str(1, "[i]  waiting for CloudFormation stack...\n");
+            write_str(1, "[+]  nodegroup deleted\n");
+        } else {
+            write_str(2, "eksctl delete: unknown resource '");
+            write_str(2, argv[2]);
+            write_str(2, "'\n");
+        }
+        return;
+    }
+    if (strcmp_simple(argv[1], "scale") == 0) {
+        if (argc >= 3 && strcmp_simple(argv[2], "nodegroup") == 0) {
+            write_str(1, "[i]  scaling nodegroup in cluster my-cluster...\n");
+            write_str(1, "[+]  nodegroup scaled successfully\n");
+        } else {
+            write_str(2, "usage: eksctl scale nodegroup [options]\n");
+        }
+        return;
+    }
+    if (strcmp_simple(argv[1], "upgrade") == 0) {
+        if (argc >= 3 && strcmp_simple(argv[2], "cluster") == 0) {
+            write_str(1, "[i]  will upgrade cluster \"my-cluster\" control plane from current version \"1.28\" to \"1.29\"\n");
+            write_str(1, "[i]  re-building cluster stack...\n");
+            write_str(1, "[i]  waiting for CloudFormation stack...\n");
+            write_str(1, "[+]  cluster \"my-cluster\" control plane has been upgraded to version \"1.29\"\n");
+            write_str(1, "[i]  you will need to follow the upgrade procedure for all of nodegroups and add-ons\n");
+        } else {
+            write_str(2, "usage: eksctl upgrade cluster [options]\n");
+        }
+        return;
+    }
+    if (strcmp_simple(argv[1], "utils") == 0) {
+        if (argc >= 3 && strcmp_simple(argv[2], "write-kubeconfig") == 0) {
+            write_str(1, "[i]  wrote kubeconfig to ~/.kube/config\n");
+            write_str(1, "[+]  kubeconfig has been updated\n");
+        } else if (argc >= 3 && strcmp_simple(argv[2], "describe-stacks") == 0) {
+            write_str(1, "Stack name: eksctl-my-cluster-cluster\n");
+            write_str(1, "Status: CREATE_COMPLETE\n");
+            write_str(1, "Cluster: my-cluster\n");
+        } else {
+            write_str(2, "usage: eksctl utils write-kubeconfig|describe-stacks\n");
+        }
+        return;
+    }
+    write_str(2, "eksctl: unknown command '");
+    write_str(2, argv[1]);
+    write_str(2, "'\n");
 }
 
 #pragma GCC diagnostic pop

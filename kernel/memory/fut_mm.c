@@ -628,6 +628,13 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
             /* Writeback present pages to file for MAP_SHARED mappings before unmapping */
             vma_writeback_pages(vma, ctx);
 
+            /* Evict shared page cache entries for this VMA's file range */
+            if ((vma->flags & 0x01) && vma->vnode) {
+                extern void shared_page_evict_range(struct fut_vnode *, uint64_t, uint64_t);
+                shared_page_evict_range(vma->vnode, vma->file_offset,
+                                        vma->file_offset + (vma->end - vma->start));
+            }
+
             mm_unmap_and_free(mm, vma->start, vma->end);
             /* Release file backing if present */
             if (vma->vnode) {
@@ -656,6 +663,12 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
                     vma->vnode->ops->write(vma->vnode, wb_kvirt, PAGE_SIZE, wb_foff);
                 }
             }
+            /* Evict shared page cache entries for the unmapped left portion */
+            if ((vma->flags & 0x01) && vma->vnode) {
+                extern void shared_page_evict_range(struct fut_vnode *, uint64_t, uint64_t);
+                shared_page_evict_range(vma->vnode, vma->file_offset,
+                                        vma->file_offset + (overlap_end - vma->start));
+            }
             mm_unmap_and_free(mm, vma->start, overlap_end);
             /* Adjust file_offset when shrinking from the left */
             if (vma->vnode) {
@@ -682,6 +695,13 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
                     uint64_t wb_foff = vma->file_offset + (pg - vma->start);
                     vma->vnode->ops->write(vma->vnode, wb_kvirt, PAGE_SIZE, wb_foff);
                 }
+            }
+            /* Evict shared page cache entries for the unmapped right portion */
+            if ((vma->flags & 0x01) && vma->vnode) {
+                extern void shared_page_evict_range(struct fut_vnode *, uint64_t, uint64_t);
+                shared_page_evict_range(vma->vnode,
+                                        vma->file_offset + (overlap_start - vma->start),
+                                        vma->file_offset + (vma->end - vma->start));
             }
             mm_unmap_and_free(mm, overlap_start, vma->end);
             vma->end = overlap_start;
@@ -710,6 +730,13 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
                     uint64_t wb_foff = vma->file_offset + (pg - vma->start);
                     vma->vnode->ops->write(vma->vnode, wb_kvirt, PAGE_SIZE, wb_foff);
                 }
+            }
+            /* Evict shared page cache entries for the unmapped middle */
+            if ((vma->flags & 0x01) && vma->vnode) {
+                extern void shared_page_evict_range(struct fut_vnode *, uint64_t, uint64_t);
+                shared_page_evict_range(vma->vnode,
+                                        vma->file_offset + (overlap_start - vma->start),
+                                        vma->file_offset + (overlap_end - vma->start));
             }
 
             /* Create right portion */
@@ -1528,6 +1555,13 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
                     vma->vnode->ops->write(vma->vnode, wb_kvirt, PAGE_SIZE, wb_foff);
                 }
             }
+            /* Evict shared page cache entries for the unmapped right portion */
+            if ((vma->flags & 0x01) && vma->vnode) {
+                extern void shared_page_evict_range(struct fut_vnode *, uint64_t, uint64_t);
+                shared_page_evict_range(vma->vnode,
+                                        vma->file_offset + (overlap_start - vma->start),
+                                        vma->file_offset + (vma->end - vma->start));
+            }
             mm_unmap_and_free(mm, overlap_start, vma->end);
             vma->end = overlap_start;
             link = &vma->next;
@@ -1555,6 +1589,13 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
                     uint64_t wb_foff = vma->file_offset + (pg - vma->start);
                     vma->vnode->ops->write(vma->vnode, wb_kvirt, PAGE_SIZE, wb_foff);
                 }
+            }
+            /* Evict shared page cache entries for the unmapped middle */
+            if ((vma->flags & 0x01) && vma->vnode) {
+                extern void shared_page_evict_range(struct fut_vnode *, uint64_t, uint64_t);
+                shared_page_evict_range(vma->vnode,
+                                        vma->file_offset + (overlap_start - vma->start),
+                                        vma->file_offset + (overlap_end - vma->start));
             }
 
             /* Create right portion */

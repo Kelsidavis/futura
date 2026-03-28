@@ -124,6 +124,40 @@ static void shared_page_insert(struct fut_vnode *vnode, uint64_t offset, phys_ad
     fut_spinlock_release(&shared_page_locks[bucket]);
 }
 
+/**
+ * Remove a shared page cache entry for a given vnode+offset.
+ * Called when the last mapper unmaps a MAP_SHARED page, preventing
+ * stale entries from returning freed physical pages to new mappers.
+ */
+void shared_page_evict(struct fut_vnode *vnode, uint64_t offset) {
+    if (!shared_page_cache_inited || !vnode) return;
+    int bucket = SHARED_PAGE_CACHE_HASH(vnode, offset);
+    fut_spinlock_acquire(&shared_page_locks[bucket]);
+    struct shared_page_entry **link = &shared_page_cache[bucket];
+    while (*link) {
+        struct shared_page_entry *e = *link;
+        if (e->vnode == vnode && e->offset == offset) {
+            *link = e->next;
+            fut_free(e);
+            fut_spinlock_release(&shared_page_locks[bucket]);
+            return;
+        }
+        link = &e->next;
+    }
+    fut_spinlock_release(&shared_page_locks[bucket]);
+}
+
+/**
+ * Evict all shared page cache entries for a given vnode within an offset range.
+ * Used by munmap to clean up shared page cache entries for unmapped file regions.
+ */
+void shared_page_evict_range(struct fut_vnode *vnode, uint64_t start_offset, uint64_t end_offset) {
+    if (!shared_page_cache_inited || !vnode) return;
+    for (uint64_t off = start_offset; off < end_offset; off += PAGE_SIZE) {
+        shared_page_evict(vnode, off);
+    }
+}
+
 /* ============================================================
  *   Architecture-Generic Demand Paging & COW Handling
  * ============================================================ */

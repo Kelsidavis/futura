@@ -1001,9 +1001,8 @@ static size_t gen_status(char *buf, size_t cap, fut_task_t *task, uint64_t tid) 
         if (task->threads)
             amask = task->threads->cpu_affinity_mask;
         if (amask == 0) {
-            /* Default: all online CPUs */
-            uint32_t ncpu = fut_platform_get_cpu_count();
-            if (ncpu == 0) ncpu = 1;
+            /* Default: all online CPUs (assume 4 if unknown) */
+            uint32_t ncpu = 4;
             if (ncpu >= 64) amask = ~0ULL;
             else amask = (1ULL << ncpu) - 1;
         }

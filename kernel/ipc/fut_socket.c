@@ -2291,12 +2291,46 @@ int fut_socket_bind_inet(fut_socket_t *socket, uint32_t addr, uint16_t port) {
         if (port == 0) return -EADDRINUSE;
     }
 
-    /* Check for address conflicts (unless SO_REUSEADDR/SO_REUSEPORT) */
-    if (!(socket->so_flags & (FUT_SO_F_REUSEADDR | FUT_SO_F_REUSEPORT))) {
+    /* Check for address conflicts with proper SO_REUSEADDR / SO_REUSEPORT enforcement.
+     *
+     * SO_REUSEADDR: Allow binding when the existing socket is in TIME_WAIT state
+     *   (or CLOSE/FIN_WAIT states).  This is the standard server-restart pattern —
+     *   the previous instance left a socket in TIME_WAIT and the new instance needs
+     *   to reclaim the port immediately.
+     *
+     * SO_REUSEPORT: Allow multiple sockets to bind to the exact same address:port
+     *   provided BOTH the existing and the new socket have SO_REUSEPORT set.
+     *   This enables load-balancing across multiple accept() threads/processes.
+     *
+     * Neither flag set: any existing binding is a conflict (EADDRINUSE).
+     */
+    {
         fut_socket_t *existing = fut_socket_find_inet_bound_ns(ns, addr, port);
         if (existing) {
+            bool allow = false;
+
+            if (socket->so_flags & FUT_SO_F_REUSEADDR) {
+                /* SO_REUSEADDR: allow if existing socket is in TIME_WAIT / CLOSE / FIN_WAIT */
+                uint8_t es = existing->tcp_state;
+                if (es == TCP_TIME_WAIT || es == TCP_CLOSE ||
+                    es == TCP_FIN_WAIT1 || es == TCP_FIN_WAIT2 ||
+                    es == TCP_LAST_ACK  || es == TCP_CLOSING ||
+                    existing->state == FUT_SOCK_CLOSED) {
+                    allow = true;
+                }
+            }
+
+            if (!allow && (socket->so_flags & FUT_SO_F_REUSEPORT)) {
+                /* SO_REUSEPORT: allow only if the existing socket also has SO_REUSEPORT */
+                if (existing->so_flags & FUT_SO_F_REUSEPORT) {
+                    allow = true;
+                }
+            }
+
             fut_socket_unref(existing);
-            return -EADDRINUSE;
+            if (!allow) {
+                return -EADDRINUSE;
+            }
         }
     }
 

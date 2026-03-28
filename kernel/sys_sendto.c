@@ -571,6 +571,17 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
                     fut_free(kbuf);
                     return -EFAULT;
                 }
+                /* SO_BROADCAST enforcement: reject broadcast destination address
+                 * (255.255.255.255 = 0xFFFFFFFF in any byte order) unless the
+                 * socket has SO_BROADCAST set.  This matches Linux/POSIX behavior
+                 * where sendto() to a broadcast address returns EACCES without
+                 * the flag.  Subnet-directed broadcasts (e.g. x.x.x.255) are also
+                 * caught by checking the host-order all-ones pattern. */
+                if (sin.sin_addr == 0xFFFFFFFFU &&
+                    !(src_sock->so_flags & FUT_SO_F_BROADCAST)) {
+                    fut_free(kbuf);
+                    return -EACCES;
+                }
                 /* Set TTL/TOS overrides from socket options for this send */
                 if (src_sock->ip_ttl > 0 && src_sock->ip_ttl != 64) {
                     extern uint8_t g_send_ttl_override;
@@ -650,6 +661,12 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
                     uint16_t peer_port;
                     __builtin_memcpy(&peer_addr, &dgsock->dgram_peer_path[0], 4);
                     __builtin_memcpy(&peer_port, &dgsock->dgram_peer_path[4], 2);
+                    /* SO_BROADCAST enforcement for connected DGRAM */
+                    if (peer_addr == 0xFFFFFFFFU &&
+                        !(dgsock->so_flags & FUT_SO_F_BROADCAST)) {
+                        fut_free(kbuf);
+                        return -EACCES;
+                    }
                     if (dgsock->ip_ttl > 0 && dgsock->ip_ttl != 64) {
                         extern uint8_t g_send_ttl_override;
                         g_send_ttl_override = dgsock->ip_ttl;

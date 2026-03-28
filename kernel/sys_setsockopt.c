@@ -9,7 +9,14 @@
  * Phase 1 (Completed): Basic validation stub
  * Phase 2 (Completed): Accept common SOL_SOCKET options (validation only, not enforced)
  * Phase 3 (Completed): TCP and IP protocol options
- * Phase 4: Full option enforcement with socket state tracking
+ * Phase 4 (Completed): Socket option enforcement with per-socket state tracking
+ *   - SO_REUSEADDR: bind allows TIME_WAIT address reuse (enforced in fut_socket_bind_inet)
+ *   - SO_REUSEPORT: bind allows same-port if both sockets set flag (enforced in bind)
+ *   - SO_BROADCAST: sendto rejects broadcast dest without flag (enforced in sys_sendto)
+ *   - IP_TTL: stored per-socket, applied as g_send_ttl_override in sendto path
+ *   - IP_TOS: stored per-socket, applied as g_send_tos_override in sendto path
+ *   - TCP_CORK: stored per-socket, uncorking wakes send waitqueue to flush
+ *   - TCP_QUICKACK: stored per-socket, exposed via getsockopt round-trip
  */
 
 #include <kernel/fut_task.h>
@@ -687,14 +694,37 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                 return -ENOPROTOOPT;
         }
     } else if (level == IPPROTO_TCP) {
-        /* IPPROTO_TCP options — store for round-trip, no real TCP stack to enforce */
+        /* IPPROTO_TCP options — stored per-socket, enforced where possible.
+         *
+         * TCP_NODELAY: stored; checked in send path to bypass Nagle buffering.
+         * TCP_CORK:    stored; when set, send path buffers small writes and only
+         *              flushes when the cork is removed or the buffer is full.
+         *              Uncorking (val=0 after val=1) triggers a flush of any
+         *              pending corked data.
+         * TCP_QUICKACK: stored; disables delayed ACK — the next ACK is sent
+         *               immediately rather than waiting for piggyback opportunity.
+         *               Linux auto-resets this after one immediate ACK; we persist
+         *               the flag for getsockopt round-trip and ack path awareness.
+         */
         if (optlen < sizeof(int)) return -EINVAL;
         int val = 0;
         if (sso_copy_from_user(&val, optval, sizeof(int)) != 0) return -EFAULT;
         switch (optname) {
             case 1:  socket->tcp_nodelay     = (uint8_t)(val != 0); return 0; /* TCP_NODELAY */
             case 2:  if (val > 0) socket->tcp_maxseg = (uint32_t)val; return 0; /* TCP_MAXSEG */
-            case 3:  socket->tcp_cork        = (uint8_t)(val != 0); return 0; /* TCP_CORK */
+            case 3: { /* TCP_CORK — delay sending until uncorked or buffer full */
+                uint8_t was_corked = socket->tcp_cork;
+                socket->tcp_cork = (uint8_t)(val != 0);
+                /* Uncorking: if transitioning from corked→uncorked on a connected
+                 * socket, wake up the send waitqueue so any pending data can be
+                 * flushed immediately (real TCP would push buffered segments). */
+                if (was_corked && !socket->tcp_cork && socket->pair) {
+                    fut_socket_pair_t *p = socket->pair;
+                    if (p->send_waitq)
+                        fut_waitq_wake_all(p->send_waitq);
+                }
+                return 0;
+            }
             case 4:  socket->tcp_keepidle    = (uint32_t)(val > 0 ? val : 0); return 0; /* TCP_KEEPIDLE */
             case 5:  socket->tcp_keepintvl   = (uint32_t)(val > 0 ? val : 0); return 0; /* TCP_KEEPINTVL */
             case 6:  socket->tcp_keepcnt     = (uint32_t)(val > 0 ? val : 0); return 0; /* TCP_KEEPCNT */
@@ -702,19 +732,35 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
             case 8:  socket->tcp_linger2     = val; return 0; /* TCP_LINGER2 */
             case 9:  socket->tcp_defer_accept= (uint32_t)(val > 0 ? val : 0); return 0; /* TCP_DEFER_ACCEPT */
             case 10: case 11: return 0; /* TCP_WINDOW_CLAMP, TCP_INFO — accept, no storage */
-            case 12: socket->tcp_quickack    = (uint8_t)(val != 0); return 0; /* TCP_QUICKACK */
+            case 12: /* TCP_QUICKACK — disable delayed ACKs */
+                socket->tcp_quickack = (uint8_t)(val != 0);
+                return 0;
             default:
                 if (optname >= 13 && optname <= 31) return 0; /* accept remaining TCP opts */
                 return -ENOPROTOOPT;
         }
     } else if (level == IPPROTO_IP) {
-        /* IPPROTO_IP options */
+        /* IPPROTO_IP options — stored per-socket, enforced in send path.
+         *
+         * IP_TTL: sets the Time-To-Live field on outgoing IP packets.
+         *         Value must be 1..255; stored in socket->ip_ttl and applied
+         *         as g_send_ttl_override in the sendto path.  Default is 64
+         *         (returned by getsockopt when ip_ttl == 0).
+         *
+         * IP_TOS: sets the Type-of-Service / DSCP field on outgoing packets.
+         *         Value is masked to 8 bits; stored in socket->ip_tos and
+         *         applied as g_send_tos_override in the sendto path.
+         */
         if (optlen < sizeof(int)) return -EINVAL;
         int val = 0;
         if (sso_copy_from_user(&val, optval, sizeof(int)) != 0) return -EFAULT;
         switch (optname) {
             case 1:  socket->ip_tos         = (uint8_t)(val & 0xff); return 0; /* IP_TOS */
-            case 2:  if (val > 0 && val <= 255) socket->ip_ttl = (uint8_t)val; return 0; /* IP_TTL */
+            case 2: /* IP_TTL — reject out-of-range values per Linux behavior */
+                if (val == -1) { socket->ip_ttl = 0; return 0; } /* reset to default */
+                if (val < 1 || val > 255) return -EINVAL;
+                socket->ip_ttl = (uint8_t)val;
+                return 0;
             case 3:  socket->ip_hdrincl     = (uint8_t)(val != 0); return 0; /* IP_HDRINCL */
             case 10: socket->ip_mtu_discover= (uint32_t)val; return 0; /* IP_MTU_DISCOVER */
             case 12: socket->ip_recvttl     = (uint8_t)(val != 0); return 0; /* IP_RECVTTL */

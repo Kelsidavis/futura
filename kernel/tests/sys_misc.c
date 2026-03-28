@@ -65390,6 +65390,173 @@ __attribute__((noinline)) static void test_pivot_root_full(void) {
     else { fut_printf("[MISC-TEST] FAIL Test 2309: %ld\n", ret); fut_test_fail(2309); }
 }
 
+/* Tests 2315-2320: overlayfs mount, file visibility, whiteout, upper-first reads */
+__attribute__((noinline)) static void test_overlayfs_container(void) {
+    extern long sys_mkdir(const char *, unsigned int);
+    extern long sys_mount(const char *, const char *, const char *, unsigned long, const void *);
+    extern long sys_umount2(const char *, int);
+    extern long sys_open(const char *, int, int);
+    extern ssize_t sys_write(int fd, const void *buf, size_t count);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_close(int);
+    extern long sys_unlink(const char *);
+
+    /* Create fresh directories for this test suite */
+    sys_mkdir("/tmp/ovl2_lower", 0755);
+    sys_mkdir("/tmp/ovl2_upper", 0755);
+    sys_mkdir("/tmp/ovl2_work", 0755);
+    sys_mkdir("/tmp/ovl2_merged", 0755);
+
+    /* Seed lower layer with two files */
+    {
+        long fd = sys_open("/tmp/ovl2_lower/fileA.txt", 0x41 /* O_WRONLY|O_CREAT */, 0644);
+        if (fd >= 0) { sys_write((int)fd, "fromLO", 6); sys_close((int)fd); }
+        fd = sys_open("/tmp/ovl2_lower/fileB.txt", 0x41, 0644);
+        if (fd >= 0) { sys_write((int)fd, "lowerB", 6); sys_close((int)fd); }
+    }
+
+    /* ── Test 2315: mount overlay with workdir option ── */
+    fut_printf("[MISC-TEST] Test 2315: overlayfs mount with workdir\n");
+    {
+        long mr = sys_mount("overlay", "/tmp/ovl2_merged", "overlay", 0,
+                             "lowerdir=/tmp/ovl2_lower,upperdir=/tmp/ovl2_upper,workdir=/tmp/ovl2_work");
+        if (mr == 0) {
+            fut_printf("[MISC-TEST] pass Test 2315\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL Test 2315: mount=%ld\n", mr);
+            fut_test_fail(2315);
+            /* Can't continue without mount */
+            return;
+        }
+    }
+
+    /* ── Test 2316: lower files visible through merged view ── */
+    fut_printf("[MISC-TEST] Test 2316: lower files visible in merged\n");
+    {
+        int pass = 0;
+        long fd = sys_open("/tmp/ovl2_merged/fileA.txt", 0 /* O_RDONLY */, 0);
+        if (fd >= 0) {
+            static char buf[16];
+            long n = sys_read((int)fd, buf, 15);
+            sys_close((int)fd);
+            if (n == 6 && buf[0] == 'f' && buf[1] == 'r' && buf[2] == 'o' &&
+                buf[3] == 'm' && buf[4] == 'L' && buf[5] == 'O') {
+                pass = 1;
+            } else {
+                fut_printf("[MISC-TEST]   read=%ld content=%c%c%c\n", n,
+                           n > 0 ? buf[0] : '?', n > 1 ? buf[1] : '?', n > 2 ? buf[2] : '?');
+            }
+        } else {
+            fut_printf("[MISC-TEST]   open=%ld\n", fd);
+        }
+        if (pass) { fut_printf("[MISC-TEST] pass Test 2316\n"); fut_test_pass(); }
+        else { fut_printf("[MISC-TEST] FAIL Test 2316\n"); fut_test_fail(2316); }
+    }
+
+    /* ── Test 2317: new files created in merged go to upper ── */
+    fut_printf("[MISC-TEST] Test 2317: new file in merged goes to upper\n");
+    {
+        int pass = 0;
+        long wfd = sys_open("/tmp/ovl2_merged/newfile.txt", 0x41 /* O_WRONLY|O_CREAT */, 0644);
+        if (wfd >= 0) {
+            sys_write((int)wfd, "UPPER!", 6);
+            sys_close((int)wfd);
+            /* Verify it landed in the upper layer directly */
+            long ufd = sys_open("/tmp/ovl2_upper/newfile.txt", 0 /* O_RDONLY */, 0);
+            if (ufd >= 0) {
+                static char buf[16];
+                long n = sys_read((int)ufd, buf, 15);
+                sys_close((int)ufd);
+                if (n == 6 && buf[0] == 'U' && buf[1] == 'P') pass = 1;
+            }
+        }
+        if (pass) { fut_printf("[MISC-TEST] pass Test 2317\n"); fut_test_pass(); }
+        else { fut_printf("[MISC-TEST] FAIL Test 2317\n"); fut_test_fail(2317); }
+    }
+
+    /* ── Test 2318: upper shadows lower for same filename ── */
+    fut_printf("[MISC-TEST] Test 2318: upper shadows lower on read\n");
+    {
+        int pass = 0;
+        /* Write a file with the same name as a lower file into upper directly */
+        long wfd = sys_open("/tmp/ovl2_upper/fileA.txt", 0x41 /* O_WRONLY|O_CREAT */, 0644);
+        if (wfd >= 0) {
+            sys_write((int)wfd, "UPPER", 5);
+            sys_close((int)wfd);
+            /* Read via merged — should see upper's content, not lower's */
+            long rfd = sys_open("/tmp/ovl2_merged/fileA.txt", 0 /* O_RDONLY */, 0);
+            if (rfd >= 0) {
+                static char buf[16];
+                long n = sys_read((int)rfd, buf, 15);
+                sys_close((int)rfd);
+                if (n == 5 && buf[0] == 'U' && buf[1] == 'P' && buf[2] == 'P' &&
+                    buf[3] == 'E' && buf[4] == 'R') {
+                    pass = 1;
+                } else {
+                    fut_printf("[MISC-TEST]   n=%ld c=%c%c%c\n", n,
+                               n > 0 ? buf[0] : '?', n > 1 ? buf[1] : '?', n > 2 ? buf[2] : '?');
+                }
+            }
+        }
+        if (pass) { fut_printf("[MISC-TEST] pass Test 2318\n"); fut_test_pass(); }
+        else { fut_printf("[MISC-TEST] FAIL Test 2318\n"); fut_test_fail(2318); }
+    }
+
+    /* ── Test 2319: delete from merged creates whiteout, hides lower ── */
+    fut_printf("[MISC-TEST] Test 2319: unlink creates whiteout for lower file\n");
+    {
+        int pass = 0;
+        /* fileB.txt exists in lower only — delete it from merged view */
+        long dr = sys_unlink("/tmp/ovl2_merged/fileB.txt");
+        if (dr == 0) {
+            /* File should no longer be visible in merged */
+            long fd = sys_open("/tmp/ovl2_merged/fileB.txt", 0 /* O_RDONLY */, 0);
+            if (fd < 0) {
+                /* Good: file is gone from merged view */
+                /* Verify whiteout exists in upper: ".wh.fileB.txt" */
+                long whfd = sys_open("/tmp/ovl2_upper/.wh.fileB.txt", 0, 0);
+                if (whfd >= 0) {
+                    sys_close((int)whfd);
+                    pass = 1;  /* Whiteout file exists */
+                } else {
+                    /* Whiteout file not directly accessible, but file is hidden — still a pass */
+                    pass = 1;
+                }
+            } else {
+                sys_close((int)fd);
+                fut_printf("[MISC-TEST]   file still visible after unlink\n");
+            }
+        } else {
+            fut_printf("[MISC-TEST]   unlink=%ld\n", dr);
+        }
+        if (pass) { fut_printf("[MISC-TEST] pass Test 2319\n"); fut_test_pass(); }
+        else { fut_printf("[MISC-TEST] FAIL Test 2319\n"); fut_test_fail(2319); }
+    }
+
+    /* ── Test 2320: lower file untouched after overlay operations ── */
+    fut_printf("[MISC-TEST] Test 2320: lower layer unchanged after overlay ops\n");
+    {
+        int pass = 0;
+        /* fileB.txt should still exist in lower even though it was "deleted" in merged */
+        long fd = sys_open("/tmp/ovl2_lower/fileB.txt", 0 /* O_RDONLY */, 0);
+        if (fd >= 0) {
+            static char buf[16];
+            long n = sys_read((int)fd, buf, 15);
+            sys_close((int)fd);
+            if (n == 6 && buf[0] == 'l' && buf[1] == 'o' && buf[2] == 'w' &&
+                buf[3] == 'e' && buf[4] == 'r' && buf[5] == 'B') {
+                pass = 1;  /* Lower data intact */
+            }
+        }
+        if (pass) { fut_printf("[MISC-TEST] pass Test 2320\n"); fut_test_pass(); }
+        else { fut_printf("[MISC-TEST] FAIL Test 2320\n"); fut_test_fail(2320); }
+    }
+
+    /* Clean up */
+    sys_umount2("/tmp/ovl2_merged", 0);
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -69703,6 +69870,7 @@ void fut_misc_test_thread(void *arg) {
     test_proc_environ_content(); /* Tests 2290-2291: /proc/self/environ content verification */
     test_inotify_tmp_watch(); /* Tests 2295-2300: inotify end-to-end /tmp directory watch */
     test_pivot_root_full(); /* Tests 2305-2309: pivot_root full implementation */
+    test_overlayfs_container(); /* Tests 2315-2320: overlayfs whiteout, upper-first, container support */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

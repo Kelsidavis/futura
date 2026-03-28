@@ -1501,6 +1501,13 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
             /* Writeback present pages to file for MAP_SHARED mappings before unmapping */
             vma_writeback_pages(vma, ctx);
 
+            /* Evict shared page cache entries for this VMA's file range */
+            if ((vma->flags & 0x01) && vma->vnode) {
+                extern void shared_page_evict_range(struct fut_vnode *, uint64_t, uint64_t);
+                shared_page_evict_range(vma->vnode, vma->file_offset,
+                                        vma->file_offset + (vma->end - vma->start));
+            }
+
             mm_unmap_and_free(mm, vma->start, vma->end);
             /* Release file backing if present */
             if (vma->vnode) {
@@ -1527,6 +1534,12 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
                     uint64_t wb_foff = vma->file_offset + (pg - vma->start);
                     vma->vnode->ops->write(vma->vnode, wb_kvirt, PAGE_SIZE, wb_foff);
                 }
+            }
+            /* Evict shared page cache entries for the unmapped left portion */
+            if ((vma->flags & 0x01) && vma->vnode) {
+                extern void shared_page_evict_range(struct fut_vnode *, uint64_t, uint64_t);
+                shared_page_evict_range(vma->vnode, vma->file_offset,
+                                        vma->file_offset + (overlap_end - vma->start));
             }
             mm_unmap_and_free(mm, vma->start, overlap_end);
             /* Adjust file_offset when shrinking from the left */
@@ -2050,7 +2063,15 @@ int fut_mm_mprotect(fut_mm_t *mm, uintptr_t start, uintptr_t end, int prot) {
         return 0;
     }
 
-    /* Compute new PTE flags from PROT_* bits (same logic as page_fault.c) */
+    /* PROT_NONE (prot == 0): Remove PTE_PRESENT so any access triggers a page
+     * fault.  The page fault handler checks vma->prot and will deliver SIGSEGV
+     * for PROT_NONE regions.  We do NOT free the physical page — the VMA still
+     * exists and mprotect back to a readable protection will re-map it.
+     *
+     * For non-PROT_NONE, compute PTE flags from PROT_* bits (same logic as
+     * page_fault.c load_demand_page). */
+    bool is_prot_none = (prot == 0);
+
     uint64_t new_flags = PTE_PRESENT | PTE_USER;
     if (prot & 0x2) {          /* PROT_WRITE */
         new_flags |= PTE_WRITABLE;
@@ -2073,8 +2094,16 @@ int fut_mm_mprotect(fut_mm_t *mm, uintptr_t start, uintptr_t end, int prot) {
         /* Skip pages not allocated by our demand-pager */
         if (fut_page_ref_get((phys_addr_t)phys) == 0) continue;
 
-        /* Re-map with updated protection; ignore per-page error (best-effort) */
-        pmap_map_user(ctx, pg, (phys_addr_t)phys, PAGE_SIZE, new_flags);
+        if (is_prot_none) {
+            /* PROT_NONE: Unmap the page (clear PTE_PRESENT) so any access
+             * triggers a page fault.  The physical page is retained — the
+             * fault handler will check vma->prot == 0 and deliver SIGSEGV
+             * instead of re-mapping the page. */
+            fut_unmap_range(ctx, pg, PAGE_SIZE);
+        } else {
+            /* Re-map with updated protection; ignore per-page error (best-effort) */
+            pmap_map_user(ctx, pg, (phys_addr_t)phys, PAGE_SIZE, new_flags);
+        }
     }
 
     return 0;

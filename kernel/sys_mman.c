@@ -554,8 +554,19 @@ long sys_mlockall(int flags) {
     /* Phase 3: Update mm->locked_vm with total locked pages from all VMAs */
     size_t total_pages = (size_t)((total_bytes + PAGE_SIZE - 1) / PAGE_SIZE);
     mm->locked_vm = total_pages;
-    /* MCL_FUTURE: future mappings will be locked at mmap/brk time (tracked via mm->locked_vm) */
-    /* MCL_ONFAULT deferred locking: requires fault handler integration (complex, deferred) */
+
+    /* Mark all current VMAs as VMA_LOCKED when MCL_CURRENT is set */
+    if (local_flags & MCL_CURRENT) {
+        vma = mm->vma_list;
+        while (vma) {
+            vma->flags |= VMA_LOCKED;
+            vma = vma->next;
+        }
+    }
+
+    /* MCL_FUTURE: Record in mm->def_flags so future mmap/brk regions
+     * inherit the locked state automatically. */
+    mm->def_flags = local_flags;
 
     return 0;
 }
@@ -577,10 +588,12 @@ long sys_munlockall(void) {
         return -ESRCH;
     }
 
-    /* Reset locked-page counter and clear VMA_LOCKED from all VMAs */
+    /* Reset locked-page counter, clear VMA_LOCKED from all VMAs,
+     * and cancel MCL_FUTURE so new mappings are not auto-locked. */
     fut_mm_t *mm = fut_task_get_mm(task);
     if (mm) {
         mm->locked_vm = 0;
+        mm->def_flags = 0;   /* Clear MCL_FUTURE */
         struct fut_vma *vma = mm->vma_list;
         while (vma) {
             vma->flags &= ~VMA_LOCKED;

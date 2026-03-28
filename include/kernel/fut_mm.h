@@ -79,6 +79,10 @@ typedef struct fut_mm {
      * locked_vm: Total number of pages currently locked in memory via mlock/mlockall
      * Used to enforce RLIMIT_MEMLOCK resource limit per process */
     size_t locked_vm;  /* Number of locked pages (in PAGE_SIZE units) */
+
+    /* mlockall(MCL_FUTURE) flags — when non-zero, future mmap/brk regions
+     * are automatically locked.  Cleared by munlockall() or exec(). */
+    int def_flags;     /* MCL_CURRENT | MCL_FUTURE | MCL_ONFAULT bitmask */
 } fut_mm_t;
 
 enum {

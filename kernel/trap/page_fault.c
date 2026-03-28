@@ -365,6 +365,13 @@ static bool handle_demand_paging_fault(uint64_t fault_addr, fut_mm_t *mm) {
         return false;
     }
 
+    /* PROT_NONE: VMA exists but access is forbidden.  Do NOT load the page —
+     * return false so the caller delivers SIGSEGV (SEGV_ACCERR). */
+    if (vma->prot == 0) {
+        fut_spinlock_release(&mm->mm_lock);
+        return false;
+    }
+
     /* Get memory context for paging operations */
     fut_vmem_context_t *ctx = fut_mm_context(mm);
     if (!ctx) {
@@ -431,6 +438,12 @@ static bool handle_cow_fault_generic(uint64_t fault_addr, bool is_write, bool is
 
     if (!vma || !(vma->flags & VMA_COW)) {
         return false;  /* Not a COW VMA */
+    }
+
+    /* PROT_NONE: VMA exists but all access is forbidden — do not perform
+     * COW; let the caller deliver SIGSEGV. */
+    if (vma->prot == 0) {
+        return false;
     }
 
     /* Get the current physical page */

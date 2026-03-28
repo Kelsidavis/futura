@@ -2,7 +2,13 @@
  *
  * Copyright (c) 2025 Kelsi Davis / Licensed under the MPL v2.0 — see LICENSE for details
  *
- * Preemptive, priority-based round-robin scheduler.
+ * Preemptive, nice-aware round-robin scheduler with per-CPU load balancing.
+ *
+ * Time slice allocation based on nice values (at 100Hz timer):
+ *   Nice -20 (highest priority): 10 ticks = 100ms
+ *   Nice   0 (default):           2 ticks =  20ms
+ *   Nice  19 (lowest priority):   1 tick  =  10ms (minimum quantum)
+ *   Formula: slice_ticks = max(1, 10 - (nice / 2))
  */
 
 #include "../../include/kernel/fut_sched.h"
@@ -95,6 +101,36 @@ static inline void sched_irq_enable(void) {
 #elif defined(__aarch64__)
     __asm__ volatile("msr daifclr, #0x2" ::: "memory");
 #endif
+}
+
+/* ============================================================
+ *   Nice-Based Time Slice Computation
+ * ============================================================ */
+
+int fut_sched_nice_to_slice(int nice) {
+    if (nice < -20) nice = -20;
+    if (nice > 19)  nice = 19;
+    int slice = 10 - (nice / 2);
+    if (slice < 1) slice = 1;
+    return slice;
+}
+
+/* ============================================================
+ *   Per-CPU Load Average Update
+ * ============================================================ */
+
+#define PERCPU_LOAD_FSHIFT  11
+#define PERCPU_LOAD_FIXED_1 (1ULL << PERCPU_LOAD_FSHIFT)
+#define PERCPU_LOAD_DECAY   2040
+
+static void percpu_update_load_avg(fut_percpu_t *percpu) {
+    uint64_t nr = percpu->ready_count;
+    if (percpu->current_thread && percpu->current_thread != percpu->idle_thread)
+        nr++;
+    uint64_t nr_fixed = nr * PERCPU_LOAD_FIXED_1;
+    percpu->load_avg_fixed = (percpu->load_avg_fixed * PERCPU_LOAD_DECAY
+                              + nr_fixed * (PERCPU_LOAD_FIXED_1 - PERCPU_LOAD_DECAY))
+                             / PERCPU_LOAD_FIXED_1;
 }
 
 /* ============================================================
@@ -294,23 +330,26 @@ void fut_sched_add_thread(fut_thread_t *thread) {
         // Default: unrestricted affinity - all CPUs allowed
         thread->cpu_affinity_mask = ~0ULL;  // All bits set (up to FUT_MAX_CPUS)
 
-        // Find least-loaded CPU for initial placement
+        // Find least-loaded CPU using per-CPU EWMA load average.
         // Note: Affinity mask only supports 64 CPUs (bits 0-63)
-        uint64_t min_queue_depth = UINT64_MAX;
+        uint64_t min_load = UINT64_MAX;
         uint32_t best_cpu = 0;
 
         for (uint32_t i = 0; i < FUT_MAX_CPUS && i < 64; i++) {
-            fut_percpu_t *percpu = &fut_percpu_data[i];
-            if (percpu->self == NULL) {
+            fut_percpu_t *pcpu = &fut_percpu_data[i];
+            if (pcpu->self == NULL) {
                 continue;  // CPU not initialized
             }
 
-            fut_spinlock_acquire(&percpu->queue_lock);
-            uint64_t queue_depth = percpu->ready_count;
-            fut_spinlock_release(&percpu->queue_lock);
+            uint64_t load = pcpu->load_avg_fixed;
+            if (load == 0) {
+                fut_spinlock_acquire(&pcpu->queue_lock);
+                load = pcpu->ready_count * PERCPU_LOAD_FIXED_1;
+                fut_spinlock_release(&pcpu->queue_lock);
+            }
 
-            if (queue_depth < min_queue_depth) {
-                min_queue_depth = queue_depth;
+            if (load < min_load) {
+                min_load = load;
                 best_cpu = i;
             }
         }
@@ -318,19 +357,55 @@ void fut_sched_add_thread(fut_thread_t *thread) {
         target_percpu = &fut_percpu_data[best_cpu];
         thread->preferred_cpu = best_cpu;
     } else {
-        // Thread has affinity constraint - add to preferred CPU within mask
+        // Thread has affinity constraint - find least-loaded CPU within mask.
         uint32_t preferred = thread->preferred_cpu;
+        uint64_t mask = thread->cpu_affinity_mask;
 
-        // Verify preferred CPU is within affinity mask (and < 64 for bitmask)
-        if (preferred < 64 && (thread->cpu_affinity_mask & (1ULL << preferred))) {
-            target_percpu = &fut_percpu_data[preferred];
-        } else {
-            // Find first CPU in affinity mask (limited to 64 CPUs)
+        if (preferred < 64 && (mask & (1ULL << preferred))) {
+            fut_percpu_t *pref_percpu = &fut_percpu_data[preferred];
+            uint64_t pref_load = pref_percpu->load_avg_fixed;
+
+            uint64_t min_load = UINT64_MAX;
+            uint32_t min_cpu = preferred;
             for (uint32_t i = 0; i < 64; i++) {
-                if (thread->cpu_affinity_mask & (1ULL << i)) {
-                    target_percpu = &fut_percpu_data[i];
+                if (!(mask & (1ULL << i))) continue;
+                fut_percpu_t *pcpu = &fut_percpu_data[i];
+                if (pcpu->self == NULL) continue;
+                uint64_t load = pcpu->load_avg_fixed;
+                if (load == 0) {
+                    fut_spinlock_acquire(&pcpu->queue_lock);
+                    load = pcpu->ready_count * PERCPU_LOAD_FIXED_1;
+                    fut_spinlock_release(&pcpu->queue_lock);
+                }
+                if (load < min_load) {
+                    min_load = load;
+                    min_cpu = i;
+                }
+            }
+
+            // Migrate only if least-loaded CPU has significantly less load
+            if (min_cpu != preferred && min_load + (min_load >> 2) < pref_load) {
+                target_percpu = &fut_percpu_data[min_cpu];
+                thread->preferred_cpu = min_cpu;
+            } else {
+                target_percpu = pref_percpu;
+            }
+        } else {
+            uint64_t min_load = UINT64_MAX;
+            for (uint32_t i = 0; i < 64; i++) {
+                if (!(mask & (1ULL << i))) continue;
+                fut_percpu_t *pcpu = &fut_percpu_data[i];
+                if (pcpu->self == NULL) continue;
+                uint64_t load = pcpu->load_avg_fixed;
+                if (load == 0) {
+                    fut_spinlock_acquire(&pcpu->queue_lock);
+                    load = pcpu->ready_count * PERCPU_LOAD_FIXED_1;
+                    fut_spinlock_release(&pcpu->queue_lock);
+                }
+                if (load < min_load) {
+                    min_load = load;
+                    target_percpu = pcpu;
                     thread->preferred_cpu = i;
-                    break;
                 }
             }
         }
@@ -987,26 +1062,52 @@ void fut_sched_check_rlimit_cpu(fut_task_t *task) {
 /**
  * Scheduler tick handler - called from timer interrupt.
  *
- * Handles timer-driven preemption.
- * This is the entry point from the timer interrupt handler.
+ * Uses nice-based time slices for preemption control:
+ * - Each thread gets a time slice computed from its task's nice value
+ * - On each tick, slice_remaining is decremented
+ * - Preemption occurs when the slice is exhausted
+ * - SCHED_FIFO threads are never preempted by the timer
  */
 void fut_sched_tick(void) {
     // Update global tick counter for performance instrumentation
     fut_stats_tick();
 
+    // Update per-CPU load average
+    fut_percpu_t *percpu = fut_percpu_get();
+    if (percpu)
+        percpu_update_load_avg(percpu);
+
     // Don't try to schedule if no thread is currently running
-    // (can't launch first thread from IRQ context)
     fut_thread_t *curr = fut_thread_current();
     if (!curr) {
-        // Silent return - can't use serial_puts from IRQ context
         return;
     }
 
-    /* RLIMIT_CPU enforcement: check once per second (every FUT_TIMER_HZ ticks). */
+    /* RLIMIT_CPU enforcement */
     fut_task_t *cpu_task = curr ? curr->task : NULL;
     if (cpu_task)
         fut_sched_check_rlimit_cpu(cpu_task);
 
-    // Trigger preemptive reschedule
-    fut_schedule();
+    /* Nice-based time slice preemption */
+    fut_thread_t *idle = percpu ? percpu->idle_thread : NULL;
+
+    if (curr == idle) {
+        fut_schedule();
+        return;
+    }
+
+    if (curr->sched_policy == 1 /* SCHED_FIFO */) {
+        return;
+    }
+
+    if (curr->slice_remaining > 0) {
+        curr->slice_remaining--;
+    }
+
+    if (curr->slice_remaining <= 0) {
+        int nice = cpu_task ? cpu_task->nice : 0;
+        curr->time_slice_ticks = fut_sched_nice_to_slice(nice);
+        curr->slice_remaining = curr->time_slice_ticks;
+        fut_schedule();
+    }
 }

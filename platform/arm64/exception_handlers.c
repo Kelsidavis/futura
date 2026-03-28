@@ -137,8 +137,16 @@ static void handle_svc(fut_interrupt_frame_t *frame) {
 
     /* (debug removed) */
 
+    /* Mark thread as inside syscall for accurate utime/stime accounting */
+    extern struct fut_thread *fut_thread_current(void);
+    struct fut_thread *_svc_thread = fut_thread_current();
+    if (_svc_thread) _svc_thread->in_syscall = 1;
+
     /* Dispatch to syscall handler */
     int64_t result = arm64_syscall_dispatch(syscall_num, arg0, arg1, arg2, arg3, arg4, arg5);
+
+    /* Clear in_syscall before returning to userspace */
+    if (_svc_thread) _svc_thread->in_syscall = 0;
 
     /* Store return value in x0.  The ARM64 syscall ABI preserves x1-x7
      * across system calls (only x0 is the return value).  Clearing them

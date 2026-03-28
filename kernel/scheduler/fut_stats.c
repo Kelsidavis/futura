@@ -84,10 +84,16 @@ void fut_stats_record_switch(fut_thread_t *prev, fut_thread_t *next) {
         prev->stats.cpu_ticks += delta;
     }
 
-    /* Increment next thread's context switch count */
+    /* Increment next thread's context switch count and assign fresh time slice */
     if (next) {
         next->stats.context_switches++;
         next->stats.last_scheduled_tick = now;
+
+        /* Assign nice-based time slice for the incoming thread */
+        extern int fut_sched_nice_to_slice(int nice);
+        int nice = (next->task) ? next->task->nice : 0;
+        next->time_slice_ticks = fut_sched_nice_to_slice(nice);
+        next->slice_remaining = next->time_slice_ticks;
     }
 
     /* Update global counter */

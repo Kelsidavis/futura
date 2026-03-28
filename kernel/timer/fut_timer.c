@@ -284,16 +284,21 @@ void fut_timer_tick(void) {
         fut_thread_t *ct = fut_thread_current();
         if (!ct || !ct->task || ct->state != 0 /* FUT_THREAD_RUNNING */) {
             atomic_fetch_add_explicit(&idle_ticks, 1, memory_order_relaxed);
-        } else if (ct->task->pid > 1) {
-            /* User-space process: count as user time */
-            atomic_fetch_add_explicit(&user_ticks, 1, memory_order_relaxed);
-            ct->stats.cpu_ticks++;
-            ct->stats.utime_ticks++;
-        } else {
-            /* Kernel thread or init process: count as system time */
+        } else if (ct->task->pid <= 1) {
+            /* Kernel thread or init process: always system time */
             atomic_fetch_add_explicit(&kern_ticks, 1, memory_order_relaxed);
             ct->stats.cpu_ticks++;
             ct->stats.stime_ticks++;
+        } else if (ct->in_syscall) {
+            /* User process inside a syscall: system time */
+            atomic_fetch_add_explicit(&kern_ticks, 1, memory_order_relaxed);
+            ct->stats.cpu_ticks++;
+            ct->stats.stime_ticks++;
+        } else {
+            /* User process running user code: user time */
+            atomic_fetch_add_explicit(&user_ticks, 1, memory_order_relaxed);
+            ct->stats.cpu_ticks++;
+            ct->stats.utime_ticks++;
         }
     }
 

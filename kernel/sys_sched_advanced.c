@@ -19,6 +19,7 @@
 
 #include <kernel/kprintf.h>
 #include <kernel/fut_timer.h>
+#include <kernel/fut_timer.h>
 #include <kernel/uaccess.h>
 #include <platform/platform.h>
 
@@ -436,11 +437,15 @@ long sys_sched_rr_get_interval(int pid, fut_timespec_t *interval) {
     if (!interval)
         return -EFAULT;
 
-    /* The quantum is 1/FUT_TIMER_HZ = 10ms for all policies.
-     * Linux returns the timeslice for any policy, not just SCHED_RR. */
+    /* Return the nice-based time slice for this task.
+     * slice_ticks = max(1, 10 - (nice / 2)), each tick = 10ms at HZ=100. */
+    extern int fut_sched_nice_to_slice(int nice);
+    int slice_ticks = fut_sched_nice_to_slice(target->nice);
+    long ns_per_tick = 1000000000L / FUT_TIMER_HZ;
+    long total_ns = (long)slice_ticks * ns_per_tick;
     fut_timespec_t quantum = {
-        .tv_sec = 0,
-        .tv_nsec = 10000000  /* 10ms = 1/100 Hz */
+        .tv_sec = total_ns / 1000000000L,
+        .tv_nsec = total_ns % 1000000000L
     };
 
     if (sched_copy_to_user(interval, &quantum, sizeof(quantum)) != 0)

@@ -1758,7 +1758,7 @@ test-iso: kernel
 	@echo "Creating test ISO..."
 	@cp $(BIN_DIR)/futura_kernel.elf iso/boot/
 	@cp iso/boot/grub/grub.cfg iso/boot/grub/grub.cfg.bak
-	@printf 'serial --unit=0 --speed=115200\nterminal_input serial\nterminal_output serial\nset timeout=0\nset default=0\nmenuentry "Futura OS (Tests)" {\n    multiboot2 /boot/futura_kernel.elf fb=1 async-tests=1\n    boot\n}\n' > iso/boot/grub/grub.cfg
+	@printf 'serial --unit=0 --speed=115200\nterminal_input serial\nterminal_output serial\nset timeout=0\nset default=0\nmenuentry "Futura OS (Tests)" {\n    multiboot2 /boot/futura_kernel.elf fb=1 async-tests=1 futura.runtests\n    boot\n}\n' > iso/boot/grub/grub.cfg
 	@grub-mkrescue -o futura.iso iso/ 2>&1 | grep -E "(completed|error)" || echo "ISO build complete"
 	@mv iso/boot/grub/grub.cfg.bak iso/boot/grub/grub.cfg
 

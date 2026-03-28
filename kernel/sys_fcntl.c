@@ -777,11 +777,12 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
     }
 
     case 1032: /* F_GETPIPE_SZ */
-        /* Return actual pipe buffer capacity for chr_ops files */
+        /* Return actual pipe buffer capacity via pipe_get_buffer_size().
+         * Only valid for pipe file descriptors (chr_ops, no vnode). */
         if (file->chr_ops && !file->vnode) {
-            struct pipe_sz_hdr { uint8_t *data; size_t size; };
-            struct pipe_sz_hdr *p = (struct pipe_sz_hdr *)file->chr_private;
-            return p ? (long)p->size : 4096;
+            extern size_t pipe_get_buffer_size(void *priv);
+            size_t sz = pipe_get_buffer_size(file->chr_private);
+            return sz ? (long)sz : 4096;
         }
         return -EINVAL;
 
@@ -808,55 +809,12 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
             if (!(file->chr_ops && !file->vnode))
                 return -EPERM;
         }
-        /* F_SETPIPE_SZ (or F_ADD_SEALS on pipe fd): resize pipe buffer */
+        /* F_SETPIPE_SZ (or F_ADD_SEALS on pipe fd): delegate to pipe_resize()
+         * which clamps to [4096, pipe_max_size], rounds to power of two,
+         * and linearizes existing data into the new buffer under lock. */
         if (file->chr_ops && !file->vnode) {
-            struct pipe_buffer_full {
-                uint8_t *data; size_t size; size_t read_pos;
-                size_t write_pos; size_t count;
-                uint32_t refcount;
-                bool write_closed; bool read_closed;
-                bool read_nonblock; bool write_nonblock;
-                fut_waitq_t read_waitq; fut_waitq_t write_waitq;
-                fut_spinlock_t lock;
-            };
-            struct pipe_buffer_full *pipe = (struct pipe_buffer_full *)file->chr_private;
-            if (!pipe) return -EBADF;
-
-            size_t req = (size_t)local_arg;
-            if (req < 4096) req = 4096;
-            if (req > 1048576) req = 1048576;
-            size_t new_size = 4096;
-            while (new_size < req) new_size <<= 1;
-
-            if (new_size == pipe->size) return (long)pipe->size;
-            if (new_size < pipe->count) return -EBUSY;
-
-            uint8_t *new_data = fut_malloc(new_size);
-            if (!new_data) return -ENOMEM;
-
-            fut_spinlock_acquire(&pipe->lock);
-            if (new_size < pipe->count) {
-                fut_spinlock_release(&pipe->lock);
-                fut_free(new_data);
-                return -EBUSY;
-            }
-            uint8_t *old_data = pipe->data;
-            if (pipe->count > 0) {
-                size_t first = pipe->size - pipe->read_pos;
-                if (first > pipe->count) first = pipe->count;
-                for (size_t i = 0; i < first; i++)
-                    new_data[i] = old_data[pipe->read_pos + i];
-                size_t second = pipe->count - first;
-                for (size_t i = 0; i < second; i++)
-                    new_data[first + i] = old_data[i];
-            }
-            pipe->data = new_data;
-            pipe->size = new_size;
-            pipe->read_pos = 0;
-            pipe->write_pos = pipe->count;
-            fut_spinlock_release(&pipe->lock);
-            fut_free(old_data);
-            return (long)new_size;
+            extern long pipe_resize(void *priv, size_t req_size);
+            return pipe_resize(file->chr_private, (size_t)local_arg);
         }
         return -EBADF;
     }

@@ -5021,10 +5021,12 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             /* 1048576 = system-wide open file descriptor limit */
             total = gen_sysctl_str(tmp, GEN_BUF, "1048576");
             break;
-        case PROC_SYS_FS_PIPE_MAX_SIZE:
-            /* 1048576 = max pipe buffer size (1 MiB, default on Linux) */
-            total = gen_sysctl_str(tmp, GEN_BUF, "1048576");
+        case PROC_SYS_FS_PIPE_MAX_SIZE: {
+            /* Dynamic: read from pipe_get_max_size() (configurable via write) */
+            extern size_t pipe_get_max_size(void);
+            total = gen_sysctl_u32(tmp, GEN_BUF, (uint32_t)pipe_get_max_size());
             break;
+        }
         /* /proc/sys/vm/ extended entries */
         case PROC_SYS_VM_DROP_CACHES:
             total = gen_sysctl_str(tmp, GEN_BUF, "0");
@@ -5588,6 +5590,22 @@ static ssize_t procfs_file_write(struct fut_vnode *vnode, const void *buf,
                 default:  fut_printf("[SYSRQ] Command '%c'\n", cmd); break;
                 }
             }
+            return (ssize_t)size;
+        }
+
+        case PROC_SYS_FS_PIPE_MAX_SIZE: {
+            /* Parse numeric value and update pipe_max_size */
+            extern void pipe_set_max_size(size_t val);
+            size_t val = 0;
+            for (size_t i = 0; i < size && i < 16; i++) {
+                char c = ((const char *)buf)[i];
+                if (c >= '0' && c <= '9')
+                    val = val * 10 + (size_t)(c - '0');
+                else
+                    break;
+            }
+            if (val > 0)
+                pipe_set_max_size(val);
             return (ssize_t)size;
         }
 

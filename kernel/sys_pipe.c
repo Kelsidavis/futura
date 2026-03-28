@@ -32,8 +32,35 @@
 #include <kernel/kprintf.h>
 
 /* Pipe buffer size (capacity) and POSIX atomic-write guarantee */
-#define PIPE_BUF_SIZE    65536
-#define PIPE_BUF_ATOMIC   4096  /* writes <= this size are atomic per POSIX */
+#define PIPE_BUF_SIZE    65536   /* Default: 64KB (16 pages) */
+#define PIPE_BUF_ATOMIC   4096   /* writes <= this size are atomic per POSIX */
+
+/* Global configurable maximum pipe buffer size.
+ * Exposed via /proc/sys/fs/pipe-max-size (read/write).
+ * F_SETPIPE_SZ clamps requested sizes to this value. */
+static size_t pipe_max_size = 1048576;  /* Default: 1MB */
+
+/**
+ * pipe_get_max_size - return the system-wide pipe-max-size limit.
+ * Called by procfs to serve /proc/sys/fs/pipe-max-size reads.
+ */
+size_t pipe_get_max_size(void) {
+    return __atomic_load_n(&pipe_max_size, __ATOMIC_RELAXED);
+}
+
+/**
+ * pipe_set_max_size - update the system-wide pipe-max-size limit.
+ * Called by procfs when /proc/sys/fs/pipe-max-size is written.
+ * Value is clamped to [4096, 16MB] and rounded up to a power of 2.
+ */
+void pipe_set_max_size(size_t val) {
+    if (val < 4096)   val = 4096;
+    if (val > 16777216) val = 16777216;  /* 16 MB hard ceiling */
+    /* Round up to power of two */
+    size_t p = 4096;
+    while (p < val) p <<= 1;
+    __atomic_store_n(&pipe_max_size, p, __ATOMIC_RELAXED);
+}
 
 /* Pipe buffer structure */
 struct pipe_buffer {
@@ -473,7 +500,7 @@ extern int chrdev_alloc_fd(const struct fut_file_ops *ops, void *inode, void *pr
  *   - Creates unidirectional data channel
  *   - pipefd[0] is read end (read-only)
  *   - pipefd[1] is write end (write-only)
- *   - Pipe buffer size is 4096 bytes (PIPE_BUF_SIZE)
+ *   - Pipe buffer size is 65536 bytes (64KB, 16 pages) by default
  *   - Reading from empty pipe blocks until data available
  *   - Writing to full pipe blocks until space available
  *   - Closing write end causes read to return EOF
@@ -928,6 +955,89 @@ void pipe_set_nonblock(void *priv, bool is_write, bool nonblock) {
         pipe->write_nonblock = nonblock;
     else
         pipe->read_nonblock = nonblock;
+}
+
+/**
+ * pipe_get_buffer_size - Return current buffer capacity for a pipe fd.
+ *
+ * @param priv  chr_private pointer (struct pipe_buffer *)
+ * @return      current buffer size in bytes, or 0 on error
+ */
+size_t pipe_get_buffer_size(void *priv) {
+    struct pipe_buffer *pipe = (struct pipe_buffer *)priv;
+    if (!pipe) return 0;
+    return pipe->size;
+}
+
+/**
+ * pipe_resize - Resize a pipe buffer (F_SETPIPE_SZ implementation).
+ *
+ * The requested size is clamped to [4096, pipe_max_size] and rounded
+ * up to a power of two. If the new size is smaller than the amount
+ * of data currently in the buffer, -EBUSY is returned.
+ *
+ * @param priv      chr_private pointer (struct pipe_buffer *)
+ * @param req_size  requested new buffer size
+ * @return          actual new size on success, or negative errno
+ */
+long pipe_resize(void *priv, size_t req_size) {
+    struct pipe_buffer *pipe = (struct pipe_buffer *)priv;
+    if (!pipe) return -EBADF;
+
+    /* Clamp to [4096, pipe_max_size] */
+    size_t max_sz = pipe_get_max_size();
+    if (req_size < 4096)   req_size = 4096;
+    if (req_size > max_sz) req_size = max_sz;
+
+    /* Round up to power of two */
+    size_t new_size = 4096;
+    while (new_size < req_size) new_size <<= 1;
+
+    /* No-op if already the right size */
+    if (new_size == pipe->size)
+        return (long)pipe->size;
+
+    /* Pre-check: can't shrink below current content */
+    if (new_size < pipe->count)
+        return -EBUSY;
+
+    /* Allocate new buffer before acquiring lock */
+    uint8_t *new_data = fut_malloc(new_size);
+    if (!new_data) return -ENOMEM;
+
+    fut_spinlock_acquire(&pipe->lock);
+
+    /* Re-check under lock */
+    if (new_size < pipe->count) {
+        fut_spinlock_release(&pipe->lock);
+        fut_free(new_data);
+        return -EBUSY;
+    }
+
+    /* Linearize existing data into new buffer */
+    uint8_t *old_data = pipe->data;
+    if (pipe->count > 0) {
+        size_t first = pipe->size - pipe->read_pos;
+        if (first > pipe->count) first = pipe->count;
+        for (size_t i = 0; i < first; i++)
+            new_data[i] = old_data[pipe->read_pos + i];
+        size_t second = pipe->count - first;
+        for (size_t i = 0; i < second; i++)
+            new_data[first + i] = old_data[i];
+    }
+
+    pipe->data = new_data;
+    pipe->size = new_size;
+    pipe->read_pos = 0;
+    pipe->write_pos = pipe->count;
+
+    fut_spinlock_release(&pipe->lock);
+    fut_free(old_data);
+
+    /* Wake writers — more space may be available now */
+    fut_waitq_wake_all(&pipe->write_waitq);
+
+    return (long)new_size;
 }
 
 /* ============================================================

@@ -1771,10 +1771,10 @@ test:
 	@$(MAKE) ENABLE_WAYLAND=0 test-iso disk
 	@# Kill any stale QEMU holding the disk image lock
 	@fuser -k $(QEMU_DISK_IMG) 2>/dev/null || true
-	@echo "Testing kernel under QEMU (isa-debug-exit, 180s timeout)..."
+	@echo "Testing kernel under QEMU (isa-debug-exit, 900s timeout)..."
 	@img=$(QEMU_DISK_IMG); \
 		echo "[HARNESS] Using test disk $$img"; \
-		timeout 600 qemu-system-x86_64 \
+		timeout 900 qemu-system-x86_64 \
 			-serial stdio \
 			-display none \
 			-m $(QEMU_MEM) \

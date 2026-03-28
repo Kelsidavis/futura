@@ -163,8 +163,10 @@ static void term_handle_escape(struct terminal *term) {
     case 'H': case 'f': { /* Cursor Position: ESC[row;colH */
         int row = (nparams > 0 && params[0] > 0) ? params[0] - 1 : 0;
         int col = (nparams > 1 && params[1] > 0) ? params[1] - 1 : 0;
-        if (row < 0) row = 0; if (row >= TERM_ROWS) row = TERM_ROWS - 1;
-        if (col < 0) col = 0; if (col >= TERM_COLS) col = TERM_COLS - 1;
+        if (row < 0) row = 0;
+        if (row >= TERM_ROWS) row = TERM_ROWS - 1;
+        if (col < 0) col = 0;
+        if (col >= TERM_COLS) col = TERM_COLS - 1;
         term->cursor_y = row;
         term->cursor_x = col;
         break;

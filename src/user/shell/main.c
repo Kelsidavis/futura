@@ -178,6 +178,14 @@ static void cmd_last(int argc, char *argv[]);
 static void cmd_dstat(int argc, char *argv[]);
 static void cmd_ascii(int argc, char *argv[]);
 static void cmd_whatis(int argc, char *argv[]);
+static void cmd_iconv(int argc, char *argv[]);
+static void cmd_uuidgen(int argc, char *argv[]);
+static void cmd_shuf(int argc, char *argv[]);
+static void cmd_truncate(int argc, char *argv[]);
+static void cmd_numfmt(int argc, char *argv[]);
+static void cmd_look(int argc, char *argv[]);
+static void cmd_colrm(int argc, char *argv[]);
+static void cmd_hd(int argc, char *argv[]);
 static void strcpy_simple(char *dest, const char *src);
 
 /* Forward declaration for prompt */
@@ -1234,7 +1242,7 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  rev [file]      - Reverse characters in each line\n");
     write_str(1, "  nl [file]       - Number lines of text\n");
     write_str(1, "  base64 [-d] [file] - Base64 encode (decode with -d)\n");
-    write_str(1, "  od [file]       - Octal/byte dump of file\n");
+    write_str(1, "  od [-A x] [-t x1] [file] - Octal/hex dump of file\n");
     write_str(1, "\n");
     write_str(1, "File Operations:\n");
     write_str(1, "  mkdir <dir>     - Create directory\n");
@@ -1264,7 +1272,7 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  df              - Show filesystem usage\n");
     write_str(1, "  nc host port    - TCP netcat client\n");
     write_str(1, "  wget url        - Fetch HTTP content\n");
-    write_str(1, "  hexdump file    - Hex dump of file contents\n");
+    write_str(1, "  hexdump [-C] [-n N] file - Hex dump of file contents\n");
     write_str(1, "  seq [s] n       - Print number sequence\n");
     write_str(1, "  sleep secs      - Pause for N seconds\n");
     write_str(1, "  env             - Show environment variables\n");
@@ -1280,18 +1288,26 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  tac file        - Print file lines in reverse\n");
     write_str(1, "  chgrp gid file  - Change group ownership\n");
     write_str(1, "  md5sum file     - Compute file hash\n");
-    write_str(1, "  strings file    - Print printable character sequences\n");
+    write_str(1, "  strings [-n N] [-t x] file - Print printable strings\n");
     write_str(1, "  pgrep pattern   - Find processes by name\n");
     write_str(1, "  pkill [-sig] pat- Kill processes by name\n");
     write_str(1, "  pidof name      - Find PID by exact process name\n");
     write_str(1, "  nice [-n N] cmd - Run command with altered priority\n");
     write_str(1, "  renice prio pid - Change process priority\n");
-    write_str(1, "  xxd [-r] file   - Hex dump (or reverse with -r)\n");
+    write_str(1, "  xxd [-r] [-p] f - Hex dump (-r reverse, -p plain hex)\n");
     write_str(1, "  file FILE...    - Identify file type by magic bytes\n");
+    write_str(1, "  hd <file>       - Hex dump (alias for hexdump -C)\n");
+    write_str(1, "  iconv -f CS -t CS [file] - Convert character encoding\n");
+    write_str(1, "  uuidgen         - Generate a random UUID\n");
+    write_str(1, "  shuf [-n N] [f] - Shuffle lines randomly\n");
+    write_str(1, "  truncate -s N f - Shrink or extend file to size N\n");
+    write_str(1, "  numfmt [--to=iec] N - Convert numbers to human-readable\n");
+    write_str(1, "  look PREFIX [f] - Display lines beginning with prefix\n");
+    write_str(1, "  colrm S [E]     - Remove columns from stdin lines\n");
     write_str(1, "  mkfifo NAME...  - Create named pipe (FIFO)\n");
     write_str(1, "  cmp [-s] F1 F2  - Compare files byte by byte\n");
     write_str(1, "  fold [-w N] file- Wrap lines to N columns (default 80)\n");
-    write_str(1, "  comm FILE1 FILE2- Compare sorted files line by line\n");
+    write_str(1, "  comm [-123] F1 F2 - Compare sorted files (suppress columns)\n");
     write_str(1, "  expand [-t N] f - Convert tabs to spaces\n");
     write_str(1, "  unexpand [-t N] f- Convert spaces to tabs\n");
     write_str(1, "  install [-m] s d- Copy file with mode\n");
@@ -2796,14 +2812,32 @@ static void cmd_sleep(int argc, char *argv[]) {
 
 /* Built-in: hexdump - Display file contents in hex */
 static void cmd_hexdump(int argc, char *argv[]) {
-    if (argc < 2) { write_str(1, "usage: hexdump <file>\n"); return; }
-    int fd = sys_open(argv[1], O_RDONLY, 0);
+    int canonical = 0; /* -C flag */
+    long max_bytes = -1; /* -n N: limit output to N bytes */
+    int file_idx = -1;
+    for (int a = 1; a < argc; a++) {
+        if (argv[a][0] == '-' && argv[a][1] == 'C' && argv[a][2] == '\0') {
+            canonical = 1;
+        } else if (argv[a][0] == '-' && argv[a][1] == 'n' && a + 1 < argc) {
+            max_bytes = 0;
+            for (const char *p = argv[a + 1]; *p >= '0' && *p <= '9'; p++)
+                max_bytes = max_bytes * 10 + (*p - '0');
+            a++;
+        } else if (argv[a][0] != '-') {
+            file_idx = a; break;
+        }
+    }
+    if (file_idx < 0) { write_str(1, "usage: hexdump [-C] [-n N] <file>\n"); return; }
+    int fd = sys_open(argv[file_idx], O_RDONLY, 0);
     if (fd < 0) { write_str(1, "hexdump: cannot open file\n"); return; }
-    
+
     char buf[16];
     ssize_t n;
-    int offset = 0;
+    long offset = 0;
+    long total_read = 0;
     while ((n = sys_read(fd, buf, 16)) > 0) {
+        if (max_bytes >= 0 && total_read + n > max_bytes) n = max_bytes - total_read;
+        if (n <= 0) break;
         /* Print offset */
         char obuf[16];
         for (int i = 7; i >= 0; i--) {
@@ -2813,7 +2847,7 @@ static void cmd_hexdump(int argc, char *argv[]) {
         obuf[8] = 0;
         write_str(1, obuf);
         write_str(1, "  ");
-        
+
         /* Print hex bytes */
         for (int i = 0; i < 16; i++) {
             if (i < n) {
@@ -2828,14 +2862,18 @@ static void cmd_hexdump(int argc, char *argv[]) {
             }
             if (i == 7) write_char(1, ' ');
         }
-        write_str(1, " |");
-        /* Print ASCII */
-        for (int i = 0; i < n; i++) {
-            char c = buf[i];
-            write_char(1, (c >= 32 && c < 127) ? c : '.');
+        if (canonical || 1) { /* Always show ASCII side (canonical is default for our hexdump) */
+            write_str(1, " |");
+            /* Print ASCII */
+            for (int i = 0; i < n; i++) {
+                char c = buf[i];
+                write_char(1, (c >= 32 && c < 127) ? c : '.');
+            }
+            write_str(1, "|\n");
         }
-        write_str(1, "|\n");
         offset += n;
+        total_read += n;
+        if (max_bytes >= 0 && total_read >= max_bytes) break;
     }
     sys_close(fd);
 }
@@ -6095,38 +6133,69 @@ static void cmd_base64(int argc, char *argv[]) {
 /* Built-in: od - Octal dump */
 static void cmd_od(int argc, char *argv[]) {
     int fd_in = 0;
-    int file_arg = 1;
-    /* Basic: -A x for hex addresses, -t x1 for hex bytes */
-    if (argc >= 2 && argv[1][0] != '-') { file_arg = 1; }
-    else file_arg = argc > 2 ? argc - 1 : 1;
-
-    if (file_arg < argc && argv[file_arg][0] != '-') {
+    int addr_radix = 'o'; /* default: octal; 'x'=hex, 'd'=decimal, 'n'=none */
+    int type_fmt = 'o';   /* default: octal bytes; 'x'=hex bytes */
+    int file_arg = -1;
+    for (int a = 1; a < argc; a++) {
+        if (argv[a][0] == '-' && argv[a][1] == 'A' && a + 1 < argc) {
+            addr_radix = argv[a + 1][0]; a++;
+        } else if (argv[a][0] == '-' && argv[a][1] == 't' && a + 1 < argc) {
+            type_fmt = argv[a + 1][0]; a++; /* 'x' for hex, 'o' for octal */
+        } else if (argv[a][0] != '-') {
+            file_arg = a; break;
+        }
+    }
+    if (file_arg >= 0) {
         fd_in = sys_open(argv[file_arg], O_RDONLY, 0);
         if (fd_in < 0) { write_str(2, "od: cannot open file\n"); return; }
     }
 
+    static const char hexc[] = "0123456789abcdef";
     unsigned char buf[16];
     long n;
     unsigned long offset = 0;
     while ((n = sys_read(fd_in, buf, 16)) > 0) {
-        /* Print offset in octal */
-        char addr[16];
-        int ap = 0;
-        unsigned long v = offset;
-        char rev[16]; int rp = 0;
-        if (v == 0) rev[rp++] = '0';
-        else while (v > 0) { rev[rp++] = '0' + (v & 7); v >>= 3; }
-        for (int i = rp; i < 7; i++) addr[ap++] = '0';
-        while (rp > 0) addr[ap++] = rev[--rp];
-        sys_write(1, addr, ap);
-        /* Print bytes in octal */
+        /* Print offset */
+        if (addr_radix != 'n') {
+            char addr[16]; int ap = 0;
+            unsigned long v = offset;
+            if (addr_radix == 'x') {
+                char rev[16]; int rp = 0;
+                if (v == 0) rev[rp++] = '0';
+                else while (v > 0) { rev[rp++] = hexc[v & 0xF]; v >>= 4; }
+                for (int i = rp; i < 7; i++) addr[ap++] = '0';
+                while (rp > 0) addr[ap++] = rev[--rp];
+            } else if (addr_radix == 'd') {
+                char rev[20]; int rp = 0;
+                if (v == 0) rev[rp++] = '0';
+                else while (v > 0) { rev[rp++] = '0' + (v % 10); v /= 10; }
+                for (int i = rp; i < 7; i++) addr[ap++] = ' ';
+                while (rp > 0) addr[ap++] = rev[--rp];
+            } else { /* octal */
+                char rev[16]; int rp = 0;
+                if (v == 0) rev[rp++] = '0';
+                else while (v > 0) { rev[rp++] = '0' + (v & 7); v >>= 3; }
+                for (int i = rp; i < 7; i++) addr[ap++] = '0';
+                while (rp > 0) addr[ap++] = rev[--rp];
+            }
+            sys_write(1, addr, ap);
+        }
+        /* Print bytes */
         for (long i = 0; i < n; i++) {
-            char oct[5];
-            oct[0] = ' ';
-            oct[1] = '0' + ((buf[i] >> 6) & 7);
-            oct[2] = '0' + ((buf[i] >> 3) & 7);
-            oct[3] = '0' + (buf[i] & 7);
-            sys_write(1, oct, 4);
+            if (type_fmt == 'x') {
+                char hx[4];
+                hx[0] = ' ';
+                hx[1] = hexc[buf[i] >> 4];
+                hx[2] = hexc[buf[i] & 0xF];
+                sys_write(1, hx, 3);
+            } else { /* octal */
+                char oct[5];
+                oct[0] = ' ';
+                oct[1] = '0' + ((buf[i] >> 6) & 7);
+                oct[2] = '0' + ((buf[i] >> 3) & 7);
+                oct[3] = '0' + (buf[i] & 7);
+                sys_write(1, oct, 4);
+            }
         }
         sys_write(1, "\n", 1);
         offset += (unsigned long)n;
@@ -13065,6 +13134,30 @@ watch_sleep:
     } else if (strcmp_simple(argv[0], "whatis") == 0) {
         cmd_whatis(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "iconv") == 0) {
+        cmd_iconv(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "uuidgen") == 0) {
+        cmd_uuidgen(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "shuf") == 0) {
+        cmd_shuf(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "truncate") == 0) {
+        cmd_truncate(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "numfmt") == 0) {
+        cmd_numfmt(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "look") == 0) {
+        cmd_look(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "colrm") == 0) {
+        cmd_colrm(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "hd") == 0) {
+        cmd_hd(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -13261,6 +13354,14 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "dstat") == 0 ||
             strcmp_simple(cmd, "ascii") == 0 ||
             strcmp_simple(cmd, "whatis") == 0 ||
+            strcmp_simple(cmd, "iconv") == 0 ||
+            strcmp_simple(cmd, "uuidgen") == 0 ||
+            strcmp_simple(cmd, "shuf") == 0 ||
+            strcmp_simple(cmd, "truncate") == 0 ||
+            strcmp_simple(cmd, "numfmt") == 0 ||
+            strcmp_simple(cmd, "look") == 0 ||
+            strcmp_simple(cmd, "colrm") == 0 ||
+            strcmp_simple(cmd, "hd") == 0 ||
             0);
 }
 
@@ -14438,14 +14539,25 @@ static void cmd_md5sum(int argc, char *argv[]) {
 static void cmd_strings(int argc, char *argv[]) {
     int min_len = 4;  /* default minimum string length */
     int file_start = 1;
-    if (argc >= 3 && argv[1][0] == '-' && argv[1][1] == 'n') {
-        min_len = 0;
-        for (const char *p = argv[2]; *p >= '0' && *p <= '9'; p++)
-            min_len = min_len * 10 + (*p - '0');
-        file_start = 3;
+    int offset_fmt = 0; /* 0=none, 'x'=hex, 'o'=octal, 'd'=decimal */
+    for (int a = 1; a < argc; a++) {
+        if (argv[a][0] == '-' && argv[a][1] == 'n' && a + 1 < argc) {
+            min_len = 0;
+            for (const char *p = argv[a + 1]; *p >= '0' && *p <= '9'; p++)
+                min_len = min_len * 10 + (*p - '0');
+            a++;
+            file_start = a + 1;
+        } else if (argv[a][0] == '-' && argv[a][1] == 't' && a + 1 < argc) {
+            offset_fmt = argv[a + 1][0]; /* 'x', 'o', or 'd' */
+            a++;
+            file_start = a + 1;
+        } else if (argv[a][0] != '-') {
+            file_start = a;
+            break;
+        }
     }
     if (file_start >= argc) {
-        write_str(2, "usage: strings [-n MIN] FILE...\n");
+        write_str(2, "usage: strings [-n MIN] [-t x|o|d] FILE...\n");
         return;
     }
     for (int f = file_start; f < argc; f++) {
@@ -14455,13 +14567,42 @@ static void cmd_strings(int argc, char *argv[]) {
         static char run[4096];
         int run_len = 0;
         ssize_t n;
+        long total_off = 0;
+        long run_start = 0;
         while ((n = sys_read(fd, buf, sizeof(buf))) > 0) {
             for (ssize_t i = 0; i < n; i++) {
                 unsigned char c = (unsigned char)buf[i];
                 if (c >= 32 && c < 127) {
+                    if (run_len == 0) run_start = total_off + i;
                     if (run_len < (int)sizeof(run) - 1) run[run_len++] = (char)c;
                 } else {
                     if (run_len >= min_len) {
+                        if (offset_fmt) {
+                            static const char hex[] = "0123456789abcdef";
+                            char obuf[20]; int op = 0;
+                            long v = run_start;
+                            if (offset_fmt == 'x') {
+                                char rev[16]; int rp = 0;
+                                if (v == 0) { rev[rp++] = '0'; }
+                                else { while (v > 0) { rev[rp++] = hex[v & 0xF]; v >>= 4; } }
+                                for (int j = rp; j < 7; j++) obuf[op++] = ' ';
+                                while (rp > 0) obuf[op++] = rev[--rp];
+                            } else if (offset_fmt == 'o') {
+                                char rev[24]; int rp = 0;
+                                if (v == 0) { rev[rp++] = '0'; }
+                                else { while (v > 0) { rev[rp++] = '0' + (v & 7); v >>= 3; } }
+                                for (int j = rp; j < 7; j++) obuf[op++] = ' ';
+                                while (rp > 0) obuf[op++] = rev[--rp];
+                            } else { /* 'd' */
+                                char rev[20]; int rp = 0;
+                                if (v == 0) { rev[rp++] = '0'; }
+                                else { while (v > 0) { rev[rp++] = '0' + (v % 10); v /= 10; } }
+                                for (int j = rp; j < 7; j++) obuf[op++] = ' ';
+                                while (rp > 0) obuf[op++] = rev[--rp];
+                            }
+                            obuf[op++] = ' ';
+                            sys_write(1, obuf, op);
+                        }
                         run[run_len] = '\0';
                         write_str(1, run);
                         write_str(1, "\n");
@@ -14469,8 +14610,35 @@ static void cmd_strings(int argc, char *argv[]) {
                     run_len = 0;
                 }
             }
+            total_off += n;
         }
         if (run_len >= min_len) {
+            if (offset_fmt) {
+                static const char hex2[] = "0123456789abcdef";
+                char obuf[20]; int op = 0;
+                long v = run_start;
+                if (offset_fmt == 'x') {
+                    char rev[16]; int rp = 0;
+                    if (v == 0) { rev[rp++] = '0'; }
+                    else { while (v > 0) { rev[rp++] = hex2[v & 0xF]; v >>= 4; } }
+                    for (int j = rp; j < 7; j++) obuf[op++] = ' ';
+                    while (rp > 0) obuf[op++] = rev[--rp];
+                } else if (offset_fmt == 'o') {
+                    char rev[24]; int rp = 0;
+                    if (v == 0) { rev[rp++] = '0'; }
+                    else { while (v > 0) { rev[rp++] = '0' + (v & 7); v >>= 3; } }
+                    for (int j = rp; j < 7; j++) obuf[op++] = ' ';
+                    while (rp > 0) obuf[op++] = rev[--rp];
+                } else {
+                    char rev[20]; int rp = 0;
+                    if (v == 0) { rev[rp++] = '0'; }
+                    else { while (v > 0) { rev[rp++] = '0' + (v % 10); v /= 10; } }
+                    for (int j = rp; j < 7; j++) obuf[op++] = ' ';
+                    while (rp > 0) obuf[op++] = rev[--rp];
+                }
+                obuf[op++] = ' ';
+                sys_write(1, obuf, op);
+            }
             run[run_len] = '\0';
             write_str(1, run);
             write_str(1, "\n");
@@ -14693,13 +14861,15 @@ static void cmd_renice(int argc, char *argv[]) {
 /* ── xxd: hex dump with optional reverse ── */
 static void cmd_xxd(int argc, char *argv[]) {
     int reverse = 0;
+    int plain = 0;
     int file_idx = 1;
-    if (argc >= 2 && argv[1][0] == '-' && argv[1][1] == 'r') {
-        reverse = 1;
-        file_idx = 2;
+    while (file_idx < argc && argv[file_idx][0] == '-') {
+        if (argv[file_idx][1] == 'r') { reverse = 1; file_idx++; }
+        else if (argv[file_idx][1] == 'p') { plain = 1; file_idx++; }
+        else break;
     }
     if (file_idx >= argc) {
-        write_str(2, "usage: xxd [-r] FILE\n");
+        write_str(2, "usage: xxd [-r] [-p] FILE\n");
         return;
     }
     int fd = sys_open(argv[file_idx], O_RDONLY, 0);
@@ -14740,6 +14910,24 @@ static void cmd_xxd(int argc, char *argv[]) {
                 }
             }
         }
+    } else if (plain) {
+        /* Plain hex dump: just hex bytes, no addresses or ASCII */
+        static const char hex[] = "0123456789abcdef";
+        static char buf[4096];
+        ssize_t n;
+        int col = 0;
+        while ((n = sys_read(fd, buf, sizeof(buf))) > 0) {
+            for (ssize_t i = 0; i < n; i++) {
+                char hb[2];
+                hb[0] = hex[((unsigned char)buf[i]) >> 4];
+                hb[1] = hex[((unsigned char)buf[i]) & 0xF];
+                sys_write(1, hb, 2);
+                col += 2;
+                if (col >= 60) { sys_write(1, "\n", 1); col = 0; }
+            }
+        }
+        if (col > 0) sys_write(1, "\n", 1);
+        sys_close(fd);
     } else {
         /* Forward hex dump: standard xxd format */
         static const char hex[] = "0123456789abcdef";
@@ -15136,6 +15324,30 @@ static void cmd_file(int argc, char *argv[]) {
         if (n >= 6 && magic[0] == 0xFD && magic[1] == '7' && magic[2] == 'z' && magic[3] == 'X') {
             write_str(1, "XZ compressed data\n"); continue;
         }
+        /* ZIP (PK\x03\x04) */
+        if (n >= 4 && magic[0] == 'P' && magic[1] == 'K' && magic[2] == 0x03 && magic[3] == 0x04) {
+            write_str(1, "Zip archive data\n"); continue;
+        }
+        /* WAVE audio (RIFF....WAVE) */
+        if (n >= 12 && magic[0] == 'R' && magic[1] == 'I' && magic[2] == 'F' && magic[3] == 'F' &&
+            magic[8] == 'W' && magic[9] == 'A' && magic[10] == 'V' && magic[11] == 'E') {
+            write_str(1, "RIFF WAVE audio data\n"); continue;
+        }
+        /* BMP image */
+        if (n >= 2 && magic[0] == 'B' && magic[1] == 'M') {
+            write_str(1, "PC bitmap, Windows BMP image data\n"); continue;
+        }
+        /* Mach-O (0xFEEDFACE / 0xFEEDFACF) */
+        if (n >= 4 && magic[0] == 0xFE && magic[1] == 0xED && magic[2] == 0xFA &&
+            (magic[3] == 0xCE || magic[3] == 0xCF)) {
+            write_str(1, "Mach-O ");
+            write_str(1, magic[3] == 0xCF ? "64-bit " : "32-bit ");
+            write_str(1, "executable\n"); continue;
+        }
+        /* Java class file (0xCAFEBABE) */
+        if (n >= 4 && magic[0] == 0xCA && magic[1] == 0xFE && magic[2] == 0xBA && magic[3] == 0xBE) {
+            write_str(1, "compiled Java class data\n"); continue;
+        }
         /* tar (ustar magic at offset 257) — read+skip to reach offset */
         if (n >= 5 && st.size > 262) {
             fd = sys_open(argv[f], O_RDONLY, 0);
@@ -15299,9 +15511,27 @@ static void cmd_fold(int argc, char *argv[]) {
 
 /* ── comm: compare sorted files line by line ── */
 static void cmd_comm(int argc, char *argv[]) {
-    if (argc < 3) { write_str(2, "usage: comm FILE1 FILE2\n"); return; }
-    int fd1 = sys_open(argv[1], O_RDONLY, 0);
-    int fd2 = sys_open(argv[2], O_RDONLY, 0);
+    int suppress1 = 0, suppress2 = 0, suppress3 = 0;
+    int file_start = 1;
+    for (int a = 1; a < argc; a++) {
+        if (argv[a][0] == '-' && argv[a][1] >= '1' && argv[a][1] <= '3' && argv[a][2] == '\0') {
+            if (argv[a][1] == '1') suppress1 = 1;
+            else if (argv[a][1] == '2') suppress2 = 1;
+            else if (argv[a][1] == '3') suppress3 = 1;
+            file_start = a + 1;
+        } else if (argv[a][0] == '-') {
+            /* Handle combined flags like -12, -13, -23, -123 */
+            for (const char *p = argv[a] + 1; *p; p++) {
+                if (*p == '1') suppress1 = 1;
+                else if (*p == '2') suppress2 = 1;
+                else if (*p == '3') suppress3 = 1;
+            }
+            file_start = a + 1;
+        } else { file_start = a; break; }
+    }
+    if (file_start + 1 >= argc) { write_str(2, "usage: comm [-123] FILE1 FILE2\n"); return; }
+    int fd1 = sys_open(argv[file_start], O_RDONLY, 0);
+    int fd2 = sys_open(argv[file_start + 1], O_RDONLY, 0);
     if (fd1 < 0 || fd2 < 0) {
         write_str(2, "comm: cannot open files\n");
         if (fd1 >= 0) sys_close(fd1);
@@ -15327,12 +15557,21 @@ static void cmd_comm(int argc, char *argv[]) {
         if (!l1[0] && !l2[0]) break;
         int c = strcmp_simple(l1, l2);
         if (c == 0 && l1[0]) {
-            write_str(1, "\t\t"); write_str(1, l1); write_str(1, "\n");
+            if (!suppress3) {
+                if (!suppress1) write_str(1, "\t");
+                if (!suppress2) write_str(1, "\t");
+                write_str(1, l1); write_str(1, "\n");
+            }
         } else if (c < 0 && l1[0]) {
-            write_str(1, l1); write_str(1, "\n");
+            if (!suppress1) {
+                write_str(1, l1); write_str(1, "\n");
+            }
             p2 -= (i + 1);  /* Rewind p2 */
         } else if (l2[0]) {
-            write_str(1, "\t"); write_str(1, l2); write_str(1, "\n");
+            if (!suppress2) {
+                if (!suppress1) write_str(1, "\t");
+                write_str(1, l2); write_str(1, "\n");
+            }
             if (l1[0]) { int j = 0; while (l1[j]) j++; p1 -= (j + 1); }  /* Rewind p1 */
         }
     }
@@ -18555,6 +18794,14 @@ static void cmd_man(int argc, char *argv[]) {
         {"realpath",  "realpath - print resolved canonical path (-e existing, -m missing OK)"},
         {"ascii",     "ascii - display ASCII character table (decimal, hex, octal, char)"},
         {"whatis",    "whatis - display one-line manual page descriptions"},
+        {"iconv",     "iconv - convert text from one character encoding to another"},
+        {"uuidgen",   "uuidgen - create a new UUID (universally unique identifier)"},
+        {"shuf",      "shuf - generate random permutations of input lines (-n count)"},
+        {"truncate",  "truncate - shrink or extend the size of a file to specified size"},
+        {"numfmt",    "numfmt - convert numbers from/to human-readable strings"},
+        {"look",      "look - display lines beginning with a given prefix string"},
+        {"colrm",     "colrm - remove columns from a file (reads stdin)"},
+        {"hd",        "hd - hexadecimal dump (alias for hexdump -C)"},
     };
     int n_entries = (int)(sizeof(man_entries) / sizeof(man_entries[0]));
 
@@ -20657,6 +20904,7 @@ static void cmd_whatis(int argc, char *argv[]) {
         {"chroot",    "chroot (8)          - run command with special root directory"},
         {"clear",     "clear (1)           - clear the terminal screen"},
         {"cmp",       "cmp (1)             - compare two files byte by byte"},
+        {"colrm",     "colrm (1)           - remove columns from a file"},
         {"comm",      "comm (1)            - compare two sorted files line by line"},
         {"cp",        "cp (1)              - copy files and directories"},
         {"csplit",    "csplit (1)           - split a file into sections by context"},
@@ -20685,10 +20933,12 @@ static void cmd_whatis(int argc, char *argv[]) {
         {"git",       "git (1)             - the stupid content tracker"},
         {"grep",      "grep (1)            - print lines matching a pattern"},
         {"groups",    "groups (1)          - print the groups a user is in"},
+        {"hd",        "hd (1)              - hexadecimal dump (alias for hexdump -C)"},
         {"head",      "head (1)            - output the first part of files"},
         {"help",      "help (1)            - display shell built-in command help"},
         {"history",   "history (1)         - display command history"},
         {"hostname",  "hostname (1)        - show or set the system hostname"},
+        {"iconv",     "iconv (1)           - convert text from one character encoding to another"},
         {"id",        "id (1)              - print real and effective user and group IDs"},
         {"ifconfig",  "ifconfig (8)        - configure a network interface"},
         {"ip",        "ip (8)              - show/manipulate routing, devices, tunnels"},
@@ -20798,6 +21048,402 @@ static void cmd_whatis(int argc, char *argv[]) {
             write_str(1, ": nothing appropriate.\n");
         }
     }
+}
+
+/* ── iconv: character set conversion ── */
+static void cmd_iconv(int argc, char *argv[]) {
+    const char *from_cs = "UTF-8";
+    const char *to_cs = "ASCII";
+    int file_idx = -1;
+    for (int a = 1; a < argc; a++) {
+        if (argv[a][0] == '-' && argv[a][1] == 'f' && a + 1 < argc) {
+            from_cs = argv[++a];
+        } else if (argv[a][0] == '-' && argv[a][1] == 't' && a + 1 < argc) {
+            to_cs = argv[++a];
+        } else if (argv[a][0] != '-') {
+            file_idx = a; break;
+        }
+    }
+    (void)from_cs; /* We read UTF-8 by default */
+    int fd = 0; /* stdin */
+    if (file_idx >= 0) {
+        fd = sys_open(argv[file_idx], O_RDONLY, 0);
+        if (fd < 0) { write_str(2, "iconv: cannot open file\n"); return; }
+    }
+    /* Check if target is ASCII-like */
+    int to_ascii = 0;
+    if ((to_cs[0] == 'A' || to_cs[0] == 'a') &&
+        (to_cs[1] == 'S' || to_cs[1] == 's') &&
+        (to_cs[2] == 'C' || to_cs[2] == 'c')) to_ascii = 1;
+    /* Also handle US-ASCII */
+    if ((to_cs[0] == 'U' || to_cs[0] == 'u') &&
+        (to_cs[1] == 'S' || to_cs[1] == 's') && to_cs[2] == '-') to_ascii = 1;
+
+    static char buf[4096];
+    ssize_t n;
+    while ((n = sys_read(fd, buf, sizeof(buf))) > 0) {
+        for (ssize_t i = 0; i < n; i++) {
+            unsigned char c = (unsigned char)buf[i];
+            if (to_ascii) {
+                if (c < 128) {
+                    sys_write(1, &buf[i], 1);
+                } else {
+                    /* Multi-byte UTF-8: skip continuation bytes, output ? for lead byte */
+                    if ((c & 0xC0) == 0xC0) {
+                        char q = '?';
+                        sys_write(1, &q, 1);
+                    }
+                    /* Skip continuation bytes (10xxxxxx) silently */
+                }
+            } else {
+                /* Pass-through for same encoding or UTF-8 to UTF-8 */
+                sys_write(1, &buf[i], 1);
+            }
+        }
+    }
+    if (fd > 0) sys_close(fd);
+}
+
+/* ── uuidgen: generate a UUID ── */
+static void cmd_uuidgen(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    /* Read random bytes from /dev/urandom or use nanosecond clock as fallback */
+    unsigned char bytes[16];
+    int got_random = 0;
+    int fd = sys_open("/dev/urandom", O_RDONLY, 0);
+    if (fd >= 0) {
+        ssize_t n = sys_read(fd, bytes, 16);
+        sys_close(fd);
+        if (n == 16) got_random = 1;
+    }
+    if (!got_random) {
+        /* Fallback: use system ticks and PID for pseudo-randomness */
+        long pid = sys_call0(39);
+        struct { long sec; long nsec; } ts;
+        sys_call2(228 /* clock_gettime */, 0, (long)&ts);
+        unsigned long seed = (unsigned long)ts.nsec ^ ((unsigned long)pid << 16) ^ (unsigned long)ts.sec;
+        for (int i = 0; i < 16; i++) {
+            seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;
+            bytes[i] = (unsigned char)(seed >> 33);
+        }
+    }
+    /* Set version 4 (random) and variant bits */
+    bytes[6] = (bytes[6] & 0x0F) | 0x40;  /* version 4 */
+    bytes[8] = (bytes[8] & 0x3F) | 0x80;  /* variant 10 */
+
+    static const char hex[] = "0123456789abcdef";
+    char uuid[37];
+    int p = 0;
+    for (int i = 0; i < 16; i++) {
+        if (i == 4 || i == 6 || i == 8 || i == 10) uuid[p++] = '-';
+        uuid[p++] = hex[bytes[i] >> 4];
+        uuid[p++] = hex[bytes[i] & 0xF];
+    }
+    uuid[p++] = '\n';
+    sys_write(1, uuid, p);
+}
+
+/* ── shuf: shuffle lines randomly ── */
+static void cmd_shuf(int argc, char *argv[]) {
+    int fd = 0; /* stdin */
+    int file_idx = -1;
+    int n_count = -1; /* -n N: output at most N lines */
+    for (int a = 1; a < argc; a++) {
+        if (argv[a][0] == '-' && argv[a][1] == 'n' && a + 1 < argc) {
+            n_count = 0;
+            for (const char *p = argv[a + 1]; *p >= '0' && *p <= '9'; p++)
+                n_count = n_count * 10 + (*p - '0');
+            a++;
+        } else if (argv[a][0] != '-') {
+            file_idx = a; break;
+        }
+    }
+    if (file_idx >= 0) {
+        fd = sys_open(argv[file_idx], O_RDONLY, 0);
+        if (fd < 0) { write_str(2, "shuf: cannot open file\n"); return; }
+    }
+    /* Read all input */
+    static char data[32768];
+    ssize_t total = 0, n;
+    while (total < (ssize_t)sizeof(data) - 1 && (n = sys_read(fd, data + total, sizeof(data) - 1 - (size_t)total)) > 0)
+        total += n;
+    data[total] = '\0';
+    if (fd > 0) sys_close(fd);
+
+    /* Split into lines */
+    static char *lines[2048];
+    int nlines = 0;
+    char *p = data;
+    while (*p && nlines < 2048) {
+        lines[nlines++] = p;
+        while (*p && *p != '\n') p++;
+        if (*p == '\n') *p++ = '\0';
+    }
+    /* Fisher-Yates shuffle */
+    struct { long sec; long nsec; } ts;
+    sys_call2(228, 0, (long)&ts);
+    unsigned long rng = (unsigned long)ts.nsec ^ ((unsigned long)sys_call0(39) << 16);
+    for (int i = nlines - 1; i > 0; i--) {
+        rng = rng * 6364136223846793005ULL + 1;
+        int j = (int)((rng >> 33) % (unsigned long)(i + 1));
+        char *tmp = lines[i]; lines[i] = lines[j]; lines[j] = tmp;
+    }
+    /* Output */
+    int out_count = nlines;
+    if (n_count >= 0 && n_count < out_count) out_count = n_count;
+    for (int i = 0; i < out_count; i++) {
+        write_str(1, lines[i]);
+        write_str(1, "\n");
+    }
+}
+
+/* ── truncate: shrink or extend the size of a file ── */
+static void cmd_truncate(int argc, char *argv[]) {
+    long size = -1;
+    int file_idx = -1;
+    for (int a = 1; a < argc; a++) {
+        if (argv[a][0] == '-' && argv[a][1] == 's' && a + 1 < argc) {
+            size = 0;
+            const char *p = argv[++a];
+            while (*p >= '0' && *p <= '9') { size = size * 10 + (*p - '0'); p++; }
+            /* Support K, M, G suffixes */
+            if (*p == 'K' || *p == 'k') size *= 1024;
+            else if (*p == 'M' || *p == 'm') size *= 1024 * 1024;
+            else if (*p == 'G' || *p == 'g') size *= 1024 * 1024 * 1024;
+        } else if (argv[a][0] != '-') {
+            file_idx = a; break;
+        }
+    }
+    if (file_idx < 0 || size < 0) {
+        write_str(2, "usage: truncate -s SIZE FILE\n");
+        return;
+    }
+    int fd = sys_open(argv[file_idx], O_WRONLY, 0);
+    if (fd < 0) {
+        /* Try to create the file */
+        fd = sys_open(argv[file_idx], O_WRONLY | O_CREAT, 0644);
+        if (fd < 0) { write_str(2, "truncate: cannot open file\n"); return; }
+    }
+    long r = sys_call2(77 /* ftruncate */, fd, size);
+    sys_close(fd);
+    if (r != 0) { write_str(2, "truncate: failed\n"); last_exit_status = 1; }
+}
+
+/* ── numfmt: convert numbers to/from human-readable format ── */
+static void cmd_numfmt(int argc, char *argv[]) {
+    int to_human = 0; /* --to=iec or --to=si */
+    int from_human = 0; /* --from=iec or --from=si */
+    int use_si = 0;
+    int file_idx = -1;
+    for (int a = 1; a < argc; a++) {
+        if (argv[a][0] == '-' && argv[a][1] == '-') {
+            const char *opt = argv[a] + 2;
+            /* Check for --to= */
+            if (opt[0] == 't' && opt[1] == 'o' && opt[2] == '=') {
+                to_human = 1;
+                if (opt[3] == 's') use_si = 1; /* si */
+            }
+            /* Check for --from= */
+            if (opt[0] == 'f' && opt[1] == 'r' && opt[2] == 'o' && opt[3] == 'm' && opt[4] == '=') {
+                from_human = 1;
+                if (opt[5] == 's') use_si = 1;
+            }
+        } else if (argv[a][0] != '-') {
+            file_idx = a; break;
+        }
+    }
+    /* Process arguments or stdin */
+    if (file_idx >= 0) {
+        for (int a = file_idx; a < argc; a++) {
+            long val = 0;
+            const char *p = argv[a];
+            if (from_human) {
+                while (*p >= '0' && *p <= '9') { val = val * 10 + (*p - '0'); p++; }
+                long mul = use_si ? 1000 : 1024;
+                if (*p == 'K' || *p == 'k') val *= mul;
+                else if (*p == 'M' || *p == 'm') val *= mul * mul;
+                else if (*p == 'G' || *p == 'g') val *= mul * mul * mul;
+                else if (*p == 'T' || *p == 't') val *= mul * mul * mul * mul;
+            } else {
+                while (*p >= '0' && *p <= '9') { val = val * 10 + (*p - '0'); p++; }
+            }
+            if (to_human) {
+                long div = use_si ? 1000 : 1024;
+                const char *suffixes = use_si ? " KMGTPE" : " KMGTPE";
+                int si = 0;
+                long dval = val;
+                while (dval >= div && si < 6) { dval /= div; si++; }
+                char num[24]; int np = 0;
+                char rev[24]; int rp = 0;
+                long v = dval;
+                if (v == 0) rev[rp++] = '0';
+                else { while (v > 0) { rev[rp++] = '0' + (v % 10); v /= 10; } }
+                while (rp > 0) num[np++] = rev[--rp];
+                if (si > 0) num[np++] = suffixes[si];
+                num[np++] = '\n';
+                sys_write(1, num, np);
+            } else {
+                char num[24]; int np = 0;
+                char rev[24]; int rp = 0;
+                if (val == 0) rev[rp++] = '0';
+                else { while (val > 0) { rev[rp++] = '0' + (val % 10); val /= 10; } }
+                while (rp > 0) num[np++] = rev[--rp];
+                num[np++] = '\n';
+                sys_write(1, num, np);
+            }
+        }
+    } else {
+        /* Read from stdin */
+        static char line[256];
+        ssize_t nr = sys_read(0, line, sizeof(line) - 1);
+        if (nr <= 0) return;
+        line[nr] = '\0';
+        char *lp = line;
+        while (*lp) {
+            while (*lp == ' ' || *lp == '\n' || *lp == '\t') lp++;
+            if (!*lp) break;
+            long val = 0;
+            if (from_human) {
+                while (*lp >= '0' && *lp <= '9') { val = val * 10 + (*lp - '0'); lp++; }
+                long mul = use_si ? 1000 : 1024;
+                if (*lp == 'K' || *lp == 'k') { val *= mul; lp++; }
+                else if (*lp == 'M' || *lp == 'm') { val *= mul * mul; lp++; }
+                else if (*lp == 'G' || *lp == 'g') { val *= mul * mul * mul; lp++; }
+            } else {
+                while (*lp >= '0' && *lp <= '9') { val = val * 10 + (*lp - '0'); lp++; }
+            }
+            if (to_human) {
+                long div = use_si ? 1000 : 1024;
+                const char *suffixes = " KMGTPE";
+                int si = 0;
+                while (val >= div && si < 6) { val /= div; si++; }
+                char num[24]; int np = 0;
+                char rev[24]; int rp = 0;
+                long v = val;
+                if (v == 0) rev[rp++] = '0';
+                else { while (v > 0) { rev[rp++] = '0' + (v % 10); v /= 10; } }
+                while (rp > 0) num[np++] = rev[--rp];
+                if (si > 0) num[np++] = suffixes[si];
+                num[np++] = '\n';
+                sys_write(1, num, np);
+            } else {
+                char num[24]; int np = 0;
+                char rev[24]; int rp = 0;
+                if (val == 0) rev[rp++] = '0';
+                else { while (val > 0) { rev[rp++] = '0' + (val % 10); val /= 10; } }
+                while (rp > 0) num[np++] = rev[--rp];
+                num[np++] = '\n';
+                sys_write(1, num, np);
+            }
+            while (*lp && *lp != ' ' && *lp != '\n' && *lp != '\t') lp++;
+        }
+    }
+}
+
+/* ── look: display lines beginning with a given prefix ── */
+static void cmd_look(int argc, char *argv[]) {
+    if (argc < 2) { write_str(2, "usage: look PREFIX [FILE]\n"); return; }
+    const char *prefix = argv[1];
+    int plen = 0;
+    while (prefix[plen]) plen++;
+    int fd = 0;
+    if (argc >= 3) {
+        fd = sys_open(argv[2], O_RDONLY, 0);
+        if (fd < 0) { write_str(2, "look: cannot open file\n"); return; }
+    }
+    static char buf[4096];
+    static char line[1024];
+    int lp = 0;
+    ssize_t n;
+    while ((n = sys_read(fd, buf, sizeof(buf))) > 0) {
+        for (ssize_t i = 0; i < n; i++) {
+            if (buf[i] == '\n') {
+                line[lp] = '\0';
+                /* Check prefix match */
+                int match = 1;
+                for (int j = 0; j < plen; j++) {
+                    if (j >= lp || line[j] != prefix[j]) { match = 0; break; }
+                }
+                if (match) { write_str(1, line); write_str(1, "\n"); }
+                lp = 0;
+            } else if (lp < (int)sizeof(line) - 1) {
+                line[lp++] = buf[i];
+            }
+        }
+    }
+    /* Handle last line without newline */
+    if (lp > 0) {
+        line[lp] = '\0';
+        int match = 1;
+        for (int j = 0; j < plen; j++) {
+            if (j >= lp || line[j] != prefix[j]) { match = 0; break; }
+        }
+        if (match) { write_str(1, line); write_str(1, "\n"); }
+    }
+    if (fd > 0) sys_close(fd);
+}
+
+/* ── colrm: remove columns from lines ── */
+static void cmd_colrm(int argc, char *argv[]) {
+    int start_col = 0, end_col = 0;
+    if (argc >= 2) {
+        for (const char *p = argv[1]; *p >= '0' && *p <= '9'; p++)
+            start_col = start_col * 10 + (*p - '0');
+    }
+    if (argc >= 3) {
+        for (const char *p = argv[2]; *p >= '0' && *p <= '9'; p++)
+            end_col = end_col * 10 + (*p - '0');
+    }
+    if (start_col <= 0) {
+        write_str(2, "usage: colrm START [END]\n");
+        return;
+    }
+
+    static char buf[4096];
+    static char line[4096];
+    int lp = 0;
+    ssize_t n;
+    while ((n = sys_read(0, buf, sizeof(buf))) > 0) {
+        for (ssize_t i = 0; i < n; i++) {
+            if (buf[i] == '\n') {
+                /* Output line with columns removed */
+                for (int c = 0; c < lp; c++) {
+                    int col = c + 1; /* 1-based columns */
+                    if (col >= start_col && (end_col == 0 || col <= end_col))
+                        continue; /* Skip this column */
+                    sys_write(1, &line[c], 1);
+                }
+                sys_write(1, "\n", 1);
+                lp = 0;
+            } else if (lp < (int)sizeof(line) - 1) {
+                line[lp++] = buf[i];
+            }
+        }
+    }
+    /* Handle last line */
+    if (lp > 0) {
+        for (int c = 0; c < lp; c++) {
+            int col = c + 1;
+            if (col >= start_col && (end_col == 0 || col <= end_col))
+                continue;
+            sys_write(1, &line[c], 1);
+        }
+        sys_write(1, "\n", 1);
+    }
+}
+
+/* ── hd: hex dump (alias for hexdump -C) ── */
+static void cmd_hd(int argc, char *argv[]) {
+    /* hd is a shorthand for hexdump -C */
+    /* Build new argv with -C inserted */
+    char *new_argv[32];
+    int new_argc = 0;
+    new_argv[new_argc++] = "hexdump";
+    new_argv[new_argc++] = "-C";
+    for (int i = 1; i < argc && new_argc < 31; i++)
+        new_argv[new_argc++] = argv[i];
+    new_argv[new_argc] = (char *)0;
+    cmd_hexdump(new_argc, new_argv);
 }
 
 #pragma GCC diagnostic pop

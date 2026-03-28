@@ -339,9 +339,10 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
 
     /* POSIX: select() with nfds=0 and all NULL fdsets acts as a sleep.
      * When timeout is provided, sleep for the specified duration and return 0.
-     * When timeout is NULL, block indefinitely (until a signal).
+     * When timeout is NULL (or {0,0}), return 0 immediately — there are no
+     * FDs to monitor and nothing to wait for.
      * This is an optimization that avoids entering the Phase 4 wiring loop
-     * with no FDs to monitor. */
+     * with no FDs to monitor (which would sleep indefinitely with no wakeup). */
     if (local_nfds == 0 && !local_readfds && !local_writefds && !local_exceptfds) {
         if (has_timeout) {
             /* Check for pending unblocked signals before sleeping */

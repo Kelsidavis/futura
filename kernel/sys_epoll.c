@@ -235,6 +235,7 @@
 
 /* Epoll debugging (controlled via debug_config.h) */
 #include <kernel/fut_memory.h>
+#include <kernel/fut_sched.h>   /* fut_spinlock_t for epoll table locking */
 #include <sys/epoll.h>
 #include <fcntl.h>
 
@@ -275,6 +276,7 @@ struct epoll_fd_entry {
     /* Phase 3: Edge-triggered and oneshot support */
     bool edge_triggered;       /* Enable edge-triggered reporting */
     bool oneshot;              /* Report only once, then auto-unregister */
+    bool oneshot_disabled;     /* True after oneshot fired; suppresses all events until re-armed */
     bool exclusive;            /* EPOLLEXCLUSIVE: wake only one waiter */
     bool last_was_readable;    /* Last state for edge-triggered EPOLLIN */
     bool last_was_writable;    /* Last state for edge-triggered EPOLLOUT */
@@ -295,6 +297,24 @@ struct epoll_set {
 
 /* Global epoll instance table */
 static struct epoll_set epoll_instances[MAX_EPOLL_INSTANCES];
+
+/* Global spinlock protecting epoll_instances table.
+ * Must be held when:
+ *   - Iterating epoll_instances (allocate, find, close-notify)
+ *   - Modifying set->fds[] entries (add/mod/del)
+ *   - Reading set->fds[] during epoll_wait polling loop
+ * The wait queue has its own internal lock, so fut_waitq_sleep_locked
+ * and fut_waitq_wake_* do NOT require this lock to be held. */
+static fut_spinlock_t epoll_lock;
+static bool epoll_lock_initialized;
+
+/* Ensure the global spinlock is initialized exactly once. */
+static inline void epoll_ensure_init(void) {
+    if (!__atomic_load_n(&epoll_lock_initialized, __ATOMIC_ACQUIRE)) {
+        fut_spinlock_init(&epoll_lock);
+        __atomic_store_n(&epoll_lock_initialized, true, __ATOMIC_RELEASE);
+    }
+}
 
 /* Forward declarations */
 static int epoll_release_op(void *inode, void *priv);
@@ -318,6 +338,9 @@ const struct fut_file_ops epoll_fops = {
  * documented in the Phase 5 security hardening notes above.
  */
 void epoll_notify_fd_close(int fd) {
+    epoll_ensure_init();
+    fut_spinlock_acquire(&epoll_lock);
+
     for (int i = 0; i < MAX_EPOLL_INSTANCES; i++) {
         if (!epoll_instances[i].active) {
             continue;
@@ -325,13 +348,70 @@ void epoll_notify_fd_close(int fd) {
         for (int j = 0; j < MAX_EPOLL_FDS; j++) {
             if (epoll_instances[i].fds[j].registered &&
                 epoll_instances[i].fds[j].fd == fd) {
+                /* Clear epoll_notify / connect_notify pointers on the fd's
+                 * backing object so they don't point at a stale waitqueue
+                 * after the entry is removed. */
+                {
+                    fut_socket_t *sock = get_socket_from_fd(fd);
+                    if (sock) {
+                        if (sock->pair_reverse &&
+                            sock->pair_reverse->epoll_notify == &epoll_instances[i].epoll_waitq)
+                            sock->pair_reverse->epoll_notify = NULL;
+                        if (sock->listener &&
+                            sock->listener->epoll_notify == &epoll_instances[i].epoll_waitq)
+                            sock->listener->epoll_notify = NULL;
+                        if (sock->connect_notify == &epoll_instances[i].epoll_waitq)
+                            sock->connect_notify = NULL;
+                    }
+                    fut_task_t *t = fut_task_current();
+                    if (t && t->fd_table && fd < t->max_fds) {
+                        struct fut_file *f = t->fd_table[fd];
+                        if (f) {
+                            extern void fut_eventfd_set_epoll_notify(struct fut_file *file, fut_waitq_t *wq);
+                            extern void fut_timerfd_set_epoll_notify(struct fut_file *file, fut_waitq_t *wq);
+                            extern void fut_signalfd_set_epoll_notify(struct fut_file *file, fut_waitq_t *wq);
+                            extern void fut_pipe_set_epoll_notify(struct fut_file *file, fut_waitq_t *wq);
+                            extern void fut_pidfd_set_epoll_notify(struct fut_file *file, fut_waitq_t *wq);
+                            extern void fut_inotify_set_epoll_notify(struct fut_file *file, fut_waitq_t *wq);
+                            extern void fut_pty_set_epoll_notify(struct fut_file *file, void *wq);
+                            fut_eventfd_set_epoll_notify(f, NULL);
+                            fut_timerfd_set_epoll_notify(f, NULL);
+                            fut_signalfd_set_epoll_notify(f, NULL);
+                            fut_pipe_set_epoll_notify(f, NULL);
+                            fut_pidfd_set_epoll_notify(f, NULL);
+                            fut_inotify_set_epoll_notify(f, NULL);
+                            fut_pty_set_epoll_notify(f, NULL);
+                        }
+                    }
+                }
+
                 epoll_instances[i].fds[j].registered = false;
                 epoll_instances[i].count--;
                 memset(&epoll_instances[i].fds[j], 0,
                        sizeof(epoll_instances[i].fds[j]));
+
+                /* Recompute has_exclusive if needed */
+                if (epoll_instances[i].has_exclusive) {
+                    bool any_excl = false;
+                    for (int k = 0; k < MAX_EPOLL_FDS; k++) {
+                        if (epoll_instances[i].fds[k].registered &&
+                            epoll_instances[i].fds[k].exclusive) {
+                            any_excl = true;
+                            break;
+                        }
+                    }
+                    epoll_instances[i].has_exclusive = any_excl;
+                }
             }
         }
+
+        /* Wake any threads blocked in epoll_wait on this set so they
+         * can re-scan and notice the removed fd (possibly reporting
+         * EPOLLERR|EPOLLHUP for a closed fd). */
+        fut_waitq_wake_all(&epoll_instances[i].epoll_waitq);
     }
+
+    fut_spinlock_release(&epoll_lock);
 }
 
 /**
@@ -342,7 +422,8 @@ void epoll_close_cloexec(uint64_t pid) {
     (void)pid;
 }
 
-/* Count active epoll instances owned by a given PID */
+/* Count active epoll instances owned by a given PID.
+ * Caller must hold epoll_lock. */
 static int epoll_count_by_pid(uint64_t pid) {
     int count = 0;
     for (int i = 0; i < MAX_EPOLL_INSTANCES; i++) {
@@ -353,7 +434,8 @@ static int epoll_count_by_pid(uint64_t pid) {
     return count;
 }
 
-/* Helper to find epoll set by epoll FD */
+/* Helper to find epoll set by epoll FD.
+ * Caller must hold epoll_lock. */
 static struct epoll_set *epoll_get_set(int epfd) {
     for (int i = 0; i < MAX_EPOLL_INSTANCES; i++) {
         if (epoll_instances[i].active && epoll_instances[i].epfd == epfd) {
@@ -520,6 +602,8 @@ bool epoll_try_close(int fd) {
  * Phase 4 (Completed): Performance optimization, memory pooling
  */
 long sys_epoll_create1(int flags) {
+    epoll_ensure_init();
+
     /* Phase 2: Validate flags */
     if (flags & ~EPOLL_CLOEXEC) {
         char msg[128];
@@ -566,12 +650,15 @@ long sys_epoll_create1(int flags) {
         flags_desc = "unknown";
     }
 
-    /* Per-task epoll instance quota check */
+    /* Per-task epoll instance quota check (under lock for atomicity) */
     fut_task_t *task = fut_task_current();
     uint64_t pid = task ? task->pid : 0;
+
+    fut_spinlock_acquire(&epoll_lock);
     if (task) {
         int task_count = epoll_count_by_pid(pid);
         if (task_count >= MAX_EPOLL_PER_TASK) {
+            fut_spinlock_release(&epoll_lock);
             fut_printf("[EPOLL_CREATE1] epoll_create1(flags=%s, pid=%llu) -> EMFILE "
                        "(per-task limit reached: %d/%d)\n",
                        flags_desc, (unsigned long long)pid,
@@ -582,6 +669,8 @@ long sys_epoll_create1(int flags) {
 
     /* Allocate new epoll instance */
     struct epoll_set *set = epoll_allocate_set(pid);
+    fut_spinlock_release(&epoll_lock);
+
     if (!set) {
         char msg[128];
         int pos = 0;
@@ -602,7 +691,9 @@ long sys_epoll_create1(int flags) {
      * S_IFCHR via fut_chrdev_fstat_mode. */
     int fd = chrdev_alloc_fd(&epoll_fops, NULL, set);
     if (fd < 0) {
+        fut_spinlock_acquire(&epoll_lock);
         epoll_deallocate_set(set);
+        fut_spinlock_release(&epoll_lock);
         return fd;
     }
     set->epfd = fd;

@@ -31610,7 +31610,7 @@ static void cmd_systemd_run(int argc, char *argv[]) {
             cmd_start = i + 1;
         } else if (starts_with_prefix(argv[i], "--slice=")) {
             cmd_start = i + 1;
-        } else if (starts_with_prefix(argv[i], "-p") || starts_with_prefix(argv[i], "--property=")) {
+        } else if (strcmp_simple(argv[i], "-p") == 0 || starts_with_prefix(argv[i], "--property=")) {
             cmd_start = i + 1;
             if (strcmp_simple(argv[i], "-p") == 0) cmd_start = i + 2; /* skip value */
         } else {
@@ -31796,7 +31796,7 @@ static void cmd_systemd_cat(int argc, char *argv[]) {
     int cmd_start = 1;
 
     for (int i = 1; i < argc; i++) {
-        if (starts_with_prefix(argv[i], "-t") || starts_with_prefix(argv[i], "--identifier=")) {
+        if (strcmp_simple(argv[i], "-t") == 0 || starts_with_prefix(argv[i], "--identifier=")) {
             if (starts_with_prefix(argv[i], "--identifier=")) {
                 identifier = argv[i] + 13;
                 cmd_start = i + 1;
@@ -31805,7 +31805,7 @@ static void cmd_systemd_cat(int argc, char *argv[]) {
                 cmd_start = i + 2;
                 i++;
             }
-        } else if (starts_with_prefix(argv[i], "-p") || starts_with_prefix(argv[i], "--priority=")) {
+        } else if (strcmp_simple(argv[i], "-p") == 0 || starts_with_prefix(argv[i], "--priority=")) {
             if (strcmp_simple(argv[i], "-p") == 0 && i + 1 < argc) {
                 cmd_start = i + 2;
                 i++;

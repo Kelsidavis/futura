@@ -447,7 +447,7 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
 
         if (ret < 0) {
             /* SIGPIPE on broken connection (unless MSG_NOSIGNAL) */
-            if (ret == -EPIPE && !(local_flags & 0x4000 /* MSG_NOSIGNAL */)) {
+            if (ret == -EPIPE && !(local_flags & MSG_NOSIGNAL)) {
                 if (sm_task) fut_signal_send(sm_task, 13 /* SIGPIPE */);
             }
             return total_sent > 0 ? total_sent : ret;

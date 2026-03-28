@@ -356,6 +356,7 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
     ssize_t total_received = 0;
     int iovecs_filled = 0;
     bool msg_trunc_set = false;
+    size_t dgram_actual_len = 0;  /* Real datagram length for MSG_TRUNC return value */
     /* Identify DGRAM socket once; used for MSG_TRUNC and direct dgram recv path */
     fut_socket_t *dgsock = get_socket_from_fd(local_sockfd);
     /* Named DGRAM (no stream pair): use direct dgram path for MSG_TRUNC detection.
@@ -368,7 +369,8 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
     for (size_t i = 0; i < kmsg.msg_iovlen; i++) {
         struct iovec iov;
         if (recvmsg_copy_from_user(&iov, &kmsg.msg_iov[i], sizeof(struct iovec)) != 0) {
-            return total_received > 0 ? total_received : -EFAULT;
+            if (total_received == 0) total_received = -EFAULT;
+            goto iov_loop_done;
         }
 
         if (iov.iov_len == 0) {
@@ -383,9 +385,9 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
          *
          * Without write validation:
          * 1. recvmsg(sockfd, &msg, 0) with iov_base = readonly_memory
-         * 2. Kernel allocates iov_len bytes (e.g., 16MB) at line 287
-         * 3. Kernel reads data from socket into kernel buffer (line 293)
-         * 4. Kernel attempts copy_to_user to readonly iov_base (line 297)
+         * 2. Kernel allocates iov_len bytes (e.g., 16MB)
+         * 3. Kernel reads data from socket into kernel buffer
+         * 4. Kernel attempts copy_to_user to readonly iov_base
          * 5. Copy fails with page fault (write to read-only page)
          * 6. Kernel buffer leaked, socket data lost
          * 7. Repeated attacks exhaust kernel memory (DoS)
@@ -397,7 +399,8 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
             RECVMSG_LOG("[RECVMSG] recvmsg(sockfd=%d) -> EFAULT "
                        "(iov_base[%zu] is NULL with non-zero length %zu)\n",
                        local_sockfd, i, iov.iov_len);
-            return total_received > 0 ? total_received : -EFAULT;
+            if (total_received == 0) total_received = -EFAULT;
+            goto iov_loop_done;
         }
 
         /* Probe write permission with 1-byte test */
@@ -407,18 +410,20 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
             RECVMSG_LOG("[RECVMSG] recvmsg(sockfd=%d) -> EFAULT "
                        "(iov_base[%zu] not writable, len=%zu)\n",
                        local_sockfd, i, iov.iov_len);
-            return total_received > 0 ? total_received : -EFAULT;
+            if (total_received == 0) total_received = -EFAULT;
+            goto iov_loop_done;
         }
 
         /* Allocate kernel buffer */
         void *kbuf = fut_malloc(iov.iov_len);
         if (!kbuf) {
-            return total_received > 0 ? total_received : -ENOMEM;
+            if (total_received == 0) total_received = -ENOMEM;
+            goto iov_loop_done;
         }
 
         /* Read from socket.
          * MSG_PEEK: read without consuming (peek at data).
-         * DGRAM: use fut_socket_recvfrom_dgram directly to track MSG_TRUNC.
+         * DGRAM: use fut_socket_recvfrom_dgram or fut_socket_peek_dgram.
          * MSG_WAITALL: loop until the full iovec is filled (stream sockets only).
          * SEQPACKET is message-oriented: MSG_WAITALL must be ignored to avoid
          * concatenating messages across boundaries (same fix as sys_recvfrom.c). */
@@ -430,11 +435,23 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
         ssize_t ret;
         if (is_dgram_sock) {
             size_t actual_len = 0;
-            ret = fut_socket_recvfrom_dgram(dgsock, kbuf, iov.iov_len,
+            if (do_peek) {
+                /* MSG_PEEK on DGRAM: peek without consuming the datagram */
+                extern ssize_t fut_socket_peek_dgram(fut_socket_t *sock, void *buf, size_t len,
+                                                      char *sender_path_out, uint16_t *sender_path_len_out,
+                                                      size_t *actual_datagram_len_out);
+                ret = fut_socket_peek_dgram(dgsock, kbuf, iov.iov_len,
                                             dgram_sender_path, &dgram_sender_path_len,
                                             &actual_len);
-            if (ret >= 0 && actual_len > iov.iov_len)
+            } else {
+                ret = fut_socket_recvfrom_dgram(dgsock, kbuf, iov.iov_len,
+                                                dgram_sender_path, &dgram_sender_path_len,
+                                                &actual_len);
+            }
+            if (ret >= 0 && actual_len > iov.iov_len) {
                 msg_trunc_set = true;
+                dgram_actual_len = actual_len;
+            }
         } else if (do_peek) {
             extern ssize_t fut_socket_recv_peek(fut_socket_t *sock, void *buf, size_t len);
             extern fut_socket_t *get_socket_from_fd(int fd);
@@ -460,7 +477,8 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
             /* Copy to userspace */
             if (recvmsg_copy_to_user(iov.iov_base, kbuf, (size_t)ret) != 0) {
                 fut_free(kbuf);
-                return total_received > 0 ? total_received : -EFAULT;
+                if (total_received == 0) total_received = -EFAULT;
+                goto iov_loop_done;
             }
             total_received += ret;
             iovecs_filled++;
@@ -469,7 +487,8 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
         fut_free(kbuf);
 
         if (ret < 0) {
-            return total_received > 0 ? total_received : ret;
+            if (total_received == 0) total_received = ret;
+            goto iov_loop_done;
         }
 
         if (ret == 0) {
@@ -494,6 +513,7 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
             break;
         }
     }
+iov_loop_done:
 
     /* Fill msg_name with sender address for DGRAM recvmsg */
     if (is_dgram_sock && kmsg.msg_name && kmsg.msg_namelen > 0 && dgram_sender_path_len > 0) {
@@ -720,13 +740,25 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
 
     /* Write updated msghdr back to userspace */
     if (recvmsg_copy_to_user(local_msg, &kmsg, sizeof(struct msghdr)) != 0) {
-        return total_received > 0 ? total_received : -EFAULT;
+        if (total_received <= 0) total_received = -EFAULT;
+        /* Fall through to cleanup */
+    }
+
+    /* MSG_TRUNC in input flags: for DGRAM, return the real datagram length
+     * even if it was larger than the supplied buffer.  This lets callers
+     * discover the original message size without a second recv.
+     * Only override when the datagram was actually truncated. */
+    if ((local_flags & MSG_TRUNC) && msg_trunc_set && dgram_actual_len > 0
+        && total_received > 0) {
+        total_received = (ssize_t)dgram_actual_len;
     }
 
     /* Phase 2: Detailed logging with I/O statistics */
     const char *completion_status;
     if (total_received == 0) {
         completion_status = "EOF";
+    } else if (total_received < 0) {
+        completion_status = "error";
     } else if ((size_t)total_received < total_size) {
         completion_status = "partial";
     } else {
@@ -748,7 +780,7 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
                    completion_status, iovecs_filled, kmsg.msg_iovlen, min_iov_len, max_iov_len);
     }
 
-    /* Restore per-task MSG_DONTWAIT flag */
+    /* Restore per-task MSG_DONTWAIT flag — must happen on ALL exit paths */
     if ((local_flags & MSG_DONTWAIT) && dw_task) {
         dw_task->msg_dontwait = saved_dontwait;
     }

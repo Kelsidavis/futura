@@ -1023,6 +1023,9 @@ long sys_fork(void) {
     __builtin_memcpy(child_task->comm, parent_task->comm, sizeof(child_task->comm));
     __builtin_memcpy(child_task->exe_path, parent_task->exe_path, sizeof(child_task->exe_path));
 
+    /* Inherit cgroup membership (child stays in parent's cgroup) */
+    child_task->cgroup_idx = parent_task->cgroup_idx;
+
     /* Inherit I/O priority */
     child_task->ioprio       = parent_task->ioprio;
     child_task->ioprio_class = parent_task->ioprio_class;

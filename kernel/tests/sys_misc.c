@@ -11611,6 +11611,8 @@ static void test_wcoredump_bit(void) {
             goto t1281;
         }
         int child_pid = (int)child->pid;
+        /* Set RLIMIT_CORE > 0 so WCOREDUMP bit is included in status */
+        child->rlimits[4].rlim_cur = 1;  /* RLIMIT_CORE = index 4 */
         child->state = FUT_TASK_ZOMBIE;
         child->exit_code = 0;
         child->term_signal = 6;  /* SIGABRT — core-dumping signal */

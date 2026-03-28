@@ -617,13 +617,17 @@ long sys_tee(int fd_in, int fd_out, size_t len, unsigned int flags) {
      * duplicating the first CHUNK bytes across the entire output.
      *
      * Fix: peek the full requested amount in one call, then write to the
-     * output pipe. Pipe buffers are bounded (65536 bytes), so the allocation
-     * is safe. Cap at 65536 to prevent excessive allocation for large len. */
+     * output pipe. Cap at the source pipe's actual buffer size (which may
+     * have been enlarged via F_SETPIPE_SZ) to prevent excessive allocation. */
     extern ssize_t pipe_peek(void *read_priv, void *buf, size_t len);
+    extern size_t pipe_get_buffer_size(void *priv);
+
+    size_t src_cap = pipe_get_buffer_size(file_in->chr_private);
+    if (src_cap == 0) src_cap = 65536;  /* fallback default */
 
     size_t peek_len = local_len;
-    if (peek_len > 65536)
-        peek_len = 65536;
+    if (peek_len > src_cap)
+        peek_len = src_cap;
 
     uint8_t *kbuf = (uint8_t *)fut_malloc(peek_len);
     if (!kbuf) return -ENOMEM;

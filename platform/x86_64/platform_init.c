@@ -1041,9 +1041,12 @@ void __attribute__((weak)) fut_isr_handler(void *regs_ptr) {
     fut_serial_puts("  KERNEL EXCEPTION\n");
     fut_serial_puts("========================================\n");
 
-    /* Read CR2 register (fault address for page faults) */
-    uint64_t cr2 = 0;
+    /* Read control registers for diagnostics */
+    uint64_t cr0 = 0, cr2 = 0, cr3 = 0, cr4 = 0;
+    __asm__ volatile("mov %%cr0, %0" : "=r"(cr0));
     __asm__ volatile("mov %%cr2, %0" : "=r"(cr2));
+    __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
+    __asm__ volatile("mov %%cr4, %0" : "=r"(cr4));
 
     /* Display exception type based on vector number */
     fut_serial_puts("Exception #");
@@ -1081,42 +1084,79 @@ void __attribute__((weak)) fut_isr_handler(void *regs_ptr) {
         print_hex64(regs->error_code);
         fut_serial_puts(")\n");
     } else {
-    fut_serial_puts("Error Code: 0x");
-    print_hex64(regs->error_code);
-    fut_serial_puts("\n");
-
-    if (regs->vector == 6) {
-        fut_serial_puts("[#UD] Opcode bytes @0x");
-        print_hex64(regs->rip);
-        fut_serial_puts(": ");
-        if ((uintptr_t)regs->rip >= KERNEL_VIRTUAL_BASE) {
-            const uint8_t *p = (const uint8_t *)regs->rip;
-            for (int i = 0; i < 8; i++) {
-                print_hex8(p[i]);
-                if (i != 7) {
-                    fut_serial_puts(" ");
-                }
-            }
-        } else {
-            fut_serial_puts("<unmapped>");
-        }
+        fut_serial_puts("Error Code: 0x");
+        print_hex64(regs->error_code);
         fut_serial_puts("\n");
     }
+
+    /* --- Faulting instruction bytes (16 bytes at RIP) --- */
+    fut_serial_puts("\nCode (16 bytes at RIP 0x");
+    print_hex64(regs->rip);
+    fut_serial_puts("):\n  ");
+    if ((uintptr_t)regs->rip >= KERNEL_VIRTUAL_BASE) {
+        const uint8_t *p = (const uint8_t *)(uintptr_t)regs->rip;
+        for (int i = 0; i < 16; i++) {
+            print_hex8(p[i]);
+            if (i < 15) fut_serial_puts(" ");
+        }
+    } else {
+        fut_serial_puts("<unmapped user address>");
     }
+    fut_serial_puts("\n");
 
-    fut_serial_puts("\nRegisters:\n");
-    fut_serial_puts("  RIP: 0x"); print_hex64(regs->rip); fut_serial_puts("\n");
-    fut_serial_puts("  RSP: 0x"); print_hex64(regs->rsp); fut_serial_puts("\n");
-    fut_serial_puts("  RBP: 0x"); print_hex64(regs->rbp); fut_serial_puts("\n");
-    fut_serial_puts("  RAX: 0x"); print_hex64(regs->rax); fut_serial_puts("\n");
+    /* --- All general-purpose registers (RAX-R15) --- */
+    fut_serial_puts("\nGeneral Purpose Registers:\n");
+    fut_serial_puts("  RAX: 0x"); print_hex64(regs->rax);
     fut_serial_puts("  RBX: 0x"); print_hex64(regs->rbx); fut_serial_puts("\n");
-    fut_serial_puts("  RCX: 0x"); print_hex64(regs->rcx); fut_serial_puts("\n");
+    fut_serial_puts("  RCX: 0x"); print_hex64(regs->rcx);
     fut_serial_puts("  RDX: 0x"); print_hex64(regs->rdx); fut_serial_puts("\n");
-    fut_serial_puts("  RSI: 0x"); print_hex64(regs->rsi); fut_serial_puts("\n");
+    fut_serial_puts("  RSI: 0x"); print_hex64(regs->rsi);
     fut_serial_puts("  RDI: 0x"); print_hex64(regs->rdi); fut_serial_puts("\n");
-    fut_serial_puts("  RFL: 0x"); print_hex64(regs->rflags); fut_serial_puts("\n");
-    fut_serial_puts("  CR2: 0x"); print_hex64(cr2); fut_serial_puts("\n");
+    fut_serial_puts("  RBP: 0x"); print_hex64(regs->rbp);
+    fut_serial_puts("  RSP: 0x"); print_hex64(regs->rsp); fut_serial_puts("\n");
+    fut_serial_puts("  R8:  0x"); print_hex64(regs->r8);
+    fut_serial_puts("  R9:  0x"); print_hex64(regs->r9);  fut_serial_puts("\n");
+    fut_serial_puts("  R10: 0x"); print_hex64(regs->r10);
+    fut_serial_puts("  R11: 0x"); print_hex64(regs->r11); fut_serial_puts("\n");
+    fut_serial_puts("  R12: 0x"); print_hex64(regs->r12);
+    fut_serial_puts("  R13: 0x"); print_hex64(regs->r13); fut_serial_puts("\n");
+    fut_serial_puts("  R14: 0x"); print_hex64(regs->r14);
+    fut_serial_puts("  R15: 0x"); print_hex64(regs->r15); fut_serial_puts("\n");
+    fut_serial_puts("  RIP: 0x"); print_hex64(regs->rip); fut_serial_puts("\n");
 
+    /* --- Control registers --- */
+    fut_serial_puts("\nControl Registers:\n");
+    fut_serial_puts("  CR0: 0x"); print_hex64(cr0); fut_serial_puts("\n");
+    fut_serial_puts("  CR2: 0x"); print_hex64(cr2); fut_serial_puts("\n");
+    fut_serial_puts("  CR3: 0x"); print_hex64(cr3); fut_serial_puts("\n");
+    fut_serial_puts("  CR4: 0x"); print_hex64(cr4); fut_serial_puts("\n");
+
+    /* --- EFLAGS decoded --- */
+    fut_serial_puts("\nEFLAGS: 0x"); print_hex64(regs->rflags);
+    fut_serial_puts(" [");
+    if (regs->rflags & (1 << 0))  fut_serial_puts(" CF");
+    if (regs->rflags & (1 << 2))  fut_serial_puts(" PF");
+    if (regs->rflags & (1 << 4))  fut_serial_puts(" AF");
+    if (regs->rflags & (1 << 6))  fut_serial_puts(" ZF");
+    if (regs->rflags & (1 << 7))  fut_serial_puts(" SF");
+    if (regs->rflags & (1 << 8))  fut_serial_puts(" TF");
+    if (regs->rflags & (1 << 9))  fut_serial_puts(" IF");
+    if (regs->rflags & (1 << 10)) fut_serial_puts(" DF");
+    if (regs->rflags & (1 << 11)) fut_serial_puts(" OF");
+    if (regs->rflags & (1 << 14)) fut_serial_puts(" NT");
+    if (regs->rflags & (1 << 16)) fut_serial_puts(" RF");
+    if (regs->rflags & (1 << 17)) fut_serial_puts(" VM");
+    if (regs->rflags & (1 << 18)) fut_serial_puts(" AC");
+    if (regs->rflags & (1 << 21)) fut_serial_puts(" ID");
+    fut_serial_puts(" ] IOPL=");
+    {
+        char iopl_ch = '0' + (char)((regs->rflags >> 12) & 3);
+        char iopl_buf[2] = { iopl_ch, '\0' };
+        fut_serial_puts(iopl_buf);
+    }
+    fut_serial_puts("\n");
+
+    /* --- Segment registers --- */
     fut_serial_puts("\nSegments:\n");
     fut_serial_puts("  CS: 0x"); print_hex64(regs->cs); fut_serial_puts("\n");
     fut_serial_puts("  DS: 0x"); print_hex64(regs->ds); fut_serial_puts("\n");
@@ -1124,13 +1164,64 @@ void __attribute__((weak)) fut_isr_handler(void *regs_ptr) {
     /* SS/RSP are only in the frame if there was a privilege level change (CS & 3).
      * For ring 0 exceptions, read SS directly from the register instead. */
     if ((regs->cs & 3) == 0) {
-        /* Ring 0 exception - SS not in frame, read from register */
         uint16_t current_ss;
         __asm__ volatile("mov %%ss, %0" : "=r"(current_ss));
         fut_serial_puts("  SS: 0x"); print_hex64(current_ss); fut_serial_puts(" (from register)\n");
     } else {
-        /* Ring 3 exception - SS is in frame */
         fut_serial_puts("  SS: 0x"); print_hex64(regs->ss); fut_serial_puts(" (from frame)\n");
+    }
+
+    /* --- Stack backtrace via RBP frame pointer chain --- */
+    fut_serial_puts("\nStack Backtrace:\n");
+    {
+        uint64_t *rbp = (uint64_t *)(uintptr_t)regs->rbp;
+        int frame = 0;
+        const int max_frames = 20;
+
+        /* Frame 0 is the faulting RIP itself */
+        fut_serial_puts("  #0  0x"); print_hex64(regs->rip); fut_serial_puts("\n");
+
+        while (frame < max_frames && rbp != NULL) {
+            /* Validate rbp is within kernel address space and aligned */
+            if ((uintptr_t)rbp < KERNEL_VIRTUAL_BASE ||
+                ((uintptr_t)rbp & 0x7) != 0) {
+                fut_serial_puts("  --- end of valid frames (bad RBP: 0x");
+                print_hex64((uint64_t)(uintptr_t)rbp);
+                fut_serial_puts(") ---\n");
+                break;
+            }
+
+            uint64_t ret_addr = rbp[1];   /* Return address is at [RBP+8] */
+            uint64_t next_rbp_val = rbp[0]; /* Saved RBP is at [RBP+0] */
+
+            if (ret_addr == 0)
+                break;
+
+            frame++;
+            fut_serial_puts("  #");
+            {
+                /* Print frame number (1-20) */
+                if (frame >= 10) {
+                    char d1 = '0' + (char)(frame / 10);
+                    char d0 = '0' + (char)(frame % 10);
+                    char nb[3] = { d1, d0, '\0' };
+                    fut_serial_puts(nb);
+                } else {
+                    char nb[2] = { (char)('0' + frame), '\0' };
+                    fut_serial_puts(nb);
+                }
+            }
+            fut_serial_puts(" 0x"); print_hex64(ret_addr); fut_serial_puts("\n");
+
+            /* Walk to next frame; detect cycles */
+            if (next_rbp_val == 0 || (uint64_t *)(uintptr_t)next_rbp_val <= rbp) {
+                break;
+            }
+            rbp = (uint64_t *)(uintptr_t)next_rbp_val;
+        }
+        if (frame == 0 && rbp == NULL) {
+            fut_serial_puts("  <no frame pointer chain available>\n");
+        }
     }
 
     fut_serial_puts("\nSystem halted.\n");

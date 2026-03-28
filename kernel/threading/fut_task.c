@@ -673,14 +673,69 @@ void fut_task_exit_current(int status) {
 /* Called from exception handler to print task info during kernel crash */
 void fut_crash_print_task(void) {
     fut_task_t *t = fut_task_current();
-    if (!t) return;
-    fut_printf("Task: PID=%llu comm=%s",
-               (unsigned long long)t->pid,
-               t->comm[0] ? t->comm : "(unnamed)");
+    if (!t) {
+        fut_printf("Task: <no current task>\n");
+        return;
+    }
+
+    /* --- Basic identity --- */
+    fut_printf("Task: PID=%llu", (unsigned long long)t->pid);
+
+    fut_thread_t *thr = fut_thread_current();
+    if (thr)
+        fut_printf(" TID=%llu", (unsigned long long)thr->tid);
+
+    fut_printf(" comm=%s", t->comm[0] ? t->comm : "(unnamed)");
+
     const char *ep = t->exe_path;
     if (ep && ep[0])
         fut_printf(" exe=%s", ep);
     fut_printf("\n");
+
+    /* --- Task state and scheduling --- */
+    const char *state_str = "UNKNOWN";
+    switch (t->state) {
+        case FUT_TASK_RUNNING: state_str = "RUNNING"; break;
+        case FUT_TASK_ZOMBIE:  state_str = "ZOMBIE";  break;
+        case FUT_TASK_STOPPED: state_str = "STOPPED"; break;
+    }
+    fut_printf("  State: %s  Nice: %d", state_str, t->nice);
+    if (thr)
+        fut_printf("  Priority: %d", thr->priority);
+    fut_printf("  UID: %u  GID: %u\n", t->uid, t->gid);
+
+    /* --- Memory map summary --- */
+    if (t->mm) {
+        struct fut_vma *vma = t->mm->vma_list;
+        int vma_count = 0;
+        uint64_t total_mapped = 0;
+        while (vma) {
+            vma_count++;
+            total_mapped += (vma->end - vma->start);
+            vma = vma->next;
+        }
+        fut_printf("  Memory: %d VMAs, %llu KB mapped",
+                   vma_count, (unsigned long long)(total_mapped / 1024));
+        fut_printf(", brk=0x%llx\n", (unsigned long long)t->mm->brk_current);
+    } else {
+        fut_printf("  Memory: <kernel thread, no mm>\n");
+    }
+
+    /* --- Open file descriptors summary --- */
+    {
+        int open_fds = 0;
+        int max_fd_seen = -1;
+        if (t->fd_table) {
+            for (int i = 0; i < t->max_fds; i++) {
+                if (t->fd_table[i] != NULL) {
+                    open_fds++;
+                    max_fd_seen = i;
+                }
+            }
+        }
+        fut_printf("  Open FDs: %d (max_fds=%d, highest=%d)\n",
+                   open_fds, t->max_fds, max_fd_seen);
+    }
 }
 
 void fut_task_signal_exit(int signal) {

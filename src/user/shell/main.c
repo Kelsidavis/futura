@@ -155,6 +155,7 @@ static void cmd_passwd(int argc, char *argv[]);
 static void cmd_systemctl(int argc, char *argv[]);
 static void cmd_crontab(int argc, char *argv[]);
 static void cmd_scp(int argc, char *argv[]);
+static void cmd_pkg(int argc, char *argv[]);
 static void strcpy_simple(char *dest, const char *src);
 
 /* Forward declaration for prompt */
@@ -1287,6 +1288,7 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  top             - Show processes and system stats\n");
     write_str(1, "  sysctl key[=v]  - Read/write kernel parameters\n");
     write_str(1, "  systemctl <cmd> - Service management (start/stop/status/list-units)\n");
+    write_str(1, "  pkg <cmd>       - Package manager (install/remove/list/search/info)\n");
     write_str(1, "\n");
     write_str(1, "Networking:\n");
     write_str(1, "  ip addr|link|route|neigh|forward - Network configuration\n");
@@ -11431,6 +11433,9 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "scp") == 0) {
         cmd_scp(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "pkg") == 0) {
+        cmd_pkg(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -11603,6 +11608,7 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "systemctl") == 0 ||
             strcmp_simple(cmd, "crontab") == 0 ||
             strcmp_simple(cmd, "scp") == 0 ||
+            strcmp_simple(cmd, "pkg") == 0 ||
             0);
 }
 
@@ -16337,4 +16343,258 @@ static void cmd_scp(int argc, char *argv[]) {
         write_str(1, " ("); write_str(1, tsb); write_str(1, " bytes)\n");
     }
     sys_close(sock);
+}
+
+/* ── pkg: simple package manager ── */
+static void cmd_pkg(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "Usage: pkg install <name>  - Install package from /var/pkg/<name>.tar\n");
+        write_str(2, "       pkg remove <name>   - Remove installed package\n");
+        write_str(2, "       pkg list            - List installed packages\n");
+        write_str(2, "       pkg search <pattern> - Search available packages\n");
+        write_str(2, "       pkg info <name>     - Show package description\n");
+        return;
+    }
+
+    /* Ensure base directories exist */
+    sys_mkdir("/var", 0755);
+    sys_mkdir("/var/pkg", 0755);
+    sys_mkdir("/var/pkg/installed", 0755);
+
+    if (strcmp_simple(argv[1], "install") == 0) {
+        if (argc < 3) { write_str(2, "pkg install: package name required\n"); return; }
+        const char *name = argv[2];
+
+        /* Build tar path: /var/pkg/<name>.tar */
+        char tar_path[256];
+        int tp = 0;
+        const char *prefix = "/var/pkg/";
+        for (int i = 0; prefix[i] && tp < 240; i++) tar_path[tp++] = prefix[i];
+        for (int i = 0; name[i] && tp < 248; i++) tar_path[tp++] = name[i];
+        tar_path[tp++] = '.'; tar_path[tp++] = 't'; tar_path[tp++] = 'a'; tar_path[tp++] = 'r';
+        tar_path[tp] = '\0';
+
+        int afd = sys_open(tar_path, O_RDONLY, 0);
+        if (afd < 0) {
+            write_str(2, "pkg: package not found: "); write_str(2, tar_path); write_str(2, "\n");
+            return;
+        }
+
+        /* Build installed record path: /var/pkg/installed/<name> */
+        char rec_path[256];
+        int rp = 0;
+        const char *rec_prefix = "/var/pkg/installed/";
+        for (int i = 0; rec_prefix[i] && rp < 240; i++) rec_path[rp++] = rec_prefix[i];
+        for (int i = 0; name[i] && rp < 254; i++) rec_path[rp++] = name[i];
+        rec_path[rp] = '\0';
+
+        int rec_fd = sys_open(rec_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (rec_fd < 0) {
+            write_str(2, "pkg: cannot create install record\n");
+            sys_close(afd); return;
+        }
+
+        /* Extract tar entries to / and record file names */
+        static char hdr[512];
+        int file_count = 0;
+        while (sys_read(afd, hdr, 512) == 512) {
+            int all_zero = 1;
+            for (int i = 0; i < 512 && all_zero; i++) if (hdr[i]) all_zero = 0;
+            if (all_zero) break;
+
+            char fname[101];
+            for (int i = 0; i < 100; i++) fname[i] = hdr[i];
+            fname[100] = '\0';
+            int nlen = 0; while (fname[nlen]) nlen++;
+
+            unsigned long size = 0;
+            for (int i = 0; i < 12; i++) {
+                char c = hdr[124 + i];
+                if (c >= '0' && c <= '7') size = size * 8 + (unsigned long)(c - '0');
+            }
+            unsigned long mode = 0;
+            for (int i = 0; i < 8; i++) {
+                char c = hdr[100 + i];
+                if (c >= '0' && c <= '7') mode = mode * 8 + (unsigned long)(c - '0');
+            }
+            char type = hdr[156];
+
+            /* Build output path with leading / */
+            char out_path[256];
+            int op = 0;
+            if (nlen > 0 && fname[0] != '/') out_path[op++] = '/';
+            for (int i = 0; i < nlen && op < 254; i++) out_path[op++] = fname[i];
+            out_path[op] = '\0';
+
+            /* Record installed file */
+            sys_write(rec_fd, out_path, (size_t)op);
+            sys_write(rec_fd, "\n", 1);
+
+            if (type == '5' || (nlen > 0 && fname[nlen - 1] == '/')) {
+                sys_mkdir(out_path, mode ? (unsigned int)mode : 0755);
+            } else {
+                int ofd = sys_open(out_path, O_WRONLY | O_CREAT | O_TRUNC, mode ? (int)mode : 0644);
+                if (ofd >= 0) {
+                    static char fbuf[4096];
+                    unsigned long remaining = size;
+                    while (remaining > 0) {
+                        unsigned long chunk = remaining > 4096 ? 4096 : remaining;
+                        long nr = sys_read(afd, fbuf, chunk);
+                        if (nr <= 0) break;
+                        sys_write(ofd, fbuf, (size_t)nr);
+                        remaining -= (unsigned long)nr;
+                    }
+                    sys_close(ofd);
+                    unsigned long pad = (512 - (size % 512)) % 512;
+                    if (pad > 0) { static char skip[512]; sys_read(afd, skip, pad); }
+                } else {
+                    unsigned long total = size + ((512 - (size % 512)) % 512);
+                    static char skip[512];
+                    while (total > 0) {
+                        unsigned long rd = total > 512 ? 512 : total;
+                        sys_read(afd, skip, rd);
+                        total -= rd;
+                    }
+                }
+                file_count++;
+            }
+        }
+        sys_close(afd);
+        sys_close(rec_fd);
+        write_str(1, "pkg: installed "); write_str(1, name);
+        char cnt[16]; int_to_str(file_count, cnt, 16);
+        write_str(1, " ("); write_str(1, cnt); write_str(1, " files)\n");
+
+    } else if (strcmp_simple(argv[1], "remove") == 0) {
+        if (argc < 3) { write_str(2, "pkg remove: package name required\n"); return; }
+        const char *name = argv[2];
+
+        char rec_path[256];
+        int rp = 0;
+        const char *rec_prefix = "/var/pkg/installed/";
+        for (int i = 0; rec_prefix[i] && rp < 240; i++) rec_path[rp++] = rec_prefix[i];
+        for (int i = 0; name[i] && rp < 254; i++) rec_path[rp++] = name[i];
+        rec_path[rp] = '\0';
+
+        int fd = sys_open(rec_path, O_RDONLY, 0);
+        if (fd < 0) {
+            write_str(2, "pkg: package not installed: "); write_str(2, name); write_str(2, "\n");
+            return;
+        }
+        static char fbuf[4096];
+        long nr = sys_read(fd, fbuf, sizeof(fbuf) - 1);
+        sys_close(fd);
+        if (nr <= 0) { sys_unlink(rec_path); return; }
+        fbuf[nr] = '\0';
+
+        /* Delete each file listed (one per line), skip directories */
+        int removed = 0;
+        char *p = fbuf;
+        while (*p) {
+            char *line = p;
+            while (*p && *p != '\n') p++;
+            if (*p == '\n') *p++ = '\0';
+            if (line[0]) {
+                /* Skip entries ending in / (directories) */
+                int ll = 0; while (line[ll]) ll++;
+                if (ll > 0 && line[ll - 1] != '/') {
+                    if (sys_unlink(line) >= 0) removed++;
+                }
+            }
+        }
+        sys_unlink(rec_path);
+        write_str(1, "pkg: removed "); write_str(1, name);
+        char cnt[16]; int_to_str(removed, cnt, 16);
+        write_str(1, " ("); write_str(1, cnt); write_str(1, " files)\n");
+
+    } else if (strcmp_simple(argv[1], "list") == 0) {
+        int fd = sys_open("/var/pkg/installed", O_RDONLY, 0);
+        if (fd < 0) { write_str(1, "No packages installed.\n"); return; }
+        static char dbuf[2048];
+        long nr = sys_getdents64(fd, dbuf, sizeof(dbuf));
+        sys_close(fd);
+        if (nr <= 0) { write_str(1, "No packages installed.\n"); return; }
+        struct { unsigned long long d_ino; long long d_off;
+                 unsigned short d_reclen; unsigned char d_type; char d_name[256]; } *d;
+        int count = 0;
+        long pos = 0;
+        while (pos < nr) {
+            d = (void *)(dbuf + pos);
+            if (d->d_name[0] != '.') {
+                write_str(1, "  "); write_str(1, d->d_name); write_str(1, "\n");
+                count++;
+            }
+            pos += d->d_reclen;
+        }
+        if (count == 0) write_str(1, "No packages installed.\n");
+
+    } else if (strcmp_simple(argv[1], "search") == 0) {
+        const char *pattern = (argc >= 3) ? argv[2] : "";
+        int fd = sys_open("/var/pkg", O_RDONLY, 0);
+        if (fd < 0) { write_str(2, "pkg: /var/pkg not found\n"); return; }
+        static char dbuf[4096];
+        long nr = sys_getdents64(fd, dbuf, sizeof(dbuf));
+        sys_close(fd);
+        if (nr <= 0) { write_str(1, "No packages available.\n"); return; }
+        struct { unsigned long long d_ino; long long d_off;
+                 unsigned short d_reclen; unsigned char d_type; char d_name[256]; } *d;
+        int count = 0;
+        long pos = 0;
+        while (pos < nr) {
+            d = (void *)(dbuf + pos);
+            /* Check for .tar suffix */
+            int nl = 0; while (d->d_name[nl]) nl++;
+            if (nl > 4 && d->d_name[nl-4] == '.' && d->d_name[nl-3] == 't'
+                       && d->d_name[nl-2] == 'a' && d->d_name[nl-1] == 'r') {
+                /* Check if pattern is a substring of the name */
+                int match = 1;
+                if (pattern[0]) {
+                    match = 0;
+                    int plen = 0; while (pattern[plen]) plen++;
+                    for (int i = 0; i <= nl - plen && !match; i++) {
+                        int ok = 1;
+                        for (int j = 0; j < plen && ok; j++)
+                            if (d->d_name[i+j] != pattern[j]) ok = 0;
+                        if (ok) match = 1;
+                    }
+                }
+                if (match) {
+                    /* Print name without .tar extension */
+                    char pname[256];
+                    for (int i = 0; i < nl - 4; i++) pname[i] = d->d_name[i];
+                    pname[nl - 4] = '\0';
+                    write_str(1, "  "); write_str(1, pname); write_str(1, "\n");
+                    count++;
+                }
+            }
+            pos += d->d_reclen;
+        }
+        if (count == 0) write_str(1, "No matching packages found.\n");
+
+    } else if (strcmp_simple(argv[1], "info") == 0) {
+        if (argc < 3) { write_str(2, "pkg info: package name required\n"); return; }
+        const char *name = argv[2];
+        char info_path[256];
+        int ip = 0;
+        const char *info_prefix = "/var/pkg/";
+        for (int i = 0; info_prefix[i] && ip < 240; i++) info_path[ip++] = info_prefix[i];
+        for (int i = 0; name[i] && ip < 248; i++) info_path[ip++] = name[i];
+        info_path[ip++] = '.'; info_path[ip++] = 'i'; info_path[ip++] = 'n';
+        info_path[ip++] = 'f'; info_path[ip++] = 'o';
+        info_path[ip] = '\0';
+
+        int fd = sys_open(info_path, O_RDONLY, 0);
+        if (fd < 0) {
+            write_str(2, "pkg: no info for "); write_str(2, name); write_str(2, "\n");
+            return;
+        }
+        static char ibuf[2048];
+        long nr = sys_read(fd, ibuf, sizeof(ibuf) - 1);
+        sys_close(fd);
+        if (nr > 0) { ibuf[nr] = '\0'; write_str(1, ibuf); write_str(1, "\n"); }
+
+    } else {
+        write_str(2, "pkg: unknown command '"); write_str(2, argv[1]);
+        write_str(2, "' (use install/remove/list/search/info)\n");
+    }
 }

@@ -63008,6 +63008,43 @@ __attribute__((noinline)) static void test_pty_and_cgroup(void) {
             fut_test_fail(2238);
         }
     }
+
+    /* ── Test 2239: /proc/self/smaps has non-zero Rss for mapped regions ── */
+    fut_printf("[MISC-TEST] Test 2239: smaps RSS non-zero\n");
+    {
+        extern long sys_open(const char *, int, int);
+        extern long sys_read(int, void *, size_t);
+        extern long sys_close(int);
+        long fd = sys_open("/proc/self/smaps", 0, 0);
+        int pass = 0;
+        if (fd >= 0) {
+            static char buf[2048];
+            long n = sys_read((int)fd, buf, 2047);
+            sys_close((int)fd);
+            if (n > 0) {
+                buf[n < 2047 ? n : 2046] = '\0';
+                /* Find "Rss:" and check value is not "0 kB" */
+                for (long i = 0; i < n - 10; i++) {
+                    if (buf[i]=='R' && buf[i+1]=='s' && buf[i+2]=='s' && buf[i+3]==':') {
+                        /* Skip whitespace to find the number */
+                        long j = i + 4;
+                        while (j < n && (buf[j] == ' ' || buf[j] == '\t')) j++;
+                        /* Check if number is > 0 */
+                        if (j < n && buf[j] >= '1' && buf[j] <= '9') {
+                            pass = 1; break;
+                        }
+                    }
+                }
+            }
+        }
+        if (pass) {
+            fut_printf("[MISC-TEST] ✓ Test 2239: smaps Rss > 0\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 2239: smaps Rss is 0\n");
+            fut_test_fail(2239);
+        }
+    }
 }
 
 /* ============================================================

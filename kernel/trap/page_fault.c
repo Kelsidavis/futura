@@ -31,6 +31,25 @@
 #include <stdint.h>
 #include <string.h>
 
+/* ============================================================
+ *   Global VM Statistics Counters
+ *
+ *   These counters track system-wide page fault and paging events
+ *   for /proc/vmstat and /proc/meminfo reporting.
+ * ============================================================ */
+
+static uint64_t vmstat_pgfault   = 0;  /* Total page faults (minor + major) */
+static uint64_t vmstat_pgmajfault = 0; /* Major page faults (unresolvable) */
+static uint64_t vmstat_pgpgin    = 0;  /* Pages paged in (demand paging) */
+static uint64_t vmstat_cow_pages = 0;  /* Pages copied for COW */
+
+void vmstat_get_counters(uint64_t *pgfault, uint64_t *pgmajfault,
+                         uint64_t *pgpgin, uint64_t *cow_pages) {
+    if (pgfault)    *pgfault    = vmstat_pgfault;
+    if (pgmajfault) *pgmajfault = vmstat_pgmajfault;
+    if (pgpgin)     *pgpgin     = vmstat_pgpgin;
+    if (cow_pages)  *cow_pages  = vmstat_cow_pages;
+}
 
 /* ============================================================
  *   Shared Page Cache for MAP_SHARED
@@ -250,6 +269,7 @@ static bool load_demand_page(uint64_t page_addr, struct fut_vma *vma, fut_vmem_c
         return false;
     }
 
+    vmstat_pgpgin++;
     return true;
 }
 
@@ -438,6 +458,7 @@ static bool handle_cow_fault_generic(uint64_t fault_addr, bool is_write, bool is
             fut_pmm_free_page(old_page);
         }
 
+        vmstat_cow_pages++;
         fut_printf("[COW] Copied page: va=0x%llx old_phys=0x%llx new_phys=0x%llx refcount=%d->%d\n",
                    page_addr, old_phys, new_phys, refcount, new_refcount);
     } else {
@@ -495,6 +516,7 @@ bool fut_trap_handle_page_fault(fut_interrupt_frame_t *frame) {
             /* Minor fault: resolved without I/O */
             fut_task_t *cow_task = fut_task_current();
             if (cow_task) cow_task->minflt++;
+            vmstat_pgfault++;
             return true;
         }
     }
@@ -506,6 +528,7 @@ bool fut_trap_handle_page_fault(fut_interrupt_frame_t *frame) {
             /* Minor fault: resolved without I/O (no swap in Futura) */
             fut_task_t *dp_task = fut_task_current();
             if (dp_task) dp_task->minflt++;
+            vmstat_pgfault++;
             return true;
         }
     }
@@ -514,6 +537,8 @@ bool fut_trap_handle_page_fault(fut_interrupt_frame_t *frame) {
         /* Major fault: unresolvable — would require I/O in a full system */
         fut_task_t *maj_task = fut_task_current();
         if (maj_task) maj_task->majflt++;
+        vmstat_pgfault++;
+        vmstat_pgmajfault++;
 
         /* Log the unhandled user page fault */
         uint64_t cr2 = fut_read_cr2();
@@ -649,6 +674,7 @@ bool fut_trap_handle_page_fault(fut_interrupt_frame_t *frame) {
     if (is_write && handle_cow_fault_generic(fault_addr, is_write, is_present)) {
         fut_task_t *cow_task = fut_task_current();
         if (cow_task) cow_task->minflt++;
+        vmstat_pgfault++;
         return true;  /* COW fault handled successfully */
     }
 
@@ -656,6 +682,7 @@ bool fut_trap_handle_page_fault(fut_interrupt_frame_t *frame) {
     if (handle_demand_paging_fault(fault_addr, mm)) {
         fut_task_t *dp_task = fut_task_current();
         if (dp_task) dp_task->minflt++;
+        vmstat_pgfault++;
         return true;  /* Demand paging fault handled successfully */
     }
 
@@ -663,6 +690,8 @@ bool fut_trap_handle_page_fault(fut_interrupt_frame_t *frame) {
     {
         fut_task_t *maj_task = fut_task_current();
         if (maj_task) maj_task->majflt++;
+        vmstat_pgfault++;
+        vmstat_pgmajfault++;
     }
 
     fut_printf("[#PF-ARM64] user fault addr=0x%llx esr=0x%llx pc=0x%llx\n",

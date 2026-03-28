@@ -153,6 +153,48 @@ uintptr_t fut_pmm_base_phys(void) {
     return pmm_base;
 }
 
+void fut_pmm_buddy_counts(uint64_t *counts, int max_order) {
+    /*
+     * Scan the PMM bitmap and count contiguous free-page runs, classifying
+     * each run by its buddy order (0 = 1 page, 1 = 2 pages, ... 10 = 1024 pages).
+     * A contiguous run of N free pages is decomposed into the largest
+     * power-of-2 blocks that fit (like a buddy allocator would), and
+     * each block increments the count for its order.
+     *
+     * This gives tools reading /proc/buddyinfo a realistic distribution
+     * rather than lumping all free pages into order 0.
+     */
+    for (int i = 0; i <= max_order; i++)
+        counts[i] = 0;
+
+    if (!pmm_bitmap || pmm_total == 0)
+        return;
+
+    uint64_t run_start = 0;
+    bool in_run = false;
+
+    for (uint64_t i = 0; i <= pmm_total; i++) {
+        bool page_free = (i < pmm_total) && !BITMAP_TST(i);
+
+        if (page_free && !in_run) {
+            run_start = i;
+            in_run = true;
+        } else if (!page_free && in_run) {
+            /* Decompose the run [run_start, i) into buddy-sized blocks */
+            uint64_t remaining = i - run_start;
+            while (remaining > 0) {
+                /* Find largest order that fits */
+                int order = 0;
+                while (order < max_order && (1ULL << (order + 1)) <= remaining)
+                    order++;
+                counts[order]++;
+                remaining -= (1ULL << order);
+            }
+            in_run = false;
+        }
+    }
+}
+
 uintptr_t fut_pmm_bitmap_end_virt(void) {
     uintptr_t offset = pmm_reserved_pages * FUT_PAGE_SIZE;
     /* Both x86_64 and ARM64 use high-VA kernels, so convert PA to kernel VA */

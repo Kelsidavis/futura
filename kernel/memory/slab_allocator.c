@@ -512,6 +512,26 @@ void slab_print_stats(void) {
     (void)total_slabs;
 }
 
+void slab_get_stats(uint64_t *out_total_bytes, uint64_t *out_free_bytes) {
+    uint64_t total = 0;
+    uint64_t free_bytes = 0;
+
+    for (size_t i = 0; i < NUM_SLAB_SIZES; i++) {
+        slab_cache_t *cache = &slab_caches[i];
+        /* Each slab occupies SLAB_SIZE bytes from the buddy allocator */
+        total += cache->num_slabs * SLAB_SIZE;
+        /* Free bytes: count free objects across all slabs in this cache */
+        for (slab_t *slab = cache->slabs; slab; slab = slab->next) {
+            if (slab_is_valid(slab)) {
+                free_bytes += slab->free_count * cache->obj_size;
+            }
+        }
+    }
+
+    if (out_total_bytes) *out_total_bytes = total;
+    if (out_free_bytes) *out_free_bytes = free_bytes;
+}
+
 void slab_debug_validate_all(const char *context) {
 
     for (size_t i = 0; i < NUM_SLAB_SIZES; i++) {

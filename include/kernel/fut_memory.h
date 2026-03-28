@@ -81,6 +81,18 @@ uintptr_t fut_pmm_bitmap_end_virt(void);
 
 void fut_pmm_reserve_range(uintptr_t phys_addr, size_t size_bytes);
 
+/**
+ * Count free-page blocks by buddy order from the PMM bitmap.
+ *
+ * Scans the bitmap for contiguous free-page runs and decomposes each run
+ * into power-of-2 blocks, counting them per order (0..max_order).
+ * Used by /proc/buddyinfo and /proc/pagetypeinfo.
+ *
+ * @param counts    Array of at least (max_order + 1) uint64_t entries
+ * @param max_order Maximum order to report (e.g. 10 for Linux-compatible output)
+ */
+void fut_pmm_buddy_counts(uint64_t *counts, int max_order);
+
 typedef struct fut_mmap_entry {
     uint64_t base;
     uint64_t length;

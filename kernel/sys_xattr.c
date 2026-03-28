@@ -857,16 +857,25 @@ long sys_flistxattr(int fd, char *list, size_t size) {
 
     struct fut_vnode *vnode = vnode_from_fd(task, fd);
     if (!vnode) return -EBADF;
-    if (!vnode->ops || !vnode->ops->listxattr) return (ssize_t)0;
 
-    ssize_t total = vnode->ops->listxattr(vnode, NULL, 0);
+    ssize_t total;
+    if (vnode->ops && vnode->ops->listxattr) {
+        total = vnode->ops->listxattr(vnode, NULL, 0);
+    } else {
+        total = vnode_generic_listxattr(vnode, NULL, 0);
+    }
     if (total < 0) return (long)total;
     if (size == 0) return (long)total;
     if ((size_t)total > size) return -ERANGE;
 
     char *kbuf = fut_malloc((size_t)total + 1);
     if (!kbuf) return -ENOMEM;
-    ssize_t got = vnode->ops->listxattr(vnode, kbuf, (size_t)total);
+    ssize_t got;
+    if (vnode->ops && vnode->ops->listxattr) {
+        got = vnode->ops->listxattr(vnode, kbuf, (size_t)total);
+    } else {
+        got = vnode_generic_listxattr(vnode, kbuf, (size_t)total);
+    }
     if (got < 0) { fut_free(kbuf); return (long)got; }
     if (got > 0 && list && xattr_copy_to_user(list, kbuf, (size_t)got) != 0) {
         fut_free(kbuf); return -EFAULT;
@@ -957,6 +966,8 @@ long sys_fremovexattr(int fd, const char *name) {
 
     struct fut_vnode *vnode = vnode_from_fd(task, fd);
     if (!vnode) return -EBADF;
-    if (!vnode->ops || !vnode->ops->removexattr) return -ENODATA;
-    return vnode->ops->removexattr(vnode, name_buf);
+    if (vnode->ops && vnode->ops->removexattr) {
+        return vnode->ops->removexattr(vnode, name_buf);
+    }
+    return vnode_generic_removexattr(vnode, name_buf);
 }

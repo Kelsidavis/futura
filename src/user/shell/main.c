@@ -152,6 +152,7 @@ static void cmd_make(int argc, char *argv[]);
 static void cmd_git(int argc, char *argv[]);
 static void cmd_su(int argc, char *argv[]);
 static void cmd_passwd(int argc, char *argv[]);
+static void cmd_systemctl(int argc, char *argv[]);
 static void strcpy_simple(char *dest, const char *src);
 
 /* Forward declaration for prompt */
@@ -1283,6 +1284,7 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  readlink <path> - Print symlink target\n");
     write_str(1, "  top             - Show processes and system stats\n");
     write_str(1, "  sysctl key[=v]  - Read/write kernel parameters\n");
+    write_str(1, "  systemctl <cmd> - Service management (start/stop/status/list-units)\n");
     write_str(1, "\n");
     write_str(1, "Networking:\n");
     write_str(1, "  ip addr|link|route|neigh|forward - Network configuration\n");
@@ -11418,6 +11420,9 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "passwd") == 0) {
         cmd_passwd(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "systemctl") == 0) {
+        cmd_systemctl(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -11587,6 +11592,7 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "git") == 0 ||
             strcmp_simple(cmd, "su") == 0 ||
             strcmp_simple(cmd, "passwd") == 0 ||
+            strcmp_simple(cmd, "systemctl") == 0 ||
             0);
 }
 
@@ -15334,6 +15340,241 @@ static void cmd_passwd(int argc, char *argv[]) {
     write_str(1, "passwd: password updated for ");
     write_str(1, target_user);
     write_str(1, "\n");
+}
+
+/* ── systemctl: basic service management ── */
+#define SCTL_MAX_SERVICES 16
+#define SCTL_NAME_LEN     64
+
+struct sctl_service {
+    char  name[SCTL_NAME_LEN];
+    pid_t pid;
+    int   enabled;
+    int   used;
+};
+
+static struct sctl_service sctl_services[SCTL_MAX_SERVICES];
+
+static struct sctl_service *sctl_find(const char *name) {
+    for (int i = 0; i < SCTL_MAX_SERVICES; i++) {
+        if (sctl_services[i].used && strcmp_simple(sctl_services[i].name, name) == 0)
+            return &sctl_services[i];
+    }
+    return NULL;
+}
+
+static struct sctl_service *sctl_alloc(const char *name) {
+    for (int i = 0; i < SCTL_MAX_SERVICES; i++) {
+        if (!sctl_services[i].used) {
+            strncpy_simple(sctl_services[i].name, name, SCTL_NAME_LEN - 1);
+            sctl_services[i].name[SCTL_NAME_LEN - 1] = '\0';
+            sctl_services[i].pid = 0;
+            sctl_services[i].enabled = 0;
+            sctl_services[i].used = 1;
+            return &sctl_services[i];
+        }
+    }
+    return NULL;
+}
+
+static int sctl_is_running(struct sctl_service *svc) {
+    if (!svc || svc->pid <= 0) return 0;
+    return sys_kill(svc->pid, 0) == 0;
+}
+
+static int sctl_start(const char *name) {
+    struct sctl_service *svc = sctl_find(name);
+    if (svc && sctl_is_running(svc)) {
+        write_str(1, "systemctl: ");
+        write_str(1, name);
+        write_str(1, " is already running\n");
+        return 0;
+    }
+    pid_t pid = (pid_t)sys_fork();
+    if (pid < 0) {
+        write_str(2, "systemctl: fork failed\n");
+        return -1;
+    }
+    if (pid == 0) {
+        /* Child: exec /sbin/<name> */
+        char path[128] = "/sbin/";
+        int p = 6;
+        for (const char *s = name; *s && p < 126; s++) path[p++] = *s;
+        path[p] = '\0';
+        char *child_argv[2] = { path, NULL };
+        sys_execve(path, child_argv, NULL);
+        /* If exec fails, exit child */
+        syscall1(60, 127);
+        while (1);
+    }
+    /* Parent */
+    if (!svc) {
+        svc = sctl_alloc(name);
+        if (!svc) {
+            write_str(2, "systemctl: service table full\n");
+            sys_kill(pid, 9);
+            return -1;
+        }
+    }
+    svc->pid = pid;
+    write_str(1, "systemctl: started ");
+    write_str(1, name);
+    char pbuf[16];
+    int_to_str(pid, pbuf, 16);
+    write_str(1, " (pid ");
+    write_str(1, pbuf);
+    write_str(1, ")\n");
+    return 0;
+}
+
+static int sctl_stop(const char *name) {
+    struct sctl_service *svc = sctl_find(name);
+    if (!svc || !sctl_is_running(svc)) {
+        write_str(2, "systemctl: ");
+        write_str(2, name);
+        write_str(2, " is not running\n");
+        return -1;
+    }
+    sys_kill(svc->pid, 15); /* SIGTERM */
+    int status = 0;
+    sys_waitpid(svc->pid, &status, 0);
+    write_str(1, "systemctl: stopped ");
+    write_str(1, name);
+    write_str(1, "\n");
+    svc->pid = 0;
+    return 0;
+}
+
+static void sctl_status(const char *name) {
+    struct sctl_service *svc = sctl_find(name);
+    if (!svc) {
+        write_str(1, name);
+        write_str(1, ": not found\n");
+        return;
+    }
+    int running = sctl_is_running(svc);
+    write_str(1, svc->name);
+    write_str(1, running ? " - active (running, pid " : " - inactive (stopped)\n");
+    if (running) {
+        char pbuf[16];
+        int_to_str(svc->pid, pbuf, 16);
+        write_str(1, pbuf);
+        write_str(1, ")\n");
+    }
+}
+
+static void sctl_list_units(void) {
+    write_str(1, "UNIT                 STATE     ENABLED\n");
+    int any = 0;
+    for (int i = 0; i < SCTL_MAX_SERVICES; i++) {
+        if (!sctl_services[i].used) continue;
+        any = 1;
+        /* Name column (20 chars padded) */
+        int nlen = 0;
+        for (const char *s = sctl_services[i].name; *s; s++) nlen++;
+        write_str(1, sctl_services[i].name);
+        for (int p = nlen; p < 21; p++) write_str(1, " ");
+        /* State */
+        if (sctl_is_running(&sctl_services[i]))
+            write_str(1, "running   ");
+        else
+            write_str(1, "stopped   ");
+        /* Enabled */
+        write_str(1, sctl_services[i].enabled ? "enabled" : "disabled");
+        write_str(1, "\n");
+    }
+    if (!any) write_str(1, "(no services registered)\n");
+}
+
+static void sctl_enable(const char *name) {
+    struct sctl_service *svc = sctl_find(name);
+    if (!svc) {
+        svc = sctl_alloc(name);
+        if (!svc) { write_str(2, "systemctl: service table full\n"); return; }
+    }
+    svc->enabled = 1;
+    /* Persist to /etc/futura/enabled */
+    sys_mkdir("/etc/futura", 0755);
+    long fd = sys_open("/etc/futura/enabled", O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (fd >= 0) {
+        sys_write(fd, name, strlen_simple(name));
+        sys_write(fd, "\n", 1);
+        sys_close(fd);
+    }
+    write_str(1, "systemctl: enabled ");
+    write_str(1, name);
+    write_str(1, "\n");
+}
+
+static void sctl_disable(const char *name) {
+    struct sctl_service *svc = sctl_find(name);
+    if (svc) svc->enabled = 0;
+    /* Rewrite /etc/futura/enabled without this service */
+    long fd = sys_open("/etc/futura/enabled", O_RDONLY, 0);
+    if (fd < 0) { write_str(1, "systemctl: disabled "); write_str(1, name); write_str(1, "\n"); return; }
+    char buf[1024];
+    ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
+    sys_close(fd);
+    if (n <= 0) { write_str(1, "systemctl: disabled "); write_str(1, name); write_str(1, "\n"); return; }
+    buf[n] = '\0';
+    /* Rewrite excluding the service */
+    fd = sys_open("/etc/futura/enabled", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) return;
+    char *line = buf;
+    while (*line) {
+        char *eol = line;
+        while (*eol && *eol != '\n') eol++;
+        char saved = *eol; *eol = '\0';
+        if (line[0] && strcmp_simple(line, name) != 0) {
+            sys_write(fd, line, strlen_simple(line));
+            sys_write(fd, "\n", 1);
+        }
+        *eol = saved;
+        if (*eol) eol++;
+        line = eol;
+    }
+    sys_close(fd);
+    write_str(1, "systemctl: disabled ");
+    write_str(1, name);
+    write_str(1, "\n");
+}
+
+static void cmd_systemctl(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "Usage: systemctl {start|stop|restart|status|list-units|enable|disable} [service]\n");
+        return;
+    }
+    const char *sub = argv[1];
+    if (strcmp_simple(sub, "start") == 0) {
+        if (argc < 3) { write_str(2, "systemctl start: missing service name\n"); return; }
+        sctl_start(argv[2]);
+    } else if (strcmp_simple(sub, "stop") == 0) {
+        if (argc < 3) { write_str(2, "systemctl stop: missing service name\n"); return; }
+        sctl_stop(argv[2]);
+    } else if (strcmp_simple(sub, "restart") == 0) {
+        if (argc < 3) { write_str(2, "systemctl restart: missing service name\n"); return; }
+        struct sctl_service *svc = sctl_find(argv[2]);
+        if (svc && sctl_is_running(svc)) sctl_stop(argv[2]);
+        sctl_start(argv[2]);
+    } else if (strcmp_simple(sub, "status") == 0) {
+        if (argc >= 3) {
+            sctl_status(argv[2]);
+        } else {
+            sctl_list_units();
+        }
+    } else if (strcmp_simple(sub, "list-units") == 0) {
+        sctl_list_units();
+    } else if (strcmp_simple(sub, "enable") == 0) {
+        if (argc < 3) { write_str(2, "systemctl enable: missing service name\n"); return; }
+        sctl_enable(argv[2]);
+    } else if (strcmp_simple(sub, "disable") == 0) {
+        if (argc < 3) { write_str(2, "systemctl disable: missing service name\n"); return; }
+        sctl_disable(argv[2]);
+    } else {
+        write_str(2, "systemctl: unknown command '");
+        write_str(2, sub);
+        write_str(2, "'\n");
+    }
 }
 
 int main(int argc, char **argv, char **envp) {

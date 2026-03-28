@@ -11648,6 +11648,7 @@ t1281:;
             goto t1282;
         }
         int child_pid = (int)child->pid;
+        child->rlimits[4].rlim_cur = 1;  /* RLIMIT_CORE > 0 for WCOREDUMP */
         child->state = FUT_TASK_ZOMBIE;
         child->exit_code = 0;
         child->term_signal = 11;  /* SIGSEGV — core-dumping signal */

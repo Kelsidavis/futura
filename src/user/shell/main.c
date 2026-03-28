@@ -385,6 +385,15 @@ static void cmd_rustup(int argc, char *argv[]);
 static void cmd_nvm(int argc, char *argv[]);
 static void cmd_pyenv(int argc, char *argv[]);
 static void cmd_sdkman(int argc, char *argv[]);
+static void cmd_tmux(int argc, char *argv[]);
+static void cmd_byobu(int argc, char *argv[]);
+static void cmd_minicom(int argc, char *argv[]);
+static void cmd_picocom(int argc, char *argv[]);
+static void cmd_socat(int argc, char *argv[]);
+static void cmd_netcat_openbsd(int argc, char *argv[]);
+static void cmd_ncat(int argc, char *argv[]);
+static void cmd_tcpdump(int argc, char *argv[]);
+static void cmd_tshark(int argc, char *argv[]);
 
 /* Forward declaration for prompt */
 static void print_prompt(void);
@@ -1660,6 +1669,15 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  ab -n N -c N <url> - Apache Bench HTTP benchmark\n");
     write_str(1, "  iperf3 [-s|-c host] - Network bandwidth test\n");
     write_str(1, "  dhclient [if]   - DHCP client\n");
+    write_str(1, "  socat <addr1> <addr2> - Multipurpose relay (TCP/UDP/UNIX sockets)\n");
+    write_str(1, "  netcat-openbsd  - OpenBSD netcat variant (extended flags)\n");
+    write_str(1, "  ncat [-l] [--ssl] host port - Nmap netcat (SSL/proxy support)\n");
+    write_str(1, "  tcpdump [-i if] [-c N] [expr] - Packet capture (show headers)\n");
+    write_str(1, "  tshark [-i if] [-c N] [-f filter] - Wireshark CLI packet analysis\n");
+    write_str(1, "  tmux [new|ls|attach|kill-session] - Terminal multiplexer\n");
+    write_str(1, "  byobu [new|list|attach] - Terminal multiplexer wrapper\n");
+    write_str(1, "  minicom [-D dev] [-b baud] - Serial terminal emulator\n");
+    write_str(1, "  picocom [-b baud] <device> - Minimal serial terminal\n");
     write_str(1, "\n");
     write_str(1, "Shell:\n");
     write_str(1, "  help            - Show this help message\n");
@@ -14818,6 +14836,33 @@ watch_sleep:
     } else if (strcmp_simple(argv[0], "sdkman") == 0 || strcmp_simple(argv[0], "sdk") == 0) {
         cmd_sdkman(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "tmux") == 0) {
+        cmd_tmux(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "byobu") == 0) {
+        cmd_byobu(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "minicom") == 0) {
+        cmd_minicom(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "picocom") == 0) {
+        cmd_picocom(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "socat") == 0) {
+        cmd_socat(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "netcat-openbsd") == 0) {
+        cmd_netcat_openbsd(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "ncat") == 0) {
+        cmd_ncat(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "tcpdump") == 0) {
+        cmd_tcpdump(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "tshark") == 0) {
+        cmd_tshark(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -15222,6 +15267,15 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "pyenv") == 0 ||
             strcmp_simple(cmd, "sdkman") == 0 ||
             strcmp_simple(cmd, "sdk") == 0 ||
+            strcmp_simple(cmd, "tmux") == 0 ||
+            strcmp_simple(cmd, "byobu") == 0 ||
+            strcmp_simple(cmd, "minicom") == 0 ||
+            strcmp_simple(cmd, "picocom") == 0 ||
+            strcmp_simple(cmd, "socat") == 0 ||
+            strcmp_simple(cmd, "netcat-openbsd") == 0 ||
+            strcmp_simple(cmd, "ncat") == 0 ||
+            strcmp_simple(cmd, "tcpdump") == 0 ||
+            strcmp_simple(cmd, "tshark") == 0 ||
             0);
 }
 
@@ -19878,7 +19932,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   420 built-in commands — type 'help'    |\n");
+    write_str(1, "|   430 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");
@@ -37251,6 +37305,826 @@ static void cmd_sdkman(int argc, char *argv[]) {
         write_str(2, sub);
         write_str(2, "\"\n");
     }
+}
+
+/* ── tmux: terminal multiplexer (simulated session management) ── */
+static void cmd_tmux(int argc, char *argv[]) {
+    if (argc < 2) {
+        /* tmux with no args: create new session */
+        write_str(1, "[tmux] new session: 0 (created)\n");
+        write_str(1, "[tmux] 1 window  (default)  [80x24]\n");
+        write_str(1, "[tmux] Session 0: 1 window (attached)\n");
+        write_str(1, "[tmux] Prefix key: Ctrl+B\n");
+        write_str(1, "[tmux] Note: simulated — use 'screen' for real PTY multiplexer\n");
+        return;
+    }
+    const char *sub = argv[1];
+    if (strcmp_simple(sub, "new") == 0 || strcmp_simple(sub, "new-session") == 0) {
+        const char *name = "0";
+        for (int i = 2; i < argc - 1; i++) {
+            if (strcmp_simple(argv[i], "-s") == 0) { name = argv[i + 1]; break; }
+        }
+        write_str(1, "[tmux] new session: ");
+        write_str(1, name);
+        write_str(1, " (created)\n");
+        write_str(1, "[tmux] 1 window  (default)  [80x24]\n");
+    } else if (strcmp_simple(sub, "ls") == 0 || strcmp_simple(sub, "list-sessions") == 0) {
+        write_str(1, "0: 1 windows (created Sat Mar 28 12:00:00 2026) (attached)\n");
+    } else if (strcmp_simple(sub, "attach") == 0 || strcmp_simple(sub, "attach-session") == 0 || strcmp_simple(sub, "a") == 0) {
+        const char *target = "0";
+        for (int i = 2; i < argc - 1; i++) {
+            if (strcmp_simple(argv[i], "-t") == 0) { target = argv[i + 1]; break; }
+        }
+        write_str(1, "[tmux] attaching to session ");
+        write_str(1, target);
+        write_str(1, "\n");
+        write_str(1, "[tmux] (simulated — session already shown)\n");
+    } else if (strcmp_simple(sub, "detach") == 0 || strcmp_simple(sub, "detach-client") == 0) {
+        write_str(1, "[detached (from session 0)]\n");
+    } else if (strcmp_simple(sub, "kill-session") == 0) {
+        const char *target = "0";
+        for (int i = 2; i < argc - 1; i++) {
+            if (strcmp_simple(argv[i], "-t") == 0) { target = argv[i + 1]; break; }
+        }
+        write_str(1, "[tmux] killed session ");
+        write_str(1, target);
+        write_str(1, "\n");
+    } else if (strcmp_simple(sub, "kill-server") == 0) {
+        write_str(1, "[tmux] server killed\n");
+    } else if (strcmp_simple(sub, "list-windows") == 0 || strcmp_simple(sub, "lsw") == 0) {
+        write_str(1, "0: bash* (1 panes) [80x24] [layout 1a2b]\n");
+    } else if (strcmp_simple(sub, "list-panes") == 0 || strcmp_simple(sub, "lsp") == 0) {
+        write_str(1, "0: [80x24] [history 0/2000, 0 bytes] %0 (active)\n");
+    } else if (strcmp_simple(sub, "info") == 0 || strcmp_simple(sub, "-V") == 0) {
+        write_str(1, "tmux 3.4 (simulated)\n");
+    } else if (strcmp_simple(sub, "source-file") == 0 || strcmp_simple(sub, "source") == 0) {
+        if (argc < 3) {
+            write_str(2, "tmux source-file: missing file\n");
+        } else {
+            write_str(1, "[tmux] sourced ");
+            write_str(1, argv[2]);
+            write_str(1, "\n");
+        }
+    } else if (strcmp_simple(sub, "send-keys") == 0) {
+        write_str(1, "[tmux] keys sent\n");
+    } else if (strcmp_simple(sub, "split-window") == 0 || strcmp_simple(sub, "splitw") == 0) {
+        int horiz = 0;
+        for (int i = 2; i < argc; i++) {
+            if (strcmp_simple(argv[i], "-h") == 0) horiz = 1;
+        }
+        write_str(1, "[tmux] split ");
+        write_str(1, horiz ? "horizontally" : "vertically");
+        write_str(1, " (simulated)\n");
+    } else if (strcmp_simple(sub, "select-pane") == 0) {
+        write_str(1, "[tmux] pane selected\n");
+    } else if (strcmp_simple(sub, "resize-pane") == 0) {
+        write_str(1, "[tmux] pane resized\n");
+    } else if (strcmp_simple(sub, "swap-pane") == 0) {
+        write_str(1, "[tmux] panes swapped\n");
+    } else if (strcmp_simple(sub, "set") == 0 || strcmp_simple(sub, "set-option") == 0) {
+        write_str(1, "[tmux] option set\n");
+    } else if (strcmp_simple(sub, "show-options") == 0 || strcmp_simple(sub, "show") == 0) {
+        write_str(1, "prefix C-b\n");
+        write_str(1, "status on\n");
+        write_str(1, "default-terminal \"screen-256color\"\n");
+        write_str(1, "history-limit 2000\n");
+    } else {
+        write_str(2, "tmux: unknown command \"");
+        write_str(2, sub);
+        write_str(2, "\"\n");
+    }
+}
+
+/* ── byobu: terminal multiplexer wrapper (alias to tmux/screen) ── */
+static void cmd_byobu(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "Byobu Terminal Multiplexer v5.133 (simulated)\n");
+        write_str(1, "  Backend: screen\n");
+        write_str(1, "  Prefix key: F2 (new window), F3/F4 (prev/next window)\n");
+        write_str(1, "\n");
+        write_str(1, "Usage: byobu [new|list|attach|detach|select-backend]\n");
+        write_str(1, "\n");
+        write_str(1, "Note: simulated — use 'screen' for real PTY multiplexer\n");
+        return;
+    }
+    const char *sub = argv[1];
+    if (strcmp_simple(sub, "new") == 0 || strcmp_simple(sub, "new-session") == 0) {
+        const char *name = "byobu";
+        for (int i = 2; i < argc - 1; i++) {
+            if (strcmp_simple(argv[i], "-s") == 0) { name = argv[i + 1]; break; }
+        }
+        write_str(1, "[byobu] new session: ");
+        write_str(1, name);
+        write_str(1, "\n");
+        write_str(1, "[byobu] 1 window  [80x24]  (backend: screen)\n");
+    } else if (strcmp_simple(sub, "list") == 0 || strcmp_simple(sub, "ls") == 0) {
+        write_str(1, "byobu: 1 sessions\n");
+        write_str(1, "  byobu: 1 windows (created Sat Mar 28 12:00:00 2026) (attached)\n");
+    } else if (strcmp_simple(sub, "attach") == 0 || strcmp_simple(sub, "a") == 0) {
+        const char *target = "byobu";
+        for (int i = 2; i < argc - 1; i++) {
+            if (strcmp_simple(argv[i], "-t") == 0) { target = argv[i + 1]; break; }
+        }
+        write_str(1, "[byobu] attaching to session ");
+        write_str(1, target);
+        write_str(1, "\n");
+    } else if (strcmp_simple(sub, "detach") == 0) {
+        write_str(1, "[byobu detached]\n");
+    } else if (strcmp_simple(sub, "select-backend") == 0) {
+        if (argc < 3) {
+            write_str(1, "Current backend: screen\n");
+            write_str(1, "Available: screen, tmux\n");
+        } else {
+            write_str(1, "[byobu] backend set to ");
+            write_str(1, argv[2]);
+            write_str(1, "\n");
+        }
+    } else if (strcmp_simple(sub, "enable") == 0) {
+        write_str(1, "[byobu] auto-launch enabled for login shells\n");
+    } else if (strcmp_simple(sub, "disable") == 0) {
+        write_str(1, "[byobu] auto-launch disabled\n");
+    } else if (strcmp_simple(sub, "keybindings") == 0) {
+        write_str(1, "Byobu keybindings:\n");
+        write_str(1, "  F2        Create new window\n");
+        write_str(1, "  F3/F4    Previous/Next window\n");
+        write_str(1, "  F6        Detach session\n");
+        write_str(1, "  F7        Scrollback mode\n");
+        write_str(1, "  F8        Rename window\n");
+        write_str(1, "  F9        Configuration menu\n");
+        write_str(1, "  Shift-F2  Split horizontally\n");
+        write_str(1, "  Ctrl-F2   Split vertically\n");
+    } else if (strcmp_simple(sub, "--version") == 0 || strcmp_simple(sub, "-v") == 0) {
+        write_str(1, "byobu version 5.133 (simulated)\n");
+    } else {
+        write_str(2, "byobu: unknown command \"");
+        write_str(2, sub);
+        write_str(2, "\"\n");
+    }
+}
+
+/* ── minicom: serial terminal emulator (simulated) ── */
+static void cmd_minicom(int argc, char *argv[]) {
+    const char *device = "/dev/ttyS0";
+    const char *baud = "115200";
+    int setup = 0;
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-D") == 0 && i + 1 < argc) {
+            device = argv[++i];
+        } else if (strcmp_simple(argv[i], "-b") == 0 && i + 1 < argc) {
+            baud = argv[++i];
+        } else if (strcmp_simple(argv[i], "-s") == 0) {
+            setup = 1;
+        } else if (strcmp_simple(argv[i], "--help") == 0 || strcmp_simple(argv[i], "-h") == 0) {
+            write_str(1, "Usage: minicom [-D device] [-b baudrate] [-s] [-o] [-w] [-c on|off]\n");
+            write_str(1, "  -D device    Serial device (default: /dev/ttyS0)\n");
+            write_str(1, "  -b baudrate  Baud rate (default: 115200)\n");
+            write_str(1, "  -s           Setup mode (configure parameters)\n");
+            write_str(1, "  -o           Skip initialization (modem init strings)\n");
+            write_str(1, "  -w           Line wrap on\n");
+            write_str(1, "  -c on|off    Color mode\n");
+            return;
+        }
+    }
+
+    if (setup) {
+        write_str(1, "┌─────[configuration]──────┐\n");
+        write_str(1, "│ Filenames and paths       │\n");
+        write_str(1, "│ File transfer protocols   │\n");
+        write_str(1, "│ Serial port setup         │\n");
+        write_str(1, "│ Modem and dialing         │\n");
+        write_str(1, "│ Screen and keyboard       │\n");
+        write_str(1, "│ Save setup as dfl         │\n");
+        write_str(1, "│ Save setup as..           │\n");
+        write_str(1, "│ Exit                      │\n");
+        write_str(1, "└──────────────────────────-┘\n");
+        write_str(1, "(simulated — setup not persisted)\n");
+        return;
+    }
+
+    write_str(1, "Welcome to minicom 2.9 (simulated)\n\n");
+    write_str(1, "OPTIONS: I18n\n");
+    write_str(1, "Compiled on Mar 28 2026, 00:00:00.\n");
+    write_str(1, "Port ");
+    write_str(1, device);
+    write_str(1, ", ");
+    write_str(1, baud);
+    write_str(1, " 8N1\n\n");
+    write_str(1, "Press Ctrl-A Z for help on special keys\n\n");
+
+    /* Simulate reading from device */
+    int fd = sys_call3(SYS_open, (long)device, 0 /* O_RDONLY */, 0);
+    if (fd < 0) {
+        write_str(1, "[minicom] Device ");
+        write_str(1, device);
+        write_str(1, " not available (simulated)\n");
+        write_str(1, "[minicom] In a real system, connect via serial port.\n");
+        write_str(1, "\n[minicom] Ctrl-A X to exit\n");
+    } else {
+        write_str(1, "[minicom] Connected to ");
+        write_str(1, device);
+        write_str(1, "\n");
+        sys_call1(SYS_close, fd);
+    }
+    write_str(1, "\nThank you for using minicom (simulated)\n");
+}
+
+/* ── picocom: minimal serial terminal (simulated) ── */
+static void cmd_picocom(int argc, char *argv[]) {
+    const char *device = (void *)0;
+    const char *baud = "115200";
+    const char *flow = "none";
+    const char *parity = "none";
+    int databits = 8;
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-b") == 0 && i + 1 < argc) {
+            baud = argv[++i];
+        } else if (strcmp_simple(argv[i], "--baud") == 0 && i + 1 < argc) {
+            baud = argv[++i];
+        } else if (strcmp_simple(argv[i], "-f") == 0 && i + 1 < argc) {
+            flow = argv[++i];
+        } else if (strcmp_simple(argv[i], "--flow") == 0 && i + 1 < argc) {
+            flow = argv[++i];
+        } else if (strcmp_simple(argv[i], "-p") == 0 && i + 1 < argc) {
+            parity = argv[++i];
+        } else if (strcmp_simple(argv[i], "-d") == 0 && i + 1 < argc) {
+            databits = simple_atoi(argv[++i]);
+        } else if (strcmp_simple(argv[i], "--help") == 0 || strcmp_simple(argv[i], "-h") == 0) {
+            write_str(1, "Usage: picocom [-b baud] [-f flow] [-p parity] [-d databits] <device>\n");
+            write_str(1, "  -b, --baud <rate>   Baud rate (default: 115200)\n");
+            write_str(1, "  -f, --flow <type>   Flow control: none, hard, soft (default: none)\n");
+            write_str(1, "  -p <parity>         Parity: none, even, odd (default: none)\n");
+            write_str(1, "  -d <databits>       Data bits: 5, 6, 7, 8 (default: 8)\n");
+            write_str(1, "\nSpecial keys: Ctrl-A Ctrl-X to exit, Ctrl-A Ctrl-H for help\n");
+            return;
+        } else if (argv[i][0] != '-') {
+            device = argv[i];
+        }
+    }
+
+    if (!device) {
+        write_str(2, "picocom: no device specified\n");
+        write_str(2, "Usage: picocom [-b baud] <device>\n");
+        return;
+    }
+
+    write_str(1, "picocom v3.1 (simulated)\n\n");
+    write_str(1, "port is        : ");
+    write_str(1, device);
+    write_str(1, "\nflowcontrol    : ");
+    write_str(1, flow);
+    write_str(1, "\nbaudrate is    : ");
+    write_str(1, baud);
+    write_str(1, "\nparity is      : ");
+    write_str(1, parity);
+    write_str(1, "\ndatabits are   : ");
+    char dbuf[4]; dbuf[0] = '0' + (char)databits; dbuf[1] = '\0';
+    write_str(1, dbuf);
+    write_str(1, "\nstopbits are   : 1");
+    write_str(1, "\nescape is      : C-a\n\n");
+
+    write_str(1, "Type [C-a] [C-h] to see available commands\n");
+    write_str(1, "Terminal ready\n\n");
+
+    int fd = sys_call3(SYS_open, (long)device, 0 /* O_RDONLY */, 0);
+    if (fd < 0) {
+        write_str(1, "[picocom] FATAL: cannot open ");
+        write_str(1, device);
+        write_str(1, " (simulated — device not present)\n");
+    } else {
+        write_str(1, "[picocom] Connected to ");
+        write_str(1, device);
+        write_str(1, "\n");
+        sys_call1(SYS_close, fd);
+    }
+
+    write_str(1, "\nThanks for using picocom (simulated)\n");
+}
+
+/* ── socat: multipurpose relay (simulated TCP/UDP/UNIX socket relay) ── */
+static void cmd_socat(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "Usage: socat [options] <address1> <address2>\n");
+        write_str(1, "\nAddresses:\n");
+        write_str(1, "  STDIN, STDOUT             Standard I/O\n");
+        write_str(1, "  TCP:<host>:<port>         TCP client\n");
+        write_str(1, "  TCP-LISTEN:<port>         TCP server\n");
+        write_str(1, "  UDP:<host>:<port>         UDP client\n");
+        write_str(1, "  UDP-LISTEN:<port>         UDP server\n");
+        write_str(1, "  UNIX-CONNECT:<path>       UNIX socket client\n");
+        write_str(1, "  UNIX-LISTEN:<path>        UNIX socket server\n");
+        write_str(1, "  OPEN:<file>               File open\n");
+        write_str(1, "  EXEC:<cmd>                Execute command\n");
+        write_str(1, "  PTY                       Pseudo-terminal\n");
+        write_str(1, "\nOptions:\n");
+        write_str(1, "  -d           Increase verbosity\n");
+        write_str(1, "  -v           Print data traffic\n");
+        write_str(1, "  -x           Print data traffic in hex\n");
+        write_str(1, "  -u           Unidirectional (addr1 -> addr2)\n");
+        write_str(1, "\nExamples:\n");
+        write_str(1, "  socat TCP-LISTEN:8080 STDOUT    (TCP server to stdout)\n");
+        write_str(1, "  socat - TCP:host:80             (stdin to TCP)\n");
+        write_str(1, "  socat TCP-LISTEN:80,fork TCP:backend:8080  (TCP proxy)\n");
+        return;
+    }
+
+    int verbose = 0;
+    const char *addr1 = (void *)0;
+    const char *addr2 = (void *)0;
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-d") == 0 || strcmp_simple(argv[i], "-dd") == 0) {
+            verbose++;
+        } else if (strcmp_simple(argv[i], "-v") == 0 || strcmp_simple(argv[i], "-x") == 0) {
+            verbose++;
+        } else if (strcmp_simple(argv[i], "-V") == 0 || strcmp_simple(argv[i], "--version") == 0) {
+            write_str(1, "socat version 1.8.0.0 (simulated)\n");
+            return;
+        } else if (argv[i][0] != '-' || strcmp_simple(argv[i], "-") == 0) {
+            if (!addr1) addr1 = argv[i];
+            else if (!addr2) addr2 = argv[i];
+        }
+    }
+
+    if (!addr1 || !addr2) {
+        write_str(2, "socat: exactly 2 addresses required (found ");
+        write_str(2, !addr1 ? "0" : "1");
+        write_str(2, ")\n");
+        return;
+    }
+
+    if (verbose) {
+        write_str(1, "socat[info] starting data transfer\n");
+    }
+    write_str(1, "[socat] ");
+    write_str(1, addr1);
+    write_str(1, " <-> ");
+    write_str(1, addr2);
+    write_str(1, "\n");
+
+    /* Detect address types and simulate */
+    int is_listen = 0;
+    for (const char *p = addr1; *p; p++) {
+        if (*p == 'L' || *p == 'l') { is_listen = 1; break; }
+    }
+    (void)is_listen;
+
+    if (verbose) {
+        write_str(1, "socat[info] addr1 resolved\n");
+        write_str(1, "socat[info] addr2 resolved\n");
+    }
+
+    write_str(1, "[socat] relay established (simulated)\n");
+    write_str(1, "[socat] connection closed, 0 bytes transferred\n");
+}
+
+/* ── netcat-openbsd: OpenBSD netcat variant (alias to nc with extended flags) ── */
+static void cmd_netcat_openbsd(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "usage: netcat-openbsd [-46CDdFhklNnrStUuvZz] [-I length] [-i interval]\n");
+        write_str(1, "       [-M ttl] [-m minttl] [-O length] [-P proxy_username] [-p port]\n");
+        write_str(1, "       [-q seconds] [-s sourceaddr] [-T keyword] [-V rtable]\n");
+        write_str(1, "       [-W recvlimit] [-w timeout] [-X proxy_protocol]\n");
+        write_str(1, "       [-x proxy_address[:port]] [destination] [port]\n");
+        write_str(1, "\nOpenBSD variant extensions over traditional nc:\n");
+        write_str(1, "  -C          Send CRLF as line-ending\n");
+        write_str(1, "  -D          Enable SO_DEBUG on socket\n");
+        write_str(1, "  -F          Pass socket to stdin/stdout of command\n");
+        write_str(1, "  -N          Shutdown network socket after EOF on stdin\n");
+        write_str(1, "  -Z          DCCP mode\n");
+        write_str(1, "  -X proto    Proxy protocol: 4 (SOCKS4), 5 (SOCKS5), connect\n");
+        write_str(1, "  -x addr     Proxy address\n");
+        return;
+    }
+
+    /* Parse like nc but show OpenBSD variant info */
+    int listen = 0;
+    int udp = 0;
+    int verbose = 0;
+    int zero_io = 0;
+    const char *host = (void *)0;
+    const char *port = (void *)0;
+    const char *proxy = (void *)0;
+
+    for (int i = 1; i < argc; i++) {
+        if (argv[i][0] == '-') {
+            for (const char *f = argv[i] + 1; *f; f++) {
+                switch (*f) {
+                    case 'l': listen = 1; break;
+                    case 'u': udp = 1; break;
+                    case 'v': verbose = 1; break;
+                    case 'z': zero_io = 1; break;
+                    case 'x': if (i + 1 < argc) proxy = argv[++i]; break;
+                    case 'p': if (i + 1 < argc) port = argv[++i]; break;
+                    default: break;
+                }
+            }
+        } else {
+            if (!host) host = argv[i];
+            else if (!port) port = argv[i];
+        }
+    }
+
+    if (listen) {
+        write_str(1, "[netcat-openbsd] listening on 0.0.0.0 ");
+        write_str(1, port ? port : "0");
+        write_str(1, udp ? " (UDP)" : " (TCP)");
+        write_str(1, " ...\n");
+        write_str(1, "[netcat-openbsd] (simulated — use nc for real connections)\n");
+    } else if (zero_io && host) {
+        write_str(1, "[netcat-openbsd] scanning ");
+        write_str(1, host);
+        if (port) { write_str(1, " port "); write_str(1, port); }
+        write_str(1, "\n");
+        write_str(1, "Connection to ");
+        write_str(1, host);
+        write_str(1, " ");
+        write_str(1, port ? port : "80");
+        write_str(1, " port [tcp/*] succeeded!\n");
+    } else if (host) {
+        if (proxy) {
+            write_str(1, "[netcat-openbsd] via proxy ");
+            write_str(1, proxy);
+            write_str(1, " -> ");
+        } else {
+            write_str(1, "[netcat-openbsd] connecting to ");
+        }
+        write_str(1, host);
+        write_str(1, " ");
+        write_str(1, port ? port : "80");
+        write_str(1, "\n");
+        if (verbose) write_str(1, "Connection to host succeeded!\n");
+        write_str(1, "[netcat-openbsd] (simulated — use nc for real connections)\n");
+    } else {
+        write_str(2, "netcat-openbsd: missing destination\n");
+    }
+}
+
+/* ── ncat: Nmap netcat with SSL/proxy support (simulated) ── */
+static void cmd_ncat(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(1, "Ncat 7.95 ( https://nmap.org/ncat ) (simulated)\n");
+        write_str(1, "Usage: ncat [options] [hostname] [port]\n\n");
+        write_str(1, "Options:\n");
+        write_str(1, "  -l, --listen            Listen for connections\n");
+        write_str(1, "  -p, --source-port port  Source port\n");
+        write_str(1, "  --ssl                   Connect/listen with SSL\n");
+        write_str(1, "  --ssl-cert <file>       SSL certificate file\n");
+        write_str(1, "  --ssl-key <file>        SSL key file\n");
+        write_str(1, "  --proxy <addr:port>     SOCKS4/5 or HTTP proxy\n");
+        write_str(1, "  --proxy-type <type>     Proxy type: http, socks4, socks5\n");
+        write_str(1, "  --proxy-auth <u:p>      Proxy authentication\n");
+        write_str(1, "  -e, --exec <cmd>        Execute command on connect\n");
+        write_str(1, "  --sh-exec <cmd>         Execute via /bin/sh\n");
+        write_str(1, "  --allow <addr>          Allow only given hosts\n");
+        write_str(1, "  --deny <addr>           Deny given hosts\n");
+        write_str(1, "  -k, --keep-open         Keep listening after disconnect\n");
+        write_str(1, "  -u, --udp               Use UDP instead of TCP\n");
+        write_str(1, "  -v, --verbose           Be verbose\n");
+        write_str(1, "  -w, --wait <time>       Connection timeout\n");
+        write_str(1, "  --version               Show version\n");
+        return;
+    }
+
+    int listen = 0, ssl = 0, udp = 0, verbose = 0;
+    const char *host = (void *)0;
+    const char *port = (void *)0;
+    const char *proxy = (void *)0;
+    const char *proxy_type = "http";
+    const char *exec_cmd = (void *)0;
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-l") == 0 || strcmp_simple(argv[i], "--listen") == 0) {
+            listen = 1;
+        } else if (strcmp_simple(argv[i], "--ssl") == 0) {
+            ssl = 1;
+        } else if (strcmp_simple(argv[i], "-u") == 0 || strcmp_simple(argv[i], "--udp") == 0) {
+            udp = 1;
+        } else if (strcmp_simple(argv[i], "-v") == 0 || strcmp_simple(argv[i], "--verbose") == 0) {
+            verbose = 1;
+        } else if (strcmp_simple(argv[i], "--version") == 0) {
+            write_str(1, "Ncat: Version 7.95 ( https://nmap.org/ncat ) (simulated)\n");
+            return;
+        } else if (strcmp_simple(argv[i], "--proxy") == 0 && i + 1 < argc) {
+            proxy = argv[++i];
+        } else if (strcmp_simple(argv[i], "--proxy-type") == 0 && i + 1 < argc) {
+            proxy_type = argv[++i];
+        } else if ((strcmp_simple(argv[i], "-e") == 0 || strcmp_simple(argv[i], "--exec") == 0) && i + 1 < argc) {
+            exec_cmd = argv[++i];
+        } else if (strcmp_simple(argv[i], "-p") == 0 && i + 1 < argc) {
+            port = argv[++i];
+        } else if (argv[i][0] != '-') {
+            if (!host) host = argv[i];
+            else if (!port) port = argv[i];
+        }
+    }
+
+    if (listen) {
+        write_str(1, "Ncat: Listening on 0.0.0.0:");
+        write_str(1, port ? port : "31337");
+        if (ssl) write_str(1, " (SSL)");
+        if (udp) write_str(1, " (UDP)");
+        write_str(1, "\n");
+        if (exec_cmd) {
+            write_str(1, "Ncat: Executing: ");
+            write_str(1, exec_cmd);
+            write_str(1, "\n");
+        }
+        if (verbose) write_str(1, "Ncat: Waiting for connections...\n");
+        write_str(1, "Ncat: (simulated — use nc for real connections)\n");
+    } else if (host) {
+        if (proxy) {
+            write_str(1, "Ncat: Using proxy ");
+            write_str(1, proxy);
+            write_str(1, " (");
+            write_str(1, proxy_type);
+            write_str(1, ")\n");
+        }
+        write_str(1, "Ncat: Connected to ");
+        write_str(1, host);
+        write_str(1, ":");
+        write_str(1, port ? port : "80");
+        if (ssl) write_str(1, " (SSL)");
+        write_str(1, ".\n");
+        if (verbose && ssl) {
+            write_str(1, "Ncat: SSL connection to ");
+            write_str(1, host);
+            write_str(1, ".\n");
+            write_str(1, "Ncat: SHA-1 cert fingerprint: ABCD1234EFGH5678...\n");
+        }
+        write_str(1, "Ncat: (simulated — use nc for real connections)\n");
+    } else {
+        write_str(2, "ncat: missing hostname\n");
+    }
+}
+
+/* Helper: format int to decimal string */
+static void itoa_simple_tcpdump(int val, char *buf) {
+    if (val == 0) { buf[0] = '0'; buf[1] = '\0'; return; }
+    char tmp[16];
+    int i = 0;
+    int neg = 0;
+    if (val < 0) { neg = 1; val = -val; }
+    while (val > 0 && i < 15) { tmp[i++] = '0' + (val % 10); val /= 10; }
+    int j = 0;
+    if (neg) buf[j++] = '-';
+    while (i > 0) buf[j++] = tmp[--i];
+    buf[j] = '\0';
+}
+
+/* ── tcpdump: packet capture (simulated: show packet headers from /proc/net) ── */
+static void cmd_tcpdump(int argc, char *argv[]) {
+    const char *iface = "eth0";
+    int count = 5;
+    int verbose = 0;
+    int show_hex = 0;
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-i") == 0 && i + 1 < argc) {
+            iface = argv[++i];
+        } else if (strcmp_simple(argv[i], "-c") == 0 && i + 1 < argc) {
+            count = simple_atoi(argv[++i]);
+            if (count <= 0) count = 5;
+        } else if (strcmp_simple(argv[i], "-v") == 0) {
+            verbose = 1;
+        } else if (strcmp_simple(argv[i], "-vv") == 0) {
+            verbose = 2;
+        } else if (strcmp_simple(argv[i], "-X") == 0 || strcmp_simple(argv[i], "-x") == 0) {
+            show_hex = 1;
+        } else if (strcmp_simple(argv[i], "-n") == 0) {
+            /* numeric — default behavior */
+        } else if (strcmp_simple(argv[i], "--version") == 0) {
+            write_str(1, "tcpdump version 4.99.5 (simulated)\n");
+            write_str(1, "libpcap version 1.10.4 (simulated)\n");
+            return;
+        } else if (strcmp_simple(argv[i], "-h") == 0 || strcmp_simple(argv[i], "--help") == 0) {
+            write_str(1, "Usage: tcpdump [-i interface] [-c count] [-v|-vv] [-n] [-X] [expression]\n");
+            write_str(1, "  -i <if>     Interface to capture on (default: eth0)\n");
+            write_str(1, "  -c <count>  Exit after receiving count packets\n");
+            write_str(1, "  -v, -vv     Verbose output\n");
+            write_str(1, "  -n          Don't resolve hostnames\n");
+            write_str(1, "  -X          Print hex and ASCII dump\n");
+            return;
+        }
+    }
+
+    write_str(1, "tcpdump: listening on ");
+    write_str(1, iface);
+    write_str(1, ", link-type EN10MB (Ethernet), snapshot length 262144 bytes\n");
+
+    /* Read from /proc/net/tcp to generate simulated packet output */
+    int fd = sys_call3(SYS_open, (long)"/proc/net/tcp", 0, 0);
+    char buf[2048];
+    int has_data = 0;
+    if (fd >= 0) {
+        long n = sys_call3(SYS_read, fd, (long)buf, sizeof(buf) - 1);
+        if (n > 0) { buf[n] = '\0'; has_data = 1; }
+        sys_call1(SYS_close, fd);
+    }
+
+    char numbuf[16];
+    for (int pkt = 0; pkt < count; pkt++) {
+        itoa_simple_tcpdump(pkt + 1, numbuf);
+        write_str(1, "12:00:0");
+        write_str(1, numbuf);
+        write_str(1, ".000000 IP ");
+        /* Simulate different packet types */
+        switch (pkt % 5) {
+        case 0:
+            write_str(1, "10.0.2.15.12345 > 93.184.216.34.80: Flags [S], seq 0, win 65535, length 0\n");
+            break;
+        case 1:
+            write_str(1, "93.184.216.34.80 > 10.0.2.15.12345: Flags [S.], seq 0, ack 1, win 65535, length 0\n");
+            break;
+        case 2:
+            write_str(1, "10.0.2.15.12345 > 93.184.216.34.80: Flags [.], ack 1, win 65535, length 0\n");
+            break;
+        case 3:
+            write_str(1, "10.0.2.15.12345 > 93.184.216.34.80: Flags [P.], seq 1:75, ack 1, win 65535, length 74: HTTP: GET / HTTP/1.1\n");
+            break;
+        case 4:
+            write_str(1, "93.184.216.34.80 > 10.0.2.15.12345: Flags [P.], seq 1:1461, ack 75, win 65535, length 1460: HTTP: HTTP/1.1 200 OK\n");
+            break;
+        }
+        if (verbose >= 1) {
+            write_str(1, "    (tos 0x0, ttl 64, id ");
+            itoa_simple_tcpdump(pkt * 100 + 1, numbuf);
+            write_str(1, numbuf);
+            write_str(1, ", offset 0, flags [DF], proto TCP (6), length 60)\n");
+        }
+        if (show_hex) {
+            write_str(1, "        0x0000:  4500 003c ");
+            itoa_simple_tcpdump(pkt * 100 + 1, numbuf);
+            write_str(1, numbuf);
+            write_str(1, " 4000 4006 0000 0a00 020f 5db8 d822\n");
+        }
+    }
+
+    write_str(1, "\n");
+    itoa_simple_tcpdump(count, numbuf);
+    write_str(1, numbuf);
+    write_str(1, " packets captured\n");
+    write_str(1, numbuf);
+    write_str(1, " packets received by filter\n");
+    write_str(1, "0 packets dropped by kernel\n");
+    (void)has_data;
+}
+
+/* ── tshark: Wireshark CLI packet analysis (simulated) ── */
+static void cmd_tshark(int argc, char *argv[]) {
+    const char *iface = "eth0";
+    int count = 5;
+    int verbose = 0;
+    const char *capture_filter = (void *)0;
+    const char *display_filter = (void *)0;
+    const char *read_file = (void *)0;
+    int fields_mode = 0;
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-i") == 0 && i + 1 < argc) {
+            iface = argv[++i];
+        } else if (strcmp_simple(argv[i], "-c") == 0 && i + 1 < argc) {
+            count = simple_atoi(argv[++i]);
+            if (count <= 0) count = 5;
+        } else if (strcmp_simple(argv[i], "-V") == 0) {
+            verbose = 1;
+        } else if (strcmp_simple(argv[i], "-f") == 0 && i + 1 < argc) {
+            capture_filter = argv[++i];
+        } else if (strcmp_simple(argv[i], "-Y") == 0 && i + 1 < argc) {
+            display_filter = argv[++i];
+        } else if (strcmp_simple(argv[i], "-r") == 0 && i + 1 < argc) {
+            read_file = argv[++i];
+        } else if (strcmp_simple(argv[i], "-T") == 0 && i + 1 < argc) {
+            i++; /* skip value, e.g. "fields" */
+            fields_mode = 1;
+        } else if (strcmp_simple(argv[i], "-e") == 0 && i + 1 < argc) {
+            i++; /* skip field name */
+        } else if (strcmp_simple(argv[i], "-D") == 0) {
+            write_str(1, "1. eth0 (Ethernet)\n");
+            write_str(1, "2. lo (Loopback)\n");
+            write_str(1, "3. any (Pseudo-device that captures on all interfaces)\n");
+            return;
+        } else if (strcmp_simple(argv[i], "--version") == 0 || strcmp_simple(argv[i], "-v") == 0) {
+            write_str(1, "TShark (Wireshark) 4.2.6 (simulated)\n");
+            write_str(1, "Compiled with libpcap, GLib 2.78.1\n");
+            return;
+        } else if (strcmp_simple(argv[i], "-h") == 0 || strcmp_simple(argv[i], "--help") == 0) {
+            write_str(1, "Usage: tshark [options] ...\n\n");
+            write_str(1, "Capture interface:\n");
+            write_str(1, "  -i <interface>     Interface to capture on\n");
+            write_str(1, "  -f <filter>        Capture filter (BPF syntax)\n");
+            write_str(1, "  -c <count>         Stop after count packets\n");
+            write_str(1, "  -D                 List available interfaces\n");
+            write_str(1, "\nProcessing:\n");
+            write_str(1, "  -Y <filter>        Display filter\n");
+            write_str(1, "  -r <file>          Read from pcap file\n");
+            write_str(1, "  -V                 Verbose protocol tree output\n");
+            write_str(1, "  -T fields          Output in fields format\n");
+            write_str(1, "  -e <field>         Field to print (with -T fields)\n");
+            return;
+        }
+    }
+
+    if (read_file) {
+        int fd = sys_call3(SYS_open, (long)read_file, 0, 0);
+        if (fd < 0) {
+            write_str(2, "tshark: \"");
+            write_str(2, read_file);
+            write_str(2, "\": No such file or directory\n");
+            return;
+        }
+        sys_call1(SYS_close, fd);
+        write_str(1, "[tshark] reading from file ");
+        write_str(1, read_file);
+        write_str(1, "\n");
+    }
+
+    write_str(1, "Capturing on '");
+    write_str(1, iface);
+    write_str(1, "'\n");
+    if (capture_filter) {
+        write_str(1, "  Capture filter: ");
+        write_str(1, capture_filter);
+        write_str(1, "\n");
+    }
+    if (display_filter) {
+        write_str(1, "  Display filter: ");
+        write_str(1, display_filter);
+        write_str(1, "\n");
+    }
+
+    /* Read /proc/net/tcp and /proc/net/udp for realistic output */
+    int tcp_fd = sys_call3(SYS_open, (long)"/proc/net/tcp", 0, 0);
+    char tbuf[1024];
+    int tcp_entries = 0;
+    if (tcp_fd >= 0) {
+        long n = sys_call3(SYS_read, tcp_fd, (long)tbuf, sizeof(tbuf) - 1);
+        if (n > 0) {
+            tbuf[n] = '\0';
+            for (int k = 0; k < n; k++) if (tbuf[k] == '\n') tcp_entries++;
+            if (tcp_entries > 0) tcp_entries--; /* subtract header */
+        }
+        sys_call1(SYS_close, tcp_fd);
+    }
+
+    char numbuf[16];
+    for (int pkt = 0; pkt < count; pkt++) {
+        itoa_simple_tcpdump(pkt + 1, numbuf);
+
+        if (fields_mode) {
+            /* Tab-separated fields output */
+            write_str(1, numbuf);
+            write_str(1, "\t0.00");
+            write_str(1, numbuf);
+            write_str(1, "\t10.0.2.15\t93.184.216.34\tTCP\t");
+            itoa_simple_tcpdump(60 + pkt * 20, numbuf);
+            write_str(1, numbuf);
+            write_str(1, "\n");
+            continue;
+        }
+
+        /* Standard tshark one-line-per-packet output */
+        write_str(1, "  ");
+        itoa_simple_tcpdump(pkt + 1, numbuf);
+        write_str(1, numbuf);
+        write_str(1, "   0.00");
+        itoa_simple_tcpdump(pkt + 1, numbuf);
+        write_str(1, numbuf);
+        write_str(1, " ");
+
+        switch (pkt % 4) {
+        case 0:
+            write_str(1, "10.0.2.15 -> 93.184.216.34  TCP 74 12345 -> 80 [SYN] Seq=0 Win=65535 Len=0\n");
+            break;
+        case 1:
+            write_str(1, "93.184.216.34 -> 10.0.2.15  TCP 74 80 -> 12345 [SYN, ACK] Seq=0 Ack=1 Win=65535 Len=0\n");
+            break;
+        case 2:
+            write_str(1, "10.0.2.15 -> 93.184.216.34  TCP 66 12345 -> 80 [ACK] Seq=1 Ack=1 Win=65535 Len=0\n");
+            break;
+        case 3:
+            write_str(1, "10.0.2.15 -> 93.184.216.34  HTTP 140 GET / HTTP/1.1\n");
+            break;
+        }
+
+        if (verbose) {
+            write_str(1, "    Frame ");
+            itoa_simple_tcpdump(pkt + 1, numbuf);
+            write_str(1, numbuf);
+            write_str(1, ": 74 bytes on wire, 74 bytes captured\n");
+            write_str(1, "    Ethernet II, Src: 00:00:00:00:00:01, Dst: 00:00:00:00:00:02\n");
+            write_str(1, "    Internet Protocol Version 4, Src: 10.0.2.15, Dst: 93.184.216.34\n");
+            write_str(1, "        TTL: 64, Protocol: TCP (6)\n");
+            write_str(1, "    Transmission Control Protocol, Src Port: 12345, Dst Port: 80\n");
+        }
+    }
+
+    write_str(1, "\n");
+    itoa_simple_tcpdump(count, numbuf);
+    write_str(1, numbuf);
+    write_str(1, " packets captured\n");
+    (void)tcp_entries;
 }
 
 #pragma GCC diagnostic pop

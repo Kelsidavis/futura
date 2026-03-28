@@ -12,8 +12,10 @@
  * Supported ioctls:
  *   TIOCGPTN     - Get slave PTY number
  *   TIOCSPTLCK   - Lock/unlock slave
- *   TIOCGWINSZ   - Get window size
- *   TIOCSWINSZ   - Set window size
+ *   TIOCSCTTY    - Set controlling terminal for session leader
+ *   TIOCNOTTY    - Give up controlling terminal
+ *   TIOCGWINSZ   - Get window size (struct winsize)
+ *   TIOCSWINSZ   - Set window size + deliver SIGWINCH to fg pgrp
  *   TCGETS       - Get termios
  *   TCSETS        - Set termios
  *   FIONREAD     - Bytes available for read
@@ -38,8 +40,10 @@
 /* ioctl numbers */
 #define TCGETS      0x5401
 #define TCSETS      0x5402
+#define TIOCSCTTY   0x540E
 #define TIOCGWINSZ  0x5413
 #define TIOCSWINSZ  0x5414
+#define TIOCNOTTY   0x5422
 #define TIOCGPTN    0x80045430  /* Get PTY number: ioctl(fd, TIOCGPTN, &n) */
 #define TIOCSPTLCK  0x40045431  /* (Un)lock PTY: ioctl(fd, TIOCSPTLCK, &n) */
 #define FIONREAD    0x541B
@@ -277,13 +281,51 @@ static int ptmx_ioctl(void *inode, void *priv, unsigned long req, unsigned long 
             memcpy(&p->winsize, (void *)arg, 8);
         else if (fut_copy_from_user(&p->winsize, (void *)arg, 8) != 0)
             return -EFAULT;
-        /* Deliver SIGWINCH to the foreground process group (Linux behavior) */
+        /* Deliver SIGWINCH to the PTY's foreground process group (Linux behavior) */
         {
             extern long sys_kill(int pid, int sig);
-            fut_task_t *task = fut_task_current();
-            if (task && task->pgid)
-                sys_kill(-(int)task->pgid, 28 /* SIGWINCH */);
+            int fg = p->fg_pgid;
+            if (fg > 0) {
+                sys_kill(-fg, 28 /* SIGWINCH */);
+            } else {
+                /* Fallback: use the calling process's pgid */
+                fut_task_t *task = fut_task_current();
+                if (task && task->pgid)
+                    sys_kill(-(int)task->pgid, 28 /* SIGWINCH */);
+            }
         }
+        return 0;
+    }
+    case TIOCSCTTY: {
+        /* TIOCSCTTY - Make this PTY the controlling terminal for the session leader.
+         * arg is the "steal" flag (0 or 1), ignored for simplicity.
+         * Sets task->tty_nr to MKDEV(136, index) and records the session in the PTY. */
+        fut_task_t *task = fut_task_current();
+        if (!task)
+            return -ESRCH;
+        /* Only a session leader may acquire a controlling terminal */
+        if (task->sid != task->pid)
+            return -EPERM;
+        fut_spinlock_acquire(&p->lock);
+        task->tty_nr = (136u << 8) | (uint32_t)p->index;
+        p->session_id = task->sid;
+        if (p->fg_pgid == 0)
+            p->fg_pgid = (int)task->pgid;
+        fut_spinlock_release(&p->lock);
+        return 0;
+    }
+    case TIOCNOTTY: {
+        /* TIOCNOTTY - Give up the controlling terminal.
+         * Clears task->tty_nr. If the caller is the session leader,
+         * also clears the PTY's session_id. */
+        fut_task_t *task = fut_task_current();
+        if (!task)
+            return -ESRCH;
+        fut_spinlock_acquire(&p->lock);
+        task->tty_nr = 0;
+        if (p->session_id == task->sid)
+            p->session_id = 0;
+        fut_spinlock_release(&p->lock);
         return 0;
     }
     case TCGETS: {
@@ -456,14 +498,46 @@ static int pts_ioctl(void *inode, void *priv, unsigned long req, unsigned long a
             memcpy(&p->winsize, (void *)arg, 8);
         else if (fut_copy_from_user(&p->winsize, (void *)arg, 8) != 0)
             return -EFAULT;
-        /* Deliver SIGWINCH to the foreground process group */
+        /* Deliver SIGWINCH to the PTY's foreground process group */
         {
             extern long sys_kill(int pid, int sig);
-            fut_task_t *task = fut_task_current();
-            if (task && task->pgid)
-                sys_kill(-(int)task->pgid, 28 /* SIGWINCH */);
+            int fg = p->fg_pgid;
+            if (fg > 0) {
+                sys_kill(-fg, 28 /* SIGWINCH */);
+            } else {
+                fut_task_t *task = fut_task_current();
+                if (task && task->pgid)
+                    sys_kill(-(int)task->pgid, 28 /* SIGWINCH */);
+            }
         }
         return 0;
+    case TIOCSCTTY: {
+        /* TIOCSCTTY - Make this PTY the controlling terminal for the session leader. */
+        fut_task_t *task = fut_task_current();
+        if (!task)
+            return -ESRCH;
+        if (task->sid != task->pid)
+            return -EPERM;
+        fut_spinlock_acquire(&p->lock);
+        task->tty_nr = (136u << 8) | (uint32_t)p->index;
+        p->session_id = task->sid;
+        if (p->fg_pgid == 0)
+            p->fg_pgid = (int)task->pgid;
+        fut_spinlock_release(&p->lock);
+        return 0;
+    }
+    case TIOCNOTTY: {
+        /* TIOCNOTTY - Give up the controlling terminal. */
+        fut_task_t *task = fut_task_current();
+        if (!task)
+            return -ESRCH;
+        fut_spinlock_acquire(&p->lock);
+        task->tty_nr = 0;
+        if (p->session_id == task->sid)
+            p->session_id = 0;
+        fut_spinlock_release(&p->lock);
+        return 0;
+    }
     case TCGETS:
         if ((uintptr_t)arg >= 0xFFFF800000000000ULL)
             memcpy((void *)arg, p->termios, 60);

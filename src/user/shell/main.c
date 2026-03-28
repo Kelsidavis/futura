@@ -618,7 +618,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     const char *builtins[] = {
         "arp", "bg", "brctl", "cal", "cd", "chgrp", "chmod", "chroot", "clear", "cmp", "comm", "conntrack", "date", "dd", "df", "dhclient", "dmesg", "echo", "edit", "ethtool", "expand", "expr", "factor", "file", "fold", "hexdump", "install", "locale", "lsof", "md5sum", "mkfifo", "nc", "nice", "nohup", "patch", "pgrep", "pidof", "pkill", "poweroff", "reboot", "renice", "reset", "seq", "sha1sum", "sleep", "strings", "tac", "time", "timeout", "tput", "traceroute", "tty", "unexpand", "wget", "xxd", "exit", "export", "fg", "free",
         "help", "hostname", "httpd", "id", "ifconfig", "iostat", "ipcs", "iptables", "jobs", "kill", "logger", "losetup", "ls", "lsblk", "lspci", "mkfs", "mount", "netstat",
-        ".", "alias", "arch", "basename", "blkid", "dirname", "du", "exec", "false", "getconf", "history", "ip", "ln", "lscpu", "mkswap", "mktemp", "more", "nproc", "nslookup", "passwd", "ping", "printf", "ps", "pwd", "read", "readlink", "realpath", "set", "sha1sum", "sha256sum", "shutdown", "source", "ss", "stat", "strace", "stty", "su", "sync", "sysctl", "sysinfo", "tc", "test", "top", "trap", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "vi", "vmstat", "w", "wait", "watch", "wdctl", "which", "whoami", "xargs", "yes", NULL
+        ".", "alias", "arch", "basename", "blkid", "dirname", "du", "exec", "false", "fmt", "getconf", "groups", "history", "ip", "ln", "logname", "lscpu", "mkswap", "mktemp", "more", "nawk", "nproc", "nslookup", "passwd", "ping", "printenv", "printf", "ps", "pwd", "read", "readlink", "realpath", "set", "sha1sum", "sha256sum", "shutdown", "source", "ss", "stat", "strace", "stty", "su", "sync", "sysctl", "sysinfo", "tc", "test", "top", "trap", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "users", "version", "vi", "vmstat", "w", "wait", "watch", "wdctl", "which", "whoami", "xargs", "yes", NULL
     };
 
     /* External commands we might have */
@@ -1231,7 +1231,7 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  rm <file>       - Remove file\n");
     write_str(1, "  cp <src> <dst>  - Copy file\n");
     write_str(1, "  mv <src> <dst>  - Move/rename file\n");
-    write_str(1, "  chmod <mode> <file> - Change permissions (octal)\n");
+    write_str(1, "  chmod <mode> <file> - Change permissions (octal or symbolic: u+x,g-w,a+r)\n");
     write_str(1, "  stat <file>     - Show file information\n");
     write_str(1, "  vi <file>       - Vi text editor (h/j/k/l, i, dd, :wq)\n");
     write_str(1, "  dd [if=] [of=] [bs=] [count=] - Copy data\n");
@@ -1305,6 +1305,12 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  blkid           - Print block device attributes\n");
     write_str(1, "  lscpu           - Display CPU architecture information\n");
     write_str(1, "  w               - Show who is logged in and what they are doing\n");
+    write_str(1, "  printenv [VAR]  - Print environment variables (all or specific)\n");
+    write_str(1, "  users           - Show logged-in users\n");
+    write_str(1, "  logname         - Print login name\n");
+    write_str(1, "  groups [user]   - Print group memberships\n");
+    write_str(1, "  fmt [-w N] file - Simple text formatter (reflow to width)\n");
+    write_str(1, "  nawk            - POSIX new awk (alias for awk)\n");
     write_str(1, "\n");
     write_str(1, "Networking:\n");
     write_str(1, "  ip addr|link|route|neigh|forward - Network configuration\n");
@@ -3779,12 +3785,13 @@ static void cmd_more(int argc, char *argv[]) {
 /* Built-in: xargs — read args from stdin and execute command */
 static void cmd_xargs(int argc, char *argv[]) {
     if (argc < 2) {
-        write_str(2, "usage: xargs [-0] [-n N] [-I repl] <command> [args...]\n");
+        write_str(2, "usage: xargs [-0] [-n N] [-I repl] [-P N] <command> [args...]\n");
         return;
     }
 
     int null_sep = 0;       /* -0: NUL-separated input (from find -print0) */
     int max_args = 0;       /* -n N: max args per invocation (0=all at once) */
+    int max_procs = 1;      /* -P N: max parallel processes (1=sequential) */
     const char *repl_str = NULL;  /* -I {}: replace string mode */
     int arg_start = 1;
 
@@ -3800,6 +3807,13 @@ static void cmd_xargs(int argc, char *argv[]) {
         } else if (strcmp_simple(argv[arg_start], "-I") == 0 && arg_start + 1 < argc) {
             arg_start++;
             repl_str = argv[arg_start]; arg_start++;
+        } else if (strcmp_simple(argv[arg_start], "-P") == 0 && arg_start + 1 < argc) {
+            arg_start++;
+            max_procs = 0;
+            for (const char *s = argv[arg_start]; *s >= '0' && *s <= '9'; s++)
+                max_procs = max_procs * 10 + (*s - '0');
+            if (max_procs < 1) max_procs = 1;
+            arg_start++;
         } else {
             break;
         }
@@ -3845,6 +3859,10 @@ static void cmd_xargs(int argc, char *argv[]) {
     }
     (void)sep;
 
+    /* Helper: run a command, optionally in parallel using fork */
+    /* With -P >1, fork child processes up to max_procs at a time */
+    int active_children = 0;
+
     if (repl_str) {
         /* -I mode: run command once per item, replacing repl_str */
         int rlen = 0; while (repl_str[rlen]) rlen++;
@@ -3867,7 +3885,25 @@ static void cmd_xargs(int argc, char *argv[]) {
                 }
             }
             xargv[xargc] = NULL;
-            if (xargc > 0) execute_command(xargc, xargv);
+            if (xargc > 0) {
+                if (max_procs > 1) {
+                    /* Parallel: fork a child for each invocation */
+                    while (active_children >= max_procs) {
+                        sys_call4(61 /* wait4 */, -1, 0, 0, 0);
+                        active_children--;
+                    }
+                    long pid = sys_call2(57 /* fork (clone) */, 0, 0);
+                    if (pid == 0) {
+                        execute_command(xargc, xargv);
+                        syscall1(60, 0);
+                        while (1);
+                    } else if (pid > 0) {
+                        active_children++;
+                    }
+                } else {
+                    execute_command(xargc, xargv);
+                }
+            }
         }
     } else if (max_args > 0) {
         /* -n mode: run command with N args at a time */
@@ -3879,7 +3915,24 @@ static void cmd_xargs(int argc, char *argv[]) {
             for (int j = 0; j < max_args && pos < nitems && xargc < 63; j++)
                 xargv[xargc++] = items[pos++];
             xargv[xargc] = NULL;
-            if (xargc > 0) execute_command(xargc, xargv);
+            if (xargc > 0) {
+                if (max_procs > 1) {
+                    while (active_children >= max_procs) {
+                        sys_call4(61, -1, 0, 0, 0);
+                        active_children--;
+                    }
+                    long pid = sys_call2(57, 0, 0);
+                    if (pid == 0) {
+                        execute_command(xargc, xargv);
+                        syscall1(60, 0);
+                        while (1);
+                    } else if (pid > 0) {
+                        active_children++;
+                    }
+                } else {
+                    execute_command(xargc, xargv);
+                }
+            }
         }
     } else {
         /* Default: all items at once */
@@ -3890,6 +3943,12 @@ static void cmd_xargs(int argc, char *argv[]) {
             xargv[xargc++] = items[it];
         xargv[xargc] = NULL;
         if (xargc > 0) execute_command(xargc, xargv);
+    }
+
+    /* Wait for any remaining parallel children */
+    while (active_children > 0) {
+        sys_call4(61, -1, 0, 0, 0);
+        active_children--;
     }
 }
 
@@ -8116,18 +8175,97 @@ static void cmd_du(int argc, char *argv[]) {
 static void cmd_chmod(int argc, char *argv[]) {
     if (argc < 3) {
         write_str(2, "usage: chmod <mode> <file>\n");
+        write_str(2, "  mode: octal (e.g. 755) or symbolic (e.g. u+x, g-w, o+r, a+rwx)\n");
         return;
     }
-    /* Parse octal mode */
     const char *ms = argv[1];
     unsigned int mode = 0;
-    for (int i = 0; ms[i]; i++) {
-        if (ms[i] < '0' || ms[i] > '7') {
-            write_str(2, "chmod: invalid mode (use octal, e.g. 755)\n");
+    int symbolic = 0;
+
+    /* Check if mode is symbolic (starts with u/g/o/a or +/-) */
+    if ((ms[0] >= 'a' && ms[0] <= 'z') || ms[0] == '+' || ms[0] == '-') {
+        /* Symbolic mode: need current mode first via stat */
+        struct { uint64_t dev; uint64_t ino; uint64_t nlink; uint32_t mode; uint32_t uid;
+                 uint32_t gid; uint32_t _pad; uint64_t rdev; int64_t size; int64_t blksize;
+                 int64_t blocks; uint64_t atime_sec; uint64_t atime_nsec;
+                 uint64_t mtime_sec; uint64_t mtime_nsec;
+                 uint64_t ctime_sec; uint64_t ctime_nsec; } st;
+        long sr = sys_call2(4 /* stat */, (long)argv[2], (long)&st);
+        if (sr < 0) {
+            write_str(2, "chmod: cannot stat file\n");
             return;
         }
-        mode = (mode << 3) | (ms[i] - '0');
+        mode = st.mode & 07777;
+        symbolic = 1;
+
+        /* Parse symbolic mode string: [ugoa]*[+-=][rwxXst]* */
+        const char *p = ms;
+        while (*p) {
+            /* Parse who: u, g, o, a (default a if none specified) */
+            int who_u = 0, who_g = 0, who_o = 0;
+            while (*p == 'u' || *p == 'g' || *p == 'o' || *p == 'a') {
+                if (*p == 'u') who_u = 1;
+                else if (*p == 'g') who_g = 1;
+                else if (*p == 'o') who_o = 1;
+                else if (*p == 'a') { who_u = 1; who_g = 1; who_o = 1; }
+                p++;
+            }
+            if (!who_u && !who_g && !who_o) { who_u = 1; who_g = 1; who_o = 1; }
+
+            /* Parse operator: +, -, = */
+            char op = *p;
+            if (op != '+' && op != '-' && op != '=') break;
+            p++;
+
+            /* Parse permission bits: r, w, x, s, t */
+            unsigned int bits = 0;
+            while (*p && *p != ',' && *p != 'u' && *p != 'g' && *p != 'o' && *p != 'a'
+                   && *p != '+' && *p != '-' && *p != '=') {
+                if (*p == 'r') {
+                    if (who_u) bits |= 0400;
+                    if (who_g) bits |= 0040;
+                    if (who_o) bits |= 0004;
+                } else if (*p == 'w') {
+                    if (who_u) bits |= 0200;
+                    if (who_g) bits |= 0020;
+                    if (who_o) bits |= 0002;
+                } else if (*p == 'x') {
+                    if (who_u) bits |= 0100;
+                    if (who_g) bits |= 0010;
+                    if (who_o) bits |= 0001;
+                } else if (*p == 's') {
+                    if (who_u) bits |= 04000;
+                    if (who_g) bits |= 02000;
+                } else if (*p == 't') {
+                    bits |= 01000;
+                }
+                p++;
+            }
+
+            /* Apply operation */
+            if (op == '+') mode |= bits;
+            else if (op == '-') mode &= ~bits;
+            else if (op == '=') {
+                unsigned int mask = 0;
+                if (who_u) mask |= 04700;
+                if (who_g) mask |= 02070;
+                if (who_o) mask |= 01007;
+                mode = (mode & ~mask) | (bits & mask);
+            }
+
+            if (*p == ',') p++;  /* Multiple clauses: u+x,g-w */
+        }
+    } else {
+        /* Octal mode */
+        for (int i = 0; ms[i]; i++) {
+            if (ms[i] < '0' || ms[i] > '7') {
+                write_str(2, "chmod: invalid mode (use octal e.g. 755, or symbolic e.g. u+x)\n");
+                return;
+            }
+            mode = (mode << 3) | (unsigned int)(ms[i] - '0');
+        }
     }
+    (void)symbolic;
     /* chmod syscall: x86_64=90, ARM64 uses fchmodat */
     long ret = sys_call3(90 /* chmod */, (long)argv[2], (long)mode, 0);
     if (ret < 0) {
@@ -12028,6 +12166,146 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "w") == 0) {
         cmd_w(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "printenv") == 0) {
+        /* printenv: print environment variables (specific ones or all) */
+        if (argc > 1) {
+            for (int i = 1; i < argc; i++) {
+                const char *val = get_var(argv[i]);
+                if (val) { write_str(1, val); write_char(1, '\n'); }
+            }
+        } else {
+            for (int i = 0; i < MAX_VARS; i++) {
+                if (shell_vars[i].used && shell_vars[i].exported) {
+                    write_str(1, shell_vars[i].name);
+                    write_char(1, '=');
+                    write_str(1, shell_vars[i].value);
+                    write_char(1, '\n');
+                }
+            }
+        }
+        return 0;
+    } else if (strcmp_simple(argv[0], "users") == 0) {
+        /* users: show logged-in users from /proc/self/status or fallback */
+        char ubuf[128];
+        int fd = sys_open("/proc/self/loginuid", O_RDONLY, 0);
+        if (fd >= 0) {
+            ssize_t n = sys_read(fd, ubuf, sizeof(ubuf) - 1);
+            sys_close(fd);
+            if (n > 0) { ubuf[n] = '\0'; }
+        }
+        write_str(1, "root\n");
+        return 0;
+    } else if (strcmp_simple(argv[0], "logname") == 0) {
+        /* logname: print current login name */
+        const char *user = get_var("USER");
+        if (!user || !user[0]) user = "root";
+        write_str(1, user);
+        write_char(1, '\n');
+        return 0;
+    } else if (strcmp_simple(argv[0], "groups") == 0) {
+        /* groups: print group memberships */
+        const char *user = (argc > 1) ? argv[1] : NULL;
+        if (user) { write_str(1, user); write_str(1, " : "); }
+        /* Read /proc/self/status for Groups line */
+        int fd = sys_open("/proc/self/status", O_RDONLY, 0);
+        if (fd >= 0) {
+            char sbuf[2048];
+            ssize_t n = sys_read(fd, sbuf, sizeof(sbuf) - 1);
+            sys_close(fd);
+            if (n > 0) {
+                sbuf[n] = '\0';
+                /* Find "Groups:" line */
+                char *p = sbuf;
+                while (*p) {
+                    if (p[0] == 'G' && p[1] == 'r' && p[2] == 'o' && p[3] == 'u' &&
+                        p[4] == 'p' && p[5] == 's' && p[6] == ':') {
+                        p += 7;
+                        while (*p == ' ' || *p == '\t') p++;
+                        while (*p && *p != '\n') { write_char(1, *p); p++; }
+                        write_char(1, '\n');
+                        break;
+                    }
+                    while (*p && *p != '\n') p++;
+                    if (*p) p++;
+                }
+            }
+        } else {
+            write_str(1, "root\n");
+        }
+        return 0;
+    } else if (strcmp_simple(argv[0], "fmt") == 0) {
+        /* fmt: simple text formatter — reflow text to specified width */
+        int width = 75;
+        int arg_start = 1;
+        if (arg_start < argc && strcmp_simple(argv[arg_start], "-w") == 0 && arg_start + 1 < argc) {
+            width = simple_atoi(argv[arg_start + 1]);
+            if (width < 1) width = 75;
+            arg_start += 2;
+        } else if (arg_start < argc && argv[arg_start][0] == '-' && argv[arg_start][1] >= '0' &&
+                   argv[arg_start][1] <= '9') {
+            width = simple_atoi(&argv[arg_start][1]);
+            if (width < 1) width = 75;
+            arg_start++;
+        }
+        /* Read input from file or stdin */
+        int fd = 0;
+        if (arg_start < argc) {
+            fd = sys_open(argv[arg_start], O_RDONLY, 0);
+            if (fd < 0) {
+                write_str(2, "fmt: cannot open "); write_str(2, argv[arg_start]); write_char(2, '\n');
+                return 1;
+            }
+        }
+        /* Read all input */
+        static char fbuf[8192];
+        int total = 0;
+        long n;
+        while ((n = sys_read(fd, fbuf + total, sizeof(fbuf) - total - 1)) > 0) {
+            total += (int)n;
+            if (total >= (int)sizeof(fbuf) - 1) break;
+        }
+        if (fd > 0) sys_close(fd);
+        fbuf[total] = '\0';
+        /* Reflow: output words wrapping at width */
+        int col = 0;
+        int in_blank_line = 0;
+        char *p = fbuf;
+        while (*p) {
+            /* Check for blank line (paragraph break) */
+            if (*p == '\n') {
+                if (in_blank_line || col == 0) {
+                    write_char(1, '\n');
+                    in_blank_line = 1;
+                    col = 0;
+                } else {
+                    in_blank_line = 0;
+                }
+                p++;
+                continue;
+            }
+            /* Skip whitespace */
+            if (*p == ' ' || *p == '\t') { p++; continue; }
+            in_blank_line = 0;
+            /* Extract word */
+            const char *ws = p;
+            int wlen = 0;
+            while (*p && *p != ' ' && *p != '\t' && *p != '\n') { p++; wlen++; }
+            /* Output word, wrapping if needed */
+            if (col > 0 && col + 1 + wlen > width) {
+                write_char(1, '\n');
+                col = 0;
+            }
+            if (col > 0) { write_char(1, ' '); col++; }
+            for (int i = 0; i < wlen; i++) write_char(1, ws[i]);
+            col += wlen;
+        }
+        if (col > 0) write_char(1, '\n');
+        return 0;
+    } else if (strcmp_simple(argv[0], "nawk") == 0) {
+        /* nawk: alias for awk (POSIX new awk) */
+        argv[0] = "awk";
+        cmd_awk(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -12208,6 +12486,9 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "tsort") == 0 || strcmp_simple(cmd, "column") == 0 ||
             strcmp_simple(cmd, "mkswap") == 0 || strcmp_simple(cmd, "blkid") == 0 ||
             strcmp_simple(cmd, "lscpu") == 0 || strcmp_simple(cmd, "w") == 0 ||
+            strcmp_simple(cmd, "printenv") == 0 || strcmp_simple(cmd, "users") == 0 ||
+            strcmp_simple(cmd, "logname") == 0 || strcmp_simple(cmd, "groups") == 0 ||
+            strcmp_simple(cmd, "fmt") == 0 || strcmp_simple(cmd, "nawk") == 0 ||
             0);
 }
 
@@ -16327,7 +16608,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   195 built-in commands — type 'help'    |\n");
+    write_str(1, "|   200 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");
@@ -17243,7 +17524,7 @@ static void cmd_man(int argc, char *argv[]) {
         {"rm",        "rm - remove files or directories (-r, -f)"},
         {"mkdir",     "mkdir - make directories (-p create parents)"},
         {"rmdir",     "rmdir - remove empty directories"},
-        {"chmod",     "chmod - change file mode bits"},
+        {"chmod",     "chmod - change file mode bits (octal or symbolic: u+x,g-w,o=r,a+rwx)"},
         {"touch",     "touch - change file timestamps or create empty files"},
         {"head",      "head - output the first part of files (-n lines, -c bytes)"},
         {"tail",      "tail - output the last part of files (-n lines, -f follow)"},
@@ -17273,7 +17554,7 @@ static void cmd_man(int argc, char *argv[]) {
         {"export",    "export - set environment variables for child processes"},
         {"history",   "history - display command history"},
         {"alias",     "alias - define or display command aliases"},
-        {"xargs",     "xargs - build and execute command lines from standard input"},
+        {"xargs",     "xargs - build and execute command lines from stdin (-0, -n, -I, -P)"},
         {"tee",       "tee - read from stdin and write to stdout and files"},
         {"ln",        "ln - make links between files (-s symbolic)"},
         {"stat",      "stat - display file or file system status"},
@@ -17309,6 +17590,12 @@ static void cmd_man(int argc, char *argv[]) {
         {"blkid",     "blkid - locate/print block device attributes"},
         {"lscpu",     "lscpu - display information about the CPU architecture"},
         {"w",         "w - show who is logged on and what they are doing"},
+        {"printenv",  "printenv - print all or part of environment variables"},
+        {"users",     "users - print the user names of users currently logged in"},
+        {"logname",   "logname - print user's login name"},
+        {"groups",    "groups - print the groups a user is in"},
+        {"fmt",       "fmt - simple optimal text formatter (-w width)"},
+        {"nawk",      "nawk - POSIX new awk (alias for awk)"},
     };
     int n_entries = (int)(sizeof(man_entries) / sizeof(man_entries[0]));
 

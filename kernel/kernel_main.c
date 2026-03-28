@@ -1270,7 +1270,7 @@ void fut_kernel_main(void) {
                   "::1\t\tlocalhost ip6-localhost ip6-loopback\n"
                   "127.0.1.1\tfutura\n");
         ETC_WRITE("/etc/resolv.conf",
-                  "nameserver 127.0.0.1\n"
+                  "nameserver 10.0.2.3\n"
                   "search local\n");
         ETC_WRITE("/etc/nsswitch.conf",
                   "passwd:   files\n"

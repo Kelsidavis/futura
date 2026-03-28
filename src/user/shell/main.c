@@ -266,6 +266,7 @@ static void cmd_nmap(int argc, char *argv[]);
 static void cmd_apropos(int argc, char *argv[]);
 static void cmd_info(int argc, char *argv[]);
 static void cmd_getent(int argc, char *argv[]);
+static void cmd_banner(int argc, char *argv[]);
 
 /* Forward declaration for prompt */
 static void print_prompt(void);
@@ -13866,6 +13867,9 @@ watch_sleep:
     } else if (strcmp_simple(argv[0], "getent") == 0) {
         cmd_getent(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "banner") == 0) {
+        cmd_banner(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -14145,7 +14149,7 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "nmap") == 0 ||
             strcmp_simple(cmd, "apropos") == 0 ||
             strcmp_simple(cmd, "info") == 0 ||
-            strcmp_simple(cmd, "getent") == 0 ||
+            strcmp_simple(cmd, "getent") == 0 || strcmp_simple(cmd, "banner") == 0 ||
             0);
 }
 
@@ -26604,6 +26608,25 @@ static void cmd_nmap(int argc, char *argv[]) {
     int_to_str(open_count, numbuf, sizeof(numbuf));
     write_str(1, numbuf);
     write_str(1, " open port(s)\n");
+}
+
+/* banner - display text in large ASCII letters */
+static void cmd_banner(int argc, char *argv[]) {
+    if (argc < 2) { write_str(1, "usage: banner text\n"); return; }
+    for (int i = 1; i < argc; i++) {
+        for (const char *p = argv[i]; *p; p++) {
+            char c = *p;
+            if (c >= 'a' && c <= 'z') c -= 32;
+            write_str(1, " ");
+            char buf[2] = {c, 0};
+            /* Print character in a simple big format */
+            for (int r = 0; r < 3; r++) {
+                write_str(1, buf); write_str(1, buf); write_str(1, buf);
+            }
+            write_str(1, " ");
+        }
+        write_str(1, "\n");
+    }
 }
 
 #pragma GCC diagnostic pop

@@ -150,6 +150,8 @@ static void cmd_sha1sum(int argc, char *argv[]);
 static void cmd_vi(int argc, char *argv[]);
 static void cmd_make(int argc, char *argv[]);
 static void cmd_git(int argc, char *argv[]);
+static void cmd_su(int argc, char *argv[]);
+static void cmd_passwd(int argc, char *argv[]);
 static void strcpy_simple(char *dest, const char *src);
 
 /* Forward declaration for prompt */
@@ -602,7 +604,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     const char *builtins[] = {
         "arp", "bg", "brctl", "cal", "cd", "chgrp", "chmod", "chroot", "clear", "cmp", "comm", "conntrack", "date", "dd", "df", "dhclient", "dmesg", "echo", "edit", "ethtool", "expand", "expr", "factor", "file", "fold", "hexdump", "install", "locale", "lsof", "md5sum", "mkfifo", "nc", "nice", "nohup", "patch", "pgrep", "pidof", "pkill", "poweroff", "reboot", "renice", "reset", "seq", "sha1sum", "sleep", "strings", "tac", "time", "timeout", "tput", "traceroute", "tty", "unexpand", "wget", "xxd", "exit", "export", "fg", "free",
         "help", "hostname", "httpd", "id", "ifconfig", "iostat", "ipcs", "iptables", "jobs", "kill", "logger", "losetup", "ls", "lsblk", "lspci", "mkfs", "mount", "netstat",
-        ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "getconf", "history", "ip", "ln", "mktemp", "more", "nproc", "nslookup", "ping", "printf", "ps", "pwd", "read", "readlink", "realpath", "set", "sha1sum", "sha256sum", "shutdown", "source", "ss", "stat", "stty", "sync", "sysctl", "sysinfo", "tc", "test", "top", "trap", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "vi", "vmstat", "wait", "watch", "wdctl", "which", "whoami", "xargs", "yes", NULL
+        ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "getconf", "history", "ip", "ln", "mktemp", "more", "nproc", "nslookup", "passwd", "ping", "printf", "ps", "pwd", "read", "readlink", "realpath", "set", "sha1sum", "sha256sum", "shutdown", "source", "ss", "stat", "stty", "su", "sync", "sysctl", "sysinfo", "tc", "test", "top", "trap", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "vi", "vmstat", "wait", "watch", "wdctl", "which", "whoami", "xargs", "yes", NULL
     };
 
     /* External commands we might have */
@@ -11410,6 +11412,12 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "bg") == 0) {
         cmd_bg(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "su") == 0) {
+        cmd_su(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "passwd") == 0) {
+        cmd_passwd(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -11577,6 +11585,8 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "tput") == 0 ||
             strcmp_simple(cmd, "make") == 0 ||
             strcmp_simple(cmd, "git") == 0 ||
+            strcmp_simple(cmd, "su") == 0 ||
+            strcmp_simple(cmd, "passwd") == 0 ||
             0);
 }
 
@@ -15128,6 +15138,202 @@ static void cmd_vi(int argc, char *argv[]) {
     #undef VI_SAVE
     #undef VI_SCROLL
     #undef VI_CLAMP_COL
+}
+
+/* ── su: switch user (simplified) ── */
+static void cmd_su(int argc, char *argv[]) {
+    const char *target_user = "root";
+    const char *cmd_to_run = NULL;
+    int i = 1;
+
+    /* Parse arguments: su [-c "command"] [user] */
+    while (i < argc) {
+        if (strcmp_simple(argv[i], "-c") == 0 && i + 1 < argc) {
+            cmd_to_run = argv[++i];
+        } else if (argv[i][0] != '-') {
+            target_user = argv[i];
+        }
+        i++;
+    }
+
+    /* Read /etc/passwd to find user entry */
+    int fd = sys_open("/etc/passwd", O_RDONLY, 0);
+    if (fd < 0) {
+        write_str(2, "su: cannot open /etc/passwd\n");
+        return;
+    }
+    char pbuf[2048];
+    ssize_t n = sys_read(fd, pbuf, sizeof(pbuf) - 1);
+    sys_close(fd);
+    if (n <= 0) { write_str(2, "su: /etc/passwd is empty\n"); return; }
+    pbuf[n] = '\0';
+
+    /* Parse passwd lines: user:x:uid:gid:gecos:home:shell */
+    unsigned int uid = 0, gid = 0;
+    char home[128] = "/";
+    char user_shell[128] = "/bin/sh";
+    int found = 0;
+    char *line = pbuf;
+    while (*line) {
+        char *eol = line;
+        while (*eol && *eol != '\n') eol++;
+        char saved = *eol; *eol = '\0';
+
+        /* Extract username (field 0) */
+        char *fields[7]; int fi = 0;
+        char *p = line;
+        fields[0] = p;
+        while (*p && fi < 6) {
+            if (*p == ':') { *p = '\0'; fi++; fields[fi] = p + 1; }
+            p++;
+        }
+        if (fi >= 5 && strcmp_simple(fields[0], target_user) == 0) {
+            /* fields: 0=user 1=pass 2=uid 3=gid 4=gecos 5=home 6=shell */
+            uid = (unsigned int)simple_atoi(fields[2]);
+            gid = (unsigned int)simple_atoi(fields[3]);
+            if (fi >= 5 && fields[5][0]) strncpy_simple(home, fields[5], sizeof(home) - 1);
+            if (fi >= 6 && fields[6][0]) strncpy_simple(user_shell, fields[6], sizeof(user_shell) - 1);
+            found = 1;
+            break;
+        }
+        *eol = saved;
+        line = (*eol) ? eol + 1 : eol;
+    }
+
+    if (!found) {
+        write_str(2, "su: user '");
+        write_str(2, target_user);
+        write_str(2, "' not found in /etc/passwd\n");
+        return;
+    }
+
+    /* Switch credentials */
+    long r = sys_setgid_call((long)gid);
+    if (r < 0) { write_str(2, "su: setgid failed\n"); return; }
+    r = sys_setuid_call((long)uid);
+    if (r < 0) { write_str(2, "su: setuid failed\n"); return; }
+
+    /* Update HOME and USER variables */
+    set_var("HOME", home, 1);
+    set_var("USER", target_user, 1);
+    sys_chdir(home);
+
+    if (cmd_to_run) {
+        /* -c mode: execute command and return */
+        char cmd_copy[512];
+        size_t cl = strlen_simple(cmd_to_run);
+        if (cl >= sizeof(cmd_copy)) cl = sizeof(cmd_copy) - 1;
+        for (size_t j = 0; j < cl; j++) cmd_copy[j] = cmd_to_run[j];
+        cmd_copy[cl] = '\0';
+        execute_command_chain(cmd_copy);
+        return;
+    }
+
+    /* Otherwise inform about the switch */
+    write_str(1, "Switched to user '");
+    write_str(1, target_user);
+    write_str(1, "' (uid=");
+    write_num((int)uid);
+    write_str(1, ", gid=");
+    write_num((int)gid);
+    write_str(1, ")\n");
+}
+
+/* ── passwd: change password (simplified) ── */
+static void cmd_passwd(int argc, char *argv[]) {
+    const char *target_user = "root";
+    if (argc >= 2) target_user = argv[1];
+
+    /* Prompt for new password (no echo) */
+    write_str(1, "New password for ");
+    write_str(1, target_user);
+    write_str(1, ": ");
+    char newpw[128];
+    int pi = 0;
+    while (pi < (int)sizeof(newpw) - 1) {
+        char c;
+        ssize_t nr = sys_read(0, &c, 1);
+        if (nr <= 0 || c == '\n' || c == '\r') break;
+        newpw[pi++] = c;
+    }
+    newpw[pi] = '\0';
+    write_char(1, '\n');
+
+    if (pi == 0) {
+        write_str(2, "passwd: empty password not allowed\n");
+        return;
+    }
+
+    /* Read /etc/shadow (or create it) */
+    char sbuf[2048];
+    int slen = 0;
+    int fd = sys_open("/etc/shadow", O_RDONLY, 0);
+    if (fd >= 0) {
+        ssize_t n = sys_read(fd, sbuf, sizeof(sbuf) - 1);
+        sys_close(fd);
+        if (n > 0) slen = (int)n;
+    }
+    sbuf[slen] = '\0';
+
+    /* Build new shadow file contents */
+    char out[2048];
+    int op = 0;
+    int updated = 0;
+    char *line = sbuf;
+    while (*line && op < (int)sizeof(out) - 256) {
+        char *eol = line;
+        while (*eol && *eol != '\n') eol++;
+        char saved = *eol; *eol = '\0';
+
+        /* Check if line starts with target_user: */
+        const char *u = target_user;
+        const char *l = line;
+        while (*u && *l && *u == *l) { u++; l++; }
+        if (*u == '\0' && *l == ':') {
+            /* Replace this line: user:newpw::::::: */
+            for (const char *s = target_user; *s && op < (int)sizeof(out) - 128; s++)
+                out[op++] = *s;
+            out[op++] = ':';
+            for (int j = 0; newpw[j] && op < (int)sizeof(out) - 64; j++)
+                out[op++] = newpw[j];
+            /* Append empty shadow fields */
+            for (int j = 0; j < 7; j++) out[op++] = ':';
+            out[op++] = '\n';
+            updated = 1;
+        } else {
+            /* Copy line as-is */
+            for (const char *s = line; *s && op < (int)sizeof(out) - 4; s++)
+                out[op++] = *s;
+            out[op++] = '\n';
+        }
+        *eol = saved;
+        line = (*eol) ? eol + 1 : eol;
+    }
+
+    /* If user not found in shadow, append new entry */
+    if (!updated && op < (int)sizeof(out) - 256) {
+        for (const char *s = target_user; *s && op < (int)sizeof(out) - 128; s++)
+            out[op++] = *s;
+        out[op++] = ':';
+        for (int j = 0; newpw[j] && op < (int)sizeof(out) - 64; j++)
+            out[op++] = newpw[j];
+        for (int j = 0; j < 7; j++) out[op++] = ':';
+        out[op++] = '\n';
+    }
+    out[op] = '\0';
+
+    /* Write back to /etc/shadow */
+    fd = sys_open("/etc/shadow", O_WRONLY | O_CREAT | O_TRUNC, 0640);
+    if (fd < 0) {
+        write_str(2, "passwd: cannot write /etc/shadow\n");
+        return;
+    }
+    sys_write(fd, out, (size_t)op);
+    sys_close(fd);
+
+    write_str(1, "passwd: password updated for ");
+    write_str(1, target_user);
+    write_str(1, "\n");
 }
 
 int main(int argc, char **argv, char **envp) {

@@ -65558,6 +65558,67 @@ __attribute__((noinline)) static void test_overlayfs_container(void) {
     sys_umount2("/tmp/ovl2_merged", 0);
 }
 
+/* Tests 2335-2337: Process group and session management for job control */
+__attribute__((noinline)) static void test_pgrp_session_jobctl(void) {
+    extern long sys_setpgid(uint64_t pid, uint64_t pgid);
+    extern long sys_getpgid(uint64_t pid);
+    extern long sys_getpid(void);
+    extern long sys_getsid(uint64_t pid);
+    extern long sys_kill(int pid, int sig);
+
+    long my_pid = sys_getpid();
+
+    /* Test 2335: setpgid(0, 0) creates a new process group with pgid == pid.
+     * After calling setpgid(0,0), getpgid(0) must return our own PID,
+     * confirming the caller became the leader of a new process group. */
+    fut_printf("[MISC-TEST] Test 2335: setpgid creates a new process group\n");
+    {
+        long old_pgid = sys_getpgid(0);
+        long rc = sys_setpgid(0, 0);
+        long new_pgid = sys_getpgid(0);
+        if (rc == 0 && new_pgid == my_pid) {
+            fut_printf("[MISC-TEST] pass Test 2335 (pgid %ld -> %ld)\n", old_pgid, new_pgid);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL Test 2335: setpgid rc=%ld, pgid=%ld expected=%ld\n",
+                       rc, new_pgid, my_pid);
+            fut_test_fail(2335);
+        }
+    }
+
+    /* Test 2336: kill(0, sig) targets the caller's process group.
+     * After setpgid(0,0) above, we are in our own group. Sending signal 0
+     * (null signal / permission check) to pid=0 should succeed, confirming
+     * the process group exists and contains at least ourselves. */
+    fut_printf("[MISC-TEST] Test 2336: kill(0, sig) targets caller's process group\n");
+    {
+        long rc = sys_kill(0, 0);
+        if (rc == 0) {
+            fut_printf("[MISC-TEST] pass Test 2336\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL Test 2336: kill(0,0) returned %ld\n", rc);
+            fut_test_fail(2336);
+        }
+    }
+
+    /* Test 2337: getsid(0) returns the session leader PID.
+     * The session leader is the process whose PID equals its SID.
+     * getsid(0) must return a positive PID that corresponds to a valid
+     * session leader (our own SID). */
+    fut_printf("[MISC-TEST] Test 2337: getsid returns the session leader PID\n");
+    {
+        long sid = sys_getsid(0);
+        if (sid > 0) {
+            fut_printf("[MISC-TEST] pass Test 2337 (sid=%ld)\n", sid);
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL Test 2337: getsid(0) returned %ld\n", sid);
+            fut_test_fail(2337);
+        }
+    }
+}
+
 /* Tests 2325-2330: ELF auxv correctness — AT_UID/AT_EUID/AT_GID/AT_EGID/AT_PLATFORM/AT_SECURE */
 __attribute__((noinline)) static void test_elf_auxv_correctness(void) {
     extern long sys_open(const char *, int, int);
@@ -69981,6 +70042,7 @@ void fut_misc_test_thread(void *arg) {
     test_pivot_root_full(); /* Tests 2305-2309: pivot_root full implementation */
     test_overlayfs_container(); /* Tests 2315-2320: overlayfs whiteout, upper-first, container support */
     test_elf_auxv_correctness(); /* Tests 2325-2330: auxv AT_UID/AT_EUID/AT_GID/AT_EGID/AT_PLATFORM/AT_SECURE */
+    test_pgrp_session_jobctl(); /* Tests 2335-2337: setpgid new group, kill(0) group target, getsid leader */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

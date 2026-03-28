@@ -570,6 +570,18 @@ static void cmd_blktrace(int argc, char *argv[]);
 static void cmd_latencytop(int argc, char *argv[]);
 static void cmd_turbostat(int argc, char *argv[]);
 static void cmd_powertop(int argc, char *argv[]);
+static void cmd_mongo(int argc, char *argv[]);
+static void cmd_skopeo(int argc, char *argv[]);
+static void cmd_crun(int argc, char *argv[]);
+static void cmd_runc(int argc, char *argv[]);
+static void cmd_containerd(int argc, char *argv[]);
+static void cmd_flamegraph(int argc, char *argv[]);
+static void cmd_stackcollapse(int argc, char *argv[]);
+static void cmd_sysdig(int argc, char *argv[]);
+static void cmd_zypper(int argc, char *argv[]);
+static void cmd_emerge(int argc, char *argv[]);
+static void cmd_portage(int argc, char *argv[]);
+static void cmd_bcc(int argc, char *argv[]);
 
 /* Forward declaration for prompt */
 static void print_prompt(void);
@@ -1021,7 +1033,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     const char *builtins[] = {
         "ab", "acpi", "arp", "ascii", "base32", "bg", "blkzone", "blockdev", "brctl", "cal", "cd", "chgrp", "chmod", "chroot", "chrt", "clear", "cmp", "comm", "conntrack", "cpupower", "date", "depmod", "dd", "df", "dhclient", "dig", "dmidecode", "dmesg", "echo", "edit", "ethtool", "expand", "expr", "factor", "file", "fold", "fuser", "hdparm", "hexdump", "host", "hwinfo", "install", "ionice", "iperf3", "locale", "lshw", "lsmod", "lsns", "lsof", "lsusb", "md5sum", "mkfifo", "modprobe", "mtr", "nameif", "nc", "nice", "nohup", "numactl", "nvme", "partprobe", "patch", "perf", "pgrep", "pidof", "pkill", "poweroff", "prlimit", "reboot", "renice", "reset", "route", "sensors", "seq", "sha1sum", "sha512sum", "sleep", "smartctl", "stdbuf", "strings", "swapon", "swapoff", "tac", "taskset", "time", "timeout", "tput", "traceroute", "tty", "udevadm", "unexpand", "wget", "whatis", "whois", "xxd", "exit", "export", "fg", "free",
         "help", "hostname", "httpd", "id", "ifconfig", "iostat", "ipcs", "iptables", "jobs", "kill", "logger", "losetup", "ls", "lsblk", "lspci", "mkfs", "mount", "netstat",
-        ".", "adduser", "alias", "ansible", "ansible-playbook", "arch", "basename", "blkid", "bridge", "buildah", "busctl", "certutil", "chage", "coredumpctl", "crictl", "ctr", "deluser", "dialog", "dirname", "docker", "du", "exec", "false", "fmt", "getconf", "gpg", "groupadd", "groupdel", "groups", "helm", "history", "hostnamectl", "infocmp", "ip", "ipcmk", "ipcrm", "journalctl", "kubectl", "ln", "localectl", "loginctl", "logname", "lscpu", "machinectl", "mkswap", "mktemp", "more", "nawk", "networkctl", "nft", "nproc", "nslookup", "openssl", "passwd", "ping", "podman", "printenv", "printf", "ps", "pwd", "read", "readlink", "realpath", "resolvectl", "set", "sha1sum", "sha256sum", "shutdown", "source", "ss", "ssh-keygen", "stat", "strace", "stty", "su", "sync", "sysctl", "sysinfo", "systemd-analyze", "systemd-ask-password", "systemd-cat", "systemd-cgls", "systemd-cgtop", "systemd-escape", "systemd-inhibit", "systemd-notify", "systemd-run", "systemd-tmpfiles", "tc", "terraform", "test", "tic", "timedatectl", "toe", "top", "trap", "tree", "true", "tset", "type", "umask", "unalias", "uname", "uptime", "users", "vagrant", "version", "vi", "vipw", "vmstat", "w", "wait", "watch", "wdctl", "whiptail", "which", "whoami", "xargs", "yes", "git-lfs", "gh", "pip", "pip3", "npm", "cargo", "go", "rustup", "nvm", "pyenv", "sdkman", "sdk", "cowsay", "figlet", "toilet", "sl", "cmatrix", "asciiquarium", "lolcat", "ponysay", "boxes", "espeak", "systemd-nspawn", "cgcreate", "cgexec", "cgdelete", "lxc", "lxc-ls", "lxc-start", "lxc-stop", "lxc-create", "lxc-destroy", "lxc-info", "firejail", "bwrap", "chcpu", "pmap", "mpstat", "pidstat", "cifsiostat", "tapestat", "age", "sops", "vault", "pass", "gpg-agent", "ssh-agent", "ssh-add", "ssh-copy-id", "keyctl", "p11-kit", "expect", "dtrace", "bpftrace", "trace-cmd", "blktrace", "latencytop", "turbostat", "powertop", NULL
+        ".", "adduser", "alias", "ansible", "ansible-playbook", "arch", "basename", "blkid", "bridge", "buildah", "busctl", "certutil", "chage", "coredumpctl", "crictl", "ctr", "deluser", "dialog", "dirname", "docker", "du", "exec", "false", "fmt", "getconf", "gpg", "groupadd", "groupdel", "groups", "helm", "history", "hostnamectl", "infocmp", "ip", "ipcmk", "ipcrm", "journalctl", "kubectl", "ln", "localectl", "loginctl", "logname", "lscpu", "machinectl", "mkswap", "mktemp", "more", "nawk", "networkctl", "nft", "nproc", "nslookup", "openssl", "passwd", "ping", "podman", "printenv", "printf", "ps", "pwd", "read", "readlink", "realpath", "resolvectl", "set", "sha1sum", "sha256sum", "shutdown", "source", "ss", "ssh-keygen", "stat", "strace", "stty", "su", "sync", "sysctl", "sysinfo", "systemd-analyze", "systemd-ask-password", "systemd-cat", "systemd-cgls", "systemd-cgtop", "systemd-escape", "systemd-inhibit", "systemd-notify", "systemd-run", "systemd-tmpfiles", "tc", "terraform", "test", "tic", "timedatectl", "toe", "top", "trap", "tree", "true", "tset", "type", "umask", "unalias", "uname", "uptime", "users", "vagrant", "version", "vi", "vipw", "vmstat", "w", "wait", "watch", "wdctl", "whiptail", "which", "whoami", "xargs", "yes", "git-lfs", "gh", "pip", "pip3", "npm", "cargo", "go", "rustup", "nvm", "pyenv", "sdkman", "sdk", "cowsay", "figlet", "toilet", "sl", "cmatrix", "asciiquarium", "lolcat", "ponysay", "boxes", "espeak", "systemd-nspawn", "cgcreate", "cgexec", "cgdelete", "lxc", "lxc-ls", "lxc-start", "lxc-stop", "lxc-create", "lxc-destroy", "lxc-info", "firejail", "bwrap", "chcpu", "pmap", "mpstat", "pidstat", "cifsiostat", "tapestat", "age", "sops", "vault", "pass", "gpg-agent", "ssh-agent", "ssh-add", "ssh-copy-id", "keyctl", "p11-kit", "expect", "dtrace", "bpftrace", "trace-cmd", "blktrace", "latencytop", "turbostat", "powertop", "mongo", "mongosh", "skopeo", "crun", "runc", "containerd", "flamegraph", "stackcollapse", "stackcollapse-perf", "sysdig", "zypper", "emerge", "portage", "bcc", "bcc-tools", NULL
     };
 
     /* External commands we might have */
@@ -15967,6 +15979,42 @@ watch_sleep:
     } else if (strcmp_simple(argv[0], "powertop") == 0) {
         cmd_powertop(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "mongo") == 0 || strcmp_simple(argv[0], "mongosh") == 0) {
+        cmd_mongo(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "skopeo") == 0) {
+        cmd_skopeo(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "crun") == 0) {
+        cmd_crun(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "runc") == 0) {
+        cmd_runc(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "containerd") == 0) {
+        cmd_containerd(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "flamegraph") == 0) {
+        cmd_flamegraph(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "stackcollapse") == 0 || strcmp_simple(argv[0], "stackcollapse-perf") == 0) {
+        cmd_stackcollapse(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "sysdig") == 0) {
+        cmd_sysdig(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "zypper") == 0) {
+        cmd_zypper(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "emerge") == 0) {
+        cmd_emerge(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "portage") == 0) {
+        cmd_portage(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "bcc") == 0 || strcmp_simple(argv[0], "bcc-tools") == 0) {
+        cmd_bcc(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -16570,6 +16618,21 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "latencytop") == 0 ||
             strcmp_simple(cmd, "turbostat") == 0 ||
             strcmp_simple(cmd, "powertop") == 0 ||
+            strcmp_simple(cmd, "mongo") == 0 ||
+            strcmp_simple(cmd, "mongosh") == 0 ||
+            strcmp_simple(cmd, "skopeo") == 0 ||
+            strcmp_simple(cmd, "crun") == 0 ||
+            strcmp_simple(cmd, "runc") == 0 ||
+            strcmp_simple(cmd, "containerd") == 0 ||
+            strcmp_simple(cmd, "flamegraph") == 0 ||
+            strcmp_simple(cmd, "stackcollapse") == 0 ||
+            strcmp_simple(cmd, "stackcollapse-perf") == 0 ||
+            strcmp_simple(cmd, "sysdig") == 0 ||
+            strcmp_simple(cmd, "zypper") == 0 ||
+            strcmp_simple(cmd, "emerge") == 0 ||
+            strcmp_simple(cmd, "portage") == 0 ||
+            strcmp_simple(cmd, "bcc") == 0 ||
+            strcmp_simple(cmd, "bcc-tools") == 0 ||
             0);
 }
 
@@ -53111,6 +53174,659 @@ static void cmd_claude(int argc, char *argv[]) {
     write_str(1, "  Version:   0.5\n");
     write_str(1, "  Desktop:   Horizon (Wayland compositor)\n\n");
     write_str(1, "Type 'help' to see available commands.\n");
+}
+
+
+/* mongo - MongoDB shell client simulation */
+static void cmd_mongo(int argc, char *argv[]) {
+    if (argc > 1 && strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "Usage: mongo [options] [db address] [file names (ending in .js)]\n");
+        write_str(1, "  --host <host>        Server to connect to (default: localhost)\n");
+        write_str(1, "  --port <port>        Port to connect to (default: 27017)\n");
+        write_str(1, "  -u <username>        Username for authentication\n");
+        write_str(1, "  -p <password>        Password for authentication\n");
+        write_str(1, "  --authenticationDatabase <db>  Database for auth credentials\n");
+        write_str(1, "  --eval <expr>        Evaluate a JavaScript expression\n");
+        write_str(1, "  --quiet              Silences output from the shell\n");
+        return;
+    }
+    if (argc > 1 && strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "mongosh 2.3.1\n");
+        write_str(1, "Build Info: {\n");
+        write_str(1, "  \"version\": \"2.3.1\",\n");
+        write_str(1, "  \"platform\": \"Futura OS x86_64\"\n");
+        write_str(1, "}\n");
+        return;
+    }
+    const char *host = "localhost";
+    const char *port = "27017";
+    const char *db = "test";
+    const char *eval_expr = NULL;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "--host") == 0 && i + 1 < argc) { host = argv[++i]; }
+        else if (strcmp_simple(argv[i], "--port") == 0 && i + 1 < argc) { port = argv[++i]; }
+        else if (strcmp_simple(argv[i], "--eval") == 0 && i + 1 < argc) { eval_expr = argv[++i]; }
+        else if (argv[i][0] != '-') { db = argv[i]; }
+    }
+    write_str(1, "MongoDB shell version v2.3.1\n");
+    write_str(1, "connecting to: mongodb://");
+    write_str(1, host); write_str(1, ":"); write_str(1, port);
+    write_str(1, "/"); write_str(1, db); write_str(1, "\n");
+    write_str(1, "Implicit session: session { \"id\" : UUID(\"a1b2c3d4-e5f6-7890-abcd-ef1234567890\") }\n");
+    write_str(1, "MongoDB server version: 7.0.14\n");
+    if (eval_expr) {
+        write_str(1, "> "); write_str(1, eval_expr); write_str(1, "\n");
+        if (strcmp_simple(eval_expr, "db.stats()") == 0) {
+            write_str(1, "{\n  \"db\" : \""); write_str(1, db);
+            write_str(1, "\",\n  \"collections\" : 5,\n  \"views\" : 0,\n");
+            write_str(1, "  \"objects\" : 1284,\n  \"avgObjSize\" : 128.3,\n");
+            write_str(1, "  \"dataSize\" : 164726,\n  \"storageSize\" : 262144,\n");
+            write_str(1, "  \"indexes\" : 7,\n  \"indexSize\" : 73728,\n  \"ok\" : 1\n}\n");
+        } else {
+            write_str(1, "{ \"acknowledged\" : true }\n");
+        }
+    } else {
+        write_str(1, "---\nThe server generated these startup warnings:\n");
+        write_str(1, "  Access control is not enabled for the database.\n---\n");
+        write_str(1, "Enterprise "); write_str(1, db);
+        write_str(1, "> (interactive mode not supported, use --eval)\n");
+    }
+}
+
+/* skopeo - container image utility simulation */
+static void cmd_skopeo(int argc, char *argv[]) {
+    if (argc < 2 || strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "Various operations with container images and registries\n\n");
+        write_str(1, "Usage:\n  skopeo [command]\n\nAvailable Commands:\n");
+        write_str(1, "  copy           Copy an image between locations\n");
+        write_str(1, "  delete         Delete image from remote registry\n");
+        write_str(1, "  inspect        Inspect image properties\n");
+        write_str(1, "  list-tags      List tags in the repository\n");
+        write_str(1, "  login          Login to a container registry\n");
+        write_str(1, "  logout         Logout of a container registry\n");
+        write_str(1, "  manifest-digest  Compute digest of a manifest\n");
+        write_str(1, "  sync           Synchronize images between registries\n");
+        write_str(1, "\nUse \"skopeo [command] --help\" for more information.\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "skopeo version 1.14.2\n"); return;
+    }
+    if (strcmp_simple(argv[1], "inspect") == 0) {
+        if (argc < 3) { write_str(1, "Error: at least one argument required\n"); return; }
+        write_str(1, "{\n    \"Name\": \""); write_str(1, argv[2]); write_str(1, "\",\n");
+        write_str(1, "    \"Digest\": \"sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633c\",\n");
+        write_str(1, "    \"RepoTags\": [\"latest\", \"1.0\", \"1.0.1\"],\n");
+        write_str(1, "    \"Created\": \"2024-12-15T10:30:00Z\",\n");
+        write_str(1, "    \"DockerVersion\": \"24.0.7\",\n");
+        write_str(1, "    \"Os\": \"linux\",\n    \"Architecture\": \"amd64\",\n");
+        write_str(1, "    \"Layers\": [\n");
+        write_str(1, "        \"sha256:2d473b07cdd5f0912cd6f5b76a95f8e1a5c5a37e\",\n");
+        write_str(1, "        \"sha256:8f3c9e2b1a7d6e5f4c3b2a1908d7e6f5c4b3a219\"\n");
+        write_str(1, "    ]\n}\n");
+    } else if (strcmp_simple(argv[1], "copy") == 0) {
+        if (argc < 4) { write_str(1, "Error: source and destination required\n"); return; }
+        write_str(1, "Getting image source signatures\n");
+        write_str(1, "Copying blob sha256:2d473b07cdd5 done\n");
+        write_str(1, "Copying blob sha256:8f3c9e2b1a7d done\n");
+        write_str(1, "Copying config sha256:a3ed95caeb02 done\n");
+        write_str(1, "Writing manifest to image destination\nStoring signatures\n");
+    } else if (strcmp_simple(argv[1], "list-tags") == 0) {
+        if (argc < 3) { write_str(1, "Error: repository argument required\n"); return; }
+        write_str(1, "{\n    \"Repository\": \""); write_str(1, argv[2]);
+        write_str(1, "\",\n    \"Tags\": [\"latest\", \"1.0\", \"1.1\", \"2.0-rc1\"]\n}\n");
+    } else if (strcmp_simple(argv[1], "delete") == 0) {
+        if (argc < 3) { write_str(1, "Error: image argument required\n"); return; }
+        write_str(1, "Deleted: "); write_str(1, argv[2]); write_str(1, "\n");
+    } else {
+        write_str(1, "Error: unknown command \""); write_str(1, argv[1]); write_str(1, "\"\n");
+    }
+}
+
+/* crun - OCI container runtime (C implementation) simulation */
+static void cmd_crun(int argc, char *argv[]) {
+    if (argc < 2 || strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "Usage: crun [OPTION...] COMMAND [ARGS...]\n\n");
+        write_str(1, "OCI runtime written in C\n\nCommands:\n");
+        write_str(1, "  create    Create a container\n  delete    Delete a container\n");
+        write_str(1, "  exec      Execute a process in a running container\n");
+        write_str(1, "  kill      Send a signal to the container init process\n");
+        write_str(1, "  list      List known containers\n");
+        write_str(1, "  run       Create and immediately start a container\n");
+        write_str(1, "  spec      Create a new OCI spec file\n");
+        write_str(1, "  start     Start a created container\n");
+        write_str(1, "  state     Output the state of a container\n");
+        write_str(1, "  update    Update container resource constraints\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "crun version 1.14.4\n");
+        write_str(1, "commit: e820e3df67efae4e9e0e5f80d4a29e29a8c2e150\n");
+        write_str(1, "rundir: /run/crun\nspec: 1.0.0\n");
+        write_str(1, "+SYSTEMD +SELINUX +APPARMOR +CAP +SECCOMP +EBPF +CRIU +YAJL\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "list") == 0) {
+        write_str(1, "NAME                   PID    STATUS    BUNDLE                          CREATED                       OWNER\n");
+        write_str(1, "web-server-01          1842   running   /run/containers/web-server-01   2024-12-20T08:15:30.123456Z   root\n");
+        write_str(1, "db-postgres            2156   running   /run/containers/db-postgres     2024-12-20T08:16:45.789012Z   root\n");
+        write_str(1, "cache-redis            2390   running   /run/containers/cache-redis     2024-12-20T08:17:12.345678Z   root\n");
+    } else if (strcmp_simple(argv[1], "state") == 0) {
+        const char *cid = (argc > 2) ? argv[2] : "web-server-01";
+        write_str(1, "{\n  \"ociVersion\": \"1.0.0\",\n  \"id\": \"");
+        write_str(1, cid); write_str(1, "\",\n  \"status\": \"running\",\n  \"pid\": 1842,\n");
+        write_str(1, "  \"bundle\": \"/run/containers/"); write_str(1, cid);
+        write_str(1, "\",\n  \"created\": \"2024-12-20T08:15:30.123456Z\",\n");
+        write_str(1, "  \"owner\": \"root\"\n}\n");
+    } else if (strcmp_simple(argv[1], "spec") == 0) {
+        write_str(1, "config.json generated\n");
+    } else if (strcmp_simple(argv[1], "run") == 0) {
+        if (argc < 3) { write_str(1, "Error: container ID required\n"); return; }
+        write_str(1, "container "); write_str(1, argv[2]);
+        write_str(1, " created and started (pid 3012)\n");
+    } else {
+        write_str(1, "crun: "); write_str(1, argv[1]); write_str(1, ": command executed\n");
+    }
+}
+
+/* runc - OCI runtime reference implementation simulation */
+static void cmd_runc(int argc, char *argv[]) {
+    if (argc < 2 || strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "NAME:\n   runc - Open Container Initiative runtime\n\n");
+        write_str(1, "USAGE:\n   runc [global options] command [arguments...]\n\n");
+        write_str(1, "VERSION:\n   1.1.12\n\nCOMMANDS:\n");
+        write_str(1, "   checkpoint  checkpoint a running container\n");
+        write_str(1, "   create      create a container\n");
+        write_str(1, "   delete      delete any resources held by the container\n");
+        write_str(1, "   events      display container events (OOM, etc.)\n");
+        write_str(1, "   exec        execute new process inside the container\n");
+        write_str(1, "   kill        send a signal to container init process\n");
+        write_str(1, "   list        lists containers started by runc\n");
+        write_str(1, "   pause       pause a container\n");
+        write_str(1, "   ps          show processes inside a container\n");
+        write_str(1, "   restore     restore a container from checkpoint\n");
+        write_str(1, "   resume      resume a paused container\n");
+        write_str(1, "   run         create and run a container\n");
+        write_str(1, "   spec        create a new specification file\n");
+        write_str(1, "   start       start a created container\n");
+        write_str(1, "   state       output the state of a container\n");
+        write_str(1, "   update      update container resource constraints\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "runc version 1.1.12\ncommit: v1.1.12-0-g51d5e946\n");
+        write_str(1, "spec: 1.0.2-dev\ngo: go1.21.6\nlibseccomp: 2.5.4\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "list") == 0) {
+        write_str(1, "ID                  PID    STATUS   BUNDLE                                CREATED                       OWNER\n");
+        write_str(1, "nginx-frontend      4201   running  /var/run/containers/nginx-frontend     2024-12-20T10:05:00.000Z      root\n");
+        write_str(1, "api-gateway         4312   running  /var/run/containers/api-gateway        2024-12-20T10:05:15.000Z      root\n");
+    } else if (strcmp_simple(argv[1], "state") == 0) {
+        const char *cid = (argc > 2) ? argv[2] : "nginx-frontend";
+        write_str(1, "{\n  \"ociVersion\": \"1.0.2-dev\",\n  \"id\": \"");
+        write_str(1, cid); write_str(1, "\",\n  \"pid\": 4201,\n  \"status\": \"running\",\n");
+        write_str(1, "  \"bundle\": \"/var/run/containers/"); write_str(1, cid);
+        write_str(1, "\",\n  \"created\": \"2024-12-20T10:05:00.000000Z\",\n");
+        write_str(1, "  \"annotations\": {}\n}\n");
+    } else if (strcmp_simple(argv[1], "spec") == 0) {
+        write_str(1, "config.json created\n");
+    } else if (strcmp_simple(argv[1], "ps") == 0) {
+        write_str(1, "UID        PID   PPID  C STIME TTY      TIME CMD\n");
+        write_str(1, "root      4201   4190  0 10:05 ?    00:00:02 nginx: master process\n");
+        write_str(1, "www-data  4215   4201  0 10:05 ?    00:00:05 nginx: worker process\n");
+        write_str(1, "www-data  4216   4201  0 10:05 ?    00:00:04 nginx: worker process\n");
+    } else {
+        write_str(1, "runc: "); write_str(1, argv[1]); write_str(1, " executed successfully\n");
+    }
+}
+
+/* containerd - container runtime daemon simulation */
+static void cmd_containerd(int argc, char *argv[]) {
+    if (argc > 1 && strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "NAME:\n   containerd - high performance container runtime\n\n");
+        write_str(1, "USAGE:\n   containerd [global options] command [arguments...]\n\n");
+        write_str(1, "COMMANDS:\n");
+        write_str(1, "   config     Information on the containerd config\n");
+        write_str(1, "   publish    Binary to publish events to containerd\n");
+        write_str(1, "   oci-hook   Provides a base for OCI hooks\n");
+        return;
+    }
+    if (argc > 1 && strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "containerd github.com/containerd/containerd v1.7.22\n");
+        write_str(1, "  GitCommit: 7f7fdf5fed64eb6a7caf99b3e12efcf9d60e311c\n");
+        write_str(1, "  Runtime: io.containerd.runc.v2\n");
+        return;
+    }
+    if (argc > 1 && strcmp_simple(argv[1], "config") == 0) {
+        if (argc > 2 && strcmp_simple(argv[2], "default") == 0) {
+            write_str(1, "disabled_plugins = []\nimports = []\n");
+            write_str(1, "oom_score = 0\nplugin_dir = \"\"\n");
+            write_str(1, "required_plugins = []\nroot = \"/var/lib/containerd\"\n");
+            write_str(1, "state = \"/run/containerd\"\nversion = 2\n\n");
+            write_str(1, "[grpc]\n  address = \"/run/containerd/containerd.sock\"\n");
+            write_str(1, "  max_recv_message_size = 16777216\n");
+            write_str(1, "  max_send_message_size = 16777216\n");
+            write_str(1, "  uid = 0\n  gid = 0\n\n");
+            write_str(1, "[plugins.\"io.containerd.grpc.v1.cri\"]\n");
+            write_str(1, "  sandbox_image = \"registry.k8s.io/pause:3.9\"\n");
+        } else {
+            write_str(1, "containerd config dump:\n");
+            write_str(1, "  root: /var/lib/containerd\n  state: /run/containerd\n");
+            write_str(1, "  snapshotter: overlayfs\n  runtime: io.containerd.runc.v2\n");
+        }
+    } else {
+        write_str(1, "INFO[0000] starting containerd                          revision=7f7fdf5 version=v1.7.22\n");
+        write_str(1, "INFO[0000] loading plugin \"io.containerd.snapshotter.v1.overlayfs\"...\n");
+        write_str(1, "INFO[0000] loading plugin \"io.containerd.runtime.v2.task\"...\n");
+        write_str(1, "INFO[0000] loading plugin \"io.containerd.grpc.v1.cri\"...\n");
+        write_str(1, "INFO[0001] containerd successfully booted in 1.012345s\n");
+        write_str(1, "INFO[0001] serving...  address=/run/containerd/containerd.sock\n");
+    }
+}
+
+/* flamegraph - generate flame graph SVG from folded stacks */
+static void cmd_flamegraph(int argc, char *argv[]) {
+    if (argc < 2 || strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "Usage: flamegraph [options] <folded_stacks_file>\n\n");
+        write_str(1, "Generate an interactive SVG flame graph from folded stack traces.\n\n");
+        write_str(1, "Options:\n");
+        write_str(1, "  --title <string>    Change title text (default: \"Flame Graph\")\n");
+        write_str(1, "  --subtitle <string> Second level title\n");
+        write_str(1, "  --width <num>       Image width (default: 1200)\n");
+        write_str(1, "  --height <num>      Frame height (default: 16)\n");
+        write_str(1, "  --minwidth <num>    Omit narrow functions (default: 0.1)\n");
+        write_str(1, "  --colors <palette>  Color palette (hot, mem, io, java, js)\n");
+        write_str(1, "  --hash             Consistent colors per function name\n");
+        write_str(1, "  --countname <name>  Count type label (default: \"samples\")\n");
+        write_str(1, "  --reverse          Generate icicle graph\n");
+        write_str(1, "  --flamechart       Produce a flame chart (time-ordered)\n");
+        write_str(1, "  --cp               Use consistent palette\n");
+        write_str(1, "  --negate           Switch differential hues\n");
+        return;
+    }
+    const char *title = "Flame Graph";
+    const char *colors = "hot";
+    const char *infile = NULL;
+    int width = 1200;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "--title") == 0 && i + 1 < argc) { title = argv[++i]; }
+        else if (strcmp_simple(argv[i], "--colors") == 0 && i + 1 < argc) { colors = argv[++i]; }
+        else if (strcmp_simple(argv[i], "--width") == 0 && i + 1 < argc) { width = simple_atoi(argv[++i]); }
+        else if (argv[i][0] != '-') { infile = argv[i]; }
+    }
+    if (!infile) { write_str(1, "Error: no input file specified\n"); return; }
+    write_str(1, "Generating SVG flame graph...\n");
+    write_str(1, "  Input:     "); write_str(1, infile); write_str(1, "\n");
+    write_str(1, "  Title:     "); write_str(1, title); write_str(1, "\n");
+    write_str(1, "  Palette:   "); write_str(1, colors); write_str(1, "\n");
+    write_str(1, "  Width:     "); write_num(width); write_str(1, "px\n");
+    write_str(1, "  Parsed 3847 stacks, 12491 unique frames\n");
+    write_str(1, "  Total samples: 98245\n");
+    write_str(1, "  Wrote flamegraph.svg (287.4 KB)\n");
+}
+
+/* stackcollapse - collapse perf/dtrace stacks into single-line format */
+static void cmd_stackcollapse(int argc, char *argv[]) {
+    if (argc < 2 || strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "Usage: stackcollapse [options] <input_file>\n\n");
+        write_str(1, "Collapse multi-line stack traces into single-line folded format.\n");
+        write_str(1, "Output suitable for piping to flamegraph.\n\n");
+        write_str(1, "Variants:\n");
+        write_str(1, "  stackcollapse-perf    Collapse Linux perf_events output\n");
+        write_str(1, "  stackcollapse-stap    Collapse SystemTap output\n");
+        write_str(1, "  stackcollapse-dtrace  Collapse DTrace output\n");
+        write_str(1, "  stackcollapse-jstack  Collapse Java jstack output\n");
+        write_str(1, "  stackcollapse-gdb     Collapse GDB backtrace output\n");
+        write_str(1, "  stackcollapse-go      Collapse Go runtime/pprof output\n\n");
+        write_str(1, "Options:\n");
+        write_str(1, "  --pid           Include PID in output\n");
+        write_str(1, "  --tid           Include TID in output\n");
+        write_str(1, "  --kernel        Keep kernel annotations ([k])\n");
+        write_str(1, "  --jit           Keep JIT annotations ([j])\n");
+        write_str(1, "  --all           Do not discard any frames\n");
+        write_str(1, "  --inline        Attempt to resolve inlined frames\n");
+        return;
+    }
+    const char *infile = NULL;
+    int show_pid = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "--pid") == 0) { show_pid = 1; }
+        else if (argv[i][0] != '-') { infile = argv[i]; }
+    }
+    if (!infile) { write_str(1, "Error: no input file specified\n"); return; }
+    write_str(1, "Processing "); write_str(1, infile); write_str(1, "...\n");
+    if (show_pid) {
+        write_str(1, "shell-42;__libc_start_main;main;execute_command;cmd_ls;sys_getdents64 15\n");
+        write_str(1, "shell-42;__libc_start_main;main;execute_command;cmd_cat;sys_read 23\n");
+        write_str(1, "kernel-0;entry_SYSCALL_64;do_syscall_64;vfs_read;ext2_file_read 31\n");
+    } else {
+        write_str(1, "__libc_start_main;main;execute_command;cmd_ls;sys_getdents64 15\n");
+        write_str(1, "__libc_start_main;main;execute_command;cmd_cat;sys_read 23\n");
+        write_str(1, "entry_SYSCALL_64;do_syscall_64;vfs_read;ext2_file_read 31\n");
+    }
+    write_str(1, "__libc_start_main;main;read_line;sys_read 8\n");
+    write_str(1, "entry_SYSCALL_64;do_syscall_64;schedule;__schedule;pick_next_task_fair 42\n");
+    write_str(1, "entry_SYSCALL_64;do_syscall_64;__x64_sys_write;vfs_write;uart_write 19\n");
+    write_str(1, "\n[Collapsed 3847 stacks from ");
+    write_str(1, infile); write_str(1, " into 1284 unique folded entries]\n");
+}
+
+/* sysdig - system exploration and troubleshooting tool simulation */
+static void cmd_sysdig(int argc, char *argv[]) {
+    if (argc > 1 && strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "Usage: sysdig [options] [-p <output_format>] [filter]\n\n");
+        write_str(1, "Options:\n");
+        write_str(1, "  -c <chiselname>     Run the specified chisel\n");
+        write_str(1, "  -cl                 List available chisels\n");
+        write_str(1, "  -j                  JSON output\n");
+        write_str(1, "  -l                  List available fields\n");
+        write_str(1, "  -n <num>            Stop after <num> events\n");
+        write_str(1, "  -p <format>         Custom output format\n");
+        write_str(1, "  -r <file>           Read events from file\n");
+        write_str(1, "  -w <file>           Write events to file\n\n");
+        write_str(1, "Examples:\n");
+        write_str(1, "  sysdig proc.name=shell\n");
+        write_str(1, "  sysdig -c topprocs_cpu\n");
+        write_str(1, "  sysdig evt.type=open and fd.name contains /etc\n");
+        return;
+    }
+    if (argc > 1 && strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "sysdig version 0.36.1\n"); return;
+    }
+    if (argc > 1 && strcmp_simple(argv[1], "-cl") == 0) {
+        write_str(1, "Category: CPU Usage\n");
+        write_str(1, "  topprocs_cpu       Top processes by CPU usage\n");
+        write_str(1, "  topcontainers_cpu  Top containers by CPU usage\n");
+        write_str(1, "\nCategory: I/O\n");
+        write_str(1, "  topprocs_file      Top processes by file I/O\n");
+        write_str(1, "  topfiles_bytes     Top files by read+write bytes\n");
+        write_str(1, "\nCategory: Net\n");
+        write_str(1, "  topprocs_net       Top processes by network I/O\n");
+        write_str(1, "  topconns           Top network connections\n");
+        write_str(1, "\nCategory: Security\n");
+        write_str(1, "  spy_users          Display interactive user activity\n");
+        write_str(1, "  list_login_shells  List login shells\n");
+        write_str(1, "  spy_file           Show r/w activity on a file\n");
+        return;
+    }
+    write_str(1, "sysdig: loaded driver, capturing live events...\n\n");
+    write_str(1, "42 08:15:30.123456789 0 shell (42) > read fd=0(<f>/dev/tty0)\n");
+    write_str(1, "43 08:15:30.123461234 0 shell (42) < read res=1 data=l\n");
+    write_str(1, "44 08:15:30.123470000 0 shell (42) > write fd=1(<f>/dev/tty0) size=1\n");
+    write_str(1, "45 08:15:30.123475000 0 shell (42) < write res=1 data=l\n");
+    write_str(1, "46 08:15:31.456789012 0 shell (42) > open name=/proc/meminfo flags=O_RDONLY\n");
+    write_str(1, "47 08:15:31.456801000 0 shell (42) < open fd=3(<f>/proc/meminfo)\n");
+    write_str(1, "48 08:15:31.456810000 0 shell (42) > read fd=3 size=4096\n");
+    write_str(1, "49 08:15:31.456825000 0 shell (42) < read res=1024\n");
+    write_str(1, "50 08:15:31.456830000 0 shell (42) > close fd=3\n");
+    write_str(1, "51 08:15:31.456835000 0 shell (42) < close res=0\n");
+    write_str(1, "52 08:15:32.789012345 0 init (1) > wait4 options=WNOHANG\n");
+    write_str(1, "53 08:15:32.789020000 0 init (1) < wait4 res=0\n");
+    write_str(1, "\n--- captured 12 events, 0 drops ---\n");
+}
+
+/* zypper - openSUSE/SLES package manager simulation */
+static void cmd_zypper(int argc, char *argv[]) {
+    if (argc < 2 || strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "Usage: zypper [--global-options] <command> [arguments]\n\n");
+        write_str(1, "Global Options:\n");
+        write_str(1, "  --non-interactive    Do not ask, use defaults\n");
+        write_str(1, "  --no-gpg-checks     Ignore GPG check failures\n");
+        write_str(1, "  --quiet, -q         Suppress normal output\n\n");
+        write_str(1, "Repository Management:\n");
+        write_str(1, "  repos, lr            List all defined repositories\n");
+        write_str(1, "  addrepo, ar          Add a new repository\n");
+        write_str(1, "  removerepo, rr       Remove specified repository\n");
+        write_str(1, "  refresh, ref         Refresh all repositories\n\n");
+        write_str(1, "Package Management:\n");
+        write_str(1, "  install, in          Install packages\n");
+        write_str(1, "  remove, rm           Remove packages\n");
+        write_str(1, "  update, up           Update installed packages\n");
+        write_str(1, "  dist-upgrade, dup    Distribution upgrade\n");
+        write_str(1, "  search, se           Search for packages\n");
+        write_str(1, "  info, if             Show full info for packages\n");
+        write_str(1, "  patch                Install needed patches\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "zypper 1.14.72\n  libzypp 17.31.28\n  ZYpp API: 17.31.28\n"); return;
+    }
+    if (strcmp_simple(argv[1], "lr") == 0 || strcmp_simple(argv[1], "repos") == 0) {
+        write_str(1, "Repository priorities in effect:\n  99 (default priority) :  4 repositories\n\n");
+        write_str(1, "#  | Alias               | Name                       | Enabled | GPG Check\n");
+        write_str(1, "---+---------------------+----------------------------+---------+----------\n");
+        write_str(1, " 1 | repo-oss            | Main Repository            | Yes     | (r) Yes\n");
+        write_str(1, " 2 | repo-non-oss        | Main Repository (NON-OSS)  | Yes     | (r) Yes\n");
+        write_str(1, " 3 | repo-update          | Main Update Repository    | Yes     | (r) Yes\n");
+        write_str(1, " 4 | repo-update-non-oss  | Update Repo (NON-OSS)     | Yes     | (r) Yes\n");
+    } else if (strcmp_simple(argv[1], "se") == 0 || strcmp_simple(argv[1], "search") == 0) {
+        if (argc < 3) { write_str(1, "Too few arguments.\n"); return; }
+        write_str(1, "Loading repository data...\nReading installed packages...\n\n");
+        write_str(1, "S  | Name                 | Summary                     | Type\n");
+        write_str(1, "---+----------------------+-----------------------------+----------\n");
+        write_str(1, "i  | "); write_str(1, argv[2]);
+        write_str(1, "            | Development files             | package\n");
+        write_str(1, "   | "); write_str(1, argv[2]);
+        write_str(1, "-devel      | Development headers            | package\n");
+    } else if (strcmp_simple(argv[1], "in") == 0 || strcmp_simple(argv[1], "install") == 0) {
+        if (argc < 3) { write_str(1, "Too few arguments.\n"); return; }
+        write_str(1, "Loading repository data...\nReading installed packages...\n");
+        write_str(1, "Resolving package dependencies...\n\n");
+        write_str(1, "The following NEW packages are going to be installed:\n  ");
+        write_str(1, argv[2]); write_str(1, " "); write_str(1, argv[2]);
+        write_str(1, "-libs\n\n2 new packages to install.\n");
+        write_str(1, "Overall download size: 4.2 MiB. After operation, 12.8 MiB.\n");
+        write_str(1, "Continue? [y/n] (y): y\n");
+        write_str(1, "Retrieving package "); write_str(1, argv[2]);
+        write_str(1, "-libs-1.2.3-1.x86_64 (1/2), 1.4 MiB\n");
+        write_str(1, "Retrieving package "); write_str(1, argv[2]);
+        write_str(1, "-1.2.3-1.x86_64         (2/2), 2.8 MiB\n");
+        write_str(1, "(1/2) Installing: "); write_str(1, argv[2]);
+        write_str(1, "-libs-1.2.3-1.x86_64 ...... [done]\n");
+        write_str(1, "(2/2) Installing: "); write_str(1, argv[2]);
+        write_str(1, "-1.2.3-1.x86_64 ........... [done]\n");
+    } else if (strcmp_simple(argv[1], "ref") == 0 || strcmp_simple(argv[1], "refresh") == 0) {
+        write_str(1, "Repository 'Main Repository' is up to date.\n");
+        write_str(1, "Repository 'Main Repository (NON-OSS)' is up to date.\n");
+        write_str(1, "Repository 'Main Update Repository' is up to date.\n");
+        write_str(1, "All repositories have been refreshed.\n");
+    } else {
+        write_str(1, "zypper: command '"); write_str(1, argv[1]);
+        write_str(1, "' not recognized. Try 'zypper --help'.\n");
+    }
+}
+
+/* emerge - Gentoo Portage package manager simulation */
+static void cmd_emerge(int argc, char *argv[]) {
+    if (argc < 2 || strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "Usage: emerge [options] [action] [ebuild | set | atom]\n\n");
+        write_str(1, "Actions:\n");
+        write_str(1, "  --search, -s      Search package names\n");
+        write_str(1, "  --info            Display Portage configuration\n");
+        write_str(1, "  --sync            Sync the Portage tree\n");
+        write_str(1, "  --depclean, -c    Remove unneeded packages\n");
+        write_str(1, "  --update, -u      Update packages\n");
+        write_str(1, "  --unmerge, -C     Remove packages\n\n");
+        write_str(1, "Options:\n");
+        write_str(1, "  --ask, -a         Prompt before performing actions\n");
+        write_str(1, "  --deep, -D        Consider entire dependency tree\n");
+        write_str(1, "  --newuse, -N      Include packages with USE changes\n");
+        write_str(1, "  --pretend, -p     Show what would be done\n");
+        write_str(1, "  --verbose, -v     Verbose output\n");
+        write_str(1, "  --oneshot, -1     Do not add to @world set\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "Portage 2.3.99 (python 3.12.3, Futura OS, gcc-13, 64bit)\n"); return;
+    }
+    if (strcmp_simple(argv[1], "--info") == 0) {
+        write_str(1, "Portage 2.3.99 (python 3.12.3, Futura OS, gcc-13, 64bit)\n");
+        write_str(1, "=================================================================\n");
+        write_str(1, "System uname: Futura OS 1.1.0 x86_64\n");
+        write_str(1, "CFLAGS=\"-O2 -march=x86-64 -pipe\"\n");
+        write_str(1, "CXXFLAGS=\"-O2 -march=x86-64 -pipe\"\n");
+        write_str(1, "MAKEOPTS=\"-j4\"\n");
+        write_str(1, "USE=\"X alsa dbus elogind pulseaudio udev -systemd\"\n");
+        write_str(1, "ACCEPT_KEYWORDS=\"amd64\"\n");
+        write_str(1, "FEATURES=\"sandbox userfetch parallel-fetch\"\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--sync") == 0) {
+        write_str(1, ">>> Syncing repository 'gentoo' into '/var/db/repos/gentoo'...\n");
+        write_str(1, ">>> Starting rsync with rsync://rsync.gentoo.org/gentoo-portage\n");
+        write_str(1, "receiving incremental file list\nmetadata/timestamp.chk\n");
+        write_str(1, ">>> Completed sync of 'gentoo' repository\n");
+        write_str(1, "\n * IMPORTANT: 3 news items need reading.\n");
+        write_str(1, " * Use eselect news read to view new items.\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "-s") == 0 || strcmp_simple(argv[1], "--search") == 0) {
+        if (argc < 3) { write_str(1, "emerge: search requires a pattern\n"); return; }
+        write_str(1, "Searching...\n\n*  dev-libs/"); write_str(1, argv[2]);
+        write_str(1, "\n      Latest version available: 3.2.1\n");
+        write_str(1, "      Latest version installed: [ Not Installed ]\n");
+        write_str(1, "      Size of files: 2,456 KiB\n");
+        write_str(1, "      Description:   A useful library\n");
+        write_str(1, "      License:       MIT\n\n");
+        return;
+    }
+    const char *pkg = NULL;
+    for (int i = 1; i < argc; i++) {
+        if (argv[i][0] != '-') { pkg = argv[i]; break; }
+    }
+    if (!pkg) { write_str(1, "emerge: no packages specified\n"); return; }
+    write_str(1, "\nCalculating dependencies... done!\n\n");
+    write_str(1, "[ebuild  N     ] dev-libs/"); write_str(1, pkg);
+    write_str(1, "-3.2.1::gentoo  USE=\"-static-libs -test\" 2,456 KiB\n\n");
+    write_str(1, "Total: 1 package (1 new), Size of downloads: 2,456 KiB\n\n");
+    write_str(1, ">>> Emerging (1 of 1) dev-libs/"); write_str(1, pkg);
+    write_str(1, "-3.2.1::gentoo\n>>> Unpacking source...\n");
+    write_str(1, ">>> Compiling source in /var/tmp/portage/dev-libs/");
+    write_str(1, pkg); write_str(1, "-3.2.1/work ...\n");
+    write_str(1, ">>> Installing to /var/tmp/portage/dev-libs/");
+    write_str(1, pkg); write_str(1, "-3.2.1/image ...\n");
+    write_str(1, ">>> Completed installing dev-libs/");
+    write_str(1, pkg); write_str(1, "-3.2.1 into /\n");
+    write_str(1, " * GNU info directory index is up-to-date.\n");
+}
+
+/* portage - Gentoo Portage system query tool simulation */
+static void cmd_portage(int argc, char *argv[]) {
+    if (argc < 2 || strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "Portage - Gentoo's package management system\n\n");
+        write_str(1, "Usage: portage <command> [options]\n\nCommands:\n");
+        write_str(1, "  status     Show Portage tree status\n");
+        write_str(1, "  info       Show system information\n");
+        write_str(1, "  sets       List package sets\n");
+        write_str(1, "  env        Show Portage environment variables\n");
+        write_str(1, "\nSee also: emerge, equery, eselect, eix\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "status") == 0) {
+        write_str(1, "Portage Tree Status:\n");
+        write_str(1, "  Repository:     gentoo\n  Location:       /var/db/repos/gentoo\n");
+        write_str(1, "  Sync type:      rsync\n  Last sync:      2024-12-20 06:30:01 UTC\n");
+        write_str(1, "  Total ebuilds:  19,847\n  Installed:      843 packages\n");
+        write_str(1, "  World set:      127 packages\n");
+    } else if (strcmp_simple(argv[1], "sets") == 0) {
+        write_str(1, "Available package sets:\n");
+        write_str(1, "  @world              User-selected packages (127)\n");
+        write_str(1, "  @system             Core system packages (45)\n");
+        write_str(1, "  @selected           Explicitly emerged packages\n");
+        write_str(1, "  @preserved-rebuild  Packages needing rebuild\n");
+        write_str(1, "  @module-rebuild     Rebuild after kernel upgrade\n");
+        write_str(1, "  @security           Security updates (3 available)\n");
+    } else if (strcmp_simple(argv[1], "env") == 0) {
+        write_str(1, "PORTAGE_TMPDIR=/var/tmp/portage\nPORTDIR=/var/db/repos/gentoo\n");
+        write_str(1, "DISTDIR=/var/cache/distfiles\nPKGDIR=/var/cache/binpkgs\n");
+        write_str(1, "PORT_LOGDIR=/var/log/portage\n");
+        write_str(1, "EMERGE_DEFAULT_OPTS=\"--ask --verbose\"\n");
+    } else if (strcmp_simple(argv[1], "info") == 0) {
+        write_str(1, "Portage 2.3.99\nPython: 3.12.3\nRepositories: gentoo\n");
+        write_str(1, "ACCEPT_KEYWORDS: amd64\nCBUILD: x86_64-pc-linux-gnu\n");
+        write_str(1, "PROFILE: default/linux/amd64/23.0\n");
+    } else {
+        write_str(1, "portage: unknown command '"); write_str(1, argv[1]); write_str(1, "'\n");
+    }
+}
+
+/* bcc - BPF Compiler Collection tools simulation */
+static void cmd_bcc(int argc, char *argv[]) {
+    if (argc < 2 || strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "BCC - BPF Compiler Collection (tools for BPF-based Linux IO analysis,\n");
+        write_str(1, "      networking, monitoring, and more)\n\n");
+        write_str(1, "Usage: bcc <tool> [options]\n\nAvailable tools:\n");
+        write_str(1, "  execsnoop     Trace process exec() calls\n");
+        write_str(1, "  opensnoop     Trace open() calls\n");
+        write_str(1, "  biosnoop      Trace block I/O with latency\n");
+        write_str(1, "  biolatency    Summarize block I/O latency as histogram\n");
+        write_str(1, "  tcpconnect    Trace TCP active connections\n");
+        write_str(1, "  tcpaccept     Trace TCP passive connections\n");
+        write_str(1, "  tcpretrans    Trace TCP retransmits\n");
+        write_str(1, "  runqlat       Run queue (scheduler) latency\n");
+        write_str(1, "  funccount     Count kernel function calls\n");
+        write_str(1, "  profile       Sample CPU stack traces\n");
+        write_str(1, "  cachestat     Page cache hit/miss statistics\n");
+        write_str(1, "  ext4slower    Trace slow ext4 operations\n");
+        write_str(1, "  filetop       File reads/writes by filename\n");
+        write_str(1, "  hardirqs      Measure hard IRQ event time\n");
+        write_str(1, "  softirqs      Measure soft IRQ event time\n");
+        return;
+    }
+    if (strcmp_simple(argv[1], "--version") == 0) {
+        write_str(1, "bcc-tools 0.30.0\nBPF: supported (kernel 5.15+)\n"); return;
+    }
+    if (strcmp_simple(argv[1], "execsnoop") == 0) {
+        write_str(1, "Tracing exec()s. Ctrl-C to end.\n");
+        write_str(1, "PCOMM            PID    PPID   RET ARGS\n");
+        write_str(1, "shell            42     1        0 /bin/shell\n");
+        write_str(1, "ls               128    42       0 /bin/ls -la /home\n");
+        write_str(1, "cat              129    42       0 /bin/cat /etc/motd\n");
+        write_str(1, "ps               130    42       0 /bin/ps aux\n");
+        write_str(1, "grep             131    42       0 /bin/grep root /etc/passwd\n");
+    } else if (strcmp_simple(argv[1], "opensnoop") == 0) {
+        write_str(1, "Tracing open()s. Ctrl-C to end.\n");
+        write_str(1, "PID    COMM               FD ERR PATH\n");
+        write_str(1, "42     shell               3   0 /etc/motd\n");
+        write_str(1, "42     shell               3   0 /proc/meminfo\n");
+        write_str(1, "42     shell               4   0 /proc/stat\n");
+        write_str(1, "1      init                3   0 /proc/1/status\n");
+        write_str(1, "42     shell               3   0 /proc/uptime\n");
+    } else if (strcmp_simple(argv[1], "biolatency") == 0) {
+        write_str(1, "Tracing block device I/O... Hit Ctrl-C to end.\n\n");
+        write_str(1, "     usecs           : count  distribution\n");
+        write_str(1, "       4 -> 7        : 3     |**                                    |\n");
+        write_str(1, "       8 -> 15       : 12    |*********                             |\n");
+        write_str(1, "      16 -> 31       : 48    |************************************  |\n");
+        write_str(1, "      32 -> 63       : 52    |****************************************|\n");
+        write_str(1, "      64 -> 127      : 31    |***********************               |\n");
+        write_str(1, "     128 -> 255      : 8     |******                                |\n");
+        write_str(1, "     256 -> 511      : 2     |*                                     |\n");
+    } else if (strcmp_simple(argv[1], "tcpconnect") == 0) {
+        write_str(1, "Tracing connect()s. Ctrl-C to end.\n");
+        write_str(1, "PID    COMM         IP SADDR            DADDR            DPORT\n");
+        write_str(1, "42     shell        4  10.0.2.15        93.184.216.34    80\n");
+        write_str(1, "42     shell        4  10.0.2.15        1.1.1.1          53\n");
+    } else if (strcmp_simple(argv[1], "runqlat") == 0) {
+        write_str(1, "Tracing run queue latency... Ctrl-C to end.\n\n");
+        write_str(1, "     usecs           : count  distribution\n");
+        write_str(1, "       0 -> 1        : 156   |*****                                 |\n");
+        write_str(1, "       2 -> 3        : 892   |*******************************       |\n");
+        write_str(1, "       4 -> 7        : 1124  |****************************************|\n");
+        write_str(1, "       8 -> 15       : 734   |**************************            |\n");
+        write_str(1, "      16 -> 31       : 215   |*******                               |\n");
+        write_str(1, "      32 -> 63       : 42    |*                                     |\n");
+    } else if (strcmp_simple(argv[1], "profile") == 0) {
+        write_str(1, "Sampling at 49 Hz of all threads... Ctrl-C to end.\n\n");
+        write_str(1, "    shell\n        strcmp_simple\n        execute_command\n");
+        write_str(1, "        main\n        __libc_start_main\n        15\n\n");
+        write_str(1, "    kernel\n        native_safe_halt\n        default_idle\n");
+        write_str(1, "        cpu_startup_entry\n        42\n");
+    } else {
+        write_str(1, "bcc: unknown tool '"); write_str(1, argv[1]);
+        write_str(1, "'. Run 'bcc --help' for available tools.\n");
+    }
 }
 
 #pragma GCC diagnostic pop

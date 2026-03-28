@@ -136,9 +136,58 @@ long sys_madvise(void *addr, size_t length, int advice) {
      * Linux advice values are non-contiguous: valid set is
      * {0-4, 8-21}; values 5, 6, 7 are unused gaps → EINVAL. */
     switch (advice) {
-    case MADV_NORMAL:       /* 0: default behavior */
-    case MADV_RANDOM:       /* 1: expect random access */
-    case MADV_SEQUENTIAL:   /* 2: expect sequential access */
+    case MADV_NORMAL: {     /* 0: default behavior — clear seq/random hints */
+        fut_task_t *n_task = fut_task_current();
+        fut_mm_t *n_mm = n_task ? fut_task_get_mm(n_task) : NULL;
+        if (!n_mm) n_mm = fut_mm_current();
+        if (n_mm) {
+            uintptr_t range_start = addr_aligned;
+            uintptr_t range_end   = addr_aligned + length_aligned;
+            struct fut_vma *vma = n_mm->vma_list;
+            while (vma) {
+                if (vma->start < range_end && vma->end > range_start)
+                    vma->flags &= ~(VMA_SEQ_READ | VMA_RAND_READ);
+                vma = vma->next;
+            }
+        }
+        return 0;
+    }
+    case MADV_RANDOM: {     /* 1: expect random access */
+        fut_task_t *r_task = fut_task_current();
+        fut_mm_t *r_mm = r_task ? fut_task_get_mm(r_task) : NULL;
+        if (!r_mm) r_mm = fut_mm_current();
+        if (r_mm) {
+            uintptr_t range_start = addr_aligned;
+            uintptr_t range_end   = addr_aligned + length_aligned;
+            struct fut_vma *vma = r_mm->vma_list;
+            while (vma) {
+                if (vma->start < range_end && vma->end > range_start) {
+                    vma->flags &= ~VMA_SEQ_READ;
+                    vma->flags |=  VMA_RAND_READ;
+                }
+                vma = vma->next;
+            }
+        }
+        return 0;
+    }
+    case MADV_SEQUENTIAL: { /* 2: expect sequential access */
+        fut_task_t *sq_task = fut_task_current();
+        fut_mm_t *sq_mm = sq_task ? fut_task_get_mm(sq_task) : NULL;
+        if (!sq_mm) sq_mm = fut_mm_current();
+        if (sq_mm) {
+            uintptr_t range_start = addr_aligned;
+            uintptr_t range_end   = addr_aligned + length_aligned;
+            struct fut_vma *vma = sq_mm->vma_list;
+            while (vma) {
+                if (vma->start < range_end && vma->end > range_start) {
+                    vma->flags &= ~VMA_RAND_READ;
+                    vma->flags |=  VMA_SEQ_READ;
+                }
+                vma = vma->next;
+            }
+        }
+        return 0;
+    }
     case MADV_WILLNEED:     /* 3: prefetch pages soon */
         return 0;
 

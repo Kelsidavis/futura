@@ -36,6 +36,17 @@ struct fut_vnode;
 #define VMA_STACK       0x8000  /* Initial user stack region ([stack] in /proc/maps) */
 #define VMA_WIPEONFORK  0x10000 /* Zero child's pages on fork (MADV_WIPEONFORK) */
 #define VMA_DONTFORK    0x20000 /* Don't copy this VMA to child on fork (MADV_DONTFORK) */
+#define VMA_GROWSDOWN   0x40000 /* Stack-like, grows downward (MAP_GROWSDOWN) */
+#define VMA_DONTEXPAND  0x80000 /* Cannot be expanded with mremap() */
+#define VMA_HUGEPAGE    0x100000 /* Backed by transparent hugepages (MADV_HUGEPAGE) */
+#define VMA_NOHUGEPAGE  0x200000 /* No hugepages (MADV_NOHUGEPAGE) */
+#define VMA_MERGEABLE   0x400000 /* KSM may merge identical pages (MADV_MERGEABLE) */
+#define VMA_DONTDUMP    0x800000 /* Exclude from core dump (MADV_DONTDUMP) */
+#define VMA_IO          0x1000000 /* Memory-mapped I/O region */
+#define VMA_SEQ_READ    0x2000000 /* Expect sequential access (MADV_SEQUENTIAL) */
+#define VMA_RAND_READ   0x4000000 /* Expect random access (MADV_RANDOM) */
+#define VMA_VVAR        0x8000000 /* vvar page ([vvar] in /proc/maps) */
+#define VMA_VDSO        0x10000000 /* vDSO page ([vdso] in /proc/maps) */
 
 /* Virtual Memory Area - represents a contiguous mapped region */
 struct fut_vma {

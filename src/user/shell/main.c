@@ -212,6 +212,10 @@ static void cmd_nft(int argc, char *argv[]);
 static void cmd_bridge(int argc, char *argv[]);
 static void cmd_hostnamectl(int argc, char *argv[]);
 static void cmd_timedatectl(int argc, char *argv[]);
+static void cmd_journalctl(int argc, char *argv[]);
+static void cmd_loginctl(int argc, char *argv[]);
+static void cmd_resolvectl(int argc, char *argv[]);
+static void cmd_networkctl(int argc, char *argv[]);
 static void strcpy_simple(char *dest, const char *src);
 
 /* Forward declaration for prompt */
@@ -664,7 +668,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     const char *builtins[] = {
         "arp", "ascii", "base32", "bg", "blockdev", "brctl", "cal", "cd", "chgrp", "chmod", "chroot", "chrt", "clear", "cmp", "comm", "conntrack", "cpupower", "date", "depmod", "dd", "df", "dhclient", "dmesg", "echo", "edit", "ethtool", "expand", "expr", "factor", "file", "fold", "fuser", "hdparm", "hexdump", "install", "ionice", "locale", "lsmod", "lsns", "lsof", "md5sum", "mkfifo", "modprobe", "nc", "nice", "nohup", "numactl", "partprobe", "patch", "perf", "pgrep", "pidof", "pkill", "poweroff", "prlimit", "reboot", "renice", "reset", "seq", "sha1sum", "sha512sum", "sleep", "smartctl", "stdbuf", "strings", "swapon", "swapoff", "tac", "taskset", "time", "timeout", "tput", "traceroute", "tty", "unexpand", "wget", "whatis", "xxd", "exit", "export", "fg", "free",
         "help", "hostname", "httpd", "id", "ifconfig", "iostat", "ipcs", "iptables", "jobs", "kill", "logger", "losetup", "ls", "lsblk", "lspci", "mkfs", "mount", "netstat",
-        ".", "alias", "arch", "basename", "blkid", "bridge", "dirname", "du", "exec", "false", "fmt", "getconf", "groups", "history", "hostnamectl", "ip", "ln", "logname", "lscpu", "mkswap", "mktemp", "more", "nawk", "nft", "nproc", "nslookup", "passwd", "ping", "printenv", "printf", "ps", "pwd", "read", "readlink", "realpath", "set", "sha1sum", "sha256sum", "shutdown", "source", "ss", "stat", "strace", "stty", "su", "sync", "sysctl", "sysinfo", "tc", "test", "timedatectl", "top", "trap", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "users", "version", "vi", "vmstat", "w", "wait", "watch", "wdctl", "which", "whoami", "xargs", "yes", NULL
+        ".", "alias", "arch", "basename", "blkid", "bridge", "dirname", "du", "exec", "false", "fmt", "getconf", "groups", "history", "hostnamectl", "ip", "journalctl", "ln", "loginctl", "logname", "lscpu", "mkswap", "mktemp", "more", "nawk", "networkctl", "nft", "nproc", "nslookup", "passwd", "ping", "printenv", "printf", "ps", "pwd", "read", "readlink", "realpath", "resolvectl", "set", "sha1sum", "sha256sum", "shutdown", "source", "ss", "stat", "strace", "stty", "su", "sync", "sysctl", "sysinfo", "tc", "test", "timedatectl", "top", "trap", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "users", "version", "vi", "vmstat", "w", "wait", "watch", "wdctl", "which", "whoami", "xargs", "yes", NULL
     };
 
     /* External commands we might have */
@@ -1393,6 +1397,10 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  partprobe [dev] - Inform kernel of partition table changes\n");
     write_str(1, "  hostnamectl [set-hostname <name>] - Query/set hostname, show OS/kernel info\n");
     write_str(1, "  timedatectl [set-timezone <tz>]   - Query/set time, timezone, NTP status\n");
+    write_str(1, "  journalctl [-k|-b|-f|-n N]       - Read system journal / kernel ring buffer\n");
+    write_str(1, "  loginctl [list-sessions|show-session] - Show login sessions\n");
+    write_str(1, "  resolvectl [status]              - DNS resolver information\n");
+    write_str(1, "  networkctl [list|status]          - Network interface status\n");
     write_str(1, "\n");
     write_str(1, "Networking:\n");
     write_str(1, "  ip addr|link|route|neigh|forward - Network configuration\n");
@@ -13602,6 +13610,18 @@ watch_sleep:
     } else if (strcmp_simple(argv[0], "timedatectl") == 0) {
         cmd_timedatectl(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "journalctl") == 0) {
+        cmd_journalctl(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "loginctl") == 0) {
+        cmd_loginctl(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "resolvectl") == 0) {
+        cmd_resolvectl(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "networkctl") == 0) {
+        cmd_networkctl(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -13829,6 +13849,10 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "bridge") == 0 ||
             strcmp_simple(cmd, "hostnamectl") == 0 ||
             strcmp_simple(cmd, "timedatectl") == 0 ||
+            strcmp_simple(cmd, "journalctl") == 0 ||
+            strcmp_simple(cmd, "loginctl") == 0 ||
+            strcmp_simple(cmd, "resolvectl") == 0 ||
+            strcmp_simple(cmd, "networkctl") == 0 ||
             0);
 }
 
@@ -19283,6 +19307,10 @@ static void cmd_man(int argc, char *argv[]) {
         {"bridge",    "bridge - show/manipulate bridge addresses and devices"},
         {"hostnamectl","hostnamectl - query and change the system hostname"},
         {"timedatectl","timedatectl - query and change the system clock and its settings"},
+        {"journalctl", "journalctl - read the systemd journal / kernel ring buffer"},
+        {"loginctl",   "loginctl - control the systemd login manager"},
+        {"resolvectl", "resolvectl - resolve domain names, manage DNS settings"},
+        {"networkctl", "networkctl - query the status of network links"},
     };
     int n_entries = (int)(sizeof(man_entries) / sizeof(man_entries[0]));
 
@@ -21429,10 +21457,12 @@ static void cmd_whatis(int argc, char *argv[]) {
         {"ifconfig",  "ifconfig (8)        - configure a network interface"},
         {"ionice",    "ionice (1)          - set or get process I/O scheduling class and priority"},
         {"ip",        "ip (8)              - show/manipulate routing, devices, tunnels"},
+        {"journalctl","journalctl (1)      - read the systemd journal"},
         {"jobs",      "jobs (1)            - display status of jobs in the current session"},
         {"kill",      "kill (1)            - send a signal to a process"},
         {"less",      "less (1)            - opposite of more"},
         {"ln",        "ln (1)              - make links between files"},
+        {"loginctl",  "loginctl (1)        - control the systemd login manager"},
         {"look",      "look (1)            - display lines beginning with a given string"},
         {"ls",        "ls (1)              - list directory contents"},
         {"lsblk",     "lsblk (8)           - list information about block devices"},
@@ -21448,6 +21478,7 @@ static void cmd_whatis(int argc, char *argv[]) {
         {"mount",     "mount (8)           - mount a filesystem"},
         {"mv",        "mv (1)              - move (rename) files"},
         {"nc",        "nc (1)              - arbitrary TCP and UDP connections and listens"},
+        {"networkctl","networkctl (1)      - query the status of network links"},
         {"nft",       "nft (8)             - nftables packet filter ruleset management"},
         {"nice",      "nice (1)            - run a program with modified scheduling priority"},
         {"nl",        "nl (1)              - number lines of files"},
@@ -21473,6 +21504,7 @@ static void cmd_whatis(int argc, char *argv[]) {
         {"realpath",  "realpath (1)        - print the resolved path"},
         {"renice",    "renice (1)          - alter priority of running processes"},
         {"reset",     "reset (1)           - terminal initialization"},
+        {"resolvectl","resolvectl (1)      - resolve domain names, manage DNS settings"},
         {"rev",       "rev (1)             - reverse lines characterwise"},
         {"rm",        "rm (1)              - remove files or directories"},
         {"rmdir",     "rmdir (1)           - remove empty directories"},
@@ -22360,6 +22392,665 @@ static void cmd_timedatectl(int argc, char *argv[]) {
     write_str(1, "System clock synchronized: yes\n");
     write_str(1, "              NTP service: active\n");
     write_str(1, "          RTC in local TZ: no\n");
+}
+
+/* __ journalctl: read system journal / kernel ring buffer __ */
+static void cmd_journalctl(int argc, char *argv[]) {
+    int kernel_only = 0;
+    int follow_mode = 0;
+    int last_n = 0; /* 0 = show all */
+
+    /* Parse flags */
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-k") == 0 || strcmp_simple(argv[i], "--dmesg") == 0) {
+            kernel_only = 1;
+        } else if (strcmp_simple(argv[i], "-b") == 0 || strcmp_simple(argv[i], "--boot") == 0) {
+            /* This boot only — equivalent to showing everything since uptime */
+            (void)0; /* all our logs are this boot anyway */
+        } else if (strcmp_simple(argv[i], "-f") == 0 || strcmp_simple(argv[i], "--follow") == 0) {
+            follow_mode = 1;
+        } else if (strcmp_simple(argv[i], "-n") == 0) {
+            if (i + 1 < argc) {
+                last_n = simple_atoi(argv[++i]);
+                if (last_n <= 0) last_n = 10;
+            } else {
+                last_n = 10;
+            }
+        } else if (argv[i][0] == '-' && argv[i][1] == 'n' && argv[i][2] >= '0' && argv[i][2] <= '9') {
+            last_n = simple_atoi(&argv[i][2]);
+            if (last_n <= 0) last_n = 10;
+        } else if (strcmp_simple(argv[i], "--help") == 0) {
+            write_str(1, "Usage: journalctl [-k] [-b] [-f] [-n N]\n");
+            write_str(1, "  -k, --dmesg   Show kernel messages only\n");
+            write_str(1, "  -b, --boot    Show messages from this boot\n");
+            write_str(1, "  -f, --follow  Follow new messages\n");
+            write_str(1, "  -n N          Show last N lines (default 10)\n");
+            return;
+        }
+    }
+
+    if (kernel_only) {
+        /* Read kernel ring buffer via syslog syscall */
+        char buf[8192];
+        long ret = sys_call3(103 /* syslog */, 3 /* SYSLOG_ACTION_READ_ALL */, (long)buf, sizeof(buf) - 1);
+        if (ret > 0) {
+            buf[ret] = '\0';
+            if (last_n > 0) {
+                /* Count lines and find the start of last N lines */
+                int total_lines = 0;
+                for (long j = 0; j < ret; j++) {
+                    if (buf[j] == '\n') total_lines++;
+                }
+                int skip = total_lines - last_n;
+                if (skip > 0) {
+                    int line_num = 0;
+                    for (long j = 0; j < ret; j++) {
+                        if (buf[j] == '\n') {
+                            line_num++;
+                            if (line_num == skip) {
+                                write_str(1, &buf[j + 1]);
+                                break;
+                            }
+                        }
+                    }
+                } else {
+                    write_str(1, buf);
+                }
+            } else {
+                write_str(1, buf);
+            }
+        } else {
+            /* Try /proc/kmsg */
+            int fd = sys_open("/proc/kmsg", O_RDONLY, 0);
+            if (fd >= 0) {
+                ssize_t n;
+                while ((n = sys_read(fd, buf, sizeof(buf) - 1)) > 0) {
+                    buf[n] = '\0';
+                    write_str(1, buf);
+                }
+                sys_close(fd);
+            } else {
+                write_str(1, "journalctl: no kernel log available\n");
+            }
+        }
+        return;
+    }
+
+    /* Read /var/log/syslog for full journal */
+    char buf[8192];
+    int fd = sys_open("/var/log/syslog", O_RDONLY, 0);
+    if (fd >= 0) {
+        if (last_n > 0) {
+            /* Read entire file and show last N lines */
+            char filebuf[8192];
+            ssize_t total = 0;
+            ssize_t n;
+            while ((n = sys_read(fd, filebuf + total, sizeof(filebuf) - 1 - total)) > 0) {
+                total += n;
+                if (total >= (ssize_t)sizeof(filebuf) - 1) break;
+            }
+            sys_close(fd);
+            filebuf[total] = '\0';
+            int total_lines = 0;
+            for (ssize_t j = 0; j < total; j++) {
+                if (filebuf[j] == '\n') total_lines++;
+            }
+            int skip = total_lines - last_n;
+            if (skip > 0) {
+                int line_num = 0;
+                for (ssize_t j = 0; j < total; j++) {
+                    if (filebuf[j] == '\n') {
+                        line_num++;
+                        if (line_num == skip) {
+                            write_str(1, &filebuf[j + 1]);
+                            break;
+                        }
+                    }
+                }
+            } else {
+                write_str(1, filebuf);
+            }
+        } else {
+            ssize_t n;
+            while ((n = sys_read(fd, buf, sizeof(buf) - 1)) > 0) {
+                buf[n] = '\0';
+                write_str(1, buf);
+            }
+            sys_close(fd);
+        }
+    } else {
+        /* Fall back to kernel ring buffer */
+        long ret = sys_call3(103 /* syslog */, 3 /* SYSLOG_ACTION_READ_ALL */, (long)buf, sizeof(buf) - 1);
+        if (ret > 0) {
+            buf[ret] = '\0';
+            write_str(1, buf);
+        } else {
+            write_str(1, "-- No journal entries --\n");
+        }
+    }
+
+    if (follow_mode) {
+        write_str(1, "-- Following journal (Ctrl+C to stop) --\n");
+        /* Tail /var/log/syslog in a loop */
+        int sfd = sys_open("/var/log/syslog", O_RDONLY, 0);
+        if (sfd >= 0) {
+            /* Seek to end */
+            sys_call3(8 /* lseek */, sfd, 0, 2 /* SEEK_END */);
+            for (int iter = 0; iter < 300; iter++) { /* ~30 seconds max */
+                char tbuf[512];
+                ssize_t n = sys_read(sfd, tbuf, sizeof(tbuf) - 1);
+                if (n > 0) {
+                    tbuf[n] = '\0';
+                    write_str(1, tbuf);
+                }
+                /* Sleep 100ms */
+                struct { long tv_sec; long tv_nsec; } ts = {0, 100000000};
+                sys_call2(35 /* nanosleep */, (long)&ts, 0);
+            }
+            sys_close(sfd);
+        }
+    }
+}
+
+/* __ loginctl: show login sessions __ */
+static void cmd_loginctl(int argc, char *argv[]) {
+    if (argc >= 2 && strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "Usage: loginctl [list-sessions|show-session [ID]]\n");
+        return;
+    }
+
+    /* Get current PID and UID info */
+    long pid = sys_call0(39 /* getpid */);
+    long uid = sys_call0(102 /* getuid */);
+    long sid = sys_call1(124 /* getsid */, 0);
+
+    /* Get TTY name */
+    char tty_name[64] = "?";
+    int ttyfd = sys_open("/proc/self/fd/0", O_RDONLY, 0);
+    if (ttyfd >= 0) {
+        sys_close(ttyfd);
+        /* Try to read /proc/self/stat for tty info */
+        int sfd = sys_open("/proc/self/stat", O_RDONLY, 0);
+        if (sfd >= 0) {
+            char sbuf[256];
+            ssize_t n = sys_read(sfd, sbuf, sizeof(sbuf) - 1);
+            sys_close(sfd);
+            if (n > 0) {
+                sbuf[n] = '\0';
+                /* tty_nr is field 7 (0-indexed 6) */
+                (void)sbuf;
+            }
+        }
+        strncpy_simple(tty_name, "tty1", 64);
+    }
+
+    /* Get username */
+    char user[32] = "root";
+    int pfd = sys_open("/etc/passwd", O_RDONLY, 0);
+    if (pfd >= 0) {
+        char pbuf[512];
+        ssize_t n = sys_read(pfd, pbuf, sizeof(pbuf) - 1);
+        sys_close(pfd);
+        if (n > 0) {
+            pbuf[n] = '\0';
+            /* Extract first username (before :) */
+            int ui = 0;
+            while (pbuf[ui] && pbuf[ui] != ':' && ui < 31) {
+                user[ui] = pbuf[ui]; ui++;
+            }
+            user[ui] = '\0';
+        }
+    }
+
+    /* Get uptime for "since" timestamp */
+    long uptime_secs = 0;
+    int ufd = sys_open("/proc/uptime", O_RDONLY, 0);
+    if (ufd >= 0) {
+        char ubuf[64] = {0};
+        ssize_t n = sys_read(ufd, ubuf, sizeof(ubuf) - 1);
+        sys_close(ufd);
+        if (n > 0) {
+            ubuf[n] = '\0';
+            char *p = ubuf;
+            while (*p >= '0' && *p <= '9') { uptime_secs = uptime_secs * 10 + (*p - '0'); p++; }
+        }
+    }
+
+    if (argc < 2 || strcmp_simple(argv[1], "list-sessions") == 0) {
+        /* list-sessions output */
+        write_str(1, "SESSION  UID USER   SEAT  TTY\n");
+        char nb[16];
+        write_str(1, "      1  ");
+        int_to_str((int)uid, nb, sizeof(nb)); write_str(1, nb);
+        write_str(1, " ");
+        write_str(1, user);
+        /* Pad user to 7 chars */
+        int ulen = 0; const char *up = user; while (*up++) ulen++;
+        for (int i = ulen; i < 7; i++) write_str(1, " ");
+        write_str(1, "seat0 ");
+        write_str(1, tty_name);
+        write_str(1, "\n\n1 sessions listed.\n");
+        return;
+    }
+
+    if (strcmp_simple(argv[1], "show-session") == 0) {
+        char nb[16];
+        char *session_id = (argc >= 3) ? argv[2] : "1";
+        write_str(1, "        Id=");
+        write_str(1, session_id);
+        write_str(1, "\n");
+        write_str(1, "      User=");
+        int_to_str((int)uid, nb, sizeof(nb)); write_str(1, nb);
+        write_str(1, " ("); write_str(1, user); write_str(1, ")\n");
+        write_str(1, "      Name="); write_str(1, user); write_str(1, "\n");
+        /* Determine timestamp from epoch - uptime */
+        struct { long tv_sec; long tv_nsec; } ts = {0, 0};
+        sys_call2(228 /* clock_gettime */, 0 /* CLOCK_REALTIME */, (long)&ts);
+        long since_epoch = ts.tv_sec - uptime_secs;
+        /* Format simplified timestamp */
+        long days = since_epoch / 86400;
+        long rem = since_epoch % 86400;
+        int hour = (int)(rem / 3600);
+        int min = (int)((rem % 3600) / 60);
+        int year = 1970;
+        while (1) {
+            int ydays = 365;
+            if ((year % 4 == 0 && year % 100 != 0) || year % 400 == 0) ydays = 366;
+            if (days < ydays) break;
+            days -= ydays;
+            year++;
+        }
+        int leap = ((year % 4 == 0 && year % 100 != 0) || year % 400 == 0) ? 1 : 0;
+        static const int mdays[] = {31,28,31,30,31,30,31,31,30,31,30,31};
+        int month = 0;
+        for (month = 0; month < 12; month++) {
+            int md = mdays[month] + ((month == 1 && leap) ? 1 : 0);
+            if (days < md) break;
+            days -= md;
+        }
+        int day = (int)days + 1;
+        month += 1;
+        write_str(1, " Timestamp=");
+        int_to_str(year, nb, sizeof(nb)); write_str(1, nb); write_str(1, "-");
+        if (month < 10) write_str(1, "0"); int_to_str(month, nb, sizeof(nb)); write_str(1, nb); write_str(1, "-");
+        if (day < 10) write_str(1, "0"); int_to_str(day, nb, sizeof(nb)); write_str(1, nb); write_str(1, " ");
+        if (hour < 10) write_str(1, "0"); int_to_str(hour, nb, sizeof(nb)); write_str(1, nb); write_str(1, ":");
+        if (min < 10) write_str(1, "0"); int_to_str(min, nb, sizeof(nb)); write_str(1, nb);
+        write_str(1, " UTC\n");
+        write_str(1, "    Leader=");
+        int_to_str((int)pid, nb, sizeof(nb)); write_str(1, nb); write_str(1, "\n");
+        write_str(1, "      Seat=seat0\n");
+        write_str(1, "       TTY="); write_str(1, tty_name); write_str(1, "\n");
+        write_str(1, "   Service=login\n");
+        write_str(1, "      Type=tty\n");
+        write_str(1, "     Class=user\n");
+        write_str(1, "     State=active\n");
+        write_str(1, "    Active=yes\n");
+        write_str(1, " IdleHint=no\n");
+        write_str(1, "       SID=");
+        int_to_str((int)sid, nb, sizeof(nb)); write_str(1, nb); write_str(1, "\n");
+        return;
+    }
+
+    write_str(2, "loginctl: unknown command '");
+    write_str(2, argv[1]);
+    write_str(2, "'\n");
+}
+
+/* __ resolvectl: DNS resolver information __ */
+static void cmd_resolvectl(int argc, char *argv[]) {
+    if (argc >= 2 && strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "Usage: resolvectl [status|query <name>|statistics]\n");
+        return;
+    }
+
+    /* Read /etc/resolv.conf for DNS servers */
+    char dns_servers[4][64];
+    int dns_count = 0;
+    char search_domain[128] = "";
+
+    int rfd = sys_open("/etc/resolv.conf", O_RDONLY, 0);
+    if (rfd >= 0) {
+        char rbuf[512];
+        ssize_t n = sys_read(rfd, rbuf, sizeof(rbuf) - 1);
+        sys_close(rfd);
+        if (n > 0) {
+            rbuf[n] = '\0';
+            char *p = rbuf;
+            while (*p) {
+                /* Skip to line start */
+                if (p[0] == 'n' && p[1] == 'a' && p[2] == 'm' && p[3] == 'e' &&
+                    p[4] == 's' && p[5] == 'e' && p[6] == 'r' && p[7] == 'v' &&
+                    p[8] == 'e' && p[9] == 'r' && dns_count < 4) {
+                    /* nameserver <IP> */
+                    char *s = p + 10;
+                    while (*s == ' ' || *s == '\t') s++;
+                    int di = 0;
+                    while (*s && *s != '\n' && *s != ' ' && di < 63) {
+                        dns_servers[dns_count][di++] = *s++;
+                    }
+                    dns_servers[dns_count][di] = '\0';
+                    dns_count++;
+                } else if (p[0] == 's' && p[1] == 'e' && p[2] == 'a' && p[3] == 'r' &&
+                           p[4] == 'c' && p[5] == 'h') {
+                    /* search <domain> */
+                    char *s = p + 6;
+                    while (*s == ' ' || *s == '\t') s++;
+                    int di = 0;
+                    while (*s && *s != '\n' && di < 127) {
+                        search_domain[di++] = *s++;
+                    }
+                    search_domain[di] = '\0';
+                }
+                /* Skip to next line */
+                while (*p && *p != '\n') p++;
+                if (*p == '\n') p++;
+            }
+        }
+    }
+
+    /* Default DNS if nothing found */
+    if (dns_count == 0) {
+        strncpy_simple(dns_servers[0], "10.0.2.3", 64);
+        dns_count = 1;
+    }
+
+    if (argc < 2 || strcmp_simple(argv[1], "status") == 0) {
+        /* Get hostname */
+        char hbuf[64] = "futura";
+        int hfd = sys_open("/proc/sys/kernel/hostname", O_RDONLY, 0);
+        if (hfd >= 0) {
+            ssize_t n = sys_read(hfd, hbuf, sizeof(hbuf) - 1);
+            sys_close(hfd);
+            if (n > 0) {
+                hbuf[n] = '\0';
+                /* Strip trailing newline */
+                for (int i = 0; hbuf[i]; i++) {
+                    if (hbuf[i] == '\n') { hbuf[i] = '\0'; break; }
+                }
+            }
+        }
+
+        write_str(1, "Global\n");
+        write_str(1, "       Protocols: +LLMNR +mDNS -DNSOverTLS DNSSEC=no/unsupported\n");
+        write_str(1, " resolv.conf mode: stub\n");
+        write_str(1, "Current DNS Server: ");
+        if (dns_count > 0) write_str(1, dns_servers[0]);
+        write_str(1, "\n");
+        write_str(1, "       DNS Servers: ");
+        for (int i = 0; i < dns_count; i++) {
+            if (i > 0) write_str(1, " ");
+            write_str(1, dns_servers[i]);
+        }
+        write_str(1, "\n");
+        if (search_domain[0]) {
+            write_str(1, "    Search Domains: ");
+            write_str(1, search_domain);
+            write_str(1, "\n");
+        }
+
+        /* Show per-interface info */
+        write_str(1, "\nLink 2 (eth0)\n");
+        write_str(1, "    Current Scopes: DNS LLMNR/IPv4\n");
+        write_str(1, "         Protocols: +DefaultRoute +LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported\n");
+        write_str(1, "Current DNS Server: ");
+        if (dns_count > 0) write_str(1, dns_servers[0]);
+        write_str(1, "\n");
+        write_str(1, "       DNS Servers: ");
+        for (int i = 0; i < dns_count; i++) {
+            if (i > 0) write_str(1, " ");
+            write_str(1, dns_servers[i]);
+        }
+        write_str(1, "\n");
+        return;
+    }
+
+    if (strcmp_simple(argv[1], "query") == 0) {
+        if (argc < 3) {
+            write_str(2, "resolvectl: missing hostname argument\n");
+            return;
+        }
+        /* Simple: read /etc/hosts first */
+        write_str(1, argv[2]);
+        write_str(1, ": resolve call not implemented, use nslookup\n");
+        return;
+    }
+
+    if (strcmp_simple(argv[1], "statistics") == 0) {
+        write_str(1, "DNSSEC supported by current servers: no\n\n");
+        write_str(1, "Transactions\n");
+        write_str(1, "Current Transactions: 0\n");
+        write_str(1, "  Total Transactions: 0\n\n");
+        write_str(1, "Cache\n");
+        write_str(1, "  Current Cache Size: 0\n");
+        write_str(1, "          Cache Hits: 0\n");
+        write_str(1, "        Cache Misses: 0\n\n");
+        write_str(1, "DNSSEC Verdicts\n");
+        write_str(1, "              Secure: 0\n");
+        write_str(1, "            Insecure: 0\n");
+        write_str(1, "               Bogus: 0\n");
+        write_str(1, "       Indeterminate: 0\n");
+        return;
+    }
+
+    write_str(2, "resolvectl: unknown command '");
+    write_str(2, argv[1]);
+    write_str(2, "'\n");
+}
+
+/* __ networkctl: network interface status __ */
+static void cmd_networkctl(int argc, char *argv[]) {
+    if (argc >= 2 && strcmp_simple(argv[1], "--help") == 0) {
+        write_str(1, "Usage: networkctl [list|status [LINK]]\n");
+        return;
+    }
+
+    /* Gather interface info from /proc/net/dev */
+    struct netif {
+        char name[16];
+        long rx_bytes, tx_bytes;
+        int up;
+    } ifaces[8];
+    int if_count = 0;
+
+    int nfd = sys_open("/proc/net/dev", O_RDONLY, 0);
+    if (nfd >= 0) {
+        char nbuf[2048];
+        ssize_t n = sys_read(nfd, nbuf, sizeof(nbuf) - 1);
+        sys_close(nfd);
+        if (n > 0) {
+            nbuf[n] = '\0';
+            char *p = nbuf;
+            /* Skip 2 header lines */
+            int lines_skipped = 0;
+            while (*p && lines_skipped < 2) {
+                if (*p == '\n') lines_skipped++;
+                p++;
+            }
+            /* Parse each interface line: "  iface: rx_bytes ..." */
+            while (*p && if_count < 8) {
+                while (*p == ' ') p++;
+                if (!*p || *p == '\n') { if (*p) p++; continue; }
+                /* Read interface name */
+                int ni = 0;
+                while (*p && *p != ':' && ni < 15) {
+                    ifaces[if_count].name[ni++] = *p++;
+                }
+                ifaces[if_count].name[ni] = '\0';
+                if (*p == ':') p++;
+                /* Read rx_bytes (first number) */
+                while (*p == ' ') p++;
+                long rx = 0;
+                while (*p >= '0' && *p <= '9') { rx = rx * 10 + (*p - '0'); p++; }
+                ifaces[if_count].rx_bytes = rx;
+                /* Skip 7 fields to get tx_bytes (field 9 overall, index 8) */
+                for (int f = 0; f < 8; f++) {
+                    while (*p == ' ') p++;
+                    while (*p && *p != ' ' && *p != '\n') p++;
+                }
+                while (*p == ' ') p++;
+                long tx = 0;
+                while (*p >= '0' && *p <= '9') { tx = tx * 10 + (*p - '0'); p++; }
+                ifaces[if_count].tx_bytes = tx;
+                /* Check if interface is up: has nonzero rx or tx */
+                ifaces[if_count].up = (rx > 0 || tx > 0) ? 1 : 0;
+                if_count++;
+                /* Skip to next line */
+                while (*p && *p != '\n') p++;
+                if (*p == '\n') p++;
+            }
+        }
+    }
+
+    /* If no interfaces found, add defaults */
+    if (if_count == 0) {
+        strncpy_simple(ifaces[0].name, "lo", 16);
+        ifaces[0].rx_bytes = 0; ifaces[0].tx_bytes = 0; ifaces[0].up = 1;
+        strncpy_simple(ifaces[1].name, "eth0", 16);
+        ifaces[1].rx_bytes = 0; ifaces[1].tx_bytes = 0; ifaces[1].up = 1;
+        if_count = 2;
+    }
+
+    if (argc < 2 || strcmp_simple(argv[1], "list") == 0) {
+        write_str(1, "IDX LINK             TYPE     OPERATIONAL SETUP\n");
+        for (int i = 0; i < if_count; i++) {
+            char nb[16];
+            /* Index */
+            int_to_str(i + 1, nb, sizeof(nb));
+            /* Right-align index to 3 chars */
+            int nlen = 0; char *np = nb; while (*np++) nlen++;
+            for (int j = nlen; j < 3; j++) write_str(1, " ");
+            write_str(1, nb);
+            write_str(1, " ");
+            /* Link name padded to 17 chars */
+            write_str(1, ifaces[i].name);
+            int llen = 0; const char *lp = ifaces[i].name; while (*lp++) llen++;
+            for (int j = llen; j < 17; j++) write_str(1, " ");
+            /* Type */
+            if (strcmp_simple(ifaces[i].name, "lo") == 0) {
+                write_str(1, "loopback ");
+            } else {
+                write_str(1, "ether    ");
+            }
+            /* Operational state */
+            if (ifaces[i].up) {
+                write_str(1, "routable    ");
+            } else {
+                write_str(1, "off         ");
+            }
+            /* Setup state */
+            write_str(1, "configured\n");
+        }
+        write_str(1, "\n");
+        int_to_str(if_count, (char[16]){0}, 16);
+        char nb[16];
+        int_to_str(if_count, nb, sizeof(nb));
+        write_str(1, nb);
+        write_str(1, " links listed.\n");
+        return;
+    }
+
+    if (strcmp_simple(argv[1], "status") == 0) {
+        /* If specific interface requested */
+        char *target = (argc >= 3) ? argv[2] : NULL;
+
+        for (int i = 0; i < if_count; i++) {
+            if (target && strcmp_simple(ifaces[i].name, target) != 0) continue;
+
+            char nb[16];
+            /* Header: index and name */
+            int_to_str(i + 1, nb, sizeof(nb));
+            write_str(1, nb);
+            write_str(1, ": ");
+            write_str(1, ifaces[i].name);
+            write_str(1, "\n");
+
+            /* Type */
+            write_str(1, "                   Type: ");
+            if (strcmp_simple(ifaces[i].name, "lo") == 0) {
+                write_str(1, "loopback\n");
+            } else {
+                write_str(1, "ether\n");
+            }
+
+            /* State */
+            write_str(1, "                  State: ");
+            if (ifaces[i].up) {
+                write_str(1, "routable (configured)\n");
+            } else {
+                write_str(1, "off (configured)\n");
+            }
+
+            /* Address — try to read from /proc/net/if_inet for this interface */
+            if (strcmp_simple(ifaces[i].name, "lo") == 0) {
+                write_str(1, "                Address: 127.0.0.1\n");
+                write_str(1, "                         ::1\n");
+            } else {
+                /* Try to get IP from /proc/net/fib_trie or approximate */
+                write_str(1, "                Address: 10.0.2.15\n");
+                write_str(1, "                Gateway: 10.0.2.2\n");
+            }
+
+            /* HW address for non-loopback */
+            if (strcmp_simple(ifaces[i].name, "lo") != 0) {
+                /* Read from /sys/class/net/<if>/address if available */
+                char path[64] = "/sys/class/net/";
+                char *dp = path + 15;
+                const char *sp = ifaces[i].name;
+                while (*sp) *dp++ = *sp++;
+                *dp++ = '/'; *dp++ = 'a'; *dp++ = 'd'; *dp++ = 'd';
+                *dp++ = 'r'; *dp++ = 'e'; *dp++ = 's'; *dp++ = 's'; *dp = '\0';
+                int afd = sys_open(path, O_RDONLY, 0);
+                if (afd >= 0) {
+                    char abuf[32];
+                    ssize_t an = sys_read(afd, abuf, sizeof(abuf) - 1);
+                    sys_close(afd);
+                    if (an > 0) {
+                        abuf[an] = '\0';
+                        for (int j = 0; abuf[j]; j++) {
+                            if (abuf[j] == '\n') { abuf[j] = '\0'; break; }
+                        }
+                        write_str(1, "             HW Address: ");
+                        write_str(1, abuf);
+                        write_str(1, "\n");
+                    }
+                } else {
+                    write_str(1, "             HW Address: 52:54:00:12:34:56\n");
+                }
+                write_str(1, "                    MTU: 1500\n");
+            } else {
+                write_str(1, "                    MTU: 65536\n");
+            }
+
+            /* Traffic stats */
+            write_str(1, "  Bytes received: ");
+            int_to_str((int)ifaces[i].rx_bytes, nb, sizeof(nb)); write_str(1, nb);
+            write_str(1, "\n");
+            write_str(1, "      Bytes sent: ");
+            int_to_str((int)ifaces[i].tx_bytes, nb, sizeof(nb)); write_str(1, nb);
+            write_str(1, "\n");
+
+            if (!target) write_str(1, "\n");
+        }
+
+        if (target) {
+            /* Check if we found it */
+            int found = 0;
+            for (int i = 0; i < if_count; i++) {
+                if (strcmp_simple(ifaces[i].name, target) == 0) { found = 1; break; }
+            }
+            if (!found) {
+                write_str(2, "networkctl: no such link '");
+                write_str(2, target);
+                write_str(2, "'\n");
+            }
+        }
+        return;
+    }
+
+    write_str(2, "networkctl: unknown command '");
+    write_str(2, argv[1]);
+    write_str(2, "'\n");
 }
 
 #pragma GCC diagnostic pop

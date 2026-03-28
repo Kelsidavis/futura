@@ -202,8 +202,9 @@ static void close_fd_in_task(fut_task_t *task, int fd) {
         return;
     }
 
-    /* Dispatch inotify IN_CLOSE_WRITE or IN_CLOSE_NOWRITE before releasing the file */
-    if (file->vnode && file->vnode->name[0]) {
+    /* Dispatch inotify IN_CLOSE_WRITE or IN_CLOSE_NOWRITE before releasing the file.
+     * Guard against vnodes with NULL name (procfs, sysfs synthetic vnodes). */
+    if (file->vnode && file->vnode->name && file->vnode->name[0]) {
         extern void inotify_dispatch_event(const char *, uint32_t, const char *, uint32_t);
         char close_dir[256];
         const char *vname = file->vnode->name;

@@ -351,7 +351,10 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
      *   ✓ Value read and comparison under lock (lines 252-265)
      *   ✓ Sleep on wait queue with lock held (line 279)
      */
-    /* TODO Phase 3: Add PI (priority inheritance) futex support */
+    /* Phase 3 (Completed): PI (priority inheritance) futex support
+     *   - FUTEX_LOCK_PI: boosts owner priority when contended
+     *   - FUTEX_UNLOCK_PI: restores owner priority, hands lock to highest-prio waiter
+     *   - FUTEX_TRYLOCK_PI: non-blocking lock attempt */
 
     /* Strip modifier flags before dispatch — FUTEX_PRIVATE_FLAG (128) indicates
      * process-private futex (skip global hash table, use per-process structure);
@@ -1013,9 +1016,12 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
              *   bit  30    = FUTEX_OWNER_DIED (owner exited holding lock)
              *   bit  31    = FUTEX_WAITERS   (threads are waiting)
              *
-             * We implement the lock semantics without actual priority
-             * inheritance (no priority boosting).  This is sufficient for
-             * programs that just need the PI-futex locking protocol.
+             * Priority Inheritance (PI):
+             * When a high-priority thread blocks on a PI futex held by a
+             * lower-priority thread, we boost the owner's effective priority
+             * to the waiter's priority.  This prevents unbounded priority
+             * inversion.  The owner's original priority is restored when it
+             * calls FUTEX_UNLOCK_PI.
              */
             fut_thread_t *cur = fut_thread_current();
             uint32_t mytid = cur ? (uint32_t)cur->tid : 1u;
@@ -1071,6 +1077,20 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
                     uint64_t mask = __atomic_load_n(&cur->signal_mask, __ATOMIC_ACQUIRE);
                     if (pend & ~mask)
                         return -EINTR;
+                }
+
+                /* Priority Inheritance: boost owner's priority to waiter's
+                 * priority if the waiter has higher priority.  This prevents
+                 * priority inversion where a low-priority lock holder
+                 * starves a high-priority waiter. */
+                if (cur) {
+                    fut_thread_t *owner_thread = fut_thread_find((uint64_t)owner);
+                    if (owner_thread && cur->priority > owner_thread->priority) {
+                        fut_thread_priority_raise(owner_thread, cur->priority);
+                        fut_printf("[FUTEX] PI boost: owner tid=%u prio %d -> %d (waiter tid=%u)\n",
+                                   owner, owner_thread->pi_saved_priority,
+                                   owner_thread->priority, mytid);
+                    }
                 }
 
                 /* Mark WAITERS bit so the owner calls UNLOCK_PI correctly */
@@ -1171,36 +1191,94 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
             if ((word & ROBUST_FUTEX_TID_MASK) != mytid)
                 return -EPERM;
 
+            /* Restore our original priority if it was boosted by PI.
+             * Must happen before releasing the lock so that the scheduler
+             * does not run us at an artificially elevated priority after
+             * we no longer hold the contended resource. */
+            if (cur) {
+                fut_thread_priority_restore(cur);
+            }
+
             bool has_waiters = (word & ROBUST_FUTEX_WAITERS) != 0;
 
-            /* Atomically release: set word to 0 (waiters will re-acquire) */
-            uint32_t expected = word;
-            __atomic_compare_exchange_n((uint32_t *)uaddr, &expected, 0u,
-                                        false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
-
             if (has_waiters) {
-                /* Wake one waiter — it will re-acquire via FUTEX_LOCK_PI loop */
+                /* Wake one waiter and hand the lock to it by writing its
+                 * TID into the futex word.  This avoids the thundering-herd
+                 * problem where all waiters race to CAS the word.
+                 * If no matching waiter is found (rare race), just zero
+                 * the word so the next LOCK_PI caller can acquire. */
                 futex_bucket_t *bucket = futex_get_bucket(uaddr);
                 fut_spinlock_acquire(&bucket->lock);
 
                 fut_waitq_t *wq = &bucket->waiters;
                 fut_thread_t *t = wq->head;
                 fut_thread_t *prev = NULL;
+                fut_thread_t *woken_thread = NULL;
+
+                /* Find the highest-priority waiter on this futex address.
+                 * Handing the lock to the highest-priority waiter maintains
+                 * the PI invariant and avoids re-boosting immediately. */
+                fut_thread_t *best = NULL;
+                fut_thread_t *best_prev = NULL;
                 while (t) {
-                    fut_thread_t *next = t->wait_next;
                     if (t->futex_addr == uaddr) {
-                        if (prev) prev->wait_next = next;
-                        else       wq->head       = next;
-                        if (wq->tail == t) wq->tail = prev;
-                        t->wait_next = NULL;
-                        t->state = FUT_THREAD_READY;
-                        fut_sched_add_thread(t);
-                        break;
+                        if (!best || t->priority > best->priority) {
+                            best = t;
+                            best_prev = prev;
+                        }
                     }
                     prev = t;
-                    t = next;
+                    t = t->wait_next;
                 }
+
+                if (best) {
+                    /* Remove best from the wait queue */
+                    if (best_prev) {
+                        best_prev->wait_next = best->wait_next;
+                    } else {
+                        wq->head = best->wait_next;
+                    }
+                    if (wq->tail == best) {
+                        wq->tail = best_prev;
+                    }
+                    best->wait_next = NULL;
+                    woken_thread = best;
+                }
+
+                /* Check if there are still more waiters on this address */
+                bool more_waiters = false;
+                for (fut_thread_t *scan = wq->head; scan; scan = scan->wait_next) {
+                    if (scan->futex_addr == uaddr) {
+                        more_waiters = true;
+                        break;
+                    }
+                }
+
+                /* Set the futex word: hand lock to woken thread or clear it.
+                 * Preserve FUTEX_WAITERS bit if other waiters remain. */
+                uint32_t new_word;
+                if (woken_thread) {
+                    new_word = (uint32_t)woken_thread->tid;
+                    if (more_waiters)
+                        new_word |= ROBUST_FUTEX_WAITERS;
+                } else {
+                    new_word = 0;
+                }
+                uint32_t expected = word;
+                __atomic_compare_exchange_n((uint32_t *)uaddr, &expected, new_word,
+                                            false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+
+                if (woken_thread) {
+                    woken_thread->state = FUT_THREAD_READY;
+                    fut_sched_add_thread(woken_thread);
+                }
+
                 fut_spinlock_release(&bucket->lock);
+            } else {
+                /* No waiters — simply clear the futex word */
+                uint32_t expected = word;
+                __atomic_compare_exchange_n((uint32_t *)uaddr, &expected, 0u,
+                                            false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
             }
             return 0;
         }
@@ -1208,17 +1286,16 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
         case FUTEX_WAIT_REQUEUE_PI: {
             /* FUTEX_WAIT_REQUEUE_PI (Linux 2.6.31+): wait on uaddr, on wake
              * attempt to acquire the PI lock at uaddr2.
-             * Futura doesn't implement priority inheritance; treat as FUTEX_WAIT
-             * with bitset=FUTEX_BITSET_MATCH_ANY.  The caller will need to acquire
-             * the PI lock manually via FUTEX_LOCK_PI after we return. */
+             * We delegate to FUTEX_WAIT_BITSET; the caller re-acquires the
+             * PI lock via FUTEX_LOCK_PI on return (which performs PI boost). */
             return sys_futex(uaddr, FUTEX_WAIT_BITSET | (op & FUTEX_PRIVATE_FLAG),
                              val, timeout, uaddr2, 0xFFFFFFFFU);
         }
 
         case FUTEX_CMP_REQUEUE_PI: {
             /* FUTEX_CMP_REQUEUE_PI (Linux 2.6.31+): like FUTEX_CMP_REQUEUE but
-             * the target futex (uaddr2) is a PI mutex.  Futura delegates to
-             * FUTEX_CMP_REQUEUE since we have no PI scheduling. */
+             * the target futex (uaddr2) is a PI mutex.  Delegates to
+             * FUTEX_CMP_REQUEUE; requeued waiters acquire via FUTEX_LOCK_PI. */
             return sys_futex(uaddr, FUTEX_CMP_REQUEUE | (op & FUTEX_PRIVATE_FLAG),
                              val, timeout, uaddr2, val3);
         }
@@ -1348,10 +1425,16 @@ long sys_set_robust_list(struct robust_list_head *head, size_t len) {
         return -EFAULT;
     }
 
-    /* Phase 2: Store head pointer in per-thread robust_list field */
+    /* Store head pointer in both per-thread and per-task robust_list fields.
+     * The per-thread pointer is walked by exit_robust_list() in fut_thread_exit().
+     * The per-task pointer is walked in task_cleanup_and_exit() as a fallback
+     * for the main thread's robust list when the task exits. */
     fut_thread_t *thread = fut_thread_current();
     if (thread) {
         thread->robust_list = (void *)head;
+    }
+    if (task) {
+        task->robust_list_head = (void *)head;
     }
 
     return 0;

@@ -589,6 +589,21 @@ static void task_cleanup_and_exit(fut_task_t *task, int status, int signal) {
      *
      * Must be done BEFORE releasing mm since we need to write to userspace memory.
      */
+    /* Walk the task-level robust futex list before releasing userspace memory.
+     * This complements the per-thread robust list walk in fut_thread_exit().
+     * If the task stored a robust list head (via sys_set_robust_list on the
+     * main thread), ensure any held PI futexes are released and waiters woken. */
+    if (task->robust_list_head) {
+        extern void exit_robust_list(fut_thread_t *thread);
+        fut_thread_t *main_thread = task->threads;
+        if (main_thread && main_thread->robust_list == NULL) {
+            /* Propagate task-level robust list to thread for exit_robust_list() */
+            main_thread->robust_list = task->robust_list_head;
+            exit_robust_list(main_thread);
+        }
+        task->robust_list_head = NULL;
+    }
+
     if (task->clear_child_tid != NULL) {
         /* Write 0 to the tid address */
         int zero = 0;

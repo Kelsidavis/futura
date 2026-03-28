@@ -126,6 +126,25 @@
      (((oparg) & 0xfff) << 8) | (((cmparg) & 0xfff) << 20))
 
 /* ============================================================
+ *   PI Futex Word Layout (Linux ABI)
+ * ============================================================ */
+
+/* PI futex word bit fields:
+ *   bits 29:0  = owner TID (0 = unlocked)
+ *   bit  30    = FUTEX_OWNER_DIED (owner exited while holding lock)
+ *   bit  31    = FUTEX_WAITERS    (one or more threads are waiting)
+ */
+#ifndef FUTEX_TID_MASK
+#define FUTEX_TID_MASK          0x3FFFFFFFU  /* Lower 30 bits: owner TID */
+#endif
+#ifndef FUTEX_OWNER_DIED
+#define FUTEX_OWNER_DIED        0x40000000U  /* Bit 30: owner died holding lock */
+#endif
+#ifndef FUTEX_WAITERS
+#define FUTEX_WAITERS           0x80000000U  /* Bit 31: waiters present */
+#endif
+
+/* ============================================================
  *   Bitset Constants
  * ============================================================ */
 

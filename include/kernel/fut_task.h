@@ -138,6 +138,12 @@ struct fut_task {
     /* POSIX per-process timers (timer_create/timer_settime/timer_delete) */
     fut_posix_timer_t posix_timers[FUT_POSIX_TIMER_MAX];
 
+    /* Robust futex list (per-task, for NPTL/pthread support).
+     * Stores the userspace robust_list_head pointer registered via
+     * sys_set_robust_list().  On task exit the kernel walks this list
+     * and wakes waiters on any futexes the dying task still held. */
+    void *robust_list_head;            // Userspace robust_list_head * (set_robust_list)
+
     /* Thread cleanup (for NPTL/pthread support) */
     int *clear_child_tid;              // Address to clear and wake on thread exit (set_tid_address)
 

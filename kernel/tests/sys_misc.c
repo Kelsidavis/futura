@@ -71125,6 +71125,219 @@ t2550:
     }
 }
 
+/* ============================================================
+ * Tests 2560-2565: mremap shrink, grow, MREMAP_MAYMOVE in-place
+ *
+ *   2560: mremap shrink 16KB->4KB preserves head data, frees tail
+ *   2561: mremap grow 4KB->12KB with MREMAP_MAYMOVE preserves data
+ *   2562: mremap grow MREMAP_MAYMOVE returns valid writable region
+ *   2563: mremap same-size is a no-op (returns same address)
+ *   2564: mremap shrink does not require MREMAP_MAYMOVE
+ *   2565: mremap grow without MREMAP_MAYMOVE succeeds if range free
+ * ============================================================ */
+static void test_mremap_enhanced(void) {
+    extern long sys_mmap(void *addr, size_t length, int prot, int flags, int fd, long offset);
+    extern long sys_mremap(void *old_address, size_t old_size, size_t new_size,
+                           int flags, void *new_address);
+    extern long sys_munmap(void *addr, size_t length);
+
+    /* Test 2560: mremap shrink 16KB->4KB preserves head data, frees tail */
+    fut_printf("[MISC-TEST] Test 2560: mremap shrink 16KB->4KB preserves head\n");
+    {
+        long base = sys_mmap(NULL, 16384, 3 /* PROT_READ|PROT_WRITE */,
+                             0x22 /* MAP_PRIVATE|MAP_ANONYMOUS */, -1, 0);
+        if (base < 0) {
+            fut_printf("[MISC-TEST] FAIL 2560: mmap failed %ld\n", base);
+            fut_test_fail(2560);
+        } else {
+            /* Write sentinel at start and at page 2 (offset 8192) */
+            volatile unsigned char *p = (volatile unsigned char *)(uintptr_t)base;
+            p[0] = 0xAA;
+            p[1] = 0xBB;
+            p[4095] = 0xCC;
+
+            /* Shrink from 16KB to 4KB — should free pages 1-3 */
+            long shrunk = sys_mremap((void *)(uintptr_t)base, 16384, 4096, 0, NULL);
+            if (shrunk != base) {
+                fut_printf("[MISC-TEST] FAIL 2560: shrink returned 0x%lx, expected 0x%lx\n",
+                           shrunk, base);
+                sys_munmap((void *)(uintptr_t)base, 16384);
+                fut_test_fail(2560);
+            } else {
+                /* Verify head data preserved */
+                volatile unsigned char *q = (volatile unsigned char *)(uintptr_t)shrunk;
+                if (q[0] == 0xAA && q[1] == 0xBB && q[4095] == 0xCC) {
+                    fut_printf("[MISC-TEST] ok Test 2560: mremap 16KB->4KB head data intact\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] FAIL 2560: head data corrupted: 0x%02x 0x%02x 0x%02x\n",
+                               q[0], q[1], q[4095]);
+                    fut_test_fail(2560);
+                }
+                sys_munmap((void *)(uintptr_t)shrunk, 4096);
+            }
+        }
+    }
+
+    /* Test 2561: mremap grow 4KB->12KB with MREMAP_MAYMOVE preserves data */
+    fut_printf("[MISC-TEST] Test 2561: mremap grow 4KB->12KB MREMAP_MAYMOVE data preserved\n");
+    {
+        long base = sys_mmap(NULL, 4096, 3, 0x22, -1, 0);
+        if (base < 0) {
+            fut_printf("[MISC-TEST] FAIL 2561: mmap failed %ld\n", base);
+            fut_test_fail(2561);
+        } else {
+            /* Fill first page with pattern */
+            volatile unsigned char *p = (volatile unsigned char *)(uintptr_t)base;
+            for (int i = 0; i < 4096; i++) {
+                p[i] = (unsigned char)(i & 0xFF);
+            }
+
+            /* Grow 4KB -> 12KB with MREMAP_MAYMOVE */
+            long grown = sys_mremap((void *)(uintptr_t)base, 4096, 12288,
+                                    1 /* MREMAP_MAYMOVE */, NULL);
+            if (grown < 0) {
+                fut_printf("[MISC-TEST] FAIL 2561: mremap grow returned %ld\n", grown);
+                sys_munmap((void *)(uintptr_t)base, 4096);
+                fut_test_fail(2561);
+            } else {
+                /* Verify original data preserved at new (or same) address */
+                volatile unsigned char *q = (volatile unsigned char *)(uintptr_t)grown;
+                int ok = 1;
+                for (int i = 0; i < 4096; i++) {
+                    if (q[i] != (unsigned char)(i & 0xFF)) {
+                        fut_printf("[MISC-TEST] FAIL 2561: byte %d: got 0x%02x expected 0x%02x\n",
+                                   i, q[i], (unsigned char)(i & 0xFF));
+                        ok = 0;
+                        break;
+                    }
+                }
+                if (ok) {
+                    fut_printf("[MISC-TEST] ok Test 2561: mremap 4KB->12KB data preserved at 0x%lx\n", grown);
+                    fut_test_pass();
+                } else {
+                    fut_test_fail(2561);
+                }
+                sys_munmap((void *)(uintptr_t)grown, 12288);
+            }
+        }
+    }
+
+    /* Test 2562: mremap grow MREMAP_MAYMOVE new pages are writable */
+    fut_printf("[MISC-TEST] Test 2562: mremap grow MREMAP_MAYMOVE new pages writable\n");
+    {
+        long base = sys_mmap(NULL, 4096, 3, 0x22, -1, 0);
+        if (base < 0) {
+            fut_printf("[MISC-TEST] FAIL 2562: mmap failed %ld\n", base);
+            fut_test_fail(2562);
+        } else {
+            long grown = sys_mremap((void *)(uintptr_t)base, 4096, 8192,
+                                    1 /* MREMAP_MAYMOVE */, NULL);
+            if (grown < 0) {
+                fut_printf("[MISC-TEST] FAIL 2562: mremap grow returned %ld\n", grown);
+                sys_munmap((void *)(uintptr_t)base, 4096);
+                fut_test_fail(2562);
+            } else {
+                /* Write into extended region (page 2) — must not fault */
+                volatile unsigned char *q = (volatile unsigned char *)(uintptr_t)grown;
+                q[4096] = 0xDE;
+                q[8191] = 0xAD;
+                if (q[4096] == 0xDE && q[8191] == 0xAD) {
+                    fut_printf("[MISC-TEST] ok Test 2562: extended region writable\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] FAIL 2562: write-read mismatch in extended region\n");
+                    fut_test_fail(2562);
+                }
+                sys_munmap((void *)(uintptr_t)grown, 8192);
+            }
+        }
+    }
+
+    /* Test 2563: mremap same-size is a no-op */
+    fut_printf("[MISC-TEST] Test 2563: mremap same-size no-op\n");
+    {
+        long base = sys_mmap(NULL, 4096, 3, 0x22, -1, 0);
+        if (base < 0) {
+            fut_printf("[MISC-TEST] FAIL 2563: mmap failed %ld\n", base);
+            fut_test_fail(2563);
+        } else {
+            long same = sys_mremap((void *)(uintptr_t)base, 4096, 4096, 0, NULL);
+            if (same == base) {
+                fut_printf("[MISC-TEST] ok Test 2563: same-size mremap returned same addr\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2563: same-size returned 0x%lx expected 0x%lx\n",
+                           same, base);
+                fut_test_fail(2563);
+            }
+            sys_munmap((void *)(uintptr_t)base, 4096);
+        }
+    }
+
+    /* Test 2564: mremap shrink does NOT require MREMAP_MAYMOVE */
+    fut_printf("[MISC-TEST] Test 2564: mremap shrink without MREMAP_MAYMOVE\n");
+    {
+        long base = sys_mmap(NULL, 8192, 3, 0x22, -1, 0);
+        if (base < 0) {
+            fut_printf("[MISC-TEST] FAIL 2564: mmap failed %ld\n", base);
+            fut_test_fail(2564);
+        } else {
+            /* Shrink with flags=0 (no MREMAP_MAYMOVE) — must succeed */
+            long shrunk = sys_mremap((void *)(uintptr_t)base, 8192, 4096, 0, NULL);
+            if (shrunk == base) {
+                fut_printf("[MISC-TEST] ok Test 2564: shrink flags=0 succeeded at same addr\n");
+                fut_test_pass();
+            } else if (shrunk < 0) {
+                fut_printf("[MISC-TEST] FAIL 2564: shrink flags=0 returned error %ld\n", shrunk);
+                fut_test_fail(2564);
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2564: shrink flags=0 returned different addr 0x%lx\n", shrunk);
+                fut_test_fail(2564);
+            }
+            sys_munmap((void *)(uintptr_t)(shrunk > 0 ? shrunk : base),
+                       shrunk > 0 ? 4096 : 8192);
+        }
+    }
+
+    /* Test 2565: mremap grow without MREMAP_MAYMOVE succeeds when range free */
+    fut_printf("[MISC-TEST] Test 2565: mremap grow flags=0 in-place when range free\n");
+    {
+        /* Map 4KB, try to grow to 8KB without MREMAP_MAYMOVE.
+         * If the extension range is free, kernel expands in-place.
+         * If occupied, returns ENOMEM — both are valid outcomes. */
+        long base = sys_mmap(NULL, 4096, 3, 0x22, -1, 0);
+        if (base < 0) {
+            fut_printf("[MISC-TEST] FAIL 2565: mmap failed %ld\n", base);
+            fut_test_fail(2565);
+        } else {
+            long grown = sys_mremap((void *)(uintptr_t)base, 4096, 8192, 0, NULL);
+            if (grown == base) {
+                /* In-place expansion succeeded */
+                volatile unsigned char *q = (volatile unsigned char *)(uintptr_t)grown;
+                q[4096] = 0x42;
+                if (q[4096] == 0x42) {
+                    fut_printf("[MISC-TEST] ok Test 2565: in-place grow 4KB->8KB, ext writable\n");
+                    fut_test_pass();
+                } else {
+                    fut_printf("[MISC-TEST] FAIL 2565: ext region not writable\n");
+                    fut_test_fail(2565);
+                }
+                sys_munmap((void *)(uintptr_t)grown, 8192);
+            } else if (grown == -12 /* -ENOMEM */) {
+                /* Extension range occupied — acceptable */
+                fut_printf("[MISC-TEST] ok Test 2565: flags=0 grow ENOMEM (range occupied, OK)\n");
+                fut_test_pass();
+                sys_munmap((void *)(uintptr_t)base, 4096);
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2565: unexpected result %ld\n", grown);
+                fut_test_fail(2565);
+                sys_munmap((void *)(uintptr_t)base, 4096);
+            }
+        }
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -75461,6 +75674,7 @@ void fut_misc_test_thread(void *arg) {
     test_futex_bitset_selective_wakeup(); /* Tests 2525-2526: FUTEX_WAIT_BITSET / FUTEX_WAKE_BITSET selective wakeup */
     test_epoll_wait_timeout_zero_immediate(); /* Tests 2535-2537: epoll_wait timeout=0 immediate return, oneshot suppression */
     test_sendmsg_recvmsg_flags(); /* Tests 2545-2550: sendmsg/recvmsg MSG_DONTWAIT, MSG_PEEK, MSG_NOSIGNAL, scatter-gather */
+    test_mremap_enhanced(); /* Tests 2560-2565: mremap shrink/grow/MREMAP_MAYMOVE in-place optimization */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

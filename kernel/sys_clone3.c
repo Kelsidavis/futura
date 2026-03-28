@@ -236,31 +236,42 @@ long sys_clone3(const struct fut_clone_args *uargs, size_t size) {
             if (child) {
                 if (ns_flags & CLONE_NEWPID) {
                     extern struct pid_namespace *pidns_create(struct pid_namespace *);
-                    struct pid_namespace *ns = pidns_create(child->pid_ns);
+                    extern void pidns_unref(struct pid_namespace *);
+                    struct pid_namespace *old = child->pid_ns;
+                    struct pid_namespace *ns = pidns_create(old);
                     if (ns) {
                         child->pid_ns = ns;
                         child->pid_ns_level = ns->level;
+                        pidns_unref(old);
                     }
                 }
                 if (ns_flags & CLONE_NEWNS) {
                     extern struct mount_namespace *mntns_create(struct mount_namespace *);
-                    struct mount_namespace *ns = mntns_create(child->mnt_ns);
-                    if (ns) child->mnt_ns = ns;
+                    extern void mntns_unref(struct mount_namespace *);
+                    struct mount_namespace *old = child->mnt_ns;
+                    struct mount_namespace *ns = mntns_create(old);
+                    if (ns) { child->mnt_ns = ns; mntns_unref(old); }
                 }
                 if (ns_flags & CLONE_NEWUTS) {
                     extern struct uts_namespace *utsns_create(struct uts_namespace *);
-                    struct uts_namespace *ns = utsns_create(child->uts_ns);
-                    if (ns) child->uts_ns = ns;
+                    extern void utsns_unref(struct uts_namespace *);
+                    struct uts_namespace *old = child->uts_ns;
+                    struct uts_namespace *ns = utsns_create(old);
+                    if (ns) { child->uts_ns = ns; utsns_unref(old); }
                 }
                 if (ns_flags & CLONE_NEWNET) {
                     extern struct net_namespace *netns_create(struct net_namespace *);
-                    struct net_namespace *ns = netns_create(child->net_ns);
-                    if (ns) child->net_ns = ns;
+                    extern void netns_unref(struct net_namespace *);
+                    struct net_namespace *old = child->net_ns;
+                    struct net_namespace *ns = netns_create(old);
+                    if (ns) { child->net_ns = ns; netns_unref(old); }
                 }
                 if (ns_flags & CLONE_NEWUSER) {
                     extern struct user_namespace *userns_create(struct user_namespace *);
-                    struct user_namespace *ns = userns_create(child->user_ns);
-                    if (ns) child->user_ns = ns;
+                    extern void userns_unref(struct user_namespace *);
+                    struct user_namespace *old = child->user_ns;
+                    struct user_namespace *ns = userns_create(old);
+                    if (ns) { child->user_ns = ns; userns_unref(old); }
                 }
                 if (ns_flags & CLONE_NEWTIME) {
                     /* Time namespace: increment nesting level for the child.

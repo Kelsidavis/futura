@@ -49,5 +49,9 @@ void netns_ref(struct net_namespace *ns) {
 
 void netns_unref(struct net_namespace *ns) {
     if (!ns || ns == &g_init_netns) return;
-    if (--ns->refcount <= 0) fut_free(ns);
+    if (--ns->refcount <= 0) {
+        if (ns->ifaces) fut_free(ns->ifaces);
+        if (ns->routes) fut_free(ns->routes);
+        fut_free(ns);
+    }
 }

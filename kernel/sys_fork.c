@@ -950,9 +950,19 @@ long sys_fork(void) {
         return -ENOMEM;
     }
 
-    /* Inherit parent's namespaces */
+    /* Inherit parent's namespaces (take a reference so the child's exit
+     * path can safely call *_unref without freeing a namespace the parent
+     * still uses). */
+    extern void pidns_ref(struct pid_namespace *);
+    extern void mntns_ref(struct mount_namespace *);
+    extern void utsns_ref(struct uts_namespace *);
+    extern void netns_ref(struct net_namespace *);
+    extern void userns_ref(struct user_namespace *);
+
     child_task->pid_ns = parent_task->pid_ns;
+    if (child_task->pid_ns) pidns_ref(child_task->pid_ns);
     child_task->mnt_ns = parent_task->mnt_ns;
+    if (child_task->mnt_ns) mntns_ref(child_task->mnt_ns);
 
     /* PID namespace: if the parent is in a child namespace (level > 0),
      * allocate a namespace-local PID.  The first fork into a new namespace
@@ -966,8 +976,11 @@ long sys_fork(void) {
         child_task->ns_pid = child_task->pid;
     }
     child_task->uts_ns = parent_task->uts_ns;
+    if (child_task->uts_ns) utsns_ref(child_task->uts_ns);
     child_task->net_ns = parent_task->net_ns;
+    if (child_task->net_ns) netns_ref(child_task->net_ns);
     child_task->user_ns = parent_task->user_ns;
+    if (child_task->user_ns) userns_ref(child_task->user_ns);
 
     /* Inherit parent's credentials (POSIX: child inherits all UID/GID values) */
     child_task->uid  = parent_task->uid;

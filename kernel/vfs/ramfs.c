@@ -731,6 +731,7 @@ static int ramfs_create(struct fut_vnode *dir, const char *name, uint32_t mode, 
     if (!vnode) {
         return -ENOMEM;
     }
+    __builtin_memset(vnode, 0, sizeof(*vnode));
 
     struct ramfs_node *node = fut_malloc(sizeof(struct ramfs_node));
     if (!node) {
@@ -871,6 +872,7 @@ static int ramfs_mkdir(struct fut_vnode *dir, const char *name, uint32_t mode) {
     if (!vnode) {
         return -ENOMEM;
     }
+    __builtin_memset(vnode, 0, sizeof(*vnode));
 
     struct ramfs_node *node = fut_malloc(sizeof(struct ramfs_node));
     if (!node) {
@@ -1705,6 +1707,7 @@ static int ramfs_symlink(struct fut_vnode *parent, const char *linkpath, const c
     if (!link_vnode) {
         return -ENOMEM;
     }
+    __builtin_memset(link_vnode, 0, sizeof(*link_vnode));
 
     struct ramfs_node *link_node = fut_malloc(sizeof(struct ramfs_node));
     if (!link_node) {

@@ -65653,7 +65653,7 @@ __attribute__((noinline)) static void test_inotify_tmp_watch(void) {
     /* inotify event layout: wd(4)+mask(4)+cookie(4)+len(4)+name[len] */
     struct ino_ev { int wd; uint32_t mask; uint32_t cookie; uint32_t len; char name[256]; };
 
-    #define INO_NB       0x00004000  /* IN_NONBLOCK */
+    #define INO_NB       00004000    /* IN_NONBLOCK (octal, = O_NONBLOCK) */
     #define INO_CREATE   0x00000100  /* IN_CREATE */
     #define INO_MODIFY   0x00000002  /* IN_MODIFY */
     #define INO_CL_WR    0x00000008  /* IN_CLOSE_WRITE */
@@ -78223,8 +78223,8 @@ void fut_misc_test_thread(void *arg) {
             } else { fut_printf("[MISC-TEST] ✗ Test 2163: open=%ld\n", fd); fut_test_fail(2163); }
         }
 
-        /* Test 2164: /proc/version contains "0.6.0" */
-        fut_printf("[MISC-TEST] Test 2164: /proc/version has 0.6.0\n");
+        /* Test 2164: /proc/version contains "0.7.4" */
+        fut_printf("[MISC-TEST] Test 2164: /proc/version has 0.7.4\n");
         {
             static char buf[256];
             long fd = sys_open("/proc/version", 0, 0);
@@ -78234,11 +78234,11 @@ void fut_misc_test_thread(void *arg) {
                 buf[n > 0 ? n : 0] = '\0';
                 int found = 0;
                 for (long i = 0; i < n - 4; i++) {
-                    if (buf[i] == '0' && buf[i+1] == '.' && buf[i+2] == '6' &&
-                        buf[i+3] == '.' && buf[i+4] == '0') { found = 1; break; }
+                    if (buf[i] == '0' && buf[i+1] == '.' && buf[i+2] == '7' &&
+                        buf[i+3] == '.' && buf[i+4] == '4') { found = 1; break; }
                 }
-                if (found) { fut_printf("[MISC-TEST] ✓ Test 2164: version 0.6.0\n"); fut_test_pass(); }
-                else { fut_printf("[MISC-TEST] ✗ Test 2164: no 0.6.0\n"); fut_test_fail(2164); }
+                if (found) { fut_printf("[MISC-TEST] ✓ Test 2164: version 0.7.4\n"); fut_test_pass(); }
+                else { fut_printf("[MISC-TEST] ✗ Test 2164: no 0.7.4\n"); fut_test_fail(2164); }
             } else { fut_printf("[MISC-TEST] ✗ Test 2164: open=%ld\n", fd); fut_test_fail(2164); }
         }
 

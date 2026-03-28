@@ -697,6 +697,7 @@ static struct fut_vnode *procfs_alloc_vnode(struct fut_mount *mount,
                                              uint64_t pid, int fd) {
     struct fut_vnode *v = fut_malloc(sizeof(struct fut_vnode));
     if (!v) return NULL;
+    __builtin_memset(v, 0, sizeof(*v));
 
     procfs_node_t *n = fut_malloc(sizeof(procfs_node_t));
     if (!n) { fut_free(v); return NULL; }

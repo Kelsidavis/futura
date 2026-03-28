@@ -258,6 +258,7 @@ static struct fut_vnode *sysfs_alloc_vnode(struct fut_mount *mount,
                                             enum sysfs_kind kind) {
     struct fut_vnode *v = fut_malloc(sizeof(struct fut_vnode));
     if (!v) return NULL;
+    __builtin_memset(v, 0, sizeof(*v));
     sysfs_node_t *n = fut_malloc(sizeof(sysfs_node_t));
     if (!n) { fut_free(v); return NULL; }
 

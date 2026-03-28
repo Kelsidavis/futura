@@ -610,7 +610,7 @@ static void complete_command(char *buf, size_t *pos, size_t max_len) {
     const char *builtins[] = {
         "arp", "bg", "brctl", "cal", "cd", "chgrp", "chmod", "chroot", "clear", "cmp", "comm", "conntrack", "date", "dd", "df", "dhclient", "dmesg", "echo", "edit", "ethtool", "expand", "expr", "factor", "file", "fold", "hexdump", "install", "locale", "lsof", "md5sum", "mkfifo", "nc", "nice", "nohup", "patch", "pgrep", "pidof", "pkill", "poweroff", "reboot", "renice", "reset", "seq", "sha1sum", "sleep", "strings", "tac", "time", "timeout", "tput", "traceroute", "tty", "unexpand", "wget", "xxd", "exit", "export", "fg", "free",
         "help", "hostname", "httpd", "id", "ifconfig", "iostat", "ipcs", "iptables", "jobs", "kill", "logger", "losetup", "ls", "lsblk", "lspci", "mkfs", "mount", "netstat",
-        ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "getconf", "history", "ip", "ln", "mktemp", "more", "nproc", "nslookup", "passwd", "ping", "printf", "ps", "pwd", "read", "readlink", "realpath", "set", "sha1sum", "sha256sum", "shutdown", "source", "ss", "stat", "stty", "su", "sync", "sysctl", "sysinfo", "tc", "test", "top", "trap", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "vi", "vmstat", "wait", "watch", "wdctl", "which", "whoami", "xargs", "yes", NULL
+        ".", "alias", "arch", "basename", "dirname", "du", "exec", "false", "getconf", "history", "ip", "ln", "mktemp", "more", "nproc", "nslookup", "passwd", "ping", "printf", "ps", "pwd", "read", "readlink", "realpath", "set", "sha1sum", "sha256sum", "shutdown", "source", "ss", "stat", "strace", "stty", "su", "sync", "sysctl", "sysinfo", "tc", "test", "top", "trap", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "version", "vi", "vmstat", "wait", "watch", "wdctl", "which", "whoami", "xargs", "yes", NULL
     };
 
     /* External commands we might have */
@@ -1281,7 +1281,8 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  locale          - Display locale settings\n");
     write_str(1, "  reset           - Reset terminal\n");
     write_str(1, "  tput cap        - Query terminal capabilities\n");
-    write_str(1, "  lsof            - List open files\n");
+    write_str(1, "  lsof [-p pid]   - List open files\n");
+    write_str(1, "  strace <cmd>    - Trace syscalls of a command\n");
     write_str(1, "  which <cmd>     - Find command in PATH\n");
     write_str(1, "  du [path]       - Show disk usage (KB)\n");
     write_str(1, "  tree [path]     - Show directory tree\n");
@@ -2203,14 +2204,31 @@ static void cmd_curl(int argc, char *argv[]) {
 /* Built-in: wget - Fetch HTTP content */
 static void cmd_wget(int argc, char *argv[]) {
     if (argc < 2) {
-        write_str(1, "usage: wget <url>\n");
+        write_str(1, "usage: wget [-O outfile] <url>\n");
         write_str(1, "  Fetch HTTP content. URL format: http://host/path\n");
+        write_str(1, "  -O file  Save response body to file (use -O - for stdout)\n");
         write_str(1, "  Example: wget http://10.0.2.2/index.html\n");
+        write_str(1, "  Example: wget -O page.html http://10.0.2.2/index.html\n");
+        return;
+    }
+
+    /* Parse options */
+    const char *outfile = NULL;
+    int url_arg = 1;
+    for (int i = 1; i < argc - 1; i++) {
+        if (strcmp_simple(argv[i], "-O") == 0 && i + 1 < argc) {
+            outfile = argv[i + 1];
+            url_arg = i + 2;
+            break;
+        }
+    }
+    if (url_arg >= argc) {
+        write_str(2, "wget: missing URL\n");
         return;
     }
 
     /* Parse URL: http://host[:port]/path */
-    const char *url = argv[1];
+    const char *url = argv[url_arg];
     char host[64] = "";
     char path[128] = "/";
     int port = 80;
@@ -2239,6 +2257,22 @@ static void cmd_wget(int argc, char *argv[]) {
         path[pi] = '\0';
     }
 
+    /* Derive output filename from URL path if no -O given */
+    char auto_name[128];
+    if (!outfile) {
+        /* Extract filename from path: last component after '/' */
+        int last_slash = -1;
+        for (int i = 0; path[i]; i++)
+            if (path[i] == '/') last_slash = i;
+        if (last_slash >= 0 && path[last_slash + 1]) {
+            int k = 0;
+            for (int i = last_slash + 1; path[i] && k < 127; i++)
+                auto_name[k++] = path[i];
+            auto_name[k] = '\0';
+            outfile = auto_name;
+        }
+    }
+
     /* Resolve hostname or parse IP */
     uint32_t ip = resolve_host(host);
     if (ip == 0) { write_str(2, "wget: cannot resolve "); write_str(2, host); write_str(2, "\n"); return; }
@@ -2260,6 +2294,11 @@ static void cmd_wget(int argc, char *argv[]) {
         sys_close(fd); return;
     }
 
+    write_str(2, "Connecting to ");
+    write_str(2, host);
+    write_str(2, "... connected.\n");
+    write_str(2, "HTTP request sent, awaiting response... ");
+
     /* Send HTTP GET request */
     char req[256];
     int ri = 0;
@@ -2269,29 +2308,84 @@ static void cmd_wget(int argc, char *argv[]) {
     const char *http = " HTTP/1.0\r\nHost: ";
     while (*http) req[ri++] = *http++;
     for (int i = 0; host[i]; i++) req[ri++] = host[i];
-    const char *end = "\r\nConnection: close\r\n\r\n";
-    while (*end) req[ri++] = *end++;
+    const char *hend = "\r\nConnection: close\r\n\r\n";
+    while (*hend) req[ri++] = *hend++;
     req[ri] = '\0';
 
     sys_call6(44, fd, (long)req, ri, 0, 0, 0);
 
-    /* Receive and print response */
+    /* Receive response — skip HTTP headers, write body */
     char buf[512];
     ssize_t total = 0;
+    int headers_done = 0;
+    int out_fd = 1; /* default: stdout */
+    int to_stdout = (outfile && outfile[0] == '-' && outfile[1] == '\0');
+
+    if (outfile && !to_stdout) {
+        out_fd = sys_open(outfile, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (out_fd < 0) {
+            write_str(2, "\nwget: cannot create ");
+            write_str(2, outfile);
+            write_str(2, "\n");
+            sys_close(fd);
+            return;
+        }
+    }
+
     while (1) {
-        ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
+        ssize_t n = sys_read(fd, buf, sizeof(buf));
         if (n <= 0) break;
-        buf[n] = '\0';
-        write_str(1, buf);
-        total += n;
+
+        int start = 0;
+        if (!headers_done) {
+            /* Scan for \r\n\r\n end of headers */
+            for (int i = 0; i + 3 < n; i++) {
+                if (buf[i] == '\r' && buf[i+1] == '\n' && buf[i+2] == '\r' && buf[i+3] == '\n') {
+                    /* Print status line to stderr */
+                    char status[4] = {0};
+                    /* Find "HTTP/x.x NNN" — status starts at offset 9 */
+                    int sp = 0;
+                    for (int j = 0; j < i && sp < 2; j++) {
+                        if (buf[j] == ' ') sp++;
+                        if (sp == 1 && buf[j] != ' ' && (int)(sizeof(status) - 1) > (j - 9)) {
+                        }
+                    }
+                    /* Just print first line of response */
+                    for (int j = 0; j < i && buf[j] != '\r'; j++)
+                        write_char(2, buf[j]);
+                    write_str(2, "\n");
+
+                    headers_done = 1;
+                    start = i + 4;
+                    break;
+                }
+            }
+            if (!headers_done) continue;
+        }
+
+        int body_len = (int)n - start;
+        if (body_len > 0) {
+            sys_call3(__NR_write, out_fd, (long)(buf + start), body_len);
+            total += body_len;
+        }
     }
     sys_close(fd);
 
-    write_str(2, "\n--- ");
+    if (outfile && !to_stdout && out_fd > 2) {
+        sys_close(out_fd);
+        write_str(2, "Saved to '");
+        write_str(2, outfile);
+        write_str(2, "' [");
+    } else {
+        write_str(2, "\n--- ");
+    }
     char nbuf[16];
     int_to_str(total, nbuf, 16);
     write_str(2, nbuf);
-    write_str(2, " bytes received ---\n");
+    if (outfile && !to_stdout)
+        write_str(2, " bytes]\n");
+    else
+        write_str(2, " bytes received ---\n");
 }
 
 /* Built-in: seq - Print sequence of numbers */
@@ -2392,16 +2486,24 @@ static int execute_command(int argc, char *argv[]); /* forward decl */
 
 /* Built-in: lsof - List open file descriptors */
 static void cmd_lsof(int argc, char *argv[]) {
-    (void)argc; (void)argv;
-    write_str(1, "FD   TYPE  NAME\n");
-
-    /* Read /proc/self/fd directory */
+    /* Parse -p <pid> option to list fds for a specific process */
     long pid = sys_call0(39 /* getpid */);
+    for (int i = 1; i + 1 < argc; i++) {
+        if (strcmp_simple(argv[i], "-p") == 0) {
+            pid = 0;
+            for (int j = 0; argv[i+1][j]; j++)
+                pid = pid * 10 + (argv[i+1][j] - '0');
+            break;
+        }
+    }
+
+    write_str(1, "PID    FD   TYPE  NAME\n");
+
+    /* Build /proc/<pid>/fd path */
     char path[64];
     int pi = 0;
     const char *prefix = "/proc/";
     while (prefix[pi]) { path[pi] = prefix[pi]; pi++; }
-    /* Write pid */
     char pbuf[16];
     int_to_str(pid, pbuf, 16);
     for (int i = 0; pbuf[i]; i++) path[pi++] = pbuf[i];
@@ -2411,7 +2513,7 @@ static void cmd_lsof(int argc, char *argv[]) {
 
     int fd = sys_open(path, O_RDONLY, 0);
     if (fd < 0) {
-        write_str(1, "lsof: cannot open /proc/self/fd\n");
+        write_str(2, "lsof: cannot open "); write_str(2, path); write_str(2, "\n");
         return;
     }
 
@@ -2424,8 +2526,14 @@ static void cmd_lsof(int argc, char *argv[]) {
             char *name = dirent_buf + pos + 19;
 
             if (name[0] >= '0' && name[0] <= '9') {
+                /* PID column */
+                write_str(1, pbuf);
+                int pad = 7 - (int)strlen_simple(pbuf);
+                while (pad-- > 0) write_char(1, ' ');
+
+                /* FD column */
                 write_str(1, name);
-                int pad = 5 - (int)strlen_simple(name);
+                pad = 5 - (int)strlen_simple(name);
                 while (pad-- > 0) write_char(1, ' ');
 
                 /* Try to readlink to get actual path */
@@ -2440,9 +2548,19 @@ static void cmd_lsof(int argc, char *argv[]) {
                 long rl = sys_call3(89 /* readlink */, (long)fdpath, (long)target, 127);
                 if (rl > 0) {
                     target[rl] = '\0';
+                    /* Determine type from target path */
+                    if (target[0] == 's' && target[1] == 'o' && target[2] == 'c' &&
+                        target[3] == 'k' && target[4] == 'e' && target[5] == 't') {
+                        write_str(1, "sock  ");
+                    } else if (target[0] == 'p' && target[1] == 'i' && target[2] == 'p' &&
+                               target[3] == 'e') {
+                        write_str(1, "pipe  ");
+                    } else {
+                        write_str(1, "reg   ");
+                    }
                     write_str(1, target);
                 } else {
-                    write_str(1, "(open)");
+                    write_str(1, "???   (open)");
                 }
                 write_char(1, '\n');
             }
@@ -2452,6 +2570,138 @@ static void cmd_lsof(int argc, char *argv[]) {
         }
     }
     sys_close(fd);
+}
+
+/* Built-in: strace - Trace syscalls of a command */
+static void cmd_strace(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: strace <command> [args...]\n");
+        write_str(2, "  Trace system calls made by a command.\n");
+        return;
+    }
+
+    /* Syscall name table (x86_64 ABI, most common calls) */
+    static const char *syscall_names[] = {
+        [0] = "read", [1] = "write", [2] = "open", [3] = "close",
+        [4] = "stat", [5] = "fstat", [6] = "lstat", [7] = "poll",
+        [8] = "lseek", [9] = "mmap", [10] = "mprotect", [11] = "munmap",
+        [12] = "brk", [13] = "rt_sigaction", [14] = "rt_sigprocmask",
+        [15] = "rt_sigreturn", [16] = "ioctl", [17] = "pread64",
+        [18] = "pwrite64", [19] = "readv", [20] = "writev",
+        [21] = "access", [22] = "pipe", [23] = "select",
+        [24] = "sched_yield", [25] = "mremap", [32] = "dup",
+        [33] = "dup2", [35] = "nanosleep", [39] = "getpid",
+        [41] = "socket", [42] = "connect", [43] = "accept",
+        [44] = "sendto", [45] = "recvfrom", [46] = "sendmsg",
+        [47] = "recvmsg", [48] = "shutdown", [49] = "bind",
+        [50] = "listen", [56] = "clone", [57] = "fork",
+        [58] = "vfork", [59] = "execve", [60] = "exit",
+        [61] = "wait4", [62] = "kill", [63] = "uname",
+        [72] = "fcntl", [78] = "getdents", [79] = "getcwd",
+        [80] = "chdir", [82] = "rename", [83] = "mkdir",
+        [84] = "rmdir", [85] = "creat", [86] = "link",
+        [87] = "unlink", [89] = "readlink", [90] = "chmod",
+        [91] = "fchmod", [92] = "chown", [96] = "gettimeofday",
+        [97] = "getrlimit", [101] = "ptrace", [102] = "getuid",
+        [104] = "getgid", [110] = "getppid",
+        [217] = "getdents64", [231] = "exit_group",
+        [257] = "openat", [262] = "newfstatat",
+    };
+    #define SYSCALL_NAME_MAX 263
+
+    pid_t child = sys_fork();
+    if (child == 0) {
+        /* Child: request to be traced, then exec the command */
+        sys_call4(101 /* ptrace */, 0 /* PTRACE_TRACEME */, 0, 0, 0);
+        /* Raise SIGSTOP so parent can catch us before exec */
+        sys_call2(62 /* kill */, sys_call0(39 /* getpid */), 19 /* SIGSTOP */);
+        /* Execute the command as a builtin */
+        execute_command(argc - 1, &argv[1]);
+        syscall1(60, 0);
+        while (1);
+    } else if (child < 0) {
+        write_str(2, "strace: fork failed\n");
+        return;
+    }
+
+    /* Parent: wait for child to stop, then trace syscalls */
+    int status = 0;
+    sys_waitpid(child, &status, 0);
+
+    /* Set PTRACE_O_TRACESYSGOOD so syscall-stops have bit 7 set */
+    sys_call4(101, 0x4200 /* PTRACE_SETOPTIONS */, child, 0, 0x01 /* PTRACE_O_TRACESYSGOOD */);
+
+    /* Resume child with PTRACE_SYSCALL */
+    sys_call4(101, 24 /* PTRACE_SYSCALL */, child, 0, 0);
+
+    int in_syscall = 0; /* toggle: 0 = entry, 1 = exit */
+    long last_nr = -1;
+    int call_count = 0;
+    char nbuf[24];
+
+    while (1) {
+        long wr = sys_waitpid(child, &status, 0);
+        if (wr < 0) break;
+
+        /* Check if child exited */
+        if ((status & 0x7F) == 0) {
+            /* Normal exit */
+            int exit_code = (status >> 8) & 0xFF;
+            write_str(2, "+++ exited with ");
+            int_to_str(exit_code, nbuf, 24); write_str(2, nbuf);
+            write_str(2, " +++\n");
+            break;
+        }
+
+        /* Check if child was signalled (not stopped) */
+        if ((status & 0xFF) != 0x7F) break;
+
+        int sig = (status >> 8) & 0xFF;
+
+        /* Syscall-stop: signal 0x80|SIGTRAP (with TRACESYSGOOD) = 0x85 */
+        if (sig == (0x80 | 5)) {
+            if (!in_syscall) {
+                /* Syscall entry — get syscall number from orig_rax via PTRACE_PEEKUSER */
+                /* On x86_64, orig_rax is at offset 120 (15*8) in user_regs_struct */
+                long nr = sys_call4(101, 3 /* PTRACE_PEEKUSR */, child, 120 /* ORIG_RAX */, 0);
+                last_nr = nr;
+                in_syscall = 1;
+            } else {
+                /* Syscall exit — get return value from rax (offset 80 = 10*8) */
+                long ret = sys_call4(101, 3 /* PTRACE_PEEKUSR */, child, 80 /* RAX */, 0);
+                /* Print: syscall_name(...) = ret */
+                if (last_nr >= 0 && last_nr < SYSCALL_NAME_MAX && syscall_names[last_nr]) {
+                    write_str(2, syscall_names[last_nr]);
+                } else {
+                    write_str(2, "syscall_");
+                    int_to_str((int)last_nr, nbuf, 24);
+                    write_str(2, nbuf);
+                }
+                write_str(2, "() = ");
+                if (ret < 0) {
+                    write_str(2, "-");
+                    int_to_str((int)(-ret), nbuf, 24);
+                } else {
+                    int_to_str((int)ret, nbuf, 24);
+                }
+                write_str(2, nbuf);
+                write_char(2, '\n');
+                in_syscall = 0;
+                call_count++;
+            }
+        } else {
+            /* Received a real signal, deliver it */
+            sys_call4(101, 24, child, 0, sig);
+            continue;
+        }
+
+        /* Continue tracing */
+        sys_call4(101, 24 /* PTRACE_SYSCALL */, child, 0, 0);
+    }
+
+    write_str(2, "strace: traced ");
+    int_to_str(call_count, nbuf, 24); write_str(2, nbuf);
+    write_str(2, " syscalls\n");
 }
 
 /* Built-in: time - Time a command */
@@ -5912,17 +6162,22 @@ static void cmd_paste(int argc, char *argv[]) {
 /* Built-in: diff - Compare files line by line */
 static void cmd_diff(int argc, char *argv[]) {
     int quiet = 0;
+    int unified = 1; /* default to unified diff format */
     int arg_start = 1;
 
-    /* Parse -q option for quiet mode */
-    if (argc > 1 && strcmp_simple(argv[1], "-q") == 0) {
-        quiet = 1;
-        arg_start = 2;
+    /* Parse options */
+    while (arg_start < argc && argv[arg_start][0] == '-') {
+        if (strcmp_simple(argv[arg_start], "-q") == 0) {
+            quiet = 1;
+        } else if (strcmp_simple(argv[arg_start], "-u") == 0) {
+            unified = 1;
+        }
+        arg_start++;
     }
 
     if (argc - arg_start < 2) {
         write_str(2, "diff: missing operand\n");
-        write_str(2, "Usage: diff [-q] <file1> <file2>\n");
+        write_str(2, "Usage: diff [-u] [-q] <file1> <file2>\n");
         return;
     }
 
@@ -5947,130 +6202,159 @@ static void cmd_diff(int argc, char *argv[]) {
         return;
     }
 
-    /* Read and compare files line by line */
-    #define DIFF_LINE_MAX 1024
-    static char line1[DIFF_LINE_MAX];
-    static char line2[DIFF_LINE_MAX];
-    int line_num = 0;
-    int differences = 0;
+    /* Read both files into line arrays */
+    #define DIFF_LINE_MAX 512
+    #define DIFF_MAX_LINES 512
+    static char lines_a[DIFF_MAX_LINES][DIFF_LINE_MAX];
+    static char lines_b[DIFF_MAX_LINES][DIFF_LINE_MAX];
+    int na = 0, nb = 0;
 
-    while (1) {
-        /* Read line from file 1 */
-        int pos1 = 0;
+    /* Helper: read all lines from fd into array */
+    for (int pass = 0; pass < 2; pass++) {
+        int fd = (pass == 0) ? fd1 : fd2;
+        int *count = (pass == 0) ? &na : &nb;
+        char (*lines)[DIFF_LINE_MAX] = (pass == 0) ? lines_a : lines_b;
+        int lp = 0;
         char c;
-        long nread;
-        int eof1 = 0;
-
-        while (pos1 < DIFF_LINE_MAX - 1) {
-            nread = sys_read(fd1, &c, 1);
-            if (nread <= 0) {
-                eof1 = 1;
+        long nr;
+        while (*count < DIFF_MAX_LINES) {
+            nr = sys_read(fd, &c, 1);
+            if (nr <= 0) {
+                if (lp > 0) { lines[*count][lp] = '\0'; (*count)++; }
                 break;
             }
             if (c == '\n') {
-                break;
+                lines[*count][lp] = '\0';
+                (*count)++;
+                lp = 0;
+            } else if (lp < DIFF_LINE_MAX - 1) {
+                lines[*count][lp++] = c;
             }
-            line1[pos1++] = c;
-        }
-        line1[pos1] = '\0';
-
-        /* Read line from file 2 */
-        int pos2 = 0;
-        int eof2 = 0;
-
-        while (pos2 < DIFF_LINE_MAX - 1) {
-            nread = sys_read(fd2, &c, 1);
-            if (nread <= 0) {
-                eof2 = 1;
-                break;
-            }
-            if (c == '\n') {
-                break;
-            }
-            line2[pos2++] = c;
-        }
-        line2[pos2] = '\0';
-
-        line_num++;
-
-        /* Check if both files ended */
-        if (eof1 && eof2 && pos1 == 0 && pos2 == 0) {
-            break;
-        }
-
-        /* Compare lines */
-        int lines_differ = 0;
-
-        if (eof1 && !eof2) {
-            lines_differ = 1;
-            if (!quiet) {
-                write_str(1, "> ");
-                write_str(1, line2);
-                write_char(1, '\n');
-            }
-        } else if (!eof1 && eof2) {
-            lines_differ = 1;
-            if (!quiet) {
-                write_str(1, "< ");
-                write_str(1, line1);
-                write_char(1, '\n');
-            }
-        } else if (pos1 != pos2) {
-            lines_differ = 1;
-            if (!quiet) {
-                write_str(1, "< ");
-                write_str(1, line1);
-                write_char(1, '\n');
-                write_str(1, "---\n");
-                write_str(1, "> ");
-                write_str(1, line2);
-                write_char(1, '\n');
-            }
-        } else {
-            /* Compare character by character */
-            for (int i = 0; i < pos1; i++) {
-                if (line1[i] != line2[i]) {
-                    lines_differ = 1;
-                    break;
-                }
-            }
-
-            if (lines_differ && !quiet) {
-                write_str(1, "< ");
-                write_str(1, line1);
-                write_char(1, '\n');
-                write_str(1, "---\n");
-                write_str(1, "> ");
-                write_str(1, line2);
-                write_char(1, '\n');
-            }
-        }
-
-        if (lines_differ) {
-            differences++;
-            if (quiet) {
-                /* In quiet mode, just report differences and exit */
-                write_str(1, "Files ");
-                write_str(1, file1);
-                write_str(1, " and ");
-                write_str(1, file2);
-                write_str(1, " differ\n");
-                break;
-            }
-        }
-
-        /* Stop if both files ended */
-        if (eof1 || eof2) {
-            break;
         }
     }
-
     sys_close(fd1);
     sys_close(fd2);
 
-    /* Exit with status indicating if files differ */
-    if (differences == 0 && !quiet) {
-        write_str(1, "Files are identical\n");
+    if (quiet) {
+        /* Quick check: do files differ? */
+        int differ = (na != nb);
+        if (!differ) {
+            for (int i = 0; i < na; i++) {
+                if (strcmp_simple(lines_a[i], lines_b[i]) != 0) { differ = 1; break; }
+            }
+        }
+        if (differ) {
+            write_str(1, "Files ");
+            write_str(1, file1);
+            write_str(1, " and ");
+            write_str(1, file2);
+            write_str(1, " differ\n");
+        }
+        return;
+    }
+
+    /* Unified diff output */
+    if (unified) {
+        /* Print unified diff header */
+        write_str(1, "--- a/"); write_str(1, file1); write_char(1, '\n');
+        write_str(1, "+++ b/"); write_str(1, file2); write_char(1, '\n');
+    }
+
+    /* Simple LCS-based diff: walk both files, output hunks */
+    int ia = 0, ib = 0;
+    int differences = 0;
+    char nbuf[16];
+
+    while (ia < na || ib < nb) {
+        /* Skip matching lines */
+        if (ia < na && ib < nb && strcmp_simple(lines_a[ia], lines_b[ib]) == 0) {
+            ia++; ib++;
+            continue;
+        }
+
+        /* Found a difference — collect the hunk */
+        int hunk_start_a = ia, hunk_start_b = ib;
+
+        /* Look ahead for next matching line to bound the hunk */
+        int found = 0;
+        for (int ahead = 1; ahead <= 8 && !found; ahead++) {
+            /* Try: skip 'ahead' lines in a, see if a[ia+ahead] matches b[ib..] */
+            if (ia + ahead < na) {
+                for (int j = ib; j < nb && j < ib + ahead + 1; j++) {
+                    if (strcmp_simple(lines_a[ia + ahead], lines_b[j]) == 0) {
+                        /* Advance to the mismatch boundary */
+                        int new_ia = ia + ahead;
+                        int new_ib = j;
+                        ia = new_ia; ib = new_ib;
+                        found = 1;
+                        break;
+                    }
+                }
+            }
+            /* Try: skip 'ahead' lines in b */
+            if (!found && ib + ahead < nb) {
+                for (int j = ia; j < na && j < ia + ahead + 1; j++) {
+                    if (strcmp_simple(lines_b[ib + ahead], lines_a[j]) == 0) {
+                        int new_ia = j;
+                        int new_ib = ib + ahead;
+                        ia = new_ia; ib = new_ib;
+                        found = 1;
+                        break;
+                    }
+                }
+            }
+        }
+        if (!found) {
+            /* No resync — consume one line from each if available */
+            if (ia < na) ia++;
+            if (ib < nb) ib++;
+        }
+
+        /* Now hunk is: a[hunk_start_a..ia), b[hunk_start_b..ib) */
+        int del_count = ia - hunk_start_a;
+        int add_count = ib - hunk_start_b;
+        if (del_count == 0 && add_count == 0) continue;
+        differences++;
+
+        /* Print context lines before hunk (up to 3) */
+        int ctx_before = (hunk_start_a > 3) ? 3 : hunk_start_a;
+        int ctx_after_a = ((ia + 3) < na) ? 3 : (na - ia);
+        int ctx_after_b = ((ib + 3) < nb) ? 3 : (nb - ib);
+
+        /* Print @@ header */
+        write_str(1, "@@ -");
+        int_to_str(hunk_start_a - ctx_before + 1, nbuf, 16); write_str(1, nbuf);
+        write_char(1, ',');
+        int_to_str(del_count + ctx_before + ctx_after_a, nbuf, 16); write_str(1, nbuf);
+        write_str(1, " +");
+        int_to_str(hunk_start_b - ctx_before + 1, nbuf, 16); write_str(1, nbuf);
+        write_char(1, ',');
+        int_to_str(add_count + ctx_before + ctx_after_b, nbuf, 16); write_str(1, nbuf);
+        write_str(1, " @@\n");
+
+        /* Context before */
+        for (int i = hunk_start_a - ctx_before; i < hunk_start_a; i++) {
+            write_str(1, " "); write_str(1, lines_a[i]); write_char(1, '\n');
+        }
+        /* Removed lines from file1 */
+        for (int i = hunk_start_a; i < ia; i++) {
+            write_str(1, "-"); write_str(1, lines_a[i]); write_char(1, '\n');
+        }
+        /* Added lines from file2 */
+        for (int i = hunk_start_b; i < ib; i++) {
+            write_str(1, "+"); write_str(1, lines_b[i]); write_char(1, '\n');
+        }
+        /* Context after */
+        int ctx_after = (ctx_after_a < ctx_after_b) ? ctx_after_a : ctx_after_b;
+        for (int i = 0; i < ctx_after; i++) {
+            if (ia + i < na) {
+                write_str(1, " "); write_str(1, lines_a[ia + i]); write_char(1, '\n');
+            }
+        }
+    }
+
+    if (differences == 0) {
+        /* Files are identical — no output (like real diff) */
     }
 }
 
@@ -8659,22 +8943,37 @@ static int execute_command(int argc, char *argv[]) {
         pkt[pos++] = (uint8_t)qtype_hi; pkt[pos++] = (uint8_t)qtype_lo; /* QTYPE */
         pkt[pos++] = 0x00; pkt[pos++] = 0x01; /* QCLASS=IN */
 
-        /* Send to DNS server 10.0.2.3 (QEMU default) */
-        long fd = sys_call3(41, 2 /* AF_INET */, 2 /* SOCK_DGRAM */, 0);
-        if (fd < 0) { write_str(2, "nslookup: socket failed\n"); return 1; }
-
-        struct { uint16_t family; uint16_t port; uint32_t addr; uint8_t pad[8]; } sa;
-        sa.family = 2;
-        sa.port = (53 >> 8) | ((53 & 0xFF) << 8); /* htons(53) */
-        sa.addr = 0x0302000A; /* 10.0.2.3 in network byte order */
-        for (int i = 0; i < 8; i++) sa.pad[i] = 0;
-
-        sys_call6(44 /* sendto */, fd, (long)pkt, pos, 0, (long)&sa, 16);
-
-        /* Read response */
+        /* Try DNS servers: 127.0.0.53 (systemd-resolved), then 10.0.2.3 (QEMU) */
+        static const uint32_t dns_servers[] = {
+            0x3500007F,  /* 127.0.0.53 in network byte order */
+            0x0302000A,  /* 10.0.2.3  in network byte order */
+        };
+        static const char *dns_names[] = { "127.0.0.53", "10.0.2.3" };
+        int dns_count = 2;
+        long rn = -1;
         uint8_t resp[512];
-        long rn = sys_call6(45 /* recvfrom */, fd, (long)resp, 512, 0, 0, 0);
-        sys_close(fd);
+        int used_server = 0;
+
+        for (int si = 0; si < dns_count; si++) {
+            long fd = sys_call3(41, 2 /* AF_INET */, 2 /* SOCK_DGRAM */, 0);
+            if (fd < 0) continue;
+
+            struct { uint16_t family; uint16_t port; uint32_t addr; uint8_t pad[8]; } sa;
+            sa.family = 2;
+            sa.port = (53 >> 8) | ((53 & 0xFF) << 8); /* htons(53) */
+            sa.addr = dns_servers[si];
+            for (int i = 0; i < 8; i++) sa.pad[i] = 0;
+
+            /* Set 2s receive timeout */
+            struct { long tv_sec; long tv_usec; } tv = {2, 0};
+            sys_call6(54 /* setsockopt */, fd, 1 /* SOL_SOCKET */, 20 /* SO_RCVTIMEO */,
+                      (long)&tv, (long)sizeof(tv), 0);
+
+            sys_call6(44 /* sendto */, fd, (long)pkt, pos, 0, (long)&sa, 16);
+            rn = sys_call6(45 /* recvfrom */, fd, (long)resp, 512, 0, 0, 0);
+            sys_close(fd);
+            if (rn > 12) { used_server = si; break; }
+        }
 
         if (rn > 12) {
             int ancount = (resp[6] << 8) | resp[7];
@@ -8688,8 +8987,13 @@ static int execute_command(int argc, char *argv[]) {
                 }
                 if (resp[rp] == 0) rp++; /* null terminator */
                 rp += 4; /* QTYPE + QCLASS */
-                /* Parse first answer */
-                if (rp + 12 <= (int)rn) {
+
+                /* Print header */
+                write_str(1, "Server:  "); write_str(1, dns_names[used_server]);
+                write_str(1, "\nName:    "); write_str(1, argv[domain_arg]); write_char(1, '\n');
+
+                /* Parse all answer records */
+                for (int ans = 0; ans < ancount && rp + 12 <= (int)rn; ans++) {
                     /* Skip NAME (may be pointer) */
                     if ((resp[rp] & 0xC0) == 0xC0) rp += 2;
                     else { while (rp < (int)rn && resp[rp] != 0) rp += resp[rp] + 1; rp++; }
@@ -8697,19 +9001,15 @@ static int execute_command(int argc, char *argv[]) {
                     rp += 2; /* CLASS */ rp += 4; /* TTL */
                     int rdlen = (resp[rp] << 8) | resp[rp+1]; rp += 2;
                     if (atype == 1 && rdlen == 4 && rp + 4 <= (int)rn) {
-                        write_str(1, "Server:  10.0.2.3\nName:    ");
-                        write_str(1, argv[domain_arg]);
-                        write_str(1, "\nAddress: ");
-                        char nb[4]; int_to_str(resp[rp], nb, 4); write_str(1, nb); write_char(1, '.');
-                        int_to_str(resp[rp+1], nb, 4); write_str(1, nb); write_char(1, '.');
-                        int_to_str(resp[rp+2], nb, 4); write_str(1, nb); write_char(1, '.');
-                        int_to_str(resp[rp+3], nb, 4); write_str(1, nb); write_char(1, '\n');
-                        return 0;
+                        write_str(1, "Address: ");
+                        char nb[8];
+                        int_to_str(resp[rp], nb, 8); write_str(1, nb); write_char(1, '.');
+                        int_to_str(resp[rp+1], nb, 8); write_str(1, nb); write_char(1, '.');
+                        int_to_str(resp[rp+2], nb, 8); write_str(1, nb); write_char(1, '.');
+                        int_to_str(resp[rp+3], nb, 8); write_str(1, nb); write_char(1, '\n');
                     } else if (atype == 28 && rdlen == 16 && rp + 16 <= (int)rn) {
-                        /* AAAA record — IPv6 address */
-                        write_str(1, "Server:  10.0.2.3\nName:    ");
-                        write_str(1, argv[domain_arg]);
-                        write_str(1, "\nAddress: ");
+                        /* AAAA record */
+                        write_str(1, "Address: ");
                         static const char hx[] = "0123456789abcdef";
                         for (int g = 0; g < 16; g += 2) {
                             char h[5];
@@ -8722,9 +9022,10 @@ static int execute_command(int argc, char *argv[]) {
                             if (g < 14) write_char(1, ':');
                         }
                         write_char(1, '\n');
-                        return 0;
                     }
+                    rp += rdlen;
                 }
+                return 0;
             }
             write_str(2, "nslookup: no answer\n");
         } else {
@@ -11445,6 +11746,9 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "screen") == 0) {
         cmd_screen(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "strace") == 0) {
+        cmd_strace(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -11620,6 +11924,7 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "pkg") == 0 ||
             strcmp_simple(cmd, "man") == 0 ||
             strcmp_simple(cmd, "screen") == 0 ||
+            strcmp_simple(cmd, "strace") == 0 ||
             0);
 }
 
@@ -15739,7 +16044,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   136 built-in commands — type 'help'    |\n");
+    write_str(1, "|   185 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");
@@ -16711,6 +17016,10 @@ static void cmd_man(int argc, char *argv[]) {
         {"expr",      "expr - evaluate expressions"},
         {"hostname",  "hostname - show or set the system hostname"},
         {"nslookup",  "nslookup - query DNS name servers"},
+        {"strace",    "strace - trace system calls of a command"},
+        {"lsof",      "lsof - list open file descriptors"},
+        {"wget",      "wget - download files from the web via HTTP"},
+        {"diff",      "diff - compare files line by line (unified format)"},
         {"ifconfig",  "ifconfig - configure a network interface"},
         {"man",       "man - display manual pages for commands"},
     };

@@ -94,11 +94,14 @@ struct fut_vnode {
     struct fut_vnode *parent;       /* Parent directory vnode (for path reconstruction) */
     char *name;                     /* Filename/basename in parent directory (for getcwd) */
 
-    /* Phase 3: Advisory file locking state */
+    /* Phase 3: Advisory file locking state (whole-file flock) */
     uint32_t lock_type;             /* 0=none, 1=shared, 2=exclusive */
     uint32_t lock_count;            /* Number of shared locks, or 1 for exclusive */
     uint32_t lock_owner_pid;        /* PID of exclusive lock owner (0 if shared/none) */
     fut_waitq_t lock_waitq;         /* Waitq for processes blocked on lock acquisition */
+
+    /* Phase 5: Per-vnode POSIX byte-range lock list (fcntl F_SETLK) */
+    struct fut_file_lock *file_lock_list; /* Linked list of active byte-range locks */
 
     /* Per-vnode write lock for O_APPEND atomicity */
     fut_spinlock_t write_lock;

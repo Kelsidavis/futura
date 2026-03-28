@@ -870,7 +870,15 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
         /* F_SETLK/F_OFD_SETLK: Set record lock (non-blocking).
          * F_SETLKW/F_OFD_SETLKW: Set record lock (blocking - wait if conflict).
          * F_OFD_* uses per-FD lock semantics; in Futura (single-process) they
-         * behave identically to the POSIX variants. */
+         * behave identically to the POSIX variants.
+         *
+         * struct flock fields used:
+         *   l_type   - F_RDLCK (shared), F_WRLCK (exclusive), F_UNLCK (release)
+         *   l_whence - SEEK_SET (0), SEEK_CUR (1), SEEK_END (2) for l_start base
+         *   l_start  - Starting offset relative to l_whence
+         *   l_len    - Byte count (0 = lock to EOF)
+         *   l_pid    - (output only for F_GETLK)
+         */
         struct flock lk;
         if (fcntl_copy_from_user(&lk, (const void *)(uintptr_t)local_arg, sizeof(lk)) != 0) {
             fut_printf("[FCNTL] fcntl(fd=%d, cmd=%s) -> EFAULT (copy flock failed)\n",
@@ -885,7 +893,26 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
             return -EBADF;
         }
 
-        int nonblock = (local_cmd == F_SETLK) ? 1 : 0;
+        /* Resolve byte-range: compute absolute start and end offsets.
+         * l_whence adjusts l_start relative to file position or size.
+         * l_len==0 means lock extends to EOF (represented as end=-1). */
+        int64_t abs_start = lk.l_start;
+        if (lk.l_whence == 2 /* SEEK_END */) {
+            abs_start += (int64_t)vnode->size;
+        } else if (lk.l_whence == 1 /* SEEK_CUR */ && file) {
+            abs_start += (int64_t)file->offset;
+        }
+        if (abs_start < 0) abs_start = 0;
+
+        int64_t abs_end;
+        if (lk.l_len == 0) {
+            abs_end = -1; /* Lock to EOF */
+        } else {
+            abs_end = abs_start + lk.l_len - 1;
+            if (abs_end < abs_start) abs_end = abs_start;
+        }
+
+        int nonblock = (local_cmd == F_SETLK || local_cmd == F_OFD_SETLK) ? 1 : 0;
         int ret;
 
         switch (lk.l_type) {
@@ -911,8 +938,10 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
             return -EAGAIN;
         }
 
-        fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s], l_type=%d) -> %d\n",
-                   local_fd, fd_category, cmd_name, cmd_category, lk.l_type, ret);
+        fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s], l_type=%d, "
+                   "start=%lld, end=%lld) -> %d\n",
+                   local_fd, fd_category, cmd_name, cmd_category, lk.l_type,
+                   (long long)abs_start, (long long)abs_end, ret);
         return ret;
     }
 
@@ -952,16 +981,24 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
         }
 
         if (conflict) {
-            /* Report the conflicting lock type and owner */
+            /* Report the conflicting lock type, owner, and byte range.
+             * POSIX requires l_whence=SEEK_SET, l_start, l_len, l_pid to
+             * describe the conflicting lock region. */
             uint32_t lock_type, lock_count, owner_pid;
             fut_vnode_lock_get_info(vnode, &lock_type, &lock_count, &owner_pid);
             lk.l_type = (lock_type == 1) ? F_RDLCK : F_WRLCK;
             lk.l_pid = (int)owner_pid;
+            lk.l_whence = 0; /* SEEK_SET */
+            lk.l_start = 0;  /* Whole-file locks start at 0 */
+            lk.l_len = 0;    /* 0 = extends to EOF (whole file) */
             fut_printf("[FCNTL] fcntl(fd=%d, cmd=F_GETLK) -> conflicting lock (type=%d, owner=%u)\n",
                        local_fd, lk.l_type, owner_pid);
         } else {
             lk.l_type = F_UNLCK;
             lk.l_pid = 0;
+            lk.l_whence = 0;
+            lk.l_start = 0;
+            lk.l_len = 0;
             fut_printf("[FCNTL] fcntl(fd=%d, cmd=F_GETLK) -> no conflict (F_UNLCK)\n", local_fd);
         }
 

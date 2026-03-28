@@ -459,6 +459,11 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
         }
 
         int ret = fut_socket_connect_inet(inet6_sock, mapped_ipv4, sin6.port);
+        /* Populate IPv6 peer address for /proc/net/tcp6 reporting */
+        if (ret == 0 || ret == -EINPROGRESS) {
+            __builtin_memcpy(inet6_sock->inet6_peer_addr, sin6.addr, 16);
+            inet6_sock->inet6_peer_port = sin6.port;
+        }
         connect_printf("[CONNECT] connect(sockfd=%d, family=AF_INET6, mapped_ipv4=0x%x, port=%u) -> %d\n",
                    local_sockfd, mapped_ipv4,
                    (unsigned)((sin6.port >> 8) | ((sin6.port & 0xFF) << 8)), ret);

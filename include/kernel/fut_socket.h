@@ -471,6 +471,20 @@ typedef struct fut_socket {
     uint32_t inet_peer_addr;   /* Peer IPv4 address (network byte order); 0 = not connected */
     uint16_t inet_peer_port;   /* Peer port (network byte order); 0 = not connected */
 
+    /* AF_INET6 peer address (set by connect/accept for IPv6) */
+    uint8_t  inet6_peer_addr[16]; /* Peer IPv6 address (network byte order); all-zero = not connected */
+    uint16_t inet6_peer_port;     /* Peer IPv6 port (network byte order); 0 = not connected */
+
+    /* Owner UID (set at socket creation time from current task) */
+    uint32_t owner_uid;
+
+    /* Queue depth tracking for /proc/net reporting */
+    uint32_t rx_queue_bytes;   /* Bytes waiting to be read (receive queue) */
+    uint32_t tx_queue_bytes;   /* Bytes waiting to be sent (transmit queue) */
+
+    /* Dropped packets counter (UDP/raw) */
+    uint32_t drops;
+
     /* SO_PEERCRED: credentials of the connected peer (set at connect/accept time) */
     uint32_t peer_pid;
     uint32_t peer_uid;

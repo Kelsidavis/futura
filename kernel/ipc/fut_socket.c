@@ -379,6 +379,12 @@ fut_socket_t *fut_socket_create(int family, int type) {
     socket->rcvbuf = g_net_sysctl.rmem_default;
     socket->rcvlowat = 1;  /* POSIX default SO_RCVLOWAT */
 
+    /* Track owner UID for /proc/net reporting */
+    {
+        fut_task_t *ctask = fut_task_current();
+        socket->owner_uid = ctask ? ctask->uid : 0;
+    }
+
     /* Allocate wait queue for close operations */
     socket->close_waitq = fut_malloc(sizeof(fut_waitq_t));
     if (!socket->close_waitq) {
@@ -1919,6 +1925,8 @@ ssize_t fut_socket_sendto_dgram(const char *dest_path, size_t dest_path_len,
     fut_spinlock_acquire(&dq->lock);
 
     if (dq->count >= FUT_DGRAM_QUEUE_MAX) {
+        /* Track dropped datagrams for /proc/net reporting */
+        dest->drops++;
         fut_spinlock_release(&dq->lock);
         fut_socket_unref(dest);
         return -EAGAIN;  /* Receiver's queue full */
@@ -2435,6 +2443,8 @@ ssize_t fut_socket_sendto_inet_dgram(uint32_t dest_addr, uint16_t dest_port,
     fut_spinlock_acquire(&dq->lock);
 
     if (dq->count >= FUT_DGRAM_QUEUE_MAX) {
+        /* Track dropped datagrams for /proc/net reporting */
+        dest->drops++;
         fut_spinlock_release(&dq->lock);
         fut_socket_unref(dest);
         return -EAGAIN;

@@ -640,6 +640,10 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
             if (accepted_socket->pair && accepted_socket->pair->peer) {
                 sin6.sin6_port = accepted_socket->pair->peer->inet_port;
                 __builtin_memcpy(&sin6.sin6_addr, accepted_socket->pair->peer->inet6_addr, 16);
+                /* Store peer address in accepted socket for /proc/net/tcp6 reporting */
+                __builtin_memcpy(accepted_socket->inet6_peer_addr,
+                                 accepted_socket->pair->peer->inet6_addr, 16);
+                accepted_socket->inet6_peer_port = accepted_socket->pair->peer->inet_port;
             }
             actual_len = (socklen_t)sizeof(accept_sockaddr_in6_t);
             socklen_t copy_len = (actual_len < len) ? actual_len : len;

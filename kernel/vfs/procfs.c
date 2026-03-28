@@ -297,6 +297,7 @@ enum procfs_kind {
     PROC_SYS_NET_UNIX_DGRAM_QLEN,  /* /proc/sys/net/unix/max_dgram_qlen */
     PROC_SYS_NET_BRIDGE_DIR,       /* /proc/sys/net/bridge/ */
     PROC_SYS_NET_BRIDGE_NF_CALL,   /* /proc/sys/net/bridge/bridge-nf-call-iptables */
+    PROC_NET_SOCKSTAT6,            /* /proc/net/sockstat6 */
     PROC_SYS_NET_NF_DIR,            /* /proc/sys/net/netfilter/ */
     PROC_SYS_NET_NF_CT_MAX,         /* /proc/sys/net/netfilter/nf_conntrack_max */
     PROC_SYS_NET_NF_CT_COUNT,       /* /proc/sys/net/netfilter/nf_conntrack_count */
@@ -417,6 +418,7 @@ typedef struct {
 #define PROC_INO_NET_PACKET          28ULL
 #define PROC_INO_NET_NF_CONNTRACK   29ULL
 #define PROC_INO_NET_PROTOCOLS      30ULL
+#define PROC_INO_NET_SOCKSTAT6      31ULL
 #define PROC_INO_SYSVIPC_DIR       32ULL
 #define PROC_INO_SYSVIPC_SHM       33ULL
 #define PROC_INO_SYSVIPC_SEM       34ULL
@@ -2898,6 +2900,21 @@ static void net_tcp_emit_one(const fut_socket_t *s, void *arg) {
     /* inet_port is stored in network byte order; swap to host order for display */
     uint16_t lport = (uint16_t)((s->inet_port >> 8) | ((s->inet_port & 0xFF) << 8));
 
+    /* Compute real queue depths from pair buffers */
+    uint32_t tx_queue = 0, rx_queue = 0;
+    if (s->pair) {
+        /* TX queue: data written by us, not yet read by peer */
+        tx_queue = (s->pair->recv_head + s->pair->recv_size - s->pair->recv_tail) % s->pair->recv_size;
+    }
+    if (s->pair_reverse) {
+        /* RX queue: data written by peer, not yet read by us */
+        rx_queue = (s->pair_reverse->recv_head + s->pair_reverse->recv_size - s->pair_reverse->recv_tail) % s->pair_reverse->recv_size;
+    }
+
+    /* Timer: 0=off, 1=retransmit, 2=keepalive.  Show keepalive if SO_KEEPALIVE set. */
+    uint8_t timer_type = (s->so_flags & FUT_SO_F_KEEPALIVE) ? 2 : 0;
+    uint32_t timer_when = (timer_type == 2) ? (s->tcp_keepidle ? s->tcp_keepidle * 100 : 7200 * 100) : 0;
+
     pb_d_padded(b, (uint64_t)sl, 4);
     pb_str(b, ": ");
     /* local address: raw uint32 (prints reversed octets on LE, matching Linux format) */
@@ -2916,8 +2933,23 @@ static void net_tcp_emit_one(const fut_socket_t *s, void *arg) {
     }
     pb_char(b, ' ');
     pb_hex2U(b, tcp_state);
-    /* tx_queue:rx_queue, timer, uid, timeout, inode */
-    pb_str(b, " 00000000:00000000 00:00000000 00000000     0        0 ");
+    /* tx_queue:rx_queue */
+    pb_char(b, ' ');
+    pb_hex8U(b, tx_queue);
+    pb_char(b, ':');
+    pb_hex8U(b, rx_queue);
+    /* timer_active:timer_jiffies */
+    pb_str(b, " 0");
+    pb_char(b, '0' + timer_type);
+    pb_char(b, ':');
+    pb_hex8U(b, timer_when);
+    /* retransmit count (0 — no real retransmit tracking yet) */
+    pb_str(b, " 00000000 ");
+    /* uid */
+    pb_d_padded(b, (uint64_t)s->owner_uid, 5);
+    /* timeout (keepalive probes sent — 0) */
+    pb_str(b, "        0 ");
+    /* inode */
     pb_u64(b, (uint64_t)s->socket_id);
     pb_str(b, " 1 0000000000000000 100 0 0 10 0\n");
 }
@@ -2936,6 +2968,17 @@ static void net_udp_emit_one(const fut_socket_t *s, void *arg) {
 
     uint16_t lport = (uint16_t)((s->inet_port >> 8) | ((s->inet_port & 0xFF) << 8));
 
+    /* Compute receive queue depth from dgram_queue */
+    uint32_t rx_queue = 0;
+    if (s->dgram_queue) {
+        /* Each queued datagram contributes its data_len to the queue depth */
+        const fut_dgram_queue_t *dq = s->dgram_queue;
+        for (uint32_t i = 0; i < dq->count && i < FUT_DGRAM_QUEUE_MAX; i++) {
+            uint32_t idx = (dq->head + i) % FUT_DGRAM_QUEUE_MAX;
+            rx_queue += dq->msgs[idx].data_len;
+        }
+    }
+
     pb_d_padded(b, (uint64_t)sl, 4);
     pb_str(b, ": ");
     pb_hex8U(b, s->inet_addr);
@@ -2951,13 +2994,30 @@ static void net_udp_emit_one(const fut_socket_t *s, void *arg) {
     } else {
         pb_str(b, "00000000:0000");
     }
-    pb_str(b, " 07 00000000:00000000 00:00000000 00000000     0        0 ");
+    pb_str(b, " 07 ");
+    /* tx_queue:rx_queue (tx always 0 for UDP) */
+    pb_hex8U(b, 0);
+    pb_char(b, ':');
+    pb_hex8U(b, rx_queue);
+    pb_str(b, " 00:00000000 00000000 ");
+    /* uid */
+    pb_d_padded(b, (uint64_t)s->owner_uid, 5);
+    pb_str(b, "        0 ");
+    /* inode */
     pb_u64(b, (uint64_t)s->socket_id);
-    pb_str(b, " 1 0000000000000000 100 0 0 10 0\n");
+    pb_str(b, " 1 0000000000000000 ");
+    /* ref pointer drops */
+    pb_str(b, "0 0 ");
+    pb_u64(b, (uint64_t)s->drops);
+    pb_char(b, '\n');
 }
 
-/* Count sockets by type for /proc/net/sockstat */
-struct sockstat_ctx { int total; int tcp; int udp; struct net_namespace *ns; };
+/* Count sockets by type for /proc/net/sockstat and /proc/net/sockstat6 */
+struct sockstat_ctx {
+    int total; int tcp; int udp;
+    int tcp6; int udp6; int raw6;
+    struct net_namespace *ns;
+};
 static void sockstat_count_one(const fut_socket_t *s, void *arg) {
     struct sockstat_ctx *ctx = (struct sockstat_ctx *)arg;
     struct net_namespace *sock_ns = (s && s->net_ns) ? s->net_ns : netns_get_init();
@@ -2965,6 +3025,9 @@ static void sockstat_count_one(const fut_socket_t *s, void *arg) {
     ctx->total++;
     if (s->address_family == AF_INET && s->socket_type == SOCK_STREAM) ctx->tcp++;
     else if (s->address_family == AF_INET && s->socket_type == SOCK_DGRAM) ctx->udp++;
+    if (s->address_family == AF_INET6 && s->socket_type == SOCK_STREAM) ctx->tcp6++;
+    else if (s->address_family == AF_INET6 && s->socket_type == SOCK_DGRAM) ctx->udp6++;
+    else if (s->address_family == AF_INET6 && s->socket_type == SOCK_RAW) ctx->raw6++;
 }
 
 /* ============================================================
@@ -3114,6 +3177,20 @@ static void net_tcp6_emit_one(const fut_socket_t *s, void *arg) {
     uint8_t tcp_state = s->tcp_state ? s->tcp_state : 0x07; /* default CLOSE */
 
     uint16_t lport = (uint16_t)((s->inet_port >> 8) | ((s->inet_port & 0xFF) << 8));
+    uint16_t rport = (uint16_t)((s->inet6_peer_port >> 8) | ((s->inet6_peer_port & 0xFF) << 8));
+
+    /* Compute real queue depths from pair buffers */
+    uint32_t tx_queue = 0, rx_queue = 0;
+    if (s->pair) {
+        tx_queue = (s->pair->recv_head + s->pair->recv_size - s->pair->recv_tail) % s->pair->recv_size;
+    }
+    if (s->pair_reverse) {
+        rx_queue = (s->pair_reverse->recv_head + s->pair_reverse->recv_size - s->pair_reverse->recv_tail) % s->pair_reverse->recv_size;
+    }
+
+    /* Timer: 0=off, 2=keepalive */
+    uint8_t timer_type = (s->so_flags & FUT_SO_F_KEEPALIVE) ? 2 : 0;
+    uint32_t timer_when = (timer_type == 2) ? (s->tcp_keepidle ? s->tcp_keepidle * 100 : 7200 * 100) : 0;
 
     pb_d_padded(b, (uint64_t)sl, 4);
     pb_str(b, ": ");
@@ -3121,12 +3198,30 @@ static void net_tcp6_emit_one(const fut_socket_t *s, void *arg) {
     pb_char(b, ':');
     pb_hex4U(b, lport);
     pb_char(b, ' ');
-    /* Remote address — zero for now (peer tracking not per-socket for IPv6 yet) */
-    uint8_t zeros[16] = {0};
-    pb_ipv6_hex(b, zeros);
-    pb_str(b, ":0000 ");
+    /* Remote address: use real inet6_peer_addr */
+    pb_ipv6_hex(b, s->inet6_peer_addr);
+    pb_char(b, ':');
+    pb_hex4U(b, rport);
+    pb_char(b, ' ');
     pb_hex2U(b, tcp_state);
-    pb_str(b, " 00000000:00000000 00:00000000 00000000     0        0 0 1 0000000000000000\n");
+    /* tx_queue:rx_queue */
+    pb_char(b, ' ');
+    pb_hex8U(b, tx_queue);
+    pb_char(b, ':');
+    pb_hex8U(b, rx_queue);
+    /* timer_active:timer_jiffies */
+    pb_str(b, " 0");
+    pb_char(b, '0' + timer_type);
+    pb_char(b, ':');
+    pb_hex8U(b, timer_when);
+    /* retransmit */
+    pb_str(b, " 00000000 ");
+    /* uid */
+    pb_d_padded(b, (uint64_t)s->owner_uid, 5);
+    pb_str(b, "        0 ");
+    /* inode */
+    pb_u64(b, (uint64_t)s->socket_id);
+    pb_str(b, " 1 0000000000000000 100 0 0 10 0\n");
 }
 
 static size_t gen_net_tcp6(char *buf, size_t cap) {
@@ -3150,6 +3245,17 @@ static void net_udp6_emit_one(const fut_socket_t *s, void *arg) {
     int sl = ctx->slot++;
 
     uint16_t lport = (uint16_t)((s->inet_port >> 8) | ((s->inet_port & 0xFF) << 8));
+    uint16_t rport = (uint16_t)((s->inet6_peer_port >> 8) | ((s->inet6_peer_port & 0xFF) << 8));
+
+    /* Compute receive queue depth from dgram_queue */
+    uint32_t rx_queue = 0;
+    if (s->dgram_queue) {
+        const fut_dgram_queue_t *dq = s->dgram_queue;
+        for (uint32_t i = 0; i < dq->count && i < FUT_DGRAM_QUEUE_MAX; i++) {
+            uint32_t idx = (dq->head + i) % FUT_DGRAM_QUEUE_MAX;
+            rx_queue += dq->msgs[idx].data_len;
+        }
+    }
 
     pb_d_padded(b, (uint64_t)sl, 4);
     pb_str(b, ": ");
@@ -3157,9 +3263,25 @@ static void net_udp6_emit_one(const fut_socket_t *s, void *arg) {
     pb_char(b, ':');
     pb_hex4U(b, lport);
     pb_char(b, ' ');
-    uint8_t zeros[16] = {0};
-    pb_ipv6_hex(b, zeros);
-    pb_str(b, ":0000 07 00000000:00000000 00:00000000 00000000     0        0 0 1 0000000000000000\n");
+    /* Remote address: use real inet6_peer_addr */
+    pb_ipv6_hex(b, s->inet6_peer_addr);
+    pb_char(b, ':');
+    pb_hex4U(b, rport);
+    pb_str(b, " 07 ");
+    /* tx_queue:rx_queue */
+    pb_hex8U(b, 0);
+    pb_char(b, ':');
+    pb_hex8U(b, rx_queue);
+    pb_str(b, " 00:00000000 00000000 ");
+    /* uid */
+    pb_d_padded(b, (uint64_t)s->owner_uid, 5);
+    pb_str(b, "        0 ");
+    /* inode */
+    pb_u64(b, (uint64_t)s->socket_id);
+    pb_str(b, " 1 0000000000000000 0 0 ");
+    /* drops */
+    pb_u64(b, (uint64_t)s->drops);
+    pb_char(b, '\n');
 }
 
 static size_t gen_net_udp6(char *buf, size_t cap) {
@@ -3557,7 +3679,8 @@ static size_t gen_net_sockstat(char *buf, size_t cap) {
     struct pbuf b = { buf, 0, cap };
     fut_task_t *task = fut_task_current();
     struct net_namespace *ns = (task && task->net_ns) ? task->net_ns : netns_get_init();
-    struct sockstat_ctx sc = { .total = 0, .tcp = 0, .udp = 0, .ns = ns };
+    struct sockstat_ctx sc = { .total = 0, .tcp = 0, .udp = 0,
+                               .tcp6 = 0, .udp6 = 0, .raw6 = 0, .ns = ns };
     fut_socket_foreach(sockstat_count_one, &sc);
     pb_str(&b, "sockets: used "); pb_u64(&b, (uint64_t)sc.total); pb_char(&b, '\n');
     pb_str(&b, "TCP: inuse "); pb_u64(&b, (uint64_t)sc.tcp);
@@ -3567,6 +3690,23 @@ static size_t gen_net_sockstat(char *buf, size_t cap) {
     pb_str(&b, "UDPLITE: inuse 0\n");
     pb_str(&b, "RAW: inuse 0\n");
     pb_str(&b, "FRAG: inuse 0 memory 0\n");
+    return b.pos;
+}
+
+static size_t gen_net_sockstat6(char *buf, size_t cap) {
+    /* /proc/net/sockstat6 — IPv6 socket usage statistics.
+     * Read by ss, netstat, and network monitoring tools. */
+    struct pbuf b = { buf, 0, cap };
+    fut_task_t *task = fut_task_current();
+    struct net_namespace *ns = (task && task->net_ns) ? task->net_ns : netns_get_init();
+    struct sockstat_ctx sc = { .total = 0, .tcp = 0, .udp = 0,
+                               .tcp6 = 0, .udp6 = 0, .raw6 = 0, .ns = ns };
+    fut_socket_foreach(sockstat_count_one, &sc);
+    pb_str(&b, "TCP6: inuse "); pb_u64(&b, (uint64_t)sc.tcp6); pb_char(&b, '\n');
+    pb_str(&b, "UDP6: inuse "); pb_u64(&b, (uint64_t)sc.udp6); pb_char(&b, '\n');
+    pb_str(&b, "UDPLITE6: inuse 0\n");
+    pb_str(&b, "RAW6: inuse "); pb_u64(&b, (uint64_t)sc.raw6); pb_char(&b, '\n');
+    pb_str(&b, "FRAG6: inuse 0 memory 0\n");
     return b.pos;
 }
 
@@ -4093,6 +4233,9 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
             break;
         case PROC_NET_SOCKSTAT:
             total = gen_net_sockstat(tmp, GEN_BUF);
+            break;
+        case PROC_NET_SOCKSTAT6:
+            total = gen_net_sockstat6(tmp, GEN_BUF);
             break;
         case PROC_COMM: {
             fut_task_t *task = fut_task_by_pid(n->pid);
@@ -6235,6 +6378,11 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
                                           0100444, PROC_NET_SOCKSTAT, 0, 0);
             return *result ? 0 : -ENOMEM;
         }
+        if (STREQ(name, "sockstat6")) {
+            *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_NET_SOCKSTAT6,
+                                          0100444, PROC_NET_SOCKSTAT6, 0, 0);
+            return *result ? 0 : -ENOMEM;
+        }
         if (STREQ(name, "arp")) {
             *result = procfs_alloc_vnode(mnt, VN_REG, PROC_INO_NET_ARP,
                                           0100444, PROC_NET_ARP, 0, 0);
@@ -7425,7 +7573,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                    "if_inet6", "unix", "sockstat", "arp",
                                    "tcp6", "udp6", "raw", "fib_trie",
                                    "snmp", "netstat", "packet", "nf_conntrack",
-                                   "protocols" };
+                                   "protocols", "sockstat6" };
         static const uint8_t t[] = { FUT_VDIR_TYPE_DIR, FUT_VDIR_TYPE_DIR,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
@@ -7435,7 +7583,7 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
                                      FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG,
-                                     FUT_VDIR_TYPE_REG };
+                                     FUT_VDIR_TYPE_REG, FUT_VDIR_TYPE_REG };
         static const uint64_t i[] = { PROC_INO_NET_DIR, PROC_INO_ROOT,
                                       PROC_INO_NET_DEV, PROC_INO_NET_ROUTE,
                                       PROC_INO_NET_TCP, PROC_INO_NET_UDP,
@@ -7445,8 +7593,8 @@ static int procfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
                                       PROC_INO_NET_RAW, PROC_INO_NET_FIB_TRIE,
                                       PROC_INO_NET_SNMP, PROC_INO_NET_NETSTAT,
                                       PROC_INO_NET_PACKET, PROC_INO_NET_NF_CONNTRACK,
-                                      PROC_INO_NET_PROTOCOLS };
-        if (idx < 19) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
+                                      PROC_INO_NET_PROTOCOLS, PROC_INO_NET_SOCKSTAT6 };
+        if (idx < 20) SYS_DIR_ENTRY(e[idx], t[idx], i[idx]);
         return -ENOENT;
     }
 

@@ -40,7 +40,20 @@ static inline int xattr_copy_to_user(void *dst, const void *src, size_t n) {
 
 /* ============================================================================
  * Internal VFS helpers for xattr dispatch
+ *
+ * Each helper resolves a path/fd to a vnode then dispatches to the FS-specific
+ * xattr op.  When the FS does not provide native xattr ops the generic
+ * per-vnode linked-list storage is used as a fallback so that *every* vnode
+ * (procfs, sysfs, overlayfs, etc.) can hold xattrs — critical for containers.
  * ============================================================================ */
+
+/* Generic per-vnode xattr helpers (kernel/vfs/fut_vfs.c) */
+extern int     vnode_generic_setxattr(struct fut_vnode *, const char *,
+                                      const void *, size_t, int);
+extern ssize_t vnode_generic_getxattr(struct fut_vnode *, const char *,
+                                      void *, size_t);
+extern ssize_t vnode_generic_listxattr(struct fut_vnode *, char *, size_t);
+extern int     vnode_generic_removexattr(struct fut_vnode *, const char *);
 
 /* Call setxattr on the vnode obtained from path (follows symlinks). */
 static long vnode_setxattr_by_path(const char *path_buf, const char *name,
@@ -48,11 +61,11 @@ static long vnode_setxattr_by_path(const char *path_buf, const char *name,
     struct fut_vnode *vnode = NULL;
     int ret = fut_vfs_lookup(path_buf, &vnode);
     if (ret < 0) return (ret == -ENOENT) ? -ENOENT : ret;
-    if (!vnode->ops || !vnode->ops->setxattr) {
-        fut_vnode_unref(vnode);
-        return -ENOTSUP;
+    if (vnode->ops && vnode->ops->setxattr) {
+        ret = vnode->ops->setxattr(vnode, name, value, size, flags);
+    } else {
+        ret = vnode_generic_setxattr(vnode, name, value, size, flags);
     }
-    ret = vnode->ops->setxattr(vnode, name, value, size, flags);
     fut_vnode_unref(vnode);
     return ret;
 }
@@ -63,11 +76,12 @@ static ssize_t vnode_getxattr_by_path(const char *path_buf, const char *name,
     struct fut_vnode *vnode = NULL;
     int ret = fut_vfs_lookup(path_buf, &vnode);
     if (ret < 0) return (ret == -ENOENT) ? -ENOENT : ret;
-    if (!vnode->ops || !vnode->ops->getxattr) {
-        fut_vnode_unref(vnode);
-        return -ENOTSUP;
+    ssize_t r;
+    if (vnode->ops && vnode->ops->getxattr) {
+        r = vnode->ops->getxattr(vnode, name, kbuf, size);
+    } else {
+        r = vnode_generic_getxattr(vnode, name, kbuf, size);
     }
-    ssize_t r = vnode->ops->getxattr(vnode, name, kbuf, size);
     fut_vnode_unref(vnode);
     return r;
 }
@@ -77,11 +91,12 @@ static ssize_t vnode_listxattr_by_path(const char *path_buf, char *kbuf, size_t 
     struct fut_vnode *vnode = NULL;
     int ret = fut_vfs_lookup(path_buf, &vnode);
     if (ret < 0) return (ret == -ENOENT) ? -ENOENT : ret;
-    if (!vnode->ops || !vnode->ops->listxattr) {
-        fut_vnode_unref(vnode);
-        return (ssize_t)0;  /* No xattrs supported: return empty list */
+    ssize_t r;
+    if (vnode->ops && vnode->ops->listxattr) {
+        r = vnode->ops->listxattr(vnode, kbuf, size);
+    } else {
+        r = vnode_generic_listxattr(vnode, kbuf, size);
     }
-    ssize_t r = vnode->ops->listxattr(vnode, kbuf, size);
     fut_vnode_unref(vnode);
     return r;
 }
@@ -91,11 +106,11 @@ static long vnode_removexattr_by_path(const char *path_buf, const char *name) {
     struct fut_vnode *vnode = NULL;
     int ret = fut_vfs_lookup(path_buf, &vnode);
     if (ret < 0) return (ret == -ENOENT) ? -ENOENT : ret;
-    if (!vnode->ops || !vnode->ops->removexattr) {
-        fut_vnode_unref(vnode);
-        return -ENODATA;
+    if (vnode->ops && vnode->ops->removexattr) {
+        ret = vnode->ops->removexattr(vnode, name);
+    } else {
+        ret = vnode_generic_removexattr(vnode, name);
     }
-    ret = vnode->ops->removexattr(vnode, name);
     fut_vnode_unref(vnode);
     return ret;
 }
@@ -106,11 +121,11 @@ static long vnode_setxattr_nofollow(const char *path_buf, const char *name,
     struct fut_vnode *vnode = NULL;
     int ret = fut_vfs_lookup_nofollow(path_buf, &vnode);
     if (ret < 0) return ret;
-    if (!vnode->ops || !vnode->ops->setxattr) {
-        fut_vnode_unref(vnode);
-        return -ENOTSUP;
+    if (vnode->ops && vnode->ops->setxattr) {
+        ret = vnode->ops->setxattr(vnode, name, value, size, flags);
+    } else {
+        ret = vnode_generic_setxattr(vnode, name, value, size, flags);
     }
-    ret = vnode->ops->setxattr(vnode, name, value, size, flags);
     fut_vnode_unref(vnode);
     return ret;
 }
@@ -121,11 +136,12 @@ static ssize_t vnode_getxattr_nofollow(const char *path_buf, const char *name,
     struct fut_vnode *vnode = NULL;
     int ret = fut_vfs_lookup_nofollow(path_buf, &vnode);
     if (ret < 0) return ret;
-    if (!vnode->ops || !vnode->ops->getxattr) {
-        fut_vnode_unref(vnode);
-        return -ENOTSUP;
+    ssize_t r;
+    if (vnode->ops && vnode->ops->getxattr) {
+        r = vnode->ops->getxattr(vnode, name, kbuf, size);
+    } else {
+        r = vnode_generic_getxattr(vnode, name, kbuf, size);
     }
-    ssize_t r = vnode->ops->getxattr(vnode, name, kbuf, size);
     fut_vnode_unref(vnode);
     return r;
 }
@@ -135,11 +151,12 @@ static ssize_t vnode_listxattr_nofollow(const char *path_buf, char *kbuf, size_t
     struct fut_vnode *vnode = NULL;
     int ret = fut_vfs_lookup_nofollow(path_buf, &vnode);
     if (ret < 0) return ret;
-    if (!vnode->ops || !vnode->ops->listxattr) {
-        fut_vnode_unref(vnode);
-        return (ssize_t)0;
+    ssize_t r;
+    if (vnode->ops && vnode->ops->listxattr) {
+        r = vnode->ops->listxattr(vnode, kbuf, size);
+    } else {
+        r = vnode_generic_listxattr(vnode, kbuf, size);
     }
-    ssize_t r = vnode->ops->listxattr(vnode, kbuf, size);
     fut_vnode_unref(vnode);
     return r;
 }
@@ -149,11 +166,11 @@ static long vnode_removexattr_nofollow(const char *path_buf, const char *name) {
     struct fut_vnode *vnode = NULL;
     int ret = fut_vfs_lookup_nofollow(path_buf, &vnode);
     if (ret < 0) return ret;
-    if (!vnode->ops || !vnode->ops->removexattr) {
-        fut_vnode_unref(vnode);
-        return -ENODATA;
+    if (vnode->ops && vnode->ops->removexattr) {
+        ret = vnode->ops->removexattr(vnode, name);
+    } else {
+        ret = vnode_generic_removexattr(vnode, name);
     }
-    ret = vnode->ops->removexattr(vnode, name);
     fut_vnode_unref(vnode);
     return ret;
 }
@@ -580,7 +597,6 @@ long sys_fsetxattr(int fd, const char *name, const void *value,
 
     struct fut_vnode *vnode = vnode_from_fd(task, fd);
     if (!vnode) return -EBADF;
-    if (!vnode->ops || !vnode->ops->setxattr) return -ENOTSUP;
 
     void *kvalue = NULL;
     if (size > 0 && value) {
@@ -591,7 +607,11 @@ long sys_fsetxattr(int fd, const char *name, const void *value,
             return -EFAULT;
         }
     }
-    ret = vnode->ops->setxattr(vnode, name_buf, kvalue, size, flags);
+    if (vnode->ops && vnode->ops->setxattr) {
+        ret = vnode->ops->setxattr(vnode, name_buf, kvalue, size, flags);
+    } else {
+        ret = vnode_generic_setxattr(vnode, name_buf, kvalue, size, flags);
+    }
     if (kvalue) fut_free(kvalue);
     return ret;
 }
@@ -711,16 +731,25 @@ long sys_fgetxattr(int fd, const char *name, void *value, size_t size) {
 
     struct fut_vnode *vnode = vnode_from_fd(task, fd);
     if (!vnode) return -EBADF;
-    if (!vnode->ops || !vnode->ops->getxattr) return -ENOTSUP;
 
-    ssize_t attr_size = vnode->ops->getxattr(vnode, name_buf, NULL, 0);
+    ssize_t attr_size;
+    if (vnode->ops && vnode->ops->getxattr) {
+        attr_size = vnode->ops->getxattr(vnode, name_buf, NULL, 0);
+    } else {
+        attr_size = vnode_generic_getxattr(vnode, name_buf, NULL, 0);
+    }
     if (attr_size < 0) return (long)attr_size;
     if (size == 0) return (long)attr_size;
     if ((size_t)attr_size > size) return -ERANGE;
 
     void *kbuf = fut_malloc((size_t)attr_size + 1);
     if (!kbuf) return -ENOMEM;
-    ssize_t got = vnode->ops->getxattr(vnode, name_buf, kbuf, (size_t)attr_size);
+    ssize_t got;
+    if (vnode->ops && vnode->ops->getxattr) {
+        got = vnode->ops->getxattr(vnode, name_buf, kbuf, (size_t)attr_size);
+    } else {
+        got = vnode_generic_getxattr(vnode, name_buf, kbuf, (size_t)attr_size);
+    }
     if (got < 0) { fut_free(kbuf); return (long)got; }
     if (value && xattr_copy_to_user(value, kbuf, (size_t)got) != 0) {
         fut_free(kbuf); return -EFAULT;

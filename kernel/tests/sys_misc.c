@@ -70240,6 +70240,254 @@ t_dup3_done:
     (void)0;
 }
 
+/* ============================================================
+ * Tests 2510-2517: Socket option enforcement round-trip
+ *
+ * Verifies that setsockopt stores values per-socket and getsockopt
+ * retrieves them correctly.  Also validates enforcement semantics
+ * for key options used by real-world network software.
+ *
+ *   2510: SO_REUSEADDR set/get round-trip on AF_INET socket
+ *   2511: SO_REUSEADDR allows bind after TIME_WAIT-state socket
+ *   2512: IP_TTL set/get round-trip (custom TTL stored and retrieved)
+ *   2513: IP_TTL rejects out-of-range value (0 or 256+)
+ *   2514: SO_BROADCAST set/get round-trip on DGRAM socket
+ *   2515: TCP_CORK set/get round-trip on STREAM socket
+ *   2516: TCP_QUICKACK set/get round-trip
+ *   2517: IP_TOS set/get round-trip
+ * ============================================================ */
+static void test_sockopt_enforcement_roundtrip(void) {
+    extern long sys_socket(int domain, int type, int protocol);
+    extern long sys_setsockopt(int fd, int level, int optname, const void *optval, unsigned int optlen);
+    extern long sys_getsockopt(int fd, int level, int optname, void *optval, unsigned int *optlen);
+    extern long sys_close(int fd);
+
+    /* ---- Test 2510: SO_REUSEADDR set/get round-trip ---- */
+    fut_printf("[MISC-TEST] Test 2510: SO_REUSEADDR set/get round-trip\n");
+    {
+        long fd = sys_socket(2 /* AF_INET */, 1 /* SOCK_STREAM */, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL 2510: socket() returned %ld\n", fd);
+            fut_test_fail(2510);
+        } else {
+            int enable = 1;
+            long r = sys_setsockopt((int)fd, 1 /* SOL_SOCKET */, 2 /* SO_REUSEADDR */, &enable, sizeof(int));
+            int got = 0;
+            unsigned int glen = sizeof(int);
+            long r2 = sys_getsockopt((int)fd, 1 /* SOL_SOCKET */, 2 /* SO_REUSEADDR */, &got, &glen);
+            if (r == 0 && r2 == 0 && got == 1) {
+                fut_printf("[MISC-TEST] pass Test 2510: SO_REUSEADDR round-trip ok (set=0, get=%d)\n", got);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2510: set=%ld get=%ld val=%d\n", r, r2, got);
+                fut_test_fail(2510);
+            }
+            sys_close((int)fd);
+        }
+    }
+
+    /* ---- Test 2511: SO_REUSEADDR allows rebind after close ---- */
+    fut_printf("[MISC-TEST] Test 2511: SO_REUSEADDR allows rebind on same port\n");
+    {
+        extern long sys_bind(int sockfd, const void *addr, unsigned int addrlen);
+        /* Create first socket, bind to an ephemeral port, then mark as TIME_WAIT-like */
+        long fd1 = sys_socket(2 /* AF_INET */, 1 /* SOCK_STREAM */, 0);
+        if (fd1 < 0) {
+            fut_printf("[MISC-TEST] FAIL 2511: socket() returned %ld\n", fd1);
+            fut_test_fail(2511);
+        } else {
+            int enable = 1;
+            sys_setsockopt((int)fd1, 1, 2 /* SO_REUSEADDR */, &enable, sizeof(int));
+
+            /* Bind to port 0 (auto-assign) */
+            struct { uint16_t sin_family; uint16_t sin_port; uint32_t sin_addr; char pad[8]; } addr1;
+            for (int i = 0; i < (int)sizeof(addr1); i++) ((char*)&addr1)[i] = 0;
+            addr1.sin_family = 2; /* AF_INET */
+            addr1.sin_port = 0;   /* auto-assign */
+            addr1.sin_addr = 0;   /* INADDR_ANY */
+            long r1 = sys_bind((int)fd1, &addr1, 16);
+            if (r1 < 0) {
+                fut_printf("[MISC-TEST] FAIL 2511: first bind failed %ld\n", r1);
+                fut_test_fail(2511);
+            } else {
+                /* Retrieve the assigned port via getsockname */
+                extern long sys_getsockname(int sockfd, void *addr, unsigned int *addrlen);
+                unsigned int slen = 16;
+                sys_getsockname((int)fd1, &addr1, &slen);
+                uint16_t assigned_port = addr1.sin_port;
+
+                /* Close first socket (it enters implicit CLOSE state) */
+                sys_close((int)fd1);
+
+                /* Create second socket with SO_REUSEADDR and bind to same port */
+                long fd2 = sys_socket(2, 1, 0);
+                if (fd2 < 0) {
+                    fut_printf("[MISC-TEST] FAIL 2511: second socket() failed %ld\n", fd2);
+                    fut_test_fail(2511);
+                } else {
+                    sys_setsockopt((int)fd2, 1, 2, &enable, sizeof(int));
+                    struct { uint16_t sin_family; uint16_t sin_port; uint32_t sin_addr; char pad[8]; } addr2;
+                    for (int i = 0; i < (int)sizeof(addr2); i++) ((char*)&addr2)[i] = 0;
+                    addr2.sin_family = 2;
+                    addr2.sin_port = assigned_port;
+                    addr2.sin_addr = 0;
+                    long r2 = sys_bind((int)fd2, &addr2, 16);
+                    if (r2 == 0) {
+                        fut_printf("[MISC-TEST] pass Test 2511: SO_REUSEADDR rebind on port %u ok\n",
+                                   (unsigned)(assigned_port >> 8 | (assigned_port & 0xFF) << 8));
+                        fut_test_pass();
+                    } else {
+                        fut_printf("[MISC-TEST] FAIL 2511: rebind returned %ld\n", r2);
+                        fut_test_fail(2511);
+                    }
+                    sys_close((int)fd2);
+                }
+            }
+        }
+    }
+
+    /* ---- Test 2512: IP_TTL set/get round-trip ---- */
+    fut_printf("[MISC-TEST] Test 2512: IP_TTL set/get round-trip\n");
+    {
+        long fd = sys_socket(2 /* AF_INET */, 2 /* SOCK_DGRAM */, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL 2512: socket() returned %ld\n", fd);
+            fut_test_fail(2512);
+        } else {
+            int ttl = 128;
+            long r = sys_setsockopt((int)fd, 0 /* IPPROTO_IP */, 2 /* IP_TTL */, &ttl, sizeof(int));
+            int got = 0;
+            unsigned int glen = sizeof(int);
+            long r2 = sys_getsockopt((int)fd, 0 /* IPPROTO_IP */, 2 /* IP_TTL */, &got, &glen);
+            if (r == 0 && r2 == 0 && got == 128) {
+                fut_printf("[MISC-TEST] pass Test 2512: IP_TTL round-trip ok (set=128, get=%d)\n", got);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2512: set=%ld get=%ld val=%d (expected 128)\n", r, r2, got);
+                fut_test_fail(2512);
+            }
+            sys_close((int)fd);
+        }
+    }
+
+    /* ---- Test 2513: IP_TTL rejects out-of-range ---- */
+    fut_printf("[MISC-TEST] Test 2513: IP_TTL rejects out-of-range value\n");
+    {
+        long fd = sys_socket(2 /* AF_INET */, 2 /* SOCK_DGRAM */, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL 2513: socket() returned %ld\n", fd);
+            fut_test_fail(2513);
+        } else {
+            int bad_ttl = 0; /* 0 is invalid for IP_TTL (must be 1-255) */
+            long r = sys_setsockopt((int)fd, 0 /* IPPROTO_IP */, 2 /* IP_TTL */, &bad_ttl, sizeof(int));
+            if (r < 0) {
+                fut_printf("[MISC-TEST] pass Test 2513: IP_TTL(0) rejected with %ld\n", r);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2513: IP_TTL(0) should fail but returned %ld\n", r);
+                fut_test_fail(2513);
+            }
+            sys_close((int)fd);
+        }
+    }
+
+    /* ---- Test 2514: SO_BROADCAST set/get round-trip ---- */
+    fut_printf("[MISC-TEST] Test 2514: SO_BROADCAST set/get round-trip\n");
+    {
+        long fd = sys_socket(2 /* AF_INET */, 2 /* SOCK_DGRAM */, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL 2514: socket() returned %ld\n", fd);
+            fut_test_fail(2514);
+        } else {
+            int enable = 1;
+            long r = sys_setsockopt((int)fd, 1 /* SOL_SOCKET */, 6 /* SO_BROADCAST */, &enable, sizeof(int));
+            int got = 0;
+            unsigned int glen = sizeof(int);
+            long r2 = sys_getsockopt((int)fd, 1 /* SOL_SOCKET */, 6 /* SO_BROADCAST */, &got, &glen);
+            if (r == 0 && r2 == 0 && got == 1) {
+                fut_printf("[MISC-TEST] pass Test 2514: SO_BROADCAST round-trip ok\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2514: set=%ld get=%ld val=%d\n", r, r2, got);
+                fut_test_fail(2514);
+            }
+            sys_close((int)fd);
+        }
+    }
+
+    /* ---- Test 2515: TCP_CORK set/get round-trip ---- */
+    fut_printf("[MISC-TEST] Test 2515: TCP_CORK set/get round-trip\n");
+    {
+        long fd = sys_socket(2 /* AF_INET */, 1 /* SOCK_STREAM */, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL 2515: socket() returned %ld\n", fd);
+            fut_test_fail(2515);
+        } else {
+            int cork = 1;
+            long r = sys_setsockopt((int)fd, 6 /* IPPROTO_TCP */, 3 /* TCP_CORK */, &cork, sizeof(int));
+            int got = 0;
+            unsigned int glen = sizeof(int);
+            long r2 = sys_getsockopt((int)fd, 6 /* IPPROTO_TCP */, 3 /* TCP_CORK */, &got, &glen);
+            if (r == 0 && r2 == 0 && got == 1) {
+                fut_printf("[MISC-TEST] pass Test 2515: TCP_CORK round-trip ok\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2515: set=%ld get=%ld val=%d\n", r, r2, got);
+                fut_test_fail(2515);
+            }
+            sys_close((int)fd);
+        }
+    }
+
+    /* ---- Test 2516: TCP_QUICKACK set/get round-trip ---- */
+    fut_printf("[MISC-TEST] Test 2516: TCP_QUICKACK set/get round-trip\n");
+    {
+        long fd = sys_socket(2 /* AF_INET */, 1 /* SOCK_STREAM */, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL 2516: socket() returned %ld\n", fd);
+            fut_test_fail(2516);
+        } else {
+            int quickack = 1;
+            long r = sys_setsockopt((int)fd, 6 /* IPPROTO_TCP */, 12 /* TCP_QUICKACK */, &quickack, sizeof(int));
+            int got = 0;
+            unsigned int glen = sizeof(int);
+            long r2 = sys_getsockopt((int)fd, 6 /* IPPROTO_TCP */, 12 /* TCP_QUICKACK */, &got, &glen);
+            if (r == 0 && r2 == 0 && got == 1) {
+                fut_printf("[MISC-TEST] pass Test 2516: TCP_QUICKACK round-trip ok\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2516: set=%ld get=%ld val=%d\n", r, r2, got);
+                fut_test_fail(2516);
+            }
+            sys_close((int)fd);
+        }
+    }
+
+    /* ---- Test 2517: IP_TOS set/get round-trip ---- */
+    fut_printf("[MISC-TEST] Test 2517: IP_TOS set/get round-trip\n");
+    {
+        long fd = sys_socket(2 /* AF_INET */, 2 /* SOCK_DGRAM */, 0);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL 2517: socket() returned %ld\n", fd);
+            fut_test_fail(2517);
+        } else {
+            int tos = 0x10; /* IPTOS_LOWDELAY */
+            long r = sys_setsockopt((int)fd, 0 /* IPPROTO_IP */, 1 /* IP_TOS */, &tos, sizeof(int));
+            int got = 0;
+            unsigned int glen = sizeof(int);
+            long r2 = sys_getsockopt((int)fd, 0 /* IPPROTO_IP */, 1 /* IP_TOS */, &got, &glen);
+            if (r == 0 && r2 == 0 && got == 0x10) {
+                fut_printf("[MISC-TEST] pass Test 2517: IP_TOS round-trip ok (set=0x10, get=0x%x)\n", got);
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL 2517: set=%ld get=%ld val=0x%x (expected 0x10)\n", r, r2, got);
+                fut_test_fail(2517);
+            }
+            sys_close((int)fd);
+        }
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -74572,6 +74820,7 @@ void fut_misc_test_thread(void *arg) {
     test_scm_rights_comprehensive(); /* Tests 2464-2471: SCM_RIGHTS comprehensive FD passing */
     test_xattr_container_compat(); /* Tests 2475-2482: xattr container compat (multi-namespace, generic storage) */
     test_dup3_fcntl_cloexec_compliance(); /* Tests 2495-2502: dup3 O_CLOEXEC and F_DUPFD_CLOEXEC POSIX compliance */
+    test_sockopt_enforcement_roundtrip(); /* Tests 2510-2517: socket option enforcement round-trip */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

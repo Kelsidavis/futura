@@ -485,6 +485,44 @@ static void seat_handle_button(struct seat_state *seat,
             seat->pressed_role = role;
             seat->pressed_edge = edge;
 
+            /* Dock click: if click is in the dock area, find which window and focus it */
+            if (!hit_surface && seat->comp) {
+                int32_t mx = seat->comp->pointer_x;
+                int32_t my = seat->comp->pointer_y;
+                int32_t fb_h = (int32_t)seat->comp->fb_info.height;
+                int32_t fb_w = (int32_t)seat->comp->fb_info.width;
+                int32_t dock_y = fb_h - 32 - 8;  /* DOCK_HEIGHT=32, 8px margin */
+
+                if (my >= dock_y && my < fb_h) {
+                    /* Count windows to compute dock geometry */
+                    int n_win = 0;
+                    struct comp_surface *ds;
+                    wl_list_for_each(ds, &seat->comp->surfaces, link)
+                        if (ds->has_backing) n_win++;
+
+                    int dock_w = n_win * 104 + 8;  /* DOCK_ITEM_W(100)+PAD(4) per item + padding */
+                    if (dock_w < 208) dock_w = 208;
+                    int dock_x = (fb_w - dock_w) / 2;
+
+                    if (mx >= dock_x && mx < dock_x + dock_w) {
+                        int item_x = dock_x + 4;
+                        wl_list_for_each(ds, &seat->comp->surfaces, link) {
+                            if (!ds->has_backing) continue;
+                            if (mx >= item_x && mx < item_x + 100) {
+                                /* Click on this window's dock entry — focus and raise */
+                                if (ds->minimized) ds->minimized = false;
+                                comp_surface_raise(seat->comp, ds);
+                                seat_focus_surface(seat, ds);
+                                comp_damage_add_full(seat->comp);
+                                seat->comp->needs_repaint = true;
+                                break;
+                            }
+                            item_x += 104;
+                        }
+                    }
+                }
+            }
+
             if (hit_surface) {
                 if (seat->comp->active_surface != hit_surface) {
                     comp_surface_raise(seat->comp, hit_surface);

@@ -728,54 +728,129 @@ static struct fut_vnode *procfs_alloc_vnode(struct fut_mount *mount,
  * ============================================================ */
 
 static size_t gen_meminfo(char *buf, size_t cap) {
+    /* --- Physical memory from PMM --- */
     uint64_t total_pages = fut_pmm_total_pages();
     uint64_t free_pages  = fut_pmm_free_pages();
     uint64_t page_size   = 4096;
     uint64_t total_kb    = (total_pages * page_size) / 1024;
     uint64_t free_kb     = (free_pages  * page_size) / 1024;
-    uint64_t used_kb     = total_kb - free_kb;
-    uint64_t avail_kb    = free_kb;
+
+    /* --- Slab allocator stats --- */
+    extern void slab_get_stats(uint64_t *out_total_bytes, uint64_t *out_free_bytes);
+    uint64_t slab_total_bytes = 0, slab_free_bytes = 0;
+    slab_get_stats(&slab_total_bytes, &slab_free_bytes);
+    uint64_t slab_kb       = slab_total_bytes / 1024;
+    uint64_t sreclaimable_kb = slab_free_bytes / 1024;
+    uint64_t sunreclaim_kb = slab_kb > sreclaimable_kb ? slab_kb - sreclaimable_kb : 0;
+
+    /* --- Buddy (kernel heap) allocator stats --- */
+    extern size_t buddy_get_total_allocated(void);
+    extern size_t buddy_get_heap_size(void);
+    uint64_t buddy_alloc_kb = buddy_get_total_allocated() / 1024;
+    uint64_t buddy_heap_kb  = buddy_get_heap_size() / 1024;
+
+    /* --- Committed address space: walk all tasks' VMAs --- */
+    uint64_t committed_pages = 0;
+    uint64_t mapped_pages = 0;
+    uint64_t anon_pages = 0;
+    uint64_t file_pages = 0;
+    uint64_t locked_pages = 0;
+    uint64_t task_count = 0;
+    {
+        fut_task_t *t = fut_task_list;
+        while (t) {
+            task_count++;
+            fut_mm_t *mm = fut_task_get_mm(t);
+            if (mm) {
+                struct fut_vma *vma = mm->vma_list;
+                while (vma) {
+                    uint64_t vma_pages = (vma->end - vma->start) / page_size;
+                    committed_pages += vma_pages;
+                    if (vma->vnode) {
+                        file_pages += vma_pages;
+                    } else {
+                        anon_pages += vma_pages;
+                    }
+                    if (vma->flags & VMA_SHARED) {
+                        mapped_pages += vma_pages;
+                    }
+                    if (vma->flags & VMA_LOCKED) {
+                        locked_pages += vma_pages;
+                    }
+                    vma = vma->next;
+                }
+            }
+            t = t->next;
+        }
+    }
+    uint64_t committed_kb = (committed_pages * page_size) / 1024;
+    uint64_t mapped_kb    = (mapped_pages * page_size) / 1024;
+    uint64_t anon_kb      = (anon_pages * page_size) / 1024;
+    uint64_t file_kb      = (file_pages * page_size) / 1024;
+    uint64_t locked_kb    = (locked_pages * page_size) / 1024;
+
+    /* Active/Inactive breakdown */
+    uint64_t active_anon_kb  = anon_kb;
+    uint64_t active_file_kb  = file_kb;
+    uint64_t active_kb       = active_anon_kb + active_file_kb;
+
+    /* MemAvailable = MemFree + reclaimable (slab reclaimable + file cache pages) */
+    uint64_t avail_kb = free_kb + sreclaimable_kb + file_kb;
+    if (avail_kb > total_kb) avail_kb = total_kb;
+
+    /* KernelStack: estimate 2 pages (8 KB) per task */
+    uint64_t kernel_stack_kb = (task_count * 2 * page_size) / 1024;
+
+    /* VmallocTotal/Used/Chunk from buddy heap */
+    uint64_t vmalloc_used_kb  = buddy_alloc_kb;
+    uint64_t vmalloc_total_kb = buddy_heap_kb > 0 ? buddy_heap_kb : 34359738367ULL;
+    uint64_t vmalloc_chunk_kb = vmalloc_total_kb > vmalloc_used_kb
+                                ? vmalloc_total_kb - vmalloc_used_kb : 0;
+
+    /* PageTables: estimate 1 page per 512 user pages mapped */
+    uint64_t pt_pages = committed_pages > 0 ? (committed_pages / 512) + 1 : 0;
+    uint64_t pt_kb = (pt_pages * page_size) / 1024;
 
     struct pbuf b = { buf, 0, cap };
     pb_str(&b, "MemTotal:       "); pb_u64(&b, total_kb); pb_str(&b, " kB\n");
     pb_str(&b, "MemFree:        "); pb_u64(&b, free_kb);  pb_str(&b, " kB\n");
     pb_str(&b, "MemAvailable:   "); pb_u64(&b, avail_kb); pb_str(&b, " kB\n");
-    pb_str(&b, "Buffers:               0 kB\n");
-    pb_str(&b, "Cached:         "); pb_u64(&b, used_kb);  pb_str(&b, " kB\n");
+    pb_str(&b, "Buffers:        "); pb_u64(&b, file_kb);  pb_str(&b, " kB\n");
+    pb_str(&b, "Cached:         "); pb_u64(&b, file_kb);  pb_str(&b, " kB\n");
     pb_str(&b, "SwapCached:            0 kB\n");
-    pb_str(&b, "Active:         "); pb_u64(&b, used_kb);  pb_str(&b, " kB\n");
+    pb_str(&b, "Active:         "); pb_u64(&b, active_kb); pb_str(&b, " kB\n");
     pb_str(&b, "Inactive:              0 kB\n");
-    pb_str(&b, "Active(anon):   "); pb_u64(&b, used_kb);  pb_str(&b, " kB\n");
+    pb_str(&b, "Active(anon):   "); pb_u64(&b, active_anon_kb); pb_str(&b, " kB\n");
     pb_str(&b, "Inactive(anon):        0 kB\n");
-    pb_str(&b, "Active(file):          0 kB\n");
+    pb_str(&b, "Active(file):   "); pb_u64(&b, active_file_kb); pb_str(&b, " kB\n");
     pb_str(&b, "Inactive(file):        0 kB\n");
     pb_str(&b, "Unevictable:           0 kB\n");
-    pb_str(&b, "Mlocked:               0 kB\n");
+    pb_str(&b, "Mlocked:        "); pb_u64(&b, locked_kb); pb_str(&b, " kB\n");
     pb_str(&b, "SwapTotal:             0 kB\n");
     pb_str(&b, "SwapFree:              0 kB\n");
     pb_str(&b, "Zswap:                 0 kB\n");
     pb_str(&b, "Zswapped:              0 kB\n");
     pb_str(&b, "Dirty:                 0 kB\n");
     pb_str(&b, "Writeback:             0 kB\n");
-    pb_str(&b, "AnonPages:      "); pb_u64(&b, used_kb);  pb_str(&b, " kB\n");
-    pb_str(&b, "Mapped:                0 kB\n");
+    pb_str(&b, "AnonPages:      "); pb_u64(&b, anon_kb);  pb_str(&b, " kB\n");
+    pb_str(&b, "Mapped:         "); pb_u64(&b, mapped_kb); pb_str(&b, " kB\n");
     pb_str(&b, "Shmem:                 0 kB\n");
-    pb_str(&b, "KReclaimable:          0 kB\n");
-    pb_str(&b, "Slab:                  0 kB\n");
-    pb_str(&b, "SReclaimable:          0 kB\n");
-    pb_str(&b, "SUnreclaim:            0 kB\n");
-    pb_str(&b, "KernelStack:           0 kB\n");
+    pb_str(&b, "KReclaimable:   "); pb_u64(&b, sreclaimable_kb); pb_str(&b, " kB\n");
+    pb_str(&b, "Slab:           "); pb_u64(&b, slab_kb); pb_str(&b, " kB\n");
+    pb_str(&b, "SReclaimable:   "); pb_u64(&b, sreclaimable_kb); pb_str(&b, " kB\n");
+    pb_str(&b, "SUnreclaim:     "); pb_u64(&b, sunreclaim_kb); pb_str(&b, " kB\n");
+    pb_str(&b, "KernelStack:    "); pb_u64(&b, kernel_stack_kb); pb_str(&b, " kB\n");
     pb_str(&b, "ShadowCallStack:       0 kB\n");
-    pb_str(&b, "PageTables:            0 kB\n");
+    pb_str(&b, "PageTables:     "); pb_u64(&b, pt_kb); pb_str(&b, " kB\n");
     pb_str(&b, "SecPageTables:         0 kB\n");
     pb_str(&b, "NFS_Unstable:          0 kB\n");
     pb_str(&b, "Bounce:                0 kB\n");
     pb_str(&b, "WritebackTmp:          0 kB\n");
     pb_str(&b, "CommitLimit:    "); pb_u64(&b, total_kb); pb_str(&b, " kB\n");
-    pb_str(&b, "Committed_AS:   "); pb_u64(&b, used_kb);  pb_str(&b, " kB\n");
-    pb_str(&b, "VmallocTotal:   34359738367 kB\n");
-    pb_str(&b, "VmallocUsed:           0 kB\n");
-    pb_str(&b, "VmallocChunk:          0 kB\n");
+    pb_str(&b, "Committed_AS:   "); pb_u64(&b, committed_kb); pb_str(&b, " kB\n");
+    pb_str(&b, "VmallocTotal:   "); pb_u64(&b, vmalloc_total_kb); pb_str(&b, " kB\n");
+    pb_str(&b, "VmallocUsed:    "); pb_u64(&b, vmalloc_used_kb); pb_str(&b, " kB\n");
+    pb_str(&b, "VmallocChunk:   "); pb_u64(&b, vmalloc_chunk_kb); pb_str(&b, " kB\n");
     pb_str(&b, "Percpu:                0 kB\n");
     pb_str(&b, "HardwareCorrupted:     0 kB\n");
     pb_str(&b, "AnonHugePages:         0 kB\n");
@@ -2510,8 +2585,8 @@ static size_t gen_kallsyms(char *buf, size_t cap) {
     extern long sys_open(const char *, int, int);
     extern long sys_close(int);
     extern long sys_fork(void);
-    extern long sys_execve(const char *, const char *const *, const char *const *);
-    extern void sys_exit(int);
+    extern long sys_execve(const char *, char *const[], char *const[]);
+    extern long sys_exit(int);
     extern long sys_kill(int, int);
     extern long sys_getpid(void);
 
@@ -2681,7 +2756,14 @@ static size_t gen_vmstat(char *buf, size_t cap) {
     uint64_t free_pg   = fut_pmm_free_pages();
     uint64_t used_pg   = total_pg > free_pg ? total_pg - free_pg : 0;
 
-    /* Sum page fault counters across all tasks for real pgfault/pgmajfault */
+    /* Get real page fault counters from the page fault handler */
+    extern void vmstat_get_counters(uint64_t *pgfault, uint64_t *pgmajfault,
+                                    uint64_t *pgpgin, uint64_t *cow_pages);
+    uint64_t real_pgfault = 0, real_pgmajfault = 0;
+    uint64_t real_pgpgin = 0, real_cow_pages = 0;
+    vmstat_get_counters(&real_pgfault, &real_pgmajfault, &real_pgpgin, &real_cow_pages);
+
+    /* Also sum per-task fault counters as a cross-check / fallback */
     uint64_t total_minflt = 0, total_majflt = 0;
     {
         extern fut_task_t *fut_task_list;
@@ -2693,26 +2775,67 @@ static size_t gen_vmstat(char *buf, size_t cap) {
         }
     }
 
+    /* Use the larger of global counters vs task-sum (global includes exited tasks) */
+    uint64_t pgfault_val = real_pgfault > total_minflt ? real_pgfault : total_minflt;
+    uint64_t pgmajfault_val = real_pgmajfault > total_majflt ? real_pgmajfault : total_majflt;
+
+    /* Walk VMAs for anon/file/mapped page counts */
+    uint64_t anon_pg = 0, file_pg = 0, mapped_pg = 0;
+    {
+        extern fut_task_t *fut_task_list;
+        fut_task_t *t = fut_task_list;
+        while (t) {
+            fut_mm_t *mm = fut_task_get_mm(t);
+            if (mm) {
+                struct fut_vma *vma = mm->vma_list;
+                while (vma) {
+                    uint64_t vma_pg = (vma->end - vma->start) / 4096;
+                    if (vma->vnode) {
+                        file_pg += vma_pg;
+                    } else {
+                        anon_pg += vma_pg;
+                    }
+                    if (vma->flags & VMA_SHARED) {
+                        mapped_pg += vma_pg;
+                    }
+                    vma = vma->next;
+                }
+            }
+            t = t->next;
+        }
+    }
+
+    /* Slab stats (in pages) */
+    extern void slab_get_stats(uint64_t *out_total_bytes, uint64_t *out_free_bytes);
+    uint64_t slab_total = 0, slab_free = 0;
+    slab_get_stats(&slab_total, &slab_free);
+    uint64_t slab_reclaimable_pg = slab_free / 4096;
+    uint64_t slab_unreclaimable_pg = (slab_total > slab_free ? slab_total - slab_free : 0) / 4096;
+
     pb_str(&b, "nr_free_pages ");       pb_u64(&b, free_pg);  pb_char(&b, '\n');
     pb_str(&b, "nr_inactive_anon ");    pb_u64(&b, 0);         pb_char(&b, '\n');
-    pb_str(&b, "nr_active_anon ");      pb_u64(&b, used_pg);   pb_char(&b, '\n');
+    pb_str(&b, "nr_active_anon ");      pb_u64(&b, anon_pg);   pb_char(&b, '\n');
     pb_str(&b, "nr_inactive_file ");    pb_u64(&b, 0);         pb_char(&b, '\n');
-    pb_str(&b, "nr_active_file ");      pb_u64(&b, 0);         pb_char(&b, '\n');
-    pb_str(&b, "nr_anon_pages ");       pb_u64(&b, used_pg);   pb_char(&b, '\n');
-    pb_str(&b, "nr_mapped ");           pb_u64(&b, 0);         pb_char(&b, '\n');
-    pb_str(&b, "nr_file_pages ");       pb_u64(&b, 0);         pb_char(&b, '\n');
+    pb_str(&b, "nr_active_file ");      pb_u64(&b, file_pg);   pb_char(&b, '\n');
+    pb_str(&b, "nr_anon_pages ");       pb_u64(&b, anon_pg);   pb_char(&b, '\n');
+    pb_str(&b, "nr_mapped ");           pb_u64(&b, mapped_pg); pb_char(&b, '\n');
+    pb_str(&b, "nr_file_pages ");       pb_u64(&b, file_pg);   pb_char(&b, '\n');
     pb_str(&b, "nr_dirty ");            pb_u64(&b, 0);         pb_char(&b, '\n');
     pb_str(&b, "nr_writeback ");        pb_u64(&b, 0);         pb_char(&b, '\n');
-    pb_str(&b, "nr_slab_reclaimable "); pb_u64(&b, 0);         pb_char(&b, '\n');
-    pb_str(&b, "nr_slab_unreclaimable "); pb_u64(&b, 0);       pb_char(&b, '\n');
-    pb_str(&b, "pgpgin ");  pb_u64(&b, 0); pb_char(&b, '\n');
+    pb_str(&b, "nr_slab_reclaimable "); pb_u64(&b, slab_reclaimable_pg); pb_char(&b, '\n');
+    pb_str(&b, "nr_slab_unreclaimable "); pb_u64(&b, slab_unreclaimable_pg); pb_char(&b, '\n');
+    pb_str(&b, "pgpgin ");  pb_u64(&b, real_pgpgin); pb_char(&b, '\n');
     pb_str(&b, "pgpgout "); pb_u64(&b, 0); pb_char(&b, '\n');
-    pb_str(&b, "pgfault "); pb_u64(&b, total_minflt); pb_char(&b, '\n');
-    pb_str(&b, "pgmajfault "); pb_u64(&b, total_majflt); pb_char(&b, '\n');
-    /* Context switch and interrupt stats */
+    pb_str(&b, "pgfault "); pb_u64(&b, pgfault_val); pb_char(&b, '\n');
+    pb_str(&b, "pgmajfault "); pb_u64(&b, pgmajfault_val); pb_char(&b, '\n');
+    /* No swap in Futura */
     pb_str(&b, "pswpin 0\npswpout 0\n");
-    pb_str(&b, "pgalloc_normal "); pb_u64(&b, total_pg - free_pg); pb_char(&b, '\n');
+    pb_str(&b, "pgalloc_normal "); pb_u64(&b, used_pg); pb_char(&b, '\n');
     pb_str(&b, "pgfree "); pb_u64(&b, free_pg); pb_char(&b, '\n');
+    pb_str(&b, "nr_page_table_pages "); pb_u64(&b, anon_pg > 0 ? (anon_pg + file_pg) / 512 + 1 : 0); pb_char(&b, '\n');
+    pb_str(&b, "pgactivate "); pb_u64(&b, 0); pb_char(&b, '\n');
+    pb_str(&b, "pgdeactivate "); pb_u64(&b, 0); pb_char(&b, '\n');
+    pb_str(&b, "pgreuse "); pb_u64(&b, real_cow_pages); pb_char(&b, '\n');
     return b.pos;
 }
 

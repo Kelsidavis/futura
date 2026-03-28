@@ -91,6 +91,11 @@ uint64_t fut_pmm_free_pages(void) {
     return 0;
 }
 
+void fut_pmm_buddy_counts(uint64_t *counts, int max_order) {
+    for (int i = 0; i <= max_order; i++)
+        counts[i] = 0;
+}
+
 void fut_heap_init(uintptr_t heap_start, uintptr_t heap_end) {
     (void)heap_start;
     (void)heap_end;

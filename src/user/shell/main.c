@@ -171,6 +171,8 @@ static void cmd_pathchk(int argc, char *argv[]);
 static void cmd_csplit(int argc, char *argv[]);
 static void cmd_chown(int argc, char *argv[]);
 static void cmd_newgrp(int argc, char *argv[]);
+static void cmd_sha512sum(int argc, char *argv[]);
+static void cmd_base32(int argc, char *argv[]);
 static void strcpy_simple(char *dest, const char *src);
 
 /* Forward declaration for prompt */
@@ -621,7 +623,7 @@ static size_t common_prefix_len(const char *s1, const char *s2) {
 static void complete_command(char *buf, size_t *pos, size_t max_len) {
     /* List of builtin commands */
     const char *builtins[] = {
-        "arp", "bg", "brctl", "cal", "cd", "chgrp", "chmod", "chroot", "clear", "cmp", "comm", "conntrack", "date", "dd", "df", "dhclient", "dmesg", "echo", "edit", "ethtool", "expand", "expr", "factor", "file", "fold", "hexdump", "install", "locale", "lsof", "md5sum", "mkfifo", "nc", "nice", "nohup", "patch", "pgrep", "pidof", "pkill", "poweroff", "reboot", "renice", "reset", "seq", "sha1sum", "sleep", "strings", "tac", "time", "timeout", "tput", "traceroute", "tty", "unexpand", "wget", "xxd", "exit", "export", "fg", "free",
+        "arp", "base32", "bg", "brctl", "cal", "cd", "chgrp", "chmod", "chroot", "clear", "cmp", "comm", "conntrack", "date", "dd", "df", "dhclient", "dmesg", "echo", "edit", "ethtool", "expand", "expr", "factor", "file", "fold", "hexdump", "install", "locale", "lsof", "md5sum", "mkfifo", "nc", "nice", "nohup", "patch", "pgrep", "pidof", "pkill", "poweroff", "reboot", "renice", "reset", "seq", "sha1sum", "sha512sum", "sleep", "strings", "tac", "time", "timeout", "tput", "traceroute", "tty", "unexpand", "wget", "xxd", "exit", "export", "fg", "free",
         "help", "hostname", "httpd", "id", "ifconfig", "iostat", "ipcs", "iptables", "jobs", "kill", "logger", "losetup", "ls", "lsblk", "lspci", "mkfs", "mount", "netstat",
         ".", "alias", "arch", "basename", "blkid", "dirname", "du", "exec", "false", "fmt", "getconf", "groups", "history", "ip", "ln", "logname", "lscpu", "mkswap", "mktemp", "more", "nawk", "nproc", "nslookup", "passwd", "ping", "printenv", "printf", "ps", "pwd", "read", "readlink", "realpath", "set", "sha1sum", "sha256sum", "shutdown", "source", "ss", "stat", "strace", "stty", "su", "sync", "sysctl", "sysinfo", "tc", "test", "top", "trap", "tree", "true", "type", "umask", "unalias", "uname", "uptime", "users", "version", "vi", "vmstat", "w", "wait", "watch", "wdctl", "which", "whoami", "xargs", "yes", NULL
     };
@@ -1316,6 +1318,11 @@ static void cmd_help(int argc, char *argv[]) {
     write_str(1, "  groups [user]   - Print group memberships\n");
     write_str(1, "  fmt [-w N] file - Simple text formatter (reflow to width)\n");
     write_str(1, "  nawk            - POSIX new awk (alias for awk)\n");
+    write_str(1, "  sha512sum file  - Compute SHA-512 hash\n");
+    write_str(1, "  base32 [-d] [f] - Base32 encode (decode with -d)\n");
+    write_str(1, "  watch [-n S] [-d] cmd - Run command repeatedly (-d highlight diffs)\n");
+    write_str(1, "  timeout [-s SIG] N cmd - Run command with time limit\n");
+    write_str(1, "  realpath [-e|-m] [-s] [--relative-to=DIR] path - Resolve canonical path\n");
     write_str(1, "\n");
     write_str(1, "Networking:\n");
     write_str(1, "  ip addr|link|route|neigh|forward - Network configuration\n");
@@ -8676,20 +8683,37 @@ static void cmd_readlink(int argc, char *argv[]) {
 static void cmd_realpath(int argc, char *argv[]) {
     int quiet = 0;
     int no_symlinks = 0;
+    int must_exist = 0;    /* -e: all components must exist */
+    int no_exist = 0;      /* -m: no component needs to exist */
+    const char *relative_to = NULL; /* --relative-to=DIR */
     int start = 1;
     for (int i = 1; i < argc && argv[i][0] == '-'; i++) {
         if (strcmp_simple(argv[i], "-q") == 0 || strcmp_simple(argv[i], "--quiet") == 0)
             quiet = 1;
-        else if (strcmp_simple(argv[i], "-s") == 0 || strcmp_simple(argv[i], "--no-symlinks") == 0)
+        else if (strcmp_simple(argv[i], "-s") == 0 || strcmp_simple(argv[i], "--no-symlinks") == 0 ||
+                 strcmp_simple(argv[i], "-L") == 0 || strcmp_simple(argv[i], "--logical") == 0)
             no_symlinks = 1;
+        else if (strcmp_simple(argv[i], "-e") == 0 || strcmp_simple(argv[i], "--canonicalize-existing") == 0)
+            must_exist = 1;
+        else if (strcmp_simple(argv[i], "-m") == 0 || strcmp_simple(argv[i], "--canonicalize-missing") == 0)
+            no_exist = 1;
+        else if (strcmp_simple(argv[i], "--relative-to") == 0) {
+            i++; if (i < argc) relative_to = argv[i]; else { write_str(2, "realpath: --relative-to requires argument\n"); return; }
+        } else if (argv[i][0] == '-' && argv[i][1] == '-' && argv[i][2] == 'r' && argv[i][3] == 'e') {
+            /* --relative-to=DIR inline form */
+            const char *eq = argv[i];
+            while (*eq && *eq != '=') eq++;
+            if (*eq == '=') relative_to = eq + 1;
+        }
         else if (strcmp_simple(argv[i], "--") == 0) { start = i + 1; break; }
         else { write_str(2, "realpath: unknown option: "); write_str(2, argv[i]); write_str(2, "\n"); return; }
         start = i + 1;
     }
     if (start >= argc) {
-        write_str(2, "usage: realpath [-q] [-s] <path>...\n");
+        write_str(2, "usage: realpath [-e] [-m] [-q] [-s] [--relative-to=DIR] <path>...\n");
         return;
     }
+    (void)must_exist; (void)no_exist;
     int ret = 0;
     for (int a = start; a < argc; a++) {
         const char *input = argv[a];
@@ -8787,18 +8811,56 @@ static void cmd_realpath(int argc, char *argv[]) {
         if (olen == 0) { out[0] = '/'; olen = 1; }
         out[olen] = '\0';
 
-        /* Verify path exists */
-        struct stat st;
-        if (sys_call2(__NR_stat, (long)out, (long)&st) < 0) {
-            if (!quiet) {
-                write_str(2, "realpath: ");
-                write_str(2, argv[a]);
-                write_str(2, ": No such file or directory\n");
+        /* Verify path exists (unless -m: missing OK) */
+        if (!no_exist) {
+            struct stat st;
+            if (sys_call2(__NR_stat, (long)out, (long)&st) < 0) {
+                if (!quiet) {
+                    write_str(2, "realpath: ");
+                    write_str(2, argv[a]);
+                    write_str(2, ": No such file or directory\n");
+                }
+                ret = 1;
+                continue;
             }
-            ret = 1;
-            continue;
         }
-        write_str(1, out);
+
+        /* --relative-to: make path relative to given directory */
+        if (relative_to) {
+            /* Resolve relative_to the same way */
+            char rel_base[1024];
+            int rb_len = 0;
+            if (relative_to[0] != '/') {
+                char cwd2[256];
+                long cr2 = sys_getcwd(cwd2, sizeof(cwd2));
+                if (cr2 > 0) { for (int j = 0; cwd2[j]; j++) if (rb_len < 1020) rel_base[rb_len++] = cwd2[j]; }
+                if (rb_len > 0 && rel_base[rb_len - 1] != '/') rel_base[rb_len++] = '/';
+            }
+            for (int j = 0; relative_to[j]; j++) if (rb_len < 1020) rel_base[rb_len++] = relative_to[j];
+            rel_base[rb_len] = '\0';
+            /* Find common prefix length (component-aligned) */
+            int cp = 0;
+            while (out[cp] && rel_base[cp] && out[cp] == rel_base[cp]) cp++;
+            /* Back up to component boundary */
+            while (cp > 0 && out[cp - 1] != '/') cp--;
+            /* Count remaining directories in rel_base after common prefix */
+            char result[1024];
+            int ri = 0;
+            for (int j = cp; rel_base[j]; j++) {
+                if (rel_base[j] == '/') {
+                    if (ri + 3 < 1020) { result[ri++] = '.'; result[ri++] = '.'; result[ri++] = '/'; }
+                }
+            }
+            /* Append remaining path from out */
+            for (int j = cp; out[j] && ri < 1020; j++) result[ri++] = out[j];
+            if (ri == 0) { result[ri++] = '.'; }
+            /* Remove trailing slash */
+            if (ri > 1 && result[ri - 1] == '/') ri--;
+            result[ri] = '\0';
+            write_str(1, result);
+        } else {
+            write_str(1, out);
+        }
         write_str(1, "\n");
     }
     (void)ret;
@@ -9894,15 +9956,30 @@ static int execute_command(int argc, char *argv[]) {
         return 0;
     } else if (strcmp_simple(argv[0], "watch") == 0) {
         /* watch — execute a command repeatedly, showing output each time */
+        /* Supports: -n SEC (interval), -d (highlight differences) */
         int interval = 2; /* default 2 seconds */
+        int diff_mode = 0;
         int cmd_start = 1;
-        if (argc > 2 && strcmp_simple(argv[1], "-n") == 0) {
-            interval = 0;
-            for (int i = 0; argv[2][i]; i++) interval = interval * 10 + (argv[2][i] - '0');
-            cmd_start = 3;
+        /* Parse options */
+        while (cmd_start < argc && argv[cmd_start][0] == '-') {
+            if (strcmp_simple(argv[cmd_start], "-n") == 0) {
+                cmd_start++;
+                if (cmd_start < argc) {
+                    interval = 0;
+                    for (int i = 0; argv[cmd_start][i]; i++)
+                        interval = interval * 10 + (argv[cmd_start][i] - '0');
+                    cmd_start++;
+                }
+            } else if (strcmp_simple(argv[cmd_start], "-d") == 0 ||
+                       strcmp_simple(argv[cmd_start], "--differences") == 0) {
+                diff_mode = 1;
+                cmd_start++;
+            } else {
+                break;
+            }
         }
         if (cmd_start >= argc) {
-            write_str(1, "usage: watch [-n secs] <command...>\n");
+            write_str(1, "usage: watch [-n secs] [-d] <command...>\n");
             return 1;
         }
         /* Build command string */
@@ -9912,6 +9989,10 @@ static int execute_command(int argc, char *argv[]) {
             for (int j = 0; argv[i][j] && ci < 250; j++) cmd[ci++] = argv[i][j];
         }
         cmd[ci] = '\0';
+        /* Capture buffers for diff mode: prev and curr output */
+        static char watch_prev[4096];
+        static char watch_curr[4096];
+        int prev_len = 0;
         /* Run command 10 times (limited in kernel self-test env) */
         for (int iter = 0; iter < 10; iter++) {
             /* Clear screen and show header */
@@ -9924,13 +10005,82 @@ static int execute_command(int argc, char *argv[]) {
             write_str(1, ib);
             write_str(1, "s: ");
             write_str(1, cmd);
+            if (diff_mode) write_str(1, "  [differences]");
             write_str(1, "\n\n");
-            /* Execute the command via the shell's command chain executor */
-            char cmd_copy[256];
-            for (int j = 0; cmd[j] && j < 255; j++) cmd_copy[j] = cmd[j];
-            cmd_copy[ci < 255 ? ci : 255] = '\0';
-            execute_command_chain(cmd_copy);
+
+            if (diff_mode) {
+                /* Capture output via pipe */
+                int pfd[2];
+                if (sys_pipe(pfd) < 0) { execute_command_chain(cmd); goto watch_sleep; }
+                long cpid = sys_fork_call();
+                if (cpid == 0) {
+                    sys_close(pfd[0]);
+                    sys_dup2(pfd[1], 1);
+                    sys_close(pfd[1]);
+                    char cmd_copy2[256];
+                    for (int j = 0; j < ci && j < 255; j++) cmd_copy2[j] = cmd[j];
+                    cmd_copy2[ci < 255 ? ci : 255] = '\0';
+                    execute_command_chain(cmd_copy2);
+                    sys_exit(0);
+                }
+                sys_close(pfd[1]);
+                int curr_len = 0;
+                ssize_t rd;
+                while (curr_len < 4095 && (rd = sys_read(pfd[0], watch_curr + curr_len, 4095 - curr_len)) > 0)
+                    curr_len += (int)rd;
+                watch_curr[curr_len] = '\0';
+                sys_close(pfd[0]);
+                int wstat = 0;
+                sys_waitpid((int)cpid, &wstat, 0);
+
+                if (prev_len == 0) {
+                    /* First run: just print output normally */
+                    sys_write(1, watch_curr, curr_len);
+                } else {
+                    /* Compare line by line, highlight changed lines */
+                    int pi = 0, ci2 = 0;
+                    while (ci2 < curr_len) {
+                        /* Extract current line */
+                        int cl_start = ci2;
+                        while (ci2 < curr_len && watch_curr[ci2] != '\n') ci2++;
+                        int cl_end = ci2;
+                        if (ci2 < curr_len) ci2++; /* skip \n */
+                        /* Extract prev line */
+                        int pl_start = pi;
+                        while (pi < prev_len && watch_prev[pi] != '\n') pi++;
+                        int pl_end = pi;
+                        if (pi < prev_len) pi++; /* skip \n */
+                        /* Compare */
+                        int clen = cl_end - cl_start;
+                        int plen = pl_end - pl_start;
+                        int same = (clen == plen);
+                        if (same) {
+                            for (int k = 0; k < clen; k++) {
+                                if (watch_curr[cl_start + k] != watch_prev[pl_start + k]) {
+                                    same = 0; break;
+                                }
+                            }
+                        }
+                        if (!same) write_str(1, "\033[7m"); /* reverse video */
+                        sys_write(1, watch_curr + cl_start, cl_end - cl_start);
+                        if (!same) write_str(1, "\033[0m"); /* reset */
+                        write_char(1, '\n');
+                    }
+                }
+                /* Save current as previous */
+                for (int j = 0; j < curr_len; j++) watch_prev[j] = watch_curr[j];
+                watch_prev[curr_len] = '\0';
+                prev_len = curr_len;
+            } else {
+                /* No diff mode — execute directly */
+                char cmd_copy[256];
+                for (int j = 0; cmd[j] && j < 255; j++) cmd_copy[j] = cmd[j];
+                cmd_copy[ci < 255 ? ci : 255] = '\0';
+                execute_command_chain(cmd_copy);
+            }
+watch_sleep:
             /* Sleep */
+            ;
             struct { long tv_sec; long tv_nsec; } ts = { interval, 0 };
             sys_call2(35 /* nanosleep */, (long)&ts, 0);
         }
@@ -12597,6 +12747,12 @@ static int execute_command(int argc, char *argv[]) {
     } else if (strcmp_simple(argv[0], "newgrp") == 0) {
         cmd_newgrp(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "sha512sum") == 0) {
+        cmd_sha512sum(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "base32") == 0) {
+        cmd_base32(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -12783,6 +12939,11 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "cksum") == 0 || strcmp_simple(cmd, "pathchk") == 0 ||
             strcmp_simple(cmd, "csplit") == 0 || strcmp_simple(cmd, "chown") == 0 ||
             strcmp_simple(cmd, "newgrp") == 0 ||
+            strcmp_simple(cmd, "sha512sum") == 0 ||
+            strcmp_simple(cmd, "base32") == 0 ||
+            strcmp_simple(cmd, "watch") == 0 ||
+            strcmp_simple(cmd, "top") == 0 ||
+            strcmp_simple(cmd, "sysctl") == 0 ||
             0);
 }
 
@@ -13531,22 +13692,56 @@ static void cmd_source(int argc, char *argv[]) {
 /* ── timeout: run command with a time limit ── */
 static void cmd_timeout(int argc, char *argv[]) {
     if (argc < 3) {
-        write_str(2, "usage: timeout SECONDS COMMAND [ARGS...]\n");
+        write_str(2, "usage: timeout [-s SIGNAL] SECONDS COMMAND [ARGS...]\n");
         return;
     }
+    /* Parse optional -s SIGNAL flag */
+    int sig = 15; /* SIGTERM default */
+    int arg_start = 1;
+    if (strcmp_simple(argv[1], "-s") == 0 || strcmp_simple(argv[1], "--signal") == 0) {
+        if (argc < 5) {
+            write_str(2, "usage: timeout [-s SIGNAL] SECONDS COMMAND [ARGS...]\n");
+            return;
+        }
+        /* Parse signal name or number */
+        const char *sname = argv[2];
+        if (sname[0] >= '0' && sname[0] <= '9') {
+            sig = 0;
+            for (const char *p = sname; *p; p++)
+                sig = sig * 10 + (*p - '0');
+        } else {
+            /* Strip optional "SIG" prefix */
+            const char *sn = sname;
+            if (sn[0] == 'S' && sn[1] == 'I' && sn[2] == 'G') sn += 3;
+            if (strcmp_simple(sn, "HUP") == 0) sig = 1;
+            else if (strcmp_simple(sn, "INT") == 0) sig = 2;
+            else if (strcmp_simple(sn, "QUIT") == 0) sig = 3;
+            else if (strcmp_simple(sn, "KILL") == 0) sig = 9;
+            else if (strcmp_simple(sn, "TERM") == 0) sig = 15;
+            else if (strcmp_simple(sn, "STOP") == 0) sig = 19;
+            else if (strcmp_simple(sn, "CONT") == 0) sig = 18;
+            else if (strcmp_simple(sn, "USR1") == 0) sig = 10;
+            else if (strcmp_simple(sn, "USR2") == 0) sig = 12;
+            else if (strcmp_simple(sn, "ALRM") == 0) sig = 14;
+            else { write_str(2, "timeout: unknown signal: "); write_str(2, sname); write_str(2, "\n"); return; }
+        }
+        arg_start = 3;
+    }
+
     /* Parse timeout value (integer seconds) */
     int secs = 0;
-    for (const char *p = argv[1]; *p; p++) {
+    for (const char *p = argv[arg_start]; *p; p++) {
         if (*p >= '0' && *p <= '9') secs = secs * 10 + (*p - '0');
         else break;
     }
     if (secs <= 0) { write_str(2, "timeout: invalid duration\n"); return; }
 
     /* Execute the subcommand with remaining args */
-    int sub_argc = argc - 2;
+    int cmd_start = arg_start + 1;
+    int sub_argc = argc - cmd_start;
     char *sub_argv[64];
     for (int i = 0; i < sub_argc && i < 63; i++)
-        sub_argv[i] = argv[i + 2];
+        sub_argv[i] = argv[i + cmd_start];
     sub_argv[sub_argc] = NULL;
 
     /* Fork: child runs command, parent sets alarm and waits */
@@ -13556,12 +13751,19 @@ static void cmd_timeout(int argc, char *argv[]) {
         execute_command(sub_argc, sub_argv);
         sys_exit(0);
     } else if (child > 0) {
-        /* Parent: set alarm and wait */
+        /* Parent: set alarm and wait, then kill with specified signal */
         sys_alarm(secs);
         int status = 0;
-        sys_waitpid((int)child, &status, 0);
+        long wr = sys_waitpid((int)child, &status, 0);
         sys_alarm(0);  /* Cancel alarm */
-        last_exit_status = (status >> 8) & 0xFF;
+        if (wr < 0) {
+            /* Alarm fired, waitpid interrupted — kill child with chosen signal */
+            sys_kill((int)child, sig);
+            sys_waitpid((int)child, &status, 0);
+            last_exit_status = 124; /* Conventional timeout exit code */
+        } else {
+            last_exit_status = (status >> 8) & 0xFF;
+        }
     } else {
         write_str(2, "timeout: fork failed\n");
     }
@@ -17938,6 +18140,11 @@ static void cmd_man(int argc, char *argv[]) {
         {"groups",    "groups - print the groups a user is in"},
         {"fmt",       "fmt - simple optimal text formatter (-w width)"},
         {"nawk",      "nawk - POSIX new awk (alias for awk)"},
+        {"sha512sum", "sha512sum - compute and check SHA-512 message digest"},
+        {"base32",    "base32 - encode/decode data in base32 (-d decode, RFC 4648)"},
+        {"watch",     "watch - execute a program periodically (-n interval, -d differences)"},
+        {"timeout",   "timeout - run a command with a time limit (-s signal)"},
+        {"realpath",  "realpath - print resolved canonical path (-e existing, -m missing OK)"},
     };
     int n_entries = (int)(sizeof(man_entries) / sizeof(man_entries[0]));
 
@@ -19313,4 +19520,270 @@ static void cmd_newgrp(int argc, char *argv[]) {
         write_str(2, "newgrp: failed to set group\n");
     }
 }
+
+/* ── sha512sum: compute SHA-512 hash of files ── */
+static void cmd_sha512sum(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "usage: sha512sum FILE...\n");
+        return;
+    }
+    /* SHA-512 round constants (first 80 primes, cube roots, fractional parts) */
+    static const uint64_t K512[80] = {
+        0x428a2f98d728ae22ULL, 0x7137449123ef65cdULL, 0xb5c0fbcfec4d3b2fULL, 0xe9b5dba58189dbbcULL,
+        0x3956c25bf348b538ULL, 0x59f111f1b605d019ULL, 0x923f82a4af194f9bULL, 0xab1c5ed5da6d8118ULL,
+        0xd807aa98a3030242ULL, 0x12835b0145706fbeULL, 0x243185be4ee4b28cULL, 0x550c7dc3d5ffb4e2ULL,
+        0x72be5d74f27b896fULL, 0x80deb1fe3b1696b1ULL, 0x9bdc06a725c71235ULL, 0xc19bf174cf692694ULL,
+        0xe49b69c19ef14ad2ULL, 0xefbe4786384f25e3ULL, 0x0fc19dc68b8cd5b5ULL, 0x240ca1cc77ac9c65ULL,
+        0x2de92c6f592b0275ULL, 0x4a7484aa6ea6e483ULL, 0x5cb0a9dcbd41fbd4ULL, 0x76f988da831153b5ULL,
+        0x983e5152ee66dfabULL, 0xa831c66d2db43210ULL, 0xb00327c898fb213fULL, 0xbf597fc7beef0ee4ULL,
+        0xc6e00bf33da88fc2ULL, 0xd5a79147930aa725ULL, 0x06ca6351e003826fULL, 0x142929670a0e6e70ULL,
+        0x27b70a8546d22ffcULL, 0x2e1b21385c26c926ULL, 0x4d2c6dfc5ac42aedULL, 0x53380d139d95b3dfULL,
+        0x650a73548baf63deULL, 0x766a0abb3c77b2a8ULL, 0x81c2c92e47edaee6ULL, 0x92722c851482353bULL,
+        0xa2bfe8a14cf10364ULL, 0xa81a664bbc423001ULL, 0xc24b8b70d0f89791ULL, 0xc76c51a30654be30ULL,
+        0xd192e819d6ef5218ULL, 0xd69906245565a910ULL, 0xf40e35855771202aULL, 0x106aa07032bbd1b8ULL,
+        0x19a4c116b8d2d0c8ULL, 0x1e376c085141ab53ULL, 0x2748774cdf8eeb99ULL, 0x34b0bcb5e19b48a8ULL,
+        0x391c0cb3c5c95a63ULL, 0x4ed8aa4ae3418acbULL, 0x5b9cca4f7763e373ULL, 0x682e6ff3d6b2b8a3ULL,
+        0x748f82ee5defb2fcULL, 0x78a5636f43172f60ULL, 0x84c87814a1f0ab72ULL, 0x8cc702081a6439ecULL,
+        0x90befffa23631e28ULL, 0xa4506cebde82bde9ULL, 0xbef9a3f7b2c67915ULL, 0xc67178f2e372532bULL,
+        0xca273eceea26619cULL, 0xd186b8c721c0c207ULL, 0xeada7dd6cde0eb1eULL, 0xf57d4f7fee6ed178ULL,
+        0x06f067aa72176fbaULL, 0x0a637dc5a2c898a6ULL, 0x113f9804bef90daeULL, 0x1b710b35131c471bULL,
+        0x28db77f523047d84ULL, 0x32caab7b40c72493ULL, 0x3c9ebe0a15c9bebcULL, 0x431d67c49c100d4cULL,
+        0x4cc5d4becb3e42b6ULL, 0x597f299cfc657e2aULL, 0x5fcb6fab3ad6faecULL, 0x6c44198c4a475817ULL,
+    };
+
+    for (int f = 1; f < argc; f++) {
+        int fd = sys_open(argv[f], O_RDONLY, 0);
+        if (fd < 0) {
+            write_str(2, "sha512sum: ");
+            write_str(2, argv[f]);
+            write_str(2, ": not found\n");
+            continue;
+        }
+
+        /* SHA-512 initial hash values */
+        uint64_t H[8] = {
+            0x6a09e667f3bcc908ULL, 0xbb67ae8584caa73bULL,
+            0x3c6ef372fe94f82bULL, 0xa54ff53a5f1d36f1ULL,
+            0x510e527fade682d1ULL, 0x9b05688c2b3e6c1fULL,
+            0x1f83d9abfb41bd6bULL, 0x5be0cd19137e2179ULL,
+        };
+        uint64_t total_bytes = 0;
+        static unsigned char blk[128];
+        int blk_len = 0;
+        static unsigned char rbuf[4096];
+        ssize_t nr;
+
+        #define SHA512_ROTR(x,n) (((x)>>(n))|((x)<<(64-(n))))
+        #define SHA512_CH(x,y,z)  (((x)&(y))^((~(x))&(z)))
+        #define SHA512_MAJ(x,y,z) (((x)&(y))^((x)&(z))^((y)&(z)))
+        #define SHA512_SIGMA0(x) (SHA512_ROTR(x,28)^SHA512_ROTR(x,34)^SHA512_ROTR(x,39))
+        #define SHA512_SIGMA1(x) (SHA512_ROTR(x,14)^SHA512_ROTR(x,18)^SHA512_ROTR(x,41))
+        #define SHA512_sigma0(x) (SHA512_ROTR(x,1)^SHA512_ROTR(x,8)^((x)>>7))
+        #define SHA512_sigma1(x) (SHA512_ROTR(x,19)^SHA512_ROTR(x,61)^((x)>>6))
+
+        #define SHA512_BLOCK() do { \
+            uint64_t w[80]; \
+            for (int _i = 0; _i < 16; _i++) \
+                w[_i] = ((uint64_t)blk[_i*8+0]<<56)|((uint64_t)blk[_i*8+1]<<48)| \
+                         ((uint64_t)blk[_i*8+2]<<40)|((uint64_t)blk[_i*8+3]<<32)| \
+                         ((uint64_t)blk[_i*8+4]<<24)|((uint64_t)blk[_i*8+5]<<16)| \
+                         ((uint64_t)blk[_i*8+6]<<8)|((uint64_t)blk[_i*8+7]); \
+            for (int _i = 16; _i < 80; _i++) \
+                w[_i] = SHA512_sigma1(w[_i-2]) + w[_i-7] + SHA512_sigma0(w[_i-15]) + w[_i-16]; \
+            uint64_t a=H[0],b=H[1],c=H[2],d=H[3],e=H[4],ff=H[5],g=H[6],h=H[7]; \
+            for (int _i = 0; _i < 80; _i++) { \
+                uint64_t T1 = h + SHA512_SIGMA1(e) + SHA512_CH(e,ff,g) + K512[_i] + w[_i]; \
+                uint64_t T2 = SHA512_SIGMA0(a) + SHA512_MAJ(a,b,c); \
+                h=g; g=ff; ff=e; e=d+T1; d=c; c=b; b=a; a=T1+T2; \
+            } \
+            H[0]+=a; H[1]+=b; H[2]+=c; H[3]+=d; H[4]+=e; H[5]+=ff; H[6]+=g; H[7]+=h; \
+        } while(0)
+
+        while ((nr = sys_read(fd, rbuf, sizeof(rbuf))) > 0) {
+            for (ssize_t i = 0; i < nr; i++) {
+                blk[blk_len++] = rbuf[i];
+                if (blk_len == 128) { SHA512_BLOCK(); blk_len = 0; }
+            }
+            total_bytes += (uint64_t)nr;
+        }
+        sys_close(fd);
+
+        /* Padding: append 0x80, pad to 112 mod 128, append 128-bit length */
+        uint64_t total_bits = total_bytes * 8;
+        blk[blk_len++] = 0x80;
+        if (blk_len > 112) {
+            while (blk_len < 128) blk[blk_len++] = 0;
+            SHA512_BLOCK(); blk_len = 0;
+        }
+        while (blk_len < 112) blk[blk_len++] = 0;
+        /* 128-bit length: high 64 bits are 0 for files < 2^64 bits */
+        for (int i = 0; i < 8; i++) blk[blk_len++] = 0;
+        for (int i = 7; i >= 0; i--)
+            blk[blk_len++] = (unsigned char)(total_bits >> (i * 8));
+        SHA512_BLOCK();
+        #undef SHA512_ROTR
+        #undef SHA512_CH
+        #undef SHA512_MAJ
+        #undef SHA512_SIGMA0
+        #undef SHA512_SIGMA1
+        #undef SHA512_sigma0
+        #undef SHA512_sigma1
+        #undef SHA512_BLOCK
+
+        /* Output 128-character hex digest */
+        static const char hex[] = "0123456789abcdef";
+        char out[129];
+        for (int i = 0; i < 8; i++) {
+            for (int j = 0; j < 8; j++) {
+                unsigned char byte = (unsigned char)(H[i] >> ((7 - j) * 8));
+                out[i*16 + j*2 + 0] = hex[(byte >> 4) & 0xF];
+                out[i*16 + j*2 + 1] = hex[byte & 0xF];
+            }
+        }
+        out[128] = '\0';
+        write_str(1, out);
+        write_str(1, "  ");
+        write_str(1, argv[f]);
+        write_str(1, "\n");
+    }
+}
+
+/* ── base32: RFC 4648 Base32 encode/decode ── */
+static void cmd_base32(int argc, char *argv[]) {
+    int decode = 0;
+    int wrap_col = 76; /* Default wrap width */
+    const char *filename = NULL;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp_simple(argv[i], "-d") == 0 || strcmp_simple(argv[i], "--decode") == 0)
+            decode = 1;
+        else if (strcmp_simple(argv[i], "-w") == 0 && i + 1 < argc) {
+            i++;
+            wrap_col = 0;
+            for (int j = 0; argv[i][j]; j++) wrap_col = wrap_col * 10 + (argv[i][j] - '0');
+        } else if (argv[i][0] != '-')
+            filename = argv[i];
+        else if (strcmp_simple(argv[i], "-") == 0)
+            filename = NULL; /* stdin */
+        else {
+            write_str(2, "usage: base32 [-d] [-w COLS] [FILE]\n");
+            return;
+        }
+    }
+
+    static const char b32_alpha[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+
+    int fd = 0; /* stdin default */
+    if (filename) {
+        fd = sys_open(filename, O_RDONLY, 0);
+        if (fd < 0) {
+            write_str(2, "base32: ");
+            write_str(2, filename);
+            write_str(2, ": not found\n");
+            return;
+        }
+    }
+
+    /* Read all input */
+    static unsigned char inbuf[65536];
+    int inlen = 0;
+    ssize_t nr;
+    while (inlen < (int)sizeof(inbuf) - 1 && (nr = sys_read(fd, inbuf + inlen, sizeof(inbuf) - (size_t)inlen - 1)) > 0)
+        inlen += (int)nr;
+    if (filename && fd > 0) sys_close(fd);
+
+    if (!decode) {
+        /* Encode: process 5 bytes at a time -> 8 base32 chars */
+        static char outbuf[131072];
+        int olen = 0;
+        int col = 0;
+        for (int i = 0; i < inlen; i += 5) {
+            int remain = inlen - i;
+            if (remain > 5) remain = 5;
+            /* Pack up to 5 bytes into a 40-bit value */
+            uint64_t val = 0;
+            for (int j = 0; j < 5; j++) {
+                val <<= 8;
+                if (j < remain) val |= inbuf[i + j];
+            }
+            /* How many output chars for this group */
+            int nchars;
+            int npad;
+            switch (remain) {
+                case 1: nchars = 2; npad = 6; break;
+                case 2: nchars = 4; npad = 4; break;
+                case 3: nchars = 5; npad = 3; break;
+                case 4: nchars = 7; npad = 1; break;
+                default: nchars = 8; npad = 0; break;
+            }
+            /* Extract 5-bit groups from MSB */
+            for (int j = 0; j < nchars; j++) {
+                int shift = (7 - j) * 5;
+                int idx = (int)((val >> shift) & 0x1F);
+                if (olen < (int)sizeof(outbuf) - 2) outbuf[olen++] = b32_alpha[idx];
+                col++;
+                if (wrap_col > 0 && col >= wrap_col) {
+                    outbuf[olen++] = '\n'; col = 0;
+                }
+            }
+            for (int j = 0; j < npad; j++) {
+                if (olen < (int)sizeof(outbuf) - 2) outbuf[olen++] = '=';
+                col++;
+                if (wrap_col > 0 && col >= wrap_col) {
+                    outbuf[olen++] = '\n'; col = 0;
+                }
+            }
+        }
+        if (col > 0 && olen < (int)sizeof(outbuf) - 1) outbuf[olen++] = '\n';
+        outbuf[olen] = '\0';
+        sys_write(1, outbuf, olen);
+    } else {
+        /* Decode: map base32 chars back to 5-bit values */
+        static unsigned char decoded[65536];
+        int dlen = 0;
+        /* Strip whitespace and collect valid base32 chars */
+        static unsigned char clean[131072];
+        int clen = 0;
+        for (int i = 0; i < inlen; i++) {
+            unsigned char c = inbuf[i];
+            if (c == '\n' || c == '\r' || c == ' ' || c == '\t') continue;
+            if (c == '=') continue; /* padding */
+            clean[clen++] = c;
+        }
+        /* Decode groups of 8 chars -> 5 bytes */
+        for (int i = 0; i < clen; i += 8) {
+            int group_len = clen - i;
+            if (group_len > 8) group_len = 8;
+            uint64_t val = 0;
+            for (int j = 0; j < 8; j++) {
+                val <<= 5;
+                if (j < group_len) {
+                    unsigned char c = clean[i + j];
+                    int v = 0;
+                    if (c >= 'A' && c <= 'Z') v = c - 'A';
+                    else if (c >= 'a' && c <= 'z') v = c - 'a'; /* lowercase tolerance */
+                    else if (c >= '2' && c <= '7') v = c - '2' + 26;
+                    else { write_str(2, "base32: invalid input\n"); return; }
+                    val |= (uint64_t)v;
+                }
+            }
+            /* How many output bytes from this group */
+            int nbytes;
+            switch (group_len) {
+                case 2: nbytes = 1; break;
+                case 4: nbytes = 2; break;
+                case 5: nbytes = 3; break;
+                case 7: nbytes = 4; break;
+                default: nbytes = 5; break;
+            }
+            /* Extract bytes from MSB of 40-bit value */
+            for (int j = 0; j < nbytes; j++) {
+                int shift = (4 - j) * 8;
+                if (dlen < (int)sizeof(decoded))
+                    decoded[dlen++] = (unsigned char)((val >> shift) & 0xFF);
+            }
+        }
+        sys_write(1, decoded, dlen);
+    }
+}
+
 #pragma GCC diagnostic pop

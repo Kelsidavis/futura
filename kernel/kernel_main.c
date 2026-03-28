@@ -1328,7 +1328,7 @@ void fut_kernel_main(void) {
                   "  Networking:   ping, wget, curl, nc, netstat, ss, httpd\n"
                   "  System:       top, ps, free, df, sysctl, dmesg, lsof, strace\n"
                   "  Containers:   nsenter, unshare, chroot (cgroups v2)\n"
-                  "  Text:         awk, sed, grep -r, sort, diff, sha1sum\n"
+                  "  Text:         awk, sed, grep -r, sort, diff, sha512sum, base32\n"
                   "\n");
         ETC_WRITE("/etc/services",
                   "# Network services\n"

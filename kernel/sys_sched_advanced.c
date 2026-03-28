@@ -18,6 +18,7 @@
 #include <string.h>
 
 #include <kernel/kprintf.h>
+#include <kernel/fut_timer.h>
 #include <kernel/uaccess.h>
 #include <platform/platform.h>
 

@@ -69053,7 +69053,7 @@ __attribute__((noinline)) static void test_execve_shebang_comprehensive(void) {
         int fd = fut_vfs_open("/tmp/shebang_2456.sh", 0x42, 0755);
         if (fd >= 0) {
             const char *content = "#!/tmp/no_such_interp_2456 -x\nset -e\n";
-            fut_vfs_write(fd, content, 38);
+            fut_vfs_write(fd, content, 37);
             fut_vfs_close(fd);
         }
         const char *const argv[] = { "/tmp/shebang_2456.sh", NULL };
@@ -69146,7 +69146,7 @@ __attribute__((noinline)) static void test_execve_shebang_comprehensive(void) {
             "#!/tmp/shebang_chain_3.sh\nlevel4\n",
             "#!/tmp/shebang_chain_4.sh\nlevel5\n"
         };
-        int lens[] = { 31, 32, 32, 32, 32, 32 };
+        int lens[] = { 31, 33, 33, 33, 33, 33 };
         for (int i = 0; i < 6; i++) {
             int fd = fut_vfs_open(names[i], 0x42, 0755);
             if (fd >= 0) {

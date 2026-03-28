@@ -111,6 +111,8 @@ void fut_mm_merge_adjacent_vmas(fut_mm_t *mm);
 
 /* VMA management for fork() */
 int fut_mm_add_vma(fut_mm_t *mm, uintptr_t start, uintptr_t end, int prot, int flags);
+int fut_mm_add_vma_file(fut_mm_t *mm, uintptr_t start, uintptr_t end, int prot, int flags,
+                        struct fut_vnode *vnode, uint64_t file_offset);
 int fut_mm_clone_vmas(fut_mm_t *dest_mm, fut_mm_t *src_mm);
 
 /* Page reference counting for COW */

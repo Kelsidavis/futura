@@ -1259,10 +1259,13 @@ static size_t gen_maps(char *buf, size_t cap, fut_task_t *task) {
     struct pbuf b = { buf, 0, cap };
     struct fut_vma *vma = mm->vma_list;
     while (vma) {
-        /* address range — Linux uses %08lx (at least 8 hex chars) */
+        /* Record line start position for column-based padding */
+        size_t line_start = b.pos;
+
+        /* address range — Linux uses %08lx (at least 8 hex chars, more for >32-bit addrs) */
         pb_hex8(&b, vma->start); pb_char(&b, '-');
         pb_hex8(&b, vma->end);   pb_char(&b, ' ');
-        /* permissions */
+        /* permissions: rwxp/s */
         pb_char(&b, (vma->prot & PROT_READ)  ? 'r' : '-');
         pb_char(&b, (vma->prot & PROT_WRITE) ? 'w' : '-');
         pb_char(&b, (vma->prot & PROT_EXEC)  ? 'x' : '-');
@@ -1270,32 +1273,62 @@ static size_t gen_maps(char *buf, size_t cap, fut_task_t *task) {
         pb_char(&b, ' ');
         /* offset — exactly 8 hex chars (Linux %08llx) */
         pb_hex8(&b, vma->file_offset); pb_char(&b, ' ');
-        /* dev:inode — file-backed: "MM:mm <ino>"; anonymous: "00:00 0" */
+        /* dev major:minor and inode */
         if (vma->vnode) {
             uint64_t dev = (vma->vnode->mount) ? vma->vnode->mount->st_dev : 1;
             pb_hex2(&b, (unsigned)(dev >> 8) & 0xff);
             pb_char(&b, ':');
             pb_hex2(&b, (unsigned)dev & 0xff);
-            pb_char(&b, ' '); pb_u64(&b, vma->vnode->ino);
+            pb_char(&b, ' ');
+            pb_u64(&b, vma->vnode->ino);
         } else {
             pb_str(&b, "00:00 0");
         }
-        /* pathname */
+
+        /* Determine the pathname (if any) to display */
+        const char *pathname = NULL;
+        char path_buf[256];
+        const char *pseudo = NULL; /* pseudo-path like [heap], [stack] */
+
         if (vma->vnode) {
-            char path_buf[256];
             char *full = fut_vnode_build_path(vma->vnode, path_buf, sizeof(path_buf));
-            pb_char(&b, ' ');
-            pb_str(&b, full ? full : vma->vnode->name ? vma->vnode->name : "");
+            pathname = full ? full : vma->vnode->name ? vma->vnode->name : NULL;
         } else if (vma->anon_name) {
-            pb_str(&b, " [anon:");
-            pb_str(&b, vma->anon_name);
-            pb_char(&b, ']');
+            /* Format [anon:name] into path_buf */
+            size_t nlen = 0;
+            path_buf[nlen++] = '[';
+            path_buf[nlen++] = 'a';
+            path_buf[nlen++] = 'n';
+            path_buf[nlen++] = 'o';
+            path_buf[nlen++] = 'n';
+            path_buf[nlen++] = ':';
+            const char *an = vma->anon_name;
+            while (*an && nlen < sizeof(path_buf) - 2) path_buf[nlen++] = *an++;
+            path_buf[nlen++] = ']';
+            path_buf[nlen] = '\0';
+            pseudo = path_buf;
         } else if (vma->flags & VMA_STACK) {
-            pb_str(&b, " [stack]");
+            pseudo = "[stack]";
         } else if (mm->brk_start && vma->start >= mm->brk_start &&
                    vma->end <= mm->brk_current + 0x1000) {
-            pb_str(&b, " [heap]");
+            pseudo = "[heap]";
         }
+
+        /* Pad with spaces and emit pathname.
+         * Linux pads the inode field so pathnames start at a consistent column.
+         * We pad to at least column 73 (from line start) with a minimum of 1 space. */
+        if (pathname || pseudo) {
+            size_t col = b.pos - line_start;
+            size_t target_col = 73;
+            if (col < target_col) {
+                size_t pad = target_col - col;
+                for (size_t p = 0; p < pad; p++) pb_char(&b, ' ');
+            } else {
+                pb_char(&b, ' ');
+            }
+            pb_str(&b, pathname ? pathname : pseudo);
+        }
+
         pb_char(&b, '\n');
         vma = vma->next;
     }
@@ -1325,6 +1358,7 @@ static size_t gen_smaps(char *buf, size_t cap, fut_task_t *task) {
         int is_anon = (vma->vnode == NULL);
 
         /* Header line: same format as /proc/maps */
+        size_t sline_start = b.pos;
         pb_hex8(&b, vma->start); pb_char(&b, '-');
         pb_hex8(&b, vma->end);   pb_char(&b, ' ');
         pb_char(&b, (vma->prot & PROT_READ)  ? 'r' : '-');
@@ -1338,24 +1372,44 @@ static size_t gen_smaps(char *buf, size_t cap, fut_task_t *task) {
             pb_hex2(&b, (unsigned)(dev >> 8) & 0xff);
             pb_char(&b, ':');
             pb_hex2(&b, (unsigned)dev & 0xff);
-            pb_char(&b, ' '); pb_u64(&b, vma->vnode->ino);
+            pb_char(&b, ' ');
+            pb_u64(&b, vma->vnode->ino);
         } else {
             pb_str(&b, "00:00 0");
         }
-        if (vma->vnode) {
-            char path_buf[256];
-            char *full = fut_vnode_build_path(vma->vnode, path_buf, sizeof(path_buf));
-            pb_char(&b, ' ');
-            pb_str(&b, full ? full : vma->vnode->name ? vma->vnode->name : "");
-        } else if (vma->anon_name) {
-            pb_str(&b, " [anon:");
-            pb_str(&b, vma->anon_name);
-            pb_char(&b, ']');
-        } else if (vma->flags & VMA_STACK) {
-            pb_str(&b, " [stack]");
-        } else if (mm->brk_start && vma->start >= mm->brk_start &&
-                   vma->end <= mm->brk_current + 0x1000) {
-            pb_str(&b, " [heap]");
+        /* Determine pathname for smaps header */
+        {
+            const char *sp_name = NULL;
+            char sp_buf[256];
+            const char *sp_pseudo = NULL;
+            if (vma->vnode) {
+                char *full = fut_vnode_build_path(vma->vnode, sp_buf, sizeof(sp_buf));
+                sp_name = full ? full : vma->vnode->name ? vma->vnode->name : NULL;
+            } else if (vma->anon_name) {
+                size_t nlen = 0;
+                sp_buf[nlen++] = '['; sp_buf[nlen++] = 'a'; sp_buf[nlen++] = 'n';
+                sp_buf[nlen++] = 'o'; sp_buf[nlen++] = 'n'; sp_buf[nlen++] = ':';
+                const char *an = vma->anon_name;
+                while (*an && nlen < sizeof(sp_buf) - 2) sp_buf[nlen++] = *an++;
+                sp_buf[nlen++] = ']'; sp_buf[nlen] = '\0';
+                sp_pseudo = sp_buf;
+            } else if (vma->flags & VMA_STACK) {
+                sp_pseudo = "[stack]";
+            } else if (mm->brk_start && vma->start >= mm->brk_start &&
+                       vma->end <= mm->brk_current + 0x1000) {
+                sp_pseudo = "[heap]";
+            }
+            if (sp_name || sp_pseudo) {
+                size_t col = b.pos - sline_start;
+                size_t target_col = 73;
+                if (col < target_col) {
+                    size_t pad = target_col - col;
+                    for (size_t p = 0; p < pad; p++) pb_char(&b, ' ');
+                } else {
+                    pb_char(&b, ' ');
+                }
+                pb_str(&b, sp_name ? sp_name : sp_pseudo);
+            }
         }
         pb_char(&b, '\n');
 
@@ -1421,8 +1475,8 @@ static size_t gen_smaps_rollup(char *buf, size_t cap, fut_task_t *task) {
     while (vma) {
         uint64_t vma_kb = (vma->end - vma->start) / 1024;
         total_size += vma_kb;
+        total_rss  += vma_kb;  /* All pages resident in Futura's RAM model */
         if (vma->vnode == NULL) {   /* anonymous mapping */
-            total_rss  += vma_kb;
             total_anon += vma_kb;
         }
         vma = vma->next;

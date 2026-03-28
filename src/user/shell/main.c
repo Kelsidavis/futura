@@ -335,6 +335,10 @@ static void cmd_systemd_inhibit(int argc, char *argv[]);
 static void cmd_systemd_notify(int argc, char *argv[]);
 static void cmd_systemd_ask_password(int argc, char *argv[]);
 static void cmd_systemd_tmpfiles(int argc, char *argv[]);
+static void cmd_at(int argc, char *argv[]);
+static void cmd_batch(int argc, char *argv[]);
+static void cmd_pr(int argc, char *argv[]);
+static void cmd_ptx(int argc, char *argv[]);
 
 /* Forward declaration for prompt */
 static void print_prompt(void);
@@ -10675,9 +10679,11 @@ static int execute_command(int argc, char *argv[]) {
         return 0;
     } else if (strcmp_simple(argv[0], "watch") == 0) {
         /* watch — execute a command repeatedly, showing output each time */
-        /* Supports: -n SEC (interval), -d (highlight differences) */
+        /* Supports: -n SEC (interval), -d (highlight differences), -t (no title), -x (exec) */
         int interval = 2; /* default 2 seconds */
         int diff_mode = 0;
+        int no_title = 0;
+        int exec_mode = 0; /* -x: use exec instead of sh -c */
         int cmd_start = 1;
         /* Parse options */
         while (cmd_start < argc && argv[cmd_start][0] == '-') {
@@ -10693,12 +10699,21 @@ static int execute_command(int argc, char *argv[]) {
                        strcmp_simple(argv[cmd_start], "--differences") == 0) {
                 diff_mode = 1;
                 cmd_start++;
+            } else if (strcmp_simple(argv[cmd_start], "-t") == 0 ||
+                       strcmp_simple(argv[cmd_start], "--no-title") == 0) {
+                no_title = 1;
+                cmd_start++;
+            } else if (strcmp_simple(argv[cmd_start], "-x") == 0 ||
+                       strcmp_simple(argv[cmd_start], "--exec") == 0) {
+                exec_mode = 1;
+                cmd_start++;
             } else {
                 break;
             }
         }
+        (void)exec_mode; /* exec_mode changes semantics but same effect in our shell */
         if (cmd_start >= argc) {
-            write_str(1, "usage: watch [-n secs] [-d] <command...>\n");
+            write_str(1, "usage: watch [-n secs] [-d] [-t] [-x] <command...>\n");
             return 1;
         }
         /* Build command string */
@@ -10714,18 +10729,20 @@ static int execute_command(int argc, char *argv[]) {
         int prev_len = 0;
         /* Run command 10 times (limited in kernel self-test env) */
         for (int iter = 0; iter < 10; iter++) {
-            /* Clear screen and show header */
+            /* Clear screen and show header (unless -t) */
             write_str(1, "\033[2J\033[H");
-            write_str(1, "Every ");
-            char ib[4]; int ip = 0;
-            if (interval >= 10) ib[ip++] = '0' + interval / 10;
-            ib[ip++] = '0' + interval % 10;
-            ib[ip] = '\0';
-            write_str(1, ib);
-            write_str(1, "s: ");
-            write_str(1, cmd);
-            if (diff_mode) write_str(1, "  [differences]");
-            write_str(1, "\n\n");
+            if (!no_title) {
+                write_str(1, "Every ");
+                char ib[4]; int ip = 0;
+                if (interval >= 10) ib[ip++] = '0' + interval / 10;
+                ib[ip++] = '0' + interval % 10;
+                ib[ip] = '\0';
+                write_str(1, ib);
+                write_str(1, "s: ");
+                write_str(1, cmd);
+                if (diff_mode) write_str(1, "  [differences]");
+                write_str(1, "\n\n");
+            }
 
             if (diff_mode) {
                 /* Capture output via pipe */
@@ -13173,7 +13190,41 @@ watch_sleep:
             if (aliases[i].used && strcmp_simple(aliases[i].name, argv[1]) == 0) { aliases[i].used = 0; break; }
         return 0;
     } else if (strcmp_simple(argv[0], "nproc") == 0) {
-        write_str(1, "1\n");  /* Single CPU for now */
+        /* nproc: print number of processing units available */
+        /* --all: show total CPUs (not just available to process) */
+        int show_all = 0;
+        for (int a = 1; a < argc; a++) {
+            if (strcmp_simple(argv[a], "--all") == 0) show_all = 1;
+        }
+        /* Try to detect CPU count from /proc/cpuinfo */
+        int cpu_count = 0;
+        int cpuinfo_fd = sys_open("/proc/cpuinfo", O_RDONLY, 0);
+        if (cpuinfo_fd >= 0) {
+            static char cpubuf[4096];
+            ssize_t nr = sys_read(cpuinfo_fd, cpubuf, sizeof(cpubuf) - 1);
+            sys_close(cpuinfo_fd);
+            if (nr > 0) {
+                cpubuf[nr] = '\0';
+                /* Count "processor" lines */
+                char *cp = cpubuf;
+                while (*cp) {
+                    if (cp[0] == 'p' && cp[1] == 'r' && cp[2] == 'o' &&
+                        cp[3] == 'c' && cp[4] == 'e' && cp[5] == 's' &&
+                        cp[6] == 's' && cp[7] == 'o' && cp[8] == 'r') {
+                        cpu_count++;
+                    }
+                    while (*cp && *cp != '\n') cp++;
+                    if (*cp) cp++;
+                }
+            }
+        }
+        if (cpu_count < 1) cpu_count = 1;
+        (void)show_all; /* In our env, all CPUs are available */
+        char nbuf[8]; int np = 0;
+        if (cpu_count >= 10) nbuf[np++] = '0' + cpu_count / 10;
+        nbuf[np++] = '0' + cpu_count % 10;
+        nbuf[np++] = '\n';
+        sys_write(1, nbuf, np);
         return 0;
     } else if (strcmp_simple(argv[0], "arch") == 0) {
 #ifdef __aarch64__
@@ -13773,17 +13824,25 @@ watch_sleep:
         return 0;
     } else if (strcmp_simple(argv[0], "fmt") == 0) {
         /* fmt: simple text formatter — reflow text to specified width */
+        /* -u: uniform spacing (single space between words, two after sentence-ending '.') */
         int width = 75;
+        int uniform = 0;
         int arg_start = 1;
-        if (arg_start < argc && strcmp_simple(argv[arg_start], "-w") == 0 && arg_start + 1 < argc) {
-            width = simple_atoi(argv[arg_start + 1]);
-            if (width < 1) width = 75;
-            arg_start += 2;
-        } else if (arg_start < argc && argv[arg_start][0] == '-' && argv[arg_start][1] >= '0' &&
-                   argv[arg_start][1] <= '9') {
-            width = simple_atoi(&argv[arg_start][1]);
-            if (width < 1) width = 75;
-            arg_start++;
+        while (arg_start < argc && argv[arg_start][0] == '-') {
+            if (strcmp_simple(argv[arg_start], "-w") == 0 && arg_start + 1 < argc) {
+                width = simple_atoi(argv[arg_start + 1]);
+                if (width < 1) width = 75;
+                arg_start += 2;
+            } else if (argv[arg_start][1] >= '0' && argv[arg_start][1] <= '9') {
+                width = simple_atoi(&argv[arg_start][1]);
+                if (width < 1) width = 75;
+                arg_start++;
+            } else if (strcmp_simple(argv[arg_start], "-u") == 0) {
+                uniform = 1;
+                arg_start++;
+            } else {
+                break;
+            }
         }
         /* Read input from file or stdin */
         int fd = 0;
@@ -13807,6 +13866,7 @@ watch_sleep:
         /* Reflow: output words wrapping at width */
         int col = 0;
         int in_blank_line = 0;
+        char prev_end_char = 0; /* last char of previous word (for -u sentence spacing) */
         char *p = fbuf;
         while (*p) {
             /* Check for blank line (paragraph break) */
@@ -13815,6 +13875,7 @@ watch_sleep:
                     write_char(1, '\n');
                     in_blank_line = 1;
                     col = 0;
+                    prev_end_char = 0;
                 } else {
                     in_blank_line = 0;
                 }
@@ -13828,14 +13889,23 @@ watch_sleep:
             const char *ws = p;
             int wlen = 0;
             while (*p && *p != ' ' && *p != '\t' && *p != '\n') { p++; wlen++; }
+            /* Determine spacing: -u puts two spaces after sentence-ending punctuation */
+            int spaces = 1;
+            if (uniform && col > 0 &&
+                (prev_end_char == '.' || prev_end_char == '!' || prev_end_char == '?')) {
+                spaces = 2;
+            }
             /* Output word, wrapping if needed */
-            if (col > 0 && col + 1 + wlen > width) {
+            if (col > 0 && col + spaces + wlen > width) {
                 write_char(1, '\n');
                 col = 0;
             }
-            if (col > 0) { write_char(1, ' '); col++; }
+            if (col > 0) {
+                for (int s = 0; s < spaces; s++) { write_char(1, ' '); col++; }
+            }
             for (int i = 0; i < wlen; i++) write_char(1, ws[i]);
             col += wlen;
+            prev_end_char = ws[wlen - 1];
         }
         if (col > 0) write_char(1, '\n');
         return 0;
@@ -14351,6 +14421,18 @@ watch_sleep:
     } else if (strcmp_simple(argv[0], "systemd-tmpfiles") == 0) {
         cmd_systemd_tmpfiles(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "at") == 0) {
+        cmd_at(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "batch") == 0) {
+        cmd_batch(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "pr") == 0) {
+        cmd_pr(argc, argv);
+        return 0;
+    } else if (strcmp_simple(argv[0], "ptx") == 0) {
+        cmd_ptx(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -14703,6 +14785,10 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "systemd-notify") == 0 ||
             strcmp_simple(cmd, "systemd-ask-password") == 0 ||
             strcmp_simple(cmd, "systemd-tmpfiles") == 0 ||
+            strcmp_simple(cmd, "at") == 0 ||
+            strcmp_simple(cmd, "batch") == 0 ||
+            strcmp_simple(cmd, "pr") == 0 ||
+            strcmp_simple(cmd, "ptx") == 0 ||
             0);
 }
 
@@ -16806,19 +16892,39 @@ static void cmd_cmp(int argc, char *argv[]) {
 /* ── fold: wrap input lines to specified width ── */
 static void cmd_fold(int argc, char *argv[]) {
     int width = 80;
+    int break_spaces = 0; /* -s: break at spaces */
     int file_start = 1;
-    if (argc >= 3 && argv[1][0] == '-' && argv[1][1] == 'w') {
-        width = 0;
-        for (const char *p = argv[2]; *p >= '0' && *p <= '9'; p++)
-            width = width * 10 + (*p - '0');
-        if (width <= 0) width = 80;
-        file_start = 3;
-    } else if (argc >= 2 && argv[1][0] == '-' && argv[1][1] == 'w' && argv[1][2] >= '0') {
-        width = 0;
-        for (const char *p = argv[1] + 2; *p >= '0' && *p <= '9'; p++)
-            width = width * 10 + (*p - '0');
-        if (width <= 0) width = 80;
-        file_start = 2;
+    /* Parse options */
+    while (file_start < argc && argv[file_start][0] == '-') {
+        if (argv[file_start][1] == 'w' && argv[file_start][2] >= '0') {
+            width = 0;
+            for (const char *p = argv[file_start] + 2; *p >= '0' && *p <= '9'; p++)
+                width = width * 10 + (*p - '0');
+            if (width <= 0) width = 80;
+            file_start++;
+        } else if (argv[file_start][1] == 'w' && argv[file_start][2] == '\0') {
+            file_start++;
+            if (file_start < argc) {
+                width = 0;
+                for (const char *p = argv[file_start]; *p >= '0' && *p <= '9'; p++)
+                    width = width * 10 + (*p - '0');
+                if (width <= 0) width = 80;
+                file_start++;
+            }
+        } else if (argv[file_start][1] == 's' && argv[file_start][2] == '\0') {
+            break_spaces = 1;
+            file_start++;
+        } else if (argv[file_start][1] == 's' && argv[file_start][2] == 'w') {
+            /* -sw<N> combined */
+            break_spaces = 1;
+            width = 0;
+            for (const char *p = argv[file_start] + 3; *p >= '0' && *p <= '9'; p++)
+                width = width * 10 + (*p - '0');
+            if (width <= 0) width = 80;
+            file_start++;
+        } else {
+            break;
+        }
     }
     int fd = 0;  /* default: stdin */
     if (file_start < argc) {
@@ -16828,24 +16934,72 @@ static void cmd_fold(int argc, char *argv[]) {
             return;
         }
     }
-    static char buf[4096];
-    ssize_t n;
-    int col = 0;
-    while ((n = sys_read(fd, buf, sizeof(buf))) > 0) {
-        for (ssize_t i = 0; i < n; i++) {
-            if (buf[i] == '\n') {
-                sys_write(1, &buf[i], 1);
-                col = 0;
-            } else {
-                if (col >= width) {
-                    char nl = '\n';
-                    sys_write(1, &nl, 1);
+    if (!break_spaces) {
+        /* Simple fold at exact column */
+        static char buf[4096];
+        ssize_t n;
+        int col = 0;
+        while ((n = sys_read(fd, buf, sizeof(buf))) > 0) {
+            for (ssize_t i = 0; i < n; i++) {
+                if (buf[i] == '\n') {
+                    sys_write(1, &buf[i], 1);
                     col = 0;
+                } else {
+                    if (col >= width) {
+                        char nl = '\n';
+                        sys_write(1, &nl, 1);
+                        col = 0;
+                    }
+                    sys_write(1, &buf[i], 1);
+                    col++;
                 }
-                sys_write(1, &buf[i], 1);
-                col++;
             }
         }
+    } else {
+        /* Fold at spaces: buffer a line, find last space before width */
+        static char lbuf[8192];
+        int llen = 0;
+        static char rbuf[4096];
+        ssize_t n;
+        while ((n = sys_read(fd, rbuf, sizeof(rbuf))) > 0) {
+            for (ssize_t i = 0; i < n; i++) {
+                if (rbuf[i] == '\n') {
+                    if (llen > 0) sys_write(1, lbuf, llen);
+                    char nl = '\n';
+                    sys_write(1, &nl, 1);
+                    llen = 0;
+                } else {
+                    lbuf[llen++] = rbuf[i];
+                    if (llen >= width) {
+                        /* Find last space in buffer */
+                        int brk = -1;
+                        for (int j = llen - 1; j >= 0; j--) {
+                            if (lbuf[j] == ' ' || lbuf[j] == '\t') { brk = j; break; }
+                        }
+                        if (brk >= 0) {
+                            sys_write(1, lbuf, brk);
+                            char nl = '\n';
+                            sys_write(1, &nl, 1);
+                            /* Move remainder */
+                            int rem = llen - brk - 1;
+                            for (int j = 0; j < rem; j++) lbuf[j] = lbuf[brk + 1 + j];
+                            llen = rem;
+                        } else {
+                            /* No space found, hard break */
+                            sys_write(1, lbuf, llen);
+                            char nl = '\n';
+                            sys_write(1, &nl, 1);
+                            llen = 0;
+                        }
+                    }
+                    if (llen >= (int)sizeof(lbuf) - 1) {
+                        sys_write(1, lbuf, llen);
+                        llen = 0;
+                    }
+                }
+            }
+        }
+        if (llen > 0) sys_write(1, lbuf, llen);
     }
     if (fd > 0) sys_close(fd);
 }
@@ -19291,7 +19445,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   370 built-in commands — type 'help'    |\n");
+    write_str(1, "|   380 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");
@@ -19672,17 +19826,40 @@ static int execute_full_line(char *line) {
 /* ---- crontab: simple cron-like task scheduler ---- */
 static void cmd_crontab(int argc, char *argv[]) {
     const char *crontab_path = "/etc/crontab";
+    const char *user = NULL;
+    int arg_start = 1;
 
-    if (argc < 2) {
-        write_str(2, "Usage: crontab [-l | -e | <file>]\n");
+    /* Parse -u user option (can appear before other flags) */
+    if (arg_start < argc && strcmp_simple(argv[arg_start], "-u") == 0) {
+        if (arg_start + 1 < argc) {
+            user = argv[arg_start + 1];
+            arg_start += 2;
+            /* Build user-specific crontab path */
+            static char user_crontab[128];
+            int p = 0;
+            const char *prefix = "/var/spool/cron/crontabs/";
+            for (int i = 0; prefix[i]; i++) user_crontab[p++] = prefix[i];
+            for (int i = 0; user[i] && p < 126; i++) user_crontab[p++] = user[i];
+            user_crontab[p] = '\0';
+            crontab_path = user_crontab;
+        } else {
+            write_str(2, "crontab: -u requires a username\n");
+            return;
+        }
+    }
+
+    if (arg_start >= argc) {
+        write_str(2, "Usage: crontab [-u user] [-l | -e | -r | <file>]\n");
         write_str(2, "  -l        List scheduled tasks\n");
         write_str(2, "  -e        Edit crontab in vi\n");
+        write_str(2, "  -r        Remove crontab\n");
+        write_str(2, "  -u user   Specify user\n");
         write_str(2, "  <file>    Install crontab from file\n");
         write_str(2, "Format: M H * * * command\n");
         return;
     }
 
-    if (strcmp_simple(argv[1], "-l") == 0) {
+    if (strcmp_simple(argv[arg_start], "-l") == 0) {
         /* List current crontab */
         int fd = sys_open(crontab_path, O_RDONLY, 0);
         if (fd < 0) {
@@ -19694,8 +19871,8 @@ static void cmd_crontab(int argc, char *argv[]) {
         while ((n = sys_read(fd, buf, sizeof(buf))) > 0)
             sys_write(1, buf, n);
         sys_close(fd);
-    } else if (strcmp_simple(argv[1], "-e") == 0) {
-        /* Ensure /etc/crontab exists before editing */
+    } else if (strcmp_simple(argv[arg_start], "-e") == 0) {
+        /* Ensure crontab exists before editing */
         int fd = sys_open(crontab_path, O_RDONLY, 0);
         if (fd < 0) {
             fd = sys_open(crontab_path, O_WRONLY | O_CREAT, 0644);
@@ -19714,9 +19891,21 @@ static void cmd_crontab(int argc, char *argv[]) {
         vi_argv[2] = NULL;
         cmd_vi(2, vi_argv);
         write_str(1, "crontab: installing new crontab\n");
+    } else if (strcmp_simple(argv[arg_start], "-r") == 0) {
+        /* Remove crontab */
+        long rc = sys_call1(SYS_unlink, (long)crontab_path);
+        if (rc < 0) {
+            write_str(2, "crontab: no crontab for ");
+            write_str(2, user ? user : "current user");
+            write_str(2, "\n");
+        } else {
+            write_str(1, "crontab: removed crontab for ");
+            write_str(1, user ? user : "current user");
+            write_str(1, "\n");
+        }
     } else {
         /* Install crontab from file */
-        const char *src = argv[1];
+        const char *src = argv[arg_start];
         int sfd = sys_open(src, O_RDONLY, 0);
         if (sfd < 0) {
             write_str(2, "crontab: cannot open ");
@@ -20277,11 +20466,11 @@ static void cmd_man(int argc, char *argv[]) {
         {"users",     "users - print the user names of users currently logged in"},
         {"logname",   "logname - print user's login name"},
         {"groups",    "groups - print the groups a user is in"},
-        {"fmt",       "fmt - simple optimal text formatter (-w width)"},
+        {"fmt",       "fmt - simple optimal text formatter (-w width, -u uniform spacing)"},
         {"nawk",      "nawk - POSIX new awk (alias for awk)"},
         {"sha512sum", "sha512sum - compute and check SHA-512 message digest"},
         {"base32",    "base32 - encode/decode data in base32 (-d decode, RFC 4648)"},
-        {"watch",     "watch - execute a program periodically (-n interval, -d differences)"},
+        {"watch",     "watch - execute a program periodically (-n interval, -d differences, -t no title, -x exec)"},
         {"timeout",   "timeout - run a command with a time limit (-s signal)"},
         {"realpath",  "realpath - print resolved canonical path (-e existing, -m missing OK)"},
         {"ascii",     "ascii - display ASCII character table (decimal, hex, octal, char)"},
@@ -20351,6 +20540,10 @@ static void cmd_man(int argc, char *argv[]) {
         {"groupdel", "groupdel - delete a group"},
         {"chage", "chage - change user password expiry information"},
         {"vipw", "vipw - edit the password file"},
+        {"at", "at - schedule commands for later execution"},
+        {"batch", "batch - execute commands when system load permits"},
+        {"pr", "pr - convert text files for printing (paginate with headers)"},
+        {"ptx", "ptx - produce a permuted index of file contents"},
     };
     int n_entries = (int)(sizeof(man_entries) / sizeof(man_entries[0]));
 
@@ -22485,8 +22678,10 @@ static void cmd_whatis(int argc, char *argv[]) {
         {"adduser",   "adduser (8)         - add a user to the system"},
         {"apropos",   "apropos (1)         - search the manual page names and descriptions"},
         {"ascii",     "ascii (1)           - display ASCII character table"},
+        {"at",        "at (1)              - schedule commands for later execution"},
         {"awk",       "awk (1)             - pattern scanning and processing language"},
         {"base32",    "base32 (1)          - encode/decode data in base32"},
+        {"batch",     "batch (1)           - execute commands when system load permits"},
         {"base64",    "base64 (1)          - encode/decode data in base64"},
         {"basename",  "basename (1)        - strip directory and suffix from filenames"},
         {"bc",        "bc (1)              - arbitrary precision calculator language"},
@@ -22605,9 +22800,11 @@ static void cmd_whatis(int argc, char *argv[]) {
         {"pigz",      "pigz (1)            - parallel implementation of gzip"},
         {"ping",      "ping (8)            - send ICMP ECHO_REQUEST to network hosts"},
         {"pkill",     "pkill (1)           - signal processes based on name"},
+        {"pr",        "pr (1)              - convert text files for printing"},
         {"printf",    "printf (1)          - format and print data"},
         {"prlimit",   "prlimit (1)         - get and set process resource limits"},
         {"ps",        "ps (1)              - report a snapshot of current processes"},
+        {"ptx",       "ptx (1)             - produce a permuted index of file contents"},
         {"pwd",       "pwd (1)             - print name of current/working directory"},
         {"read",      "read (1)            - read a line from standard input"},
         {"readlink",  "readlink (1)        - print resolved symbolic links"},
@@ -22894,6 +23091,7 @@ static void cmd_numfmt(int argc, char *argv[]) {
     int to_human = 0; /* --to=iec or --to=si */
     int from_human = 0; /* --from=iec or --from=si */
     int use_si = 0;
+    int from_auto = 0; /* --from=auto: auto-detect SI vs IEC per-value */
     int file_idx = -1;
     for (int a = 1; a < argc; a++) {
         if (argv[a][0] == '-' && argv[a][1] == '-') {
@@ -22907,6 +23105,10 @@ static void cmd_numfmt(int argc, char *argv[]) {
             if (opt[0] == 'f' && opt[1] == 'r' && opt[2] == 'o' && opt[3] == 'm' && opt[4] == '=') {
                 from_human = 1;
                 if (opt[5] == 's') use_si = 1;
+                /* --from=auto: detect IEC (Ki, Mi, Gi) vs SI (K, M, G) per value */
+                if (opt[5] == 'a' && opt[6] == 'u' && opt[7] == 't' && opt[8] == 'o') {
+                    from_auto = 1;
+                }
             }
         } else if (argv[a][0] != '-') {
             file_idx = a; break;
@@ -22919,11 +23121,23 @@ static void cmd_numfmt(int argc, char *argv[]) {
             const char *p = argv[a];
             if (from_human) {
                 while (*p >= '0' && *p <= '9') { val = val * 10 + (*p - '0'); p++; }
+                /* Determine multiplier: auto-detect IEC (Ki/Mi/Gi) vs SI (K/M/G) */
                 long mul = use_si ? 1000 : 1024;
-                if (*p == 'K' || *p == 'k') val *= mul;
-                else if (*p == 'M' || *p == 'm') val *= mul * mul;
-                else if (*p == 'G' || *p == 'g') val *= mul * mul * mul;
-                else if (*p == 'T' || *p == 't') val *= mul * mul * mul * mul;
+                if (from_auto && *p) {
+                    /* Check if next char after suffix is 'i' (IEC) */
+                    char sc = *p;
+                    if ((sc == 'K' || sc == 'M' || sc == 'G' || sc == 'T') &&
+                        *(p + 1) == 'i') {
+                        mul = 1024; /* IEC */
+                    } else {
+                        mul = 1000; /* SI */
+                    }
+                }
+                if (*p == 'K' || *p == 'k') { val *= mul; p++; }
+                else if (*p == 'M' || *p == 'm') { val *= mul * mul; p++; }
+                else if (*p == 'G' || *p == 'g') { val *= mul * mul * mul; p++; }
+                else if (*p == 'T' || *p == 't') { val *= mul * mul * mul * mul; p++; }
+                if (*p == 'i') p++; /* skip trailing 'i' in IEC suffixes */
             } else {
                 while (*p >= '0' && *p <= '9') { val = val * 10 + (*p - '0'); p++; }
             }
@@ -32183,6 +32397,398 @@ static void cmd_systemd_tmpfiles(int argc, char *argv[]) {
 
     if (!create && !clean && !remove_mode) {
         write_str(2, "systemd-tmpfiles: no command specified (use --create, --clean, or --remove)\n");
+    }
+}
+
+/* ── at: schedule commands for later execution ── */
+static void cmd_at(int argc, char *argv[]) {
+    if (argc < 2) {
+        write_str(2, "Usage: at <timespec>\n");
+        write_str(2, "  at now + 5 minutes\n");
+        write_str(2, "  at 14:30\n");
+        write_str(2, "  at -l            List pending jobs\n");
+        write_str(2, "  at -r <jobid>    Remove a pending job\n");
+        write_str(2, "Commands are read from stdin until EOF (Ctrl+D).\n");
+        return;
+    }
+
+    if (strcmp_simple(argv[1], "-l") == 0 || strcmp_simple(argv[1], "--list") == 0) {
+        /* List pending at jobs from /var/spool/at/ */
+        int fd = sys_open("/var/spool/at", O_RDONLY, 0);
+        if (fd < 0) {
+            write_str(1, "No pending jobs.\n");
+            return;
+        }
+        struct at_dirent64 {
+            unsigned long long d_ino;
+            long long d_off;
+            unsigned short d_reclen;
+            unsigned char d_type;
+            char d_name[256];
+        };
+        char dbuf[1024];
+        long nr = sys_call3(SYS_getdents64, fd, (long)dbuf, sizeof(dbuf));
+        if (nr <= 0) {
+            write_str(1, "No pending jobs.\n");
+            sys_close(fd);
+            return;
+        }
+        write_str(1, "Job ID   Scheduled\n");
+        write_str(1, "------   ---------\n");
+        long off = 0;
+        while (off < nr) {
+            struct at_dirent64 *d = (struct at_dirent64 *)(dbuf + off);
+            if (d->d_name[0] != '.') {
+                write_str(1, d->d_name);
+                write_str(1, "       queued\n");
+            }
+            off += d->d_reclen;
+        }
+        sys_close(fd);
+        return;
+    }
+
+    if (strcmp_simple(argv[1], "-r") == 0 || strcmp_simple(argv[1], "-d") == 0) {
+        if (argc < 3) {
+            write_str(2, "at: -r requires a job ID\n");
+            return;
+        }
+        char path[64];
+        int pi = 0;
+        const char *pfx = "/var/spool/at/";
+        for (int i = 0; pfx[i]; i++) path[pi++] = pfx[i];
+        for (int i = 0; argv[2][i] && pi < 62; i++) path[pi++] = argv[2][i];
+        path[pi] = '\0';
+        long rc = sys_call1(SYS_unlink, (long)path);
+        if (rc < 0)
+            write_str(2, "at: job not found\n");
+        else
+            write_str(1, "at: job removed\n");
+        return;
+    }
+
+    /* Parse time specification: "now + N minutes/hours" or "HH:MM" */
+    int delay_secs = 0;
+    if (strcmp_simple(argv[1], "now") == 0) {
+        /* at now + N minutes/hours */
+        if (argc >= 4 && argv[2][0] == '+') {
+            int amount = simple_atoi(argv[3]);
+            if (argc >= 5) {
+                if (argv[4][0] == 'm') delay_secs = amount * 60;
+                else if (argv[4][0] == 'h') delay_secs = amount * 3600;
+                else if (argv[4][0] == 's') delay_secs = amount;
+                else delay_secs = amount * 60; /* default minutes */
+            } else {
+                delay_secs = amount * 60;
+            }
+        }
+    } else {
+        /* HH:MM format — schedule for that time (simplified: delay 0) */
+        delay_secs = 0;
+    }
+
+    /* Read commands from stdin */
+    write_str(1, "at> ");
+    static char cmdbuf[2048];
+    int total = 0;
+    static char line[256];
+    ssize_t n;
+    while ((n = sys_read(0, line, sizeof(line) - 1)) > 0) {
+        line[n] = '\0';
+        /* Check for Ctrl+D / empty read */
+        for (int i = 0; i < (int)n && total < 2046; i++)
+            cmdbuf[total++] = line[i];
+        write_str(1, "at> ");
+    }
+    cmdbuf[total] = '\0';
+    write_str(1, "\n");
+
+    if (total == 0) {
+        write_str(2, "at: no commands specified\n");
+        return;
+    }
+
+    /* Save job to /var/spool/at/ */
+    sys_mkdir("/var/spool", 0755);
+    sys_mkdir("/var/spool/at", 0755);
+
+    /* Generate job ID from clock */
+    struct { long sec; long nsec; } ts;
+    sys_call2(228, 0, (long)&ts);
+    int jobid = (int)(ts.nsec % 99999) + 1;
+    char jobpath[64];
+    int jp = 0;
+    const char *spfx = "/var/spool/at/";
+    for (int i = 0; spfx[i]; i++) jobpath[jp++] = spfx[i];
+    /* Convert jobid to string */
+    char jstr[8]; int ji = 0;
+    char jrev[8]; int jr = 0;
+    int jv = jobid;
+    if (jv == 0) jrev[jr++] = '0';
+    while (jv > 0) { jrev[jr++] = '0' + jv % 10; jv /= 10; }
+    while (jr > 0) jstr[ji++] = jrev[--jr];
+    jstr[ji] = '\0';
+    for (int i = 0; jstr[i] && jp < 62; i++) jobpath[jp++] = jstr[i];
+    jobpath[jp] = '\0';
+
+    int jfd = sys_open(jobpath, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (jfd >= 0) {
+        sys_write(jfd, cmdbuf, total);
+        sys_close(jfd);
+    }
+
+    write_str(1, "job ");
+    write_str(1, jstr);
+    write_str(1, " scheduled");
+    if (delay_secs > 0) {
+        write_str(1, " (delay: ");
+        char ds[12]; int di = 0;
+        char dr[12]; int dri = 0;
+        int dv = delay_secs;
+        if (dv == 0) dr[dri++] = '0';
+        while (dv > 0) { dr[dri++] = '0' + dv % 10; dv /= 10; }
+        while (dri > 0) ds[di++] = dr[--dri];
+        ds[di] = '\0';
+        write_str(1, ds);
+        write_str(1, "s)");
+    }
+    write_str(1, "\n");
+}
+
+/* ── batch: run commands when system load is low ── */
+static void cmd_batch(int argc, char *argv[]) {
+    /* batch is equivalent to 'at' with load-dependent scheduling */
+    write_str(1, "batch: scheduling job for execution when system load permits\n");
+    /* Delegate to cmd_at with "now" timespec */
+    if (argc < 2) {
+        char *at_argv[] = { "at", "now", NULL };
+        cmd_at(2, at_argv);
+    } else {
+        cmd_at(argc, argv);
+    }
+}
+
+/* ── pr: paginate text files with headers and page numbers ── */
+static void cmd_pr(int argc, char *argv[]) {
+    int page_len = 66;  /* default lines per page */
+    int page_width = 72;
+    const char *header = NULL;
+    int num_cols = 1;
+    int arg_start = 1;
+    int omit_header = 0;
+
+    /* Parse options */
+    while (arg_start < argc && argv[arg_start][0] == '-') {
+        if (strcmp_simple(argv[arg_start], "-h") == 0 && arg_start + 1 < argc) {
+            header = argv[arg_start + 1];
+            arg_start += 2;
+        } else if (strcmp_simple(argv[arg_start], "-l") == 0 && arg_start + 1 < argc) {
+            page_len = simple_atoi(argv[arg_start + 1]);
+            if (page_len < 10) page_len = 66;
+            arg_start += 2;
+        } else if (strcmp_simple(argv[arg_start], "-w") == 0 && arg_start + 1 < argc) {
+            page_width = simple_atoi(argv[arg_start + 1]);
+            if (page_width < 10) page_width = 72;
+            arg_start += 2;
+        } else if (argv[arg_start][1] >= '1' && argv[arg_start][1] <= '9' && argv[arg_start][2] == '\0') {
+            num_cols = argv[arg_start][1] - '0';
+            arg_start++;
+        } else if (strcmp_simple(argv[arg_start], "-t") == 0) {
+            omit_header = 1;
+            arg_start++;
+        } else {
+            break;
+        }
+    }
+    (void)num_cols; /* multi-column: future enhancement */
+    (void)page_width;
+
+    /* Open input file or read from stdin */
+    int fd = 0;
+    const char *filename = "stdin";
+    if (arg_start < argc) {
+        filename = argv[arg_start];
+        fd = sys_open(filename, O_RDONLY, 0);
+        if (fd < 0) {
+            write_str(2, "pr: cannot open "); write_str(2, filename); write_str(2, "\n");
+            return;
+        }
+    }
+
+    if (!header) header = filename;
+
+    /* Read all input */
+    static char fbuf[16384];
+    int total = 0;
+    ssize_t n;
+    while ((n = sys_read(fd, fbuf + total, sizeof(fbuf) - total - 1)) > 0) {
+        total += (int)n;
+        if (total >= (int)sizeof(fbuf) - 1) break;
+    }
+    if (fd > 0) sys_close(fd);
+    fbuf[total] = '\0';
+
+    /* Split into lines */
+    char *lines[4096];
+    int nlines = 0;
+    char *p = fbuf;
+    while (*p && nlines < 4096) {
+        lines[nlines++] = p;
+        while (*p && *p != '\n') p++;
+        if (*p == '\n') *p++ = '\0';
+    }
+
+    /* Output with page headers */
+    int body_lines = page_len - 5; /* 2 header + 3 footer margin */
+    if (body_lines < 1) body_lines = page_len;
+    int page_num = 1;
+    int line_idx = 0;
+
+    while (line_idx < nlines) {
+        if (!omit_header) {
+            /* Page header */
+            write_str(1, "\n\n");
+            write_str(1, header);
+            write_str(1, "    Page ");
+            char pn[8]; int pi = 0;
+            char pr2[8]; int pri = 0;
+            int pv = page_num;
+            if (pv == 0) pr2[pri++] = '0';
+            while (pv > 0) { pr2[pri++] = '0' + pv % 10; pv /= 10; }
+            while (pri > 0) pn[pi++] = pr2[--pri];
+            pn[pi] = '\0';
+            write_str(1, pn);
+            write_str(1, "\n\n");
+        }
+
+        /* Body lines */
+        int count = 0;
+        while (line_idx < nlines && count < body_lines) {
+            write_str(1, lines[line_idx]);
+            write_str(1, "\n");
+            line_idx++;
+            count++;
+        }
+
+        if (!omit_header) {
+            /* Footer: pad remaining lines + blank footer */
+            while (count < body_lines) {
+                write_str(1, "\n");
+                count++;
+            }
+            write_str(1, "\n\n\n");
+        }
+        page_num++;
+    }
+}
+
+/* ── ptx: produce permuted index (keyword-in-context concordance) ── */
+static void cmd_ptx(int argc, char *argv[]) {
+    int arg_start = 1;
+    int width = 72;
+    int traditional = 0; /* -t for traditional format */
+
+    while (arg_start < argc && argv[arg_start][0] == '-') {
+        if (strcmp_simple(argv[arg_start], "-w") == 0 && arg_start + 1 < argc) {
+            width = simple_atoi(argv[arg_start + 1]);
+            if (width < 20) width = 72;
+            arg_start += 2;
+        } else if (strcmp_simple(argv[arg_start], "-t") == 0) {
+            traditional = 1;
+            arg_start++;
+        } else {
+            break;
+        }
+    }
+    (void)traditional;
+
+    /* Open input file or read from stdin */
+    int fd = 0;
+    if (arg_start < argc) {
+        fd = sys_open(argv[arg_start], O_RDONLY, 0);
+        if (fd < 0) {
+            write_str(2, "ptx: cannot open "); write_str(2, argv[arg_start]); write_str(2, "\n");
+            return;
+        }
+    }
+
+    /* Read all input */
+    static char fbuf[16384];
+    int total = 0;
+    ssize_t n;
+    while ((n = sys_read(fd, fbuf + total, sizeof(fbuf) - total - 1)) > 0) {
+        total += (int)n;
+        if (total >= (int)sizeof(fbuf) - 1) break;
+    }
+    if (fd > 0) sys_close(fd);
+    fbuf[total] = '\0';
+
+    /* Split into lines */
+    static char *lines[2048];
+    int nlines = 0;
+    char *p = fbuf;
+    while (*p && nlines < 2048) {
+        lines[nlines++] = p;
+        while (*p && *p != '\n') p++;
+        if (*p == '\n') *p++ = '\0';
+    }
+
+    /* For each line, for each word, produce a KWIC entry */
+    /* Format: left-context  [KEYWORD]  right-context */
+    for (int li = 0; li < nlines; li++) {
+        char *line = lines[li];
+        int llen = 0;
+        while (line[llen]) llen++;
+
+        /* Find each word in the line */
+        int wi = 0;
+        while (wi < llen) {
+            /* Skip whitespace */
+            while (wi < llen && (line[wi] == ' ' || line[wi] == '\t')) wi++;
+            if (wi >= llen) break;
+
+            /* Start of word */
+            int ws = wi;
+            while (wi < llen && line[wi] != ' ' && line[wi] != '\t') wi++;
+            int we = wi; /* word end (exclusive) */
+            int wlen = we - ws;
+
+            /* Skip very short words (articles, prepositions) */
+            if (wlen <= 2) continue;
+
+            /* Build KWIC line */
+            /* Left context: chars before the keyword */
+            int ctx_width = (width - wlen - 4) / 2;
+            if (ctx_width < 0) ctx_width = 10;
+
+            /* Right-pad left context */
+            int left_start = ws - ctx_width;
+            if (left_start < 0) left_start = 0;
+
+            /* Print: spaces for alignment, left context, [KEYWORD], right context */
+            /* Left context */
+            int lctx_len = ws - left_start;
+            int pad = ctx_width - lctx_len;
+            for (int i = 0; i < pad; i++) write_char(1, ' ');
+            for (int i = left_start; i < ws; i++) write_char(1, line[i]);
+
+            /* Keyword in brackets */
+            write_str(1, " [");
+            for (int i = ws; i < we; i++) {
+                char c = line[i];
+                /* Uppercase the keyword */
+                if (c >= 'a' && c <= 'z') c -= 32;
+                write_char(1, c);
+            }
+            write_str(1, "] ");
+
+            /* Right context */
+            int right_end = we + ctx_width;
+            if (right_end > llen) right_end = llen;
+            for (int i = we; i < right_end; i++) write_char(1, line[i]);
+
+            write_char(1, '\n');
+        }
     }
 }
 

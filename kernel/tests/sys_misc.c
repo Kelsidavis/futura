@@ -26573,9 +26573,8 @@ static void test_subreaper_reparent(void) {
  * test_unshare_namespace_noop() — Tests 492-497
  *
  * Verify that unshare() with namespace flags returns 0 for all
- * namespace types (they are accepted as no-ops since Futura does
- * not enforce per-task namespace isolation), except CLONE_NEWPID
- * which requires PID namespace infrastructure and returns ENOSYS.
+ * namespace types. CLONE_NEWPID creates a real PID namespace
+ * (pid_ns_level increments); others are accepted as no-ops.
  * ============================================================ */
 static void test_unshare_namespace_noop(void) {
     extern long sys_unshare(unsigned long flags);

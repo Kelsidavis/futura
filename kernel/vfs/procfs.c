@@ -1013,9 +1013,17 @@ static size_t gen_status(char *buf, size_t cap, fut_task_t *task, uint64_t tid) 
     }
     pb_char(&b, '\n');
     /* NStgid/NSpid/NSpgid/NSsid (Linux 4.1+): PID as seen in each namespace.
-     * Futura has no PID namespaces — report the same PID at all levels. */
-    pb_str(&b, "NStgid:\t"); pb_u64(&b, task->pid); pb_char(&b, '\n');
-    pb_str(&b, "NSpid:\t");  pb_u64(&b, tid ? tid : task->pid); pb_char(&b, '\n');
+     * Show the real PID first, then the namespace-local PID if in a child ns. */
+    pb_str(&b, "NStgid:\t"); pb_u64(&b, task->pid);
+    if (task->pid_ns && task->pid_ns->level > 0) {
+        pb_char(&b, '\t'); pb_u64(&b, task->ns_pid);
+    }
+    pb_char(&b, '\n');
+    pb_str(&b, "NSpid:\t");  pb_u64(&b, tid ? tid : task->pid);
+    if (task->pid_ns && task->pid_ns->level > 0) {
+        pb_char(&b, '\t'); pb_u64(&b, task->ns_pid);
+    }
+    pb_char(&b, '\n');
     pb_str(&b, "NSpgid:\t"); pb_u64(&b, task->pgid); pb_char(&b, '\n');
     pb_str(&b, "NSsid:\t");  pb_u64(&b, task->sid);  pb_char(&b, '\n');
     pb_str(&b, "Threads:\t");    pb_u64(&b, task->thread_count); pb_char(&b, '\n');
@@ -5075,26 +5083,6 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
              * A proper implementation would iterate the NAT table, but for
              * compatibility we return the count from /proc/net/nf_conntrack. */
             total = gen_sysctl_str(tmp, GEN_BUF, "0");
-            break;
-        }
-        /* PROC_KMSG is handled before the GEN_BUF allocation above */
-        case PROC_KMSG: {
-            /* /proc/kmsg — kernel log ring buffer (like dmesg). */
-            extern char klog_buf[];
-            extern size_t klog_write_pos;
-            extern size_t klog_count;
-            size_t klog_sz = 64 * 1024;
-            size_t cnt = klog_count;
-            size_t wpos = klog_write_pos;
-            if (cnt == 0) { total = 0; break; }
-            size_t rstart = (cnt < klog_sz) ? 0 : wpos;
-            size_t tocopy = cnt;
-            if (tocopy > GEN_BUF) tocopy = GEN_BUF;
-            size_t skip = (cnt > GEN_BUF) ? cnt - GEN_BUF : 0;
-            size_t src = (rstart + skip) % klog_sz;
-            for (size_t i = 0; i < tocopy; i++)
-                tmp[i] = klog_buf[(src + i) % klog_sz];
-            total = tocopy;
             break;
         }
         default:

@@ -952,8 +952,19 @@ long sys_fork(void) {
 
     /* Inherit parent's namespaces */
     child_task->pid_ns = parent_task->pid_ns;
-    child_task->ns_pid = child_task->pid;
     child_task->mnt_ns = parent_task->mnt_ns;
+
+    /* PID namespace: if the parent is in a child namespace (level > 0),
+     * allocate a namespace-local PID.  The first fork into a new namespace
+     * gets ns_pid 1 (the namespace init process). */
+    if (parent_task->pid_ns && parent_task->pid_ns->level > 0) {
+        extern uint64_t pidns_alloc_pid(struct pid_namespace *);
+        child_task->ns_pid = pidns_alloc_pid(parent_task->pid_ns);
+        if (child_task->ns_pid == 1)
+            parent_task->pid_ns->init_task = child_task;
+    } else {
+        child_task->ns_pid = child_task->pid;
+    }
     child_task->uts_ns = parent_task->uts_ns;
     child_task->net_ns = parent_task->net_ns;
     child_task->user_ns = parent_task->user_ns;

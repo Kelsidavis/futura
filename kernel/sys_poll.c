@@ -137,6 +137,11 @@ static struct poll_scan_stats poll_scan_fds(struct pollfd *kfds, unsigned long n
         if (kfds[i].events & (POLLOUT | POLLWRNORM)) epoll_req |= EPOLLOUT | EPOLLWRNORM;
         if (kfds[i].events & POLLPRI)                epoll_req |= EPOLLPRI;
 
+        /* POSIX: POLLERR and POLLHUP are always checked regardless of events.
+         * Always include them in the request so drivers report error/hangup
+         * conditions even when the caller didn't explicitly ask for them. */
+        epoll_req |= EPOLLERR | EPOLLHUP;
+
         uint32_t epoll_ready = 0;
         bool handled = false;
 

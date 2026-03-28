@@ -522,7 +522,10 @@ static struct epoll_set *epoll_allocate_set(uint64_t owner_pid) {
 static int epoll_release_op(void *inode, void *priv) {
     (void)inode;
     struct epoll_set *set = (struct epoll_set *)priv;
+    epoll_ensure_init();
+    fut_spinlock_acquire(&epoll_lock);
     epoll_deallocate_set(set);
+    fut_spinlock_release(&epoll_lock);
     return 0;
 }
 
@@ -1050,6 +1053,7 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
             msg[pos] = '\0';
             fut_printf("%s", msg);
 
+            fut_spinlock_release(&epoll_lock);
             return -EFAULT;
         }
 
@@ -1063,6 +1067,7 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
                                EPOLL_ET | EPOLL_ONESHOT;
         if (ev.events & ~valid_events) {
             uint32_t invalid_bits = ev.events & ~valid_events;
+            fut_spinlock_release(&epoll_lock);
             fut_printf("[EPOLL_CTL] epoll_ctl(epfd=%d, op=%s, fd=%d, events=0x%x) -> EINVAL "
                        "(invalid event bits 0x%x detected, valid=0x%x)\n",
                        epfd, op_name, fd, ev.events, invalid_bits, valid_events);
@@ -1075,12 +1080,14 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
          * See Linux kernel fs/eventpoll.c ep_insert() validation. */
         if (ev.events & EPOLLEXCLUSIVE) {
             if (op != EPOLL_CTL_ADD) {
+                fut_spinlock_release(&epoll_lock);
                 fut_printf("[EPOLL_CTL] epoll_ctl(epfd=%d, op=%s, fd=%d) -> EINVAL "
                            "(EPOLLEXCLUSIVE only valid with EPOLL_CTL_ADD)\n",
                            epfd, op_name, fd);
                 return -EINVAL;
             }
             if (ev.events & EPOLL_ONESHOT) {
+                fut_spinlock_release(&epoll_lock);
                 fut_printf("[EPOLL_CTL] epoll_ctl(epfd=%d, fd=%d) -> EINVAL "
                            "(EPOLLEXCLUSIVE cannot be combined with EPOLLONESHOT)\n",
                            epfd, fd);
@@ -1123,6 +1130,7 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
                 msg[pos] = '\0';
                 fut_printf("%s", msg);
 
+                fut_spinlock_release(&epoll_lock);
                 return -EEXIST;
             }
         }
@@ -1166,6 +1174,7 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
             msg[pos] = '\0';
             fut_printf("%s", msg);
 
+            fut_spinlock_release(&epoll_lock);
             return -ENOMEM;
         }
 
@@ -1178,6 +1187,7 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
         /* Phase 3: Extract and store edge-triggered, oneshot, and exclusive flags */
         set->fds[slot].edge_triggered = (ev.events & EPOLL_ET) != 0;
         set->fds[slot].oneshot = (ev.events & EPOLL_ONESHOT) != 0;
+        set->fds[slot].oneshot_disabled = false;
         set->fds[slot].exclusive = (ev.events & EPOLLEXCLUSIVE) != 0;
         set->fds[slot].last_was_readable = false;
         set->fds[slot].last_was_writable = false;
@@ -1234,6 +1244,7 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
             }
         }
 
+        fut_spinlock_release(&epoll_lock);
         return 0;
     }
 
@@ -1244,9 +1255,11 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
                 set->fds[i].data = ev.data.u64;
 
                 /* Update edge-triggered, oneshot, and exclusive flags on MOD
-                 * (must mirror EPOLL_CTL_ADD logic to avoid stale modifier state) */
+                 * (must mirror EPOLL_CTL_ADD logic to avoid stale modifier state).
+                 * MOD re-arms oneshot: clear the disabled flag so events fire again. */
                 set->fds[i].edge_triggered = (ev.events & EPOLL_ET) != 0;
                 set->fds[i].oneshot = (ev.events & EPOLL_ONESHOT) != 0;
+                set->fds[i].oneshot_disabled = false;  /* re-arm */
                 set->fds[i].exclusive = (ev.events & EPOLLEXCLUSIVE) != 0;
                 set->fds[i].last_was_readable = false;
                 set->fds[i].last_was_writable = false;
@@ -1273,10 +1286,12 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
                 base_events |= EPOLLERR | EPOLLHUP;
                 set->fds[i].events = base_events;
 
+                fut_spinlock_release(&epoll_lock);
                 return 0;
             }
         }
 
+        fut_spinlock_release(&epoll_lock);
         return -ENOENT;
     }
 
@@ -1320,14 +1335,17 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
                         }
                     }
                 }
+                fut_spinlock_release(&epoll_lock);
                 return 0;
             }
         }
 
+        fut_spinlock_release(&epoll_lock);
         return -ENOENT;
     }
 
     default:
+        fut_spinlock_release(&epoll_lock);
         return -EINVAL;
     }
 }
@@ -1403,6 +1421,8 @@ static void epoll_timeout_wakeup(void *arg) {
 }
 
 long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout) {
+    epoll_ensure_init();
+
     /* Phase 2: Categorize epoll FD */
     const char *epfd_category;
     if (epfd >= 4000 && epfd < 5000) {
@@ -1482,8 +1502,11 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
         return -EFAULT;
     }
 
-    /* Get the epoll set */
+    /* Get the epoll set (under lock for safe lookup) */
+    fut_spinlock_acquire(&epoll_lock);
     struct epoll_set *set = epoll_get_set(epfd);
+    fut_spinlock_release(&epoll_lock);
+
     if (!set) {
         char msg[256];
         int pos = 0;
@@ -1569,9 +1592,20 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
         int ready_count = 0;
         struct epoll_event ready_events[MAX_EPOLL_FDS];
 
+        /* Hold lock while scanning/modifying fds array for thread safety.
+         * Multiple threads may call epoll_wait on the same epfd. */
+        fut_spinlock_acquire(&epoll_lock);
+
         /* Check all registered file descriptors */
         for (int i = 0; i < MAX_EPOLL_FDS && ready_count < maxevents; i++) {
             if (!set->fds[i].registered) {
+                continue;
+            }
+
+            /* EPOLLONESHOT: skip entries that already fired and are waiting
+             * for re-arm via EPOLL_CTL_MOD.  This suppresses all events
+             * including EPOLLERR/EPOLLHUP until the user re-arms. */
+            if (set->fds[i].oneshot_disabled) {
                 continue;
             }
 
@@ -1756,6 +1790,7 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
                  * via EPOLL_CTL_MOD. This matches Linux behavior. */
                 if (set->fds[i].oneshot) {
                     set->fds[i].events = 0;  /* Disable all events */
+                    set->fds[i].oneshot_disabled = true;
                 }
 
                 /* Cap at maxevents — Linux returns at most maxevents entries */
@@ -1763,6 +1798,9 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
                     break;
             }
         }
+
+        /* Release lock before user-space copy or sleep */
+        fut_spinlock_release(&epoll_lock);
 
         /* If we have events, copy to user and return */
         if (ready_count > 0) {
@@ -2028,7 +2066,10 @@ long sys_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
     if (fut_access_ok(events, maxevents * sizeof(struct epoll_event), 1) != 0)
         return -EFAULT;
 
+    epoll_ensure_init();
+    fut_spinlock_acquire(&epoll_lock);
     struct epoll_set *set = epoll_get_set(epfd);
+    fut_spinlock_release(&epoll_lock);
     if (!set)
         return -EBADF;
 
@@ -2065,9 +2106,16 @@ long sys_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
         int ready_count = 0;
         struct epoll_event ready_events[MAX_EPOLL_FDS];
 
+        /* Hold lock while scanning/modifying fds array for thread safety */
+        fut_spinlock_acquire(&epoll_lock);
+
         /* Scan all registered FDs (reuses the same polling logic as sys_epoll_wait) */
         for (int i = 0; i < MAX_EPOLL_FDS && ready_count < maxevents; i++) {
             if (!set->fds[i].registered)
+                continue;
+
+            /* EPOLLONESHOT: skip entries disabled by oneshot until re-armed */
+            if (set->fds[i].oneshot_disabled)
                 continue;
 
             struct fut_file *file = fut_vfs_get_file(set->fds[i].fd);
@@ -2187,12 +2235,17 @@ long sys_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
                 ready_events[ready_count].events = events_ready;
                 ready_events[ready_count].data.u64 = set->fds[i].data;
                 ready_count++;
-                if (set->fds[i].oneshot)
+                if (set->fds[i].oneshot) {
                     set->fds[i].events = 0;
+                    set->fds[i].oneshot_disabled = true;
+                }
                 if (ready_count >= maxevents)
                     break;
             }
         }
+
+        /* Release lock before user-space copy or sleep */
+        fut_spinlock_release(&epoll_lock);
 
         if (ready_count > 0) {
             size_t copy_size = ready_count * sizeof(struct epoll_event);

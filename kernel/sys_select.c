@@ -337,6 +337,39 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
         }
     }
 
+    /* POSIX: select() with nfds=0 and all NULL fdsets acts as a sleep.
+     * When timeout is provided, sleep for the specified duration and return 0.
+     * When timeout is NULL, block indefinitely (until a signal).
+     * This is an optimization that avoids entering the Phase 4 wiring loop
+     * with no FDs to monitor. */
+    if (local_nfds == 0 && !local_readfds && !local_writefds && !local_exceptfds) {
+        if (has_timeout) {
+            /* Check for pending unblocked signals before sleeping */
+            uint64_t pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
+            fut_thread_t *thr0 = fut_thread_current();
+            uint64_t blocked0 = thr0 ?
+                __atomic_load_n(&thr0->signal_mask, __ATOMIC_ACQUIRE) :
+                task->signal_mask;
+            if (pending & ~blocked0)
+                return -EINTR;
+            uint64_t now = fut_get_ticks();
+            if (deadline_ticks > now) {
+                uint64_t sleep_ms = (deadline_ticks - now) * 10;
+                fut_thread_sleep(sleep_ms);
+            }
+            /* Update timeout to zero (all time elapsed) */
+            if (local_timeout) {
+                fut_timeval_t ktv_zero = { .tv_sec = 0, .tv_usec = 0 };
+                if (IS_KPTR(local_timeout))
+                    memcpy(local_timeout, &ktv_zero, sizeof(ktv_zero));
+                else
+                    fut_copy_to_user(local_timeout, &ktv_zero, sizeof(ktv_zero));
+            }
+        }
+        /* is_immediate or timeout==NULL with nfds=0: return 0 immediately */
+        return 0;
+    }
+
     /* Scan-and-block loop */
     for (;;) {
         ready_count = 0;
@@ -359,6 +392,9 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
             uint32_t epoll_req = 0;
             if (check_read)  epoll_req |= EPOLLIN;
             if (check_write) epoll_req |= EPOLLOUT;
+            /* POSIX: error and hangup conditions are always checked,
+             * regardless of which events the caller asked for. */
+            epoll_req |= EPOLLERR | EPOLLHUP;
 
             uint32_t epoll_ready = 0;
             bool handled = false;
@@ -513,6 +549,7 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
                 uint32_t epoll_req = 0;
                 if (check_read)  epoll_req |= EPOLLIN;
                 if (check_write) epoll_req |= EPOLLOUT;
+                epoll_req |= EPOLLERR | EPOLLHUP;
                 uint32_t epoll_ready = 0;
                 bool handled = false;
                 if (!handled && fut_eventfd_poll(file, epoll_req, &epoll_ready)) handled = true;
@@ -871,6 +908,8 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
             uint32_t epoll_req = 0;
             if (check_read)  epoll_req |= EPOLLIN;
             if (check_write) epoll_req |= EPOLLOUT;
+            /* POSIX: error and hangup conditions are always checked. */
+            epoll_req |= EPOLLERR | EPOLLHUP;
 
             uint32_t epoll_ready = 0;
             bool handled = false;
@@ -1014,6 +1053,7 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
                 uint32_t epoll_req = 0;
                 if (check_read)  epoll_req |= EPOLLIN;
                 if (check_write) epoll_req |= EPOLLOUT;
+                epoll_req |= EPOLLERR | EPOLLHUP;
                 uint32_t epoll_ready = 0;
                 bool handled = false;
                 if (!handled && fut_eventfd_poll(file, epoll_req, &epoll_ready)) handled = true;

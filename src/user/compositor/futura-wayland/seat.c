@@ -626,6 +626,28 @@ static void seat_handle_mouse_event(struct seat_state *seat,
     }
 }
 
+/* Track modifier state for compositor keybindings */
+static uint32_t compositor_mods = 0;
+#define COMP_MOD_CTRL  (1u << 0)
+#define COMP_MOD_ALT   (1u << 1)
+#define COMP_MOD_SUPER (1u << 2)
+
+/* Launch a new terminal instance */
+static void compositor_launch_terminal(void) {
+    extern long sys_fork_call(void);
+    extern void sys_execve_call(const char *, char *const[], char *const[]);
+    extern void sys_exit(int);
+    long pid = sys_fork_call();
+    if (pid == 0) {
+        /* Child: exec wl-term */
+        char *argv[] = { "/bin/wl-term", (void*)0 };
+        char *envp[] = { "WAYLAND_DISPLAY=wayland-0", "XDG_RUNTIME_DIR=/tmp",
+                         "TERM=xterm-256color", (void*)0 };
+        sys_execve_call("/bin/wl-term", argv, envp);
+        sys_exit(127);
+    }
+}
+
 static void seat_handle_key_event(struct seat_state *seat,
                                   const struct fut_input_event *ev) {
     if (!seat || !ev) {
@@ -636,9 +658,34 @@ static void seat_handle_key_event(struct seat_state *seat,
         return;
     }
 
-    uint32_t time_msec = (uint32_t)(ev->ts_ns / 1000000ULL);
     uint32_t keycode = (uint32_t)ev->code;
     bool pressed = (ev->value != 0);
+
+    /* Track modifier keys */
+    if (keycode == 29 || keycode == 97) {  /* Left/Right Ctrl */
+        if (pressed) compositor_mods |= COMP_MOD_CTRL;
+        else compositor_mods &= ~COMP_MOD_CTRL;
+    }
+    if (keycode == 56 || keycode == 100) {  /* Left/Right Alt */
+        if (pressed) compositor_mods |= COMP_MOD_ALT;
+        else compositor_mods &= ~COMP_MOD_ALT;
+    }
+    if (keycode == 125 || keycode == 126) {  /* Super/Meta */
+        if (pressed) compositor_mods |= COMP_MOD_SUPER;
+        else compositor_mods &= ~COMP_MOD_SUPER;
+    }
+
+    /* Compositor keybindings (consumed, not forwarded to clients) */
+    if (pressed) {
+        /* Ctrl+Alt+T or Super+Enter: launch new terminal */
+        if ((compositor_mods == (COMP_MOD_CTRL | COMP_MOD_ALT) && keycode == 20 /* T */) ||
+            (compositor_mods == COMP_MOD_SUPER && keycode == 28 /* Enter */)) {
+            compositor_launch_terminal();
+            return;  /* Don't forward to client */
+        }
+    }
+
+    uint32_t time_msec = (uint32_t)(ev->ts_ns / 1000000ULL);
     seat_send_key(seat, keycode, pressed, time_msec);
 }
 

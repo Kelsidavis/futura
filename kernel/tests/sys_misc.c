@@ -70488,6 +70488,172 @@ static void test_sockopt_enforcement_roundtrip(void) {
     }
 }
 
+/* ============================================================
+ * Tests 2525-2526: FUTEX_WAIT_BITSET / FUTEX_WAKE_BITSET selective wakeup
+ *
+ *   2525: WAIT_BITSET(mask=0x1) + WAKE_BITSET(mask=0x2) → no overlap → not woken
+ *   2526: WAIT_BITSET(mask=0x3) + WAKE_BITSET(mask=0x1) → overlap → woken
+ *
+ * Each test spawns a child thread that blocks in FUTEX_WAIT_BITSET.
+ * The parent thread yields until the child is enqueued, then issues
+ * FUTEX_WAKE_BITSET and checks the return value (number of woken waiters).
+ * ============================================================ */
+
+/* Shared state for bitset wakeup tests */
+static volatile uint32_t g_bitset_futex_word;   /* Futex word the child waits on        */
+static volatile int      g_bitset_child_ready;  /* 1 once child is about to block        */
+static volatile int      g_bitset_child_result; /* Stores child's sys_futex return value  */
+
+/* Child entry for Test 2525: WAIT_BITSET with mask=0x1 */
+static void bitset_child_mask1_fn(void *arg) {
+    (void)arg;
+    extern long sys_futex(uint32_t *uaddr, int op, uint32_t val,
+                          const void *timeout, uint32_t *uaddr2, uint32_t val3);
+
+    /* Signal readiness before blocking */
+    __atomic_store_n((int *)&g_bitset_child_ready, 1, __ATOMIC_RELEASE);
+
+    /* FUTEX_WAIT_BITSET=9 | FUTEX_PRIVATE_FLAG=128, val3=mask=0x1
+     * Use a 2-second absolute timeout as a safety net so the child doesn't
+     * hang forever if the wake never arrives. */
+    extern uint64_t fut_get_ticks(void);
+    uint64_t now_ticks = fut_get_ticks();
+    uint64_t now_ns = now_ticks * 10000000ULL; /* 100 Hz → 10ms/tick */
+    uint64_t deadline_ns = now_ns + 2000000000ULL; /* +2 s */
+    fut_timespec_t abs_ts = {
+        .tv_sec  = (long)(deadline_ns / 1000000000ULL),
+        .tv_nsec = (long)(deadline_ns % 1000000000ULL),
+    };
+
+    long r = sys_futex((uint32_t *)&g_bitset_futex_word,
+                       9 | 128, /* FUTEX_WAIT_BITSET | PRIVATE */
+                       0,       /* expected value */
+                       &abs_ts, NULL,
+                       0x1);    /* wait bitset = bit 0 only */
+    __atomic_store_n((int *)&g_bitset_child_result, (int)r, __ATOMIC_RELEASE);
+    fut_thread_exit();
+}
+
+/* Child entry for Test 2526: WAIT_BITSET with mask=0x3 */
+static void bitset_child_mask3_fn(void *arg) {
+    (void)arg;
+    extern long sys_futex(uint32_t *uaddr, int op, uint32_t val,
+                          const void *timeout, uint32_t *uaddr2, uint32_t val3);
+
+    __atomic_store_n((int *)&g_bitset_child_ready, 1, __ATOMIC_RELEASE);
+
+    extern uint64_t fut_get_ticks(void);
+    uint64_t now_ticks = fut_get_ticks();
+    uint64_t now_ns = now_ticks * 10000000ULL;
+    uint64_t deadline_ns = now_ns + 2000000000ULL;
+    fut_timespec_t abs_ts = {
+        .tv_sec  = (long)(deadline_ns / 1000000000ULL),
+        .tv_nsec = (long)(deadline_ns % 1000000000ULL),
+    };
+
+    long r = sys_futex((uint32_t *)&g_bitset_futex_word,
+                       9 | 128, /* FUTEX_WAIT_BITSET | PRIVATE */
+                       0,       /* expected value */
+                       &abs_ts, NULL,
+                       0x3);    /* wait bitset = bits 0+1 */
+    __atomic_store_n((int *)&g_bitset_child_result, (int)r, __ATOMIC_RELEASE);
+    fut_thread_exit();
+}
+
+static void test_futex_bitset_selective_wakeup(void) {
+    fut_printf("[MISC-TEST] Tests 2525-2526: FUTEX_WAIT_BITSET / FUTEX_WAKE_BITSET selective wakeup\n");
+
+    extern long sys_futex(uint32_t *uaddr, int op, uint32_t val,
+                          const void *timeout, uint32_t *uaddr2, uint32_t val3);
+
+    fut_task_t   *task   = fut_task_current();
+    fut_thread_t *parent = fut_thread_current();
+    if (!task || !parent) {
+        fut_printf("[MISC-TEST] ✗ Tests 2525-2526: no task/thread context\n");
+        fut_test_fail(2525);
+        fut_test_fail(2526);
+        return;
+    }
+
+    /* ---- Test 2525: disjoint bitsets → WAKE_BITSET returns 0 ---- */
+    fut_printf("[MISC-TEST] Test 2525: WAIT_BITSET(0x1) + WAKE_BITSET(0x2) → not woken\n");
+    {
+        __atomic_store_n((uint32_t *)&g_bitset_futex_word, 0, __ATOMIC_RELEASE);
+        __atomic_store_n((int *)&g_bitset_child_ready, 0, __ATOMIC_RELEASE);
+        __atomic_store_n((int *)&g_bitset_child_result, 0x7FFFFFFF, __ATOMIC_RELEASE);
+
+        fut_thread_t *child = fut_thread_create(task, bitset_child_mask1_fn, NULL,
+                                                 parent->stack_size, parent->priority);
+        if (!child) {
+            fut_printf("[MISC-TEST] ✗ Test 2525: thread creation failed\n");
+            fut_test_fail(2525);
+        } else {
+            /* Wait until child signals readiness and has had time to block */
+            for (int i = 0; i < 20000; i++) {
+                if (__atomic_load_n((int *)&g_bitset_child_ready, __ATOMIC_ACQUIRE))
+                    break;
+                fut_thread_yield();
+            }
+            /* Extra yields to let child enter FUTEX_WAIT_BITSET */
+            for (int i = 0; i < 50; i++)
+                fut_thread_yield();
+
+            /* FUTEX_WAKE_BITSET=10|128, wake 1 waiter with mask=0x2 — disjoint from child's 0x1 */
+            long woken = sys_futex((uint32_t *)&g_bitset_futex_word,
+                                   10 | 128, 1, NULL, NULL, 0x2);
+            if (woken == 0) {
+                fut_printf("[MISC-TEST] ✓ Test 2525: WAKE_BITSET(0x2) woke 0 waiters (disjoint masks)\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2525: WAKE_BITSET(0x2) woke %ld (expected 0)\n", woken);
+                fut_test_fail(2525);
+            }
+
+            /* Clean up: wake child with matching mask so it doesn't hang */
+            sys_futex((uint32_t *)&g_bitset_futex_word, 10 | 128, 1, NULL, NULL, 0x1);
+            for (int i = 0; i < 5000; i++)
+                fut_thread_yield();
+        }
+    }
+
+    /* ---- Test 2526: overlapping bitsets → WAKE_BITSET returns 1 ---- */
+    fut_printf("[MISC-TEST] Test 2526: WAIT_BITSET(0x3) + WAKE_BITSET(0x1) → woken\n");
+    {
+        __atomic_store_n((uint32_t *)&g_bitset_futex_word, 0, __ATOMIC_RELEASE);
+        __atomic_store_n((int *)&g_bitset_child_ready, 0, __ATOMIC_RELEASE);
+        __atomic_store_n((int *)&g_bitset_child_result, 0x7FFFFFFF, __ATOMIC_RELEASE);
+
+        fut_thread_t *child = fut_thread_create(task, bitset_child_mask3_fn, NULL,
+                                                 parent->stack_size, parent->priority);
+        if (!child) {
+            fut_printf("[MISC-TEST] ✗ Test 2526: thread creation failed\n");
+            fut_test_fail(2526);
+        } else {
+            for (int i = 0; i < 20000; i++) {
+                if (__atomic_load_n((int *)&g_bitset_child_ready, __ATOMIC_ACQUIRE))
+                    break;
+                fut_thread_yield();
+            }
+            for (int i = 0; i < 50; i++)
+                fut_thread_yield();
+
+            /* FUTEX_WAKE_BITSET=10|128, wake 1 waiter with mask=0x1 — overlaps child's 0x3 */
+            long woken = sys_futex((uint32_t *)&g_bitset_futex_word,
+                                   10 | 128, 1, NULL, NULL, 0x1);
+            if (woken == 1) {
+                fut_printf("[MISC-TEST] ✓ Test 2526: WAKE_BITSET(0x1) woke 1 waiter (overlapping masks)\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] ✗ Test 2526: WAKE_BITSET(0x1) woke %ld (expected 1)\n", woken);
+                fut_test_fail(2526);
+            }
+
+            for (int i = 0; i < 5000; i++)
+                fut_thread_yield();
+        }
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -74821,6 +74987,7 @@ void fut_misc_test_thread(void *arg) {
     test_xattr_container_compat(); /* Tests 2475-2482: xattr container compat (multi-namespace, generic storage) */
     test_dup3_fcntl_cloexec_compliance(); /* Tests 2495-2502: dup3 O_CLOEXEC and F_DUPFD_CLOEXEC POSIX compliance */
     test_sockopt_enforcement_roundtrip(); /* Tests 2510-2517: socket option enforcement round-trip */
+    test_futex_bitset_selective_wakeup(); /* Tests 2525-2526: FUTEX_WAIT_BITSET / FUTEX_WAKE_BITSET selective wakeup */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

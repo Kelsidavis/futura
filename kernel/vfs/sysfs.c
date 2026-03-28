@@ -10,12 +10,14 @@
  *
  * Directory tree:
  *   /sys/
- *     class/  net/lo/{ifindex,operstate,type,mtu,address,flags}  block/  tty/
+ *     class/  net/lo/{ifindex,operstate,type,mtu,address,flags}
+ *             net/eth0/{ifindex,operstate,type,mtu,address,flags}
+ *             block/  tty/console/{active}  tty/tty0/{active}
  *     bus/    pci/devices/  usb/devices/  platform/devices/
  *     devices/
  *     kernel/ mm/ transparent_hugepage/{enabled,defrag,use_zero_pages}
  *             profiling
- *     fs/     cgroup/
+ *     fs/     cgroup/{cgroup.controllers}
  *     block/
  *     power/  state
  *     module/
@@ -127,6 +129,21 @@ enum sysfs_kind {
     /* /sys/kernel/security/ */
     SYSFS_KERNEL_SECURITY_DIR,
     SYSFS_KERNEL_SECURITY_LSM,
+    /* /sys/class/net/eth0/ */
+    SYSFS_CLASS_NET_ETH0_DIR,
+    SYSFS_NET_ETH0_IFINDEX,
+    SYSFS_NET_ETH0_OPERSTATE,
+    SYSFS_NET_ETH0_TYPE,
+    SYSFS_NET_ETH0_MTU,
+    SYSFS_NET_ETH0_ADDRESS,
+    SYSFS_NET_ETH0_FLAGS,
+    /* /sys/class/tty/console/ and tty0/ */
+    SYSFS_CLASS_TTY_CONSOLE_DIR,
+    SYSFS_CLASS_TTY_TTY0_DIR,
+    SYSFS_TTY_CONSOLE_ACTIVE,
+    SYSFS_TTY_TTY0_ACTIVE,
+    /* /sys/fs/cgroup/cgroup.controllers */
+    SYSFS_FS_CGROUP_CONTROLLERS,
 };
 
 typedef struct {
@@ -204,6 +221,18 @@ typedef struct {
 #define SYSFS_INO_TZ0_MODE          575ULL
 #define SYSFS_INO_KERNEL_SECURITY   580ULL
 #define SYSFS_INO_KERNEL_SECURITY_LSM 581ULL
+#define SYSFS_INO_CLASS_NET_ETH0    590ULL
+#define SYSFS_INO_NET_ETH0_IFINDEX  591ULL
+#define SYSFS_INO_NET_ETH0_OPERSTATE 592ULL
+#define SYSFS_INO_NET_ETH0_TYPE     593ULL
+#define SYSFS_INO_NET_ETH0_MTU      594ULL
+#define SYSFS_INO_NET_ETH0_ADDRESS  595ULL
+#define SYSFS_INO_NET_ETH0_FLAGS    596ULL
+#define SYSFS_INO_TTY_CONSOLE       600ULL
+#define SYSFS_INO_TTY_TTY0          601ULL
+#define SYSFS_INO_TTY_CONSOLE_ACTIVE 602ULL
+#define SYSFS_INO_TTY_TTY0_ACTIVE   603ULL
+#define SYSFS_INO_FS_CGROUP_CTRL    610ULL
 #define SYSFS_INO_CLASS_NET_LO      526ULL
 #define SYSFS_INO_NET_LO_IFINDEX    527ULL
 #define SYSFS_INO_NET_LO_OPERSTATE  528ULL
@@ -274,9 +303,9 @@ static ssize_t sysfs_file_read(struct fut_vnode *vnode, void *buf,
 
     switch (n->kind) {
         case SYSFS_THP_ENABLED:
-            /* Report THP as disabled; Python's multiprocessing checks this */
+            /* Report THP as madvise; container runtimes (Docker/Podman) check this */
             total = sysfs_gen_str(tmp, sizeof(tmp),
-                                  "always madvise [never]\n");
+                                  "always [madvise] never\n");
             break;
         case SYSFS_THP_DEFRAG:
             total = sysfs_gen_str(tmp, sizeof(tmp),
@@ -444,6 +473,86 @@ static ssize_t sysfs_file_read(struct fut_vnode *vnode, void *buf,
         case SYSFS_KERNEL_SECURITY_LSM:
             /* Report available LSMs — Futura has Landlock and capability */
             total = sysfs_gen_str(tmp, sizeof(tmp), "landlock,capability,lockdown\n");
+            break;
+
+        /* /sys/class/net/eth0/ attribute files — read real data from netif registry */
+        case SYSFS_NET_ETH0_IFINDEX: {
+            struct net_iface *eth = netif_by_name("eth0");
+            char ibuf[16]; int pos = 0;
+            int v = eth ? eth->index : 2;
+            if (v >= 100) ibuf[pos++] = '0' + v / 100;
+            if (v >= 10) ibuf[pos++] = '0' + (v / 10) % 10;
+            ibuf[pos++] = '0' + v % 10;
+            ibuf[pos++] = '\n'; ibuf[pos] = '\0';
+            total = sysfs_gen_str(tmp, sizeof(tmp), ibuf);
+            break;
+        }
+        case SYSFS_NET_ETH0_OPERSTATE: {
+            struct net_iface *eth = netif_by_name("eth0");
+            if (!eth) { total = sysfs_gen_str(tmp, sizeof(tmp), "unknown\n"); break; }
+            total = sysfs_gen_str(tmp, sizeof(tmp),
+                (eth->flags & 0x0040) ? "up\n" : "down\n");
+            break;
+        }
+        case SYSFS_NET_ETH0_TYPE:
+            /* ARPHRD_ETHER = 1 */
+            total = sysfs_gen_str(tmp, sizeof(tmp), "1\n");
+            break;
+        case SYSFS_NET_ETH0_MTU: {
+            struct net_iface *eth = netif_by_name("eth0");
+            char mbuf[16]; int pos = 0;
+            uint32_t mtu = eth ? eth->mtu : 1500;
+            if (mtu == 0) { mbuf[pos++] = '0'; }
+            else { char t[12]; int ti = 0; while (mtu > 0) { t[ti++] = '0' + mtu%10; mtu /= 10; } while (ti > 0) mbuf[pos++] = t[--ti]; }
+            mbuf[pos++] = '\n'; mbuf[pos] = '\0';
+            total = sysfs_gen_str(tmp, sizeof(tmp), mbuf);
+            break;
+        }
+        case SYSFS_NET_ETH0_ADDRESS: {
+            struct net_iface *eth = netif_by_name("eth0");
+            static const char hex[] = "0123456789abcdef";
+            int pos = 0;
+            if (eth) {
+                for (int i = 0; i < 6; i++) {
+                    if (i) tmp[pos++] = ':';
+                    tmp[pos++] = hex[(eth->mac[i] >> 4) & 0xF];
+                    tmp[pos++] = hex[eth->mac[i] & 0xF];
+                }
+            } else {
+                /* Default fallback: 52:54:00:12:34:56 (QEMU default) */
+                pos = (int)sysfs_gen_str(tmp, sizeof(tmp), "52:54:00:12:34:56");
+            }
+            tmp[pos++] = '\n'; tmp[pos] = '\0';
+            total = (size_t)pos;
+            break;
+        }
+        case SYSFS_NET_ETH0_FLAGS: {
+            struct net_iface *eth = netif_by_name("eth0");
+            uint32_t flags = eth ? eth->flags : 0x1003;
+            char fbuf[16]; int pos = 0;
+            fbuf[pos++] = '0'; fbuf[pos++] = 'x';
+            static const char hex2[] = "0123456789abcdef";
+            if (flags >= 0x1000) fbuf[pos++] = hex2[(flags >> 12) & 0xF];
+            if (flags >= 0x100) fbuf[pos++] = hex2[(flags >> 8) & 0xF];
+            if (flags >= 0x10) fbuf[pos++] = hex2[(flags >> 4) & 0xF];
+            fbuf[pos++] = hex2[flags & 0xF];
+            fbuf[pos++] = '\n'; fbuf[pos] = '\0';
+            total = sysfs_gen_str(tmp, sizeof(tmp), fbuf);
+            break;
+        }
+
+        /* /sys/class/tty/ files */
+        case SYSFS_TTY_CONSOLE_ACTIVE:
+            total = sysfs_gen_str(tmp, sizeof(tmp), "tty0\n");
+            break;
+        case SYSFS_TTY_TTY0_ACTIVE:
+            total = sysfs_gen_str(tmp, sizeof(tmp), "tty0\n");
+            break;
+
+        /* /sys/fs/cgroup/cgroup.controllers */
+        case SYSFS_FS_CGROUP_CONTROLLERS:
+            total = sysfs_gen_str(tmp, sizeof(tmp),
+                "cpuset cpu io memory hugetlb pids rdma misc\n");
             break;
 
         /* /sys/class/thermal/thermal_zone0/ files */
@@ -635,6 +744,52 @@ static const sysfs_de_t lo_entries[] = {
     DE_REG("flags",     SYSFS_INO_NET_LO_FLAGS,    SYSFS_NET_LO_FLAGS),
 };
 #define LO_N (sizeof(lo_entries)/sizeof(lo_entries[0]))
+
+/* /sys/class/net/eth0/ */
+static const sysfs_de_t eth0_entries[] = {
+    DE_DIR(".",         SYSFS_INO_CLASS_NET_ETH0,     SYSFS_CLASS_NET_ETH0_DIR),
+    DE_DIR("..",        SYSFS_INO_CLASS_NET,           SYSFS_CLASS_NET_DIR),
+    DE_REG("ifindex",   SYSFS_INO_NET_ETH0_IFINDEX,   SYSFS_NET_ETH0_IFINDEX),
+    DE_REG("operstate", SYSFS_INO_NET_ETH0_OPERSTATE,  SYSFS_NET_ETH0_OPERSTATE),
+    DE_REG("type",      SYSFS_INO_NET_ETH0_TYPE,       SYSFS_NET_ETH0_TYPE),
+    DE_REG("mtu",       SYSFS_INO_NET_ETH0_MTU,        SYSFS_NET_ETH0_MTU),
+    DE_REG("address",   SYSFS_INO_NET_ETH0_ADDRESS,    SYSFS_NET_ETH0_ADDRESS),
+    DE_REG("flags",     SYSFS_INO_NET_ETH0_FLAGS,      SYSFS_NET_ETH0_FLAGS),
+};
+#define ETH0_N (sizeof(eth0_entries)/sizeof(eth0_entries[0]))
+
+/* /sys/class/tty/ */
+static const sysfs_de_t class_tty_entries[] = {
+    DE_DIR(".",       SYSFS_INO_CLASS_TTY,      SYSFS_CLASS_TTY_DIR),
+    DE_DIR("..",      SYSFS_INO_CLASS,           SYSFS_CLASS_DIR),
+    DE_DIR("console", SYSFS_INO_TTY_CONSOLE,    SYSFS_CLASS_TTY_CONSOLE_DIR),
+    DE_DIR("tty0",    SYSFS_INO_TTY_TTY0,       SYSFS_CLASS_TTY_TTY0_DIR),
+};
+#define CLASS_TTY_N (sizeof(class_tty_entries)/sizeof(class_tty_entries[0]))
+
+/* /sys/class/tty/console/ */
+static const sysfs_de_t tty_console_entries[] = {
+    DE_DIR(".",      SYSFS_INO_TTY_CONSOLE,        SYSFS_CLASS_TTY_CONSOLE_DIR),
+    DE_DIR("..",     SYSFS_INO_CLASS_TTY,           SYSFS_CLASS_TTY_DIR),
+    DE_REG("active", SYSFS_INO_TTY_CONSOLE_ACTIVE, SYSFS_TTY_CONSOLE_ACTIVE),
+};
+#define TTY_CONSOLE_N (sizeof(tty_console_entries)/sizeof(tty_console_entries[0]))
+
+/* /sys/class/tty/tty0/ */
+static const sysfs_de_t tty_tty0_entries[] = {
+    DE_DIR(".",      SYSFS_INO_TTY_TTY0,          SYSFS_CLASS_TTY_TTY0_DIR),
+    DE_DIR("..",     SYSFS_INO_CLASS_TTY,          SYSFS_CLASS_TTY_DIR),
+    DE_REG("active", SYSFS_INO_TTY_TTY0_ACTIVE,   SYSFS_TTY_TTY0_ACTIVE),
+};
+#define TTY_TTY0_N (sizeof(tty_tty0_entries)/sizeof(tty_tty0_entries[0]))
+
+/* /sys/fs/cgroup/ */
+static const sysfs_de_t fs_cgroup_entries[] = {
+    DE_DIR(".",                   SYSFS_INO_FS_CGROUP,   SYSFS_FS_CGROUP_DIR),
+    DE_DIR("..",                  SYSFS_INO_FS,          SYSFS_FS_DIR),
+    DE_REG("cgroup.controllers", SYSFS_INO_FS_CGROUP_CTRL, SYSFS_FS_CGROUP_CONTROLLERS),
+};
+#define FS_CGROUP_N (sizeof(fs_cgroup_entries)/sizeof(fs_cgroup_entries[0]))
 
 static const sysfs_de_t bus_entries[] = {
     DE_DIR(".",        SYSFS_INO_BUS,          SYSFS_BUS_DIR),
@@ -901,6 +1056,11 @@ static int sysfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
             return -ENOENT;
         }
         case SYSFS_CLASS_NET_LO_DIR: return sysfs_table_readdir(lo_entries,       LO_N,       cookie, de);
+        case SYSFS_CLASS_NET_ETH0_DIR: return sysfs_table_readdir(eth0_entries, ETH0_N, cookie, de);
+        case SYSFS_CLASS_TTY_DIR:    return sysfs_table_readdir(class_tty_entries, CLASS_TTY_N, cookie, de);
+        case SYSFS_CLASS_TTY_CONSOLE_DIR: return sysfs_table_readdir(tty_console_entries, TTY_CONSOLE_N, cookie, de);
+        case SYSFS_CLASS_TTY_TTY0_DIR: return sysfs_table_readdir(tty_tty0_entries, TTY_TTY0_N, cookie, de);
+        case SYSFS_FS_CGROUP_DIR:    return sysfs_table_readdir(fs_cgroup_entries, FS_CGROUP_N, cookie, de);
         case SYSFS_BUS_DIR:          return sysfs_table_readdir(bus_entries,      BUS_N,      cookie, de);
         case SYSFS_BUS_PCI_DIR:      return sysfs_table_readdir(pci_entries,      PCI_N,      cookie, de);
         case SYSFS_BUS_USB_DIR:      return sysfs_table_readdir(usb_entries,      USB_N,      cookie, de);
@@ -962,12 +1122,21 @@ static int sysfs_dir_lookup(struct fut_vnode *dir, const char *name,
             /* First check static table (has ".", "..", "lo") */
             int rc = sysfs_table_lookup(mnt, class_net_entries, CLASS_NET_N, name, result);
             if (rc == 0) return 0;
-            /* Dynamic lookup: any registered interface by name */
+            /* Check for eth0 explicitly */
+            if (STREQ(name, "eth0")) {
+                struct net_iface *eth = netif_by_name("eth0");
+                if (eth && eth->active) {
+                    *result = sysfs_alloc_vnode(mnt, VN_DIR,
+                        SYSFS_INO_CLASS_NET_ETH0,
+                        0040555, SYSFS_CLASS_NET_ETH0_DIR);
+                    return *result ? 0 : -ENOMEM;
+                }
+                return -ENOENT;
+            }
+            /* Dynamic lookup: any other registered interface by name */
             struct net_iface *iface = netif_by_name(name);
             if (iface && iface->active) {
-                /* Use a synthetic inode and the lo_entries kind for attributes.
-                 * We reuse SYSFS_CLASS_NET_LO_DIR kind — the read handler uses
-                 * the interface name from the vnode path context. */
+                /* Reuse SYSFS_CLASS_NET_LO_DIR kind for generic interfaces */
                 *result = sysfs_alloc_vnode(mnt, VN_DIR,
                     SYSFS_INO_CLASS_NET_LO + (uint64_t)iface->index * 100,
                     0040555, SYSFS_CLASS_NET_LO_DIR);
@@ -977,6 +1146,16 @@ static int sysfs_dir_lookup(struct fut_vnode *dir, const char *name,
         }
         case SYSFS_CLASS_NET_LO_DIR:
             return sysfs_table_lookup(mnt, lo_entries, LO_N, name, result);
+        case SYSFS_CLASS_NET_ETH0_DIR:
+            return sysfs_table_lookup(mnt, eth0_entries, ETH0_N, name, result);
+        case SYSFS_CLASS_TTY_DIR:
+            return sysfs_table_lookup(mnt, class_tty_entries, CLASS_TTY_N, name, result);
+        case SYSFS_CLASS_TTY_CONSOLE_DIR:
+            return sysfs_table_lookup(mnt, tty_console_entries, TTY_CONSOLE_N, name, result);
+        case SYSFS_CLASS_TTY_TTY0_DIR:
+            return sysfs_table_lookup(mnt, tty_tty0_entries, TTY_TTY0_N, name, result);
+        case SYSFS_FS_CGROUP_DIR:
+            return sysfs_table_lookup(mnt, fs_cgroup_entries, FS_CGROUP_N, name, result);
         case SYSFS_BUS_DIR:
             return sysfs_table_lookup(mnt, bus_entries, BUS_N, name, result);
         case SYSFS_BUS_PCI_DIR:

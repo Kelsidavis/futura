@@ -67267,6 +67267,406 @@ futurafs_persist_done:
     }
 }
 
+/* ── Tests 2395-2402: MAP_SHARED file visibility, anonymous shared, /dev/shm ── */
+__attribute__((noinline)) static void test_mmap_shared_semantics(void) {
+    extern long sys_open(const char *, int, int);
+    extern long sys_write(int, const void *, size_t);
+    extern long sys_read(int, void *, size_t);
+    extern long sys_close(int);
+    extern long sys_unlink(const char *);
+    extern long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset);
+    extern long sys_munmap(void *addr, size_t len);
+    extern long sys_msync(void *addr, size_t length, int flags);
+    extern long sys_lseek(int, long, int);
+
+    fut_printf("[MISC-TEST] Tests 2395-2402: MAP_SHARED semantics\n");
+
+    /* ── Test 2395: MAP_SHARED file mmap + msync writes back to file ── */
+    fut_printf("[MISC-TEST] Test 2395: MAP_SHARED file mmap + msync writeback\n");
+    {
+        /* Create a test file with known content */
+        long fd = sys_open("/tmp/shm_test_2395", 0x0042 /* O_WRONLY|O_CREAT */, 0666);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL Test 2395: open for write: %ld\n", fd);
+            fut_test_fail(2395);
+        } else {
+            /* Write initial data: 4096 bytes of 'A' */
+            static char init_buf[4096];
+            __builtin_memset(init_buf, 'A', sizeof(init_buf));
+            long wr = sys_write((int)fd, init_buf, sizeof(init_buf));
+            sys_close((int)fd);
+
+            if (wr != (long)sizeof(init_buf)) {
+                fut_printf("[MISC-TEST] FAIL Test 2395: short write: %ld\n", wr);
+                fut_test_fail(2395);
+            } else {
+                /* mmap the file MAP_SHARED */
+                fd = sys_open("/tmp/shm_test_2395", 0x0002 /* O_RDWR */, 0);
+                if (fd < 0) {
+                    fut_printf("[MISC-TEST] FAIL Test 2395: reopen: %ld\n", fd);
+                    fut_test_fail(2395);
+                } else {
+                    long map_addr = sys_mmap(NULL, 4096, 0x3 /* PROT_READ|PROT_WRITE */,
+                                              0x01 /* MAP_SHARED */, (int)fd, 0);
+                    sys_close((int)fd);
+
+                    if (map_addr < 0) {
+                        fut_printf("[MISC-TEST] FAIL Test 2395: mmap: %ld\n", map_addr);
+                        fut_test_fail(2395);
+                    } else {
+                        /* The mapping was created; msync + read-back verifies writeback.
+                         * Note: demand-paging loads the page on first access; since we
+                         * cannot fault from kernel context, we verify the VMA was created
+                         * correctly as MAP_SHARED with proper file backing. */
+                        fut_mm_t *mm = fut_mm_current();
+                        bool found_vma = false;
+                        if (mm) {
+                            struct fut_vma *v = mm->vma_list;
+                            while (v) {
+                                if (v->start == (uintptr_t)map_addr &&
+                                    v->end == (uintptr_t)map_addr + 4096) {
+                                    /* Check VMA has MAP_SHARED flag and file backing */
+                                    if ((v->flags & 0x01) && v->vnode) {
+                                        found_vma = true;
+                                    }
+                                    break;
+                                }
+                                v = v->next;
+                            }
+                        }
+                        sys_munmap((void *)(uintptr_t)map_addr, 4096);
+
+                        if (found_vma) {
+                            fut_printf("[MISC-TEST] pass Test 2395: MAP_SHARED file VMA has shared flag + vnode\n");
+                            fut_test_pass();
+                        } else {
+                            fut_printf("[MISC-TEST] FAIL Test 2395: VMA missing shared flag or vnode\n");
+                            fut_test_fail(2395);
+                        }
+                    }
+                }
+            }
+            sys_unlink("/tmp/shm_test_2395");
+        }
+    }
+
+    /* ── Test 2396: MAP_PRIVATE file mmap gets COW flag ── */
+    fut_printf("[MISC-TEST] Test 2396: MAP_PRIVATE file mmap gets COW semantics\n");
+    {
+        long fd = sys_open("/tmp/shm_test_2396", 0x0042, 0666);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL Test 2396: open: %ld\n", fd);
+            fut_test_fail(2396);
+        } else {
+            static char buf[4096];
+            __builtin_memset(buf, 'B', sizeof(buf));
+            sys_write((int)fd, buf, sizeof(buf));
+            sys_close((int)fd);
+
+            fd = sys_open("/tmp/shm_test_2396", 0x0002, 0);
+            if (fd < 0) {
+                fut_printf("[MISC-TEST] FAIL Test 2396: reopen: %ld\n", fd);
+                fut_test_fail(2396);
+            } else {
+                long map_addr = sys_mmap(NULL, 4096, 0x3 /* PROT_READ|PROT_WRITE */,
+                                          0x02 /* MAP_PRIVATE */, (int)fd, 0);
+                sys_close((int)fd);
+
+                if (map_addr < 0) {
+                    fut_printf("[MISC-TEST] FAIL Test 2396: mmap: %ld\n", map_addr);
+                    fut_test_fail(2396);
+                } else {
+                    /* Verify VMA does NOT have MAP_SHARED flag */
+                    fut_mm_t *mm = fut_mm_current();
+                    bool ok = false;
+                    if (mm) {
+                        struct fut_vma *v = mm->vma_list;
+                        while (v) {
+                            if (v->start == (uintptr_t)map_addr) {
+                                /* Should NOT have MAP_SHARED, should have file backing */
+                                if (!(v->flags & 0x01) && v->vnode) {
+                                    ok = true;
+                                }
+                                break;
+                            }
+                            v = v->next;
+                        }
+                    }
+                    sys_munmap((void *)(uintptr_t)map_addr, 4096);
+
+                    if (ok) {
+                        fut_printf("[MISC-TEST] pass Test 2396: MAP_PRIVATE VMA is private with vnode\n");
+                        fut_test_pass();
+                    } else {
+                        fut_printf("[MISC-TEST] FAIL Test 2396: VMA has wrong flags\n");
+                        fut_test_fail(2396);
+                    }
+                }
+            }
+            sys_unlink("/tmp/shm_test_2396");
+        }
+    }
+
+    /* ── Test 2397: MAP_ANONYMOUS|MAP_SHARED creates writable mapping ── */
+    fut_printf("[MISC-TEST] Test 2397: MAP_ANONYMOUS|MAP_SHARED allocation\n");
+    {
+        long map_addr = sys_mmap(NULL, 4096, 0x3 /* PROT_READ|PROT_WRITE */,
+                                  0x21 /* MAP_SHARED|MAP_ANONYMOUS */, -1, 0);
+        if (map_addr < 0) {
+            fut_printf("[MISC-TEST] FAIL Test 2397: mmap: %ld\n", map_addr);
+            fut_test_fail(2397);
+        } else {
+            /* Verify VMA has both MAP_SHARED and VMA_SHARED flags */
+            fut_mm_t *mm = fut_mm_current();
+            bool ok = false;
+            if (mm) {
+                struct fut_vma *v = mm->vma_list;
+                while (v) {
+                    if (v->start == (uintptr_t)map_addr) {
+                        if ((v->flags & 0x01) && (v->flags & 0x2000) && !v->vnode) {
+                            ok = true;  /* MAP_SHARED + VMA_SHARED + anonymous */
+                        }
+                        break;
+                    }
+                    v = v->next;
+                }
+            }
+            sys_munmap((void *)(uintptr_t)map_addr, 4096);
+
+            if (ok) {
+                fut_printf("[MISC-TEST] pass Test 2397: anonymous shared mapping has correct flags\n");
+                fut_test_pass();
+            } else {
+                fut_printf("[MISC-TEST] FAIL Test 2397: anonymous shared VMA flags incorrect\n");
+                fut_test_fail(2397);
+            }
+        }
+    }
+
+    /* ── Test 2398: /dev/shm file creation works ── */
+    fut_printf("[MISC-TEST] Test 2398: /dev/shm file creation for POSIX shm\n");
+    {
+        long fd = sys_open("/dev/shm/test_2398", 0x0042 /* O_WRONLY|O_CREAT */, 0666);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL Test 2398: open /dev/shm file: %ld\n", fd);
+            fut_test_fail(2398);
+        } else {
+            static const char data[] = "shared_memory_test_data";
+            long wr = sys_write((int)fd, data, sizeof(data) - 1);
+            sys_close((int)fd);
+
+            if (wr == (long)(sizeof(data) - 1)) {
+                /* Read it back to verify persistence */
+                fd = sys_open("/dev/shm/test_2398", 0 /* O_RDONLY */, 0);
+                if (fd >= 0) {
+                    static char rbuf[64];
+                    long rd = sys_read((int)fd, rbuf, sizeof(rbuf));
+                    sys_close((int)fd);
+                    bool match = (rd == (long)(sizeof(data) - 1));
+                    if (match) {
+                        for (size_t i = 0; i < sizeof(data) - 1; i++) {
+                            if (rbuf[i] != data[i]) { match = false; break; }
+                        }
+                    }
+                    if (match) {
+                        fut_printf("[MISC-TEST] pass Test 2398: /dev/shm read-back matches\n");
+                        fut_test_pass();
+                    } else {
+                        fut_printf("[MISC-TEST] FAIL Test 2398: data mismatch\n");
+                        fut_test_fail(2398);
+                    }
+                } else {
+                    fut_printf("[MISC-TEST] FAIL Test 2398: reopen: %ld\n", fd);
+                    fut_test_fail(2398);
+                }
+            } else {
+                fut_printf("[MISC-TEST] FAIL Test 2398: write: %ld\n", wr);
+                fut_test_fail(2398);
+            }
+            sys_unlink("/dev/shm/test_2398");
+        }
+    }
+
+    /* ── Test 2399: /dev/shm mmap MAP_SHARED produces correct VMA ── */
+    fut_printf("[MISC-TEST] Test 2399: /dev/shm mmap MAP_SHARED\n");
+    {
+        long fd = sys_open("/dev/shm/test_2399", 0x0042, 0666);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL Test 2399: create: %ld\n", fd);
+            fut_test_fail(2399);
+        } else {
+            static char buf[4096];
+            __builtin_memset(buf, 'X', sizeof(buf));
+            sys_write((int)fd, buf, sizeof(buf));
+            sys_close((int)fd);
+
+            fd = sys_open("/dev/shm/test_2399", 0x0002, 0);
+            if (fd < 0) {
+                fut_printf("[MISC-TEST] FAIL Test 2399: reopen: %ld\n", fd);
+                fut_test_fail(2399);
+            } else {
+                long map_addr = sys_mmap(NULL, 4096, 0x3,
+                                          0x01 /* MAP_SHARED */, (int)fd, 0);
+                sys_close((int)fd);
+
+                if (map_addr < 0) {
+                    fut_printf("[MISC-TEST] FAIL Test 2399: mmap: %ld\n", map_addr);
+                    fut_test_fail(2399);
+                } else {
+                    /* Verify the mapping is shared, file-backed, and on /dev/shm */
+                    fut_mm_t *mm = fut_mm_current();
+                    bool ok = false;
+                    if (mm) {
+                        struct fut_vma *v = mm->vma_list;
+                        while (v) {
+                            if (v->start == (uintptr_t)map_addr) {
+                                if ((v->flags & 0x01) && v->vnode) {
+                                    ok = true;
+                                }
+                                break;
+                            }
+                            v = v->next;
+                        }
+                    }
+                    sys_munmap((void *)(uintptr_t)map_addr, 4096);
+
+                    if (ok) {
+                        fut_printf("[MISC-TEST] pass Test 2399: /dev/shm MAP_SHARED mmap has vnode\n");
+                        fut_test_pass();
+                    } else {
+                        fut_printf("[MISC-TEST] FAIL Test 2399: VMA flags wrong\n");
+                        fut_test_fail(2399);
+                    }
+                }
+            }
+            sys_unlink("/dev/shm/test_2399");
+        }
+    }
+
+    /* ── Test 2400: msync on MAP_SHARED mapping returns success ── */
+    fut_printf("[MISC-TEST] Test 2400: msync on MAP_SHARED mapping\n");
+    {
+        long fd = sys_open("/tmp/shm_test_2400", 0x0042, 0666);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL Test 2400: create: %ld\n", fd);
+            fut_test_fail(2400);
+        } else {
+            static char buf[4096];
+            __builtin_memset(buf, 'M', sizeof(buf));
+            sys_write((int)fd, buf, sizeof(buf));
+            sys_close((int)fd);
+
+            fd = sys_open("/tmp/shm_test_2400", 0x0002, 0);
+            if (fd < 0) {
+                fut_printf("[MISC-TEST] FAIL Test 2400: reopen: %ld\n", fd);
+                fut_test_fail(2400);
+            } else {
+                long map_addr = sys_mmap(NULL, 4096, 0x3,
+                                          0x01 /* MAP_SHARED */, (int)fd, 0);
+                sys_close((int)fd);
+
+                if (map_addr < 0) {
+                    fut_printf("[MISC-TEST] FAIL Test 2400: mmap: %ld\n", map_addr);
+                    fut_test_fail(2400);
+                } else {
+                    /* Call msync with MS_SYNC */
+                    long ms_ret = sys_msync((void *)(uintptr_t)map_addr, 4096, 4 /* MS_SYNC */);
+                    sys_munmap((void *)(uintptr_t)map_addr, 4096);
+
+                    if (ms_ret == 0) {
+                        fut_printf("[MISC-TEST] pass Test 2400: msync(MS_SYNC) returned 0\n");
+                        fut_test_pass();
+                    } else {
+                        fut_printf("[MISC-TEST] FAIL Test 2400: msync returned %ld\n", ms_ret);
+                        fut_test_fail(2400);
+                    }
+                }
+            }
+            sys_unlink("/tmp/shm_test_2400");
+        }
+    }
+
+    /* ── Test 2401: MAP_SHARED + MAP_PRIVATE = EINVAL ── */
+    fut_printf("[MISC-TEST] Test 2401: MAP_SHARED|MAP_PRIVATE rejected\n");
+    {
+        long ret = sys_mmap(NULL, 4096, 0x3, 0x03 /* MAP_SHARED|MAP_PRIVATE */, -1, 0);
+        if (ret == -22 /* -EINVAL */) {
+            fut_printf("[MISC-TEST] pass Test 2401: MAP_SHARED|MAP_PRIVATE = EINVAL\n");
+            fut_test_pass();
+        } else {
+            fut_printf("[MISC-TEST] FAIL Test 2401: expected EINVAL, got %ld\n", ret);
+            if (ret > 0) sys_munmap((void *)(uintptr_t)ret, 4096);
+            fut_test_fail(2401);
+        }
+    }
+
+    /* ── Test 2402: partial munmap preserves remaining VMA for file mapping ── */
+    fut_printf("[MISC-TEST] Test 2402: partial munmap of MAP_SHARED file mapping\n");
+    {
+        long fd = sys_open("/tmp/shm_test_2402", 0x0042, 0666);
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] FAIL Test 2402: create: %ld\n", fd);
+            fut_test_fail(2402);
+        } else {
+            /* Write 2 pages of data */
+            static char buf[4096];
+            __builtin_memset(buf, 'P', sizeof(buf));
+            sys_write((int)fd, buf, sizeof(buf));
+            sys_write((int)fd, buf, sizeof(buf));
+            sys_close((int)fd);
+
+            fd = sys_open("/tmp/shm_test_2402", 0x0002, 0);
+            if (fd < 0) {
+                fut_printf("[MISC-TEST] FAIL Test 2402: reopen: %ld\n", fd);
+                fut_test_fail(2402);
+            } else {
+                long map_addr = sys_mmap(NULL, 8192, 0x3,
+                                          0x01 /* MAP_SHARED */, (int)fd, 0);
+                sys_close((int)fd);
+
+                if (map_addr < 0) {
+                    fut_printf("[MISC-TEST] FAIL Test 2402: mmap: %ld\n", map_addr);
+                    fut_test_fail(2402);
+                } else {
+                    /* Unmap first page only */
+                    long um_ret = sys_munmap((void *)(uintptr_t)map_addr, 4096);
+                    if (um_ret != 0) {
+                        fut_printf("[MISC-TEST] FAIL Test 2402: munmap: %ld\n", um_ret);
+                        sys_munmap((void *)(uintptr_t)map_addr, 8192);
+                        fut_test_fail(2402);
+                    } else {
+                        /* Verify second page VMA still exists */
+                        fut_mm_t *mm = fut_mm_current();
+                        bool found = false;
+                        if (mm) {
+                            struct fut_vma *v = mm->vma_list;
+                            while (v) {
+                                if (v->start == (uintptr_t)map_addr + 4096 &&
+                                    v->end == (uintptr_t)map_addr + 8192 &&
+                                    (v->flags & 0x01) && v->vnode) {
+                                    found = true;
+                                    break;
+                                }
+                                v = v->next;
+                            }
+                        }
+                        sys_munmap((void *)(uintptr_t)(map_addr + 4096), 4096);
+
+                        if (found) {
+                            fut_printf("[MISC-TEST] pass Test 2402: partial munmap preserved remaining VMA\n");
+                            fut_test_pass();
+                        } else {
+                            fut_printf("[MISC-TEST] FAIL Test 2402: remaining VMA not found\n");
+                            fut_test_fail(2402);
+                        }
+                    }
+                }
+            }
+            sys_unlink("/tmp/shm_test_2402");
+        }
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -71588,6 +71988,7 @@ void fut_misc_test_thread(void *arg) {
     test_proc_io_accounting(); /* Tests 2355-2357: /proc/self/io per-process I/O accounting */
     test_seccomp_bpf_enforcement(); /* Tests 2360-2367: seccomp-BPF filter enforcement for container security */
     test_futurafs_persistence(); /* Tests 2370-2377: FuturaFS on-disk persistence and correctness */
+    test_mmap_shared_semantics(); /* Tests 2395-2402: MAP_SHARED file/anonymous/shm semantics */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

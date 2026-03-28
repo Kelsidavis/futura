@@ -561,6 +561,7 @@ static void cmd_msgpack(int argc, char *argv[]);
 static void cmd_avro(int argc, char *argv[]);
 static void cmd_jsonnet(int argc, char *argv[]);
 static void cmd_dhall(int argc, char *argv[]);
+static void cmd_claude(int argc, char *argv[]);
 
 /* Forward declaration for prompt */
 static void print_prompt(void);
@@ -15931,6 +15932,9 @@ watch_sleep:
     } else if (strcmp_simple(argv[0], "dhall") == 0) {
         cmd_dhall(argc, argv);
         return 0;
+    } else if (strcmp_simple(argv[0], "claude") == 0) {
+        cmd_claude(argc, argv);
+        return 0;
     } else if (strcmp_simple(argv[0], "exit") == 0) {
         int status = 0;
         if (argc > 1) {
@@ -16525,6 +16529,7 @@ static int is_builtin(const char *cmd) {
             strcmp_simple(cmd, "avro") == 0 ||
             strcmp_simple(cmd, "jsonnet") == 0 ||
             strcmp_simple(cmd, "dhall") == 0 ||
+            strcmp_simple(cmd, "claude") == 0 ||
             0);
 }
 
@@ -52387,6 +52392,20 @@ static void cmd_dhall(int argc, char *argv[]) {
         write_str(1, "  { name = \"my-service\", port = 8080, debug = False }\n");
     }
     write_str(1, "  (simulated - no actual Dhall evaluation performed)\n");
+}
+
+/* claude - AI assistant information command */
+static void cmd_claude(int argc, char *argv[]) {
+    (void)argc;
+    (void)argv;
+    write_str(1, "\033[1;35m");
+    write_str(1, "Hello! I'm Claude, your Futura OS AI assistant.\033[0m\n\n");
+    write_str(1, "  OS:        Futura OS (custom kernel, C23)\n");
+    write_str(1, "  Arch:      x86_64 + ARM64\n");
+    write_str(1, "  Shell:     600 built-in commands\n");
+    write_str(1, "  Version:   0.5\n");
+    write_str(1, "  Desktop:   Horizon (Wayland compositor)\n\n");
+    write_str(1, "Type 'help' to see available commands.\n");
 }
 
 #pragma GCC diagnostic pop

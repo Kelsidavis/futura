@@ -1285,15 +1285,14 @@ fut_switch_context_irq:
      * NOTE: This is safe because we're still in kernel mode with kernel page tables.
      * The LAPIC is mapped at its physical address 0xFEE00000 to a kernel VA.
      */
-    /* Send both LAPIC and PIC EOI to ensure the timer interrupt is fully
-     * acknowledged regardless of delivery path. The early EOI in
-     * fut_timer_irq() may not suffice if the interrupt routing changed. */
-    /* Send LAPIC EOI using direct kernel VA (0xFFFFFFFFFEE000B0).
-     * This avoids reliance on the lapic_base global which may not be
-     * accessible when CR3 has changed during context switch. */
+    /* Send LAPIC EOI via the lapic_base global. The pmap_phys_to_virt
+     * mapping now correctly maps LAPIC phys 0xFEE00000 into kernel space. */
     pushq %rax
-    movq $0xFFFFFFFFFEE000B0, %rax
-    movl $0, (%rax)
+    movq lapic_base(%rip), %rax
+    testq %rax, %rax
+    jz .skip_ctx_eoi
+    movl $0, 0xB0(%rax)
+.skip_ctx_eoi:
     popq %rax
 
     /* CRITICAL: Clear fut_in_interrupt and fut_current_frame before IRETQ.

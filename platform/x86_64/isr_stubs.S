@@ -688,12 +688,14 @@ irq_common_stub:
     call fut_irq_handler
 
     /* Always send LAPIC EOI after handling any IRQ.
-     * Write directly to the LAPIC's known kernel virtual address
-     * (0xFFFFFFFF80000000 + 0xFEE00000 = 0xFFFFFFFFFEE00000).
-     * The lapic_base global can be unreliable when CR3 has changed.
-     * EOI register is at offset 0xB0 from LAPIC base. */
-    movq $0xFFFFFFFFFEE000B0, %rax
-    movl $0, (%rax)
+     * Use the lapic_base global which points to the mapped LAPIC region.
+     * This ensures the ISR bit is cleared, preventing lower-priority
+     * interrupts (like the timer) from being blocked. */
+    movq lapic_base(%rip), %rax
+    testq %rax, %rax
+    jz .girq_skip_eoi
+    movl $0, 0xB0(%rax)
+.girq_skip_eoi:
 
     /* Restore stack */
     movq %rbp, %rsp

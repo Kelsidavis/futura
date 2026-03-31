@@ -23,15 +23,27 @@ typedef uint64_t phys_addr_t;
 #define PMAP_DIRECT_VIRT_BASE  KERNEL_VIRTUAL_BASE
 
 static inline uintptr_t pmap_phys_to_virt(phys_addr_t phys) {
-    /* Add HHDM base to get kernel virtual address.
-     * Bitwise OR corrupts addresses >= 2GB where bits overlap with the base. */
+    /* Map physical addresses to kernel virtual addresses.
+     * The direct-map window at PMAP_DIRECT_VIRT_BASE (0xFFFFFFFF80000000)
+     * only covers physical addresses 0 to 0x7FFFFFFF (2GB) because adding
+     * higher physical addresses wraps around past 64-bit boundary.
+     *
+     * For MMIO devices above 2GB physical (LAPIC at 0xFEE00000, framebuffer
+     * at 0xFD000000, etc.), use a secondary mapping window at 0xFFFFFFFF00000000
+     * which covers physical 0x80000000 to 0xFFFFFFFF. */
+    if (phys >= 0x80000000ULL && phys < 0x100000000ULL) {
+        /* High physical: map into 0xFFFFFFFF00000000 + (phys - 0x80000000) */
+        return (uintptr_t)(0xFFFFFFFF00000000ULL + (phys - 0x80000000ULL));
+    }
     return (uintptr_t)(phys + PMAP_DIRECT_VIRT_BASE);
 }
 
 static inline phys_addr_t pmap_virt_to_phys(uintptr_t virt) {
+    /* Reverse the secondary MMIO window mapping (0xFFFFFFFF00000000-0xFFFFFFFF7FFFFFFF) */
+    if (virt >= 0xFFFFFFFF00000000ULL && virt < PMAP_DIRECT_VIRT_BASE) {
+        return (phys_addr_t)((virt - 0xFFFFFFFF00000000ULL) + 0x80000000ULL);
+    }
     if (virt >= PMAP_DIRECT_VIRT_BASE) {
-        /* Subtract HHDM base to recover physical address.
-         * Bitwise AND corrupts addresses >= 2GB where bits overlap with the base. */
         return (phys_addr_t)(virt - PMAP_DIRECT_VIRT_BASE);
     }
     return (phys_addr_t)virt;

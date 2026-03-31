@@ -2108,25 +2108,11 @@ int comp_run(struct compositor_state *comp) {
     while (comp->running) {
         wl_display_flush_clients(comp->display);
 
-        /* Use non-blocking dispatch (timeout=0) to avoid blocking in
-         * epoll_wait. This ensures the compositor always makes progress
-         * even if the kernel's epoll sleep/wakeup has issues. */
-        int rc = wl_event_loop_dispatch(comp->loop, 0);
+        /* Dispatch Wayland events with 16ms timeout (~60Hz frame rate).
+         * This blocks in epoll_wait until events arrive or timeout expires. */
+        int rc = wl_event_loop_dispatch(comp->loop, 16);
         if (rc < 0 && errno != EINTR) {
             break;
-        }
-
-        /* Yield CPU to let other processes run, then spin-wait ~16ms.
-         * nanosleep/epoll_wait block the thread, but after context switches
-         * the timer IRQ stops firing (LAPIC/IOAPIC interaction issue).
-         * Polling with yield keeps the system alive. */
-        sys_sched_yield();
-        {
-            /* Busy-wait ~16ms using TSC (assumes ~1GHz+ clock) */
-            volatile int spin = 0;
-            for (int i = 0; i < 160000; i++) {
-                spin++;
-            }
         }
 
         /* Manually handle timer events.

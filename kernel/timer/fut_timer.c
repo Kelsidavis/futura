@@ -465,15 +465,7 @@ void fut_timer_tick(void) {
         }
     }
 
-    // Only trigger preemptive scheduling if the scheduler has been started
-    // (i.e., current_thread != NULL). This prevents premature scheduling
-    // before the test harness has created any threads.
-    //
-    // CRITICAL: Only call fut_schedule() when the idle thread is running.
-    // Calling fut_schedule() from IRQ context while a user process is running
-    // requires IRETQ-based context switching which permanently kills the PIT
-    // timer on single-vCPU QEMU. When user threads are running, they will
-    // voluntarily yield via syscalls (nanosleep, epoll_wait, sched_yield).
+    // Trigger preemptive scheduling if the scheduler is running.
     if (cur_thread != nullptr) {
         fut_schedule();
     }

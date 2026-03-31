@@ -15,33 +15,6 @@ struct cursor_state {
 #define CURSOR_W 16
 #define CURSOR_H 16
 
-/* Blend LUT disabled - causes crashes, using simple opaque drawing instead
- * TODO: Investigate blend LUT initialization issues */
-#if 0
-/* Pre-computed blend lookup table for cursor alpha blending.
- * blend_lut[value][alpha] = (value * alpha) / 255
- * This eliminates expensive division in the inner pixel loop.
- * Memory: 256 * 256 = 64 KB (negligible)
- * Speedup: Eliminates 2-3 divisions per pixel (~2-3x faster cursor rendering)
- */
-static uint8_t cursor_blend_lut[256][256];
-static bool cursor_blend_lut_initialized = false;
-
-static void cursor_init_blend_lut(void) {
-    if (cursor_blend_lut_initialized) {
-        return;
-    }
-
-    for (int value = 0; value < 256; ++value) {
-        for (int alpha = 0; alpha < 256; ++alpha) {
-            cursor_blend_lut[value][alpha] = (uint8_t)((value * alpha) / 255);
-        }
-    }
-
-    cursor_blend_lut_initialized = true;
-}
-#endif
-
 /* Simple ARGB arrow cursor (white with dark outline) */
 static const uint32_t cursor_pixels[CURSOR_W * CURSOR_H] = {
     0x00000000, 0x55000000, 0x55000000, 0x55000000, 0x55000000, 0x55000000, 0x55000000, 0x55000000,

@@ -207,6 +207,7 @@ int main(void) {
            comp.fb_info.width,
            comp.fb_info.height,
            socket);
+
     /* Demo mode: render test pattern when socket creation fails */
     if (!socket || strcmp(socket, "none") == 0) {
         comp_scheduler_stop(&comp);

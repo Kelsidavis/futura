@@ -201,7 +201,6 @@ isr_syscall_int80_stub:
      * path, saving this INT 0x80 frame (RAX=syscall_number) as irq_frame.
      * When later restored via IRETQ, RAX=syscall_number goes to userspace. */
     movq %rsp, fut_current_frame(%rip)
-    movb $0, fut_in_interrupt(%rip)
 
     /* Extract syscall arguments from saved registers
      * User syscall convention: RAX=syscall#, RDI=arg1, RSI=arg2, RDX=arg3, R10=arg4, R8=arg5, R9=arg6

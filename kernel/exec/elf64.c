@@ -714,14 +714,9 @@ static int build_user_stack(fut_mm_t *mm,
 
     uint64_t argv_ptr = sp;
 
-    if (((sp - sizeof(uint64_t)) & 0xFULL) != 0) {
-        sp -= sizeof(uint64_t);
-        if (exec_copy_to_user(mm, sp, &zero, sizeof(zero)) != 0) {
-            fut_free(string_ptrs);
-            return -EFAULT;
-        }
-    }
-
+    /* Push argc immediately before argv[0]. crt0 pops argc, then finds
+     * argv at RSP and envp at argv + (argc+1)*8. No padding between
+     * argc and argv — crt0's and $-16,%rsp handles alignment. */
     uint64_t argc_val = (uint64_t)argc;
     sp -= sizeof(uint64_t);
     if (exec_copy_to_user(mm, sp, &argc_val, sizeof(argc_val)) != 0) {

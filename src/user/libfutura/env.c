@@ -32,11 +32,23 @@ void __libc_init_environ(char **envp) {
         return;
     }
 
+    /* Point directly to the envp array on the stack.
+     * This avoids malloc during early startup before the heap is initialized.
+     * The envp array and strings are on the user stack set up by execve
+     * and persist for the lifetime of the process. */
+    g_environ = envp;
+    environ = envp;
+
     /* Count environment variables */
     size_t count = 0;
     while (envp[count] != NULL) {
         count++;
     }
+    g_env_count = count;
+    g_env_capacity = count;
+    return;
+
+    /* --- DEAD CODE: original malloc-based copy (kept for reference) --- */
 
     /* Allocate environment array (+1 for NULL terminator) */
     g_environ = (char **)malloc((count + 1) * sizeof(char *));

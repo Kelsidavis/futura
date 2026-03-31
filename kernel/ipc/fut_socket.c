@@ -910,6 +910,13 @@ fut_socket_t *fut_socket_find_listener(const char *path, size_t path_len) {
         return NULL;
     }
 
+    /* Normalize path length: strip trailing NUL if present.
+     * bind() and connect() may include or exclude the NUL terminator
+     * in addrlen, causing path_len mismatches for the same path. */
+    while (path_len > 0 && path[path_len - 1] == '\0') {
+        path_len--;
+    }
+
     fut_spinlock_acquire(&socket_lock);
     for (int i = 0; i < FUT_SOCKET_MAX; i++) {
         fut_socket_t *socket = socket_registry[i];
@@ -917,9 +924,14 @@ fut_socket_t *fut_socket_find_listener(const char *path, size_t path_len) {
             if (socket) socket_registry[i] = NULL;
             continue;
         }
+        /* Compare paths with NUL-normalized lengths */
+        size_t bound_len = socket->bound_path_len;
+        while (bound_len > 0 && socket->bound_path[bound_len - 1] == '\0') {
+            bound_len--;
+        }
         if (socket->magic == FUT_SOCKET_MAGIC &&
             socket->bound_path &&
-            socket->bound_path_len == path_len &&
+            bound_len == path_len &&
             memcmp(socket->bound_path, path, path_len) == 0 &&
             socket->state == FUT_SOCK_LISTENING) {
             if (!fut_socket_ref(socket)) {

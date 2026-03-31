@@ -148,6 +148,11 @@ static void idle_thread_entry(void *arg) {
         /* Generic idle: just loop */
         __asm__ volatile("" ::: "memory");
 #endif
+        /* After waking from HLT, yield to let runnable threads execute.
+         * The timer ISR already calls fut_schedule() preemptively, but
+         * this cooperative yield catches any threads woken by non-timer
+         * events (e.g., I/O completion). */
+        fut_schedule();
     }
 }
 
@@ -263,6 +268,12 @@ void fut_sched_start(void) {
  */
 bool fut_sched_is_started(void) {
     return scheduler_started;
+}
+
+bool fut_thread_is_idle(fut_thread_t *t) {
+    if (!t) return false;
+    fut_percpu_t *percpu = fut_percpu_get();
+    return percpu && t == percpu->idle_thread;
 }
 
 /**

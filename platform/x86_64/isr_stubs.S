@@ -687,6 +687,17 @@ irq_common_stub:
     movq %rbp, %rdi                     /* Pass register state pointer */
     call fut_irq_handler
 
+    /* Always send LAPIC EOI after handling any IRQ.
+     * The C handler may call fut_irq_send_eoi() but this can fail silently
+     * if lapic_base is accessed with wrong CR3. Writing EOI directly here
+     * ensures the ISR bit is always cleared, preventing interrupt starvation
+     * where a stuck ISR bit blocks lower-priority interrupts (like the timer). */
+    movq lapic_base(%rip), %rax
+    testq %rax, %rax
+    jz .girq_skip_eoi
+    movl $0, 0xB0(%rax)
+.girq_skip_eoi:
+
     /* Restore stack */
     movq %rbp, %rsp
 

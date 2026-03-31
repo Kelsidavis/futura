@@ -602,17 +602,17 @@ uint64_t fut_get_time_us(void) {
 }
 
 void fut_timer_irq(void) {
-    fut_timer_tick();
-
-    /* Send EOI to LAPIC - in IOAPIC mode (which we use), only LAPIC EOI is needed.
-     * The legacy 8259 PIC is disabled by ACPI initialization.
-     *
-     * NOTE: If fut_timer_tick() triggers a context switch via fut_switch_context_irq(),
-     * that function does its own IRETQ and never returns here. In that case, we need
-     * to send EOI from the context switch path instead. */
+    /* Send EOI to LAPIC BEFORE processing the tick.
+     * This must happen first because fut_timer_tick() may trigger a context
+     * switch via fut_switch_context_irq() which does IRETQ and never returns.
+     * If EOI is deferred until after fut_timer_tick(), it's never sent on the
+     * context switch path, causing the LAPIC's ISR bit to remain set and
+     * blocking all future timer interrupts. */
 #ifdef __x86_64__
     lapic_send_eoi();
 #endif
+
+    fut_timer_tick();
 }
 
 /* ============================================================

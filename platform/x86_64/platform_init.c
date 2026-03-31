@@ -856,9 +856,8 @@ void fut_platform_init(uint32_t multiboot_magic __attribute__((unused)),
     fut_serial_puts("[INIT] Initializing PIT...\n");
     fut_pit_init();
 
-    /* Enable timer IRQ */
-    /* DISABLED: Timer IRQ will be unmasked later after scheduler initialization */
-    /* fut_irq_enable(0); */
+    /* Enable timer IRQ via IOAPIC (or PIC fallback) */
+    fut_irq_enable(0);
 
     /* Enable interrupts
      * Note: Per-CPU data will be initialized later in kernel_main after ACPI/LAPIC init.

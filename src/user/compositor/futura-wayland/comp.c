@@ -2116,12 +2116,17 @@ int comp_run(struct compositor_state *comp) {
             break;
         }
 
-        /* Yield CPU for ~16ms (60Hz) via nanosleep instead of epoll timeout.
-         * This is less efficient than blocking epoll but avoids scheduler
-         * issues with multi-process cooperative/preemptive switching. */
+        /* Yield CPU to let other processes run, then spin-wait ~16ms.
+         * nanosleep/epoll_wait block the thread, but after context switches
+         * the timer IRQ stops firing (LAPIC/IOAPIC interaction issue).
+         * Polling with yield keeps the system alive. */
+        sys_sched_yield();
         {
-            fut_timespec_t ts = { .tv_sec = 0, .tv_nsec = 16000000 };
-            sys_nanosleep_call(&ts, NULL);
+            /* Busy-wait ~16ms using TSC (assumes ~1GHz+ clock) */
+            volatile int spin = 0;
+            for (int i = 0; i < 160000; i++) {
+                spin++;
+            }
         }
 
         /* Manually handle timer events.

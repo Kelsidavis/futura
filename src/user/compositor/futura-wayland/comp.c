@@ -2105,33 +2105,23 @@ int comp_run(struct compositor_state *comp) {
         return -1;
     }
 
-    static int comp_loop_dbg = 0;
     while (comp->running) {
-        if (comp_loop_dbg < 5) {
-            char m[] = "[COMP] loop-top\n";
-            sys_write(1, m, sizeof(m)-1);
-        }
         wl_display_flush_clients(comp->display);
 
-        if (comp_loop_dbg < 5) {
-            char m[] = "[COMP] pre-dispatch\n";
-            sys_write(1, m, sizeof(m)-1);
-        }
-
-        /* Calculate timeout to next timer event.
-         * Since timerfd is not in event loop, we need to manually poll it.
-         * Use a short timeout (16ms ~ 60Hz) to ensure timely timer handling.
-         */
-        int timeout_ms = 16;
-
-        int rc = wl_event_loop_dispatch(comp->loop, timeout_ms);
-        if (comp_loop_dbg < 5) {
-            char m[] = "[COMP] post-dispatch\n";
-            sys_write(1, m, sizeof(m)-1);
-            comp_loop_dbg++;
-        }
+        /* Use non-blocking dispatch (timeout=0) to avoid blocking in
+         * epoll_wait. This ensures the compositor always makes progress
+         * even if the kernel's epoll sleep/wakeup has issues. */
+        int rc = wl_event_loop_dispatch(comp->loop, 0);
         if (rc < 0 && errno != EINTR) {
             break;
+        }
+
+        /* Yield CPU for ~16ms (60Hz) via nanosleep instead of epoll timeout.
+         * This is less efficient than blocking epoll but avoids scheduler
+         * issues with multi-process cooperative/preemptive switching. */
+        {
+            fut_timespec_t ts = { .tv_sec = 0, .tv_nsec = 16000000 };
+            sys_nanosleep_call(&ts, NULL);
         }
 
         /* Manually handle timer events.

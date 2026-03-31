@@ -221,6 +221,14 @@ isr_syscall_int80_stub:
     pushq %r11                /* Push frame_ptr (param 8) */
     pushq %r10                /* Push arg6 (param 7) */
 
+    /* Re-enable interrupts before calling the syscall handler.
+     * INT 0x80 clears IF on entry (CPU hardware behavior), so syscall
+     * handlers run with interrupts disabled by default. This prevents
+     * timer interrupts from firing during long-running syscalls (e.g.,
+     * sys_write busy-waiting on serial THRE), which can cause the
+     * system to hang when multiple user threads are in syscalls. */
+    sti
+
     call syscall_entry_c
 
     /* Save return value */

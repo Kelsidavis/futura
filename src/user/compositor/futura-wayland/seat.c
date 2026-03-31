@@ -687,9 +687,6 @@ static uint32_t compositor_mods = 0;
 
 /* Launch a new terminal instance */
 static void compositor_launch_terminal(void) {
-    extern long sys_fork_call(void);
-    extern void sys_execve_call(const char *, char *const[], char *const[]);
-    extern void sys_exit(int);
     long pid = sys_fork_call();
     if (pid == 0) {
         /* Child: exec wl-term */
@@ -780,9 +777,8 @@ static void seat_handle_key_event(struct seat_state *seat,
         if ((compositor_mods & COMP_MOD_ALT) && keycode == 62 /* F4 */) {
             if (seat->comp && seat->comp->focused_surface) {
                 struct comp_surface *s = seat->comp->focused_surface;
-                if (s->xdg_toplevel_resource) {
-                    extern void xdg_toplevel_send_close(struct wl_resource *);
-                    xdg_toplevel_send_close(s->xdg_toplevel_resource);
+                if (s->xdg_toplevel) {
+                    xdg_shell_toplevel_send_close(s);
                 }
             }
             return;

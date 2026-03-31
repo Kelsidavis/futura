@@ -1923,16 +1923,11 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
  * Phase 2 (Completed): Wrapper that delegates to epoll_create1(0)
  */
 long sys_epoll_create(int size) {
-    /* Phase 2: Validate size parameter */
-    if (size <= 0) {
-        fut_printf("[EPOLL_CREATE] epoll_create(size=%d) -> EINVAL "
-                   "(size must be positive, Phase 2)\n", size);
+    /* Linux ignores size since 2.6.8, but historically required size > 0.
+     * Accept size >= 0 for compatibility — many libc wrappers pass 0. */
+    if (size < 0) {
         return -EINVAL;
     }
-
-    /* Phase 2: Log deprecation notice */
-    fut_printf("[EPOLL_CREATE] epoll_create(size=%d) -> delegating to "
-               "epoll_create1(0) (legacy API, Phase 2)\n", size);
 
     /* Delegate to modern epoll_create1 with flags=0 */
     return sys_epoll_create1(0);

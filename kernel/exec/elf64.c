@@ -977,33 +977,60 @@ static int stage_stack_pages(fut_mm_t *mm, uint64_t *out_stack_top) {
  * @return: 0 on success, negative errno on failure
  */
 static int stage_tls_page(fut_mm_t *mm, uint64_t *out_tls_base) {
-    /* Allocate a page for TLS */
-    uint8_t *page = fut_pmm_alloc_page();
-    if (!page) {
+    /* Allocate a page for __thread variables (accessed at negative offsets
+     * from the TCB). This page is mapped just below USER_TLS_BASE. */
+    uint8_t *tls_data_page = fut_pmm_alloc_page();
+    if (!tls_data_page) {
         return -ENOMEM;
     }
+    memset(tls_data_page, 0, PAGE_SIZE);
 
-    /* Zero the page */
-    memset(page, 0, PAGE_SIZE);
+    /* Allocate a page for the TCB (Thread Control Block) at USER_TLS_BASE.
+     * Contains the self-pointer at offset 0 and stack canary at offset 0x28. */
+    uint8_t *tcb_page = fut_pmm_alloc_page();
+    if (!tcb_page) {
+        fut_pmm_free_page(tls_data_page);
+        return -ENOMEM;
+    }
+    memset(tcb_page, 0, PAGE_SIZE);
+
+    /* Write TLS self-pointer at offset 0 (x86_64 TLS ABI requirement).
+     * GCC __thread variables are accessed via %fs:0 -> self-pointer,
+     * then negative offsets from the TCB. */
+    *(uint64_t *)(tcb_page) = USER_TLS_BASE;
 
     /* Initialize stack canary at offset 0x28
      * Use TSC directly for entropy (avoid fut_get_time_ns which may hang) */
     uint32_t lo, hi;
     __asm__ volatile("rdtsc" : "=a" (lo), "=d" (hi));
-    uint64_t canary = (((uint64_t)hi << 32) | lo) ^ 0xDEADBEEFCAFEBABEULL ^ (uintptr_t)page;
+    uint64_t canary = (((uint64_t)hi << 32) | lo) ^ 0xDEADBEEFCAFEBABEULL ^ (uintptr_t)tcb_page;
     /* Ensure canary has a null byte to help detect string overflows */
     canary &= ~0xFFULL;
-    *(uint64_t *)(page + TLS_STACK_CANARY_OFFSET) = canary;
+    *(uint64_t *)(tcb_page + TLS_STACK_CANARY_OFFSET) = canary;
 
-    /* Map to userspace */
-    phys_addr_t phys = pmap_virt_to_phys((uintptr_t)page);
+    /* Map TLS data page at USER_TLS_BASE - PAGE_SIZE (for __thread vars) */
+    phys_addr_t tls_data_phys = pmap_virt_to_phys((uintptr_t)tls_data_page);
     int rc = pmap_map_user(mm_context(mm),
-                           USER_TLS_BASE,
-                           phys,
+                           USER_TLS_BASE - PAGE_SIZE,
+                           tls_data_phys,
                            PAGE_SIZE,
                            PTE_PRESENT | PTE_USER | PTE_WRITABLE | PTE_NX);
     if (rc != 0) {
-        fut_pmm_free_page(page);
+        fut_pmm_free_page(tls_data_page);
+        fut_pmm_free_page(tcb_page);
+        return rc;
+    }
+
+    /* Map TCB page at USER_TLS_BASE (self-pointer + canary) */
+    phys_addr_t tcb_phys = pmap_virt_to_phys((uintptr_t)tcb_page);
+    rc = pmap_map_user(mm_context(mm),
+                       USER_TLS_BASE,
+                       tcb_phys,
+                       PAGE_SIZE,
+                       PTE_PRESENT | PTE_USER | PTE_WRITABLE | PTE_NX);
+    if (rc != 0) {
+        fut_pmm_free_page(tls_data_page);
+        fut_pmm_free_page(tcb_page);
         return rc;
     }
 

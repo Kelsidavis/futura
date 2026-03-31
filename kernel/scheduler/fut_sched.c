@@ -137,8 +137,6 @@ static void percpu_update_load_avg(fut_percpu_t *percpu) {
  *   Idle Thread
  * ============================================================ */
 
-volatile int g_sched_needed = 0;
-
 static void idle_thread_entry(void *arg) {
     (void)arg;
     for (;;) {
@@ -150,19 +148,6 @@ static void idle_thread_entry(void *arg) {
         /* Generic idle: just loop */
         __asm__ volatile("" ::: "memory");
 #endif
-        /* Timer ISR sets g_sched_needed instead of calling fut_schedule()
-         * directly. This avoids IRETQ context switches from IRQ context
-         * which permanently kill the PIT timer on single-vCPU QEMU.
-         * The cooperative fut_schedule() here runs in thread context. */
-        if (g_sched_needed) {
-            g_sched_needed = 0;
-            fut_schedule();
-        }
-        /* After waking from HLT, yield to let runnable threads execute.
-         * The timer ISR already calls fut_schedule() preemptively, but
-         * this cooperative yield catches any threads woken by non-timer
-         * events (e.g., I/O completion). */
-        fut_schedule();
     }
 }
 

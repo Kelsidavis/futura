@@ -24,7 +24,7 @@
 #include "xdg-shell-client-protocol.h"
 
 /* Set to 1 to enable verbose wl-term debug logging */
-#define WLTERM_DEBUG 1
+#define WLTERM_DEBUG 0
 #if WLTERM_DEBUG
 #define WLTERM_LOG(...) printf(__VA_ARGS__)
 #else
@@ -626,8 +626,6 @@ static bool main_loop_iteration(struct client_state *state) {
 }
 
 int main(void) {
-    /* Raw write to fd 1 to verify stdio works */
-    sys_write(1, "[WL-TERM] main() reached\n", 25);
     WLTERM_LOG("[WL-TERM] Starting...\n");
     struct client_state state = {0};
     state.running = true;
@@ -637,27 +635,11 @@ int main(void) {
     /* Initialize terminal */
     term_init(&state.term);
 
-    /* Debug: check environment */
-    {
-        extern char **environ;
-        printf("[WL-TERM] environ=%p\n", (void*)environ);
-        if (environ) {
-            for (int i = 0; environ[i] && i < 5; i++) {
-                printf("[WL-TERM] env[%d]=%s\n", i, environ[i]);
-            }
-        }
-        extern char *getenv(const char *name);
-        const char *xdg = getenv("XDG_RUNTIME_DIR");
-        const char *wdisp = getenv("WAYLAND_DISPLAY");
-        printf("[WL-TERM] XDG_RUNTIME_DIR=%s WAYLAND_DISPLAY=%s\n",
-               xdg ? xdg : "(null)", wdisp ? wdisp : "(null)");
-    }
-
     WLTERM_LOG("[WL-TERM] Connecting to Wayland display...\n");
     /* Connect to Wayland display */
     state.display = wl_display_connect(NULL);
     if (!state.display) {
-        printf("[WL-TERM] Failed to connect to Wayland (errno-like from socket/connect)\n");
+        WLTERM_LOG("[WL-TERM] Failed to connect to Wayland\n");
         return -1;
     }
     WLTERM_LOG("[WL-TERM] Connected to Wayland!\n");

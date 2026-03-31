@@ -62,9 +62,14 @@ ifeq ($(DEBUG),1)
 WAYLAND_ENV += DEBUG_WAYLAND=1 DEBUG_NETUNIX=1
 endif
 
+# Skip tests in desktop mode (HEADFUL=1 + ENABLE_WAYLAND=1)
+ifeq ($(HEADFUL)$(ENABLE_WAYLAND),11)
+KAPPEND :=
+else
 KAPPEND := futura.runtests
 ifeq ($(ASYNC),1)
 KAPPEND += async-tests=1
+endif
 endif
 ifeq ($(PERF),1)
 KAPPEND += perf
@@ -1836,6 +1841,9 @@ run-debug:
 
 run-headful:
 	@$(MAKE) HEADFUL=1 run
+
+run-desktop:
+	@$(MAKE) ENABLE_WAYLAND=1 HEADFUL=1 run
 
 run-clean:
 	@rm -f qemu.log $(INITRAMFS)

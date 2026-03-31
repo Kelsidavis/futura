@@ -1035,6 +1035,13 @@ irq1_keyboard:
     /* Call keyboard IRQ handler */
     call ps2_irq_keyboard
 
+    /* Send LAPIC EOI (required for IOAPIC-routed interrupts) */
+    movq lapic_base(%rip), %rax
+    testq %rax, %rax
+    jz .kbd_skip_eoi
+    movl $0, 0xB0(%rax)
+.kbd_skip_eoi:
+
     /* Clear interrupt context flag */
     movb $0, fut_in_interrupt(%rip)
 
@@ -1178,6 +1185,13 @@ irq12_mouse:
 
     /* Call mouse IRQ handler */
     call ps2_irq_mouse
+
+    /* Send LAPIC EOI (required for IOAPIC-routed interrupts) */
+    movq lapic_base(%rip), %rax
+    testq %rax, %rax
+    jz .mse_skip_eoi
+    movl $0, 0xB0(%rax)
+.mse_skip_eoi:
 
     /* Clear interrupt context flag */
     movb $0, fut_in_interrupt(%rip)

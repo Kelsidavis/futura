@@ -475,7 +475,12 @@ void fut_timer_tick(void) {
     // timer on single-vCPU QEMU. When user threads are running, they will
     // voluntarily yield via syscalls (nanosleep, epoll_wait, sched_yield).
     if (cur_thread != nullptr) {
-        fut_schedule();
+        /* Set a flag for the idle loop to check, instead of calling
+         * fut_schedule() directly from IRQ context. The IRETQ-based
+         * context switch from timer ISR permanently kills the PIT timer
+         * on single-vCPU QEMU. The idle thread polls this flag. */
+        extern volatile int g_sched_needed;
+        g_sched_needed = 1;
     }
 }
 

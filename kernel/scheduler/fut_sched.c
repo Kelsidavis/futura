@@ -137,6 +137,8 @@ static void percpu_update_load_avg(fut_percpu_t *percpu) {
  *   Idle Thread
  * ============================================================ */
 
+volatile int g_sched_needed = 0;
+
 static void idle_thread_entry(void *arg) {
     (void)arg;
     for (;;) {
@@ -148,6 +150,14 @@ static void idle_thread_entry(void *arg) {
         /* Generic idle: just loop */
         __asm__ volatile("" ::: "memory");
 #endif
+        /* Timer ISR sets g_sched_needed instead of calling fut_schedule()
+         * directly. This avoids IRETQ context switches from IRQ context
+         * which permanently kill the PIT timer on single-vCPU QEMU.
+         * The cooperative fut_schedule() here runs in thread context. */
+        if (g_sched_needed) {
+            g_sched_needed = 0;
+            fut_schedule();
+        }
         /* After waking from HLT, yield to let runnable threads execute.
          * The timer ISR already calls fut_schedule() preemptively, but
          * this cooperative yield catches any threads woken by non-timer
@@ -188,7 +198,7 @@ void fut_sched_init(void) {
         idle_task,
         idle_thread_entry,
         NULL,
-        4096,  // Small stack for idle
+        16384,  // 16KB: timer ISR + scheduler + context switch chain needs headroom
         FUT_IDLE_PRIORITY
     );
 
@@ -300,7 +310,7 @@ void fut_sched_init_cpu(void) {
         idle_task,
         idle_thread_entry,
         NULL,
-        4096,  // Small stack for idle
+        16384,  // 16KB: timer ISR + scheduler + context switch chain needs headroom
         FUT_IDLE_PRIORITY
     );
 
@@ -736,10 +746,15 @@ void fut_schedule(void) {
     }
 
     fut_thread_t *prev = fut_thread_current();
-    fut_thread_t *next = select_next_thread();
 
-    // Debug: Log scheduler calls (disabled for perf)
-    (void)0;
+    /* CRITICAL: Disable interrupts BEFORE acquiring queue_lock in
+     * select_next_thread(). The timer ISR calls wake_sleeping_threads()
+     * which calls fut_sched_add_thread() which also acquires queue_lock.
+     * If the timer fires while we hold queue_lock, the ISR deadlocks
+     * trying to acquire it, permanently halting the system with IF=0. */
+    sched_irq_disable();
+
+    fut_thread_t *next = select_next_thread();
 
     // Get per-CPU data for idle thread check
     fut_percpu_t *percpu = fut_percpu_get();
@@ -748,20 +763,11 @@ void fut_schedule(void) {
     if (!next)
         next = idle;
 
-    /* If scheduler not initialized yet (no idle thread), just return.
-     * Can happen if timer IRQs fire during early boot. */
-    if (!next)
+    /* If scheduler not initialized yet (no idle thread), just return. */
+    if (!next) {
+        sched_irq_enable();
         return;
-
-    /* CRITICAL: Disable local interrupts to close the race window between
-     * select_next_thread() (which already removed 'next' from the ready queue)
-     * and the actual context switch.  If a timer IRQ fires in this gap and
-     * calls fut_schedule() again, it would see an empty ready queue, switch to
-     * the idle thread via IRETQ (never returning here), and permanently orphan
-     * 'next'.  With interrupts disabled no nested schedule can occur.
-     * The context switch itself re-enables interrupts: cooperative path via
-     * "sti; ret", IRQ path via IRETQ restoring RFLAGS.IF=1. */
-    sched_irq_disable();
+    }
 
     // If current thread is still runnable, put it back in ready queue
     if (prev && prev != idle && prev->state == FUT_THREAD_RUNNING) {

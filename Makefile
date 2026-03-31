@@ -1259,7 +1259,7 @@ futfs-crash-test: kernel tools
 
 $(BIN_DIR)/futura_kernel.elf: $(OBJECTS) $(RUST_LIBS) $(KERNEL_DEPS) | $(BIN_DIR)
 	@echo "LD $@.tmp"
-	@$(LD) $(LDFLAGS) -o $@.tmp $(OBJECTS) $(RUST_LIBS) $(EXTRA_LDLIBS)
+	@$(LD) $(LDFLAGS) -Map=build/kernel.map -o $@.tmp $(OBJECTS) $(RUST_LIBS) $(EXTRA_LDLIBS)
 ifeq ($(PLATFORM),x86_64)
 	@cp $@.tmp /tmp/kernel_before_fix.elf
 	@echo "FIX-ELF $@"

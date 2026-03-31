@@ -525,7 +525,14 @@ fut_thread_t *fut_thread_current(void) {
         return NULL;
     }
     fut_percpu_t *percpu = fut_percpu_get();
-    return percpu ? percpu->current_thread : NULL;
+    if (!percpu || (uintptr_t)percpu < 0xFFFFFFFF80000000ULL) {
+        return NULL;  /* GS_BASE corrupted — percpu is not a kernel address */
+    }
+    fut_thread_t *thread = percpu->current_thread;
+    if (thread && (uintptr_t)thread < 0xFFFFFFFF80000000ULL) {
+        return NULL;  /* current_thread is not a kernel address */
+    }
+    return thread;
 }
 
 /**

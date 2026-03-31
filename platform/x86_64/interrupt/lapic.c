@@ -303,6 +303,87 @@ void lapic_timer_disable(void) {
 }
 
 /**
+ * Calibrate and start LAPIC timer at the specified frequency.
+ * Uses the PIT for calibration (10ms reference tick).
+ * The LAPIC timer is local to the CPU and doesn't go through IOAPIC,
+ * making it more reliable for preemptive scheduling.
+ *
+ * @param hz Target frequency in Hz (e.g., 100 for 100Hz)
+ * @param vector IDT vector to fire on timer expiry (e.g., 32 for IRQ0)
+ */
+void lapic_timer_calibrate_and_start(uint32_t hz, uint8_t vector) {
+    if (!lapic_base || !lapic_initialized) {
+        fut_printf("[LAPIC-TIMER] Cannot start: LAPIC not initialized\n");
+        return;
+    }
+
+    /* I/O port helpers (lapic.c doesn't have platform_init's static outb/inb) */
+    #define LAPIC_OUTB(port, val) __asm__ volatile("outb %0, %1" :: "a"((uint8_t)(val)), "Nd"((uint16_t)(port)))
+    #define LAPIC_INB(port, result) __asm__ volatile("inb %1, %0" : "=a"(result) : "Nd"((uint16_t)(port)))
+
+    /* Step 1: Calibrate by measuring LAPIC ticks during a known interval.
+     * Use PIT channel 2 for a ~10ms calibration window. */
+
+    /* Configure PIT channel 2 for one-shot mode, 10ms */
+    uint32_t pit_10ms = 1193182 / 100;  /* ~11932 ticks = ~10ms */
+    uint8_t port61;
+    LAPIC_INB(0x61, port61);
+    LAPIC_OUTB(0x61, (port61 & 0xFD) | 0x01);  /* Enable PIT ch2 gate */
+    LAPIC_OUTB(0x43, 0xB0);  /* Channel 2, lobyte/hibyte, mode 0, binary */
+    LAPIC_OUTB(0x42, pit_10ms & 0xFF);
+    LAPIC_OUTB(0x42, (pit_10ms >> 8) & 0xFF);
+
+    /* Step 2: Start LAPIC timer with max count */
+    lapic_write(LAPIC_REG_TIMER_DIVIDE, LAPIC_TIMER_DIV_16);
+    lapic_write(LAPIC_REG_LVT_TIMER, LAPIC_LVT_MASKED);  /* Masked during calibration */
+    lapic_write(LAPIC_REG_TIMER_INITIAL, 0xFFFFFFFF);
+
+    /* Step 3: Wait for PIT channel 2 to expire */
+    /* Reset PIT ch2 output latch */
+    LAPIC_INB(0x61, port61);
+    uint8_t tmp = port61 & 0xFE;
+    LAPIC_OUTB(0x61, tmp);
+    LAPIC_OUTB(0x61, tmp | 0x01);
+    uint8_t status;
+    do {
+        LAPIC_INB(0x61, status);
+    } while (!(status & 0x20));
+
+    /* Step 4: Read how many LAPIC ticks elapsed in ~10ms */
+    uint32_t elapsed = 0xFFFFFFFF - lapic_read(LAPIC_REG_TIMER_CURRENT);
+    lapic_write(LAPIC_REG_TIMER_INITIAL, 0);  /* Stop timer */
+
+    if (elapsed == 0) {
+        fut_printf("[LAPIC-TIMER] Calibration failed (0 ticks in 10ms)\n");
+        return;
+    }
+
+    /* Step 5: Calculate count for desired frequency.
+     * elapsed ticks = 10ms worth. For hz Hz, period = 1000/hz ms.
+     * count = elapsed * (1000 / hz) / 10 = elapsed * 100 / hz */
+    uint32_t count = elapsed * 100 / hz;
+
+    fut_printf("[LAPIC-TIMER] Calibrated: %u ticks/10ms, count=%u for %u Hz\n",
+               elapsed, count, hz);
+
+    /* Step 6: Disable PIT to avoid dual timer interrupts on same vector */
+    /* Mask PIT IRQ 0 on both IOAPIC and legacy PIC */
+    {
+        extern void ioapic_mask_irq(uint8_t irq);
+        extern bool ioapic_is_available(void);
+        if (ioapic_is_available()) {
+            ioapic_mask_irq(0);
+        }
+        LAPIC_OUTB(0x21, 0xFF);  /* Mask all IRQs on PIC master including IRQ 0 */
+    }
+
+    /* Step 7: Start LAPIC timer in periodic mode */
+    lapic_timer_periodic(count, vector);
+
+    fut_printf("[LAPIC-TIMER] Started periodic timer at %u Hz (vector %u), PIT disabled\n", hz, vector);
+}
+
+/**
  * Check if LAPIC is enabled.
  */
 bool lapic_is_enabled(void) {

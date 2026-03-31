@@ -859,6 +859,18 @@ void fut_platform_init(uint32_t multiboot_magic __attribute__((unused)),
     /* Enable timer IRQ via IOAPIC (or PIC fallback) */
     fut_irq_enable(0);
 
+    /* Mask IRQ 10 (VirtIO) on IOAPIC to prevent interrupt storm.
+     * VirtIO-blk can continuously assert IRQ 10 if the driver doesn't
+     * acknowledge the device's ISR register, creating an interrupt flood
+     * that blocks lower-priority interrupts like the timer (vector 32). */
+    {
+        extern bool ioapic_is_available(void);
+        extern void ioapic_mask_irq(uint8_t irq);
+        if (ioapic_is_available()) {
+            ioapic_mask_irq(10);
+        }
+    }
+
     /* Enable interrupts
      * Note: Per-CPU data will be initialized later in kernel_main after ACPI/LAPIC init.
      * The guard flag in fut_thread_current() prevents access until initialization is complete. */

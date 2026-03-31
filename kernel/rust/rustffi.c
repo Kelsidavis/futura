@@ -94,3 +94,16 @@ uint64_t rust_virt_to_phys(const void *vaddr) {
     return (uint64_t)(uintptr_t)vaddr;
 }
 #endif
+
+#if defined(__x86_64__)
+/**
+ * Send LAPIC EOI - callable from Rust drivers (e.g., VirtIO MSI-X handlers).
+ * Uses the lapic_base global which is properly resolved in C.
+ */
+void rust_lapic_send_eoi(void) {
+    extern volatile uint32_t *lapic_base;
+    if (lapic_base) {
+        lapic_base[0xB0 / 4] = 0;
+    }
+}
+#endif

@@ -34,6 +34,9 @@ unsafe extern "C" {
     fn fut_idt_set_entry(vector: u8, handler: u64, selector: u16, type_attr: u8, ist: u8);
     #[cfg(target_arch = "aarch64")]
     fn virtio_mmio_get_base_addr(dev: *mut core::ffi::c_void) -> u64;
+    /// Send LAPIC EOI - defined in rustffi.c, properly resolves lapic_base
+    #[cfg(target_arch = "x86_64")]
+    fn rust_lapic_send_eoi();
 }
 
 const GDT_KERNEL_CODE: u16 = 0x08;     // Kernel code segment
@@ -109,8 +112,11 @@ unsafe extern "C" fn virtio_blk_irq_handler() {
         "pop rcx",
         "pop rbx",
         "pop rax",
+        // Send LAPIC EOI via C wrapper (MSI-X requires LAPIC EOI, not PIC EOI)
+        "call {lapic_eoi}",
         "iretq",
         handler = sym virtio_blk_irq_handler_inner,
+        lapic_eoi = sym rust_lapic_send_eoi,
     );
 }
 
@@ -135,19 +141,7 @@ extern "C" fn virtio_blk_irq_handler_inner() {
     // Signal I/O completion
     IO_COMPLETED.store(1, Ordering::Release);
 
-    // Send EOI to PIC (End of Interrupt) - x86_64 only
-    #[cfg(target_arch = "x86_64")]
-    unsafe {
-        let irq = VIRTIO_BLK_IRQ_VECTOR.load(Ordering::Relaxed).saturating_sub(INT_IRQ_BASE);
-
-        // If IRQ >= 8, send EOI to slave PIC first
-        if irq >= 8 {
-            outb(0xA0, 0x20);  // EOI to slave PIC
-        }
-
-        // Always send EOI to master PIC
-        outb(0x20, 0x20);  // EOI to master PIC
-    }
+    // LAPIC EOI is sent by the naked IRQ handler stub after this returns
 }
 
 // x86_64 I/O port operations

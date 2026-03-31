@@ -1288,17 +1288,12 @@ fut_switch_context_irq:
     /* Send both LAPIC and PIC EOI to ensure the timer interrupt is fully
      * acknowledged regardless of delivery path. The early EOI in
      * fut_timer_irq() may not suffice if the interrupt routing changed. */
+    /* Send LAPIC EOI using direct kernel VA (0xFFFFFFFFFEE000B0).
+     * This avoids reliance on the lapic_base global which may not be
+     * accessible when CR3 has changed during context switch. */
     pushq %rax
-    pushq %rcx
-    movq lapic_base(%rip), %rcx
-    testq %rcx, %rcx
-    jz .skip_eoi2
-    movl $0, 0xB0(%rcx)     /* LAPIC EOI */
-.skip_eoi2:
-    /* Also send PIC EOI for IRQ 0 (timer) as safety measure */
-    movb $0x20, %al
-    outb %al, $0x20          /* PIC1 EOI */
-    popq %rcx
+    movq $0xFFFFFFFFFEE000B0, %rax
+    movl $0, (%rax)
     popq %rax
 
     /* CRITICAL: Clear fut_in_interrupt and fut_current_frame before IRETQ.

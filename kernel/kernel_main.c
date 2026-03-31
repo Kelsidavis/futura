@@ -1007,6 +1007,15 @@ void fut_kernel_main(void) {
     fut_thread_mark_percpu_safe();
     fut_printf("[INIT] Per-CPU data marked as safe for access\n");
 
+    /* Switch from PIT to LAPIC timer for more reliable interrupt delivery.
+     * The PIT+IOAPIC path loses interrupts after IRETQ context switches
+     * on single-vCPU QEMU. The LAPIC timer is local and doesn't go through
+     * external interrupt routing, making it more reliable. */
+    {
+        extern void lapic_timer_calibrate_and_start(uint32_t hz, uint8_t vector);
+        lapic_timer_calibrate_and_start(100, 32);  /* 100 Hz on vector 32 (same as PIT) */
+    }
+
     /* Provide a bootstrap task/thread context so VFS/syscalls work before scheduler */
     fut_thread_init_bootstrap();
 #else

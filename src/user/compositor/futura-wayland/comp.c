@@ -2105,8 +2105,18 @@ int comp_run(struct compositor_state *comp) {
         return -1;
     }
 
+    static int comp_loop_dbg = 0;
     while (comp->running) {
+        if (comp_loop_dbg < 5) {
+            char m[] = "[COMP] loop-top\n";
+            sys_write(1, m, sizeof(m)-1);
+        }
         wl_display_flush_clients(comp->display);
+
+        if (comp_loop_dbg < 5) {
+            char m[] = "[COMP] pre-dispatch\n";
+            sys_write(1, m, sizeof(m)-1);
+        }
 
         /* Calculate timeout to next timer event.
          * Since timerfd is not in event loop, we need to manually poll it.
@@ -2115,6 +2125,11 @@ int comp_run(struct compositor_state *comp) {
         int timeout_ms = 16;
 
         int rc = wl_event_loop_dispatch(comp->loop, timeout_ms);
+        if (comp_loop_dbg < 5) {
+            char m[] = "[COMP] post-dispatch\n";
+            sys_write(1, m, sizeof(m)-1);
+            comp_loop_dbg++;
+        }
         if (rc < 0 && errno != EINTR) {
             break;
         }

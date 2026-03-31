@@ -1316,6 +1316,13 @@ fut_switch_context_irq:
     movb $0, fut_in_interrupt(%rip)
     movq $0, fut_current_frame(%rip)
 
+    /* CRITICAL: Force IF=1 in RFLAGS of the IRETQ frame.
+     * If the thread was preempted during INT 0x80 (where IF=0 due to CPU
+     * clearing IF on interrupt entry), the saved frame has IF=0. Restoring
+     * with IF=0 permanently disables timer interrupts, causing a system hang.
+     * All user threads must run with IF=1. */
+    orq $0x200, 16(%rsp)        /* RFLAGS is at RSP+16 in IRETQ frame */
+
     iretq
 
 /* ----------------------------------------------------------------

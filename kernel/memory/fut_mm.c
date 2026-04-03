@@ -873,8 +873,6 @@ void *fut_mm_map_file(fut_mm_t *mm, struct fut_vnode *vnode, uintptr_t hint,
     /* Add reference to vnode */
     fut_vnode_ref(vnode);
 
-    fut_printf("[MM-MAP-FILE] Created lazy mapping: vaddr=0x%llx-0x%llx size=%zu offset=%llu (demand paging enabled)\n",
-               base, end, len, file_offset);
     return (void *)(uintptr_t)base;
 }
 
@@ -1744,8 +1742,6 @@ void *fut_mm_map_file(fut_mm_t *mm, struct fut_vnode *vnode, uintptr_t hint,
     /* Add reference to vnode */
     fut_vnode_ref(vnode);
 
-    fut_printf("[MM-MAP-FILE] ARM64: Created lazy mapping: vaddr=0x%llx-0x%llx size=%zu offset=%llu (demand paging enabled)\n",
-               base, end, len, file_offset);
     return (void *)(uintptr_t)base;
 }
 

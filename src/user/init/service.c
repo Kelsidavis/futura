@@ -103,8 +103,16 @@ static int spawn_service(struct fui_service *service) {
 
     printf("[SERVICE] Spawning service: %s (%s)\n", service->name, service->exec_path);
 
-    long pid = sys_fork_call();
-    if (pid < 0) {
+    long pid = -1;
+    for (int fork_try = 0; fork_try < 5; fork_try++) {
+        pid = sys_fork_call();
+        if (pid >= 0) break;
+        /* Retry on ENOMEM — transient memory pressure during early boot */
+        if (pid == -12 && fork_try < 4) {
+            fut_timespec_t ts = { .tv_sec = 0, .tv_nsec = 50000000 }; /* 50ms */
+            sys_nanosleep_call(&ts, NULL);
+            continue;
+        }
         printf("[SERVICE] Fork failed for %s: %ld\n", service->name, pid);
         return -1;
     }

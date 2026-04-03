@@ -1412,7 +1412,7 @@ void fut_kernel_main(void) {
                   "\n"
                   "  Futura OS 0.8.0\n"
                   "\n"
-                  "  361 built-in commands — type 'help' or 'man <cmd>'\n"
+                  "  610+ built-in commands — type 'help' or 'man <cmd>'\n"
                   "\n"
                   "  Development:  vi, make, git, patch, bc, curl, tar, less\n"
                   "  Networking:   ping, wget, curl, nc, netstat, ss, httpd\n"

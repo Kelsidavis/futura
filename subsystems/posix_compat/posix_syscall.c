@@ -3095,10 +3095,7 @@ static int64_t sys_connect_handler(uint64_t sockfd, uint64_t addr, uint64_t addr
                                    uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     (void)arg4; (void)arg5; (void)arg6;
     extern long sys_connect(int sockfd, const void *addr, uint32_t addrlen);
-    fut_printf("[CONNECT] connect(sockfd=%llu, addr=0x%llx, addrlen=%llu) entering\n",
-               sockfd, addr, addrlen);
     long result = sys_connect((int)sockfd, (const void *)addr, (uint32_t)addrlen);
-    fut_printf("[CONNECT] connect() -> %ld\n", result);
     return result;
 }
 

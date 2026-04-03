@@ -379,20 +379,20 @@ static void registry_global(void *data, struct wl_registry *registry, uint32_t n
                            const char *interface, uint32_t version) {
     struct client_state *state = data;
 
-    printf("[WL-TERM-REGISTRY] Global advertised: name=%u interface=%s version=%u\n",
-           name, interface, version);
+    WLTERM_LOG("[WL-TERM-REGISTRY] Global advertised: name=%u interface=%s version=%u\n",
+               name, interface, version);
 
     if (strcmp(interface, wl_compositor_interface.name) == 0) {
         uint32_t ver = version < 4 ? version : 4;
         state->compositor = wl_registry_bind(registry, name, &wl_compositor_interface, ver);
-        printf("[WL-TERM-REGISTRY] Bound wl_compositor: %p\n", state->compositor);
+        WLTERM_LOG("[WL-TERM-REGISTRY] Bound wl_compositor: %p\n", state->compositor);
     } else if (strcmp(interface, wl_shm_interface.name) == 0) {
         state->shm = wl_registry_bind(registry, name, &wl_shm_interface, 1);
-        printf("[WL-TERM-REGISTRY] Bound wl_shm: %p\n", state->shm);
+        WLTERM_LOG("[WL-TERM-REGISTRY] Bound wl_shm: %p\n", state->shm);
     } else if (strcmp(interface, xdg_wm_base_interface.name) == 0) {
         uint32_t ver = version < 2 ? version : 2;
         state->xdg_wm_base = wl_registry_bind(registry, name, &xdg_wm_base_interface, ver);
-        printf("[WL-TERM-REGISTRY] Bound xdg_wm_base: %p\n", state->xdg_wm_base);
+        WLTERM_LOG("[WL-TERM-REGISTRY] Bound xdg_wm_base: %p\n", state->xdg_wm_base);
         xdg_wm_base_add_listener(state->xdg_wm_base, &wm_base_listener, state);
     } else if (strcmp(interface, wl_seat_interface.name) == 0) {
         uint32_t ver = version < 7 ? version : 7;
@@ -400,9 +400,9 @@ static void registry_global(void *data, struct wl_registry *registry, uint32_t n
         if (state->seat) {
             wl_seat_add_listener(state->seat, &seat_listener, state);
         }
-        printf("[WL-TERM-REGISTRY] Bound wl_seat: %p\n", state->seat);
+        WLTERM_LOG("[WL-TERM-REGISTRY] Bound wl_seat: %p\n", state->seat);
     } else {
-        printf("[WL-TERM-REGISTRY] Unknown global: %s\n", interface);
+        WLTERM_LOG("[WL-TERM-REGISTRY] Unknown global: %s\n", interface);
     }
 }
 
@@ -541,8 +541,6 @@ static int spawn_shell(struct terminal *term) {
     sys_fcntl_call(master_fd, 4 /*F_SETFL*/, 0x0800 /*O_NONBLOCK*/);
     term->shell_pid = (int)pid;
 
-    const char spawn_msg[] = "[WL-TERM] Shell spawned\n";
-    sys_write(1, spawn_msg, sizeof(spawn_msg) - 1);
     return 0;
 }
 
@@ -644,15 +642,11 @@ int main(void) {
     }
     WLTERM_LOG("[WL-TERM] Connected to Wayland!\n");
 
-    /* Get registry and bind globals */
+    /* Get registry and bind globals (blocking roundtrip — standard Wayland init) */
     WLTERM_LOG("[WL-TERM] Getting registry...\n");
     state.registry = wl_display_get_registry(state.display);
     wl_registry_add_listener(state.registry, &registry_listener, &state);
-
-    WLTERM_LOG("[WL-TERM] About to call wl_display_roundtrip()...\n");
-    int roundtrip_result = wl_display_roundtrip(state.display);
-    (void)roundtrip_result;  /* Used only in debug logging */
-    WLTERM_LOG("[WL-TERM] wl_display_roundtrip() returned: %d\n", roundtrip_result);
+    wl_display_roundtrip(state.display);
     WLTERM_LOG("[WL-TERM] After roundtrip: compositor=%p shm=%p xdg_wm_base=%p\n",
            state.compositor, state.shm, state.xdg_wm_base);
 
@@ -679,7 +673,7 @@ int main(void) {
     xdg_toplevel_set_title(state.toplevel, "Futura Terminal");
     wl_surface_commit(state.surface);
 
-    /* Wait for configure */
+    /* Wait for configure (blocking roundtrip — compositor will respond) */
     while (!state.configured) {
         wl_display_roundtrip(state.display);
     }

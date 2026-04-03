@@ -262,11 +262,6 @@ fut_thread_t *fut_thread_create(
     ctx->rsp = aligned_top;
     ctx->rip = (uint64_t)(uintptr_t)&fut_thread_trampoline;
 
-    fut_printf("[THREAD-CREATE] tid=%llu rip=0x%llx (trampoline=0x%llx entry=0x%llx)\n",
-               (unsigned long long)thread->tid, (unsigned long long)ctx->rip,
-               (unsigned long long)(uintptr_t)&fut_thread_trampoline,
-               (unsigned long long)(uintptr_t)entry);
-
     /* RFLAGS: reserved bit 1 must be 1. Start with interrupts DISABLED (IF=0)
      * to allow the trampoline to execute without being immediately preempted.
      * The thread's entry function is responsible for enabling interrupts (e.g.,

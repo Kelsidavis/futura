@@ -12,7 +12,7 @@
 /* Default colors — slightly warm off-white on dark blue-gray for a modern look */
 #define COLOR_BLACK     0xFF1A1B26u
 #define COLOR_WHITE     0xFFC0CAF5u
-#define COLOR_GREEN     0xFF00FF00u
+/* cursor accent (Tokyo Night blue) is defined inline in term_render */
 
 void term_init(struct terminal *term) {
     memset(term, 0, sizeof(*term));
@@ -610,7 +610,7 @@ void term_render(struct terminal *term, uint32_t *pixels, int32_t width, int32_t
         int cy = term->cursor_y * FONT_HEIGHT;
         char under_ch = term->grid[term->cursor_y][term->cursor_x].ch;
         uint32_t cursor_fg = COLOR_BLACK;
-        uint32_t cursor_bg = COLOR_GREEN;
+        uint32_t cursor_bg = 0xFF7AA2F7u;  /* Tokyo Night blue accent */
 
         /* Draw the block: fill background with cursor color, then render
          * the character on top in inverted colors so it remains readable. */

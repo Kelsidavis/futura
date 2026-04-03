@@ -477,11 +477,17 @@ static void draw_bar_segment(struct backbuffer *dst, fut_rect_t rect, bool focus
     char *base = (char *)dst->px;
     for (int32_t y = 0; y < rect.h; ++y) {
         int32_t gy = rect.y + y;
-        int t = (rect.h > 1) ? (y * 255 / (rect.h - 1)) : 0;
-        uint8_t r_c = (uint8_t)(((top >> 16) & 0xFF) + ((int)((bot >> 16) & 0xFF) - (int)((top >> 16) & 0xFF)) * t / 255);
-        uint8_t g_c = (uint8_t)(((top >> 8) & 0xFF) + ((int)((bot >> 8) & 0xFF) - (int)((top >> 8) & 0xFF)) * t / 255);
-        uint8_t b_c = (uint8_t)((top & 0xFF) + ((int)(bot & 0xFF) - (int)(top & 0xFF)) * t / 255);
-        uint32_t color = 0xFF000000u | ((uint32_t)r_c << 16) | ((uint32_t)g_c << 8) | b_c;
+        uint32_t color;
+        if (y == rect.h - 1) {
+            /* 1px bottom border for clean separation from content */
+            color = focused ? 0xFFC0C0C0u : 0xFFD8D8D8u;
+        } else {
+            int t = (rect.h > 2) ? (y * 255 / (rect.h - 2)) : 0;
+            uint8_t r_c = (uint8_t)(((top >> 16) & 0xFF) + ((int)((bot >> 16) & 0xFF) - (int)((top >> 16) & 0xFF)) * t / 255);
+            uint8_t g_c = (uint8_t)(((top >> 8) & 0xFF) + ((int)((bot >> 8) & 0xFF) - (int)((top >> 8) & 0xFF)) * t / 255);
+            uint8_t b_c = (uint8_t)((top & 0xFF) + ((int)(bot & 0xFF) - (int)(top & 0xFF)) * t / 255);
+            color = 0xFF000000u | ((uint32_t)r_c << 16) | ((uint32_t)g_c << 8) | b_c;
+        }
         uint32_t *row = (uint32_t *)(base + (size_t)gy * dst->pitch);
         for (int32_t x = 0; x < rect.w; ++x) {
             row[rect.x + x] = color;
@@ -1579,6 +1585,48 @@ void comp_render_frame(struct compositor_state *comp) {
                 uint32_t _ob = (_sb * _sa + _db * _da) / 255u; \
                 (dst_px) = 0xFF000000u | (_or << 16) | (_og << 8) | _ob; \
             } } while (0)
+
+        /* Inline pixel darkening for dock shadow */
+        #define shadow_darken_pixel_inline(px_ptr, a) do { \
+            uint32_t _sd = *(px_ptr); \
+            uint32_t _sf = 255u - (a); \
+            uint32_t _sdr = ((_sd >> 16) & 0xFF) * _sf / 255u; \
+            uint32_t _sdg = ((_sd >>  8) & 0xFF) * _sf / 255u; \
+            uint32_t _sdb = ((_sd      ) & 0xFF) * _sf / 255u; \
+            *(px_ptr) = 0xFF000000u | (_sdr << 16) | (_sdg << 8) | _sdb; \
+        } while (0)
+
+        /* Draw soft shadow above dock for depth */
+        {
+            #define DOCK_SHADOW_H 12  /* shadow height above dock */
+            fut_rect_t shadow_rect = { dock_x - 4, dock_y - DOCK_SHADOW_H,
+                                       dock_w + 8, DOCK_SHADOW_H };
+            for (int i = 0; i < damage->count; ++i) {
+                fut_rect_t sc;
+                if (!rect_intersection(damage->rects[i], shadow_rect, &sc))
+                    continue;
+                char *base = (char *)dst->px;
+                for (int32_t py = sc.y; py < sc.y + sc.h; py++) {
+                    uint32_t *row = (uint32_t *)(base + (size_t)py * dst->pitch);
+                    /* t: 0 at top of shadow → 1 at dock edge */
+                    int sy = py - (dock_y - DOCK_SHADOW_H);
+                    int alpha = sy * sy * 40 / (DOCK_SHADOW_H * DOCK_SHADOW_H);
+                    if (alpha <= 0) continue;
+                    if (alpha > 40) alpha = 40;
+                    for (int32_t px = sc.x; px < sc.x + sc.w; px++) {
+                        /* Fade at horizontal edges */
+                        int edge_fade = 255;
+                        int dx = px - dock_x;
+                        int dx2 = (dock_x + dock_w) - px;
+                        if (dx < 8) edge_fade = dx * 255 / 8;
+                        else if (dx2 < 8) edge_fade = dx2 * 255 / 8;
+                        int a = alpha * edge_fade / 255;
+                        if (a > 0)
+                            shadow_darken_pixel_inline(&row[px], (uint8_t)a);
+                    }
+                }
+            }
+        }
 
         /* Check if dock overlaps any damage region */
         for (int i = 0; i < damage->count; ++i) {

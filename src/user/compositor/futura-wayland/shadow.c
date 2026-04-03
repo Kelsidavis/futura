@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define SHADOW_MAX_ALPHA 96
+#define SHADOW_MAX_ALPHA 160
 
 /* Pre-computed lookup table for shadow color multiplication.
  * shadow_lut[value][factor] = (value * factor) / 255
@@ -150,15 +150,19 @@ void shadow_draw(struct backbuffer *dst,
                 dy = y - bottom;
             }
 
-            int dist = dx > dy ? dx : dy;
-            if (dist <= 0 || dist > radius) {
+            /* Euclidean distance for soft round shadows */
+            int dist_sq = dx * dx + dy * dy;
+            int radius_sq = radius * radius;
+            if (dist_sq <= 0 || dist_sq > radius_sq) {
                 continue;
             }
 
-            int alpha = (radius - dist + 1) * SHADOW_MAX_ALPHA / radius;
+            /* Smooth falloff: (1 - dist_sq/radius_sq) gives gradual fade */
+            int alpha = (int)((int64_t)(radius_sq - dist_sq) * SHADOW_MAX_ALPHA / radius_sq);
             if (alpha <= 0) {
                 continue;
             }
+            if (alpha > SHADOW_MAX_ALPHA) alpha = SHADOW_MAX_ALPHA;
 
             shadow_darken_pixel(&row[x], (uint8_t)alpha);
         }

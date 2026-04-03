@@ -37,7 +37,7 @@
 #define WINDOW_BTN_PADDING 4
 #define WINDOW_TITLE_MAX 128
 #define WINDOW_APP_ID_MAX 128
-#define WINDOW_SHADOW_DEFAULT 10
+#define WINDOW_SHADOW_DEFAULT 18
 
 struct seat_state;
 struct cursor_state;

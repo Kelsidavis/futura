@@ -486,9 +486,7 @@ int socket(int domain, int type, int protocol) {
      * 3. Avoiding FD number mismatch between kernel and userspace tables
      */
     if (domain == AF_UNIX) {
-        printf("[SOCKET-LIB] socket(AF_UNIX, type=%d) -> kernel syscall\n", type);
         long fd = sys_socket(domain, type, protocol);
-        printf("[SOCKET-LIB] kernel socket returned fd=%ld\n", fd);
         return (int)fd;
     }
 
@@ -574,9 +572,7 @@ int connect(int fd, const struct sockaddr *addr, socklen_t len) {
     struct unix_stream *stream = socket_from_fd(fd);
     if (!stream || stream->state != STREAM_INIT) {
         /* Not a userspace socket - fall back to kernel */
-        printf("[SOCKET-LIB] connect(fd=%d) -> kernel syscall\n", fd);
         long ret = sys_connect(fd, addr, len);
-        printf("[SOCKET-LIB] kernel connect returned %ld\n", ret);
         return (int)ret;
     }
     if (!addr || len < sizeof(struct sockaddr_un)) {
@@ -654,11 +650,9 @@ int accept(int fd, struct sockaddr *addr, socklen_t *len) {
 
     /* If not in userspace table, use kernel syscall directly */
     if (!stream) {
-        printf("[SOCKET-LIB] accept(fd=%d) -> kernel syscall\n", fd);
         uint32_t addrlen = len ? *len : 0;
         long ret = sys_accept(fd, addr, len ? &addrlen : NULL);
         if (len) *len = addrlen;
-        printf("[SOCKET-LIB] kernel accept returned %ld\n", ret);
         if (ret < 0) {
             extern int *__errno_location(void);
             *__errno_location() = (int)(-ret);

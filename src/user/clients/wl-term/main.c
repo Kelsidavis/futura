@@ -721,13 +721,15 @@ int main(void) {
                                              TERM_WIDTH * 4, WL_SHM_FORMAT_ARGB8888);
     wl_shm_pool_destroy(pool);
 
+    /* Initial draw BEFORE spawning shell — spawn_shell() can block on PTY
+     * device open/ioctl during early boot, preventing the window from
+     * becoming visible.  Drawing first ensures the surface is committed. */
+    redraw(&state);
+
     /* Spawn shell process (non-fatal if fork fails) */
     if (spawn_shell(&state.term) < 0) {
         WLTERM_LOG("[WL-TERM] Shell spawn failed, continuing as display-only terminal\n");
     }
-
-    /* Initial draw */
-    redraw(&state);
 
     /* Set Wayland socket to non-blocking for the main loop.
      * Futura's poll() is a stub that always returns POLLIN,

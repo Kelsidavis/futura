@@ -1410,15 +1410,15 @@ void fut_kernel_main(void) {
                   "cat /etc/motd\n");
         ETC_WRITE("/etc/motd",
                   "\n"
-                  "  Futura OS 0.8.0\n"
+                  "  \033[1;36mFutura OS 0.8.0\033[0m\n"
                   "\n"
-                  "  610+ built-in commands — type 'help' or 'man <cmd>'\n"
+                  "  \033[33m610+ built-in commands\033[0m  type '\033[1mhelp\033[0m' or '\033[1mman <cmd>\033[0m'\n"
                   "\n"
-                  "  Development:  vi, make, git, patch, bc, curl, tar, less\n"
-                  "  Networking:   ping, wget, curl, nc, netstat, ss, httpd\n"
-                  "  System:       top, ps, free, df, sysctl, dmesg, lsof, strace\n"
-                  "  Containers:   nsenter, unshare, chroot (cgroups v2)\n"
-                  "  Text:         awk, sed, grep -r, sort, diff, sha512sum, base32\n"
+                  "  \033[36mDevelopment:\033[0m  vi, make, git, patch, bc, curl, tar, less\n"
+                  "  \033[36mNetworking:\033[0m   ping, wget, curl, nc, netstat, ss, httpd\n"
+                  "  \033[36mSystem:\033[0m       top, ps, free, df, sysctl, dmesg, lsof, strace\n"
+                  "  \033[36mContainers:\033[0m   nsenter, unshare, chroot (cgroups v2)\n"
+                  "  \033[36mText:\033[0m         awk, sed, grep -r, sort, diff, sha512sum, base32\n"
                   "\n");
         ETC_WRITE("/etc/services",
                   "# Network services\n"

@@ -706,7 +706,7 @@ int main(void) {
     /* Initialize buffer to black */
     uint32_t *pixels = (uint32_t *)state.shm_data;
     for (size_t i = 0; i < state.shm_size / 4; i++) {
-        pixels[i] = 0xFF000000;
+        pixels[i] = 0xFF1A1B26u;  /* Match terminal background */
     }
 
     struct wl_shm_pool *pool = wl_shm_create_pool(state.shm, state.shm_fd,

@@ -9,9 +9,9 @@
 #include <string.h>
 #include <user/sys.h>
 
-/* Default colors */
-#define COLOR_BLACK     0xFF000000u
-#define COLOR_WHITE     0xFFFFFFFFu
+/* Default colors — slightly warm off-white on dark blue-gray for a modern look */
+#define COLOR_BLACK     0xFF1A1B26u
+#define COLOR_WHITE     0xFFC0CAF5u
 #define COLOR_GREEN     0xFF00FF00u
 
 void term_init(struct terminal *term) {
@@ -123,24 +123,24 @@ void term_clear(struct terminal *term) {
     term->cursor_y = 0;
 }
 
-/* ANSI 16-color palette */
+/* ANSI 16-color palette (Tokyo Night inspired) */
 static const uint32_t ansi_colors[16] = {
-    0xFF000000u, /* 0: black */
-    0xFFCC0000u, /* 1: red */
-    0xFF00CC00u, /* 2: green */
-    0xFFCCCC00u, /* 3: yellow */
-    0xFF0000CCu, /* 4: blue */
-    0xFFCC00CCu, /* 5: magenta */
-    0xFF00CCCCu, /* 6: cyan */
-    0xFFCCCCCCu, /* 7: white */
-    0xFF666666u, /* 8: bright black (gray) */
-    0xFFFF3333u, /* 9: bright red */
-    0xFF33FF33u, /* 10: bright green */
-    0xFFFFFF33u, /* 11: bright yellow */
-    0xFF3333FFu, /* 12: bright blue */
-    0xFFFF33FFu, /* 13: bright magenta */
-    0xFF33FFFFu, /* 14: bright cyan */
-    0xFFFFFFFFu, /* 15: bright white */
+    0xFF15161Eu, /* 0: black */
+    0xFFF7768Eu, /* 1: red */
+    0xFF9ECE6Au, /* 2: green */
+    0xFFE0AF68u, /* 3: yellow */
+    0xFF7AA2F7u, /* 4: blue */
+    0xFFBB9AF7u, /* 5: magenta */
+    0xFF7DCFFFu, /* 6: cyan */
+    0xFFA9B1D6u, /* 7: white */
+    0xFF414868u, /* 8: bright black (gray) */
+    0xFFFF9E64u, /* 9: bright red (orange) */
+    0xFF73DACAu, /* 10: bright green (teal) */
+    0xFFE0AF68u, /* 11: bright yellow */
+    0xFF7AA2F7u, /* 12: bright blue */
+    0xFFBB9AF7u, /* 13: bright magenta */
+    0xFF2AC3DEu, /* 14: bright cyan */
+    0xFFC0CAF5u, /* 15: bright white */
 };
 
 /* Parse CSI parameter numbers: ESC[n1;n2;...X */

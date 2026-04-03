@@ -134,12 +134,17 @@ void cursor_draw(const struct cursor_state *cursor,
             uint8_t src_g = (uint8_t)((src >> 8) & 0xFFu);
             uint8_t src_b = (uint8_t)(src & 0xFFu);
 
-            /* For now, just draw opaque pixels (skip semi-transparent ones)
-             * This avoids the blend LUT which may have initialization issues */
-            if (alpha >= 128) {
+            if (alpha == 0xFF) {
                 dst_px[0] = src_b;
                 dst_px[1] = src_g;
                 dst_px[2] = src_r;
+                dst_px[3] = 0xFFu;
+            } else {
+                /* Alpha blend cursor over background */
+                uint8_t inv = (uint8_t)(255u - alpha);
+                dst_px[0] = (uint8_t)((src_b * alpha + dst_px[0] * inv) / 255u);
+                dst_px[1] = (uint8_t)((src_g * alpha + dst_px[1] * inv) / 255u);
+                dst_px[2] = (uint8_t)((src_r * alpha + dst_px[2] * inv) / 255u);
                 dst_px[3] = 0xFFu;
             }
         }

@@ -471,8 +471,22 @@ static void blit_argb(const char *src_base,
 }
 
 static void draw_bar_segment(struct backbuffer *dst, fut_rect_t rect, bool focused) {
-    uint32_t color = focused ? COLOR_BAR_FOCUSED : COLOR_BAR_UNFOCUSED;
-    bb_fill_rect(dst, rect, color);
+    /* Subtle vertical gradient on the title bar for depth */
+    uint32_t top = focused ? 0xFFF0F0F0u : 0xFFFAFAFAu;
+    uint32_t bot = focused ? 0xFFDCDCDCu : 0xFFF0F0F0u;
+    char *base = (char *)dst->px;
+    for (int32_t y = 0; y < rect.h; ++y) {
+        int32_t gy = rect.y + y;
+        int t = (rect.h > 1) ? (y * 255 / (rect.h - 1)) : 0;
+        uint8_t r_c = (uint8_t)(((top >> 16) & 0xFF) + ((int)((bot >> 16) & 0xFF) - (int)((top >> 16) & 0xFF)) * t / 255);
+        uint8_t g_c = (uint8_t)(((top >> 8) & 0xFF) + ((int)((bot >> 8) & 0xFF) - (int)((top >> 8) & 0xFF)) * t / 255);
+        uint8_t b_c = (uint8_t)((top & 0xFF) + ((int)(bot & 0xFF) - (int)(top & 0xFF)) * t / 255);
+        uint32_t color = 0xFF000000u | ((uint32_t)r_c << 16) | ((uint32_t)g_c << 8) | b_c;
+        uint32_t *row = (uint32_t *)(base + (size_t)gy * dst->pitch);
+        for (int32_t x = 0; x < rect.w; ++x) {
+            row[rect.x + x] = color;
+        }
+    }
 }
 
 static void draw_minimize_button(struct backbuffer *dst,
@@ -510,7 +524,13 @@ static void draw_minimize_button(struct backbuffer *dst,
             int32_t gx = clip.x + x;
             int32_t dx = gx - cx, dy = gy - cy;
             if (dx * dx + dy * dy <= r * r) {
-                px[x] = btn_color;
+                /* Draw horizontal line glyph on hover */
+                if (surface->min_btn_hover &&
+                    dy == 0 && dx >= -3 && dx <= 3) {
+                    px[x] = 0xFF8B6914u;  /* Dark amber line */
+                } else {
+                    px[x] = btn_color;
+                }
             }
         }
     }
@@ -543,7 +563,14 @@ static void draw_maximize_button(struct backbuffer *dst,
             int32_t gx = clip.x + x;
             int32_t dx = gx - cx, dy = gy - cy;
             if (dx * dx + dy * dy <= r * r) {
-                px[x] = btn_color;
+                /* Draw small square glyph on hover */
+                if (surface->max_btn_hover &&
+                    dx >= -3 && dx <= 3 && dy >= -3 && dy <= 3 &&
+                    (dx == -3 || dx == 3 || dy == -3 || dy == 3)) {
+                    px[x] = 0xFF0F6B1Du;  /* Dark green outline */
+                } else {
+                    px[x] = btn_color;
+                }
             }
         }
     }
@@ -1401,7 +1428,7 @@ void comp_render_frame(struct compositor_state *comp) {
         surface->composed_this_tick = false;
     }
 
-    /* Desktop background: vertical gradient from dark top to slightly lighter bottom */
+    /* Desktop background: rich vertical gradient with subtle blue tint */
     for (int i = 0; i < damage->count; ++i) {
         fut_rect_t r = damage->rects[i];
         if (r.w <= 0 || r.h <= 0) continue;
@@ -1409,11 +1436,11 @@ void comp_render_frame(struct compositor_state *comp) {
         char *base = (char *)dst->px;
         for (int32_t y = 0; y < r.h; ++y) {
             int32_t gy = r.y + y;
-            /* Interpolate: top=#1A1A2E, bottom=#2D2D44 */
+            /* Interpolate: top=#0D0D1A (deep navy), bottom=#2A2A40 (slate) */
             int t = (fb_height > 0) ? (gy * 255 / fb_height) : 0;
-            uint8_t rb = (uint8_t)(0x1A + (0x2D - 0x1A) * t / 255);
-            uint8_t gb = (uint8_t)(0x1A + (0x2D - 0x1A) * t / 255);
-            uint8_t bb_c = (uint8_t)(0x2E + (0x44 - 0x2E) * t / 255);
+            uint8_t rb = (uint8_t)(0x0D + (0x2A - 0x0D) * t / 255);
+            uint8_t gb = (uint8_t)(0x0D + (0x2A - 0x0D) * t / 255);
+            uint8_t bb_c = (uint8_t)(0x1A + (0x40 - 0x1A) * t / 255);
             uint32_t color = 0xFF000000u | ((uint32_t)rb << 16) | ((uint32_t)gb << 8) | bb_c;
             uint32_t *row = (uint32_t *)(base + (size_t)gy * dst->pitch);
             for (int32_t x = 0; x < r.w; ++x) {
@@ -1550,17 +1577,20 @@ void comp_render_frame(struct compositor_state *comp) {
                         int32_t rx = px - dock_x;               /* col within dock */
                         int32_t dx = rx < dock_w / 2 ? rx : (dock_w - 1 - rx);
 
-                        /* Compute corner alpha fade for rounded appearance */
+                        /* Compute corner alpha fade with smooth anti-aliasing */
                         uint32_t alpha = 0xD0;
                         if (dx < DOCK_CORNER_R && dy < DOCK_CORNER_R) {
-                            int32_t cx = DOCK_CORNER_R - dx;
-                            int32_t cy = DOCK_CORNER_R - dy;
-                            int32_t dist_sq = cx * cx + cy * cy;
+                            int32_t cx_d = DOCK_CORNER_R - dx;
+                            int32_t cy_d = DOCK_CORNER_R - dy;
+                            int32_t dist_sq = cx_d * cx_d + cy_d * cy_d;
                             int32_t r_sq = DOCK_CORNER_R * DOCK_CORNER_R;
+                            int32_t inner_r = DOCK_CORNER_R - 2;
+                            int32_t inner_sq = inner_r * inner_r;
                             if (dist_sq > r_sq) {
                                 alpha = 0;   /* outside the rounded corner */
-                            } else if (dist_sq > (DOCK_CORNER_R - 2) * (DOCK_CORNER_R - 2)) {
-                                alpha = 0x60; /* anti-alias edge band */
+                            } else if (dist_sq > inner_sq) {
+                                /* Smooth falloff in the 2px edge band */
+                                alpha = (uint32_t)(0xD0 * (r_sq - dist_sq) / (r_sq - inner_sq));
                             }
                         }
 

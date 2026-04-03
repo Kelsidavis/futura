@@ -1023,8 +1023,34 @@ void fut_kernel_main(void) {
         int64_t epoch = days * 86400 + (int64_t)hr * 3600 + (int64_t)min * 60 + sec;
         if (epoch > 1000000000LL) {
             g_realtime_offset_sec = epoch;
-            fut_printf("[RTC] CMOS: %04d-%02d-%02d %02d:%02d:%02d UTC (epoch=%lld)\n",
-                       full_year, mon, day, hr, min, sec, (long long)epoch);
+            char rtc_buf[64];
+            int ri = 0;
+            /* "[RTC] CMOS: YYYY-MM-DD HH:MM:SS UTC\n" */
+            const char *p = "[RTC] CMOS: ";
+            while (*p) rtc_buf[ri++] = *p++;
+            rtc_buf[ri++] = '0' + (char)(full_year / 1000 % 10);
+            rtc_buf[ri++] = '0' + (char)(full_year / 100 % 10);
+            rtc_buf[ri++] = '0' + (char)(full_year / 10 % 10);
+            rtc_buf[ri++] = '0' + (char)(full_year % 10);
+            rtc_buf[ri++] = '-';
+            rtc_buf[ri++] = '0' + (char)(mon / 10);
+            rtc_buf[ri++] = '0' + (char)(mon % 10);
+            rtc_buf[ri++] = '-';
+            rtc_buf[ri++] = '0' + (char)(day / 10);
+            rtc_buf[ri++] = '0' + (char)(day % 10);
+            rtc_buf[ri++] = ' ';
+            rtc_buf[ri++] = '0' + (char)(hr / 10);
+            rtc_buf[ri++] = '0' + (char)(hr % 10);
+            rtc_buf[ri++] = ':';
+            rtc_buf[ri++] = '0' + (char)(min / 10);
+            rtc_buf[ri++] = '0' + (char)(min % 10);
+            rtc_buf[ri++] = ':';
+            rtc_buf[ri++] = '0' + (char)(sec / 10);
+            rtc_buf[ri++] = '0' + (char)(sec % 10);
+            p = " UTC\n";
+            while (*p) rtc_buf[ri++] = *p++;
+            rtc_buf[ri] = '\0';
+            fut_printf("%s", rtc_buf);
         }
     }
 #endif

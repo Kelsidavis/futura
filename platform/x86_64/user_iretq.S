@@ -29,28 +29,10 @@ fut_do_user_iretq:
      * from firing while we're in a transitional state. */
     cli
 
-    /* Debug: Print 'B' for entered fut_do_user_iretq */
-    pushq %rax
-    pushq %rdx
-    movw $0x3F8, %dx
-    movb $'B', %al
-    outb %al, %dx
-    popq %rdx
-    popq %rax
-
     /* Move arguments to temporary registers */
     movq %rdi, %r11                     /* r11 = entry (RIP) */
     movq %rsi, %r10                     /* r10 = user stack (RSP) */
     /* DON'T set rdi/rsi - _start expects argc on stack, not in registers */
-
-    /* Debug: Print 'C' for saved args */
-    pushq %rax
-    pushq %rdx
-    movw $0x3F8, %dx
-    movb $'C', %al
-    outb %al, %dx
-    popq %rdx
-    popq %rax
 
     /* Build IRETQ frame on stack
      * Stack layout (growing down):
@@ -104,11 +86,6 @@ fut_do_user_iretq:
     pxor %xmm14, %xmm14
     pxor %xmm15, %xmm15
 
-    /* Debug: Print 'D' before segment loads */
-    movw $0x3F8, %dx
-    movb $'D', %al
-    outb %al, %dx
-
     /* Set user data segments for ring transition
      * IRETQ will validate that all segment registers have DPL >= CPL
      * User code has CPL=3, so we need user data selectors with DPL=3 (0x1B)
@@ -118,11 +95,6 @@ fut_do_user_iretq:
     movw %ax, %es
     /* DON'T load FS - it uses MSR_FS_BASE for TLS! Loading clears the MSR! */
     /* DON'T load GS - it uses MSR for per-CPU data! */
-
-    /* Debug: Print 'E' before IRETQ */
-    movw $0x3F8, %dx
-    movb $'E', %al
-    outb %al, %dx
 
     /* Return to userspace - this never returns */
     iretq

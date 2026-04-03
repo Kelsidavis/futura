@@ -440,12 +440,7 @@ fut_switch_context_irq:
     cmpq $0x08, 120(%r13)   /* next->context.cs (context at +48, cs at +72 => +120) */
     je .kernel_coop_restore
 
-    /* User thread with no saved frame: construct IRETQ frame from context. Print 'C' */
-    pushq %rdx
-    movw $SERIAL_PORT, %dx
-    movb $'C', %al
-    outb %al, %dx
-    popq %rdx
+    /* User thread with no saved frame: construct IRETQ frame from context */
 
     /* IMPORTANT: Clear next->irq_frame to prevent reusing stale frames */
     /* This handles both the case where irq_frame was NULL and where

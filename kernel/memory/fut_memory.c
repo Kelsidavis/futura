@@ -12,6 +12,7 @@
 #include <platform/platform.h>
 #include <kernel/errno.h>
 #include <kernel/kprintf.h>
+#include <kernel/fut_sched.h>
 
 
 /* ============================================================
@@ -23,6 +24,34 @@ static uint64_t  pmm_total  = 0;         // Total pages
 static uint64_t  pmm_free   = 0;         // Free pages
 static uintptr_t pmm_base   = 0;         // Physical base address
 static uint64_t  pmm_reserved_pages = 0;
+
+/* Spinlock protecting the bitmap — prevents TOCTOU races when
+ * a thread is preempted between BITMAP_TST and BITMAP_SET during
+ * fork's page-table cloning on SMP=1 (or true SMP).
+ * Must be IRQ-safe: interrupt handlers (page faults, etc.) may
+ * call fut_pmm_alloc_page while the lock is held by mainline code. */
+static fut_spinlock_t pmm_lock = { .locked = 0 };
+
+static inline unsigned long pmm_irqsave(void) {
+    unsigned long flags;
+#if defined(__x86_64__)
+    __asm__ volatile("pushfq; pop %0; cli" : "=r"(flags) :: "memory");
+#elif defined(__aarch64__)
+    __asm__ volatile("mrs %0, daif; msr daifset, #0xF" : "=r"(flags) :: "memory");
+#else
+    flags = 0;
+#endif
+    return flags;
+}
+
+static inline void pmm_irqrestore(unsigned long flags) {
+#if defined(__x86_64__)
+    if (flags & (1UL << 9))  /* IF bit */
+        __asm__ volatile("sti" ::: "memory");
+#elif defined(__aarch64__)
+    __asm__ volatile("msr daif, %0" :: "r"(flags) : "memory");
+#endif
+}
 
 /* Bitmap manipulation macros */
 #define BITMAP_SET(b)   (pmm_bitmap[(b)/8u] |=  (1u << ((b)%8u)))
@@ -88,22 +117,21 @@ static void *pmm_alloc_page_internal(void) {
     /* Guard: PMM must be initialized before any allocation attempt */
     if (!pmm_bitmap || pmm_total == 0) return nullptr;
 
+    unsigned long flags = pmm_irqsave();
+    fut_spinlock_acquire(&pmm_lock);
+
     // Linear scan for first free page
     for (uint64_t i = pmm_reserved_pages; i < pmm_total; ++i) {
         if (!BITMAP_TST(i)) {
             BITMAP_SET(i);
             --pmm_free;
+            fut_spinlock_release(&pmm_lock);
+            pmm_irqrestore(flags);
             uintptr_t phys = pmm_base + i * FUT_PAGE_SIZE;
 #if defined(__x86_64__)
-            /* Convert physical to virtual using OR to set high bits.
-             * This approach is more reliable than addition because:
-             * 1. OR cannot be optimized to a no-op
-             * 2. Works correctly even if physical address has high bits set
-             * 3. Matches pmap_phys_to_virt behavior for consistency */
             uintptr_t virt = phys | KERNEL_VIRTUAL_BASE;
             return (void *)virt;
 #elif defined(__aarch64__)
-            /* ARM64: Convert physical address to kernel virtual address */
             return pmap_phys_to_virt(phys);
 #else
             return (void *)(uintptr_t)phys;
@@ -111,6 +139,8 @@ static void *pmm_alloc_page_internal(void) {
         }
     }
 
+    fut_spinlock_release(&pmm_lock);
+    pmm_irqrestore(flags);
     return nullptr;  // Out of memory
 }
 
@@ -170,20 +200,26 @@ void fut_pmm_free_page(void *addr) {
 
     /* Double-free detection — if the bitmap bit is already clear,
      * the page was already freed. Log and reject to prevent corruption. */
+    unsigned long flags = pmm_irqsave();
+    fut_spinlock_acquire(&pmm_lock);
     if (!BITMAP_TST(idx)) {
+        fut_spinlock_release(&pmm_lock);
+        pmm_irqrestore(flags);
         fut_printf("[PMM] WARNING: Double-free detected for phys %p (page idx %llu already free)\n",
                    (void *)(uintptr_t)phys, (unsigned long long)idx);
         return;
     }
 
-    /* Zero the page before freeing to prevent information leakage.
+    BITMAP_CLR(idx);
+    ++pmm_free;
+    fut_spinlock_release(&pmm_lock);
+    pmm_irqrestore(flags);
+
+    /* Zero the page after releasing lock to prevent information leakage.
      * This ensures a subsequently allocated page doesn't contain
      * data from a previous process (passwords, keys, etc). */
     volatile uint8_t *p = (volatile uint8_t *)addr;
     for (size_t i = 0; i < FUT_PAGE_SIZE; i++) p[i] = 0;
-
-    BITMAP_CLR(idx);
-    ++pmm_free;
 }
 
 uint64_t fut_pmm_total_pages(void) {

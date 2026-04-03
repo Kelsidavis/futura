@@ -1427,23 +1427,44 @@ void comp_render_frame(struct compositor_state *comp) {
         surface->composed_this_tick = false;
     }
 
-    /* Desktop background: rich vertical gradient with subtle blue tint */
+    /* Desktop background: vertical gradient with centered radial glow */
     for (int i = 0; i < damage->count; ++i) {
         fut_rect_t r = damage->rects[i];
         if (r.w <= 0 || r.h <= 0) continue;
-        int32_t fb_height = (int32_t)comp->fb_info.height;
+        int32_t fb_w = (int32_t)comp->fb_info.width;
+        int32_t fb_h = (int32_t)comp->fb_info.height;
+        int32_t cx = fb_w / 2;
+        int32_t cy = fb_h * 2 / 5;  /* glow center: 40% from top */
+        /* max_dist_sq scaled so glow fades across ~60% of screen diagonal */
+        int32_t max_r = (fb_w > fb_h ? fb_w : fb_h) * 3 / 5;
+        int64_t max_r_sq = (int64_t)max_r * max_r;
         char *base = (char *)dst->px;
         for (int32_t y = 0; y < r.h; ++y) {
             int32_t gy = r.y + y;
-            /* Interpolate: top=#0D0D1A (deep navy), bottom=#2A2A40 (slate) */
-            int t = (fb_height > 0) ? (gy * 255 / fb_height) : 0;
-            uint8_t rb = (uint8_t)(0x0D + (0x2A - 0x0D) * t / 255);
-            uint8_t gb = (uint8_t)(0x0D + (0x2A - 0x0D) * t / 255);
-            uint8_t bb_c = (uint8_t)(0x1A + (0x40 - 0x1A) * t / 255);
-            uint32_t color = 0xFF000000u | ((uint32_t)rb << 16) | ((uint32_t)gb << 8) | bb_c;
+            /* Vertical gradient: top=#0D0D1A, bottom=#2A2A40 */
+            int t = (fb_h > 0) ? (gy * 255 / fb_h) : 0;
+            int base_r = 0x0D + (0x2A - 0x0D) * t / 255;
+            int base_g = 0x0D + (0x2A - 0x0D) * t / 255;
+            int base_b = 0x1A + (0x40 - 0x1A) * t / 255;
+            int32_t dy = gy - cy;
             uint32_t *row = (uint32_t *)(base + (size_t)gy * dst->pitch);
             for (int32_t x = 0; x < r.w; ++x) {
-                row[r.x + x] = color;
+                int32_t gx = r.x + x;
+                int32_t dx = gx - cx;
+                int64_t dist_sq = (int64_t)dx * dx + (int64_t)dy * dy;
+                /* Radial glow: subtle blue-purple boost near center */
+                int glow = 0;
+                if (dist_sq < max_r_sq) {
+                    glow = (int)((max_r_sq - dist_sq) * 18 / max_r_sq);
+                }
+                int pr = base_r + glow / 3;
+                int pg = base_g + glow / 4;
+                int pb = base_b + glow;
+                if (pr > 255) pr = 255;
+                if (pg > 255) pg = 255;
+                if (pb > 255) pb = 255;
+                row[gx] = 0xFF000000u | ((uint32_t)pr << 16)
+                         | ((uint32_t)pg << 8) | (uint32_t)pb;
             }
         }
     }

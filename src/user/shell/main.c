@@ -21475,7 +21475,7 @@ int main(int argc, char **argv, char **envp) {
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "|   Futura OS Shell v0.5                   |\n");
-    write_str(1, "|   610 built-in commands — type 'help'    |\n");
+    write_str(1, "|   620 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");
     write_str(1, "\033[0m\n");
@@ -53170,7 +53170,7 @@ static void cmd_claude(int argc, char *argv[]) {
     write_str(1, "Hello! I'm Claude, your Futura OS AI assistant.\033[0m\n\n");
     write_str(1, "  OS:        Futura OS (custom kernel, C23)\n");
     write_str(1, "  Arch:      x86_64 + ARM64\n");
-    write_str(1, "  Shell:     610 built-in commands\n");
+    write_str(1, "  Shell:     620 built-in commands\n");
     write_str(1, "  Version:   0.5\n");
     write_str(1, "  Desktop:   Horizon (Wayland compositor)\n\n");
     write_str(1, "Type 'help' to see available commands.\n");

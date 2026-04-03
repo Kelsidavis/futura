@@ -1412,7 +1412,7 @@ void fut_kernel_main(void) {
                   "\n"
                   "  \033[1;36mFutura OS 0.8.0\033[0m\n"
                   "\n"
-                  "  \033[33m610+ built-in commands\033[0m  type '\033[1mhelp\033[0m' or '\033[1mman <cmd>\033[0m'\n"
+                  "  \033[33m620+ built-in commands\033[0m  type '\033[1mhelp\033[0m' or '\033[1mman <cmd>\033[0m'\n"
                   "\n"
                   "  \033[36mDevelopment:\033[0m  vi, make, git, patch, bc, curl, tar, less\n"
                   "  \033[36mNetworking:\033[0m   ping, wget, curl, nc, netstat, ss, httpd\n"

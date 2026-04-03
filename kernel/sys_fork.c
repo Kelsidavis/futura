@@ -1671,7 +1671,6 @@ static fut_thread_t *clone_thread(fut_thread_t *parent_thread, fut_task_t *child
      * during clone_mm's VMA cloning yield. */
     fut_interrupt_frame_t *frame = saved_frame;
     if (!frame) {
-        fut_printf("[FORK] clone_thread: no interrupt frame (saved_frame was NULL)\n");
         return NULL;
     }
 

@@ -72,6 +72,14 @@ static void emit_button_event(struct ps2_mouse_device *dev, uint16_t code, bool 
     fut_input_queue_push(&dev->queue, &ev);
 }
 
+/* Allow VirtIO input driver to inject events into the PS/2 mouse queue.
+ * This lets both PS/2 hardware and VirtIO mouse share /dev/input/mouse0. */
+void ps2_mouse_inject_event(const struct fut_input_event *ev) {
+    if (g_ps2_mouse.active) {
+        fut_input_queue_push(&g_ps2_mouse.queue, ev);
+    }
+}
+
 void ps2_mouse_handle_byte(uint8_t data) {
     struct ps2_mouse_device *dev = &g_ps2_mouse;
     if (!dev->active) {
@@ -95,6 +103,7 @@ void ps2_mouse_handle_byte(uint8_t data) {
     int rel_y = (int8_t)dev->packet[2];
     /* PS/2 Y is inverted (positive is upward). Flip to screen coordinates. */
     rel_y = -rel_y;
+
     emit_move_event(dev, rel_x, rel_y);
 
     uint8_t buttons = status & 0x07u;

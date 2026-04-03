@@ -691,70 +691,37 @@ impl VirtQueue {
 
     fn poll_completion(&self, isr_ptr: *const u8) -> FutStatus {
         let mut waited = 0u32;
-        const TIMEOUT_ITERATIONS: u32 = 10_000;  // Fast timeout — MMIO notify issue on ARM64
-
-        let irq_vector = VIRTIO_BLK_IRQ_VECTOR.load(Ordering::Relaxed);
-        unsafe {
-//            fut_printf(b"[virtio-blk] waiting for interrupt (vector=%d)...\n\0".as_ptr(),
-//                irq_vector as u32);
-        }
+        const TIMEOUT_ITERATIONS: u32 = 50_000;
 
         loop {
-            // Read ISR register - this is critical in Virtio 1.0!
-            // Reading it acknowledges the interrupt and may trigger device processing
-            let mut isr_status = 0u8;
+            // Read ISR register to acknowledge interrupt to VirtIO device
             if !isr_ptr.is_null() {
                 unsafe {
-                    isr_status = core::ptr::read_volatile(isr_ptr);
+                    let _ = core::ptr::read_volatile(isr_ptr);
                 }
             }
 
-            // Check used ring directly (device might update it without interrupt)
+            // Check used ring directly (volatile read — device updates this in DMA)
             let last = self.last_used.load(Ordering::Acquire);
-            let used_idx = unsafe { (*self.used).idx };
+            let used_idx = unsafe {
+                let idx_ptr = core::ptr::addr_of!((*self.used).idx);
+                core::ptr::read_volatile(idx_ptr)
+            };
 
             // Check if interrupt handler signaled completion
             let int_flag = IO_COMPLETED.load(Ordering::Acquire);
             if int_flag != 0 || used_idx != last {
-                // Clear the flag for next I/O
                 IO_COMPLETED.store(0, Ordering::Release);
-
-                unsafe {
-                    if int_flag != 0 {
-//                        fut_printf(b"[virtio-blk] interrupt received! last_used=%d used_idx=%d isr=0x%x\n\0".as_ptr(),
-//                            last as u32, used_idx as u32, isr_status as u32);
-                    } else {
-//                        fut_printf(b"[virtio-blk] completion without interrupt! last_used=%d used_idx=%d isr=0x%x\n\0".as_ptr(),
-//                            last as u32, used_idx as u32, isr_status as u32);
-                    }
-                }
-
                 if used_idx != last {
                     self.last_used.store(last.wrapping_add(1), Ordering::Release);
                     return 0;
-                } else {
-                    unsafe {
-//                        fut_printf(b"[virtio-blk] WARNING: interrupt but no used ring update\n\0".as_ptr());
-                    }
-                }
-            }
-
-            if waited == 10000 {
-                unsafe {
-//                    fut_printf(b"[virtio-blk] still waiting after 10k iterations... (used=%d last=%d isr=0x%x)\n\0".as_ptr(),
-//                        used_idx as u32, last as u32, isr_status as u32);
                 }
             }
 
             if waited > TIMEOUT_ITERATIONS {
-                unsafe {
-//                    fut_printf(b"[virtio-blk] TIMEOUT: no interrupt received (last=%d used=%d isr=0x%x)\n\0".as_ptr(),
-//                        last as u32, used_idx as u32, isr_status as u32);
-                }
                 return ETIMEDOUT;
             }
 
-            // Brief spin delay — yield may not work in all contexts (e.g., early boot)
             for _ in 0..100u32 {
                 core::hint::spin_loop();
             }
@@ -1366,6 +1333,14 @@ impl VirtioBlkDevice {
 
         #[cfg(not(target_arch = "aarch64"))]
         {
+            // Skip legacy INTx setup if MSI-X is already configured (in init_queue)
+            if self.msix_enabled {
+                unsafe {
+                    fut_printf(b"[virtio-blk] MSI-X active, skipping legacy INTx setup\n\0".as_ptr());
+                }
+                return Ok(());
+            }
+
             // Read PCI interrupt line register (offset 0x3C)
             let interrupt_line = pci_config_read8(self.pci.bus, self.pci.device, self.pci.function, 0x3C);
 

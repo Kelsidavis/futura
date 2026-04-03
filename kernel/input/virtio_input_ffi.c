@@ -143,6 +143,17 @@ static struct fut_file_ops vmouse_fops;
  * EV_KEY with code < BTN_LEFT is a keyboard key; >= BTN_LEFT is a mouse
  * button.  EV_REL / EV_ABS are mouse movement events.
  */
+/*
+ * On x86_64, PS/2 already owns /dev/input/mouse0. Route VirtIO mouse events
+ * to the PS/2 mouse queue so both hardware paths share one device node.
+ */
+#ifdef __x86_64__
+extern void ps2_mouse_inject_event(const struct fut_input_event *ev);
+#define PUSH_MOUSE_EVENT(evp) ps2_mouse_inject_event(evp)
+#else
+#define PUSH_MOUSE_EVENT(evp) fut_input_queue_push(&g_vmouse.queue, (evp))
+#endif
+
 void virtio_input_post_event(uint16_t type, uint16_t code, int32_t value)
 {
     if (type == EVTYPE_SYN)
@@ -169,7 +180,7 @@ void virtio_input_post_event(uint16_t type, uint16_t code, int32_t value)
                 .code   = (int16_t)code,
                 .value  = (value != 0) ? 1 : 0,
             };
-            fut_input_queue_push(&g_vmouse.queue, &ev);
+            PUSH_MOUSE_EVENT(&ev);
         }
         return;
     }
@@ -181,7 +192,7 @@ void virtio_input_post_event(uint16_t type, uint16_t code, int32_t value)
             .code   = (int16_t)(code == REL_X ? FUT_REL_X : FUT_REL_Y),
             .value  = value,
         };
-        fut_input_queue_push(&g_vmouse.queue, &ev);
+        PUSH_MOUSE_EVENT(&ev);
         return;
     }
 
@@ -193,7 +204,7 @@ void virtio_input_post_event(uint16_t type, uint16_t code, int32_t value)
             .code   = (int16_t)(code == 0 ? FUT_REL_X : FUT_REL_Y),
             .value  = value,
         };
-        fut_input_queue_push(&g_vmouse.queue, &ev);
+        PUSH_MOUSE_EVENT(&ev);
         return;
     }
 }

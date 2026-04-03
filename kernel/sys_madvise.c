@@ -195,7 +195,11 @@ long sys_madvise(void *addr, size_t length, int advice) {
     case MADV_FREE: {       /* 8: lazy-free (Linux 4.5+) — same observable effect */
         /* For anonymous private VMAs, zero the range so the next read returns 0,
          * matching Linux semantics (pages are unmapped; new demand-zero pages appear).
-         * Shared/file-backed VMAs are left untouched (no-op is safe). */
+         * Shared/file-backed VMAs are left untouched (no-op is safe).
+         *
+         * We zero pages via the kernel direct-map (pmap_phys_to_virt) instead of
+         * through user-space VAs, because kernel threads may have a different CR3
+         * than the mm that owns the mapping (lazy TLB). */
         fut_task_t *task = fut_task_current();
         fut_mm_t *mm = task ? fut_task_get_mm(task) : NULL;
         if (!mm) mm = fut_mm_current();
@@ -208,8 +212,13 @@ long sys_madvise(void *addr, size_t length, int advice) {
                 if (!vma->vnode && !(vma->flags & VMA_SHARED)) {
                     uintptr_t zstart = vma->start > range_start ? vma->start : range_start;
                     uintptr_t zend   = vma->end   < range_end   ? vma->end   : range_end;
-                    if (zstart < zend) {
-                        memset((void *)zstart, 0, zend - zstart);
+                    /* Zero page-by-page via kernel direct-map */
+                    for (uintptr_t va = zstart; va < zend; va += PAGE_SIZE) {
+                        uint64_t phys = 0;
+                        if (fut_virt_to_phys(&mm->ctx, va, &phys) == 0) {
+                            void *kva = (void *)pmap_phys_to_virt((phys_addr_t)phys);
+                            memset(kva, 0, PAGE_SIZE);
+                        }
                     }
                 }
                 vma = vma->next;

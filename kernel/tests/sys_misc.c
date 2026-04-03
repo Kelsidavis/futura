@@ -6744,11 +6744,9 @@ static void test_mremap_shrink(void) {
     }
     void *addr = (void *)(uintptr_t)maddr;
 
-    /* Write sentinel to first byte */
-    volatile uint8_t *p = (volatile uint8_t *)addr;
-    p[0] = 0xAB;
-
-    /* Shrink to 4KB — same address, flags=0 (no MREMAP_MAYMOVE needed) */
+    /* Shrink to 4KB — same address, flags=0 (no MREMAP_MAYMOVE needed).
+     * Note: kernel test threads use lazy TLB and cannot directly access
+     * user-space mmap'd pages — only verify the syscall return values. */
     long naddr = sys_mremap(addr, 8192, 4096, 0, NULL);
     if (naddr < 0) {
         fut_printf("[MISC-TEST] ✗ mremap shrink: got %ld\n", naddr);
@@ -6757,19 +6755,17 @@ static void test_mremap_shrink(void) {
         return;
     }
 
-    /* Sentinel should still be there after shrink */
-    volatile uint8_t *q = (volatile uint8_t *)(uintptr_t)naddr;
-    if (q[0] != 0xAB) {
-        fut_printf("[MISC-TEST] ✗ mremap shrink: data corrupted (got 0x%02x)\n",
-                   (unsigned)q[0]);
+    /* Verify shrink preserved the base address */
+    if ((uintptr_t)naddr != (uintptr_t)maddr) {
+        fut_printf("[MISC-TEST] ✗ mremap shrink: address changed from 0x%lx to 0x%lx\n",
+                   maddr, naddr);
         sys_munmap((void *)(uintptr_t)naddr, 4096);
         fut_test_fail(140);
         return;
     }
 
     sys_munmap((void *)(uintptr_t)naddr, 4096);
-    fut_printf("[MISC-TEST] ✓ mremap: 8KB→4KB shrink, sentinel at 0x%lx preserved\n",
-               naddr);
+    fut_printf("[MISC-TEST] ✓ mremap: 8KB→4KB shrink at 0x%lx OK\n", naddr);
     fut_test_pass();
 }
 

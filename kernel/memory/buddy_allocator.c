@@ -347,12 +347,30 @@ void *buddy_malloc(size_t size) {
                        ((uint8_t*)hdr)[0], ((uint8_t*)hdr)[1], ((uint8_t*)hdr)[2], ((uint8_t*)hdr)[3],
                        ((uint8_t*)hdr)[4], ((uint8_t*)hdr)[5], ((uint8_t*)hdr)[6], ((uint8_t*)hdr)[7]);
 
-            /* Found a free block - remove from free list */
+            /* CRITICAL: Validate block header before trusting it.
+             * A corrupted header (e.g. from a buffer overflow in an adjacent allocation)
+             * can have a wrong order field, causing the splitting loop to access
+             * free_lists[] out of bounds or create buddy blocks at wrong addresses.
+             * When corruption is detected, discard the entire free list at this order
+             * because the block's linked list pointers (next/prev) are also untrusted. */
+            if (hdr->magic != BLOCK_MAGIC || hdr->order != search_order) {
+                BUDDY_DEBUG_PRINTF("[BUDDY-MALLOC] WARNING: Block header corrupted! magic=0x%x (expected 0x%x) order=%d (expected %d)\n",
+                           hdr->magic, BLOCK_MAGIC, hdr->order, search_order);
+                free_lists[search_order - MIN_ORDER] = NULL;
+                search_order++;
+                continue;
+            }
+
+            /* Found a free block - remove from free list (validate pointers first) */
             if (candidate->next) {
-                candidate->next->prev = candidate->prev;
+                if ((uintptr_t)candidate->next >= heap_start && (uintptr_t)candidate->next < heap_end) {
+                    candidate->next->prev = candidate->prev;
+                }
             }
             if (candidate->prev) {
-                candidate->prev->next = candidate->next;
+                if ((uintptr_t)candidate->prev >= heap_start && (uintptr_t)candidate->prev < heap_end) {
+                    candidate->prev->next = candidate->next;
+                }
             } else {
                 free_lists[search_order - MIN_ORDER] = candidate->next;
             }
@@ -376,13 +394,28 @@ void *buddy_malloc(size_t size) {
                     buddy_hdr->magic = BLOCK_MAGIC;
 
                     /* Add buddy to free list */
-                    free_block_t *buddy_free = (free_block_t *)get_data_ptr(buddy_hdr);
-                    buddy_free->next = free_lists[hdr->order - MIN_ORDER];
-                    buddy_free->prev = NULL;
-                    if (free_lists[hdr->order - MIN_ORDER]) {
-                        free_lists[hdr->order - MIN_ORDER]->prev = buddy_free;
+                    int fl_idx = hdr->order - MIN_ORDER;
+                    if (fl_idx < 0 || fl_idx >= NUM_ORDERS) {
+                        BUDDY_DEBUG_PRINTF("[BUDDY-MALLOC] WARNING: Split produced invalid free list index %d, stopping split\n", fl_idx);
+                        break;
                     }
-                    free_lists[hdr->order - MIN_ORDER] = buddy_free;
+                    free_block_t *buddy_free = (free_block_t *)get_data_ptr(buddy_hdr);
+
+                    /* Validate current free list head before dereferencing */
+                    free_block_t *fl_head = free_lists[fl_idx];
+                    if (fl_head && ((uintptr_t)fl_head < heap_start || (uintptr_t)fl_head >= heap_end)) {
+                        BUDDY_DEBUG_PRINTF("[BUDDY-MALLOC] WARNING: Corrupted free list head %p at order %d during split, discarding\n",
+                                   (void*)fl_head, hdr->order);
+                        fl_head = NULL;
+                        free_lists[fl_idx] = NULL;
+                    }
+
+                    buddy_free->next = fl_head;
+                    buddy_free->prev = NULL;
+                    if (fl_head) {
+                        fl_head->prev = buddy_free;
+                    }
+                    free_lists[fl_idx] = buddy_free;
                 } else {
                     BUDDY_DEBUG_PRINTF("[BUDDY-MALLOC] WARNING: Buddy block outside heap bounds, skipping\n");
                     BUDDY_DEBUG_PRINTF("[BUDDY-MALLOC]   Buddy: %p-%p (size=%llu)\n",

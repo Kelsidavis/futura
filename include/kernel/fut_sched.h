@@ -64,6 +64,19 @@ static inline void fut_spinlock_acquire(fut_spinlock_t *lock) {
 }
 
 /**
+ * Try to acquire a spinlock without blocking.
+ *
+ * @param lock  Spinlock to try
+ * @return true if lock acquired, false if already held
+ */
+static inline bool fut_spinlock_trylock(fut_spinlock_t *lock) {
+    uint64_t expected = 0;
+    return atomic_compare_exchange_strong_explicit(&lock->locked, &expected, 1,
+                                                   memory_order_acquire,
+                                                   memory_order_relaxed);
+}
+
+/**
  * Release a spinlock.
  *
  * @param lock  Spinlock to release

@@ -15,6 +15,7 @@
 #include <generated/feature_flags.h>
 #include <kernel/fut_memory.h>
 #include <kernel/fut_sched.h>
+#include <kernel/fut_mm.h>
 #include <kernel/fut_thread.h>
 #include <kernel/fut_task.h>
 #include <kernel/fut_fipc.h>
@@ -874,6 +875,11 @@ static void selftest_sequential_runner(void *arg) {
         extern void fut_schedule(void);
         fut_schedule();
     }
+
+    /* Note: kernel test threads use lazy TLB (inherit previous process's CR3),
+     * so mmap'd user-space pages are only visible if mapped into the active
+     * page table. Tests that call sys_mmap should verify return values only,
+     * not dereference the returned user-space pointers. */
 
     fut_multiprocess_test_thread(NULL);
     fut_dup2_test_thread(NULL);

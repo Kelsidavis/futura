@@ -200,12 +200,8 @@ fut_mm_t *fut_mm_create(void) {
     mm_create_printf("[MM-CREATE] Line 157: about to call fut_vmem_set_root\n");
     fut_vmem_set_root(&mm->ctx, pml4);
     mm_create_printf("[MM-CREATE] Line 159: about to call fut_vmem_set_reload_value\n");
-    /* Direct serial markers to pinpoint hang */
-    __asm__ volatile("movw $0x3F8, %%dx; movb $'a', %%al; outb %%al, %%dx" ::: "ax", "dx");
     phys_addr_t pml4_phys = pmap_virt_to_phys((uintptr_t)pml4);
-    __asm__ volatile("movw $0x3F8, %%dx; movb $'b', %%al; outb %%al, %%dx" ::: "ax", "dx");
     fut_vmem_set_reload_value(&mm->ctx, pml4_phys);
-    __asm__ volatile("movw $0x3F8, %%dx; movb $'c', %%al; outb %%al, %%dx" ::: "ax", "dx");
     mm_create_printf("[MM-CREATE] Line 161: about to set ref_count\n");
     mm->ctx.ref_count = 1;
     mm_create_printf("[MM-CREATE] Line 163: about to set refcnt atomic\n");
@@ -300,14 +296,6 @@ void fut_mm_switch(fut_mm_t *mm) {
 
     uint64_t old_cr3 = fut_read_cr3();
     uint64_t new_cr3 = fut_vmem_get_reload_value(&mm->ctx);
-
-    // Debug: limited logging for perf
-    static int mm_switch_count = 0;
-    if (mm_switch_count < 20) {
-        fut_printf("[MM-SWITCH] CR3: 0x%016llx -> 0x%016llx (kernel=%s)\n",
-                   old_cr3, new_cr3, (mm == &kernel_mm) ? "yes" : "no");
-        mm_switch_count++;
-    }
 
     active_mm = mm;
     fut_write_cr3(new_cr3);

@@ -203,9 +203,11 @@ long sys_stat(const char *path, struct fut_stat *statbuf) {
                 break;
         }
 
-        fut_printf("[STAT] stat(path='%s' [%s, len=%lu], statbuf=%p) -> %d (%s)\n",
-                   path_buf, path_type, (unsigned long)path_len, (void *)local_statbuf,
-                   ret, error_desc);
+        /* Only log unexpected errors, not routine ENOENT from file existence checks */
+        if (ret != -ENOENT) {
+            fut_printf("[STAT] stat(path='%s' [%s, len=%lu]) -> %d (%s)\n",
+                       path_buf, path_type, (unsigned long)path_len, ret, error_desc);
+        }
         return ret;
     }
 
@@ -216,154 +218,6 @@ long sys_stat(const char *path, struct fut_stat *statbuf) {
                    path_buf, path_type, (unsigned long)path_len);
         return -EFAULT;
     }
-
-    /* Phase 2: Categorize file type */
-    const char *file_type_desc;
-    uint32_t mode = kernel_stat.st_mode;
-
-    if ((mode & 0170000) == 0040000) {
-        file_type_desc = "directory";
-    } else if ((mode & 0170000) == 0100000) {
-        file_type_desc = "regular file";
-    } else if ((mode & 0170000) == 0120000) {
-        file_type_desc = "symbolic link";
-    } else if ((mode & 0170000) == 0020000) {
-        file_type_desc = "character device";
-    } else if ((mode & 0170000) == 0060000) {
-        file_type_desc = "block device";
-    } else if ((mode & 0170000) == 0010000) {
-        file_type_desc = "FIFO/pipe";
-    } else if ((mode & 0170000) == 0140000) {
-        file_type_desc = "socket";
-    } else {
-        file_type_desc = "unknown";
-    }
-
-    /* Phase 2: Categorize file size */
-    const char *size_category;
-    if (kernel_stat.st_size == 0) {
-        size_category = "empty";
-    } else if (kernel_stat.st_size < 1024) {
-        size_category = "<1KB";
-    } else if (kernel_stat.st_size < 1024 * 1024) {
-        size_category = "<1MB";
-    } else if (kernel_stat.st_size < 1024 * 1024 * 1024) {
-        size_category = "<1GB";
-    } else {
-        size_category = ">=1GB";
-    }
-
-    /* Phase 3: Filesystem-specific metadata and xattr readiness */
-    const char *fs_type = "unknown";
-    const char *xattr_capable = "unknown";
-
-    if (kernel_stat.st_dev == 0) {
-        fs_type = "rootfs (ramfs)";
-        xattr_capable = "yes";
-    } else if (kernel_stat.st_dev < 256) {
-        fs_type = "virtual (devfs)";
-        xattr_capable = "no";
-    } else {
-        fs_type = "persistent (futurafs)";
-        xattr_capable = "yes";
-    }
-
-    /* Security hardening WARNING: TOCTOU Race Condition in stat()
-     * VULNERABILITY: Time-of-Check-Time-of-Use Race in Path Resolution
-     *
-     * ATTACK SCENARIO:
-     * Attacker exploits race between stat() and subsequent file operation
-     * 1. Privileged program checks file metadata:
-     *    struct fut_stat st;
-     *    stat("/tmp/logfile", &st);  // Check at time T1
-     *    if (st.st_uid == getuid()) {
-     *        fd = open("/tmp/logfile", O_WRONLY);  // Use at time T2
-     *        write(fd, sensitive_data, len);
-     *    }
-     * 2. Attack timeline:
-     *    - T1: stat() resolves /tmp/logfile → regular file owned by user
-     *    - Between T1 and T2: Attacker replaces /tmp/logfile with symlink to /etc/passwd
-     *    - T2: open() follows symlink → writes to /etc/passwd
-     * 3. Result: System file overwritten via race condition
-     * 4. Impact:
-     *    - Privilege escalation: Write to files owned by root
-     *    - Information disclosure: Redirect reads to sensitive files
-     *    - Data corruption: Overwrite critical system files
-     *    - Symlink attacks: Replace file with symlink between check and use
-     *
-     * ROOT CAUSE:
-     * stat() is fundamentally vulnerable to TOCTOU races:
-     * - Line 166: fut_vfs_stat resolves path and retrieves metadata
-     * - Caller uses metadata to make security decision
-     * - Between stat() and subsequent operation, file can be modified:
-     *   - File replaced with symlink (symlink attack)
-     *   - Permissions changed (chmod)
-     *   - Ownership changed (chown)
-     *   - File deleted and recreated with different type
-     * - Subsequent operation (open/unlink/exec) resolves path AGAIN
-     * - Second resolution may yield different file than first
-     *
-     * VULNERABLE PATTERNS:
-     * 1. Check-then-operate:
-     *    stat(path, &st);
-     *    if (S_ISREG(st.st_mode)) { open(path, O_RDONLY); }
-     *    → File could become symlink between stat and open
-     *
-     * 2. Size-based allocation:
-     *    stat(path, &st);
-     *    buf = malloc(st.st_size);
-     *    fd = open(path, O_RDONLY);
-     *    read(fd, buf, st.st_size);
-     *    → File size could change, buffer overflow
-     *
-     * 3. Permission checking:
-     *    stat(path, &st);
-     *    if (st.st_mode & 0200) { open(path, O_WRONLY); }
-     *    → Permissions could change between check and open
-     *
-     * DEFENSE:
-     * This implementation CANNOT fix the fundamental TOCTOU race in stat().
-     * Applications MUST use TOCTOU-resistant patterns:
-     *
-     * 1. Use fstat() instead of stat() (FD-based, no path resolution):
-     *    fd = open(path, O_RDONLY | O_NOFOLLOW);  // Atomic open
-     *    fstat(fd, &st);  // No path resolution, no race
-     *    // Use fd for all operations, metadata guaranteed to match
-     *
-     * 2. Use openat() with O_NOFOLLOW to prevent symlink following:
-     *    int dirfd = open("/tmp", O_RDONLY | O_DIRECTORY);
-     *    int fd = openat(dirfd, "logfile", O_WRONLY | O_NOFOLLOW);
-     *    // Prevents symlink attacks
-     *
-     * 3. Use O_EXCL with O_CREAT to prevent file substitution:
-     *    fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0600);
-     *    // Fails if file already exists, prevents race
-     *
-     * 4. Never use stat() for security decisions - just try operation and handle error:
-     *    fd = open(path, O_RDONLY);
-     *    if (fd < 0) { handle_error(errno); }
-     *    // No TOCTOU - single atomic operation
-     *
-     * POSIX GUIDANCE (IEEE Std 1003.1):
-     * "Applications should not use stat() to check for file existence or
-     *  accessibility before performing an operation. Such uses are vulnerable
-     *  to time-of-check-time-of-use race conditions."
-     *
-     * CVE REFERENCES:
-     * Real-world TOCTOU vulnerabilities:
-     * - CVE-2019-13272: Linux PTRACE_TRACEME local privilege escalation
-     * - CVE-2016-1247: nginx privilege escalation via symlink race
-     * - CVE-2015-1328: Ubuntu overlayfs privilege escalation
-     * - CVE-2014-0196: Linux pty TOCTOU privilege escalation
-     */
-
-    /* Phase 4: Detailed success logging with filesystem and xattr metadata */
-    fut_printf("[STAT] stat(path='%s' [%s, len=%lu], type=%s, size=%llu [%s], "
-               "mode=%o, ino=%llu, fs=%s, xattr=%s) -> 0 (cached metadata, TOCTOU warning - use fstat() instead)\n",
-               path_buf, path_type, (unsigned long)path_len, file_type_desc,
-               (unsigned long long)kernel_stat.st_size, size_category,
-               kernel_stat.st_mode & 0777, (unsigned long long)kernel_stat.st_ino,
-               fs_type, xattr_capable);
 
     return 0;
 }

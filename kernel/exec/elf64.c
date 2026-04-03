@@ -874,10 +874,7 @@ static int build_user_stack(fut_mm_t *mm,
     }
 
     /* Call the pure assembly function to perform IRETQ to userspace
-     * This function never returns */
-    fut_printf("[EXEC-IRETQ] entry=0x%llx stack=0x%llx argc=%llu argv=0x%llx\n",
-               (unsigned long long)entry, (unsigned long long)stack,
-               (unsigned long long)argc, (unsigned long long)argv_ptr);
+     * This function never returns - NO printf here, CR3 switches break IRETQ */
     fut_do_user_iretq(entry, stack, argc, argv_ptr);
 
     /* Should NEVER reach here */

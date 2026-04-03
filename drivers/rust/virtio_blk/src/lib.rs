@@ -1636,20 +1636,8 @@ impl VirtioBlkDevice {
             let off = (self.queue.notify_off as u32 * self.notify_off_multiplier) as usize;
             let ptr = self.notify_base.add(off) as *mut u16;
 
-            fut_printf(b"[virtio-blk] notify: queue_notify_off=%u multiplier=%u offset=%u base=%p final_ptr=%p\n\0".as_ptr(),
-                self.queue.notify_off as u32,
-                self.notify_off_multiplier,
-                off as u32,
-                self.notify_base,
-                ptr);
-
             /* Write the queue index to notify QEMU */
             write_volatile(ptr, 0);  // Queue 0
-
-            /* Verify write succeeded by reading back (may help trigger QEMU too) */
-            let _readback = read_volatile(ptr as *const u16);
-
-            fut_printf(b"[virtio-blk] notified queue 0 (wrote to ptr=%p)\n\0".as_ptr(), ptr);
         }
     }
 

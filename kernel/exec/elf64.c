@@ -7,6 +7,7 @@
 
 #include <kernel/exec.h>
 #include <generated/feature_flags.h>
+#include <config/futura_config.h>
 
 #include <kernel/errno.h>
 #include <kernel/fut_task.h>
@@ -59,7 +60,7 @@ extern void fut_do_user_iretq(uint64_t entry, uint64_t stack, uint64_t argc, uin
 #endif
 
 /* Debug output for user trampoline serial output (U1234567A characters) */
-#define DEBUG_USER_TRAMPOLINE
+/* #define DEBUG_USER_TRAMPOLINE */
 
 /* Stack debugging (controlled via debug_config.h) */
 #define stack_printf(...) do { if (STACK_DEBUG) fut_printf(__VA_ARGS__); } while(0)
@@ -2079,7 +2080,7 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     fut_thread_t *thread = fut_thread_create(task,
                                              fut_user_trampoline,
                                              entry,
-                                             16 * 1024,
+                                             CONFIG_KERNEL_STACK_SIZE,
                                              FUT_DEFAULT_PRIORITY);
     if (!thread) {
         __asm__ volatile("sti" ::: "memory");
@@ -2132,6 +2133,7 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
 /* ARM64 ELF64 loader implementation */
 
 #include <kernel/exec.h>
+#include <config/futura_config.h>
 #include <kernel/errno.h>
 #include <kernel/fut_task.h>
 #include <kernel/fut_thread.h>
@@ -3620,7 +3622,7 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     fut_thread_t *thread = fut_thread_create(task,
                                              fut_user_trampoline_arm64,
                                              entry,
-                                             16 * 1024,
+                                             CONFIG_KERNEL_STACK_SIZE,
                                              FUT_DEFAULT_PRIORITY);
     if (!thread) {
         fut_free(entry);

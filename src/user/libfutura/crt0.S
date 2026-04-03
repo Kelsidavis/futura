@@ -11,15 +11,6 @@
 .global _start
 
 _start:
-    /* EARLY DEBUG: Write marker to fd=1 to confirm _start reached (userspace)
-     * Uses int 0x80 syscall - this is the earliest possible userspace output.
-     * This should appear after BCDE markers in kernel logs if syscalls work. */
-    mov $1, %rax            /* SYS_write = 1 */
-    mov $1, %rdi            /* fd = stdout */
-    lea crt0_early_msg(%rip), %rsi  /* buf = message */
-    mov $crt0_early_msg_len, %rdx   /* count */
-    int $0x80
-
     /* Clear frame pointer for stack unwinding */
     xor %rbp, %rbp
 

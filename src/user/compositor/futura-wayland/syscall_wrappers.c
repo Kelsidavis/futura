@@ -23,6 +23,9 @@
 /* Portable syscall interface - provides architecture-agnostic wrapper functions */
 #include "../libfutura/syscall_portable.h"
 
+/* Set to 0 to silence syscall wrapper debug output */
+#define WRAP_DEBUG 0
+
 /* Forward declarations for debug helpers */
 static void debug_write(const char *msg);
 static void debug_write_int(long num);
@@ -269,6 +272,7 @@ static const char *strerror_simple(int err) {
 
 /* Direct write for debugging without errno corruption */
 static void debug_write(const char *msg) {
+#if WRAP_DEBUG
     /* Try to write to console via stdout */
     extern long syscall(long, ...);
     size_t len = 0;
@@ -277,6 +281,9 @@ static void debug_write(const char *msg) {
     /* Write to fd 1 (stdout) instead of stderr */
     long result = syscall(1, 1, msg, len);  /* SYS_write = 1, stdout = 1 */
     (void)result;  /* Suppress unused warning */
+#else
+    (void)msg;
+#endif
 }
 
 /* Linker-wrapped listen() */

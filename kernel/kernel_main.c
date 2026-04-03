@@ -980,6 +980,55 @@ void fut_kernel_main(void) {
     fut_printf("[INIT] Initializing timer subsystem...\n");
     fut_timer_subsystem_init();
 
+#ifdef __x86_64__
+    /* Read CMOS RTC to initialize wall-clock time.
+     * CMOS RTC is accessed via I/O ports 0x70 (address) and 0x71 (data).
+     * Registers: 0=sec, 2=min, 4=hr, 6=weekday, 7=day, 8=month, 9=year, 0x0B=status_B */
+    {
+        extern volatile int64_t g_realtime_offset_sec;
+        uint8_t rtc_val;
+        /* Helper: read CMOS register */
+        #define CMOS_OUT(r) __asm__ volatile("outb %0, $0x70" :: "a"((uint8_t)(r)))
+        #define CMOS_IN()   __asm__ volatile("inb $0x71, %0" : "=a"(rtc_val))
+
+        CMOS_OUT(0x0A); CMOS_IN();
+        while (rtc_val & 0x80) { CMOS_OUT(0x0A); CMOS_IN(); }
+        CMOS_OUT(0x00); CMOS_IN(); uint8_t sec = rtc_val;
+        CMOS_OUT(0x02); CMOS_IN(); uint8_t min = rtc_val;
+        CMOS_OUT(0x04); CMOS_IN(); uint8_t hr  = rtc_val;
+        CMOS_OUT(0x07); CMOS_IN(); uint8_t day = rtc_val;
+        CMOS_OUT(0x08); CMOS_IN(); uint8_t mon = rtc_val;
+        CMOS_OUT(0x09); CMOS_IN(); uint8_t year = rtc_val;
+        CMOS_OUT(0x0B); CMOS_IN(); uint8_t status_b = rtc_val;
+        #undef CMOS_OUT
+        #undef CMOS_IN
+        /* Convert BCD to binary if needed */
+        if (!(status_b & 0x04)) {
+            sec  = (sec  & 0x0F) + (sec  >> 4) * 10;
+            min  = (min  & 0x0F) + (min  >> 4) * 10;
+            hr   = (hr   & 0x0F) + ((hr >> 4) & 0x03) * 10;
+            day  = (day  & 0x0F) + (day  >> 4) * 10;
+            mon  = (mon  & 0x0F) + (mon  >> 4) * 10;
+            year = (year & 0x0F) + (year >> 4) * 10;
+        }
+        int full_year = 2000 + (int)year;
+        int64_t days = 0;
+        for (int y = 1970; y < full_year; y++)
+            days += (y % 4 == 0 && (y % 100 != 0 || y % 400 == 0)) ? 366 : 365;
+        int mdays[] = {31,28,31,30,31,30,31,31,30,31,30,31};
+        if (full_year % 4 == 0 && (full_year % 100 != 0 || full_year % 400 == 0))
+            mdays[1] = 29;
+        for (int m = 0; m < (int)mon - 1; m++) days += mdays[m];
+        days += (int)day - 1;
+        int64_t epoch = days * 86400 + (int64_t)hr * 3600 + (int64_t)min * 60 + sec;
+        if (epoch > 1000000000LL) {
+            g_realtime_offset_sec = epoch;
+            fut_printf("[RTC] CMOS: %04d-%02d-%02d %02d:%02d:%02d UTC (epoch=%lld)\n",
+                       full_year, mon, day, hr, min, sec, (long long)epoch);
+        }
+    }
+#endif
+
     fut_printf("[INIT] Initializing signal subsystem...\n");
     fut_signal_init();
 

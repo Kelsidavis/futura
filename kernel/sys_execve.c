@@ -257,18 +257,6 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
         return -EFAULT;
     }
 
-    /* Phase 2: Categorize path type - use kernel_pathname for safe access */
-    const char *path_type;
-    if (kernel_pathname[0] == '/') {
-        path_type = "absolute";
-    } else if (kernel_pathname[0] == '.' && kernel_pathname[1] == '/') {
-        path_type = "relative (./...)";
-    } else if (kernel_pathname[0] == '.' && kernel_pathname[1] == '.' && kernel_pathname[2] == '/') {
-        path_type = "relative (../...)";
-    } else {
-        path_type = "basename (no path)";
-    }
-
     /* Security hardening WARNING: TOCTOU Race Condition in execve()
      *
      * execve() has inherent time-of-check-time-of-use vulnerabilities that CANNOT
@@ -889,6 +877,7 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
 #undef SHEBANG_MAX_DEPTH
 
     /* Phase 3: Log argument and environment size limits enforcement */
+#if EXECVE_DEBUG
     char limit_msg[256];
     int limit_pos = 0;
     const char *limit_text = "[EXECVE] execve() limit check: argv_size=";
@@ -917,18 +906,7 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
     while (*limit_text) { limit_msg[limit_pos++] = *limit_text++; }
     limit_msg[limit_pos] = '\0';
     fut_printf("%s", limit_msg);
-
-    /* Phase 2: Categorize argument count */
-    const char *argc_category;
-    if (argc == 0) {
-        argc_category = "none";
-    } else if (argc <= 5) {
-        argc_category = "few (1-5)";
-    } else if (argc <= 20) {
-        argc_category = "normal (6-20)";
-    } else {
-        argc_category = "many (>20)";
-    }
+#endif
 
     /* PRE-VALIDATION: Verify the file is a valid executable BEFORE any
      * destructive operations (closing CLOEXEC fds, resetting signal handlers).
@@ -1016,69 +994,8 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
     /* Linux: PR_SET_KEEPCAPS is cleared on exec */
     task->keepcaps = 0;
 
-    /* Phase 2: Detailed pre-exec logging (use kernel_pathname for SMAP safety) */
-    char msg[256];
-    int pos = 0;
-    const char *text = "[EXECVE] execve(path=";
-    while (*text) { msg[pos++] = *text++; }
-    /* Use kernel_pathname (already safely copied) instead of local_pathname */
-    const char *p = kernel_pathname;
-    int log_path_len = 0;
-    while (*p && log_path_len < 80) { msg[pos++] = *p++; log_path_len++; }
-    text = " [";
-    while (*text) { msg[pos++] = *text++; }
-    while (*path_type) { msg[pos++] = *path_type++; }
-    text = "], argc=";
-    while (*text) { msg[pos++] = *text++; }
-
-    char num2[16]; int num_pos2 = 0; int val2 = argc;
-    if (val2 == 0) { num2[num_pos2++] = '0'; }
-    else { char temp[16]; int temp_pos = 0;
-        while (val2 > 0) { temp[temp_pos++] = '0' + (val2 % 10); val2 /= 10; }
-        while (temp_pos > 0) { num2[num_pos2++] = temp[--temp_pos]; } }
-    num2[num_pos2] = '\0';
-    for (int i = 0; num2[i]; i++) { msg[pos++] = num2[i]; }
-
-    text = " [";
-    while (*text) { msg[pos++] = *text++; }
-    while (*argc_category) { msg[pos++] = *argc_category++; }
-    text = "], envc=";
-    while (*text) { msg[pos++] = *text++; }
-
-    num_pos2 = 0; val2 = envc;
-    if (val2 == 0) { num2[num_pos2++] = '0'; }
-    else { char temp[16]; int temp_pos = 0;
-        while (val2 > 0) { temp[temp_pos++] = '0' + (val2 % 10); val2 /= 10; }
-        while (temp_pos > 0) { num2[num_pos2++] = temp[--temp_pos]; } }
-    num2[num_pos2] = '\0';
-    for (int i = 0; num2[i]; i++) { msg[pos++] = num2[i]; }
-
-    text = ", cloexec_fds=";
-    while (*text) { msg[pos++] = *text++; }
-
-    num_pos2 = 0; val2 = cloexec_count;
-    if (val2 == 0) { num2[num_pos2++] = '0'; }
-    else { char temp[16]; int temp_pos = 0;
-        while (val2 > 0) { temp[temp_pos++] = '0' + (val2 % 10); val2 /= 10; }
-        while (temp_pos > 0) { num2[num_pos2++] = temp[--temp_pos]; } }
-    num2[num_pos2] = '\0';
-    for (int i = 0; num2[i]; i++) { msg[pos++] = num2[i]; }
-
-    text = ", pid=";
-    while (*text) { msg[pos++] = *text++; }
-
-    num_pos2 = 0; unsigned int uval = task->pid;
-    if (uval == 0) { num2[num_pos2++] = '0'; }
-    else { char temp[16]; int temp_pos = 0;
-        while (uval > 0) { temp[temp_pos++] = '0' + (uval % 10); uval /= 10; }
-        while (temp_pos > 0) { num2[num_pos2++] = temp[--temp_pos]; } }
-    num2[num_pos2] = '\0';
-    for (int i = 0; num2[i]; i++) { msg[pos++] = num2[i]; }
-
-    text = ") (replacing process image, Phase 2)\n";
-    while (*text) { msg[pos++] = *text++; }
-    msg[pos] = '\0';
-    fut_printf("%s", msg);
+    EXECVE_LOG("[EXECVE] execve(path=%s, argc=%d, envc=%d, cloexec=%d, pid=%u)\n",
+               kernel_pathname, argc, envc, cloexec_count, (unsigned)task->pid);
 
     /* Check setuid/setgid bits on the executable and update credentials.
      * POSIX: if the file has S_ISUID set, effective UID becomes file owner.
@@ -1274,52 +1191,7 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
     }
 
     /* If we get here, fut_exec_elf failed. Log the error. */
-    const char *error_desc;
-    switch (ret) {
-        case -ENOENT:
-            error_desc = "file not found";
-            break;
-        case -EACCES:
-            error_desc = "permission denied";
-            break;
-        case -ENOMEM:
-            error_desc = "out of memory";
-            break;
-        case -EINVAL:
-            error_desc = "invalid executable format";
-            break;
-        default:
-            error_desc = "exec failed";
-            break;
-    }
-
-    pos = 0;
-    text = "[EXECVE] execve(path=";
-    while (*text) { msg[pos++] = *text++; }
-    /* SMAP FIX: Use kernel_pathname instead of local_pathname (userspace pointer) */
-    p = kernel_pathname;
-    path_len = 0;
-    while (*p && path_len < 80) { msg[pos++] = *p++; path_len++; }
-    text = ") -> ";
-    while (*text) { msg[pos++] = *text++; }
-
-    /* Add error code */
-    num_pos = 0; val = -ret;
-    if (val == 0) { num[num_pos++] = '0'; }
-    else { char temp[16]; int temp_pos = 0;
-        while (val > 0) { temp[temp_pos++] = '0' + (val % 10); val /= 10; }
-        while (temp_pos > 0) { num[num_pos++] = temp[--temp_pos]; } }
-    num[num_pos] = '\0';
-    msg[pos++] = '-';
-    for (int i = 0; num[i]; i++) { msg[pos++] = num[i]; }
-
-    text = " (";
-    while (*text) { msg[pos++] = *text++; }
-    while (*error_desc) { msg[pos++] = *error_desc++; }
-    text = ")\n";
-    while (*text) { msg[pos++] = *text++; }
-    msg[pos] = '\0';
-    fut_printf("%s", msg);
+    EXECVE_LOG("[EXECVE] execve(path=%s) -> %d\n", kernel_pathname, ret);
 
     /* Cleanup kernel buffers on exec failure
      * On success, fut_exec_elf never returns (calls fut_thread_exit),

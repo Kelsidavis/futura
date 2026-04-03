@@ -191,6 +191,7 @@ static struct pty_pair *pty_alloc(void) {
 struct pty_priv {
     uint32_t         tag;
     struct pty_pair *pair;
+    bool             nonblock;  /* O_NONBLOCK flag (propagated via fcntl F_SETFL) */
 };
 
 static ssize_t ptmx_read(void *inode, void *priv, void *buf, size_t n, off_t *pos) {
@@ -207,7 +208,7 @@ static ssize_t ptmx_read(void *inode, void *priv, void *buf, size_t n, off_t *po
     }
     if (ring_empty(&p->s2m)) {
         fut_spinlock_release(&p->lock);
-        return -EAGAIN;  /* Non-blocking for now */
+        return -EAGAIN;
     }
     size_t got = ring_read(&p->s2m, buf, n);
     fut_spinlock_release(&p->lock);
@@ -372,6 +373,9 @@ static int ptmx_ioctl(void *inode, void *priv, unsigned long req, unsigned long 
             fut_waitq_wake_one(p->slave_epoll_wq);
         return 0;
     }
+    case 0xFE01:  /* PIPE_IOC_SETFLAGS — propagated from fcntl(F_SETFL) */
+        pp->nonblock = ((unsigned long)arg & 0x800) != 0;
+        return 0;
     default:
         return -ENOTTY;
     }
@@ -419,8 +423,9 @@ static int ptmx_open(void *inode, int flags, void **private_data) {
 
     struct pty_priv *pp = fut_malloc(sizeof(*pp));
     if (!pp) { p->active = false; return -ENOMEM; }
-    pp->tag  = PTY_MASTER_TAG;
-    pp->pair = p;
+    pp->tag      = PTY_MASTER_TAG;
+    pp->pair     = p;
+    pp->nonblock = false;
     p->master_refcnt++;
 
     *private_data = pp;
@@ -438,13 +443,20 @@ static ssize_t pts_read(void *inode, void *priv, void *buf, size_t n, off_t *pos
     struct pty_pair *p = pp->pair;
 
     fut_spinlock_acquire(&p->lock);
+    if (ring_empty(&p->m2s) && p->master_refcnt > 0) {
+        if (pp->nonblock) {
+            fut_spinlock_release(&p->lock);
+            return -EAGAIN;
+        }
+        /* Block until data is available or master closes */
+        while (ring_empty(&p->m2s) && p->master_refcnt > 0) {
+            fut_waitq_sleep_locked(&p->slave_wq, &p->lock, FUT_THREAD_BLOCKED);
+            fut_spinlock_acquire(&p->lock);
+        }
+    }
     if (p->master_refcnt == 0 && ring_empty(&p->m2s)) {
         fut_spinlock_release(&p->lock);
         return 0;  /* EOF: master closed */
-    }
-    if (ring_empty(&p->m2s)) {
-        fut_spinlock_release(&p->lock);
-        return -EAGAIN;
     }
     size_t got = ring_read(&p->m2s, buf, n);
     fut_spinlock_release(&p->lock);
@@ -560,6 +572,9 @@ static int pts_ioctl(void *inode, void *priv, unsigned long req, unsigned long a
             return -EFAULT;
         return 0;
     }
+    case 0xFE01:  /* PIPE_IOC_SETFLAGS — propagated from fcntl(F_SETFL) */
+        pp->nonblock = ((unsigned long)arg & 0x800) != 0;
+        return 0;
     default:
         return -ENOTTY;
     }
@@ -630,8 +645,9 @@ int pty_open_slave(int index) {
 
     struct pty_priv *pp = fut_malloc(sizeof(*pp));
     if (!pp) { if (p->slave_refcnt > 0) p->slave_refcnt--; return -ENOMEM; }
-    pp->tag  = PTY_SLAVE_TAG;
-    pp->pair = p;
+    pp->tag      = PTY_SLAVE_TAG;
+    pp->pair     = p;
+    pp->nonblock = false;
 
     int fd = chrdev_alloc_fd(&pts_fops, NULL, pp);
     if (fd < 0) {

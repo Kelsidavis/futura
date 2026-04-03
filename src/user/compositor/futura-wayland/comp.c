@@ -1195,8 +1195,7 @@ void comp_surface_commit(struct comp_surface *surface) {
     if (has_buffer) {
         struct comp_buffer buffer = {0};
         if (shm_buffer_import(surface->pending_buffer_resource, &buffer) == 0) {
-            printf("[DEBUG] Buffer import OK: %dx%d stride=%d data=%p\n",
-                   buffer.width, buffer.height, buffer.stride, buffer.data);
+            /* buffer imported successfully */
             /* Defense in depth: validate buffer before use */
             if (!buffer.data || buffer.width <= 0 || buffer.height <= 0 || buffer.stride <= 0) {
                 shm_buffer_release(&buffer);
@@ -1477,7 +1476,7 @@ void comp_render_frame(struct compositor_state *comp) {
         /* Get current time and date for clock display */
         struct { long tv_sec; long tv_nsec; } clock_ts = {0, 0};
         extern long sys_call2(long nr, long a, long b);
-        sys_call2(228, 0, (long)&clock_ts);
+        sys_call2(98, 0, (long)&clock_ts);  /* SYS_clock_gettime(CLOCK_REALTIME, &ts) */
         long total_secs = clock_ts.tv_sec;
         long daytime = total_secs % 86400;
         int clock_hr = (int)(daytime / 3600);

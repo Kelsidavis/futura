@@ -331,12 +331,7 @@ static void seat_send_key(struct seat_state *seat,
                           uint32_t keycode,
                           bool pressed,
                           uint32_t time_msec) {
-    if (!seat) {
-        printf("[KEY] seat=NULL\n");
-        return;
-    }
-    if (!seat->keyboard_focus) {
-        printf("[KEY] code=%u focus=NULL\n", keycode);
+    if (!seat || !seat->keyboard_focus) {
         return;
     }
 
@@ -360,7 +355,6 @@ static void seat_send_key(struct seat_state *seat,
         }
     }
     if (!any_entered) {
-        printf("[KEY] force-enter: clients=%d kbd=%d\n", n_clients, n_kbd);
         seat_keyboard_enter(seat, seat->keyboard_focus);
     }
 
@@ -380,7 +374,7 @@ static void seat_send_key(struct seat_state *seat,
         wl_keyboard_send_key(client->keyboard_resource, serial, time_msec, keycode, state);
         sent++;
     }
-    printf("[KEY] code=%u down=%u sent=%d\n", keycode, pressed ? 1u : 0u, sent);
+    (void)sent;
 }
 
 void seat_focus_surface(struct seat_state *seat, struct comp_surface *surface) {
@@ -1010,7 +1004,7 @@ struct seat_state *seat_init(struct compositor_state *comp) {
 
     seat->kbd_fd = (int)sys_open("/dev/input/kbd0", O_RDONLY | O_NONBLOCK, 0);
     seat->mouse_fd = (int)sys_open("/dev/input/mouse0", O_RDONLY | O_NONBLOCK, 0);
-    printf("[SEAT] kbd_fd=%d mouse_fd=%d\n", seat->kbd_fd, seat->mouse_fd);
+    /* kbd_fd and mouse_fd opened */
 
     /* Input devices are polled manually in seat_poll_input() since they
        don't support epoll. The compositor main loop calls seat_poll_input()

@@ -189,16 +189,43 @@ static char keycode_to_ascii(uint32_t key, bool shift) {
 }
 
 static uint32_t kbd_mods_depressed = 0;  /* Track modifier state */
+static uint64_t tick_ms = 0;             /* Monotonic tick counter (~10ms per iteration) */
+
+/* Key repeat state */
+static uint32_t repeat_key = 0;          /* Currently held key (0 = none) */
+static uint64_t repeat_deadline_ms = 0;  /* When next repeat fires */
+#define REPEAT_DELAY_MS   500
+#define REPEAT_INTERVAL_MS 33  /* ~30 chars/sec */
+
+/* Forward declaration — processes a single keypress */
+static void process_key(struct client_state *state, uint32_t key);
 
 static void keyboard_key(void *data, struct wl_keyboard *keyboard, uint32_t serial,
                         uint32_t time, uint32_t key, uint32_t key_state) {
     (void)keyboard; (void)serial; (void)time;
 
     struct client_state *state = data;
-    if (!state || key_state != WL_KEYBOARD_KEY_STATE_PRESSED) {
+    if (!state) return;
+
+    if (key_state == WL_KEYBOARD_KEY_STATE_RELEASED) {
+        if (key == repeat_key) repeat_key = 0;  /* Stop repeating */
         return;
     }
 
+    /* Key pressed — process it and start repeat timer */
+    process_key(state, key);
+
+    /* Modifier keys (shift, ctrl, alt) don't repeat */
+    if (key == 42 || key == 54 || key == 29 || key == 97 ||
+        key == 56 || key == 100) {
+        repeat_key = 0;
+    } else {
+        repeat_key = key;
+        repeat_deadline_ms = tick_ms + REPEAT_DELAY_MS;
+    }
+}
+
+static void process_key(struct client_state *state, uint32_t key) {
     bool shift = (kbd_mods_depressed & 1) != 0;
 
     /* Shift+PageUp/PageDown: scroll through scrollback history */
@@ -573,9 +600,6 @@ static void redraw(struct client_state *state) {
     state->needs_redraw = false;
 }
 
-/* Monotonic tick counter (incremented each main loop iteration, ~10ms each) */
-static uint64_t tick_ms = 0;
-
 /* Main loop iteration */
 static bool main_loop_iteration(struct client_state *state) {
     tick_ms += 10;  /* Each iteration is ~10ms (matches nanosleep below) */
@@ -596,6 +620,12 @@ static bool main_loop_iteration(struct client_state *state) {
     /* Update cursor blink */
     if (term_update_blink(&state->term, tick_ms)) {
         state->needs_redraw = true;
+    }
+
+    /* Key repeat: if a key is held, re-fire it after delay */
+    if (repeat_key != 0 && tick_ms >= repeat_deadline_ms) {
+        process_key(state, repeat_key);
+        repeat_deadline_ms = tick_ms + REPEAT_INTERVAL_MS;
     }
 
     /* Check if shell set a new window title via OSC 0/2 */

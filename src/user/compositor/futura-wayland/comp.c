@@ -2134,14 +2134,28 @@ int comp_run(struct compositor_state *comp) {
         return -1;
     }
 
+    int dispatch_errors = 0;
+
     while (comp->running) {
         wl_display_flush_clients(comp->display);
 
         /* Dispatch Wayland events with 16ms timeout (~60Hz frame rate).
-         * This blocks in epoll_wait until events arrive or timeout expires. */
+         * This blocks in epoll_wait until events arrive or timeout expires.
+         * On our custom kernel, epoll may return transient errors — tolerate
+         * them rather than exiting the compositor event loop. */
         int rc = wl_event_loop_dispatch(comp->loop, 16);
         if (rc < 0 && errno != EINTR) {
-            break;
+            dispatch_errors++;
+            if (dispatch_errors > 1000) {
+                printf("[WAYLAND] event loop failed %d times, exiting\n",
+                       dispatch_errors);
+                break;
+            }
+            /* Brief yield on error to avoid busy spin */
+            struct timespec ts = { .tv_sec = 0, .tv_nsec = 1000000 }; /* 1ms */
+            nanosleep(&ts, NULL);
+        } else {
+            dispatch_errors = 0;
         }
 
         /* Manually handle timer events.
@@ -2167,6 +2181,8 @@ int comp_run(struct compositor_state *comp) {
         wl_display_flush_clients(comp->display);
     }
 
+    printf("[WAYLAND] event loop exited (running=%d errors=%d)\n",
+           comp->running, dispatch_errors);
     return 0;
 }
 

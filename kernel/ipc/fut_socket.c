@@ -1184,7 +1184,7 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
         fut_thread_t *snd_thr = fut_thread_current();
         if (snd_thr) {
             snd_tmo_ctx.fired  = false;
-            snd_thr->state         = FUT_THREAD_BLOCKED;
+            /* Don't set BLOCKED until timer is armed — avoids preemption hang */
             snd_thr->blocked_waitq = pair->send_waitq;
             snd_thr->wait_next     = NULL;
             fut_spinlock_acquire(&pair->send_waitq->lock);
@@ -1213,10 +1213,15 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
                         wp = wc; wc = wc->wait_next;
                     }
                     fut_spinlock_release(&pair->send_waitq->lock);
-                    snd_thr->state = FUT_THREAD_RUNNING;
                     return -EAGAIN;
                 }
+                if (snd_tmo_ctx.fired) {
+                    fut_timer_cancel(sock_timeout_callback, &snd_tmo_ctx);
+                    fut_spinlock_acquire(&pair->lock);
+                    continue;
+                }
             }
+            snd_thr->state = FUT_THREAD_BLOCKED;
             fut_schedule();
             if (snd_has_timeout) fut_timer_cancel(sock_timeout_callback, &snd_tmo_ctx);
             fut_spinlock_acquire(&pair->lock);
@@ -1399,7 +1404,7 @@ ssize_t fut_socket_recv(fut_socket_t *socket, void *buf, size_t len) {
         fut_thread_t *rcv_thr = fut_thread_current();
         if (rcv_thr) {
             rcv_tmo_ctx.fired  = false;
-            rcv_thr->state         = FUT_THREAD_BLOCKED;
+            /* Don't set BLOCKED until timer is armed — avoids preemption hang */
             rcv_thr->blocked_waitq = pair->recv_waitq;
             rcv_thr->wait_next     = NULL;
             fut_spinlock_acquire(&pair->recv_waitq->lock);
@@ -1427,10 +1432,15 @@ ssize_t fut_socket_recv(fut_socket_t *socket, void *buf, size_t len) {
                         wp = wc; wc = wc->wait_next;
                     }
                     fut_spinlock_release(&pair->recv_waitq->lock);
-                    rcv_thr->state = FUT_THREAD_RUNNING;
                     return -EAGAIN;
                 }
+                if (rcv_tmo_ctx.fired) {
+                    fut_timer_cancel(sock_timeout_callback, &rcv_tmo_ctx);
+                    fut_spinlock_acquire(&pair->lock);
+                    continue;
+                }
             }
+            rcv_thr->state = FUT_THREAD_BLOCKED;
             fut_schedule();
             if (rcv_has_timeout) fut_timer_cancel(sock_timeout_callback, &rcv_tmo_ctx);
             fut_spinlock_acquire(&pair->lock);
@@ -2039,7 +2049,10 @@ ssize_t fut_socket_recvfrom_dgram(fut_socket_t *socket, void *buf, size_t len,
         fut_thread_t *dg_thr = fut_thread_current();
         if (dg_thr) {
             dg_tmo_ctx.fired  = false;
-            dg_thr->state         = FUT_THREAD_BLOCKED;
+            /* Keep thread RUNNING while arming the waitqueue and timer.
+             * Setting BLOCKED too early creates a preemption window where
+             * a timer IRQ can switch us away before the timeout timer
+             * is armed, causing a permanent hang on single-vCPU. */
             dg_thr->blocked_waitq = dq->recv_waitq;
             dg_thr->wait_next     = NULL;
             fut_spinlock_acquire(&dq->recv_waitq->lock);
@@ -2067,10 +2080,17 @@ ssize_t fut_socket_recvfrom_dgram(fut_socket_t *socket, void *buf, size_t len,
                         wp = wc; wc = wc->wait_next;
                     }
                     fut_spinlock_release(&dq->recv_waitq->lock);
-                    dg_thr->state = FUT_THREAD_RUNNING;
                     return -EAGAIN;
                 }
+                /* If timeout already fired while we were arming, skip sleep */
+                if (dg_tmo_ctx.fired) {
+                    fut_timer_cancel(sock_timeout_callback, &dg_tmo_ctx);
+                    fut_spinlock_acquire(&dq->lock);
+                    continue;
+                }
             }
+            /* Now safe to mark BLOCKED — timer is armed (if applicable) */
+            dg_thr->state = FUT_THREAD_BLOCKED;
             fut_schedule();
             if (dg_has_timeout) fut_timer_cancel(sock_timeout_callback, &dg_tmo_ctx);
             fut_spinlock_acquire(&dq->lock);

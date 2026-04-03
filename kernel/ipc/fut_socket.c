@@ -1222,7 +1222,17 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
                 }
             }
             snd_thr->state = FUT_THREAD_BLOCKED;
-            fut_schedule();
+            /* Memory barrier + recheck: if the timer fired between the
+             * check at line ~1218 and setting BLOCKED above, the callback
+             * already set fired=true and moved us to READY.  Our BLOCKED
+             * write just clobbered that → sleep forever.  Catch it here. */
+            __atomic_thread_fence(__ATOMIC_SEQ_CST);
+            if (snd_has_timeout && snd_tmo_ctx.fired) {
+                snd_thr->state = FUT_THREAD_RUNNING;
+            } else {
+                fut_schedule();
+            }
+            snd_thr->state = FUT_THREAD_RUNNING;
             if (snd_has_timeout) fut_timer_cancel(sock_timeout_callback, &snd_tmo_ctx);
             fut_spinlock_acquire(&pair->lock);
         } else {
@@ -1441,7 +1451,13 @@ ssize_t fut_socket_recv(fut_socket_t *socket, void *buf, size_t len) {
                 }
             }
             rcv_thr->state = FUT_THREAD_BLOCKED;
-            fut_schedule();
+            __atomic_thread_fence(__ATOMIC_SEQ_CST);
+            if (rcv_has_timeout && rcv_tmo_ctx.fired) {
+                rcv_thr->state = FUT_THREAD_RUNNING;
+            } else {
+                fut_schedule();
+            }
+            rcv_thr->state = FUT_THREAD_RUNNING;
             if (rcv_has_timeout) fut_timer_cancel(sock_timeout_callback, &rcv_tmo_ctx);
             fut_spinlock_acquire(&pair->lock);
         } else {
@@ -2091,7 +2107,13 @@ ssize_t fut_socket_recvfrom_dgram(fut_socket_t *socket, void *buf, size_t len,
             }
             /* Now safe to mark BLOCKED — timer is armed (if applicable) */
             dg_thr->state = FUT_THREAD_BLOCKED;
-            fut_schedule();
+            __atomic_thread_fence(__ATOMIC_SEQ_CST);
+            if (dg_has_timeout && dg_tmo_ctx.fired) {
+                dg_thr->state = FUT_THREAD_RUNNING;
+            } else {
+                fut_schedule();
+            }
+            dg_thr->state = FUT_THREAD_RUNNING;
             if (dg_has_timeout) fut_timer_cancel(sock_timeout_callback, &dg_tmo_ctx);
             fut_spinlock_acquire(&dq->lock);
         } else {

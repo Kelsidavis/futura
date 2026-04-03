@@ -103,6 +103,30 @@ static inline void sched_irq_enable(void) {
 #endif
 }
 
+/* Save interrupt state and disable — safe from both thread and ISR context.
+ * Unlike bare cli/sti, this won't accidentally re-enable interrupts when
+ * called from an ISR (where IF is already 0). */
+static inline unsigned long sched_irqsave(void) {
+    unsigned long flags;
+#if defined(__x86_64__)
+    __asm__ volatile("pushfq; pop %0; cli" : "=r"(flags) :: "memory");
+#elif defined(__aarch64__)
+    __asm__ volatile("mrs %0, daif; msr daifset, #0xF" : "=r"(flags) :: "memory");
+#else
+    flags = 0;
+#endif
+    return flags;
+}
+
+static inline void sched_irqrestore(unsigned long flags) {
+#if defined(__x86_64__)
+    if (flags & (1UL << 9))
+        __asm__ volatile("sti" ::: "memory");
+#elif defined(__aarch64__)
+    __asm__ volatile("msr daif, %0" :: "r"(flags) : "memory");
+#endif
+}
+
 /* ============================================================
  *   Nice-Based Time Slice Computation
  * ============================================================ */
@@ -329,6 +353,13 @@ void fut_sched_add_thread(fut_thread_t *thread) {
         return;
     }
 
+    /* Disable interrupts for the duration of this function.  The timer ISR
+     * calls wake_sleeping_threads() → fut_sched_add_thread(), so if a timer
+     * fires while we hold any percpu queue_lock, the ISR will deadlock trying
+     * to acquire the same lock.  Use save/restore so this is safe when called
+     * from ISR context too (where IF is already 0). */
+    unsigned long irq_flags = sched_irqsave();
+
     fut_percpu_t *target_percpu = NULL;
 
     // If thread has no affinity mask set, find least-loaded CPU within default mask
@@ -422,6 +453,7 @@ void fut_sched_add_thread(fut_thread_t *thread) {
         target_percpu = fut_percpu_get();
     }
     if (!target_percpu) {
+        sched_irqrestore(irq_flags);
         return;  // No per-CPU data available
     }
 
@@ -435,6 +467,7 @@ void fut_sched_add_thread(fut_thread_t *thread) {
             // Thread already in queue - this is benign and can happen during normal
             // cooperative scheduling when multiple code paths try to ready the same thread
             fut_spinlock_release(&target_percpu->queue_lock);
+            sched_irqrestore(irq_flags);
             return;
         }
         walker = walker->next;
@@ -455,15 +488,7 @@ void fut_sched_add_thread(fut_thread_t *thread) {
     target_percpu->queue_depth = target_percpu->ready_count;
 
     fut_spinlock_release(&target_percpu->queue_lock);
-
-    // Debug: Log when threads are added (limited for perf)
-    static int add_count = 0;
-    (void)add_count; /* Quiet - thread scheduling is working */
-    if (0) {
-        fut_printf("[SCHED] Added thread tid=%llu to ready queue (count now %llu)\n",
-                   (unsigned long long)thread->tid, (unsigned long long)target_percpu->ready_count);
-        add_count++;
-    }
+    sched_irqrestore(irq_flags);
 }
 
 /**
@@ -483,6 +508,12 @@ void fut_sched_remove_thread(fut_thread_t *thread) {
 
     fut_percpu_t *percpu = &fut_percpu_data[cpu_index];
 
+    /* Disable interrupts before acquiring queue_lock to prevent deadlock:
+     * the timer ISR calls wake_sleeping_threads() → fut_sched_add_thread()
+     * which also acquires queue_lock. Without cli, a timer firing while
+     * we hold the lock will spin forever trying to re-acquire it.
+     * Use save/restore so this is safe from any context. */
+    unsigned long irq_flags = sched_irqsave();
     fut_spinlock_acquire(&percpu->queue_lock);
 
     // Check if thread is actually in the list
@@ -494,6 +525,7 @@ void fut_sched_remove_thread(fut_thread_t *thread) {
     if (!in_list) {
         // Thread not in list, nothing to remove
         fut_spinlock_release(&percpu->queue_lock);
+        sched_irqrestore(irq_flags);
         return;
     }
 
@@ -519,6 +551,7 @@ void fut_sched_remove_thread(fut_thread_t *thread) {
     percpu->queue_depth = percpu->ready_count;
 
     fut_spinlock_release(&percpu->queue_lock);
+    sched_irqrestore(irq_flags);
 }
 
 /* ============================================================

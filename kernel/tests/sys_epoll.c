@@ -26,7 +26,7 @@ extern long sys_epoll_create1(int flags);
 extern long sys_eventfd2(unsigned int initval, int flags);
 
 /* Max per-task epoll instances (must match kernel/sys_epoll.c) */
-#define EPOLL_TEST_MAX_PER_TASK 16
+#define EPOLL_TEST_MAX_PER_TASK 128
 
 /* Test error codes */
 #define EPOLL_TEST_CREATE       1

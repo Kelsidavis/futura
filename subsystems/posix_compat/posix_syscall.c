@@ -732,17 +732,19 @@ static inline uint64_t get_current_tid(void) {
  * Returns NULL if FD is invalid, not a socket, or belongs to another process.
  */
 fut_socket_t *get_socket_from_fd(int fd) {
-    if (fd < 0 || fd >= MAX_SOCKET_FDS) {
-        return NULL;
+    /* Primary path: look up through the per-task VFS fd table.
+     * This is correct across fork/exec because VFS fds are per-process,
+     * unlike the global socket_fd_table which is indexed by fd number
+     * and can be clobbered when different processes reuse the same fd. */
+    struct fut_file *file = vfs_get_file(fd);
+    if (file && file->chr_ops == &socket_fops && file->chr_private) {
+        return (fut_socket_t *)file->chr_private;
     }
-    if (socket_fd_table[fd] == NULL) {
-        return NULL;
+    /* Fallback to global table for edge cases (kernel-internal sockets) */
+    if (fd >= 0 && fd < MAX_SOCKET_FDS && socket_fd_table[fd] != NULL) {
+        return socket_fd_table[fd];
     }
-    /* Note: ownership check removed. VFS fd_table provides per-task isolation,
-     * and release_socket_fd() in fut_vfs_close clears stale entries. The old
-     * ownership check broke fork() — child inherited VFS fds but couldn't
-     * access parent's socket_fd_table entries due to different thread IDs. */
-    return socket_fd_table[fd];
+    return NULL;
 }
 
 /**

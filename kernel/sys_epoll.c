@@ -253,7 +253,7 @@
 #define MAX_EPOLL_INSTANCES 256
 
 /* Maximum epoll instances per task (prevents single-task resource exhaustion) */
-#define MAX_EPOLL_PER_TASK 16
+#define MAX_EPOLL_PER_TASK 128
 
 /* epoll_event structure provided by sys/epoll.h - matches Linux ABI
  *

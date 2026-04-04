@@ -589,10 +589,13 @@ bool fut_trap_handle_page_fault(fut_interrupt_frame_t *frame) {
 
         /* Log the unhandled user page fault */
         uint64_t cr2 = fut_read_cr2();
-        fut_printf("[#PF-USER] Unhandled user page fault: addr=0x%llx rip=0x%llx err=0x%llx\n",
+        fut_task_t *pf_dbg = fut_task_current();
+        fut_printf("[#PF-USER] Unhandled user page fault: addr=0x%llx rip=0x%llx err=0x%llx pid=%d comm=%s\n",
                    (unsigned long long)cr2,
                    (unsigned long long)frame->rip,
-                   (unsigned long long)frame->error_code);
+                   (unsigned long long)frame->error_code,
+                   pf_dbg ? (int)pf_dbg->pid : -1,
+                   pf_dbg ? pf_dbg->comm : "?");
         fut_printf("[#PF-USER] RAX=0x%llx RBX=0x%llx RCX=0x%llx RDX=0x%llx\n",
                    (unsigned long long)frame->rax, (unsigned long long)frame->rbx,
                    (unsigned long long)frame->rcx, (unsigned long long)frame->rdx);

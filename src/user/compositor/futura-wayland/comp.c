@@ -459,6 +459,12 @@ static void blit_argb(const char *src_base,
                       int dst_pitch,
                       int width,
                       int height) {
+    if (!src_base || !dst_base || width <= 0 || height <= 0) {
+        return;
+    }
+    if ((uintptr_t)dst_base < 0x10000 || (uintptr_t)src_base < 0x10000) {
+        return;
+    }
     size_t row_bytes = (size_t)width * 4u;
     const char *src = src_base;
     char *dst = dst_base;

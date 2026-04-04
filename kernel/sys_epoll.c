@@ -1412,14 +1412,6 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
  * Phase 3 (Completed): Edge-triggered mode, oneshot events
  * Phase 4 (Completed): Performance optimization with memory pooling
  */
-/* Timer callback to wake epoll waitqueue on timeout expiry */
-static void epoll_timeout_wakeup(void *arg) {
-    fut_waitq_t *wq = (fut_waitq_t *)arg;
-    if (wq) {
-        fut_waitq_wake_all(wq);
-    }
-}
-
 long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout) {
     epoll_ensure_init();
 
@@ -1852,15 +1844,12 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
                 return 0;  /* Timeout already expired */
             }
             uint64_t remaining = deadline_ticks - now;
-            if (fut_timer_start(remaining, epoll_timeout_wakeup, &set->epoll_waitq) != 0) {
-                /* OOM: cannot start timeout timer, treat as timeout expiry */
-                return 0;
-            }
-        }
-        fut_waitq_sleep_locked(&set->epoll_waitq, NULL, FUT_THREAD_BLOCKED);
-        /* Cancel any outstanding timeout timer (harmless if already fired) */
-        if (timeout > 0) {
-            fut_timer_cancel(epoll_timeout_wakeup, &set->epoll_waitq);
+            /* Use sleep_timed to avoid lost-wakeup race: thread is enqueued
+             * BEFORE the timer starts, so the callback always finds us. */
+            fut_waitq_sleep_timed(&set->epoll_waitq, remaining, NULL);
+        } else {
+            /* timeout == -1: block indefinitely until an event wakes us */
+            fut_waitq_sleep_locked(&set->epoll_waitq, NULL, FUT_THREAD_BLOCKED);
         }
 
         /* Check for pending unblocked signals → EINTR */
@@ -2299,14 +2288,10 @@ long sys_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
             uint64_t remaining_ticks = remaining_ns / 10000000ULL;
             if (remaining_ns % 10000000ULL != 0) remaining_ticks++;
             if (remaining_ticks == 0) remaining_ticks = 1;
-            if (fut_timer_start(remaining_ticks, epoll_timeout_wakeup, &set->epoll_waitq) != 0) {
-                ret = 0;  /* OOM on timer → treat as timeout */
-                goto out_restore;
-            }
+            fut_waitq_sleep_timed(&set->epoll_waitq, remaining_ticks, NULL);
+        } else {
+            fut_waitq_sleep_locked(&set->epoll_waitq, NULL, FUT_THREAD_BLOCKED);
         }
-        fut_waitq_sleep_locked(&set->epoll_waitq, NULL, FUT_THREAD_BLOCKED);
-        if (has_timeout)
-            fut_timer_cancel(epoll_timeout_wakeup, &set->epoll_waitq);
 
         /* Check for pending signals after wakeup → EINTR */
         if (task) {

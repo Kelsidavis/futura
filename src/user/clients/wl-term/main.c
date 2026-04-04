@@ -541,6 +541,21 @@ static int spawn_shell(struct terminal *term) {
     slave_path[sp++] = '0' + (char)(slave_num % 10);
     slave_path[sp] = '\0';
 
+    /* Enable ECHO and line-editing flags for the terminal.
+     * Default termios has ECHO off to avoid test pollution; real terminals
+     * need it so keystrokes are displayed. */
+    {
+        char tios[60];
+        if (sys_ioctl(master_fd, 0x5401 /* TCGETS */, (long)tios) == 0) {
+            unsigned int lf;
+            for (int i = 0; i < 4; i++) ((char*)&lf)[i] = tios[12+i];
+            lf |= 0x0008 | 0x0010 | 0x0020 | 0x0200 | 0x0800;
+            /* ECHO | ECHOE | ECHOK | ECHOCTL | ECHOKE */
+            for (int i = 0; i < 4; i++) tios[12+i] = ((char*)&lf)[i];
+            sys_ioctl(master_fd, 0x5402 /* TCSETS */, (long)tios);
+        }
+    }
+
     /* Set terminal size on PTY */
     struct { unsigned short ws_row, ws_col, ws_xpixel, ws_ypixel; } wsz;
     wsz.ws_row = TERM_ROWS;

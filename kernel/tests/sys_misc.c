@@ -78464,12 +78464,14 @@ void fut_misc_test_thread(void *arg) {
             /* Read original termios from PTY2 */
             char orig[60];
             sys_ioctl((int)s2, 0x5401 /* TCGETS */, orig);
-            /* Modify PTY1 termios: clear ECHO (bit 3 in c_lflag at offset 12) */
+            uint32_t orig_lflag2;
+            __builtin_memcpy(&orig_lflag2, orig + 12, 4);
+            /* Modify PTY1 termios: set ECHO (bit 3 in c_lflag at offset 12) */
             char t1[60];
             sys_ioctl((int)s1, 0x5401, t1);
             uint32_t lflag;
             __builtin_memcpy(&lflag, t1 + 12, 4);
-            lflag &= ~(uint32_t)8;  /* Clear ECHO */
+            lflag |= (uint32_t)8;  /* Set ECHO */
             __builtin_memcpy(t1 + 12, &lflag, 4);
             sys_ioctl((int)s1, 0x5402 /* TCSETS */, t1);
             /* Read PTY2 termios — should be unchanged */
@@ -78477,11 +78479,11 @@ void fut_misc_test_thread(void *arg) {
             sys_ioctl((int)s2, 0x5401, t2);
             uint32_t lflag2;
             __builtin_memcpy(&lflag2, t2 + 12, 4);
-            if (lflag2 & 8) {  /* ECHO still set on PTY2 */
-                fut_printf("[MISC-TEST] ✓ Test 1673: PTY2 ECHO still set after PTY1 cleared it\n");
+            if (lflag2 == orig_lflag2) {  /* PTY2 unchanged */
+                fut_printf("[MISC-TEST] ✓ Test 1673: PTY2 lflag unchanged after PTY1 modified\n");
                 fut_test_pass();
             } else {
-                fut_printf("[MISC-TEST] ✗ Test 1673: PTY2 lflag=0x%x (ECHO cleared, leaked!)\n", lflag2);
+                fut_printf("[MISC-TEST] ✗ Test 1673: PTY2 lflag=0x%x (expected 0x%x, leaked!)\n", lflag2, orig_lflag2);
                 fut_test_fail(1673);
             }
         } else {
@@ -78495,12 +78497,12 @@ void fut_misc_test_thread(void *arg) {
             char t_slave[60], t_master[60];
             sys_ioctl((int)s1, 0x5401, t_slave);
             sys_ioctl((int)m1, 0x5401, t_master);
-            /* Both should see the same modified termios (ECHO cleared in test 1673) */
+            /* Both should see the same modified termios (ECHO set in test 1673) */
             uint32_t lf_s, lf_m;
             __builtin_memcpy(&lf_s, t_slave + 12, 4);
             __builtin_memcpy(&lf_m, t_master + 12, 4);
-            if (!(lf_s & 8) && !(lf_m & 8)) {  /* Both have ECHO cleared */
-                fut_printf("[MISC-TEST] ✓ Test 1674: slave+master see same termios (ECHO cleared)\n");
+            if ((lf_s & 8) && (lf_m & 8)) {  /* Both have ECHO set */
+                fut_printf("[MISC-TEST] ✓ Test 1674: slave+master see same termios (ECHO set)\n");
                 fut_test_pass();
             } else {
                 fut_printf("[MISC-TEST] ✗ Test 1674: slave lflag=0x%x master lflag=0x%x\n", lf_s, lf_m);

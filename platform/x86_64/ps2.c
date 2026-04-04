@@ -120,6 +120,13 @@ void ps2_irq_keyboard(void) {
         }
     }
 
+    /* Send PIC EOI first so the legacy PIC clears its ISR bit and
+     * deasserts the IRQ line.  This allows the IOAPIC (edge-triggered)
+     * to detect a new rising edge for the next keystroke.  In QEMU's
+     * i440FX emulation the i8042 routes through the PIC even when the
+     * IOAPIC is active. */
+    hal_outb(0x20, 0x20);  /* PIC1 EOI */
+
     fut_irq_send_eoi(1);
 }
 
@@ -141,6 +148,11 @@ void ps2_irq_mouse(void) {
             ps2_kbd_handle_byte(data);
         }
     }
+
+    /* Send PIC EOI (both slave and master) so the legacy PIC deasserts
+     * the IRQ line, enabling the IOAPIC to detect the next edge. */
+    hal_outb(0xA0, 0x20);  /* PIC2 EOI (slave) */
+    hal_outb(0x20, 0x20);  /* PIC1 EOI (master cascade) */
 
     fut_irq_send_eoi(12);
 }

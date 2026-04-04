@@ -223,11 +223,37 @@ int fut_thread_wake_sleeping(fut_thread_t *target) {
 
 /* Drain the deferred-free list.  Must be called from non-IRQ context
  * (interrupts may be enabled; fut_free disables them internally). */
+/* Save RFLAGS and disable IRQs — prevents deadlock when an IRQ handler
+ * (process_timer_events) tries to acquire the same spinlock we hold. */
+static inline unsigned long timer_irq_save(void) {
+    unsigned long flags;
+#if defined(__x86_64__)
+    __asm__ volatile("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
+#elif defined(__aarch64__)
+    __asm__ volatile("mrs %0, daif; msr daifset, #2" : "=r"(flags) :: "memory");
+#else
+    flags = 0;
+#endif
+    return flags;
+}
+
+static inline void timer_irq_restore(unsigned long flags) {
+#if defined(__x86_64__)
+    __asm__ volatile("pushq %0; popfq" :: "r"(flags) : "memory", "cc");
+#elif defined(__aarch64__)
+    __asm__ volatile("msr daif, %0" :: "r"(flags) : "memory");
+#else
+    (void)flags;
+#endif
+}
+
 static void drain_deferred_frees(void) {
+    unsigned long flags = timer_irq_save();
     fut_spinlock_acquire(&deferred_free_lock);
     fut_timer_event_t *list = deferred_free_head;
     deferred_free_head = nullptr;
     fut_spinlock_release(&deferred_free_lock);
+    timer_irq_restore(flags);
 
     while (list) {
         fut_timer_event_t *next = list->next;
@@ -494,6 +520,7 @@ int fut_timer_start(uint64_t ticks_from_now, void (*cb)(void *), void *arg) {
     ev->arg = arg;
     ev->next = nullptr;
 
+    unsigned long flags = timer_irq_save();
     fut_spinlock_acquire(&timer_events_lock);
     if (!timer_events_head || ev->expiry < timer_events_head->expiry) {
         ev->next = timer_events_head;
@@ -507,6 +534,7 @@ int fut_timer_start(uint64_t ticks_from_now, void (*cb)(void *), void *arg) {
         curr->next = ev;
     }
     fut_spinlock_release(&timer_events_lock);
+    timer_irq_restore(flags);
     return 0;
 }
 
@@ -517,6 +545,7 @@ int fut_timer_cancel(void (*cb)(void *), void *arg) {
 
     /* Drain deferred frees from previous IRQ-context timer expirations */
     drain_deferred_frees();
+    unsigned long flags = timer_irq_save();
     fut_spinlock_acquire(&timer_events_lock);
     fut_timer_event_t *prev = NULL;
     fut_timer_event_t *curr = timer_events_head;
@@ -528,6 +557,7 @@ int fut_timer_cancel(void (*cb)(void *), void *arg) {
                 timer_events_head = curr->next;
             }
             fut_spinlock_release(&timer_events_lock);
+            timer_irq_restore(flags);
             fut_free(curr);
             return 0;
         }
@@ -535,6 +565,7 @@ int fut_timer_cancel(void (*cb)(void *), void *arg) {
         curr = curr->next;
     }
     fut_spinlock_release(&timer_events_lock);
+    timer_irq_restore(flags);
     return -ENOENT;  /* Timer event not found */
 }
 

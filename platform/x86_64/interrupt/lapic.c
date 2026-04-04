@@ -377,7 +377,25 @@ void lapic_timer_calibrate_and_start(uint32_t hz, uint8_t vector) {
             uint32_t pit_gsi = ioapic_get_gsi_for_isa_irq(0);
             ioapic_mask_irq((uint8_t)pit_gsi);
         }
-        LAPIC_OUTB(0x21, 0xFF);  /* Mask all IRQs on PIC master */
+        /* Clear any in-service IRQs left from the PIT calibration period.
+         * The PIC may have IRQ 0 (timer) stuck in its ISR, which blocks all
+         * lower-priority IRQs (including keyboard on IRQ 1).  Send EOI to
+         * both PICs to clear all pending in-service bits. */
+        LAPIC_OUTB(0xA0, 0x20);  /* PIC2 (slave) non-specific EOI */
+        LAPIC_OUTB(0x20, 0x20);  /* PIC1 (master) non-specific EOI */
+        LAPIC_OUTB(0x20, 0x20);  /* Extra EOI in case multiple ISR bits */
+
+        /* Mask most PIC IRQs but leave IRQ 1 (keyboard) and IRQ 12 (mouse)
+         * unmasked.  In APIC mode the PIC INTR line is disconnected from the
+         * CPU, so unmasked PIC IRQs won't cause spurious interrupts.  However
+         * the i8042 PS/2 controller routes through the PIC in QEMU's i440FX
+         * emulation: if the PIC masks IRQ 1, the IRQ line stays asserted and
+         * the IOAPIC (edge-triggered) never sees a new edge, so only the
+         * first keystroke generates an interrupt.  Leaving IRQ 1/12 unmasked
+         * lets the PIC accept and deassert them, allowing the IOAPIC to
+         * detect subsequent edges. */
+        LAPIC_OUTB(0x21, 0xFD);  /* Mask all PIC master except IRQ 1 (kbd) */
+        LAPIC_OUTB(0xA1, 0xEF);  /* Mask all PIC slave except IRQ 12 (mouse) */
     }
 
     /* Step 7: Start LAPIC timer in periodic mode */

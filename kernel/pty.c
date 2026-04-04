@@ -144,7 +144,7 @@ static struct pty_pair *pty_alloc(void) {
             uint32_t iflag = 0x0500;  /* ICRNL | IXON */
             uint32_t oflag = 0x0005;  /* OPOST | ONLCR */
             uint32_t cflag = 0x00BF;  /* B38400 | CS8 | CREAD | HUPCL */
-            uint32_t lflag = 0x8A3B;  /* ECHO | ECHOE | ECHOK | ECHOCTL | ECHOKE | ICANON | ISIG | IEXTEN */
+            uint32_t lflag = 0x8003;  /* ICANON | ISIG | IEXTEN (echo off by default; callers enable via TCSETS) */
             memcpy(p->termios +  0, &iflag, 4);
             memcpy(p->termios +  4, &oflag, 4);
             memcpy(p->termios +  8, &cflag, 4);
@@ -221,6 +221,51 @@ static ssize_t ptmx_read(void *inode, void *priv, void *buf, size_t n, off_t *po
     return (ssize_t)got;
 }
 
+/* Line discipline: echo and input processing for master writes.
+ * When the master writes (user input direction), apply termios processing:
+ *   ECHO  → copy each byte to s2m ring (echo back to terminal)
+ *   ICRNL → translate CR to NL on input
+ *   OPOST+ONLCR → translate NL to CR+NL on echo output
+ * Must be called with p->lock held. */
+static void pty_ldisc_echo(struct pty_pair *p, const char *buf, size_t n) {
+    uint32_t lflag = 0, oflag = 0, iflag = 0;
+    memcpy(&iflag, p->termios + 0, 4);
+    memcpy(&oflag, p->termios + 4, 4);
+    memcpy(&lflag, p->termios + 12, 4);
+
+    if (!(lflag & 0x0008))  /* ECHO */
+        return;
+
+    for (size_t i = 0; i < n; i++) {
+        unsigned char ch = (unsigned char)buf[i];
+
+        if (ch == '\n') {
+            /* Echo NL: apply OPOST+ONLCR → CR+LF */
+            if ((oflag & 0x0001) && (oflag & 0x0004)) {
+                char crlf[2] = { '\r', '\n' };
+                ring_write(&p->s2m, crlf, 2);
+            } else {
+                ring_write(&p->s2m, (const char *)&ch, 1);
+            }
+        } else if (ch == 127 || ch == '\b') {
+            /* Erase: echo BS+SPACE+BS if ECHOE */
+            if (lflag & 0x0010) {
+                char erase[3] = { '\b', ' ', '\b' };
+                ring_write(&p->s2m, erase, 3);
+            }
+        } else if (ch < 32 && ch != '\t' && ch != '\r') {
+            /* Control char: echo ^X if ECHOCTL */
+            if (lflag & 0x0200) {
+                char ctl[2] = { '^', (char)(ch + '@') };
+                ring_write(&p->s2m, ctl, 2);
+            }
+        } else {
+            /* Normal printable character or TAB/CR */
+            ring_write(&p->s2m, (const char *)&ch, 1);
+        }
+    }
+}
+
 static ssize_t ptmx_write(void *inode, void *priv, const void *buf, size_t n, off_t *pos) {
     (void)inode; (void)pos;
     struct pty_priv *pp = (struct pty_priv *)priv;
@@ -232,13 +277,33 @@ static ssize_t ptmx_write(void *inode, void *priv, const void *buf, size_t n, of
         fut_spinlock_release(&p->lock);
         return -EIO;
     }
-    size_t wrote = ring_write(&p->m2s, buf, n);
+
+    /* Apply input processing: ICRNL (CR→NL) */
+    uint32_t iflag = 0;
+    memcpy(&iflag, p->termios + 0, 4);
+    char processed[256];
+    size_t pn = n < sizeof(processed) ? n : sizeof(processed);
+    memcpy(processed, buf, pn);
+    if (iflag & 0x0100) {  /* ICRNL */
+        for (size_t i = 0; i < pn; i++) {
+            if (processed[i] == '\r') processed[i] = '\n';
+        }
+    }
+
+    /* Echo processed input back to master read side */
+    pty_ldisc_echo(p, processed, pn);
+
+    /* Forward to slave input */
+    size_t wrote = ring_write(&p->m2s, processed, pn);
     fut_spinlock_release(&p->lock);
 
-    /* Wake slave readers */
+    /* Wake slave readers + master readers (for echo data) */
     fut_waitq_wake_all(&p->slave_wq);
     if (p->slave_epoll_wq)
         fut_waitq_wake_all(p->slave_epoll_wq);
+    fut_waitq_wake_all(&p->master_wq);
+    if (p->master_epoll_wq)
+        fut_waitq_wake_all(p->master_epoll_wq);
 
     return wrote > 0 ? (ssize_t)wrote : -EAGAIN;
 }

@@ -43,12 +43,6 @@ static inline int _ns_copy_to_user(void *dst, const void *src, size_t n) {
 /* Nanosleep debugging (controlled via debug_config.h) */
 #define nanosleep_printf(...) do { if (NANOSLEEP_DEBUG) fut_printf(__VA_ARGS__); } while(0)
 
-/* Timer callback that wakes the task's signal_waitq to end a nanosleep */
-static void ns_timer_wakeup(void *arg) {
-    fut_task_t *t = (fut_task_t *)arg;
-    if (t) fut_waitq_wake_all(&t->signal_waitq);
-}
-
 /**
  * nanosleep() syscall - High-resolution sleep
  *
@@ -270,13 +264,9 @@ long sys_nanosleep(const fut_timespec_t *u_req, fut_timespec_t *u_rem) {
                 fut_schedule();
             }
         } else {
-            if (fut_timer_start(sleep_ticks, ns_timer_wakeup, task) != 0) {
-                return -EAGAIN;
-            }
-            fut_spinlock_acquire(&task->signal_waitq.lock);
-            fut_waitq_sleep_locked(&task->signal_waitq, &task->signal_waitq.lock,
-                                   FUT_THREAD_BLOCKED);
-            fut_timer_cancel(ns_timer_wakeup, task);
+            /* Use sleep_timed to avoid lost-wakeup race: thread is enqueued
+             * BEFORE the timer starts, so the callback always finds us. */
+            fut_waitq_sleep_timed(&task->signal_waitq, sleep_ticks, NULL);
 
             /* Missed-wakeup fallback: if we woke too early (timer race),
              * yield until the deadline to avoid hanging indefinitely. */

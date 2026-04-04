@@ -148,3 +148,17 @@ void fut_waitq_wake_all(fut_waitq_t *q);
  *   }
  */
 bool fut_waitq_remove_thread(fut_waitq_t *q, fut_thread_t *thread);
+
+/**
+ * Sleep on a wait queue with a timer-based timeout.
+ *
+ * Fixes the lost-wakeup race by adding the thread to the wait queue
+ * BEFORE starting the timer.  This guarantees the timer callback always
+ * finds the thread on the queue.
+ *
+ * @param q              Wait queue to sleep on
+ * @param timeout_ticks  Timer expiry (0 = infinite, block until explicit wake)
+ * @param released_lock  Optional lock to release after enqueuing (may be NULL)
+ */
+void fut_waitq_sleep_timed(fut_waitq_t *q, uint64_t timeout_ticks,
+                           fut_spinlock_t *released_lock);

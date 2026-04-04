@@ -764,6 +764,21 @@ void fut_schedule(void) {
     }
 
     fut_thread_t *prev = fut_thread_current();
+#if defined(__x86_64__)
+    /* If percpu->current_thread is corrupt (not a kernel address), clear it
+     * so scheduling can continue.  The thread that was running is lost from
+     * the ready queue, but a frozen system is worse. */
+    if (prev && (uintptr_t)prev < 0xFFFFFFFF80000000ULL) {
+        static bool warned;
+        if (!warned) {
+            warned = true;
+            fut_printf("[SCHED] WARNING: percpu->current_thread=%p (corrupt), clearing\n",
+                       (void *)prev);
+        }
+        fut_thread_set_current(NULL);
+        prev = NULL;
+    }
+#endif
 
     /* CRITICAL: Disable interrupts BEFORE acquiring queue_lock in
      * select_next_thread(). The timer ISR calls wake_sleeping_threads()

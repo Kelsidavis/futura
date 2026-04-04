@@ -19,11 +19,6 @@
 
 #include <platform/platform.h>
 
-/* Timer callback: wake a waitq passed as arg (used for timed sigtimedwait) */
-static void stw_timer_wake(void *arg) {
-    fut_waitq_t *wq = (fut_waitq_t *)arg;
-    if (wq) fut_waitq_wake_all(wq);
-}
 
 /* siginfo_t for returning signal info to userspace */
 struct kernel_siginfo {
@@ -169,14 +164,9 @@ long sys_rt_sigtimedwait(const uint64_t *uthese, void *uinfo,
             /* Use timer+waitq: remain is in ticks (not ms), so start timer
              * for that many ticks and sleep on signal_waitq.
              * fut_signal_send also wakes signal_waitq, so signals interrupt early. */
-            if (fut_timer_start((uint64_t)remain, stw_timer_wake, &task->signal_waitq) != 0) {
-                /* OOM: cannot start timeout timer — thread was not enqueued */
-                return -EAGAIN;
-            }
-            fut_spinlock_acquire(&task->signal_waitq.lock);
-            fut_waitq_sleep_locked(&task->signal_waitq, &task->signal_waitq.lock,
-                                   FUT_THREAD_BLOCKED);
-            fut_timer_cancel(stw_timer_wake, &task->signal_waitq);
+            /* Use sleep_timed to avoid lost-wakeup race: thread is enqueued
+             * BEFORE the timer starts, so the callback always finds us. */
+            fut_waitq_sleep_timed(&task->signal_waitq, (uint64_t)remain, NULL);
         } else {
             /* No timeout — block indefinitely on signal waitq */
             fut_spinlock_acquire(&task->signal_waitq.lock);

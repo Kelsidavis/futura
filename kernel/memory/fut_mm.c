@@ -321,11 +321,17 @@ static fut_mm_t *mm_from_current_thread(void) {
     }
 
     fut_mm_t *task_mm = fut_task_get_mm(thread->task);
-    if (task_mm) {
+    if (task_mm
+#if defined(__x86_64__)
+        && (uintptr_t)task_mm >= 0xFFFFFFFF80000000ULL
+#elif defined(__aarch64__)
+        && (uintptr_t)task_mm >= 0xFFFF000000000000ULL
+#endif
+    ) {
         return task_mm;
     }
 
-    return &kernel_mm;
+    return active_mm ? active_mm : &kernel_mm;
 }
 
 fut_mm_t *fut_mm_current(void) {
@@ -1245,11 +1251,17 @@ static fut_mm_t *mm_from_current_thread(void) {
     }
 
     fut_mm_t *task_mm = fut_task_get_mm(thread->task);
-    if (task_mm) {
+    if (task_mm
+#if defined(__x86_64__)
+        && (uintptr_t)task_mm >= 0xFFFFFFFF80000000ULL
+#elif defined(__aarch64__)
+        && (uintptr_t)task_mm >= 0xFFFF000000000000ULL
+#endif
+    ) {
         return task_mm;
     }
 
-    return &kernel_mm;
+    return active_mm ? active_mm : &kernel_mm;
 }
 
 fut_mm_t *fut_mm_current(void) {

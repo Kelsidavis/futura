@@ -15,7 +15,7 @@
 #include <kernel/kprintf.h>
 
 static inline pte_t *pmap_context_pml4(fut_vmem_context_t *ctx) {
-    if (!ctx || !ctx->pml4) {
+    if (!ctx || (uintptr_t)ctx < 0xFFFFFFFF80000000ULL || !ctx->pml4) {
         return fut_get_kernel_pml4();
     }
 

@@ -366,15 +366,18 @@ void lapic_timer_calibrate_and_start(uint32_t hz, uint8_t vector) {
     fut_printf("[LAPIC-TIMER] Calibrated: %u ticks/10ms, count=%u for %u Hz\n",
                elapsed, count, hz);
 
-    /* Step 6: Disable PIT to avoid dual timer interrupts on same vector */
-    /* Mask PIT IRQ 0 on both IOAPIC and legacy PIC */
+    /* Step 6: Disable PIT to avoid dual timer interrupts on same vector.
+     * ISA IRQ 0 (PIT) is remapped to GSI 2 via MADT interrupt override,
+     * so mask IOAPIC entry 2, not entry 0. */
     {
         extern void ioapic_mask_irq(uint8_t irq);
         extern bool ioapic_is_available(void);
+        extern uint32_t ioapic_get_gsi_for_isa_irq(uint8_t isa_irq);
         if (ioapic_is_available()) {
-            ioapic_mask_irq(0);
+            uint32_t pit_gsi = ioapic_get_gsi_for_isa_irq(0);
+            ioapic_mask_irq((uint8_t)pit_gsi);
         }
-        LAPIC_OUTB(0x21, 0xFF);  /* Mask all IRQs on PIC master including IRQ 0 */
+        LAPIC_OUTB(0x21, 0xFF);  /* Mask all IRQs on PIC master */
     }
 
     /* Step 7: Start LAPIC timer in periodic mode */

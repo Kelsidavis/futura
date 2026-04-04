@@ -17,6 +17,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/fut_thread.h>
 #include <kernel/errno.h>
+#include <platform/platform.h>
 #include <sys/mman.h>
 #include <stdint.h>
 #include <string.h>

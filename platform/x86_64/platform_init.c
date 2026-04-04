@@ -534,6 +534,12 @@ void fut_pic_disable(void) {
     /* Mask all interrupts on both PICs */
     outb(PIC1_DATA, PIC_MASK_ALL);
     outb(PIC2_DATA, PIC_MASK_ALL);
+
+    /* Program IMCR to disconnect PIC from LINT0 and enable APIC mode.
+     * Required on PC-AT compatible systems (MADT PCAT_COMPAT flag set)
+     * so that IOAPIC-routed interrupts can be delivered to the LAPIC. */
+    outb(0x22, 0x70);  /* Select IMCR register */
+    outb(0x23, 0x01);  /* Switch to APIC mode */
 }
 
 void fut_pic_send_eoi(uint8_t irq) {

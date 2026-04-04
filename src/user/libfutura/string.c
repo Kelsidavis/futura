@@ -258,9 +258,13 @@ long __isoc23_strtol(const char *nptr, char **endptr, int base) {
 /**
  * Copy memory.
  */
-void *memcpy(void *dest, const void *src, size_t n) {
-    /* Defensive check: reject NULL or suspiciously low pointer values */
-    if (!dest || !src || (uintptr_t)dest < 0x10000 || (uintptr_t)src < 0x10000)
+void * __attribute__((noinline,noclone))
+memcpy(void *dest, const void *src, size_t n) {
+    /* Defensive check: reject NULL or suspiciously low pointer values.
+     * Use volatile to prevent compiler from optimizing away (UB assumption). */
+    volatile uintptr_t d_addr = (uintptr_t)dest;
+    volatile uintptr_t s_addr = (uintptr_t)src;
+    if (d_addr < 0x10000 || s_addr < 0x10000 || n == 0)
         return dest;
 
     unsigned char *d = (unsigned char *)dest;

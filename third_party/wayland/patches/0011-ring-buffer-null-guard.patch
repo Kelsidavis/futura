@@ -1,0 +1,28 @@
+--- a/src/connection.c
++++ b/src/connection.c
+@@ -96,6 +96,9 @@ ring_buffer_put(struct wl_ring_buffer *b, const void *data, size_t count)
+ 	if (count == 0)
+ 		return 0;
+
++	if (!b->data)
++		return -1;
++
+ 	head = ring_buffer_mask(b, b->head);
+ 	if (head + count <= ring_buffer_capacity(b)) {
+ 		memcpy(b->data + head, data, count);
+@@ -269,6 +272,16 @@ ring_buffer_ensure_space(struct wl_ring_buffer *b, size_t count)
+ 	/* The following test here is a short-cut to avoid reallocating a buffer
+ 	 * of the same size.
+ 	 */
++
++	/* Force allocation if data pointer is NULL (prior calloc failure) */
++	if (!b->data) {
++		b->head = 0;
++		b->tail = 0;
++		b->size_bits = 0;
++		return ring_buffer_allocate(b, size_bits);
++	}
++
+ 	if (size_bits == b->size_bits)
+ 		return 0;
+

@@ -787,6 +787,12 @@ void fut_schedule(void) {
         return;
     }
 
+    // Validate prev pointer before use
+    if (prev && (uintptr_t)prev < 0xFFFFFFFF80000000ULL) {
+        fut_printf("[SCHED] BUG: prev=%p (not kernel addr) — clearing\n", (void *)prev);
+        prev = NULL;
+    }
+
     // If current thread is still runnable, put it back in ready queue
     if (prev && prev != idle && prev->state == FUT_THREAD_RUNNING) {
         prev->state = FUT_THREAD_READY;

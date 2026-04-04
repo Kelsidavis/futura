@@ -1233,6 +1233,13 @@ void comp_surface_commit(struct comp_surface *surface) {
                 surface->backing_size = required;
             }
             bool had_backing = surface->has_backing;
+            if (!surface->backing || (uintptr_t)surface->backing < 0x10000) {
+                shm_buffer_release(&buffer);
+                wl_buffer_send_release(surface->pending_buffer_resource);
+                surface->pending_buffer_resource = NULL;
+                surface->has_pending_buffer = false;
+                return;
+            }
             for (int32_t row = 0; row < buffer.height; ++row) {
                 const uint8_t *src_row = (const uint8_t *)buffer.data + (size_t)row * buffer.stride;
                 uint8_t *dst_row = surface->backing + (size_t)row * buffer.stride;

@@ -263,11 +263,11 @@ long sys_nanosleep(const fut_timespec_t *u_req, fut_timespec_t *u_rem) {
 
         uint64_t deadline_ticks = start_ticks + sleep_ticks;
 
-        /* If very short sleep (1-2 ticks / 10-20ms), just busy-yield to avoid
-         * the timer/waitq race entirely. This is what Linux does for sub-tick. */
-        if (sleep_ticks <= 2) {
+        /* If very short sleep (1-2 ticks / 10-20ms), or no task context,
+         * just busy-yield to avoid the timer/waitq race entirely. */
+        if (sleep_ticks <= 2 || !task) {
             while (fut_get_ticks() < deadline_ticks) {
-                fut_thread_yield();
+                fut_schedule();
             }
         } else {
             if (fut_timer_start(sleep_ticks, ns_timer_wakeup, task) != 0) {

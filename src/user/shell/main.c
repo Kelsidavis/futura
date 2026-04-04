@@ -691,6 +691,7 @@ struct redir_info {
 
 /* Simple write syscall wrapper */
 static void write_str(int fd, const char *str) {
+    if (!str) return;
     size_t total = 0;
     for (const char *p = str; *p; p++) {
         total++;

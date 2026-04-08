@@ -1241,6 +1241,34 @@ void __attribute__((weak)) fut_isr_handler(void *regs_ptr) {
         }
     }
 
+    /* --- Raw stack dump (useful when RBP is NULL or corrupt) --- */
+    fut_serial_puts("\nStack Dump (RSP=0x");
+    print_hex64(regs->rsp);
+    fut_serial_puts("):\n");
+    {
+        uint64_t *sp = (uint64_t *)(uintptr_t)regs->rsp;
+        /* Dump 16 qwords (128 bytes) from the stack */
+        for (int i = 0; i < 16; i++) {
+            if ((uintptr_t)&sp[i] < KERNEL_VIRTUAL_BASE ||
+                (uintptr_t)&sp[i] >= KERNEL_VIRTUAL_BASE + 0x40000000ULL) {
+                break;
+            }
+            fut_serial_puts("  [RSP+0x");
+            /* Print hex offset (i*8) */
+            {
+                int off = i * 8;
+                char h[4];
+                h[0] = "0123456789ABCDEF"[(off >> 4) & 0xF];
+                h[1] = "0123456789ABCDEF"[off & 0xF];
+                h[2] = '\0';
+                fut_serial_puts(h);
+            }
+            fut_serial_puts("] = 0x");
+            print_hex64(sp[i]);
+            fut_serial_puts("\n");
+        }
+    }
+
     fut_serial_puts("\nSystem halted.\n");
     fut_serial_puts("========================================\n");
 

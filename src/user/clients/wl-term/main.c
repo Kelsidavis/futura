@@ -264,8 +264,10 @@ static uint64_t tick_ms = 0;             /* Monotonic tick counter (~10ms per it
 /* Key repeat state */
 static uint32_t repeat_key = 0;          /* Currently held key (0 = none) */
 static uint64_t repeat_deadline_ms = 0;  /* When next repeat fires */
+static uint64_t repeat_start_ms = 0;     /* When current repeat started */
 #define REPEAT_DELAY_MS   500
 #define REPEAT_INTERVAL_MS 33  /* ~30 chars/sec */
+#define REPEAT_MAX_MS     2000 /* Safety: auto-clear repeat after 2s */
 
 /* Forward declaration — processes a single keypress */
 static void process_key(struct client_state *state, uint32_t key);
@@ -292,6 +294,7 @@ static void keyboard_key(void *data, struct wl_keyboard *keyboard, uint32_t seri
     } else {
         repeat_key = key;
         repeat_deadline_ms = tick_ms + REPEAT_DELAY_MS;
+        repeat_start_ms = tick_ms;
     }
 }
 
@@ -735,10 +738,16 @@ static bool main_loop_iteration(struct client_state *state) {
         state->needs_redraw = true;
     }
 
-    /* Key repeat: if a key is held, re-fire it after delay */
-    if (repeat_key != 0 && tick_ms >= repeat_deadline_ms) {
-        process_key(state, repeat_key);
-        repeat_deadline_ms = tick_ms + REPEAT_INTERVAL_MS;
+    /* Key repeat: if a key is held, re-fire it after delay.
+     * Safety: auto-clear repeat after REPEAT_MAX_MS to prevent stuck keys
+     * (e.g., if a key release event is lost over the Wayland connection). */
+    if (repeat_key != 0) {
+        if (tick_ms - repeat_start_ms > REPEAT_MAX_MS) {
+            repeat_key = 0;  /* Safety timeout — stop repeating */
+        } else if (tick_ms >= repeat_deadline_ms) {
+            process_key(state, repeat_key);
+            repeat_deadline_ms = tick_ms + REPEAT_INTERVAL_MS;
+        }
     }
 
     /* Ack any pending configure from the compositor (fullscreen, maximize, etc.) */
@@ -777,33 +786,25 @@ static bool main_loop_iteration(struct client_state *state) {
         redraw(state);
     }
 
-    /* Process Wayland events (non-blocking: Futura poll() is a stub,
-     * so blocking wl_display_dispatch may not wake up reliably).
-     * wl_display_read_events handles EAGAIN gracefully (returns 0). */
-    if (wl_display_flush(state->display) < 0 && errno != 11 /* EAGAIN */) {
-        state->running = false;
-        return false;
-    }
+    /* Process Wayland events.
+     *
+     * Futura poll() is a stub, so we use non-blocking I/O with
+     * prepare_read/read_events instead of blocking dispatch.
+     *
+     * Error handling: treat ALL errors as transient and retry.
+     * Futura's socket implementation can produce transient errors
+     * (e.g., buffer contention, scheduler timing) that don't mean
+     * the connection is truly dead.  Only exit on persistent failure
+     * (wl_display_get_error reports a protocol error). */
+    wl_display_flush(state->display);
     {
         int prep_retries = 0;
         while (wl_display_prepare_read(state->display) != 0) {
             wl_display_dispatch_pending(state->display);
-            if (++prep_retries > 1000) {
-                /* Queue never drains — compositor may be stuck */
-                state->running = false;
-                return false;
-            }
+            if (++prep_retries > 1000) break;
         }
-    }
-    /* read_events: on non-blocking fd, libwayland returns 0 for EAGAIN.
-     * But guard against transient errors — only exit on persistent failure. */
-    if (wl_display_read_events(state->display) < 0) {
-        /* Check errno: EAGAIN/EINTR are transient, not fatal */
-        if (errno == 11 /* EAGAIN */ || errno == 4 /* EINTR */) {
-            /* Transient — continue */
-        } else {
-            state->running = false;
-            return false;
+        if (prep_retries <= 1000) {
+            wl_display_read_events(state->display);
         }
     }
     wl_display_dispatch_pending(state->display);

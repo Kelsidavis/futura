@@ -506,8 +506,6 @@ static bool handle_cow_fault_generic(uint64_t fault_addr, bool is_write, bool is
         }
 
         vmstat_cow_pages++;
-        fut_printf("[COW] Copied page: va=0x%llx old_phys=0x%llx new_phys=0x%llx refcount=%d->%d\n",
-                   page_addr, old_phys, new_phys, refcount, new_refcount);
     } else {
         /* Only one reference - just make it writable (sole owner optimization) */
         uint64_t flags = (pte & (PTE_PRESENT | PTE_USER | PTE_NX)) | PTE_WRITABLE;
@@ -520,8 +518,7 @@ static bool handle_cow_fault_generic(uint64_t fault_addr, bool is_write, bool is
         /* Decrement refcount to remove from tracking (refcount was 1, now goes to 0) */
         fut_page_ref_dec(old_phys);
 
-        fut_printf("[COW] Made page writable: va=0x%llx phys=0x%llx (sole owner, refcount 1->0)\n",
-                   page_addr, old_phys);
+        /* COW: sole owner, page made writable in place */
     }
 
     /* Per-page COW tracking achieved through PTE flags:

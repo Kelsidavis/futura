@@ -150,6 +150,11 @@ int main(void) {
         return -1;
     }
 
+    /* Increase Wayland buffer limit from the default 4KB.
+     * Under heavy terminal I/O the server-side outgoing buffer overflows,
+     * killing the client connection.  0 = unlimited (buffer grows as needed). */
+    wl_display_set_default_max_buffer_size(comp.display, 0);
+
     comp.loop = wl_display_get_event_loop(comp.display);
 
     if (comp_set_backbuffer_enabled(&comp, want_backbuffer) != 0) {

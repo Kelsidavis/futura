@@ -305,7 +305,7 @@ typedef struct fut_socket_pair {
     struct fut_waitq *epoll_notify;         /* Epoll wakeup on data arrival */
 } fut_socket_pair_t;
 
-#define FUT_SOCKET_BUFSIZE 4096  /* Per-direction buffer size */
+#define FUT_SOCKET_BUFSIZE 65536  /* Per-direction buffer size (64 KiB) */
 
 /* ============================================================
  *   Datagram Queue (for SOCK_DGRAM sockets)

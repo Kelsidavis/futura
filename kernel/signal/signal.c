@@ -1038,18 +1038,17 @@ void fut_signal_send_group(int sig) {
         scan = scan->next;
     }
 
-    fut_task_t *task = fut_task_list;
-    while (task) {
-        if (task->pid > 1 && task->state != FUT_TASK_ZOMBIE) {
-            if (fg_pgid > 0) {
-                /* Send only to processes in the foreground group */
-                if ((int)task->pgid == fg_pgid)
-                    fut_signal_send(task, sig);
-            } else {
-                /* No fg pgid known: fall back to all user processes */
+    /* Only deliver if we found a foreground process group.
+     * Broadcasting to ALL processes is incorrect for SIGWINCH and
+     * can interfere with unrelated kernel tasks (e.g. test runner). */
+    if (fg_pgid > 0) {
+        fut_task_t *task = fut_task_list;
+        while (task) {
+            if (task->pid > 1 && task->state != FUT_TASK_ZOMBIE &&
+                (int)task->pgid == fg_pgid) {
                 fut_signal_send(task, sig);
             }
+            task = task->next;
         }
-        task = task->next;
     }
 }

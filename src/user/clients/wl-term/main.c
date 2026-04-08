@@ -144,6 +144,9 @@ static void keyboard_enter(void *data, struct wl_keyboard *keyboard, uint32_t se
 static void keyboard_leave(void *data, struct wl_keyboard *keyboard, uint32_t serial,
                           struct wl_surface *surface) {
     (void)data; (void)keyboard; (void)serial; (void)surface;
+    /* Stop key repeat when focus is lost — otherwise a held key
+     * would keep repeating when focus returns. */
+    repeat_key = 0;
 }
 
 /* Simple keycode to ASCII mapping (US keyboard layout) */
@@ -767,9 +770,19 @@ int main(void) {
     xdg_toplevel_set_title(state.toplevel, "Futura Terminal");
     wl_surface_commit(state.surface);
 
-    /* Wait for configure (blocking roundtrip — compositor will respond) */
-    while (!state.configured) {
-        wl_display_roundtrip(state.display);
+    /* Wait for configure (blocking roundtrip — compositor will respond).
+     * Bail out after ~2 seconds to prevent hanging if compositor is stuck. */
+    {
+        int config_attempts = 0;
+        while (!state.configured && config_attempts < 200) {
+            wl_display_roundtrip(state.display);
+            config_attempts++;
+        }
+        if (!state.configured) {
+            WLTERM_LOG("[WL-TERM] Timed out waiting for configure\n");
+            wl_display_disconnect(state.display);
+            return -1;
+        }
     }
     xdg_surface_ack_configure(state.xdg_surface, state.configure_serial);
 

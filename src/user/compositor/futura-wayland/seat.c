@@ -479,13 +479,21 @@ static void seat_handle_button(struct seat_state *seat,
             seat->pressed_role = role;
             seat->pressed_edge = edge;
 
-            /* Dock click: if click is in the dock area, find which window and focus it */
+            /* Dock click: if click is in the dock area, find which window and focus it.
+             * Geometry must match the dock renderer in comp.c exactly:
+             * DOCK_HEIGHT=36, DOCK_ITEM_W=120, DOCK_ITEM_PAD=2, margin=6px,
+             * CLOCK_WIDTH=13*8+16=120, DOCK_DSKBTN_W=28 */
             if (!hit_surface && seat->comp) {
                 int32_t mx = seat->comp->pointer_x;
                 int32_t my = seat->comp->pointer_y;
                 int32_t fb_h = (int32_t)seat->comp->fb_info.height;
                 int32_t fb_w = (int32_t)seat->comp->fb_info.width;
-                int32_t dock_y = fb_h - 32 - 8;  /* DOCK_HEIGHT=32, 8px margin */
+                #define SEAT_DOCK_HEIGHT   36
+                #define SEAT_DOCK_ITEM_W   120
+                #define SEAT_DOCK_ITEM_PAD 2
+                #define SEAT_DOCK_DSKBTN_W 28
+                #define SEAT_CLOCK_W       (13 * 8 + 16)
+                int32_t dock_y = fb_h - SEAT_DOCK_HEIGHT - 6;
 
                 if (my >= dock_y && my < fb_h) {
                     /* Count windows to compute dock geometry */
@@ -494,24 +502,51 @@ static void seat_handle_button(struct seat_state *seat,
                     wl_list_for_each(ds, &seat->comp->surfaces, link)
                         if (ds->has_backing) n_win++;
 
-                    int dock_w = n_win * 104 + 8;  /* DOCK_ITEM_W(100)+PAD(4) per item + padding */
-                    if (dock_w < 208) dock_w = 208;
+                    int items_w = n_win > 0
+                        ? n_win * SEAT_DOCK_ITEM_W + (n_win - 1) * SEAT_DOCK_ITEM_PAD
+                        : 0;
+                    int dock_content_w = 8 + items_w + 8 + SEAT_CLOCK_W + 4 + SEAT_DOCK_DSKBTN_W + 4;
+                    if (dock_content_w < 240) dock_content_w = 240;
+                    int dock_w = dock_content_w;
                     int dock_x = (fb_w - dock_w) / 2;
 
                     if (mx >= dock_x && mx < dock_x + dock_w) {
-                        int item_x = dock_x + 4;
-                        wl_list_for_each(ds, &seat->comp->surfaces, link) {
-                            if (!ds->has_backing) continue;
-                            if (mx >= item_x && mx < item_x + 100) {
-                                /* Click on this window's dock entry — focus and raise */
-                                if (ds->minimized) ds->minimized = false;
-                                comp_surface_raise(seat->comp, ds);
-                                seat_focus_surface(seat, ds);
-                                comp_damage_add_full(seat->comp);
-                                seat->comp->needs_repaint = true;
-                                break;
+                        /* Check desktop-show button at far right */
+                        int dskbtn_x = dock_x + dock_w - SEAT_DOCK_DSKBTN_W - 2;
+                        if (mx >= dskbtn_x && mx < dskbtn_x + SEAT_DOCK_DSKBTN_W) {
+                            /* Toggle show-desktop: minimize all or restore all */
+                            bool any_visible = false;
+                            wl_list_for_each(ds, &seat->comp->surfaces, link) {
+                                if (ds->has_backing && !ds->minimized)
+                                    any_visible = true;
                             }
-                            item_x += 104;
+                            wl_list_for_each(ds, &seat->comp->surfaces, link) {
+                                if (ds->has_backing)
+                                    ds->minimized = any_visible;
+                            }
+                            seat->comp->dock_all_minimized = any_visible;
+                            comp_damage_add_full(seat->comp);
+                            seat->comp->needs_repaint = true;
+                        } else {
+                            /* Check window items */
+                            int item_x = dock_x + 8;
+                            wl_list_for_each(ds, &seat->comp->surfaces, link) {
+                                if (!ds->has_backing) continue;
+                                if (mx >= item_x && mx < item_x + SEAT_DOCK_ITEM_W) {
+                                    /* Click on this window's dock entry — toggle minimize or focus */
+                                    if (ds == seat->comp->focused_surface && !ds->minimized) {
+                                        ds->minimized = true;
+                                    } else {
+                                        ds->minimized = false;
+                                        comp_surface_raise(seat->comp, ds);
+                                        seat_focus_surface(seat, ds);
+                                    }
+                                    comp_damage_add_full(seat->comp);
+                                    seat->comp->needs_repaint = true;
+                                    break;
+                                }
+                                item_x += SEAT_DOCK_ITEM_W + SEAT_DOCK_ITEM_PAD;
+                            }
                         }
                     }
                 }

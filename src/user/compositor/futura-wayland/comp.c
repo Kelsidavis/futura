@@ -868,6 +868,8 @@ int comp_state_init(struct compositor_state *comp) {
     comp->next_tick_ms = 0;
     comp->target_ms = 16u;
     comp->vsync_hint_ms = comp->target_ms;
+    comp->last_clock_min = -1;
+    comp->dock_hover_index = -1;
 
     /* Try to open /dev/fb0, but fall back to virtual framebuffer if not available */
     int fd = (int)sys_open("/dev/fb0", O_RDWR, 0);
@@ -2187,6 +2189,24 @@ static void comp_handle_timer_tick(struct compositor_state *comp, uint64_t expir
 
     (void)comp_timer_arm(comp);
 
+    /* Auto-damage the dock area when the clock minute changes so the
+     * displayed time stays current even when nothing else triggers a
+     * repaint (e.g. the user is idle). */
+    {
+        struct { long tv_sec; long tv_nsec; } cts = {0, 0};
+        extern long sys_call2(long nr, long a, long b);
+        sys_call2(98, 0, (long)&cts);  /* SYS_clock_gettime(CLOCK_REALTIME) */
+        int cur_min = (int)((cts.tv_sec % 3600) / 60);
+        if (cur_min != comp->last_clock_min) {
+            comp->last_clock_min = cur_min;
+            /* Damage the dock strip at the bottom of the screen */
+            int32_t fb_h = (int32_t)comp->fb_info.height;
+            int32_t fb_w = (int32_t)comp->fb_info.width;
+            fut_rect_t dock_damage = { 0, fb_h - 42, fb_w, 42 };
+            comp_damage_add_rect(comp, dock_damage);
+        }
+    }
+
     if (comp->frame_damage.count > 0) {
         comp_render_frame(comp);
     }
@@ -2493,6 +2513,56 @@ void comp_pointer_motion(struct compositor_state *comp, int32_t new_x, int32_t n
 
     comp_cursor_damage(comp, comp->pointer_x, comp->pointer_y, cursor_w, cursor_h);
     comp->needs_repaint = true;
+
+    /* Update dock hover state */
+    {
+        int32_t fb_h = (int32_t)comp->fb_info.height;
+        int32_t fb_w = (int32_t)comp->fb_info.width;
+        int32_t dock_y = fb_h - 36 - 6;
+        int old_hover = comp->dock_hover_index;
+        int new_hover = -1;
+
+        if (comp->pointer_y >= dock_y && comp->pointer_y < fb_h) {
+            int n_win = 0;
+            struct comp_surface *ds;
+            wl_list_for_each(ds, &comp->surfaces, link)
+                if (ds->has_backing) n_win++;
+
+            int items_w = n_win > 0 ? n_win * 120 + (n_win - 1) * 2 : 0;
+            int clock_w = 13 * 8 + 16;
+            int dock_content_w = 8 + items_w + 8 + clock_w + 4 + 28 + 4;
+            if (dock_content_w < 240) dock_content_w = 240;
+            int dock_x = (fb_w - dock_content_w) / 2;
+
+            /* Check desktop button at far right */
+            int dskbtn_x = dock_x + dock_content_w - 28 - 2;
+            if (comp->pointer_x >= dskbtn_x &&
+                comp->pointer_x < dskbtn_x + 28) {
+                new_hover = -2;
+            } else {
+                /* Check window items */
+                int item_x = dock_x + 8;
+                int idx = 0;
+                wl_list_for_each(ds, &comp->surfaces, link) {
+                    if (!ds->has_backing) continue;
+                    if (comp->pointer_x >= item_x &&
+                        comp->pointer_x < item_x + 120) {
+                        new_hover = idx;
+                        break;
+                    }
+                    item_x += 120 + 2;
+                    idx++;
+                }
+            }
+        }
+
+        if (new_hover != old_hover) {
+            comp->dock_hover_index = new_hover;
+            /* Damage dock area for hover highlight update */
+            fut_rect_t dock_damage = { 0, dock_y, fb_w, fb_h - dock_y };
+            comp_damage_add_rect(comp, dock_damage);
+        }
+    }
 
     comp_update_drag(comp);
     comp_update_resize(comp);

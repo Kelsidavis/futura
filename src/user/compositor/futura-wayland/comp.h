@@ -149,6 +149,7 @@ struct compositor_state {
     struct comp_surface *resize_surface;
     int dock_hover_index;          /* -1 = none, -2 = desktop button */
     bool dock_all_minimized;       /* true after "show desktop" click */
+    int last_clock_min;            /* last rendered clock minute (-1 = never) */
 };
 
 struct comp_surface {

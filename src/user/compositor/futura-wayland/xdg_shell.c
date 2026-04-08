@@ -95,8 +95,9 @@ static void surface_resource_destroy(struct wl_resource *resource) {
 static void surface_destroy(struct wl_client *client,
                             struct wl_resource *resource) {
     (void)client;
-    struct comp_surface *surface = surface_from_resource(resource);
-    comp_surface_destroy(surface);
+    /* Only call wl_resource_destroy — it triggers surface_resource_destroy
+     * which calls comp_surface_destroy.  Calling comp_surface_destroy here
+     * first would free the surface, then the destructor would double-free. */
     wl_resource_destroy(resource);
 }
 
@@ -438,7 +439,10 @@ static void xdg_surface_issue_configure(struct xdg_surface_state *state,
     }
 
     uint32_t serial = wl_display_next_serial(state->comp->display);
-    xdg_surface_send_configure(state->xdg_surface_res, serial);
+
+    /* Per xdg-shell protocol: role-specific configure (toplevel) must be
+     * sent BEFORE the xdg_surface.configure, which acts as the final
+     * delimiter of the configure sequence. */
     struct wl_array states;
     wl_array_init(&states);
     if (state_flags & XDG_CFG_STATE_MAXIMIZED) {
@@ -462,6 +466,7 @@ static void xdg_surface_issue_configure(struct xdg_surface_state *state,
 
     xdg_toplevel_send_configure(state->xdg_toplevel_res, width, height, &states);
     wl_array_release(&states);
+    xdg_surface_send_configure(state->xdg_surface_res, serial);
     state->configure_serial = serial;
     state->size.width = width;
     state->size.height = height;

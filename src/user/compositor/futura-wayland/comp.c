@@ -1110,6 +1110,11 @@ void comp_surface_destroy(struct comp_surface *surface) {
         return;
     }
 
+    /* Clear the resource's back-pointer so no stale reference survives. */
+    if (surface->surface_resource) {
+        wl_resource_set_user_data(surface->surface_resource, NULL);
+    }
+
     struct comp_frame_callback *cb, *tmp;
     wl_list_for_each_safe(cb, tmp, &surface->frame_callbacks, link) {
         wl_resource_destroy(cb->resource);

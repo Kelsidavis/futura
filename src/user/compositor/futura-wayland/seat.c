@@ -163,7 +163,8 @@ static void seat_pointer_leave(struct seat_state *seat) {
 
     seat_clear_button_hover(seat);
 
-    if (!seat->pointer_focus) {
+    if (!seat->pointer_focus || !seat->pointer_focus->surface_resource) {
+        seat->pointer_focus = NULL;
         return;
     }
 
@@ -192,7 +193,7 @@ static void seat_pointer_enter(struct seat_state *seat,
                                wl_fixed_t sx,
                                wl_fixed_t sy,
                                uint32_t time_msec) {
-    if (!seat || !surface) {
+    if (!seat || !surface || !surface->surface_resource) {
         return;
     }
     struct wl_client *target = wl_resource_get_client(surface->surface_resource);
@@ -225,7 +226,7 @@ static void seat_pointer_motion(struct seat_state *seat,
                                 wl_fixed_t sx,
                                 wl_fixed_t sy,
                                 uint32_t time_msec) {
-    if (!seat || !seat->pointer_focus) {
+    if (!seat || !seat->pointer_focus || !seat->pointer_focus->surface_resource) {
         return;
     }
 
@@ -249,7 +250,7 @@ static void seat_pointer_button(struct seat_state *seat,
                                 uint32_t button,
                                 bool pressed,
                                 uint32_t time_msec) {
-    if (!seat || !seat->pointer_focus) {
+    if (!seat || !seat->pointer_focus || !seat->pointer_focus->surface_resource) {
         return;
     }
 
@@ -282,7 +283,7 @@ static void seat_pointer_button(struct seat_state *seat,
 }
 
 static void seat_keyboard_leave(struct seat_state *seat, struct comp_surface *surface) {
-    if (!seat || !surface) {
+    if (!seat || !surface || !surface->surface_resource) {
         return;
     }
 
@@ -303,7 +304,7 @@ static void seat_keyboard_leave(struct seat_state *seat, struct comp_surface *su
 }
 
 static void seat_keyboard_enter(struct seat_state *seat, struct comp_surface *surface) {
-    if (!seat || !surface) {
+    if (!seat || !surface || !surface->surface_resource) {
         return;
     }
 
@@ -331,7 +332,7 @@ static void seat_send_key(struct seat_state *seat,
                           uint32_t keycode,
                           bool pressed,
                           uint32_t time_msec) {
-    if (!seat || !seat->keyboard_focus) {
+    if (!seat || !seat->keyboard_focus || !seat->keyboard_focus->surface_resource) {
         return;
     }
 
@@ -987,7 +988,7 @@ static void seat_get_keyboard(struct wl_client *client,
     /* If a surface is already focused and belongs to this client,
      * send keyboard enter immediately so keys are delivered */
     struct seat_state *seat = seat_client->seat;
-    if (seat && seat->keyboard_focus) {
+    if (seat && seat->keyboard_focus && seat->keyboard_focus->surface_resource) {
         struct wl_client *focus_client =
             wl_resource_get_client(seat->keyboard_focus->surface_resource);
         if (focus_client == client) {
@@ -1014,12 +1015,16 @@ static void seat_resource_destroy(struct wl_resource *resource) {
         return;
     }
 
-    if (client->seat->pointer_focus && wl_resource_get_client(client->seat->pointer_focus->surface_resource) ==
+    if (client->seat->pointer_focus &&
+        client->seat->pointer_focus->surface_resource &&
+        wl_resource_get_client(client->seat->pointer_focus->surface_resource) ==
             wl_resource_get_client(resource)) {
         seat_pointer_leave(client->seat);
     }
 
-    if (client->seat->keyboard_focus && wl_resource_get_client(client->seat->keyboard_focus->surface_resource) ==
+    if (client->seat->keyboard_focus &&
+        client->seat->keyboard_focus->surface_resource &&
+        wl_resource_get_client(client->seat->keyboard_focus->surface_resource) ==
             wl_resource_get_client(resource)) {
         seat_keyboard_leave(client->seat, client->seat->keyboard_focus);
         client->seat->keyboard_focus = NULL;

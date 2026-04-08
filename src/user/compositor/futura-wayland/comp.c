@@ -1970,9 +1970,20 @@ void comp_render_frame(struct compositor_state *comp) {
                        surface->backing, surface->stride);
                 continue;
             }
+            /* Bounds-check the backing buffer read */
+            int32_t src_y = content_clip.y - content_rect.y;
+            int32_t src_x = content_clip.x - content_rect.x;
+            if (src_y < 0 || src_x < 0) {
+                continue;
+            }
+            size_t src_end = (size_t)(src_y + content_clip.h - 1) * surface->stride +
+                             (size_t)(src_x + content_clip.w) * 4u;
+            if (src_end > surface->backing_size) {
+                continue;
+            }
             const char *src_ptr = (const char *)surface->backing +
-                (size_t)(content_clip.y - content_rect.y) * surface->stride +
-                (size_t)(content_clip.x - content_rect.x) * 4u;
+                (size_t)src_y * surface->stride +
+                (size_t)src_x * 4u;
             char *dst_ptr = (char *)dst->px +
                 (size_t)content_clip.y * dst->pitch +
                 (size_t)content_clip.x * 4u;

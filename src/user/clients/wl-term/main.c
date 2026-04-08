@@ -15,8 +15,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <errno.h>
 #include <futura/compat/posix_shm.h>
 #include <user/stdio.h>
+#include <user/signal.h>
 #include <user/sys.h>
 
 #include <wayland-client-core.h>
@@ -680,17 +682,28 @@ static bool main_loop_iteration(struct client_state *state) {
     /* Process Wayland events (non-blocking: Futura poll() is a stub,
      * so blocking wl_display_dispatch may not wake up reliably).
      * wl_display_read_events handles EAGAIN gracefully (returns 0). */
-    wl_display_flush(state->display);
+    if (wl_display_flush(state->display) < 0 && errno != 11 /* EAGAIN */) {
+        state->running = false;
+        return false;
+    }
     while (wl_display_prepare_read(state->display) != 0) {
         wl_display_dispatch_pending(state->display);
     }
-    wl_display_read_events(state->display);
+    if (wl_display_read_events(state->display) < 0) {
+        state->running = false;
+        return false;
+    }
     wl_display_dispatch_pending(state->display);
 
     return state->running;
 }
 
 int main(void) {
+    /* Ignore SIGPIPE so broken pipes return errors instead of killing us */
+    struct sigaction sa = {0};
+    sa.sa_handler = SIG_IGN;
+    sigaction(SIGPIPE, &sa, NULL);
+
     WLTERM_LOG("[WL-TERM] Starting...\n");
     struct client_state state = {0};
     state.running = true;

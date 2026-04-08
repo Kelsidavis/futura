@@ -13,6 +13,7 @@
 #include <fcntl.h>
 #include <user/stdio.h>
 #include <user/stdlib.h>
+#include <user/signal.h>
 
 /* Portable syscall wrappers using libfutura */
 #include "syscall_portable.h"
@@ -89,6 +90,12 @@ static void write_ready_marker(const char *runtime_dir, const char *socket) {
 }
 
 int main(void) {
+    /* Ignore SIGPIPE — writing to a disconnected client must not kill
+     * the compositor.  This is standard practice for Wayland compositors. */
+    struct sigaction sa = {0};
+    sa.sa_handler = SIG_IGN;
+    sigaction(SIGPIPE, &sa, NULL);
+
     sys_mkdir("/tmp", 0777);
 
     struct compositor_state comp = {0};

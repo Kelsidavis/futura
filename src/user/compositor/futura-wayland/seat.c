@@ -1187,6 +1187,16 @@ void seat_surface_destroyed(struct seat_state *seat, struct comp_surface *surfac
         seat_keyboard_leave(seat, surface);
         seat->keyboard_focus = NULL;
         seat->comp->focused_surface = NULL;
+        /* Focus next visible window */
+        if (!wl_list_empty(&seat->comp->surfaces)) {
+            struct comp_surface *other;
+            wl_list_for_each_reverse(other, &seat->comp->surfaces, link) {
+                if (other != surface && !other->minimized) {
+                    seat_focus_surface(seat, other);
+                    break;
+                }
+            }
+        }
     }
 
     if (seat->hover_btn_surface == surface) {

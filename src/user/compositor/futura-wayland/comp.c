@@ -1136,6 +1136,16 @@ void comp_surface_destroy(struct comp_surface *surface) {
         }
         if (comp->focused_surface == surface) {
             comp->focused_surface = NULL;
+            /* Focus the next visible window */
+            if (!wl_list_empty(&comp->surfaces)) {
+                struct comp_surface *other;
+                wl_list_for_each_reverse(other, &comp->surfaces, link) {
+                    if (other != surface && !other->minimized) {
+                        comp->focused_surface = other;
+                        break;
+                    }
+                }
+            }
         }
         if (comp->drag_surface == surface) {
             comp->drag_surface = NULL;
@@ -1255,8 +1265,22 @@ void comp_surface_commit(struct comp_surface *surface) {
 
             if (!surface->pos_initialised) {
                 int32_t total_h = buffer.height + surface->bar_height;
-                int32_t cx = ((int32_t)surface->comp->fb_info.width - buffer.width) / 2;
-                int32_t cy = ((int32_t)surface->comp->fb_info.height - total_h) / 2;
+                int32_t fb_w = (int32_t)surface->comp->fb_info.width;
+                int32_t fb_h = (int32_t)surface->comp->fb_info.height;
+                int32_t cx = (fb_w - buffer.width) / 2;
+                int32_t cy = (fb_h - total_h) / 2;
+                /* Cascade: offset each new window by 30px so they don't overlap */
+                int32_t offset = (int32_t)(surface->comp->cascade_counter % 8u) * 30;
+                surface->comp->cascade_counter++;
+                cx += offset;
+                cy += offset;
+                /* Clamp so the window stays on screen */
+                if (cx + buffer.width > fb_w)
+                    cx = fb_w - buffer.width;
+                if (cy + total_h > fb_h - 42) /* 42 = dock area */
+                    cy = fb_h - 42 - total_h;
+                if (cx < 0) cx = 0;
+                if (cy < 0) cy = 0;
                 surface->x = cx;
                 surface->y = cy;
                 surface->pos_initialised = true;
@@ -1728,45 +1752,35 @@ void comp_render_frame(struct compositor_state *comp) {
                     }
 
                     /* Draw window title text, centered in the item */
-                    if (ws->title[0]) {
+                    {
+                        const char *src_title = ws->title[0]
+                            ? ws->title
+                            : (ws->app_id[0] ? ws->app_id : "Window");
+                        uint32_t text_color = ws->title[0]
+                            ? (is_focused ? 0xFFFFFFFFu : DOCK_TEXT)
+                            : (is_focused ? 0xFFFFFFFFu : DOCK_TEXT_DIM);
                         int max_chars = (DOCK_ITEM_W - 12) / UI_FONT_WIDTH;
                         if (max_chars > 15) max_chars = 15;
                         if (max_chars > 0) {
+                            int src_len = 0;
+                            while (src_title[src_len]) src_len++;
+                            bool needs_ellipsis = src_len > max_chars && max_chars >= 3;
                             char dock_title[16];
                             int ti = 0;
-                            while (ti < max_chars && ws->title[ti]) {
-                                dock_title[ti] = ws->title[ti];
+                            int copy_len = needs_ellipsis ? max_chars - 2 : max_chars;
+                            while (ti < copy_len && src_title[ti]) {
+                                dock_title[ti] = src_title[ti];
                                 ti++;
+                            }
+                            if (needs_ellipsis) {
+                                dock_title[ti++] = '.';
+                                dock_title[ti++] = '.';
                             }
                             dock_title[ti] = '\0';
 
-                            /* Center text horizontally within item */
                             int text_w = ti * UI_FONT_WIDTH;
                             int tx = item_x + (DOCK_ITEM_W - text_w) / 2;
                             int ty = item_y + (DOCK_ITEM_H - UI_FONT_HEIGHT) / 2;
-                            uint32_t text_color = is_focused ? 0xFFFFFFFFu : DOCK_TEXT;
-                            ui_draw_text(dst->px, dst->pitch, tx, ty,
-                                         text_color, dock_title,
-                                         item_clip.x, item_clip.y,
-                                         item_clip.w, item_clip.h);
-                        }
-                    } else {
-                        /* No title: show app_id or fallback "Window" */
-                        const char *label = ws->app_id[0] ? ws->app_id : "Window";
-                        int max_chars = (DOCK_ITEM_W - 12) / UI_FONT_WIDTH;
-                        if (max_chars > 15) max_chars = 15;
-                        if (max_chars > 0) {
-                            char dock_title[16];
-                            int ti = 0;
-                            while (ti < max_chars && label[ti]) {
-                                dock_title[ti] = label[ti];
-                                ti++;
-                            }
-                            dock_title[ti] = '\0';
-                            int text_w = ti * UI_FONT_WIDTH;
-                            int tx = item_x + (DOCK_ITEM_W - text_w) / 2;
-                            int ty = item_y + (DOCK_ITEM_H - UI_FONT_HEIGHT) / 2;
-                            uint32_t text_color = is_focused ? 0xFFFFFFFFu : DOCK_TEXT_DIM;
                             ui_draw_text(dst->px, dst->pitch, tx, ty,
                                          text_color, dock_title,
                                          item_clip.x, item_clip.y,
@@ -2887,21 +2901,19 @@ void comp_surface_set_minimized(struct comp_surface *surface, bool minimized) {
             comp_damage_add_rect(comp, comp_frame_rect(surface));
             comp_surface_mark_damage(surface);
         }
-        /* Clear focus if this window had it */
+        /* Transfer focus to next visible window */
         if (comp->focused_surface == surface) {
             comp->focused_surface = NULL;
-        }
-        if (comp->active_surface == surface) {
-            /* Switch to another window */
-            if (!wl_list_empty(&comp->surfaces)) {
-                struct comp_surface *other;
-                wl_list_for_each_reverse(other, &comp->surfaces, link) {
-                    if (other != surface && !other->minimized) {
-                        comp->active_surface = other;
-                        break;
-                    }
+            struct comp_surface *other;
+            wl_list_for_each_reverse(other, &comp->surfaces, link) {
+                if (other != surface && !other->minimized) {
+                    comp->focused_surface = other;
+                    break;
                 }
             }
+        }
+        if (comp->active_surface == surface) {
+            comp->active_surface = comp->focused_surface;
         }
     } else {
         surface->minimized = false;

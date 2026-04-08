@@ -69,6 +69,12 @@ void term_init(struct terminal *term) {
                                  0x22 /* MAP_PRIVATE|MAP_ANONYMOUS */, -1, 0);
     if (sb && (long)sb > 0 && (uintptr_t)sb >= 0x10000) {
         term->scrollback = (struct term_cell (*)[TERM_MAX_COLS])sb;
+        /* Pre-fault all pages: the kernel's demand-paging for anonymous
+         * mmap can fail deep into the buffer during heavy scrolling.
+         * Touch every page now to force physical page allocation. */
+        for (size_t i = 0; i < sb_size; i += 4096) {
+            ((volatile char *)sb)[i] = 0;
+        }
     } else {
         term->scrollback = NULL;  /* Scrollback unavailable */
     }

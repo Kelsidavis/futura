@@ -359,10 +359,42 @@ static bool handle_demand_paging_fault(uint64_t fault_addr, fut_mm_t *mm) {
         vma = vma->next;
     }
 
-    /* Not in any VMA or not file-backed */
-    if (!vma || !vma->vnode) {
+    /* Not in any VMA */
+    if (!vma) {
         fut_spinlock_release(&mm->mm_lock);
         return false;
+    }
+
+    /* Anonymous VMA (MAP_ANONYMOUS): allocate a zero-filled page on demand.
+     * This handles pages that were never mapped (lazy allocation), pages
+     * freed after fork/exec COW teardown, or pages reclaimed by the kernel. */
+    if (!vma->vnode) {
+        if (vma->prot == 0) {
+            fut_spinlock_release(&mm->mm_lock);
+            return false;
+        }
+        fut_vmem_context_t *ctx = fut_mm_context(mm);
+        if (!ctx) {
+            fut_spinlock_release(&mm->mm_lock);
+            return false;
+        }
+        void *page = fut_pmm_alloc_page();
+        if (!page) {
+            fut_spinlock_release(&mm->mm_lock);
+            return false;
+        }
+        memset(page, 0, PAGE_SIZE);
+        phys_addr_t phys = pmap_virt_to_phys((uintptr_t)page);
+        uint64_t pte_flags = PTE_PRESENT | PTE_USER;
+        if (vma->prot & 0x2) pte_flags |= PTE_WRITABLE;
+        if (!(vma->prot & 0x4)) pte_flags |= PTE_NX;
+        if (pmap_map_user(ctx, page_addr, phys, PAGE_SIZE, pte_flags) != 0) {
+            fut_pmm_free_page(page);
+            fut_spinlock_release(&mm->mm_lock);
+            return false;
+        }
+        fut_spinlock_release(&mm->mm_lock);
+        return true;
     }
 
     /* PROT_NONE: VMA exists but access is forbidden.  Do NOT load the page —

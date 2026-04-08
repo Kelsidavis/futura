@@ -10,7 +10,7 @@
  	head = ring_buffer_mask(b, b->head);
  	if (head + count <= ring_buffer_capacity(b)) {
  		memcpy(b->data + head, data, count);
-@@ -269,6 +272,16 @@ ring_buffer_ensure_space(struct wl_ring_buffer *b, size_t count)
+@@ -269,5 +272,14 @@ ring_buffer_ensure_space(struct wl_ring_buffer *b, size_t count)
  	/* The following test here is a short-cut to avoid reallocating a buffer
  	 * of the same size.
  	 */

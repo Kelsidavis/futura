@@ -16904,7 +16904,9 @@ static int execute_pipeline(int num_stages, char *stages[], int background, cons
                 /* External command - fork and exec */
                 pid_t pid = sys_fork();
                 if (pid < 0) {
-                    write_str(2, "Error: fork() failed\n");
+                    write_str(2, "Error: fork() failed (errno=");
+                    write_num((int)(-pid));
+                    write_str(2, ")\n");
                     return -1;
                 }
 
@@ -16993,7 +16995,9 @@ static int execute_pipeline(int num_stages, char *stages[], int background, cons
         pid_t pid = sys_fork();
 
         if (pid < 0) {
-            write_str(2, "Error: fork() failed\n");
+            write_str(2, "Error: fork() failed (errno=");
+            write_num((int)(-pid));
+            write_str(2, ")\n");
             return -1;
         }
 

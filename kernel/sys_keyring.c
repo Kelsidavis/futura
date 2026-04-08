@@ -25,6 +25,7 @@
 #include <kernel/kprintf.h>
 #include <kernel/errno.h>
 #include <kernel/fut_task.h>
+#include <kernel/uaccess.h>
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
@@ -262,11 +263,19 @@ long sys_add_key(const char *type, const char *description,
     if (!type || !description) return -EINVAL;
     if (plen > MAX_KEY_PAYLOAD) return -EDQUOT;
 
+    /* Copy strings from user space (SMAP-safe) */
+    char k_type[MAX_KEY_TYPE];
+    char k_desc[MAX_KEY_DESC];
+    if (fut_copy_from_user(k_type, type, MAX_KEY_TYPE) != 0) return -EFAULT;
+    if (fut_copy_from_user(k_desc, description, MAX_KEY_DESC) != 0) return -EFAULT;
+    k_type[MAX_KEY_TYPE - 1] = '\0';
+    k_desc[MAX_KEY_DESC - 1] = '\0';
+
     /* Validate key type */
     bool valid_type = false;
     const char *valid_types[] = {"user", "logon", "keyring", "big_key", NULL};
     for (int i = 0; valid_types[i]; i++) {
-        if (strcmp(type, valid_types[i]) == 0) { valid_type = true; break; }
+        if (strcmp(k_type, valid_types[i]) == 0) { valid_type = true; break; }
     }
     if (!valid_type) return -EINVAL;
 
@@ -278,10 +287,11 @@ long sys_add_key(const char *type, const char *description,
     if (!kr || !kr->is_keyring) return -ENOTDIR;
 
     /* Check for existing key with same type+description → update */
-    struct kernel_key *existing = key_find_in_keyring(kr_serial, type, description);
+    struct kernel_key *existing = key_find_in_keyring(kr_serial, k_type, k_desc);
     if (existing) {
         if (payload && plen > 0) {
-            memcpy(existing->payload, payload, plen);
+            if (fut_copy_from_user(existing->payload, payload, plen) != 0)
+                return -EFAULT;
             existing->payload_len = plen;
         }
         return existing->serial;
@@ -291,22 +301,17 @@ long sys_add_key(const char *type, const char *description,
     struct kernel_key *key = key_alloc();
     if (!key) return -ENOMEM;
 
-    {
-        int i = 0;
-        while (type[i] && i < MAX_KEY_TYPE - 1) { key->type[i] = type[i]; i++; }
-        key->type[i] = '\0';
-    }
-    {
-        int i = 0;
-        while (description[i] && i < MAX_KEY_DESC - 1) { key->description[i] = description[i]; i++; }
-        key->description[i] = '\0';
-    }
+    memcpy(key->type, k_type, MAX_KEY_TYPE);
+    memcpy(key->description, k_desc, MAX_KEY_DESC);
     if (payload && plen > 0) {
-        memcpy(key->payload, payload, plen);
+        if (fut_copy_from_user(key->payload, payload, plen) != 0) {
+            key->active = false;
+            return -EFAULT;
+        }
         key->payload_len = plen;
     }
     key->perm = KEY_POS_ALL | KEY_USR_ALL;
-    key->is_keyring = (strcmp(type, "keyring") == 0);
+    key->is_keyring = (strcmp(k_type, "keyring") == 0);
 
     fut_task_t *task = fut_task_current();
     key->uid = task ? task->uid : 0;
@@ -336,6 +341,14 @@ long sys_request_key(const char *type, const char *description,
     (void)callout_info;
     if (!type || !description) return -EINVAL;
 
+    /* Copy strings from user space (SMAP-safe) */
+    char k_type[MAX_KEY_TYPE];
+    char k_desc[MAX_KEY_DESC];
+    if (fut_copy_from_user(k_type, type, MAX_KEY_TYPE) != 0) return -EFAULT;
+    if (fut_copy_from_user(k_desc, description, MAX_KEY_DESC) != 0) return -EFAULT;
+    k_type[MAX_KEY_TYPE - 1] = '\0';
+    k_desc[MAX_KEY_DESC - 1] = '\0';
+
     /* Search through session, process, thread keyrings in order */
     int32_t search_order[] = {
         session_keyring_serial,
@@ -347,7 +360,7 @@ long sys_request_key(const char *type, const char *description,
 
     for (int i = 0; i < 5; i++) {
         if (search_order[i] == 0) continue;
-        struct kernel_key *found = key_find_in_keyring(search_order[i], type, description);
+        struct kernel_key *found = key_find_in_keyring(search_order[i], k_type, k_desc);
         if (found) {
             /* Optionally link into dest_keyring */
             if (dest_keyring != 0) {

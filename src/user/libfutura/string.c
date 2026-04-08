@@ -260,11 +260,26 @@ long __isoc23_strtol(const char *nptr, char **endptr, int base) {
  */
 void * __attribute__((noinline,noclone))
 memcpy(void *dest, const void *src, size_t n) {
-    /* Defensive check: reject NULL or suspiciously low pointer values.
-     * Use volatile to prevent compiler from optimizing away (UB assumption). */
-    volatile uintptr_t d_addr = (uintptr_t)dest;
-    volatile uintptr_t s_addr = (uintptr_t)src;
-    if (d_addr < 0x10000 || s_addr < 0x10000 || n == 0)
+    /* Hard check using pure inline asm to avoid any compiler UB reasoning.
+     * The compiler cannot remove inline asm, so the branch is guaranteed. */
+    unsigned long d_val = (unsigned long)dest;
+    unsigned long s_val = (unsigned long)src;
+    int bad = 0;
+    __asm__ volatile (
+        "cmpq $0xFFFF, %[d]\n\t"
+        "jbe 1f\n\t"
+        "cmpq $0xFFFF, %[s]\n\t"
+        "jbe 1f\n\t"
+        "testq %[n], %[n]\n\t"
+        "jz 1f\n\t"
+        "jmp 2f\n\t"
+        "1: movl $1, %[bad]\n\t"
+        "2:\n\t"
+        : [bad] "+r"(bad)
+        : [d] "r"(d_val), [s] "r"(s_val), [n] "r"(n)
+        : "cc"
+    );
+    if (bad)
         return dest;
 
     unsigned char *d = (unsigned char *)dest;

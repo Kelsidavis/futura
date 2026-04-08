@@ -1121,6 +1121,14 @@ void comp_surface_destroy(struct comp_surface *surface) {
         return;
     }
 
+    /* If a commit is in progress, defer destruction until commit finishes.
+     * This prevents use-after-free when event re-entrancy (e.g. buffer
+     * release triggering client disconnect) destroys the surface mid-commit. */
+    if (surface->in_commit) {
+        surface->destroy_deferred = true;
+        return;
+    }
+
     /* Clear the resource's back-pointer so no stale reference survives. */
     if (surface->surface_resource) {
         wl_resource_set_user_data(surface->surface_resource, NULL);
@@ -1133,6 +1141,8 @@ void comp_surface_destroy(struct comp_surface *surface) {
 
     if (surface->backing) {
         free(surface->backing);
+        surface->backing = NULL;
+        surface->backing_size = 0;
     }
 
     struct compositor_state *comp = surface->comp;
@@ -1220,6 +1230,8 @@ void comp_surface_commit(struct comp_surface *surface) {
         return;
     }
 
+    surface->in_commit = true;
+
     struct compositor_state *comp = surface->comp;
     bool throttle = comp && comp->throttle_enabled;
     bool has_buffer = surface->has_pending_buffer && surface->pending_buffer_resource;
@@ -1229,7 +1241,7 @@ void comp_surface_commit(struct comp_surface *surface) {
 #ifdef DEBUG_WAYLAND
         WLOG("[WAYLAND] throttle skip win=%p\n", (void *)surface);
 #endif
-        return;
+        goto commit_done;
     }
 
     if (has_buffer) {
@@ -1243,7 +1255,7 @@ void comp_surface_commit(struct comp_surface *surface) {
                 wl_buffer_send_release(surface->pending_buffer_resource);
                 surface->pending_buffer_resource = NULL;
                 surface->has_pending_buffer = false;
-                return;
+                goto commit_done;
             }
 
             size_t required = (size_t)buffer.stride * (size_t)buffer.height;
@@ -1256,7 +1268,7 @@ void comp_surface_commit(struct comp_surface *surface) {
                     shm_buffer_release(&buffer);
                     surface->pending_buffer_resource = NULL;
                     surface->has_pending_buffer = false;
-                    return;
+                    goto commit_done;
                 }
                 surface->backing = new_mem;
                 surface->backing_size = required;
@@ -1267,7 +1279,7 @@ void comp_surface_commit(struct comp_surface *surface) {
                 wl_buffer_send_release(surface->pending_buffer_resource);
                 surface->pending_buffer_resource = NULL;
                 surface->has_pending_buffer = false;
-                return;
+                goto commit_done;
             }
             /* Cache backing pointer locally so the compiler doesn't
              * reload it from the struct each iteration (memcpy is an
@@ -1364,6 +1376,12 @@ void comp_surface_commit(struct comp_surface *surface) {
             }
         }
         surface->has_pending_damage = false;
+    }
+
+commit_done:
+    surface->in_commit = false;
+    if (surface->destroy_deferred) {
+        comp_surface_destroy(surface);
     }
 }
 
@@ -2233,7 +2251,10 @@ static void comp_handle_timer_tick(struct compositor_state *comp, uint64_t expir
         }
     }
 
-    (void)comp_timer_arm(comp);
+    if (comp_timer_arm(comp) < 0) {
+        /* Timer arm failed — reset next_tick so we recalculate next time */
+        comp->next_tick_ms = 0;
+    }
 
     /* Auto-damage the dock area when the clock minute changes so the
      * displayed time stays current even when nothing else triggers a
@@ -2310,6 +2331,7 @@ int comp_run(struct compositor_state *comp) {
          * The user-space timerfd is not a real kernel fd, so even when
          * wl_event_loop_add_fd succeeds (due to bypassed epoll_ctl),
          * the event loop won't deliver timer events. Always poll manually. */
+        bool rendered_this_iter = false;
         if (comp->timerfd >= 0) {
             uint64_t expirations = 0;
             ssize_t read_rc = read(comp->timerfd, &expirations, sizeof(expirations));
@@ -2319,6 +2341,18 @@ int comp_run(struct compositor_state *comp) {
                     expirations = 4;
                 }
                 comp_handle_timer_tick(comp, expirations);
+                rendered_this_iter = true;
+            }
+        }
+
+        /* Fallback: if the timer didn't fire but we have pending damage,
+         * render anyway to prevent desktop freezes.  Re-arm the timer
+         * so it doesn't stay stuck. */
+        if (!rendered_this_iter && comp->frame_damage.count > 0) {
+            comp_render_frame(comp);
+            if (comp->timerfd >= 0) {
+                comp->next_tick_ms = 0; /* recalculate from now */
+                comp_timer_arm(comp);
             }
         }
 

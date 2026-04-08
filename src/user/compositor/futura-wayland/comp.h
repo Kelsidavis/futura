@@ -235,6 +235,8 @@ struct comp_surface {
     int32_t pre_fs_h;
     fut_rect_t window_geometry;
     bool has_window_geometry;
+    bool in_commit;         /* true while comp_surface_commit is running */
+    bool destroy_deferred;  /* set if destroy was called during commit */
 };
 
 int comp_state_init(struct compositor_state *comp);

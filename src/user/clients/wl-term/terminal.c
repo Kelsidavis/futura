@@ -543,10 +543,9 @@ int term_read_shell(struct terminal *term) {
     if (n == -11 /* EAGAIN */ || n == -4 /* EINTR */) {
         return 0;
     }
-    if (n != 0) {
-        /* Unexpected read error from shell pipe */
-    }
-    return (int)n;
+    /* n == 0 means EOF (shell closed pipe), other negatives are errors.
+     * Both indicate the shell is gone — return -1 to signal closure. */
+    return -1;
 }
 
 void term_send_key(struct terminal *term, char ch) {

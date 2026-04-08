@@ -217,11 +217,13 @@ int main(void) {
 
     /* Demo mode: render test pattern when socket creation fails */
     if (!socket || strcmp(socket, "none") == 0) {
+        printf("[WAYLAND] No socket — entering demo mode\n");
         comp_scheduler_stop(&comp);
         comp_render_demo_frame(&comp);
+        /* Sleep instead of spinning so we don't pin the CPU */
         while (1) {
-            volatile int x = 0;
-            x++;
+            struct timespec ts = { .tv_sec = 1, .tv_nsec = 0 };
+            nanosleep(&ts, NULL);
         }
     } else {
         /* Normal mode */

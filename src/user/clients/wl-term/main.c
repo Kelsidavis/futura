@@ -705,8 +705,16 @@ static bool main_loop_iteration(struct client_state *state) {
         state->running = false;
         return false;
     }
-    while (wl_display_prepare_read(state->display) != 0) {
-        wl_display_dispatch_pending(state->display);
+    {
+        int prep_retries = 0;
+        while (wl_display_prepare_read(state->display) != 0) {
+            wl_display_dispatch_pending(state->display);
+            if (++prep_retries > 1000) {
+                /* Queue never drains — compositor may be stuck */
+                state->running = false;
+                return false;
+            }
+        }
     }
     if (wl_display_read_events(state->display) < 0) {
         state->running = false;

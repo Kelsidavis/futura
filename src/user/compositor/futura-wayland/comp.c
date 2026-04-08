@@ -2299,6 +2299,10 @@ int comp_run(struct compositor_state *comp) {
             uint64_t expirations = 0;
             ssize_t read_rc = read(comp->timerfd, &expirations, sizeof(expirations));
             if (read_rc > 0 && expirations > 0) {
+                /* Cap to avoid processing hundreds of ticks after a stall */
+                if (expirations > 4) {
+                    expirations = 4;
+                }
                 comp_handle_timer_tick(comp, expirations);
             }
         }

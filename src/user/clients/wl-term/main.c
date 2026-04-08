@@ -746,9 +746,30 @@ int main(void) {
     }
     xdg_surface_ack_configure(state.xdg_surface, state.configure_serial);
 
-    /* Create shared memory buffer */
+    /* Create shared memory buffer (unique per instance via PID) */
     state.shm_size = (size_t)TERM_WIDTH * TERM_HEIGHT * 4u;
-    const char shm_name[] = "/wl-term-shm";
+    char shm_name[32];
+    {
+        long pid = sys_call1(39 /* getpid */, 0);
+        int si = 0;
+        shm_name[si++] = '/';
+        shm_name[si++] = 'w';
+        shm_name[si++] = 'l';
+        shm_name[si++] = '-';
+        shm_name[si++] = 't';
+        shm_name[si++] = 'e';
+        shm_name[si++] = 'r';
+        shm_name[si++] = 'm';
+        shm_name[si++] = '-';
+        /* Append PID digits */
+        if (pid < 0) pid = 0;
+        char digits[12];
+        int nd = 0;
+        long tmp = pid;
+        do { digits[nd++] = '0' + (char)(tmp % 10); tmp /= 10; } while (tmp > 0);
+        for (int d = nd - 1; d >= 0; d--) shm_name[si++] = digits[d];
+        shm_name[si] = '\0';
+    }
     state.shm_fd = fut_shm_create(shm_name, state.shm_size, O_RDWR | O_CREAT | O_TRUNC, 0600);
     if (state.shm_fd < 0) {
         WLTERM_LOG("[WL-TERM] Failed to create shm\n");

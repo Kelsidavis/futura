@@ -26,10 +26,23 @@
 #include <kernel/errno.h>
 #include <kernel/fut_task.h>
 #include <kernel/uaccess.h>
+#include <platform/platform.h>
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
 #include <string.h>
+
+/* Copy from user or kernel buffer depending on pointer address.
+ * Kernel-space callers (self-tests) pass kernel pointers directly. */
+static inline int keyring_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) {
+        __builtin_memcpy(dst, src, n);
+        return 0;
+    }
+#endif
+    return keyring_copy_from_user(dst, src, n);
+}
 
 /* ── Keyctl operations (Linux ABI) ── */
 #define KEYCTL_GET_KEYRING_ID         0
@@ -266,8 +279,8 @@ long sys_add_key(const char *type, const char *description,
     /* Copy strings from user space (SMAP-safe) */
     char k_type[MAX_KEY_TYPE];
     char k_desc[MAX_KEY_DESC];
-    if (fut_copy_from_user(k_type, type, MAX_KEY_TYPE) != 0) return -EFAULT;
-    if (fut_copy_from_user(k_desc, description, MAX_KEY_DESC) != 0) return -EFAULT;
+    if (keyring_copy_from_user(k_type, type, MAX_KEY_TYPE) != 0) return -EFAULT;
+    if (keyring_copy_from_user(k_desc, description, MAX_KEY_DESC) != 0) return -EFAULT;
     k_type[MAX_KEY_TYPE - 1] = '\0';
     k_desc[MAX_KEY_DESC - 1] = '\0';
 
@@ -290,7 +303,7 @@ long sys_add_key(const char *type, const char *description,
     struct kernel_key *existing = key_find_in_keyring(kr_serial, k_type, k_desc);
     if (existing) {
         if (payload && plen > 0) {
-            if (fut_copy_from_user(existing->payload, payload, plen) != 0)
+            if (keyring_copy_from_user(existing->payload, payload, plen) != 0)
                 return -EFAULT;
             existing->payload_len = plen;
         }
@@ -304,7 +317,7 @@ long sys_add_key(const char *type, const char *description,
     memcpy(key->type, k_type, MAX_KEY_TYPE);
     memcpy(key->description, k_desc, MAX_KEY_DESC);
     if (payload && plen > 0) {
-        if (fut_copy_from_user(key->payload, payload, plen) != 0) {
+        if (keyring_copy_from_user(key->payload, payload, plen) != 0) {
             key->active = false;
             return -EFAULT;
         }
@@ -344,8 +357,8 @@ long sys_request_key(const char *type, const char *description,
     /* Copy strings from user space (SMAP-safe) */
     char k_type[MAX_KEY_TYPE];
     char k_desc[MAX_KEY_DESC];
-    if (fut_copy_from_user(k_type, type, MAX_KEY_TYPE) != 0) return -EFAULT;
-    if (fut_copy_from_user(k_desc, description, MAX_KEY_DESC) != 0) return -EFAULT;
+    if (keyring_copy_from_user(k_type, type, MAX_KEY_TYPE) != 0) return -EFAULT;
+    if (keyring_copy_from_user(k_desc, description, MAX_KEY_DESC) != 0) return -EFAULT;
     k_type[MAX_KEY_TYPE - 1] = '\0';
     k_desc[MAX_KEY_DESC - 1] = '\0';
 

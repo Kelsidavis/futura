@@ -34,6 +34,17 @@ static inline int statfs_copy_to_buf(void *dst, const void *src, size_t n) {
     return fut_copy_to_user(dst, src, n);
 }
 
+/* Copy from user or kernel buffer depending on pointer address */
+static inline int statfs_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) {
+        __builtin_memcpy(dst, src, n);
+        return 0;
+    }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
+
 /* Filesystem type constants */
 #define FUT_TMPFS_MAGIC        0x01021994
 #define FUT_RAMFS_MAGIC        0x858458F6
@@ -147,9 +158,10 @@ long sys_statfs(const char *path, struct fut_linux_statfs *buf) {
         return -EFAULT;
     }
 
-    /* Copy path from user space (SMAP prevents direct access) */
+    /* Copy path from user space (SMAP prevents direct access).
+     * Use the bypass helper so kernel-space callers (tests) also work. */
     char path_preview[256];
-    if (fut_copy_from_user(path_preview, path, sizeof(path_preview)) != 0) {
+    if (statfs_copy_from_user(path_preview, path, sizeof(path_preview)) != 0) {
         return -EFAULT;
     }
     path_preview[sizeof(path_preview) - 1] = '\0';

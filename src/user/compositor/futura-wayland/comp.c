@@ -2370,6 +2370,13 @@ int comp_run(struct compositor_state *comp) {
          * The top-of-loop flush handles most cases, but this ensures
          * keyboard/mouse events reach clients before the next sleep. */
         wl_display_flush_clients(comp->display);
+
+        /* Yield to client processes.  On a single-CPU system, the
+         * compositor can starve clients if epoll_wait returns immediately
+         * (e.g. when timer or client events are always pending).  An
+         * explicit yield gives wl-term and other clients CPU time to
+         * process the events we just flushed. */
+        sys_sched_yield();
     }
 
     printf("[WAYLAND] event loop exited (running=%d errors=%d)\n",

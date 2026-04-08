@@ -28,7 +28,9 @@ static struct fut_timerfd timerfds[MAX_TIMERFDS];
 static int next_timerfd_handle = 64; /* avoid stdio descriptors */
 
 static uint64_t now_ms(void) {
-    return (uint64_t)sys_time_millis_call();
+    /* sys_time_millis_call() returns the kernel tick count, not
+     * milliseconds.  At 100 Hz each tick = 10 ms. */
+    return (uint64_t)sys_time_millis_call() * 10;
 }
 
 static uint64_t timespec_to_ms(const struct timespec *ts) {

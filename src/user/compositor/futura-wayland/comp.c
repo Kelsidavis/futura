@@ -1213,7 +1213,13 @@ void comp_surface_damage(struct comp_surface *surface,
 }
 
 static uint32_t comp_now_msec(void) {
-    return (uint32_t)sys_time_millis_call();
+    /* sys_time_millis_call() returns the kernel tick counter, not
+     * milliseconds.  The LAPIC timer runs at 100 Hz (10 ms/tick),
+     * so multiply by 10 to get real milliseconds.  This matters
+     * because timerfd_settime(TFD_TIMER_ABSTIME) compares against
+     * CLOCK_MONOTONIC which is also tick-based but converted to
+     * nanoseconds inside the kernel. */
+    return (uint32_t)(sys_time_millis_call() * 10);
 }
 
 static void frame_callback_resource_destroy(struct wl_resource *resource) {
@@ -1406,7 +1412,9 @@ void comp_surface_frame(struct comp_surface *surface,
 }
 
 static uint64_t comp_now_ns(void) {
-    return (uint64_t)sys_time_millis_call() * 1000000ULL;
+    /* sys_time_millis_call() returns ticks (100 Hz = 10 ms/tick).
+     * Each tick = 10,000,000 ns. */
+    return (uint64_t)sys_time_millis_call() * 10000000ULL;
 }
 
 static void present_damage(struct compositor_state *comp, const struct damage_accum *damage) {
@@ -2375,8 +2383,15 @@ int comp_run(struct compositor_state *comp) {
          * compositor can starve clients if epoll_wait returns immediately
          * (e.g. when timer or client events are always pending).  An
          * explicit yield gives wl-term and other clients CPU time to
-         * process the events we just flushed. */
+         * process the events we just flushed.  Follow with a brief sleep
+         * to guarantee we actually block and let the scheduler run other
+         * tasks; sched_yield alone may return immediately if we are the
+         * highest-priority runnable thread. */
         sys_sched_yield();
+        {
+            struct timespec ys = { .tv_sec = 0, .tv_nsec = 1000000 }; /* 1ms */
+            nanosleep(&ys, NULL);
+        }
     }
 
     printf("[WAYLAND] event loop exited (running=%d errors=%d)\n",

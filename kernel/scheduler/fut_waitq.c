@@ -163,10 +163,19 @@ bool fut_waitq_remove_thread(fut_waitq_t *q, fut_thread_t *thread) {
  * @param timeout_ticks  Timer expiry in ticks (0 = no timeout, block forever)
  * @param released_lock  Optional lock to release after enqueuing
  */
+/* Context passed to the timer callback so it can both signal that the
+ * timer fired AND wake threads on the queue. */
+struct timed_wakeup_ctx {
+    fut_waitq_t *q;
+    volatile int fired;   /* set to 1 by callback — checked after CLI */
+};
+
 static void timed_wakeup_cb(void *arg) {
-    fut_waitq_t *wq = (fut_waitq_t *)arg;
-    if (wq) {
-        fut_waitq_wake_all(wq);
+    struct timed_wakeup_ctx *ctx = (struct timed_wakeup_ctx *)arg;
+    if (!ctx) return;
+    ctx->fired = 1;
+    if (ctx->q) {
+        fut_waitq_wake_all(ctx->q);
     }
 }
 
@@ -185,20 +194,21 @@ void fut_waitq_sleep_timed(fut_waitq_t *q, uint64_t timeout_ticks,
         return;
     }
 
-    /* Step 1: Start the timer WHILE the thread is still RUNNING.
-     * This avoids the preemption race: if the timer IRQ fires while we're
-     * setting up, the thread is still RUNNING and won't be stolen from the
-     * ready queue.  The timer callback may fire before we sleep — that's OK,
-     * it will either find us on the queue (and wake us) or not find us (no-op,
-     * but we won't block because state is already READY). */
+    /* Use a stack-local context so the timer callback can set a flag
+     * indicating it already fired.  This closes the lost-timer race
+     * without requiring interrupts to be disabled during fut_timer_start
+     * (which does heap allocation and can deadlock on single-CPU). */
+    struct timed_wakeup_ctx ctx = { .q = q, .fired = 0 };
+
+    /* Step 1: Start the timer with interrupts ENABLED.  fut_timer_start
+     * calls fut_malloc, which may spin on the heap lock — this is safe
+     * only with interrupts enabled so preempted lock holders can run. */
     if (timeout_ticks > 0) {
         extern int fut_timer_start(uint64_t ticks, void (*cb)(void *), void *arg);
-        fut_timer_start(timeout_ticks, timed_wakeup_cb, q);
+        fut_timer_start(timeout_ticks, timed_wakeup_cb, &ctx);
     }
 
-    /* Step 2: Disable interrupts, then set BLOCKED + enqueue atomically.
-     * With IRQs off, no preemption can observe us as BLOCKED before we're
-     * safely on the waitqueue and about to call fut_schedule(). */
+    /* Step 2: Disable interrupts for the enqueue sequence. */
 #if defined(__x86_64__)
     unsigned long flags;
     __asm__ volatile("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
@@ -209,6 +219,23 @@ void fut_waitq_sleep_timed(fut_waitq_t *q, uint64_t timeout_ticks,
     unsigned long flags = 0;
 #endif
 
+    /* Step 3: Check if the timer already fired between step 1 and step 2.
+     * If so, skip blocking — the wakeup already happened. */
+    if (timeout_ticks > 0 && ctx.fired) {
+#if defined(__x86_64__)
+        __asm__ volatile("pushq %0; popfq" :: "r"(flags) : "memory", "cc");
+#elif defined(__aarch64__)
+        __asm__ volatile("msr daif, %0" :: "r"(flags) : "memory");
+#endif
+        if (released_lock)
+            fut_spinlock_release(released_lock);
+        /* Timer already removed from list by process_timer_events. */
+        return;
+    }
+
+    /* Step 4: Set BLOCKED + enqueue atomically (IRQs off, timer can't
+     * fire until we re-enable).  The timer callback will find the thread
+     * on the queue when it eventually fires. */
     thread->state = FUT_THREAD_BLOCKED;
     thread->blocked_waitq = q;
 
@@ -222,20 +249,19 @@ void fut_waitq_sleep_timed(fut_waitq_t *q, uint64_t timeout_ticks,
     if (released_lock)
         fut_spinlock_release(released_lock);
 
-    /* Re-enable interrupts and schedule.  If the timer already fired and
-     * set our state to READY, fut_schedule() will just re-add us. */
+    /* Step 5: Re-enable interrupts and schedule.  When the timer fires
+     * it will find the thread on the waitqueue and wake it. */
 #if defined(__x86_64__)
     __asm__ volatile("pushq %0; popfq" :: "r"(flags) : "memory", "cc");
 #elif defined(__aarch64__)
     __asm__ volatile("msr daif, %0" :: "r"(flags) : "memory");
 #endif
 
-    /* Step 3: Schedule away (or return immediately if already woken). */
     fut_schedule();
 
-    /* Step 4: Cancel the timer (harmless no-op if already fired). */
+    /* Step 6: Cancel the timer (harmless no-op if already fired). */
     if (timeout_ticks > 0) {
         extern int fut_timer_cancel(void (*cb)(void *), void *arg);
-        fut_timer_cancel(timed_wakeup_cb, q);
+        fut_timer_cancel(timed_wakeup_cb, &ctx);
     }
 }

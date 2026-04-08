@@ -9,10 +9,11 @@
 
 /**
  * Get the current time since the epoch in milliseconds.
- * Wrapper around sys_time_millis_call() for portability.
+ * sys_time_millis_call() returns the kernel tick counter (100 Hz),
+ * so each tick = 10 ms.  Multiply to get real milliseconds.
  */
 static long get_millis(void) {
-    return (long)sys_time_millis_call();
+    return (long)sys_time_millis_call() * 10;
 }
 
 /**

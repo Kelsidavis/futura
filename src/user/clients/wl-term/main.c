@@ -813,9 +813,12 @@ static bool main_loop_iteration(struct client_state *state) {
 
 int main(void) {
     /* Ignore SIGPIPE so broken pipes return errors instead of killing us */
-    struct sigaction sa = {0};
-    sa.sa_handler = SIG_IGN;
-    sigaction(SIGPIPE, &sa, NULL);
+    {
+        struct sigaction sa = {0};
+        sa.sa_handler = SIG_IGN;
+        sigaction(SIGPIPE, &sa, NULL);
+        (void)sa;
+    }
 
     WLTERM_LOG("[WL-TERM] Starting...\n");
     struct client_state state = {0};

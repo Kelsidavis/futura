@@ -142,46 +142,25 @@ long sys_statfs(const char *path, struct fut_linux_statfs *buf) {
         return -ESRCH;
     }
 
-    /* Validate path pointer */
-    if (!path) {
-        fut_printf("[STATFS] statfs(path=NULL, buf=%p, pid=%d) -> EFAULT (null path)\n",
-                   buf, task->pid);
+    /* Validate pointers */
+    if (!path || !buf) {
         return -EFAULT;
     }
 
-    /* Validate buffer pointer */
-    if (!buf) {
-        fut_printf("[STATFS] statfs(path=%p, buf=NULL, pid=%d) -> EFAULT (null buffer)\n",
-                   path, task->pid);
+    /* Copy path from user space (SMAP prevents direct access) */
+    char path_preview[256];
+    if (fut_copy_from_user(path_preview, path, sizeof(path_preview)) != 0) {
         return -EFAULT;
     }
+    path_preview[sizeof(path_preview) - 1] = '\0';
 
-    /* Estimate path length for logging */
     size_t path_len = 0;
-    const char *p = path;
-    while (path_len < 4096 && *p != '\0') {
+    while (path_len < sizeof(path_preview) - 1 && path_preview[path_len] != '\0')
         path_len++;
-        p++;
-    }
 
     if (path_len == 0) {
-        fut_printf("[STATFS] statfs(path='', pid=%d) -> ENOENT (empty path)\n", task->pid);
         return -ENOENT;
     }
-
-    if (path_len >= 4096) {
-        fut_printf("[STATFS] statfs(path=<too long>, pid=%d) -> ENAMETOOLONG (path >4096)\n",
-                   task->pid);
-        return -ENAMETOOLONG;
-    }
-
-    /* Log first 64 characters of path */
-    char path_preview[65];
-    size_t preview_len = (path_len < 64) ? path_len : 64;
-    for (size_t i = 0; i < preview_len; i++) {
-        path_preview[i] = path[i];
-    }
-    path_preview[preview_len] = '\0';
 
     /* Try to get real filesystem stats from the mounted filesystem.
      * Look up the vnode, find its mount, and call the fs's statfs if available. */

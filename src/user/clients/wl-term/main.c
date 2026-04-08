@@ -106,7 +106,14 @@ static const struct xdg_surface_listener xdg_surface_listener = {
 /* XDG Toplevel listener */
 static void xdg_toplevel_configure(void *data, struct xdg_toplevel *toplevel,
                                    int32_t width, int32_t height, struct wl_array *states) {
-    (void)data; (void)toplevel; (void)width; (void)height; (void)states;
+    (void)toplevel; (void)states;
+    struct client_state *state = data;
+    /* Store requested size.  We don't dynamically resize the terminal
+     * grid, but we need to ack the configure so the compositor can
+     * apply pending position changes (fullscreen, maximize, etc.). */
+    if (width > 0 && height > 0) {
+        state->needs_redraw = true;
+    }
 }
 
 static void xdg_toplevel_close(void *data, struct xdg_toplevel *toplevel) {
@@ -667,6 +674,13 @@ static bool main_loop_iteration(struct client_state *state) {
         repeat_deadline_ms = tick_ms + REPEAT_INTERVAL_MS;
     }
 
+    /* Ack any pending configure from the compositor (fullscreen, maximize, etc.) */
+    if (state->configured && state->configure_serial != 0) {
+        xdg_surface_ack_configure(state->xdg_surface, state->configure_serial);
+        state->configured = false;
+        state->needs_redraw = true;
+    }
+
     /* Check if shell set a new window title via OSC 0/2 */
     if (state->term.title_changed && state->toplevel) {
         xdg_toplevel_set_title(state->toplevel, term_get_title(&state->term));
@@ -812,9 +826,21 @@ int main(void) {
 
     struct wl_shm_pool *pool = wl_shm_create_pool(state.shm, state.shm_fd,
                                                    (int32_t)state.shm_size);
+    if (!pool) {
+        WLTERM_LOG("[WL-TERM] wl_shm_create_pool failed\n");
+        sys_close(state.shm_fd);
+        wl_display_disconnect(state.display);
+        return -1;
+    }
     state.buffer = wl_shm_pool_create_buffer(pool, 0, TERM_WIDTH, TERM_HEIGHT,
                                              TERM_WIDTH * 4, WL_SHM_FORMAT_ARGB8888);
     wl_shm_pool_destroy(pool);
+    if (!state.buffer) {
+        WLTERM_LOG("[WL-TERM] wl_shm_pool_create_buffer failed\n");
+        sys_close(state.shm_fd);
+        wl_display_disconnect(state.display);
+        return -1;
+    }
 
     /* Initial draw BEFORE spawning shell — spawn_shell() can block on PTY
      * device open/ioctl during early boot, preventing the window from

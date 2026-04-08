@@ -701,6 +701,24 @@ static __attribute__((noreturn)) void fork_child_return(void *arg) {
     /* Ensure IF is set in the saved RFLAGS so user mode gets preempted. */
     saved->rflags |= 0x200;
 
+    /* Load FS_BASE MSR from the child thread before returning to user mode.
+     * Without this, FS_BASE retains the kernel's value (often 0x23 =
+     * USER_CODE_SELECTOR) causing TLS accesses (stack canary at FS:0x28,
+     * errno, etc.) to fault in the child process. */
+    {
+        fut_thread_t *child_thread = fut_thread_current();
+        if (child_thread) {
+            uint64_t fs = child_thread->fs_base;
+            uint32_t lo = (uint32_t)fs;
+            uint32_t hi = (uint32_t)(fs >> 32);
+            __asm__ volatile("wrmsr"
+                             :
+                             : "c" (0xC0000100u), /* MSR_FS_BASE */
+                               "a" (lo), "d" (hi)
+                             : "memory");
+        }
+    }
+
     /* Set RSP to point at the saved frame and pop registers + IRETQ.
      * This is the same register restore sequence used by the ISR return path.
      * After IRETQ, RSP is replaced by the user RSP from the frame. */

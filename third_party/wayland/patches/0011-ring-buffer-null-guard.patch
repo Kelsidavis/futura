@@ -25,4 +25,3 @@
 +
  	if (size_bits == b->size_bits)
  		return 0;
-

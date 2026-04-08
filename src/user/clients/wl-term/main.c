@@ -987,6 +987,13 @@ int main(void) {
             break;
         }
 
+        /* Yield to compositor between iterations.  On a single-CPU
+         * system, the compositor needs CPU time to process our
+         * Wayland requests and send back events (keyboard, frame
+         * callbacks).  Without an explicit yield, the nanosleep
+         * busy-yields but may starve the compositor. */
+        sys_sched_yield();
+
         /* Small delay to avoid busy-wait */
         struct fut_timespec ts = { .tv_sec = 0, .tv_nsec = 10000000 };  /* 10ms */
         sys_nanosleep_call(&ts, NULL);

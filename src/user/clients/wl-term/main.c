@@ -33,9 +33,12 @@
 #define WLTERM_LOG(...) ((void)0)
 #endif
 
-/* Terminal window size (80x25 chars = 640x400 pixels) */
+/* Initial terminal window size (80x25 chars = 640x400 pixels) */
 #define TERM_WIDTH  (TERM_COLS * FONT_WIDTH)
 #define TERM_HEIGHT (TERM_ROWS * FONT_HEIGHT)
+/* Maximum buffer size (matches TERM_MAX dimensions) */
+#define TERM_MAX_WIDTH  (TERM_MAX_COLS * FONT_WIDTH)
+#define TERM_MAX_HEIGHT (TERM_MAX_ROWS * FONT_HEIGHT)
 
 #define O_RDWR      0x0002
 #define O_CREAT     0x0040
@@ -72,7 +75,12 @@ struct client_state {
     void *shm_data;
     size_t shm_size;
     int shm_fd;
+    struct wl_shm_pool *pool;
     struct wl_buffer *buffer;
+
+    /* Current pixel dimensions (derived from term cols/rows) */
+    int32_t pixel_width;
+    int32_t pixel_height;
 
     /* Terminal emulator */
     struct terminal term;
@@ -103,17 +111,65 @@ static const struct xdg_surface_listener xdg_surface_listener = {
     .configure = xdg_surface_configure,
 };
 
+/* Recreate wl_buffer at current pixel dimensions from the existing pool */
+static void recreate_buffer(struct client_state *state) {
+    if (state->buffer) {
+        wl_buffer_destroy(state->buffer);
+        state->buffer = NULL;
+    }
+    if (!state->pool) return;
+
+    state->buffer = wl_shm_pool_create_buffer(
+        state->pool, 0,
+        state->pixel_width, state->pixel_height,
+        state->pixel_width * 4, WL_SHM_FORMAT_ARGB8888);
+}
+
 /* XDG Toplevel listener */
 static void xdg_toplevel_configure(void *data, struct xdg_toplevel *toplevel,
                                    int32_t width, int32_t height, struct wl_array *states) {
     (void)toplevel; (void)states;
     struct client_state *state = data;
-    /* Store requested size.  We don't dynamically resize the terminal
-     * grid, but we need to ack the configure so the compositor can
-     * apply pending position changes (fullscreen, maximize, etc.). */
-    if (width > 0 && height > 0) {
-        state->needs_redraw = true;
+
+    if (width <= 0 || height <= 0) {
+        /* 0,0 means "client decides" — keep current size */
+        return;
     }
+
+    /* Compute new grid dimensions from pixel size */
+    int new_cols = width / FONT_WIDTH;
+    int new_rows = height / FONT_HEIGHT;
+    if (new_cols < 1) new_cols = 1;
+    if (new_rows < 1) new_rows = 1;
+    if (new_cols > TERM_MAX_COLS) new_cols = TERM_MAX_COLS;
+    if (new_rows > TERM_MAX_ROWS) new_rows = TERM_MAX_ROWS;
+
+    if (new_cols == state->term.cols && new_rows == state->term.rows) {
+        state->needs_redraw = true;
+        return;
+    }
+
+    /* Resize the terminal grid */
+    term_resize(&state->term, new_cols, new_rows);
+
+    /* Update pixel dimensions to match grid (snap to char boundaries) */
+    state->pixel_width = new_cols * FONT_WIDTH;
+    state->pixel_height = new_rows * FONT_HEIGHT;
+
+    /* Recreate buffer at new size */
+    recreate_buffer(state);
+
+    /* Update PTY window size so shell knows about new dimensions */
+    if (state->term.shell_stdin_fd >= 0) {
+        struct { unsigned short ws_row, ws_col, ws_xpixel, ws_ypixel; } wsz;
+        wsz.ws_row = (unsigned short)new_rows;
+        wsz.ws_col = (unsigned short)new_cols;
+        wsz.ws_xpixel = (unsigned short)state->pixel_width;
+        wsz.ws_ypixel = (unsigned short)state->pixel_height;
+        sys_ioctl(state->term.shell_stdin_fd, 0x5414 /* TIOCSWINSZ */, (long)&wsz);
+    }
+
+    state->needs_redraw = true;
 }
 
 static void xdg_toplevel_close(void *data, struct xdg_toplevel *toplevel) {
@@ -635,7 +691,7 @@ static void redraw(struct client_state *state) {
 
     /* Render terminal to pixel buffer */
     uint32_t *pixels = (uint32_t *)state->shm_data;
-    term_render(&state->term, pixels, TERM_WIDTH, TERM_HEIGHT, TERM_WIDTH);
+    term_render(&state->term, pixels, state->pixel_width, state->pixel_height, state->pixel_width);
 
     /* Request frame callback */
     state->frame_done = false;
@@ -644,12 +700,17 @@ static void redraw(struct client_state *state) {
 
     /* Commit surface */
     wl_surface_attach(state->surface, state->buffer, 0, 0);
-    wl_surface_damage_buffer(state->surface, 0, 0, TERM_WIDTH, TERM_HEIGHT);
+    wl_surface_damage_buffer(state->surface, 0, 0, state->pixel_width, state->pixel_height);
     wl_surface_commit(state->surface);
     wl_display_flush(state->display);
 
     state->needs_redraw = false;
 }
+
+/* Frame callback timeout: if the compositor stops sending frame callbacks
+ * (e.g., surface not in damage region), force a redraw to prevent freeze. */
+static int frame_wait_ticks = 0;
+#define FRAME_TIMEOUT_TICKS 50  /* ~500ms at 10ms/iteration */
 
 /* Main loop iteration */
 static bool main_loop_iteration(struct client_state *state) {
@@ -663,7 +724,8 @@ static bool main_loop_iteration(struct client_state *state) {
         state->term.cursor_blink_on = true;
         state->term.cursor_blink_time = tick_ms;
     } else if (n < 0) {
-        /* Shell closed */
+        /* Shell closed — but don't exit immediately; allow the last
+         * output to be rendered.  Only exit after a grace period. */
         WLTERM_LOG("[WL-TERM] Shell exited\n");
         return false;
     }
@@ -693,6 +755,23 @@ static bool main_loop_iteration(struct client_state *state) {
         wl_surface_commit(state->surface);
     }
 
+    /* Frame callback timeout: if compositor hasn't sent frame done in
+     * FRAME_TIMEOUT_TICKS iterations, force it so we don't freeze. */
+    if (!state->frame_done) {
+        frame_wait_ticks++;
+        if (frame_wait_ticks >= FRAME_TIMEOUT_TICKS) {
+            /* Destroy stale callback to avoid leak */
+            if (state->frame_cb) {
+                wl_callback_destroy(state->frame_cb);
+                state->frame_cb = NULL;
+            }
+            state->frame_done = true;
+            frame_wait_ticks = 0;
+        }
+    } else {
+        frame_wait_ticks = 0;
+    }
+
     /* Redraw if needed and frame is ready */
     if (state->needs_redraw && state->frame_done) {
         redraw(state);
@@ -716,9 +795,16 @@ static bool main_loop_iteration(struct client_state *state) {
             }
         }
     }
+    /* read_events: on non-blocking fd, libwayland returns 0 for EAGAIN.
+     * But guard against transient errors — only exit on persistent failure. */
     if (wl_display_read_events(state->display) < 0) {
-        state->running = false;
-        return false;
+        /* Check errno: EAGAIN/EINTR are transient, not fatal */
+        if (errno == 11 /* EAGAIN */ || errno == 4 /* EINTR */) {
+            /* Transient — continue */
+        } else {
+            state->running = false;
+            return false;
+        }
     }
     wl_display_dispatch_pending(state->display);
 
@@ -796,8 +882,13 @@ int main(void) {
     }
     xdg_surface_ack_configure(state.xdg_surface, state.configure_serial);
 
-    /* Create shared memory buffer (unique per instance via PID) */
-    state.shm_size = (size_t)TERM_WIDTH * TERM_HEIGHT * 4u;
+    /* Set pixel dimensions from terminal grid (may have been resized by configure) */
+    state.pixel_width = state.term.cols * FONT_WIDTH;
+    state.pixel_height = state.term.rows * FONT_HEIGHT;
+
+    /* Create shared memory buffer (unique per instance via PID).
+     * Allocate at MAX size so we can resize without re-mmap. */
+    state.shm_size = (size_t)TERM_MAX_WIDTH * TERM_MAX_HEIGHT * 4u;
     char shm_name[32];
     {
         long pid = sys_call1(39 /* getpid */, 0);
@@ -847,17 +938,17 @@ int main(void) {
         pixels[i] = 0xFF1A1B26u;  /* Match terminal background */
     }
 
-    struct wl_shm_pool *pool = wl_shm_create_pool(state.shm, state.shm_fd,
-                                                   (int32_t)state.shm_size);
-    if (!pool) {
+    state.pool = wl_shm_create_pool(state.shm, state.shm_fd,
+                                     (int32_t)state.shm_size);
+    if (!state.pool) {
         WLTERM_LOG("[WL-TERM] wl_shm_create_pool failed\n");
         sys_close(state.shm_fd);
         wl_display_disconnect(state.display);
         return -1;
     }
-    state.buffer = wl_shm_pool_create_buffer(pool, 0, TERM_WIDTH, TERM_HEIGHT,
-                                             TERM_WIDTH * 4, WL_SHM_FORMAT_ARGB8888);
-    wl_shm_pool_destroy(pool);
+    state.buffer = wl_shm_pool_create_buffer(state.pool, 0,
+                                             state.pixel_width, state.pixel_height,
+                                             state.pixel_width * 4, WL_SHM_FORMAT_ARGB8888);
     if (!state.buffer) {
         WLTERM_LOG("[WL-TERM] wl_shm_pool_create_buffer failed\n");
         sys_close(state.shm_fd);
@@ -913,6 +1004,9 @@ int main(void) {
     }
     if (state.buffer) {
         wl_buffer_destroy(state.buffer);
+    }
+    if (state.pool) {
+        wl_shm_pool_destroy(state.pool);
     }
     if (state.shm_data) {
         sys_munmap_call(state.shm_data, (long)state.shm_size);

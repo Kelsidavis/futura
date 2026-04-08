@@ -1027,8 +1027,10 @@ static void xdg_wm_base_get_xdg_surface(struct wl_client *client,
     state->comp = comp;
     state->xdg_surface_res = xdg_surface_res;
 
-    int32_t default_w = 480;
-    int32_t default_h = 320;
+    /* Per xdg-shell spec: width=0, height=0 means "client decides".
+     * Let the client pick its preferred size. */
+    int32_t default_w = 0;
+    int32_t default_h = 0;
     if (comp->fb_info.width > 0 && comp->fb_info.width < (uint32_t)default_w) {
         default_w = (int32_t)comp->fb_info.width;
     }

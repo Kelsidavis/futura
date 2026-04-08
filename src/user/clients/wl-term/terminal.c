@@ -17,9 +17,23 @@
 void term_init(struct terminal *term) {
     memset(term, 0, sizeof(*term));
 
+    term->cols = TERM_COLS;
+    term->rows = TERM_ROWS;
+
+    /* Allocate grid via mmap (too large for 64KB user stack) */
+    size_t grid_size = (size_t)TERM_MAX_ROWS * TERM_MAX_COLS * sizeof(struct term_cell);
+    void *g = (void *)sys_mmap(NULL, (long)grid_size, 0x3 /* PROT_READ|PROT_WRITE */,
+                               0x22 /* MAP_PRIVATE|MAP_ANONYMOUS */, -1, 0);
+    if (g && (long)g > 0 && (uintptr_t)g >= 0x10000) {
+        term->grid = (struct term_cell (*)[TERM_MAX_COLS])g;
+    } else {
+        term->grid = NULL;
+        return;  /* Fatal: no grid */
+    }
+
     /* Initialize grid with spaces */
-    for (int y = 0; y < TERM_ROWS; y++) {
-        for (int x = 0; x < TERM_COLS; x++) {
+    for (int y = 0; y < term->rows; y++) {
+        for (int x = 0; x < term->cols; x++) {
             term->grid[y][x].ch = ' ';
             term->grid[y][x].fg_color = COLOR_WHITE;
             term->grid[y][x].bg_color = COLOR_BLACK;
@@ -38,7 +52,7 @@ void term_init(struct terminal *term) {
     term->osc_len = 0;
 
     /* Initialize tab stops every TAB_STOP_WIDTH columns */
-    for (int x = 0; x < TERM_COLS; x++) {
+    for (int x = 0; x < TERM_MAX_COLS; x++) {
         term->tab_stops[x] = (x % TAB_STOP_WIDTH == 0);
     }
 
@@ -50,11 +64,11 @@ void term_init(struct terminal *term) {
     term->title_changed = false;
 
     /* Allocate scrollback buffer via mmap (too large for stack) */
-    size_t sb_size = (size_t)SCROLLBACK_LINES * TERM_COLS * sizeof(struct term_cell);
+    size_t sb_size = (size_t)SCROLLBACK_LINES * TERM_MAX_COLS * sizeof(struct term_cell);
     void *sb = (void *)sys_mmap(NULL, (long)sb_size, 0x3 /* PROT_READ|PROT_WRITE */,
                                  0x22 /* MAP_PRIVATE|MAP_ANONYMOUS */, -1, 0);
     if (sb && (long)sb > 0 && (uintptr_t)sb >= 0x10000) {
-        term->scrollback = (struct term_cell (*)[TERM_COLS])sb;
+        term->scrollback = (struct term_cell (*)[TERM_MAX_COLS])sb;
     } else {
         term->scrollback = NULL;  /* Scrollback unavailable */
     }
@@ -65,8 +79,13 @@ void term_init(struct terminal *term) {
 }
 
 void term_destroy(struct terminal *term) {
+    if (term->grid) {
+        size_t grid_size = (size_t)TERM_MAX_ROWS * TERM_MAX_COLS * sizeof(struct term_cell);
+        sys_munmap_call(term->grid, (long)grid_size);
+        term->grid = NULL;
+    }
     if (term->scrollback) {
-        size_t sb_size = (size_t)SCROLLBACK_LINES * TERM_COLS * sizeof(struct term_cell);
+        size_t sb_size = (size_t)SCROLLBACK_LINES * TERM_MAX_COLS * sizeof(struct term_cell);
         sys_munmap_call(term->scrollback, (long)sb_size);
         term->scrollback = NULL;
     }
@@ -75,7 +94,7 @@ void term_destroy(struct terminal *term) {
 void term_scroll(struct terminal *term) {
     /* Save top row to scrollback before discarding */
     if (term->scrollback) {
-        for (int x = 0; x < TERM_COLS; x++) {
+        for (int x = 0; x < term->cols; x++) {
             term->scrollback[term->scrollback_head][x] = term->grid[0][x];
         }
         term->scrollback_head = (term->scrollback_head + 1) % SCROLLBACK_LINES;
@@ -87,17 +106,17 @@ void term_scroll(struct terminal *term) {
         term->scroll_offset++;
 
     /* Move all rows up by one */
-    for (int y = 0; y < TERM_ROWS - 1; y++) {
-        for (int x = 0; x < TERM_COLS; x++) {
+    for (int y = 0; y < term->rows - 1; y++) {
+        for (int x = 0; x < term->cols; x++) {
             term->grid[y][x] = term->grid[y + 1][x];
         }
     }
 
     /* Clear bottom row */
-    for (int x = 0; x < TERM_COLS; x++) {
-        term->grid[TERM_ROWS - 1][x].ch = ' ';
-        term->grid[TERM_ROWS - 1][x].fg_color = term->fg_color;
-        term->grid[TERM_ROWS - 1][x].bg_color = term->bg_color;
+    for (int x = 0; x < term->cols; x++) {
+        term->grid[term->rows - 1][x].ch = ' ';
+        term->grid[term->rows - 1][x].fg_color = term->fg_color;
+        term->grid[term->rows - 1][x].bg_color = term->bg_color;
     }
 }
 
@@ -112,8 +131,8 @@ void term_scroll_to_bottom(struct terminal *term) {
 }
 
 void term_clear(struct terminal *term) {
-    for (int y = 0; y < TERM_ROWS; y++) {
-        for (int x = 0; x < TERM_COLS; x++) {
+    for (int y = 0; y < term->rows; y++) {
+        for (int x = 0; x < term->cols; x++) {
             term->grid[y][x].ch = ' ';
             term->grid[y][x].fg_color = term->fg_color;
             term->grid[y][x].bg_color = term->bg_color;
@@ -121,6 +140,49 @@ void term_clear(struct terminal *term) {
     }
     term->cursor_x = 0;
     term->cursor_y = 0;
+}
+
+void term_resize(struct terminal *term, int new_cols, int new_rows) {
+    if (new_cols < 1) new_cols = 1;
+    if (new_rows < 1) new_rows = 1;
+    if (new_cols > TERM_MAX_COLS) new_cols = TERM_MAX_COLS;
+    if (new_rows > TERM_MAX_ROWS) new_rows = TERM_MAX_ROWS;
+
+    if (new_cols == term->cols && new_rows == term->rows)
+        return;
+
+    int old_cols = term->cols;
+    int old_rows = term->rows;
+
+    /* Clear newly exposed columns in existing rows */
+    if (new_cols > old_cols) {
+        int fill_rows = old_rows < new_rows ? old_rows : new_rows;
+        for (int y = 0; y < fill_rows; y++) {
+            for (int x = old_cols; x < new_cols; x++) {
+                term->grid[y][x].ch = ' ';
+                term->grid[y][x].fg_color = term->fg_color;
+                term->grid[y][x].bg_color = term->bg_color;
+            }
+        }
+    }
+
+    /* Clear newly exposed rows */
+    if (new_rows > old_rows) {
+        for (int y = old_rows; y < new_rows; y++) {
+            for (int x = 0; x < new_cols; x++) {
+                term->grid[y][x].ch = ' ';
+                term->grid[y][x].fg_color = term->fg_color;
+                term->grid[y][x].bg_color = term->bg_color;
+            }
+        }
+    }
+
+    term->cols = new_cols;
+    term->rows = new_rows;
+
+    /* Clamp cursor to new bounds */
+    if (term->cursor_x >= new_cols) term->cursor_x = new_cols - 1;
+    if (term->cursor_y >= new_rows) term->cursor_y = new_rows - 1;
 }
 
 /* ANSI 16-color palette (Tokyo Night inspired) */
@@ -225,13 +287,13 @@ static void term_handle_escape(struct terminal *term) {
     case 'B': { /* Cursor Down */
         int n = (nparams > 0 && params[0] > 0) ? params[0] : 1;
         term->cursor_y += n;
-        if (term->cursor_y >= TERM_ROWS) term->cursor_y = TERM_ROWS - 1;
+        if (term->cursor_y >= term->rows) term->cursor_y = term->rows - 1;
         break;
     }
     case 'C': { /* Cursor Forward (Right) */
         int n = (nparams > 0 && params[0] > 0) ? params[0] : 1;
         term->cursor_x += n;
-        if (term->cursor_x >= TERM_COLS) term->cursor_x = TERM_COLS - 1;
+        if (term->cursor_x >= term->cols) term->cursor_x = term->cols - 1;
         break;
     }
     case 'D': { /* Cursor Back (Left) */
@@ -244,9 +306,9 @@ static void term_handle_escape(struct terminal *term) {
         int row = (nparams > 0 && params[0] > 0) ? params[0] - 1 : 0;
         int col = (nparams > 1 && params[1] > 0) ? params[1] - 1 : 0;
         if (row < 0) row = 0;
-        if (row >= TERM_ROWS) row = TERM_ROWS - 1;
+        if (row >= term->rows) row = term->rows - 1;
         if (col < 0) col = 0;
-        if (col >= TERM_COLS) col = TERM_COLS - 1;
+        if (col >= term->cols) col = term->cols - 1;
         term->cursor_y = row;
         term->cursor_x = col;
         break;
@@ -254,20 +316,20 @@ static void term_handle_escape(struct terminal *term) {
     case 'J': { /* Erase in Display */
         int mode = (nparams > 0) ? params[0] : 0;
         if (mode == 0) { /* Cursor to end */
-            for (int x = term->cursor_x; x < TERM_COLS; x++) {
+            for (int x = term->cursor_x; x < term->cols; x++) {
                 term->grid[term->cursor_y][x].ch = ' ';
                 term->grid[term->cursor_y][x].fg_color = term->fg_color;
                 term->grid[term->cursor_y][x].bg_color = term->bg_color;
             }
-            for (int y = term->cursor_y + 1; y < TERM_ROWS; y++)
-                for (int x = 0; x < TERM_COLS; x++) {
+            for (int y = term->cursor_y + 1; y < term->rows; y++)
+                for (int x = 0; x < term->cols; x++) {
                     term->grid[y][x].ch = ' ';
                     term->grid[y][x].fg_color = term->fg_color;
                     term->grid[y][x].bg_color = term->bg_color;
                 }
         } else if (mode == 1) { /* Start to cursor */
             for (int y = 0; y < term->cursor_y; y++)
-                for (int x = 0; x < TERM_COLS; x++) {
+                for (int x = 0; x < term->cols; x++) {
                     term->grid[y][x].ch = ' ';
                     term->grid[y][x].fg_color = term->fg_color;
                     term->grid[y][x].bg_color = term->bg_color;
@@ -286,7 +348,7 @@ static void term_handle_escape(struct terminal *term) {
         int mode = (nparams > 0) ? params[0] : 0;
         int y = term->cursor_y;
         if (mode == 0) { /* Cursor to end of line */
-            for (int x = term->cursor_x; x < TERM_COLS; x++) {
+            for (int x = term->cursor_x; x < term->cols; x++) {
                 term->grid[y][x].ch = ' ';
                 term->grid[y][x].fg_color = term->fg_color;
                 term->grid[y][x].bg_color = term->bg_color;
@@ -298,7 +360,7 @@ static void term_handle_escape(struct terminal *term) {
                 term->grid[y][x].bg_color = term->bg_color;
             }
         } else if (mode == 2) { /* Entire line */
-            for (int x = 0; x < TERM_COLS; x++) {
+            for (int x = 0; x < term->cols; x++) {
                 term->grid[y][x].ch = ' ';
                 term->grid[y][x].fg_color = term->fg_color;
                 term->grid[y][x].bg_color = term->bg_color;
@@ -363,13 +425,13 @@ static void term_handle_escape(struct terminal *term) {
     }
     case 'G': { /* Cursor Horizontal Absolute */
         int col = (nparams > 0 && params[0] > 0) ? params[0] - 1 : 0;
-        if (col >= TERM_COLS) col = TERM_COLS - 1;
+        if (col >= term->cols) col = term->cols - 1;
         term->cursor_x = col;
         break;
     }
     case 'd': { /* Cursor Vertical Absolute */
         int row = (nparams > 0 && params[0] > 0) ? params[0] - 1 : 0;
-        if (row >= TERM_ROWS) row = TERM_ROWS - 1;
+        if (row >= term->rows) row = term->rows - 1;
         term->cursor_y = row;
         break;
     }
@@ -460,8 +522,8 @@ void term_putchar(struct terminal *term, char ch) {
     if (ch == '\n') {
         term->cursor_y++;
         term->cursor_x = 0;
-        if (term->cursor_y >= TERM_ROWS) {
-            term->cursor_y = TERM_ROWS - 1;
+        if (term->cursor_y >= term->rows) {
+            term->cursor_y = term->rows - 1;
             term_scroll(term);
         }
         return;
@@ -485,7 +547,7 @@ void term_putchar(struct terminal *term, char ch) {
          * found before the right margin, clamp to the last column. */
         int start = term->cursor_x + 1;
         bool found = false;
-        for (int x = start; x < TERM_COLS; x++) {
+        for (int x = start; x < term->cols; x++) {
             if (term->tab_stops[x]) {
                 term->cursor_x = x;
                 found = true;
@@ -496,8 +558,8 @@ void term_putchar(struct terminal *term, char ch) {
             /* No tab stop before right margin: wrap to next line */
             term->cursor_x = 0;
             term->cursor_y++;
-            if (term->cursor_y >= TERM_ROWS) {
-                term->cursor_y = TERM_ROWS - 1;
+            if (term->cursor_y >= term->rows) {
+                term->cursor_y = term->rows - 1;
                 term_scroll(term);
             }
         }
@@ -511,11 +573,11 @@ void term_putchar(struct terminal *term, char ch) {
         term->grid[term->cursor_y][term->cursor_x].bg_color = term->bg_color;
 
         term->cursor_x++;
-        if (term->cursor_x >= TERM_COLS) {
+        if (term->cursor_x >= term->cols) {
             term->cursor_x = 0;
             term->cursor_y++;
-            if (term->cursor_y >= TERM_ROWS) {
-                term->cursor_y = TERM_ROWS - 1;
+            if (term->cursor_y >= term->rows) {
+                term->cursor_y = term->rows - 1;
                 term_scroll(term);
             }
         }
@@ -539,12 +601,16 @@ int term_read_shell(struct terminal *term) {
         term_write(term, buf, (size_t)n);
         return (int)n;
     }
-    /* EAGAIN (-11) means no data available on non-blocking pipe, not an error */
-    if (n == -11 /* EAGAIN */ || n == -4 /* EINTR */) {
+    /* EAGAIN (-11) means no data available on non-blocking pipe, not an error.
+     * EINTR (-4) means interrupted by signal.
+     * EIO (-5) can occur on PTY master when slave session ends — but on
+     * Futura this may be transient during PTY setup, so treat as no-data.
+     * n == 0 on a PTY master could mean no data (Futura quirk) rather than
+     * true EOF — treat as no-data to avoid premature exit. */
+    if (n == 0 || n == -11 /* EAGAIN */ || n == -4 /* EINTR */ || n == -5 /* EIO */) {
         return 0;
     }
-    /* n == 0 means EOF (shell closed pipe), other negatives are errors.
-     * Both indicate the shell is gone — return -1 to signal closure. */
+    /* Other negative values indicate the shell is truly gone. */
     return -1;
 }
 
@@ -559,7 +625,7 @@ void term_send_key(struct terminal *term, char ch) {
 void term_render(struct terminal *term, uint32_t *pixels, int32_t width, int32_t height, int32_t stride) {
 
     /* Defensive check: reject NULL or suspiciously low pointer values */
-    if (!term || !pixels || (uintptr_t)pixels < 0x10000) {
+    if (!term || !term->grid || !pixels || (uintptr_t)pixels < 0x10000) {
         return;
     }
 
@@ -569,8 +635,8 @@ void term_render(struct terminal *term, uint32_t *pixels, int32_t width, int32_t
     }
 
     /* Clear background - use min of expected size and actual buffer size */
-    int32_t clear_height = TERM_ROWS * FONT_HEIGHT;
-    int32_t clear_width = TERM_COLS * FONT_WIDTH;
+    int32_t clear_height = term->rows * FONT_HEIGHT;
+    int32_t clear_width = term->cols * FONT_WIDTH;
     if (clear_height > height) clear_height = height;
     if (clear_width > width) clear_width = width;
 
@@ -582,26 +648,26 @@ void term_render(struct terminal *term, uint32_t *pixels, int32_t width, int32_t
     }
 
     /* Render each character — show scrollback if offset > 0 */
-    for (int row = 0; row < TERM_ROWS; row++) {
+    for (int row = 0; row < term->rows; row++) {
         struct term_cell *cell_row;
-        struct term_cell scrollback_row[TERM_COLS]; /* temp for scrollback rows */
+        struct term_cell scrollback_row[TERM_MAX_COLS]; /* temp for scrollback rows */
 
         if (term->scrollback && term->scroll_offset > 0 && row < term->scroll_offset &&
             row < term->scrollback_count) {
             /* This row shows a scrollback line */
             int sb_line = term->scroll_offset - row;
             int sb_idx = (term->scrollback_head - sb_line + SCROLLBACK_LINES) % SCROLLBACK_LINES;
-            for (int c = 0; c < TERM_COLS; c++) scrollback_row[c] = term->scrollback[sb_idx][c];
+            for (int c = 0; c < term->cols; c++) scrollback_row[c] = term->scrollback[sb_idx][c];
             cell_row = scrollback_row;
         } else {
             /* Normal grid row (offset by scrollback lines shown) */
-            int grid_row = row - (term->scroll_offset < TERM_ROWS ? term->scroll_offset : TERM_ROWS - 1);
+            int grid_row = row - (term->scroll_offset < term->rows ? term->scroll_offset : term->rows - 1);
             if (grid_row < 0) grid_row = 0;
-            if (grid_row >= TERM_ROWS) grid_row = TERM_ROWS - 1;
+            if (grid_row >= term->rows) grid_row = term->rows - 1;
             cell_row = term->grid[grid_row];
         }
 
-        for (int col = 0; col < TERM_COLS; col++) {
+        for (int col = 0; col < term->cols; col++) {
             int px = col * FONT_WIDTH;
             int py = row * FONT_HEIGHT;
             font_render_char(cell_row[col].ch, pixels, px, py, stride, width, height,
@@ -613,8 +679,8 @@ void term_render(struct terminal *term, uint32_t *pixels, int32_t width, int32_t
      * When blink phase is off, render the character under the cursor normally
      * (i.e., skip the cursor overlay) so the cursor appears to vanish. */
     if (term->cursor_visible && term->cursor_blink_on &&
-        term->cursor_x >= 0 && term->cursor_x < TERM_COLS &&
-        term->cursor_y >= 0 && term->cursor_y < TERM_ROWS) {
+        term->cursor_x >= 0 && term->cursor_x < term->cols &&
+        term->cursor_y >= 0 && term->cursor_y < term->rows) {
         int cx = term->cursor_x * FONT_WIDTH;
         int cy = term->cursor_y * FONT_HEIGHT;
         char under_ch = term->grid[term->cursor_y][term->cursor_x].ch;

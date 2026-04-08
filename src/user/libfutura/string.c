@@ -260,35 +260,35 @@ long __isoc23_strtol(const char *nptr, char **endptr, int base) {
  */
 void * __attribute__((noinline,noclone))
 memcpy(void *dest, const void *src, size_t n) {
-    /* Hard check using pure inline asm to avoid any compiler UB reasoning.
-     * The compiler cannot remove inline asm, so the branch is guaranteed. */
-    unsigned long d_val = (unsigned long)dest;
-    unsigned long s_val = (unsigned long)src;
-    int bad = 0;
+    /* Guard + copy entirely in asm so the compiler cannot interfere.
+     * Uses rep movsb for the copy — a single instruction that the CPU
+     * executes directly, giving clean fault diagnostics if pointers are bad. */
     __asm__ volatile (
         "cmpq $0xFFFF, %[d]\n\t"
-        "jbe 1f\n\t"
+        "jbe 9f\n\t"
         "cmpq $0xFFFF, %[s]\n\t"
-        "jbe 1f\n\t"
-        "testq %[n], %[n]\n\t"
-        "jz 1f\n\t"
-        "jmp 2f\n\t"
-        "1: movl $1, %[bad]\n\t"
-        "2:\n\t"
-        : [bad] "+r"(bad)
-        : [d] "r"(d_val), [s] "r"(s_val), [n] "r"(n)
-        : "cc"
+        "jbe 9f\n\t"
+        "testq %[cnt], %[cnt]\n\t"
+        "jz 9f\n\t"
+        /* Save rdi/rsi/rcx (caller-saved but we restore for safety) */
+        "pushq %%rdi\n\t"
+        "pushq %%rsi\n\t"
+        "pushq %%rcx\n\t"
+        "movq %[d], %%rdi\n\t"
+        "movq %[s], %%rsi\n\t"
+        "movq %[cnt], %%rcx\n\t"
+        "cld\n\t"
+        "rep movsb\n\t"
+        "popq %%rcx\n\t"
+        "popq %%rsi\n\t"
+        "popq %%rdi\n\t"
+        "9:\n\t"
+        :
+        : [d] "r"((unsigned long)dest),
+          [s] "r"((unsigned long)src),
+          [cnt] "r"(n)
+        : "cc", "memory"
     );
-    if (bad)
-        return dest;
-
-    unsigned char *d = (unsigned char *)dest;
-    const unsigned char *s = (const unsigned char *)src;
-
-    for (size_t i = 0; i < n; i++) {
-        d[i] = s[i];
-    }
-
     return dest;
 }
 

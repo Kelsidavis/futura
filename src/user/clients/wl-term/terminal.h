@@ -11,9 +11,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* Terminal dimensions */
-#define TERM_COLS 80
-#define TERM_ROWS 25
+/* Terminal dimensions — defaults and compile-time maximums */
+#define TERM_COLS 80           /* Default columns */
+#define TERM_ROWS 25           /* Default rows */
+#define TERM_MAX_COLS 128      /* Max columns (1024px / 8px font) */
+#define TERM_MAX_ROWS 48       /* Max rows (768px / 16px font) */
 #define SCROLLBACK_LINES 1000  /* Lines of scrollback history */
 
 /* Tab stop interval */
@@ -34,7 +36,9 @@ struct term_cell {
 
 /* Terminal state */
 struct terminal {
-    struct term_cell grid[TERM_ROWS][TERM_COLS];
+    struct term_cell (*grid)[TERM_MAX_COLS];  /* mmap-allocated [MAX_ROWS][MAX_COLS] */
+    int cols;  /* current column count (dynamic, <= TERM_MAX_COLS) */
+    int rows;  /* current row count (dynamic, <= TERM_MAX_ROWS) */
     int cursor_x;
     int cursor_y;
     uint32_t fg_color;
@@ -46,13 +50,13 @@ struct terminal {
     uint64_t cursor_blink_time;  /* Last blink toggle timestamp (ms) */
 
     /* Scrollback buffer (circular, dynamically allocated) */
-    struct term_cell (*scrollback)[TERM_COLS];
+    struct term_cell (*scrollback)[TERM_MAX_COLS];
     int scrollback_count;   /* Number of lines stored (0..SCROLLBACK_LINES) */
     int scrollback_head;    /* Next write position (circular) */
     int scroll_offset;      /* Lines scrolled back (0 = at bottom, >0 = viewing history) */
 
     /* Tab stops (one bool per column) */
-    bool tab_stops[TERM_COLS];
+    bool tab_stops[TERM_MAX_COLS];
 
     /* Window title (set by OSC 0/2) */
     char title[TERM_TITLE_MAX];
@@ -96,6 +100,9 @@ void term_send_key(struct terminal *term, char ch);
 
 /* Render terminal to pixel buffer */
 void term_render(struct terminal *term, uint32_t *pixels, int32_t width, int32_t height, int32_t stride);
+
+/* Resize terminal grid (clamps to MAX dimensions, updates cursor) */
+void term_resize(struct terminal *term, int new_cols, int new_rows);
 
 /* Clear terminal screen */
 void term_clear(struct terminal *term);

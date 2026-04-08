@@ -453,6 +453,8 @@ static void seat_update_pointer_focus(struct seat_state *seat, uint32_t time_mse
     seat_update_hover(seat);
 }
 
+static void compositor_launch_terminal(void);
+
 static void seat_handle_button(struct seat_state *seat,
                                uint16_t code,
                                bool pressed,
@@ -663,6 +665,21 @@ static void seat_handle_button(struct seat_state *seat,
         }
     }
 
+    /* Right-click on desktop background: launch a new terminal */
+    if (code == FUT_BTN_RIGHT && !pressed) {
+        struct comp_surface *hit_surface = NULL;
+        resize_edge_t edge = RSZ_NONE;
+        hit_role_t role = comp_hit_test(seat->comp,
+                                        seat->comp->pointer_x,
+                                        seat->comp->pointer_y,
+                                        &hit_surface,
+                                        &edge);
+        (void)role; (void)edge;
+        if (!hit_surface) {
+            compositor_launch_terminal();
+        }
+    }
+
     seat_update_hover(seat);
     seat_pointer_button(seat, code, pressed, time_msec);
 }
@@ -798,6 +815,26 @@ static void seat_handle_key_event(struct seat_state *seat,
                     comp_damage_add_full(seat->comp);
                     seat->comp->needs_repaint = true;
                 }
+            }
+            return;
+        }
+
+        /* Super+D: toggle show-desktop (minimize/restore all windows) */
+        if (compositor_mods == COMP_MOD_SUPER && keycode == 32 /* D */) {
+            if (seat->comp) {
+                bool any_visible = false;
+                struct comp_surface *s;
+                wl_list_for_each(s, &seat->comp->surfaces, link) {
+                    if (s->has_backing && !s->minimized)
+                        any_visible = true;
+                }
+                wl_list_for_each(s, &seat->comp->surfaces, link) {
+                    if (s->has_backing)
+                        s->minimized = any_visible;
+                }
+                seat->comp->dock_all_minimized = any_visible;
+                comp_damage_add_full(seat->comp);
+                seat->comp->needs_repaint = true;
             }
             return;
         }

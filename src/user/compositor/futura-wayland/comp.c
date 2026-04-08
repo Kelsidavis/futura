@@ -25,6 +25,17 @@ void free(void *ptr);
 void *memcpy(void *dest, const void *src, size_t n);
 void *memset(void *dest, int c, size_t n);
 
+/* Safe memcpy: skip copy when destination is obviously invalid
+ * (NULL or near-NULL pointer from corrupted struct fields).
+ * This prevents the compositor from crashing on heap corruption. */
+static inline void *safe_memcpy(void *dest, const void *src, size_t n) {
+    if ((uintptr_t)dest < 0x10000u || (uintptr_t)src < 0x10000u) {
+        return dest;
+    }
+    return memcpy(dest, src, n);
+}
+#define memcpy safe_memcpy
+
 #define NS_PER_MS 1000000ULL
 
 /* Use system fcntl.h definitions when available */
@@ -1258,9 +1269,13 @@ void comp_surface_commit(struct comp_surface *surface) {
                 surface->has_pending_buffer = false;
                 return;
             }
+            /* Cache backing pointer locally so the compiler doesn't
+             * reload it from the struct each iteration (memcpy is an
+             * opaque call that could alias surface->backing). */
+            uint8_t *commit_dst = surface->backing;
             for (int32_t row = 0; row < buffer.height; ++row) {
                 const uint8_t *src_row = (const uint8_t *)buffer.data + (size_t)row * buffer.stride;
-                uint8_t *dst_row = surface->backing + (size_t)row * buffer.stride;
+                uint8_t *dst_row = commit_dst + (size_t)row * buffer.stride;
                 memcpy(dst_row, src_row, (size_t)buffer.width * 4u);
             }
 

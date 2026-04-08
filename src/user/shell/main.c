@@ -772,6 +772,24 @@ static ssize_t read_line(int fd, char *buf, size_t max_len) {
     static int current_history_index = -1;  /* -1 means not browsing history */
     static char saved_input[MAX_CMD_LEN];   /* Save current input when browsing history */
 
+    /* Disable PTY ECHO during line editing.  The shell handles its own
+     * echo (redraw_from_cursor, write_char, etc.), so if the PTY also
+     * echoes we get every character doubled on screen. */
+    char rl_saved_tios[60];
+    int rl_tios_saved = 0;
+    {
+        char tios[60];
+        if (sys_call3(16 /* ioctl */, fd, 0x5401 /* TCGETS */, (long)tios) == 0) {
+            for (int i = 0; i < 60; i++) rl_saved_tios[i] = tios[i];
+            rl_tios_saved = 1;
+            unsigned int lf;
+            for (int i = 0; i < 4; i++) ((char *)&lf)[i] = tios[12 + i];
+            lf &= ~0x0008u;  /* clear ECHO */
+            for (int i = 0; i < 4; i++) tios[12 + i] = ((char *)&lf)[i];
+            sys_call3(16, fd, 0x5402 /* TCSETS */, (long)tios);
+        }
+    }
+
     /* Reset history position at start of new line */
     current_history_index = -1;
     saved_input[0] = '\0';
@@ -781,6 +799,7 @@ static ssize_t read_line(int fd, char *buf, size_t max_len) {
 
         if (nread <= 0) {
             /* EOF or error */
+            if (rl_tios_saved) sys_call3(16, fd, 0x5402, (long)rl_saved_tios);
             if (len > 0) {
                 buf[len] = '\0';
                 return (ssize_t)len;
@@ -860,6 +879,7 @@ static ssize_t read_line(int fd, char *buf, size_t max_len) {
             while (cursor < len) { write_str(1, "\033[C"); cursor++; }
             write_char(1, '\n');
             buf[len] = '\0';
+            if (rl_tios_saved) sys_call3(16, fd, 0x5402, (long)rl_saved_tios);
             return (ssize_t)len;
         } else if (c == 0x7F || c == 0x08) {
             /* Backspace (DEL=0x7F or BS=0x08) */
@@ -881,11 +901,13 @@ static ssize_t read_line(int fd, char *buf, size_t max_len) {
             /* Ctrl+C - interrupt */
             write_str(1, "^C\n");
             buf[0] = '\0';
+            if (rl_tios_saved) sys_call3(16, fd, 0x5402, (long)rl_saved_tios);
             return 0;
         } else if (c == 0x1A) {
             /* Ctrl+Z - suspend */
             write_str(1, "^Z\n");
             buf[0] = '\0';
+            if (rl_tios_saved) sys_call3(16, fd, 0x5402, (long)rl_saved_tios);
             return 0;
         } else if (c == 0x11 || c == 0x13) {
             /* Ctrl+Q (XON) / Ctrl+S (XOFF) - flow control, ignore */
@@ -934,6 +956,7 @@ static ssize_t read_line(int fd, char *buf, size_t max_len) {
 
     /* Buffer full */
     buf[max_len - 1] = '\0';
+    if (rl_tios_saved) sys_call3(16, fd, 0x5402, (long)rl_saved_tios);
     return max_len - 1;
 }
 

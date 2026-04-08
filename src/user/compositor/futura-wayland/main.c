@@ -14,6 +14,7 @@
 #include <user/stdio.h>
 #include <user/stdlib.h>
 #include <user/signal.h>
+#include <time.h>
 
 /* Portable syscall wrappers using libfutura */
 #include "syscall_portable.h"

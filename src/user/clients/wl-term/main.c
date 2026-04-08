@@ -542,10 +542,14 @@ static void frame_done(void *data, struct wl_callback *callback, uint32_t time) 
     (void)time;
     struct client_state *state = data;
     state->frame_done = true;
+    /* Only destroy if this is still our current callback.  If the timeout
+     * already superseded it (frame_cb == NULL or points to a newer cb),
+     * the callback was either already destroyed or will be cleaned up
+     * in the next redraw(). */
     if (state->frame_cb == callback) {
+        wl_callback_destroy(callback);
         state->frame_cb = NULL;
     }
-    wl_callback_destroy(callback);
 }
 
 static const struct wl_callback_listener frame_listener = {
@@ -696,10 +700,21 @@ static void redraw(struct client_state *state) {
     uint32_t *pixels = (uint32_t *)state->shm_data;
     term_render(&state->term, pixels, state->pixel_width, state->pixel_height, state->pixel_width);
 
+    /* Destroy any old frame callback that was superseded by timeout */
+    if (state->frame_cb) {
+        wl_callback_destroy(state->frame_cb);
+        state->frame_cb = NULL;
+    }
+
     /* Request frame callback */
     state->frame_done = false;
     state->frame_cb = wl_surface_frame(state->surface);
-    wl_callback_add_listener(state->frame_cb, &frame_listener, state);
+    if (!state->frame_cb) {
+        /* Allocation failure — render without callback, retry next tick */
+        state->frame_done = true;
+    } else {
+        wl_callback_add_listener(state->frame_cb, &frame_listener, state);
+    }
 
     /* Commit surface */
     wl_surface_attach(state->surface, state->buffer, 0, 0);
@@ -719,18 +734,30 @@ static int frame_wait_ticks = 0;
 static bool main_loop_iteration(struct client_state *state) {
     tick_ms += 10;  /* Each iteration is ~10ms (matches nanosleep below) */
 
-    /* Read from shell if available */
-    int n = term_read_shell(&state->term);
-    if (n > 0) {
-        state->needs_redraw = true;
-        /* Any new output resets cursor blink to visible phase */
-        state->term.cursor_blink_on = true;
-        state->term.cursor_blink_time = tick_ms;
-    } else if (n < 0) {
-        /* Shell closed — but don't exit immediately; allow the last
-         * output to be rendered.  Only exit after a grace period. */
-        WLTERM_LOG("[WL-TERM] Shell exited\n");
-        return false;
+    /* Drain all available shell output before rendering.
+     * Reading in a loop avoids thousands of render cycles when the shell
+     * dumps large output (e.g., "help" with 620+ commands).  Cap at 16
+     * reads (~4KB) per iteration to keep the main loop responsive. */
+    {
+        int total = 0, reads = 0;
+        const int max_reads = 16;
+        while (reads < max_reads) {
+            int n = term_read_shell(&state->term);
+            if (n > 0) {
+                total += n;
+                reads++;
+            } else if (n < 0) {
+                WLTERM_LOG("[WL-TERM] Shell exited\n");
+                return false;
+            } else {
+                break;  /* No more data available */
+            }
+        }
+        if (total > 0) {
+            state->needs_redraw = true;
+            state->term.cursor_blink_on = true;
+            state->term.cursor_blink_time = tick_ms;
+        }
     }
 
     /* Update cursor blink */
@@ -765,15 +792,13 @@ static bool main_loop_iteration(struct client_state *state) {
     }
 
     /* Frame callback timeout: if compositor hasn't sent frame done in
-     * FRAME_TIMEOUT_TICKS iterations, force it so we don't freeze. */
+     * FRAME_TIMEOUT_TICKS iterations, force it so we don't freeze.
+     * Do NOT destroy frame_cb here — the done event may still arrive
+     * later and calling wl_callback_destroy twice is undefined behavior.
+     * The old callback will be cleaned up in the next redraw(). */
     if (!state->frame_done) {
         frame_wait_ticks++;
         if (frame_wait_ticks >= FRAME_TIMEOUT_TICKS) {
-            /* Destroy stale callback to avoid leak */
-            if (state->frame_cb) {
-                wl_callback_destroy(state->frame_cb);
-                state->frame_cb = NULL;
-            }
             state->frame_done = true;
             frame_wait_ticks = 0;
         }

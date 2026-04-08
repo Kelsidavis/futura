@@ -92,6 +92,8 @@ void term_destroy(struct terminal *term) {
 }
 
 void term_scroll(struct terminal *term) {
+    if (!term->grid) return;
+
     /* Save top row to scrollback before discarding */
     if (term->scrollback) {
         for (int x = 0; x < term->cols; x++) {
@@ -458,6 +460,8 @@ static void term_handle_escape(struct terminal *term) {
 }
 
 void term_putchar(struct terminal *term, char ch) {
+    if (!term->grid) return;
+
     /* Handle OSC sequences: accumulate until BEL (\007) or ST (ESC \) */
     if (term->parser_state == TERM_STATE_OSC) {
         if (ch == '\007') {

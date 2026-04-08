@@ -414,6 +414,11 @@ void term_putchar(struct terminal *term, char ch) {
             term->escape_len = 0;
         } else if (term->osc_len < (int)sizeof(term->osc_buf) - 1) {
             term->osc_buf[term->osc_len++] = ch;
+        } else {
+            /* OSC buffer full and no terminator — abandon the sequence
+             * to prevent the terminal from getting stuck. */
+            term->parser_state = TERM_STATE_NORMAL;
+            term->osc_len = 0;
         }
         return;
     }
@@ -429,6 +434,11 @@ void term_putchar(struct terminal *term, char ch) {
 
         if (term->escape_len < (int)sizeof(term->escape_buf) - 1) {
             term->escape_buf[term->escape_len++] = ch;
+        } else {
+            /* Escape buffer full without terminator — abandon sequence. */
+            term->parser_state = TERM_STATE_NORMAL;
+            term->escape_len = 0;
+            return;
         }
 
         /* Check if sequence is complete (ends with letter) */

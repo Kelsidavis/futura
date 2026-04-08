@@ -1226,7 +1226,8 @@ void comp_surface_commit(struct comp_surface *surface) {
         if (shm_buffer_import(surface->pending_buffer_resource, &buffer) == 0) {
             /* buffer imported successfully */
             /* Defense in depth: validate buffer before use */
-            if (!buffer.data || buffer.width <= 0 || buffer.height <= 0 || buffer.stride <= 0) {
+            if (!buffer.data || buffer.width <= 0 || buffer.height <= 0 || buffer.stride <= 0
+                || buffer.stride < buffer.width * 4) {
                 shm_buffer_release(&buffer);
                 wl_buffer_send_release(surface->pending_buffer_resource);
                 surface->pending_buffer_resource = NULL;

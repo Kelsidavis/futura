@@ -499,7 +499,12 @@ struct fut_mm *fut_task_get_mm(const fut_task_t *task) {
 
 fut_task_t *fut_task_current(void) {
     fut_thread_t *thread = fut_thread_current();
-    return thread ? thread->task : NULL;
+    if (!thread) return NULL;
+    fut_task_t *task = thread->task;
+    /* Guard against corrupt task pointer (e.g. GS_BASE race) */
+    if (task && (uintptr_t)task < 0xFFFFFFFF80000000ULL)
+        return NULL;
+    return task;
 }
 
 static void task_mark_exit(fut_task_t *task, int status, int signal) {

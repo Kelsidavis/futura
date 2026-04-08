@@ -141,6 +141,8 @@ static void keyboard_enter(void *data, struct wl_keyboard *keyboard, uint32_t se
     (void)data; (void)keyboard; (void)serial; (void)surface; (void)keys;
 }
 
+static uint32_t repeat_key;  /* forward decl — defined with repeat state below */
+
 static void keyboard_leave(void *data, struct wl_keyboard *keyboard, uint32_t serial,
                           struct wl_surface *surface) {
     (void)data; (void)keyboard; (void)serial; (void)surface;

@@ -602,6 +602,9 @@ bool fut_trap_handle_page_fault(fut_interrupt_frame_t *frame) {
         fut_printf("[#PF-USER] RSP=0x%llx RBP=0x%llx RSI=0x%llx RDI=0x%llx\n",
                    (unsigned long long)frame->rsp, (unsigned long long)frame->rbp,
                    (unsigned long long)frame->rsi, (unsigned long long)frame->rdi);
+        fut_printf("[#PF-USER] R8=0x%llx R9=0x%llx R10=0x%llx R11=0x%llx\n",
+                   (unsigned long long)frame->r8, (unsigned long long)frame->r9,
+                   (unsigned long long)frame->r10, (unsigned long long)frame->r11);
         fut_printf("[#PF-USER] R12=0x%llx R13=0x%llx R14=0x%llx R15=0x%llx\n",
                    (unsigned long long)frame->r12, (unsigned long long)frame->r13,
                    (unsigned long long)frame->r14, (unsigned long long)frame->r15);

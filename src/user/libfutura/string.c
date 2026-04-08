@@ -260,36 +260,19 @@ long __isoc23_strtol(const char *nptr, char **endptr, int base) {
  */
 void * __attribute__((noinline,noclone))
 memcpy(void *dest, const void *src, size_t n) {
-    /* Guard + copy entirely in asm so the compiler cannot interfere.
-     * Uses rep movsb for the copy — a single instruction that the CPU
-     * executes directly, giving clean fault diagnostics if pointers are bad. */
+    if (!dest || (uintptr_t)dest < 0x10000) return dest;
+    if (!src || (uintptr_t)src < 0x10000) return dest;
+    if (n == 0) return dest;
+
+    void *ret = dest;
     __asm__ volatile (
-        "cmpq $0xFFFF, %[d]\n\t"
-        "jbe 9f\n\t"
-        "cmpq $0xFFFF, %[s]\n\t"
-        "jbe 9f\n\t"
-        "testq %[cnt], %[cnt]\n\t"
-        "jz 9f\n\t"
-        /* Save rdi/rsi/rcx (caller-saved but we restore for safety) */
-        "pushq %%rdi\n\t"
-        "pushq %%rsi\n\t"
-        "pushq %%rcx\n\t"
-        "movq %[d], %%rdi\n\t"
-        "movq %[s], %%rsi\n\t"
-        "movq %[cnt], %%rcx\n\t"
         "cld\n\t"
         "rep movsb\n\t"
-        "popq %%rcx\n\t"
-        "popq %%rsi\n\t"
-        "popq %%rdi\n\t"
-        "9:\n\t"
+        : "+D"(dest), "+S"(src), "+c"(n)
         :
-        : [d] "r"((unsigned long)dest),
-          [s] "r"((unsigned long)src),
-          [cnt] "r"(n)
-        : "cc", "memory"
+        : "memory"
     );
-    return dest;
+    return ret;
 }
 
 void *__memcpy_chk(void *dest, const void *src, size_t len, size_t destlen) {

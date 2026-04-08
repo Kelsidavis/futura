@@ -2286,6 +2286,11 @@ int comp_run(struct compositor_state *comp) {
             }
         }
 
+        /* Reap zombie child processes (launched terminals) */
+        while (sys_wait4_call(-1, NULL, 1 /* WNOHANG */, NULL) > 0) {
+            /* reaped one */
+        }
+
         /* Poll input devices for keyboard/mouse events */
         if (comp->seat) {
             seat_poll_input(comp->seat);

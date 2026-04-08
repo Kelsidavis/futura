@@ -281,6 +281,8 @@ void comp_update_resize(struct compositor_state *comp);
 void comp_end_resize(struct compositor_state *comp, struct comp_surface *surface);
 void comp_surface_set_maximized(struct comp_surface *surface, bool maximized);
 void comp_surface_toggle_maximize(struct comp_surface *surface);
+void comp_surface_set_fullscreen(struct comp_surface *surface, bool fullscreen);
+void comp_surface_toggle_fullscreen(struct comp_surface *surface);
 void comp_surface_set_minimized(struct comp_surface *surface, bool minimized);
 void comp_surface_toggle_minimize(struct comp_surface *surface);
 

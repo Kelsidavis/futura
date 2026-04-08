@@ -2894,6 +2894,59 @@ void comp_surface_toggle_maximize(struct comp_surface *surface) {
     comp_surface_set_maximized(surface, !surface->maximized);
 }
 
+void comp_surface_set_fullscreen(struct comp_surface *surface, bool fullscreen) {
+    if (!surface || !surface->comp || surface->fullscreen == fullscreen) {
+        return;
+    }
+
+    struct compositor_state *comp = surface->comp;
+
+    if (fullscreen) {
+        /* Save current geometry for restore */
+        surface->pre_fs_x = surface->x;
+        surface->pre_fs_y = surface->y;
+        surface->pre_fs_w = surface->width;
+        surface->pre_fs_h = surface->content_height;
+        surface->fullscreen = true;
+        surface->bar_height = 0;
+        surface->shadow_px = 0;
+
+        int32_t fs_w = (int32_t)comp->fb_info.width;
+        int32_t fs_h = (int32_t)comp->fb_info.height;
+
+        surface->pend_x = 0;
+        surface->pend_y = 0;
+        surface->have_pending_pos = true;
+
+        uint32_t flags = comp_surface_state_flags(surface);
+        xdg_shell_surface_send_configure(surface, fs_w, fs_h, flags);
+        comp_update_surface_position(comp, surface, 0, 0);
+    } else {
+        surface->fullscreen = false;
+        if (comp->deco_enabled) {
+            surface->bar_height = WINDOW_BAR_HEIGHT;
+        }
+        if (comp->shadow_enabled) {
+            surface->shadow_px = comp->shadow_radius;
+        }
+
+        surface->pend_x = surface->pre_fs_x;
+        surface->pend_y = surface->pre_fs_y;
+        surface->have_pending_pos = true;
+
+        uint32_t flags = comp_surface_state_flags(surface);
+        xdg_shell_surface_send_configure(surface, surface->pre_fs_w,
+                                         surface->pre_fs_h, flags);
+    }
+}
+
+void comp_surface_toggle_fullscreen(struct comp_surface *surface) {
+    if (!surface) {
+        return;
+    }
+    comp_surface_set_fullscreen(surface, !surface->fullscreen);
+}
+
 void comp_surface_set_minimized(struct comp_surface *surface, bool minimized) {
     if (!surface || !surface->comp) {
         return;

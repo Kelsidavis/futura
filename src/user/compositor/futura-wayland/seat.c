@@ -839,6 +839,16 @@ static void seat_handle_key_event(struct seat_state *seat,
             return;
         }
 
+        /* F11: toggle fullscreen on focused window */
+        if (keycode == 87 /* F11 */) {
+            if (seat->comp && seat->comp->focused_surface) {
+                comp_surface_toggle_fullscreen(seat->comp->focused_surface);
+                comp_damage_add_full(seat->comp);
+                seat->comp->needs_repaint = true;
+            }
+            return;
+        }
+
         /* Alt+F4: close focused window */
         if ((compositor_mods & COMP_MOD_ALT) && keycode == 62 /* F4 */) {
             if (seat->comp && seat->comp->focused_surface) {

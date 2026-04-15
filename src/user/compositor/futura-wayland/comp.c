@@ -2680,7 +2680,7 @@ void comp_render_frame(struct compositor_state *comp) {
     if (comp->ctx_menu_active) {
         #define CTX_W     220
         #define CTX_ITEM_H 28
-        #define CTX_ITEMS  4
+        #define CTX_ITEMS  6
         #define CTX_SEP_AFTER_1 1   /* separator after item index 1 */
         #define CTX_SEP_H  9       /* separator row height */
         #define CTX_PAD    4
@@ -2703,8 +2703,10 @@ void comp_render_frame(struct compositor_state *comp) {
         fut_rect_t menu_rect = { menu_x, menu_y, CTX_W, menu_h };
 
         const char *ctx_labels[] = { "New Terminal", "Show Desktop",
+                                      "Tile Left", "Tile Right",
                                       "Fullscreen", "About Futura" };
         const char *ctx_hints[] = { "Ctrl+Alt+T", "Super+D",
+                                     "Super+Left", "Super+Right",
                                      "F11", NULL };
 
         for (int i = 0; i < damage->count; ++i) {
@@ -3889,7 +3891,7 @@ void comp_pointer_motion(struct compositor_state *comp, int32_t new_x, int32_t n
     if (comp->ctx_menu_active) {
         #define CTX_MENU_W       220
         #define CTX_MENU_ITEM_H  28
-        #define CTX_MENU_ITEMS   4
+        #define CTX_MENU_ITEMS   6
         #define CTX_MENU_PAD     4
         #define CTX_MENU_SEP_AFTER 1
         #define CTX_MENU_SEP_H   9

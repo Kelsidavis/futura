@@ -721,7 +721,31 @@ static void seat_handle_button(struct seat_state *seat,
             comp_damage_add_full(seat->comp);
             seat->comp->needs_repaint = true;
         }
-        if (sel == 2) {
+        if (sel == 2 || sel == 3) {
+            /* "Tile Left" / "Tile Right" */
+            struct comp_surface *sf = seat->comp->focused_surface;
+            if (sf) {
+                int32_t fw = (int32_t)seat->comp->fb_info.width;
+                int32_t fh = (int32_t)seat->comp->fb_info.height;
+                if (sf->maximized) comp_surface_set_maximized(sf, false);
+                if (sf->fullscreen) comp_surface_set_fullscreen(sf, false);
+                sf->saved_x = sf->x; sf->saved_y = sf->y;
+                sf->saved_w = sf->width; sf->saved_h = sf->height;
+                sf->have_saved_geom = true;
+                int32_t tile_y = 24 /* MENUBAR_HEIGHT */;
+                int32_t tile_h = fh - 24 - 48;
+                int32_t tile_w = fw / 2;
+                int32_t tile_x = (sel == 2) ? 0 : (fw - tile_w);
+                comp_update_surface_position(seat->comp, sf, tile_x, tile_y);
+                int32_t content_h = tile_h - sf->bar_height;
+                if (content_h < 1) content_h = 1;
+                xdg_shell_surface_send_configure(sf, tile_w, content_h,
+                    comp_surface_state_flags(sf));
+                comp_damage_add_full(seat->comp);
+                seat->comp->needs_repaint = true;
+            }
+        }
+        if (sel == 4) {
             /* Toggle fullscreen on focused window */
             if (seat->comp->focused_surface) {
                 comp_surface_toggle_fullscreen(seat->comp->focused_surface);
@@ -729,7 +753,7 @@ static void seat_handle_button(struct seat_state *seat,
                 seat->comp->needs_repaint = true;
             }
         }
-        if (sel == 3) {
+        if (sel == 5) {
             /* "About Futura" — show about dialog overlay */
             seat->comp->about_active = true;
             comp_damage_add_full(seat->comp);
@@ -990,6 +1014,16 @@ static void seat_handle_key_event(struct seat_state *seat,
         if (keycode == 87 /* F11 */) {
             if (seat->comp && seat->comp->focused_surface) {
                 comp_surface_toggle_fullscreen(seat->comp->focused_surface);
+                comp_damage_add_full(seat->comp);
+                seat->comp->needs_repaint = true;
+            }
+            return;
+        }
+
+        /* Super+M: minimize focused window */
+        if (compositor_mods == COMP_MOD_SUPER && keycode == 50 /* M */) {
+            if (seat->comp && seat->comp->focused_surface) {
+                comp_surface_set_minimized(seat->comp->focused_surface, true);
                 comp_damage_add_full(seat->comp);
                 seat->comp->needs_repaint = true;
             }

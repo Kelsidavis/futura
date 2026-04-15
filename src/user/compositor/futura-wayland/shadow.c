@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define SHADOW_MAX_ALPHA 160
+#define SHADOW_MAX_ALPHA 200
 
 /* Pre-computed lookup table for shadow color multiplication.
  * shadow_lut[value][factor] = (value * factor) / 255

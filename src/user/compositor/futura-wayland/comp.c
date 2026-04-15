@@ -2472,9 +2472,9 @@ void comp_render_frame(struct compositor_state *comp) {
                     /* glow_i: 0 = outermost (2px out), 1 = 1px out, 2 = border itself */
                     int offset = 2 - glow_i;
                     uint32_t glow_color;
-                    if (glow_i == 0) glow_color = 0x18445588u;  /* Faint outer */
-                    else if (glow_i == 1) glow_color = 0x30556699u;  /* Mid glow */
-                    else glow_color = 0x50334466u;  /* Inner border */
+                    if (glow_i == 0) glow_color = 0x28506090u;  /* Faint outer */
+                    else if (glow_i == 1) glow_color = 0x486688AAu;  /* Mid glow */
+                    else glow_color = 0x68445578u;  /* Inner border */
                     fut_rect_t gr = { wr.x - offset, wr.y - offset,
                                       wr.w + offset * 2, wr.h + offset * 2 };
                     int32_t gedges[4][4] = {

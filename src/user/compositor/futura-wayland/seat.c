@@ -713,6 +713,18 @@ static void seat_handle_button(struct seat_state *seat,
             comp_damage_add_full(seat->comp);
             seat->comp->needs_repaint = true;
         }
+        if (sel == 2) {
+            /* Toggle fullscreen on focused window */
+            if (seat->comp->focused_surface) {
+                comp_surface_toggle_fullscreen(seat->comp->focused_surface);
+                comp_damage_add_full(seat->comp);
+                seat->comp->needs_repaint = true;
+            }
+        }
+        if (sel == 3) {
+            /* "About Futura" — show about dialog (launch terminal for now) */
+            /* TODO: proper about dialog in future */
+        }
         /* Don't process this click further if menu was open */
         return;
     }

@@ -161,6 +161,11 @@ struct compositor_state {
     int ctx_menu_hover;            /* hovered item index, -1 = none */
     /* About dialog */
     bool about_active;
+    /* Futura menu (top-left dropdown) */
+    bool futura_menu_active;
+    int futura_menu_hover;          /* hovered item index, -1 = none */
+    /* Keyboard shortcut overlay */
+    bool shortcut_overlay_active;
     /* Alt+Tab switcher overlay */
     bool alt_tab_active;
     int alt_tab_index;             /* currently highlighted index in switcher */

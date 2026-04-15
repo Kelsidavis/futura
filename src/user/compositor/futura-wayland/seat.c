@@ -686,9 +686,44 @@ static void seat_handle_button(struct seat_state *seat,
         }
     }
 
+    /* Click anywhere dismisses shortcut overlay */
+    if (pressed && seat->comp && seat->comp->shortcut_overlay_active) {
+        seat->comp->shortcut_overlay_active = false;
+        comp_damage_add_full(seat->comp);
+        seat->comp->needs_repaint = true;
+        return;
+    }
+
     /* Click anywhere dismisses about dialog */
     if (pressed && seat->comp && seat->comp->about_active) {
         seat->comp->about_active = false;
+        comp_damage_add_full(seat->comp);
+        seat->comp->needs_repaint = true;
+        return;
+    }
+
+    /* Left-click on Futura menu: select item or dismiss */
+    if (code == FUT_BTN_LEFT && pressed && seat->comp && seat->comp->futura_menu_active) {
+        int sel = seat->comp->futura_menu_hover;
+        seat->comp->futura_menu_active = false;
+        comp_damage_add_full(seat->comp);
+        seat->comp->needs_repaint = true;
+        if (sel == 0) compositor_launch_terminal();
+        if (sel == 1) { seat->comp->about_active = true; }
+        if (sel == 2) { seat->comp->shortcut_overlay_active = true; }
+        if (sel == 3) {
+            /* Show Desktop */
+            bool any_vis = false;
+            struct comp_surface *s;
+            wl_list_for_each(s, &seat->comp->surfaces, link) {
+                if (s->has_backing && !s->minimized) any_vis = true;
+            }
+            wl_list_for_each(s, &seat->comp->surfaces, link) {
+                if (s->has_backing) s->minimized = any_vis;
+            }
+            seat->comp->dock_all_minimized = any_vis;
+        }
+        /* sel == 4: Quit — not implemented, just dismiss */
         comp_damage_add_full(seat->comp);
         seat->comp->needs_repaint = true;
         return;
@@ -760,6 +795,17 @@ static void seat_handle_button(struct seat_state *seat,
             seat->comp->needs_repaint = true;
         }
         /* Don't process this click further if menu was open */
+        return;
+    }
+
+    /* Left-click on "Futura" branding → toggle Futura menu */
+    if (code == FUT_BTN_LEFT && pressed && seat->comp &&
+        seat->comp->pointer_y < 24 /* MENUBAR_HEIGHT */ &&
+        seat->comp->pointer_x < 60) {
+        seat->comp->futura_menu_active = !seat->comp->futura_menu_active;
+        seat->comp->futura_menu_hover = -1;
+        comp_damage_add_full(seat->comp);
+        seat->comp->needs_repaint = true;
         return;
     }
 
@@ -839,6 +885,22 @@ static void seat_handle_key_event(struct seat_state *seat,
 
     uint32_t keycode = (uint32_t)ev->code;
     bool pressed = (ev->value != 0);
+
+    /* Any key dismisses shortcut overlay */
+    if (pressed && seat->comp && seat->comp->shortcut_overlay_active) {
+        seat->comp->shortcut_overlay_active = false;
+        comp_damage_add_full(seat->comp);
+        seat->comp->needs_repaint = true;
+        return;
+    }
+
+    /* Escape dismisses Futura menu */
+    if (pressed && keycode == 1 && seat->comp && seat->comp->futura_menu_active) {
+        seat->comp->futura_menu_active = false;
+        comp_damage_add_full(seat->comp);
+        seat->comp->needs_repaint = true;
+        return;
+    }
 
     /* Escape or any key dismisses about dialog */
     if (pressed && seat->comp && seat->comp->about_active) {
@@ -1008,6 +1070,16 @@ static void seat_handle_key_event(struct seat_state *seat,
                 seat->comp->needs_repaint = true;
                 return;
             }
+        }
+
+        /* Super+/: toggle shortcut overlay */
+        if (compositor_mods == COMP_MOD_SUPER && keycode == 53 /* / */) {
+            if (seat->comp) {
+                seat->comp->shortcut_overlay_active = !seat->comp->shortcut_overlay_active;
+                comp_damage_add_full(seat->comp);
+                seat->comp->needs_repaint = true;
+            }
+            return;
         }
 
         /* F11: toggle fullscreen on focused window */

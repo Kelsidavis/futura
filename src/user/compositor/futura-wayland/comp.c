@@ -491,8 +491,8 @@ static void blit_argb(const char *src_base,
 static void draw_bar_segment(struct backbuffer *dst, fut_rect_t rect, bool focused) {
     /* Refined title bar gradient with rounded top corners */
     #define BAR_CORNER_R 6  /* Radius for rounded top corners */
-    uint32_t top = focused ? 0xFFF4F4F6u : 0xFFFAFAFBu;
-    uint32_t bot = focused ? 0xFFDEDEE2u : 0xFFEEEEF0u;
+    uint32_t top = focused ? 0xFFF0F0F4u : 0xFFF8F8FAu;
+    uint32_t bot = focused ? 0xFFD8D8DEu : 0xFFEAEAEEu;
     char *base = (char *)dst->px;
     for (int32_t y = 0; y < rect.h; ++y) {
         int32_t gy = rect.y + y;
@@ -909,6 +909,9 @@ int comp_state_init(struct compositor_state *comp) {
     comp->alt_tab_index = 0;
     comp->alt_tab_count = 0;
     comp->dock_tooltip_index = -1;
+    comp->futura_menu_active = false;
+    comp->futura_menu_hover = -1;
+    comp->shortcut_overlay_active = false;
 
     /* Try to open /dev/fb0, but fall back to virtual framebuffer if not available */
     int fd = (int)sys_open("/dev/fb0", O_RDWR, 0);
@@ -2894,6 +2897,263 @@ void comp_render_frame(struct compositor_state *comp) {
         #undef CTX_SEP
     }
 
+    /* Futura menu dropdown (top-left, below "Futura" branding) */
+    if (comp->futura_menu_active) {
+        #define FM_W       200
+        #define FM_ITEM_H  26
+        #define FM_ITEMS   5
+        #define FM_SEP_AFTER 2   /* separator after item index 2 */
+        #define FM_SEP_H   7
+        #define FM_PAD     4
+        #define FM_CORNER  6
+        #define FM_BG      0xE8202030u
+        #define FM_HOVER   0xFF334466u
+        #define FM_TEXT    0xFFE0E0E8u
+        #define FM_HINT    0xFF808098u
+        #define FM_SEP     0x40667788u
+
+        int32_t fm_h = FM_PAD + FM_ITEMS * FM_ITEM_H + FM_SEP_H + FM_PAD;
+        int32_t fm_x = 4;
+        int32_t fm_y = MENUBAR_HEIGHT;
+        fut_rect_t fm_rect = { fm_x, fm_y, FM_W, fm_h };
+
+        const char *fm_labels[] = { "New Terminal", "About Futura",
+                                     "Shortcuts",
+                                     "Show Desktop", "Quit" };
+        const char *fm_hints[] = { "Ctrl+Alt+T", NULL,
+                                    "Super+/",
+                                    "Super+D", "Ctrl+Alt+Del" };
+
+        for (int i = 0; i < damage->count; ++i) {
+            fut_rect_t fc;
+            if (!rect_intersection(damage->rects[i], fm_rect, &fc)) continue;
+            char *fbase = (char *)dst->px;
+
+            /* Background with rounded corners */
+            for (int32_t py = fc.y; py < fc.y + fc.h; py++) {
+                uint32_t *row = (uint32_t *)(fbase + (size_t)py * dst->pitch);
+                int32_t ry = py - fm_y;
+                int32_t dy_e = ry < fm_h / 2 ? ry : (fm_h - 1 - ry);
+                for (int32_t px = fc.x; px < fc.x + fc.w; px++) {
+                    int32_t rx = px - fm_x;
+                    int32_t dx_e = rx < FM_W / 2 ? rx : (FM_W - 1 - rx);
+                    if (dx_e < FM_CORNER && dy_e < FM_CORNER) {
+                        int32_t cxd = FM_CORNER - dx_e, cyd = FM_CORNER - dy_e;
+                        if (cxd * cxd + cyd * cyd > FM_CORNER * FM_CORNER) continue;
+                    }
+                    /* Determine item index */
+                    int fmi = -1;
+                    int32_t lry = ry - FM_PAD;
+                    if (lry >= 0) {
+                        int before_sep = (FM_SEP_AFTER + 1) * FM_ITEM_H;
+                        if (lry < before_sep) {
+                            fmi = lry / FM_ITEM_H;
+                        } else if (lry >= before_sep + FM_SEP_H) {
+                            fmi = FM_SEP_AFTER + 1 + (lry - before_sep - FM_SEP_H) / FM_ITEM_H;
+                        }
+                        if (fmi >= FM_ITEMS) fmi = -1;
+                    }
+                    uint32_t bg = FM_BG;
+                    if (fmi >= 0 && fmi == comp->futura_menu_hover) bg = FM_HOVER;
+                    uint32_t sa = (bg >> 24) & 0xFF;
+                    uint32_t da = 255u - sa;
+                    uint32_t d = row[px];
+                    uint32_t or_ = (((bg >> 16) & 0xFF) * sa + ((d >> 16) & 0xFF) * da) / 255u;
+                    uint32_t og = (((bg >> 8) & 0xFF) * sa + ((d >> 8) & 0xFF) * da) / 255u;
+                    uint32_t ob = ((bg & 0xFF) * sa + (d & 0xFF) * da) / 255u;
+                    row[px] = 0xFF000000u | (or_ << 16) | (og << 8) | ob;
+                }
+            }
+
+            /* Border */
+            uint32_t fb_color = 0x50667799u;
+            int32_t fb_edges[4][4] = {
+                { fm_x, fm_y, FM_W, 1 },
+                { fm_x, fm_y + fm_h - 1, FM_W, 1 },
+                { fm_x, fm_y, 1, fm_h },
+                { fm_x + FM_W - 1, fm_y, 1, fm_h },
+            };
+            for (int e = 0; e < 4; e++) {
+                fut_rect_t edge = { fb_edges[e][0], fb_edges[e][1], fb_edges[e][2], fb_edges[e][3] };
+                fut_rect_t ec;
+                if (!rect_intersection(fc, edge, &ec)) continue;
+                for (int32_t py = ec.y; py < ec.y + ec.h; py++) {
+                    uint32_t *row = (uint32_t *)(fbase + (size_t)py * dst->pitch);
+                    for (int32_t px = ec.x; px < ec.x + ec.w; px++) {
+                        uint32_t sa = (fb_color >> 24) & 0xFF;
+                        uint32_t da = 255u - sa;
+                        uint32_t d = row[px];
+                        row[px] = 0xFF000000u |
+                            ((((fb_color>>16)&0xFF)*sa+((d>>16)&0xFF)*da)/255u << 16) |
+                            ((((fb_color>>8)&0xFF)*sa+((d>>8)&0xFF)*da)/255u << 8) |
+                            (((fb_color&0xFF)*sa+(d&0xFF)*da)/255u);
+                    }
+                }
+            }
+
+            /* Separator line */
+            {
+                int sep_top = (FM_SEP_AFTER + 1) * FM_ITEM_H + FM_PAD;
+                int32_t sy = fm_y + sep_top + FM_SEP_H / 2;
+                fut_rect_t sep_line = { fm_x + 8, sy, FM_W - 16, 1 };
+                fut_rect_t sc;
+                if (rect_intersection(fc, sep_line, &sc)) {
+                    for (int32_t py = sc.y; py < sc.y + sc.h; py++) {
+                        uint32_t *srow = (uint32_t *)(fbase + (size_t)py * dst->pitch);
+                        for (int32_t px = sc.x; px < sc.x + sc.w; px++)
+                            srow[px] = 0xFF333344u;
+                    }
+                }
+            }
+
+            /* Item labels + hints */
+            for (int item = 0; item < FM_ITEMS; item++) {
+                int y_off = (item > FM_SEP_AFTER) ? FM_SEP_H : 0;
+                int ty = fm_y + FM_PAD + item * FM_ITEM_H + y_off +
+                         (FM_ITEM_H - UI_FONT_HEIGHT) / 2;
+                ui_draw_text(dst->px, dst->pitch, fm_x + 12, ty,
+                             FM_TEXT, fm_labels[item],
+                             fc.x, fc.y, fc.w, fc.h);
+                if (fm_hints[item]) {
+                    int hl = 0;
+                    while (fm_hints[item][hl]) hl++;
+                    ui_draw_text(dst->px, dst->pitch,
+                                 fm_x + FM_W - 12 - hl * UI_FONT_WIDTH, ty,
+                                 FM_HINT, fm_hints[item],
+                                 fc.x, fc.y, fc.w, fc.h);
+                }
+            }
+        }
+        #undef FM_W
+        #undef FM_ITEM_H
+        #undef FM_ITEMS
+        #undef FM_SEP_AFTER
+        #undef FM_SEP_H
+        #undef FM_PAD
+        #undef FM_CORNER
+        #undef FM_BG
+        #undef FM_HOVER
+        #undef FM_TEXT
+        #undef FM_HINT
+        #undef FM_SEP
+    }
+
+    /* Keyboard shortcut overlay */
+    if (comp->shortcut_overlay_active) {
+        int32_t fb_w = (int32_t)comp->fb_info.width;
+        int32_t fb_h = (int32_t)comp->fb_info.height;
+        #define SO_W 340
+        #define SO_H 280
+        #define SO_R 10
+        #define SO_BG 0xF0181828u
+        int32_t sox = (fb_w - SO_W) / 2;
+        int32_t soy = (fb_h - SO_H) / 2;
+        fut_rect_t so_rect = { sox, soy, SO_W, SO_H };
+
+        /* Dim background */
+        for (int i = 0; i < damage->count; ++i) {
+            fut_rect_t frc;
+            fut_rect_t full = { 0, 0, fb_w, fb_h };
+            if (!rect_intersection(damage->rects[i], full, &frc)) continue;
+            char *dbase = (char *)dst->px;
+            for (int32_t py = frc.y; py < frc.y + frc.h; py++) {
+                uint32_t *row = (uint32_t *)(dbase + (size_t)py * dst->pitch);
+                for (int32_t px = frc.x; px < frc.x + frc.w; px++) {
+                    uint32_t d = row[px];
+                    row[px] = 0xFF000000u |
+                        ((((d>>16)&0xFF)*160/255)<<16) |
+                        ((((d>>8)&0xFF)*160/255)<<8) |
+                        (((d&0xFF)*160/255));
+                }
+            }
+        }
+
+        /* Draw overlay box */
+        for (int i = 0; i < damage->count; ++i) {
+            fut_rect_t sc;
+            if (!rect_intersection(damage->rects[i], so_rect, &sc)) continue;
+            char *sbase = (char *)dst->px;
+            /* Background with rounded corners */
+            for (int32_t py = sc.y; py < sc.y + sc.h; py++) {
+                uint32_t *row = (uint32_t *)(sbase + (size_t)py * dst->pitch);
+                int32_t ry = py - soy;
+                int32_t dy_e = ry < SO_H / 2 ? ry : (SO_H - 1 - ry);
+                for (int32_t px = sc.x; px < sc.x + sc.w; px++) {
+                    int32_t rx = px - sox;
+                    int32_t dx_e = rx < SO_W / 2 ? rx : (SO_W - 1 - rx);
+                    if (dx_e < SO_R && dy_e < SO_R) {
+                        int32_t cxd = SO_R - dx_e, cyd = SO_R - dy_e;
+                        if (cxd * cxd + cyd * cyd > SO_R * SO_R) continue;
+                    }
+                    uint32_t sa = (SO_BG >> 24) & 0xFF;
+                    uint32_t da = 255u - sa;
+                    uint32_t d = row[px];
+                    uint32_t or_ = (((SO_BG>>16)&0xFF)*sa+((d>>16)&0xFF)*da)/255u;
+                    uint32_t og = (((SO_BG>>8)&0xFF)*sa+((d>>8)&0xFF)*da)/255u;
+                    uint32_t ob = ((SO_BG&0xFF)*sa+(d&0xFF)*da)/255u;
+                    row[px] = 0xFF000000u | (or_ << 16) | (og << 8) | ob;
+                }
+            }
+
+            /* Title */
+            ui_draw_text(dst->px, dst->pitch,
+                         sox + SO_W / 2 - 9 * UI_FONT_WIDTH / 2, soy + 16,
+                         0xFF7799DDu, "Shortcuts",
+                         sc.x, sc.y, sc.w, sc.h);
+
+            /* Separator */
+            {
+                fut_rect_t sep = { sox + 16, soy + 38, SO_W - 32, 1 };
+                fut_rect_t sepc;
+                if (rect_intersection(sc, sep, &sepc)) {
+                    for (int32_t py = sepc.y; py < sepc.y + sepc.h; py++) {
+                        uint32_t *row = (uint32_t *)(sbase + (size_t)py * dst->pitch);
+                        for (int32_t px = sepc.x; px < sepc.x + sepc.w; px++)
+                            row[px] = 0xFF333344u;
+                    }
+                }
+            }
+
+            /* Shortcut entries */
+            const char *so_keys[] = {
+                "Ctrl+Alt+T", "Super+Enter",
+                "Alt+Tab", "Alt+F4",
+                "Super+D", "Super+M",
+                "Super+Left", "Super+Right",
+                "Super+Up", "Super+Down",
+                "F11", "Super+/",
+            };
+            const char *so_desc[] = {
+                "New terminal", "New terminal",
+                "Switch windows", "Close window",
+                "Show desktop", "Minimize",
+                "Tile left", "Tile right",
+                "Maximize", "Restore",
+                "Fullscreen", "This overlay",
+            };
+            int so_n = 12;
+            for (int si = 0; si < so_n; si++) {
+                int ty = soy + 50 + si * 18;
+                ui_draw_text(dst->px, dst->pitch, sox + 20, ty,
+                             0xFFB0B0C0u, so_keys[si],
+                             sc.x, sc.y, sc.w, sc.h);
+                ui_draw_text(dst->px, dst->pitch, sox + 160, ty,
+                             0xFF808098u, so_desc[si],
+                             sc.x, sc.y, sc.w, sc.h);
+            }
+
+            /* Dismiss hint */
+            ui_draw_text(dst->px, dst->pitch,
+                         sox + SO_W / 2 - 11 * UI_FONT_WIDTH, soy + SO_H - 22,
+                         0xFF606078u, "Press any key to close",
+                         sc.x, sc.y, sc.w, sc.h);
+        }
+        #undef SO_W
+        #undef SO_H
+        #undef SO_R
+        #undef SO_BG
+    }
+
     /* Alt+Tab window switcher overlay */
     if (comp->alt_tab_active) {
         #define TAB_ITEM_W    140
@@ -3924,6 +4184,43 @@ void comp_pointer_motion(struct compositor_state *comp, int32_t new_x, int32_t n
         #undef CTX_MENU_PAD
         #undef CTX_MENU_SEP_AFTER
         #undef CTX_MENU_SEP_H
+    }
+
+    /* Update Futura menu hover state */
+    if (comp->futura_menu_active) {
+        #define FM_MENU_W       200
+        #define FM_MENU_ITEM_H  26
+        #define FM_MENU_ITEMS   5
+        #define FM_MENU_PAD     4
+        #define FM_MENU_SEP_AFTER 2
+        #define FM_MENU_SEP_H   7
+        int32_t fm_h = FM_MENU_PAD + FM_MENU_ITEMS * FM_MENU_ITEM_H +
+                        FM_MENU_SEP_H + FM_MENU_PAD;
+        int32_t mx = comp->pointer_x - 4;
+        int32_t my = comp->pointer_y - MENUBAR_HEIGHT;
+        int old_h = comp->futura_menu_hover;
+        int new_h = -1;
+        if (mx >= 0 && mx < FM_MENU_W && my >= FM_MENU_PAD && my < fm_h) {
+            int ly = my - FM_MENU_PAD;
+            int before = (FM_MENU_SEP_AFTER + 1) * FM_MENU_ITEM_H;
+            if (ly < before) {
+                new_h = ly / FM_MENU_ITEM_H;
+            } else if (ly >= before + FM_MENU_SEP_H) {
+                new_h = FM_MENU_SEP_AFTER + 1 + (ly - before - FM_MENU_SEP_H) / FM_MENU_ITEM_H;
+            }
+            if (new_h >= FM_MENU_ITEMS) new_h = -1;
+        }
+        if (new_h != old_h) {
+            comp->futura_menu_hover = new_h;
+            fut_rect_t fd = { 4, MENUBAR_HEIGHT, FM_MENU_W, fm_h };
+            comp_damage_add_rect(comp, fd);
+        }
+        #undef FM_MENU_W
+        #undef FM_MENU_ITEM_H
+        #undef FM_MENU_ITEMS
+        #undef FM_MENU_PAD
+        #undef FM_MENU_SEP_AFTER
+        #undef FM_MENU_SEP_H
     }
 
     comp_update_drag(comp);

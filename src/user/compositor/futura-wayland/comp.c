@@ -1600,6 +1600,27 @@ void comp_render_frame(struct compositor_state *comp) {
         }
     }
 
+    /* ── Desktop watermark (bottom-right) ── */
+    {
+        int32_t fb_w = (int32_t)comp->fb_info.width;
+        int32_t fb_h = (int32_t)comp->fb_info.height;
+        const char *watermark = "Futura OS 0.8";
+        int wm_len = 0;
+        while (watermark[wm_len]) wm_len++;
+        int wm_x = fb_w - wm_len * UI_FONT_WIDTH - 12;
+        int wm_y = fb_h - UI_FONT_HEIGHT - 50;  /* above dock area */
+        fut_rect_t wm_rect = { wm_x, wm_y, wm_len * UI_FONT_WIDTH, UI_FONT_HEIGHT };
+        for (int i = 0; i < damage->count; ++i) {
+            fut_rect_t wm_clip;
+            if (!rect_intersection(damage->rects[i], wm_rect, &wm_clip))
+                continue;
+            /* Very subtle: just a few shades lighter than the background */
+            ui_draw_text(dst->px, dst->pitch, wm_x, wm_y,
+                         0xFF252538u, watermark,
+                         wm_clip.x, wm_clip.y, wm_clip.w, wm_clip.h);
+        }
+    }
+
     /* ── Top menu bar ── */
     {
         #define MENUBAR_COLOR   0xE0181828u  /* Dark frosted panel */
@@ -1658,19 +1679,30 @@ void comp_render_frame(struct compositor_state *comp) {
             struct { long tv_sec; long tv_nsec; } mb_ts = {0, 0};
             extern long sys_call2(long nr, long a, long b);
             sys_call2(98, 0, (long)&mb_ts);
-            long mb_daytime = mb_ts.tv_sec % 86400;
+            long mb_secs = mb_ts.tv_sec;
+            long mb_daytime = mb_secs % 86400;
             int mb_hr = (int)(mb_daytime / 3600);
             int mb_min = (int)((mb_daytime % 3600) / 60);
-            char mb_time[6];
-            mb_time[0] = '0' + (char)(mb_hr / 10);
-            mb_time[1] = '0' + (char)(mb_hr % 10);
-            mb_time[2] = ':';
-            mb_time[3] = '0' + (char)(mb_min / 10);
-            mb_time[4] = '0' + (char)(mb_min % 10);
-            mb_time[5] = '\0';
+
+            /* Day of week from epoch (Jan 1 1970 was Thursday) */
+            int mb_dow = (int)((mb_secs / 86400 + 4) % 7);
+            const char *dow_names[] = {"Sun","Mon","Tue","Wed","Thu","Fri","Sat"};
+
+            /* Build "Tue  20:43" */
+            char mb_time[16];
+            const char *dn = dow_names[mb_dow];
+            int ci = 0;
+            mb_time[ci++] = dn[0]; mb_time[ci++] = dn[1]; mb_time[ci++] = dn[2];
+            mb_time[ci++] = ' '; mb_time[ci++] = ' ';
+            mb_time[ci++] = '0' + (char)(mb_hr / 10);
+            mb_time[ci++] = '0' + (char)(mb_hr % 10);
+            mb_time[ci++] = ':';
+            mb_time[ci++] = '0' + (char)(mb_min / 10);
+            mb_time[ci++] = '0' + (char)(mb_min % 10);
+            mb_time[ci] = '\0';
 
             /* Clock (right-aligned) */
-            int clock_tx = fb_w - 6 * UI_FONT_WIDTH - 10;
+            int clock_tx = fb_w - ci * UI_FONT_WIDTH - 10;
             ui_draw_text(dst->px, dst->pitch, clock_tx, 4,
                          0xFFE0E0E8u, mb_time,
                          mbar_clip.x, mbar_clip.y, mbar_clip.w, mbar_clip.h);

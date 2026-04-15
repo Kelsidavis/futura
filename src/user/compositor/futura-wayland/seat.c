@@ -915,6 +915,77 @@ static void seat_handle_key_event(struct seat_state *seat,
             return;
         }
 
+        /* Super+Arrow: window tiling / snap */
+        if (compositor_mods == COMP_MOD_SUPER && seat->comp && seat->comp->focused_surface) {
+            struct comp_surface *sf = seat->comp->focused_surface;
+            int32_t fw = (int32_t)seat->comp->fb_info.width;
+            int32_t fh = (int32_t)seat->comp->fb_info.height;
+
+            if (keycode == 75 /* Left arrow */) {
+                /* Tile to left half */
+                if (sf->maximized) comp_surface_set_maximized(sf, false);
+                if (sf->fullscreen) comp_surface_set_fullscreen(sf, false);
+                sf->saved_x = sf->x; sf->saved_y = sf->y;
+                sf->saved_w = sf->width; sf->saved_h = sf->height;
+                sf->have_saved_geom = true;
+                int32_t tile_y = 24 /* MENUBAR_HEIGHT */;
+                int32_t tile_h = fh - 24 /* MENUBAR_HEIGHT */ - 48;
+                int32_t tile_w = fw / 2;
+                comp_update_surface_position(seat->comp, sf, 0, tile_y);
+                int32_t content_h = tile_h - sf->bar_height;
+                if (content_h < 1) content_h = 1;
+                xdg_shell_surface_send_configure(sf, tile_w, content_h,
+                    comp_surface_state_flags(sf));
+                comp_damage_add_full(seat->comp);
+                seat->comp->needs_repaint = true;
+                return;
+            }
+            if (keycode == 77 /* Right arrow */) {
+                /* Tile to right half */
+                if (sf->maximized) comp_surface_set_maximized(sf, false);
+                if (sf->fullscreen) comp_surface_set_fullscreen(sf, false);
+                sf->saved_x = sf->x; sf->saved_y = sf->y;
+                sf->saved_w = sf->width; sf->saved_h = sf->height;
+                sf->have_saved_geom = true;
+                int32_t tile_y = 24 /* MENUBAR_HEIGHT */;
+                int32_t tile_h = fh - 24 /* MENUBAR_HEIGHT */ - 48;
+                int32_t tile_w = fw / 2;
+                comp_update_surface_position(seat->comp, sf, fw - tile_w, tile_y);
+                int32_t content_h = tile_h - sf->bar_height;
+                if (content_h < 1) content_h = 1;
+                xdg_shell_surface_send_configure(sf, tile_w, content_h,
+                    comp_surface_state_flags(sf));
+                comp_damage_add_full(seat->comp);
+                seat->comp->needs_repaint = true;
+                return;
+            }
+            if (keycode == 72 /* Up arrow */) {
+                /* Maximize */
+                if (!sf->maximized) {
+                    comp_surface_set_maximized(sf, true);
+                    comp_damage_add_full(seat->comp);
+                    seat->comp->needs_repaint = true;
+                }
+                return;
+            }
+            if (keycode == 80 /* Down arrow */) {
+                /* Restore from maximized/tiled */
+                if (sf->maximized) {
+                    comp_surface_set_maximized(sf, false);
+                } else if (sf->have_saved_geom) {
+                    comp_update_surface_position(seat->comp, sf, sf->saved_x, sf->saved_y);
+                    int32_t content_h = sf->saved_h - sf->bar_height;
+                    if (content_h < 1) content_h = 1;
+                    xdg_shell_surface_send_configure(sf, sf->saved_w, content_h,
+                        comp_surface_state_flags(sf));
+                    sf->have_saved_geom = false;
+                }
+                comp_damage_add_full(seat->comp);
+                seat->comp->needs_repaint = true;
+                return;
+            }
+        }
+
         /* F11: toggle fullscreen on focused window */
         if (keycode == 87 /* F11 */) {
             if (seat->comp && seat->comp->focused_surface) {

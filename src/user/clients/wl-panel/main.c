@@ -271,16 +271,16 @@ static void pointer_button(void *data, struct wl_pointer *pointer, uint32_t seri
         printf("[PANEL] Launcher button clicked - attempting to launch terminal\n");
 
         /* Fork and exec a terminal application */
-        long pid = sys_fork();
+        long pid = sys_fork_call();
         if (pid == 0) {
             /* Child process - launch terminal */
             const char *argv[] = {"/bin/wl-term", NULL};
             const char *envp[] = {NULL};
-            sys_execve("/bin/wl-term", (char *const *)argv, (char *const *)envp);
+            sys_execve_call("/bin/wl-term", (char *const *)argv, (char *const *)envp);
 
             /* If execve fails, try futura-shell as fallback */
             const char *shell_argv[] = {"/bin/futura-shell", NULL};
-            sys_execve("/bin/futura-shell", (char *const *)shell_argv, (char *const *)envp);
+            sys_execve_call("/bin/futura-shell", (char *const *)shell_argv, (char *const *)envp);
 
             /* If both fail, exit */
             printf("[PANEL] Failed to launch application\n");

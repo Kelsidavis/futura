@@ -1050,6 +1050,8 @@ extern const uint8_t _binary_build_bin_x86_64_user_futura_shell_start[];
 extern const uint8_t _binary_build_bin_x86_64_user_futura_shell_end[];
 extern const uint8_t _binary_build_bin_x86_64_user_wl_term_start[];
 extern const uint8_t _binary_build_bin_x86_64_user_wl_term_end[];
+extern const uint8_t _binary_build_bin_x86_64_user_wl_panel_start[];
+extern const uint8_t _binary_build_bin_x86_64_user_wl_panel_end[];
 #endif
 /* Test clients (optional) */
 #if ENABLE_WAYLAND_TEST_CLIENTS
@@ -1218,6 +1220,13 @@ int fut_stage_wl_term_binary(void) {
                       "/bin/wl-term");
 }
 
+int fut_stage_wl_panel_binary(void) {
+    (void)fut_vfs_mkdir("/bin", 0755);
+    return stage_blob(_binary_build_bin_x86_64_user_wl_panel_start,
+                      _binary_build_bin_x86_64_user_wl_panel_end,
+                      "/bin/wl-panel");
+}
+
 int fut_stage_futura_shell_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_futura_shell_start,
@@ -1230,6 +1239,10 @@ int fut_stage_wayland_compositor_binary(void) {
 }
 
 int fut_stage_wl_term_binary(void) {
+    return -ENOSYS;  /* Wayland not available */
+}
+
+int fut_stage_wl_panel_binary(void) {
     return -ENOSYS;  /* Wayland not available */
 }
 

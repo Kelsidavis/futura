@@ -2108,6 +2108,14 @@ void fut_kernel_main(void) {
         fut_printf("[INIT] wl-term staged at /bin/wl-term\n");
     }
 
+    extern int fut_stage_wl_panel_binary(void);
+    int wl_panel_stage = fut_stage_wl_panel_binary();
+    if (wl_panel_stage != 0) {
+        fut_printf("[WARN] Failed to stage wl-panel binary (error %d)\n", wl_panel_stage);
+    } else {
+        fut_printf("[INIT] wl-panel staged at /bin/wl-panel\n");
+    }
+
     extern int fut_stage_futura_shell_binary(void);
     int shell_stage = fut_stage_futura_shell_binary();
     if (shell_stage != 0) {

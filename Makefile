@@ -1168,6 +1168,8 @@ WAYLAND_SHELL_BIN := $(BIN_DIR)/$(PLATFORM)/user/futura-shell
 WAYLAND_SHELL_BLOB := $(OBJ_DIR)/kernel/blobs/futura_shell_blob.o
 WL_TERM_BIN := $(BIN_DIR)/$(PLATFORM)/user/wl-term
 WL_TERM_BLOB := $(OBJ_DIR)/kernel/blobs/wl_term_blob.o
+WL_PANEL_BIN := $(BIN_DIR)/$(PLATFORM)/user/wl-panel
+WL_PANEL_BLOB := $(OBJ_DIR)/kernel/blobs/wl_panel_blob.o
 
 # ARM64 userland binaries
 ARM64_INIT_BIN := $(BIN_DIR)/arm64/user/init
@@ -1196,7 +1198,7 @@ endif
 # Core Wayland binaries (production) - only when ENABLE_WAYLAND=1 on Linux
 ifeq ($(ENABLE_WAYLAND),1)
 ifneq ($(shell uname -s),Darwin)
-OBJECTS += $(WAYLAND_COMPOSITOR_BLOB) $(WAYLAND_SHELL_BLOB) $(WL_TERM_BLOB)
+OBJECTS += $(WAYLAND_COMPOSITOR_BLOB) $(WAYLAND_SHELL_BLOB) $(WL_TERM_BLOB) $(WL_PANEL_BLOB)
 ifeq ($(ENABLE_WAYLAND_TEST_CLIENTS),1)
 OBJECTS += $(WAYLAND_CLIENT_BLOB) $(WAYLAND_COLOR_BLOB)
 endif
@@ -1580,6 +1582,10 @@ $(WAYLAND_CLIENT_BLOB): $(WAYLAND_CLIENT_BIN) | $(OBJ_DIR)/kernel/blobs
 	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
 
 $(WL_TERM_BLOB): $(WL_TERM_BIN) | $(OBJ_DIR)/kernel/blobs
+	@echo "OBJCOPY $@"
+	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
+
+$(WL_PANEL_BLOB): $(WL_PANEL_BIN) | $(OBJ_DIR)/kernel/blobs
 	@echo "OBJCOPY $@"
 	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
 

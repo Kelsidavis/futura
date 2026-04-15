@@ -70,6 +70,7 @@ static inline void *safe_memcpy(void *dest, const void *src, size_t n) {
 #define COLOR_TEXT_FOCUSED   0xFF333333u  /* Dark text on light title bar */
 #define COLOR_TEXT_UNFOCUSED 0xFF999999u  /* Muted text for unfocused */
 #define RESIZE_MARGIN        6
+#define MENUBAR_HEIGHT       24
 
 static inline uint32_t clamp_u32(uint32_t value, uint32_t max) {
     return value > max ? max : value;
@@ -1322,7 +1323,7 @@ void comp_surface_commit(struct comp_surface *surface) {
                 if (cy + total_h > fb_h - 42) /* 42 = dock area */
                     cy = fb_h - 42 - total_h;
                 if (cx < 0) cx = 0;
-                if (cy < 0) cy = 0;
+                if (cy < MENUBAR_HEIGHT) cy = MENUBAR_HEIGHT;
                 surface->x = cx;
                 surface->y = cy;
                 surface->pos_initialised = true;
@@ -1596,6 +1597,83 @@ void comp_render_frame(struct compositor_state *comp) {
                 row[gx] = 0xFF000000u | ((uint32_t)pr << 16)
                          | ((uint32_t)pg << 8) | (uint32_t)pb;
             }
+        }
+    }
+
+    /* ── Top menu bar ── */
+    {
+        #define MENUBAR_COLOR   0xE0181828u  /* Dark frosted panel */
+
+        int32_t fb_w = (int32_t)comp->fb_info.width;
+        fut_rect_t mbar_rect = { 0, 0, fb_w, MENUBAR_HEIGHT };
+
+        for (int i = 0; i < damage->count; ++i) {
+            fut_rect_t mbar_clip;
+            if (!rect_intersection(damage->rects[i], mbar_rect, &mbar_clip))
+                continue;
+
+            char *base = (char *)dst->px;
+            /* Draw background with subtle vertical gradient */
+            for (int32_t py = mbar_clip.y; py < mbar_clip.y + mbar_clip.h; py++) {
+                uint32_t *row = (uint32_t *)(base + (size_t)py * dst->pitch);
+                /* Gradient: slightly lighter at top */
+                int vg = py < 4 ? (4 - py) * 3 : 0;
+                uint32_t bg_r = 0x18 + vg;
+                uint32_t bg_g = 0x18 + vg;
+                uint32_t bg_b = 0x28 + vg;
+                uint32_t bg = 0xE0000000u | (bg_r << 16) | (bg_g << 8) | bg_b;
+                for (int32_t px = mbar_clip.x; px < mbar_clip.x + mbar_clip.w; px++) {
+                    /* Alpha blend over background */
+                    uint32_t sa = (bg >> 24) & 0xFF;
+                    uint32_t da = 255u - sa;
+                    uint32_t sr = (bg >> 16) & 0xFF, sg = (bg >> 8) & 0xFF, sb = bg & 0xFF;
+                    uint32_t dr = (row[px] >> 16) & 0xFF, dg = (row[px] >> 8) & 0xFF, db = row[px] & 0xFF;
+                    uint32_t or_ = (sr * sa + dr * da) / 255u;
+                    uint32_t og = (sg * sa + dg * da) / 255u;
+                    uint32_t ob = (sb * sa + db * da) / 255u;
+                    row[px] = 0xFF000000u | (or_ << 16) | (og << 8) | ob;
+                }
+            }
+
+            /* 1px bottom separator */
+            if (MENUBAR_HEIGHT - 1 >= mbar_clip.y &&
+                MENUBAR_HEIGHT - 1 < mbar_clip.y + mbar_clip.h) {
+                uint32_t *sep_row = (uint32_t *)(base + (size_t)(MENUBAR_HEIGHT - 1) * dst->pitch);
+                for (int32_t px = mbar_clip.x; px < mbar_clip.x + mbar_clip.w; px++) {
+                    /* Subtle separator */
+                    uint32_t old = sep_row[px];
+                    uint32_t or_ = ((old >> 16) & 0xFF) * 160 / 255;
+                    uint32_t og = ((old >> 8) & 0xFF) * 160 / 255;
+                    uint32_t ob = (old & 0xFF) * 160 / 255;
+                    sep_row[px] = 0xFF000000u | (or_ << 16) | (og << 8) | ob;
+                }
+            }
+
+            /* "Futura" branding (left) */
+            ui_draw_text(dst->px, dst->pitch, 10, 4,
+                         0xFF7799DDu, "Futura",
+                         mbar_clip.x, mbar_clip.y, mbar_clip.w, mbar_clip.h);
+
+            /* Get current time for menubar clock */
+            struct { long tv_sec; long tv_nsec; } mb_ts = {0, 0};
+            extern long sys_call2(long nr, long a, long b);
+            sys_call2(98, 0, (long)&mb_ts);
+            long mb_daytime = mb_ts.tv_sec % 86400;
+            int mb_hr = (int)(mb_daytime / 3600);
+            int mb_min = (int)((mb_daytime % 3600) / 60);
+            char mb_time[6];
+            mb_time[0] = '0' + (char)(mb_hr / 10);
+            mb_time[1] = '0' + (char)(mb_hr % 10);
+            mb_time[2] = ':';
+            mb_time[3] = '0' + (char)(mb_min / 10);
+            mb_time[4] = '0' + (char)(mb_min % 10);
+            mb_time[5] = '\0';
+
+            /* Clock (right-aligned) */
+            int clock_tx = fb_w - 6 * UI_FONT_WIDTH - 10;
+            ui_draw_text(dst->px, dst->pitch, clock_tx, 4,
+                         0xFFE0E0E8u, mb_time,
+                         mbar_clip.x, mbar_clip.y, mbar_clip.w, mbar_clip.h);
         }
     }
 

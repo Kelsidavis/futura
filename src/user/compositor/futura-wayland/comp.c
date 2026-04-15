@@ -2364,6 +2364,52 @@ void comp_render_frame(struct compositor_state *comp) {
         }
     }
 
+    /* Draw snap preview overlay (translucent blue rectangle with rounded corners) */
+    if (comp->snap_preview_active) {
+        fut_rect_t sp = comp->snap_preview_rect;
+        #define SNAP_PREVIEW_COLOR  0x20446699u  /* Semi-transparent blue */
+        #define SNAP_BORDER_COLOR   0x607799DDu  /* Brighter blue border */
+        #define SP_CORNER_R 8
+        for (int i = 0; i < damage->count; ++i) {
+            fut_rect_t sc;
+            if (!rect_intersection(damage->rects[i], sp, &sc)) continue;
+            char *spbase = (char *)dst->px;
+            for (int32_t py = sc.y; py < sc.y + sc.h; py++) {
+                uint32_t *row = (uint32_t *)(spbase + (size_t)py * dst->pitch);
+                int32_t ry = py - sp.y;
+                int32_t dy_edge = ry < sp.h / 2 ? ry : (sp.h - 1 - ry);
+                for (int32_t px = sc.x; px < sc.x + sc.w; px++) {
+                    int32_t rx = px - sp.x;
+                    int32_t dx_edge = rx < sp.w / 2 ? rx : (sp.w - 1 - rx);
+                    /* Rounded corner check */
+                    if (dx_edge < SP_CORNER_R && dy_edge < SP_CORNER_R) {
+                        int32_t cx_d = SP_CORNER_R - dx_edge;
+                        int32_t cy_d = SP_CORNER_R - dy_edge;
+                        if (cx_d * cx_d + cy_d * cy_d > SP_CORNER_R * SP_CORNER_R)
+                            continue;
+                    }
+                    /* Determine if border (2px) or fill */
+                    bool is_border = (rx < 2 || rx >= sp.w - 2 ||
+                                      ry < 2 || ry >= sp.h - 2);
+                    uint32_t color = is_border ? SNAP_BORDER_COLOR : SNAP_PREVIEW_COLOR;
+                    uint32_t sa = (color >> 24) & 0xFF;
+                    uint32_t da = 255u - sa;
+                    uint32_t sr = (color >> 16) & 0xFF;
+                    uint32_t sg = (color >> 8) & 0xFF;
+                    uint32_t sb = color & 0xFF;
+                    uint32_t d = row[px];
+                    uint32_t or_ = (sr * sa + ((d >> 16) & 0xFF) * da) / 255u;
+                    uint32_t og = (sg * sa + ((d >> 8) & 0xFF) * da) / 255u;
+                    uint32_t ob = (sb * sa + (d & 0xFF) * da) / 255u;
+                    row[px] = 0xFF000000u | (or_ << 16) | (og << 8) | ob;
+                }
+            }
+        }
+        #undef SNAP_PREVIEW_COLOR
+        #undef SNAP_BORDER_COLOR
+        #undef SP_CORNER_R
+    }
+
     if (comp->cursor) {
         struct fut_fb_info info = comp->fb_info;
         info.pitch = (uint32_t)dst->pitch;
@@ -3067,6 +3113,12 @@ void comp_end_drag(struct compositor_state *comp) {
         #undef SNAP_THRESHOLD
     }
 
+    /* Clear snap preview */
+    if (comp->snap_preview_active) {
+        comp_damage_add_rect(comp, comp->snap_preview_rect);
+        comp->snap_preview_active = false;
+    }
+
     comp->dragging = false;
     comp->drag_surface = NULL;
 }
@@ -3461,6 +3513,46 @@ void comp_update_drag(struct compositor_state *comp) {
     int32_t new_x = comp->pointer_x - comp->drag_offset_x;
     int32_t new_y = comp->pointer_y - comp->drag_offset_y;
     comp_update_surface_position(comp, surface, new_x, new_y);
+
+    /* Update snap preview: show translucent rectangle at target snap zone */
+    int32_t fb_w = (int32_t)comp->fb_info.width;
+    int32_t fb_h = (int32_t)comp->fb_info.height;
+    int32_t px = comp->pointer_x;
+    int32_t py = comp->pointer_y;
+    bool old_active = comp->snap_preview_active;
+    fut_rect_t old_rect = comp->snap_preview_rect;
+    #define SNAP_PREVIEW_THRESHOLD 8
+    int32_t snap_h = fb_h - MENUBAR_HEIGHT - 48;
+
+    if (px <= SNAP_PREVIEW_THRESHOLD && !surface->maximized) {
+        comp->snap_preview_active = true;
+        comp->snap_preview_rect = (fut_rect_t){ 2, MENUBAR_HEIGHT + 2,
+                                                 fb_w / 2 - 4, snap_h - 4 };
+    } else if (px >= fb_w - SNAP_PREVIEW_THRESHOLD - 1 && !surface->maximized) {
+        comp->snap_preview_active = true;
+        comp->snap_preview_rect = (fut_rect_t){ fb_w / 2 + 2, MENUBAR_HEIGHT + 2,
+                                                 fb_w / 2 - 4, snap_h - 4 };
+    } else if (py <= SNAP_PREVIEW_THRESHOLD + (int32_t)MENUBAR_HEIGHT && !surface->maximized) {
+        comp->snap_preview_active = true;
+        comp->snap_preview_rect = (fut_rect_t){ 2, 2, fb_w - 4, fb_h - 4 };
+    } else {
+        comp->snap_preview_active = false;
+    }
+    #undef SNAP_PREVIEW_THRESHOLD
+
+    /* Damage old and new preview areas */
+    if (old_active) {
+        fut_rect_t expanded = { old_rect.x - 2, old_rect.y - 2,
+                                old_rect.w + 4, old_rect.h + 4 };
+        comp_damage_add_rect(comp, expanded);
+    }
+    if (comp->snap_preview_active) {
+        fut_rect_t expanded = { comp->snap_preview_rect.x - 2,
+                                comp->snap_preview_rect.y - 2,
+                                comp->snap_preview_rect.w + 4,
+                                comp->snap_preview_rect.h + 4 };
+        comp_damage_add_rect(comp, expanded);
+    }
 }
 
 hit_role_t comp_hit_test(struct compositor_state *comp,

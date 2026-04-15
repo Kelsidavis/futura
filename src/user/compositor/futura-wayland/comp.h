@@ -151,6 +151,9 @@ struct compositor_state {
     bool dock_all_minimized;       /* true after "show desktop" click */
     int last_clock_min;            /* last rendered clock minute (-1 = never) */
     uint32_t cascade_counter;      /* window placement offset counter */
+    /* Edge-snap preview overlay */
+    bool snap_preview_active;
+    fut_rect_t snap_preview_rect;
 };
 
 struct comp_surface {

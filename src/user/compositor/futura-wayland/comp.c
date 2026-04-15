@@ -414,6 +414,22 @@ void comp_surface_update_decorations(struct comp_surface *surface) {
     surface->height = surface->content_height + surface->bar_height;
 }
 
+void comp_show_toast(struct compositor_state *comp, const char *text) {
+    if (!comp || !text) return;
+    int i = 0;
+    while (text[i] && i < 127) { comp->toast_text[i] = text[i]; i++; }
+    comp->toast_text[i] = '\0';
+    /* Get current time and set expiry 3 seconds from now */
+    struct { long tv_sec; long tv_nsec; } ts = {0, 0};
+    extern long sys_call2(long nr, long a, long b);
+    sys_call2(98, 0, (long)&ts);
+    comp->toast_expire_ns = (uint64_t)ts.tv_sec * 1000000000ULL +
+                            (uint64_t)ts.tv_nsec + 5000000000ULL;  /* 5 seconds */
+    comp->toast_active = true;
+    comp_damage_add_full(comp);
+    comp->needs_repaint = true;
+}
+
 /* Optimized bulk fill using 64-bit writes (2 pixels at a time).
  * This is significantly faster than pixel-by-pixel writes for large fills.
  * Further optimization could use SIMD (NEON/SSE) for 128-bit or wider writes.
@@ -912,6 +928,9 @@ int comp_state_init(struct compositor_state *comp) {
     comp->futura_menu_active = false;
     comp->futura_menu_hover = -1;
     comp->shortcut_overlay_active = false;
+    comp->toast_active = false;
+    comp->toast_text[0] = '\0';
+    comp->toast_expire_ns = 0;
 
     /* Try to open /dev/fb0, but fall back to virtual framebuffer if not available */
     int fd = (int)sys_open("/dev/fb0", O_RDWR, 0);
@@ -3614,6 +3633,86 @@ void comp_render_frame(struct compositor_state *comp) {
         #undef ABOUT_BORDER
     }
 
+    /* Toast notification (top-right, auto-dismiss) */
+    if (comp->toast_active) {
+        /* Check expiry */
+        struct { long tv_sec; long tv_nsec; } toast_ts = {0, 0};
+        extern long sys_call2(long nr, long a, long b);
+        sys_call2(98, 0, (long)&toast_ts);
+        uint64_t now_ns = (uint64_t)toast_ts.tv_sec * 1000000000ULL +
+                          (uint64_t)toast_ts.tv_nsec;
+        if (now_ns >= comp->toast_expire_ns) {
+            comp->toast_active = false;
+            comp_damage_add_full(comp);
+            comp->needs_repaint = true;
+        } else {
+            int32_t fb_w = (int32_t)comp->fb_info.width;
+            int tl = 0;
+            while (comp->toast_text[tl] && tl < 127) tl++;
+            int tw = tl * UI_FONT_WIDTH + 24;
+            int th = UI_FONT_HEIGHT + 16;
+            int tx = fb_w - tw - 12;
+            int ty = 24 + 8;  /* below menubar */
+            #define TOAST_R 6
+            #define TOAST_BG 0xE0202030u
+            fut_rect_t toast_rect = { tx, ty, tw, th };
+            for (int i = 0; i < damage->count; ++i) {
+                fut_rect_t tc;
+                if (!rect_intersection(damage->rects[i], toast_rect, &tc)) continue;
+                char *tbase = (char *)dst->px;
+                for (int32_t py = tc.y; py < tc.y + tc.h; py++) {
+                    uint32_t *row = (uint32_t *)(tbase + (size_t)py * dst->pitch);
+                    int32_t ry = py - ty;
+                    int32_t dy_e = ry < th / 2 ? ry : (th - 1 - ry);
+                    for (int32_t px = tc.x; px < tc.x + tc.w; px++) {
+                        int32_t rx = px - tx;
+                        int32_t dx_e = rx < tw / 2 ? rx : (tw - 1 - rx);
+                        if (dx_e < TOAST_R && dy_e < TOAST_R) {
+                            int32_t cxd = TOAST_R - dx_e, cyd = TOAST_R - dy_e;
+                            if (cxd * cxd + cyd * cyd > TOAST_R * TOAST_R) continue;
+                        }
+                        uint32_t sa = (TOAST_BG >> 24) & 0xFF;
+                        uint32_t da = 255u - sa;
+                        uint32_t d = row[px];
+                        uint32_t or_ = (((TOAST_BG>>16)&0xFF)*sa+((d>>16)&0xFF)*da)/255u;
+                        uint32_t og = (((TOAST_BG>>8)&0xFF)*sa+((d>>8)&0xFF)*da)/255u;
+                        uint32_t ob = ((TOAST_BG&0xFF)*sa+(d&0xFF)*da)/255u;
+                        row[px] = 0xFF000000u | (or_ << 16) | (og << 8) | ob;
+                    }
+                }
+                /* Border */
+                uint32_t bc = 0x50667799u;
+                int32_t be[4][4] = {
+                    { tx, ty, tw, 1 }, { tx, ty+th-1, tw, 1 },
+                    { tx, ty, 1, th }, { tx+tw-1, ty, 1, th },
+                };
+                for (int e = 0; e < 4; e++) {
+                    fut_rect_t er = { be[e][0], be[e][1], be[e][2], be[e][3] };
+                    fut_rect_t ec;
+                    if (!rect_intersection(tc, er, &ec)) continue;
+                    for (int32_t py = ec.y; py < ec.y+ec.h; py++) {
+                        uint32_t *row = (uint32_t *)(tbase + (size_t)py * dst->pitch);
+                        for (int32_t px = ec.x; px < ec.x+ec.w; px++) {
+                            uint32_t sa = (bc >> 24) & 0xFF;
+                            uint32_t da = 255u - sa;
+                            uint32_t d = row[px];
+                            row[px] = 0xFF000000u |
+                                ((((bc>>16)&0xFF)*sa+((d>>16)&0xFF)*da)/255u << 16) |
+                                ((((bc>>8)&0xFF)*sa+((d>>8)&0xFF)*da)/255u << 8) |
+                                (((bc&0xFF)*sa+(d&0xFF)*da)/255u);
+                        }
+                    }
+                }
+                /* Toast text */
+                ui_draw_text(dst->px, dst->pitch, tx + 12, ty + 8,
+                             0xFFE0E0E8u, comp->toast_text,
+                             tc.x, tc.y, tc.w, tc.h);
+            }
+            #undef TOAST_R
+            #undef TOAST_BG
+        }
+    }
+
     if (comp->cursor) {
         struct fut_fb_info info = comp->fb_info;
         info.pitch = (uint32_t)dst->pitch;
@@ -3892,7 +3991,14 @@ int comp_run(struct compositor_state *comp) {
 
     int dispatch_errors = 0;
 
+    /* Welcome toast — delayed until first frame with a surface */
+    bool welcome_shown = false;
+
     while (comp->running) {
+        if (!welcome_shown && !wl_list_empty(&comp->surfaces)) {
+            comp_show_toast(comp, "Welcome to Horizon Desktop");
+            welcome_shown = true;
+        }
         /* Poll input FIRST — never let epoll_wait starvation delay mouse/kbd.
          * On a single-CPU kernel, epoll_wait can sometimes overshoot its
          * timeout, freezing the cursor.  Polling before and after epoll

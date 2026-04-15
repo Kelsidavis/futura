@@ -174,6 +174,10 @@ struct compositor_state {
     int dock_tooltip_index;        /* dock item showing tooltip, -1 = none */
     int32_t dock_tooltip_x;
     int32_t dock_tooltip_y;
+    /* Toast notification */
+    bool toast_active;
+    char toast_text[128];
+    uint64_t toast_expire_ns;      /* timestamp when toast should disappear */
 };
 
 struct comp_surface {
@@ -333,6 +337,7 @@ hit_role_t comp_hit_test(struct compositor_state *comp,
                          resize_edge_t *out_edge);
 void comp_surface_request_close(struct comp_surface *surface);
 void comp_surface_update_decorations(struct comp_surface *surface);
+void comp_show_toast(struct compositor_state *comp, const char *text);
 static inline fut_rect_t comp_window_rect(const struct comp_surface *surface) {
     fut_rect_t r = {
         .x = surface->x,

@@ -666,6 +666,21 @@ static void seat_handle_button(struct seat_state *seat,
         }
     }
 
+    /* Middle-click on title bar: minimize window */
+    if (code == FUT_BTN_MIDDLE && pressed) {
+        struct comp_surface *hit_surface = NULL;
+        resize_edge_t edge = RSZ_NONE;
+        hit_role_t role = comp_hit_test(seat->comp,
+                                        seat->comp->pointer_x,
+                                        seat->comp->pointer_y,
+                                        &hit_surface, &edge);
+        if (role == HIT_BAR && hit_surface && seat->comp->deco_enabled) {
+            comp_surface_set_minimized(hit_surface, true);
+            comp_damage_add_full(seat->comp);
+            seat->comp->needs_repaint = true;
+        }
+    }
+
     /* Right-click on desktop background: show context menu */
     if (code == FUT_BTN_RIGHT && pressed) {
         struct comp_surface *hit_surface = NULL;

@@ -1648,14 +1648,29 @@ void comp_render_frame(struct compositor_state *comp) {
                 if (pg > 255) pg = 255;
                 if (pb > 255) pb = 255;
 
-                /* Deterministic star field */
+                /* Deterministic star field with colored stars */
                 uint32_t hash = (uint32_t)(gx * 7919 + gy * 104729);
                 hash ^= hash >> 13;
                 hash *= 0x5bd1e995u;
                 hash ^= hash >> 15;
                 if ((hash & 0x3FF) < 3) {
+                    /* Bright star — with subtle color tint */
                     int brightness = 100 + (int)(hash >> 10 & 0x7F);
-                    pr += brightness; pg += brightness; pb += brightness;
+                    int star_type = (hash >> 17) & 0x7;
+                    if (star_type == 0) {
+                        /* Blue-white star */
+                        pr += brightness * 3 / 4;
+                        pg += brightness * 7 / 8;
+                        pb += brightness;
+                    } else if (star_type == 1) {
+                        /* Warm orange star */
+                        pr += brightness;
+                        pg += brightness * 3 / 4;
+                        pb += brightness / 2;
+                    } else {
+                        /* White star */
+                        pr += brightness; pg += brightness; pb += brightness;
+                    }
                     if (pr > 255) pr = 255;
                     if (pg > 255) pg = 255;
                     if (pb > 255) pb = 255;
@@ -1843,7 +1858,10 @@ void comp_render_frame(struct compositor_state *comp) {
                 }
             }
 
-            /* "Futura" branding (left) — bold accent */
+            /* "Futura" branding (left) — bold accent with subtle text shadow */
+            ui_draw_text(dst->px, dst->pitch, 11, 5,
+                         0x40000000u, "Futura",
+                         mbar_clip.x, mbar_clip.y, mbar_clip.w, mbar_clip.h);
             ui_draw_text(dst->px, dst->pitch, 10, 4,
                          0xFF7799DDu, "Futura",
                          mbar_clip.x, mbar_clip.y, mbar_clip.w, mbar_clip.h);

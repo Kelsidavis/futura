@@ -159,6 +159,8 @@ struct compositor_state {
     int32_t ctx_menu_x;
     int32_t ctx_menu_y;
     int ctx_menu_hover;            /* hovered item index, -1 = none */
+    /* About dialog */
+    bool about_active;
 };
 
 struct comp_surface {

@@ -2647,6 +2647,141 @@ void comp_render_frame(struct compositor_state *comp) {
         #undef CTX_SEP
     }
 
+    /* About Futura dialog overlay */
+    if (comp->about_active) {
+        #define ABOUT_W    280
+        #define ABOUT_H    180
+        #define ABOUT_R    10
+        #define ABOUT_BG   0xF0181828u
+        #define ABOUT_BORDER 0x60667799u
+        int32_t fb_w = (int32_t)comp->fb_info.width;
+        int32_t fb_h = (int32_t)comp->fb_info.height;
+        int32_t ax = (fb_w - ABOUT_W) / 2;
+        int32_t ay = (fb_h - ABOUT_H) / 2;
+        fut_rect_t about_rect = { ax, ay, ABOUT_W, ABOUT_H };
+
+        /* Dim the background */
+        for (int i = 0; i < damage->count; ++i) {
+            fut_rect_t fc;
+            fut_rect_t full = { 0, 0, fb_w, fb_h };
+            if (!rect_intersection(damage->rects[i], full, &fc)) continue;
+            char *dbase = (char *)dst->px;
+            for (int32_t py = fc.y; py < fc.y + fc.h; py++) {
+                uint32_t *row = (uint32_t *)(dbase + (size_t)py * dst->pitch);
+                for (int32_t px = fc.x; px < fc.x + fc.w; px++) {
+                    uint32_t d = row[px];
+                    uint32_t r = ((d >> 16) & 0xFF) * 160 / 255;
+                    uint32_t g = ((d >> 8) & 0xFF) * 160 / 255;
+                    uint32_t b = (d & 0xFF) * 160 / 255;
+                    row[px] = 0xFF000000u | (r << 16) | (g << 8) | b;
+                }
+            }
+        }
+
+        /* Draw dialog box */
+        for (int i = 0; i < damage->count; ++i) {
+            fut_rect_t ac;
+            if (!rect_intersection(damage->rects[i], about_rect, &ac)) continue;
+            char *abase = (char *)dst->px;
+            for (int32_t py = ac.y; py < ac.y + ac.h; py++) {
+                uint32_t *arow = (uint32_t *)(abase + (size_t)py * dst->pitch);
+                int32_t ry = py - ay;
+                int32_t dy = ry < ABOUT_H / 2 ? ry : (ABOUT_H - 1 - ry);
+                for (int32_t px = ac.x; px < ac.x + ac.w; px++) {
+                    int32_t rx = px - ax;
+                    int32_t dx = rx < ABOUT_W / 2 ? rx : (ABOUT_W - 1 - rx);
+                    if (dx < ABOUT_R && dy < ABOUT_R) {
+                        int32_t cx = ABOUT_R - dx;
+                        int32_t cy = ABOUT_R - dy;
+                        if (cx * cx + cy * cy > ABOUT_R * ABOUT_R) continue;
+                    }
+                    uint32_t sa = (ABOUT_BG >> 24) & 0xFF;
+                    uint32_t da = 255u - sa;
+                    uint32_t sr = (ABOUT_BG >> 16) & 0xFF;
+                    uint32_t sg = (ABOUT_BG >> 8) & 0xFF;
+                    uint32_t sb = ABOUT_BG & 0xFF;
+                    uint32_t d = arow[px];
+                    uint32_t or_ = (sr * sa + ((d >> 16) & 0xFF) * da) / 255u;
+                    uint32_t og = (sg * sa + ((d >> 8) & 0xFF) * da) / 255u;
+                    uint32_t ob = (sb * sa + (d & 0xFF) * da) / 255u;
+                    arow[px] = 0xFF000000u | (or_ << 16) | (og << 8) | ob;
+                }
+            }
+
+            /* Border */
+            int32_t bedges[4][4] = {
+                { ax, ay, ABOUT_W, 1 },
+                { ax, ay + ABOUT_H - 1, ABOUT_W, 1 },
+                { ax, ay, 1, ABOUT_H },
+                { ax + ABOUT_W - 1, ay, 1, ABOUT_H },
+            };
+            for (int e = 0; e < 4; e++) {
+                fut_rect_t edge = { bedges[e][0], bedges[e][1], bedges[e][2], bedges[e][3] };
+                fut_rect_t ec;
+                if (!rect_intersection(ac, edge, &ec)) continue;
+                uint32_t bsa = (ABOUT_BORDER >> 24) & 0xFF;
+                uint32_t bda = 255u - bsa;
+                for (int32_t py2 = ec.y; py2 < ec.y + ec.h; py2++) {
+                    uint32_t *brow = (uint32_t *)(abase + (size_t)py2 * dst->pitch);
+                    for (int32_t px2 = ec.x; px2 < ec.x + ec.w; px2++) {
+                        uint32_t d = brow[px2];
+                        uint32_t or_ = ((ABOUT_BORDER >> 16) & 0xFF) * bsa / 255u +
+                                        ((d >> 16) & 0xFF) * bda / 255u;
+                        uint32_t og = ((ABOUT_BORDER >> 8) & 0xFF) * bsa / 255u +
+                                       ((d >> 8) & 0xFF) * bda / 255u;
+                        uint32_t ob = (ABOUT_BORDER & 0xFF) * bsa / 255u +
+                                       (d & 0xFF) * bda / 255u;
+                        brow[px2] = 0xFF000000u | (or_ << 16) | (og << 8) | ob;
+                    }
+                }
+            }
+
+            /* Title */
+            ui_draw_text(dst->px, dst->pitch, ax + ABOUT_W / 2 - 5 * UI_FONT_WIDTH, ay + 20,
+                         0xFF7799DDu, "Futura OS",
+                         ac.x, ac.y, ac.w, ac.h);
+
+            /* Version */
+            ui_draw_text(dst->px, dst->pitch, ax + ABOUT_W / 2 - 5 * UI_FONT_WIDTH, ay + 44,
+                         0xFFE0E0E8u, "Version 0.8.0",
+                         ac.x, ac.y, ac.w, ac.h);
+
+            /* Separator */
+            {
+                fut_rect_t sep = { ax + 20, ay + 66, ABOUT_W - 40, 1 };
+                fut_rect_t sc;
+                if (rect_intersection(ac, sep, &sc)) {
+                    for (int32_t spy = sc.y; spy < sc.y + sc.h; spy++) {
+                        uint32_t *srow = (uint32_t *)(abase + (size_t)spy * dst->pitch);
+                        for (int32_t spx = sc.x; spx < sc.x + sc.w; spx++)
+                            srow[spx] = 0xFF333344u;
+                    }
+                }
+            }
+
+            /* Info lines */
+            ui_draw_text(dst->px, dst->pitch, ax + 20, ay + 80,
+                         0xFFA0A0B0u, "Horizon Desktop",
+                         ac.x, ac.y, ac.w, ac.h);
+            ui_draw_text(dst->px, dst->pitch, ax + 20, ay + 100,
+                         0xFFA0A0B0u, "Wayland Compositor",
+                         ac.x, ac.y, ac.w, ac.h);
+            ui_draw_text(dst->px, dst->pitch, ax + 20, ay + 120,
+                         0xFF808098u, "Copyright 2025",
+                         ac.x, ac.y, ac.w, ac.h);
+
+            /* Dismiss hint */
+            ui_draw_text(dst->px, dst->pitch, ax + ABOUT_W / 2 - 10 * UI_FONT_WIDTH, ay + ABOUT_H - 26,
+                         0xFF606078u, "Click anywhere to close",
+                         ac.x, ac.y, ac.w, ac.h);
+        }
+        #undef ABOUT_W
+        #undef ABOUT_H
+        #undef ABOUT_R
+        #undef ABOUT_BG
+        #undef ABOUT_BORDER
+    }
+
     if (comp->cursor) {
         struct fut_fb_info info = comp->fb_info;
         info.pitch = (uint32_t)dst->pitch;

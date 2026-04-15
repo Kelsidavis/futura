@@ -686,6 +686,14 @@ static void seat_handle_button(struct seat_state *seat,
         }
     }
 
+    /* Click anywhere dismisses about dialog */
+    if (pressed && seat->comp && seat->comp->about_active) {
+        seat->comp->about_active = false;
+        comp_damage_add_full(seat->comp);
+        seat->comp->needs_repaint = true;
+        return;
+    }
+
     /* Left-click dismisses context menu, or selects an item */
     if (code == FUT_BTN_LEFT && pressed && seat->comp && seat->comp->ctx_menu_active) {
         int sel = seat->comp->ctx_menu_hover;
@@ -722,8 +730,10 @@ static void seat_handle_button(struct seat_state *seat,
             }
         }
         if (sel == 3) {
-            /* "About Futura" — show about dialog (launch terminal for now) */
-            /* TODO: proper about dialog in future */
+            /* "About Futura" — show about dialog overlay */
+            seat->comp->about_active = true;
+            comp_damage_add_full(seat->comp);
+            seat->comp->needs_repaint = true;
         }
         /* Don't process this click further if menu was open */
         return;
@@ -805,6 +815,14 @@ static void seat_handle_key_event(struct seat_state *seat,
 
     uint32_t keycode = (uint32_t)ev->code;
     bool pressed = (ev->value != 0);
+
+    /* Escape or any key dismisses about dialog */
+    if (pressed && seat->comp && seat->comp->about_active) {
+        seat->comp->about_active = false;
+        comp_damage_add_full(seat->comp);
+        seat->comp->needs_repaint = true;
+        if (keycode == 1) return;  /* Escape: consume the key */
+    }
 
     /* Track modifier keys */
     if (keycode == 29 || keycode == 97) {  /* Left/Right Ctrl */

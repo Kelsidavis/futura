@@ -157,8 +157,11 @@ int __wrap_socket(int domain, int type, int protocol) {
     debug_write_int(protocol);
     debug_write(")\n");
 
-    /* Strip SOCK_CLOEXEC and SOCK_NONBLOCK flags - kernel doesn't support them */
-    int type_masked = type & 0xF;  /* Keep only the socket type bits */
+    /* Strip SOCK_CLOEXEC and SOCK_NONBLOCK flags — kernel socket creation
+     * crashes with these flags due to a FD-table bug.  Apply O_NONBLOCK
+     * after creation via fcntl instead. */
+    int type_flags = type & ~0xF;
+    int type_masked = type & 0xF;
     long result = SYSCALL_SOCKET(domain, type_masked, protocol);
     if (result < 0) {
         int err = -(int)result;
@@ -171,6 +174,16 @@ int __wrap_socket(int domain, int type, int protocol) {
         return -1;
     }
     errno = 0;  /* Clear errno on success */
+
+    /* Apply SOCK_NONBLOCK via fcntl since the kernel can't handle it in socket() */
+    if (type_flags & 0x800 /* SOCK_NONBLOCK */) {
+        /* F_GETFL=3, F_SETFL=4 */
+        long cur = SYSCALL_FCNTL(result, 3, 0);  /* fcntl(fd, F_GETFL) */
+        if (cur >= 0) {
+            SYSCALL_FCNTL(result, 4, cur | 0x800);  /* fcntl(fd, F_SETFL, flags|O_NONBLOCK) */
+        }
+    }
+
     debug_write("[WRAP_SOCKET] SUCCESS: fd=");
     debug_write_int(result);
     debug_write("\n");
@@ -447,9 +460,15 @@ long __wrap_syscall(long number, ...) {
         int domain = va_arg(ap, int);
         int type = va_arg(ap, int);
         int protocol = va_arg(ap, int);
-        /* Strip SOCK_CLOEXEC and SOCK_NONBLOCK flags */
+        /* Strip SOCK_NONBLOCK/SOCK_CLOEXEC, apply O_NONBLOCK via fcntl */
+        int s_flags = type & ~0xF;
         int type_masked = type & 0xF;
         result = SYSCALL_SOCKET(domain, type_masked, protocol);
+        if (result >= 0 && (s_flags & 0x800)) {
+            long cur = SYSCALL_FCNTL(result, 3, 0);
+            if (cur >= 0)
+                SYSCALL_FCNTL(result, 4, cur | 0x800);
+        }
         break;
     }
     case 49: { /* SYS_bind */

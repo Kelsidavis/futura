@@ -789,8 +789,12 @@ void fut_schedule(void) {
 
     // Validate prev pointer before use
     if (prev && (uintptr_t)prev < 0xFFFFFFFF80000000ULL) {
-        fut_printf("[SCHED] BUG: prev=%p (not kernel addr) — clearing\n", (void *)prev);
-        prev = NULL;
+        fut_printf("[SCHED] BUG: prev=%p (not kernel addr) — skipping switch\n", (void *)prev);
+        /* Don't context-switch with a corrupt current-thread pointer:
+         * we can't safely save state or re-queue prev.  Skip this tick
+         * and let the timer IRQ retry on the next tick. */
+        sched_irq_enable();
+        return;
     }
 
     // If current thread is still runnable, put it back in ready queue

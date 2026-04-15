@@ -830,8 +830,30 @@ static void seat_handle_key_event(struct seat_state *seat,
         else compositor_mods &= ~COMP_MOD_CTRL;
     }
     if (keycode == 56 || keycode == 100) {  /* Left/Right Alt */
-        if (pressed) compositor_mods |= COMP_MOD_ALT;
-        else compositor_mods &= ~COMP_MOD_ALT;
+        if (pressed) {
+            compositor_mods |= COMP_MOD_ALT;
+        } else {
+            compositor_mods &= ~COMP_MOD_ALT;
+            /* Alt released: commit alt-tab selection */
+            if (seat->comp && seat->comp->alt_tab_active) {
+                seat->comp->alt_tab_active = false;
+                /* Focus the selected window */
+                int idx = 0;
+                struct comp_surface *target = NULL;
+                struct comp_surface *s;
+                wl_list_for_each(s, &seat->comp->surfaces, link) {
+                    if (!s->has_backing || s->minimized) continue;
+                    if (idx == seat->comp->alt_tab_index) { target = s; break; }
+                    idx++;
+                }
+                if (target) {
+                    comp_surface_raise(seat->comp, target);
+                    seat_focus_surface(seat, target);
+                }
+                comp_damage_add_full(seat->comp);
+                seat->comp->needs_repaint = true;
+            }
+        }
     }
     if (keycode == 125 || keycode == 126) {  /* Super/Meta */
         if (pressed) compositor_mods |= COMP_MOD_SUPER;
@@ -847,38 +869,25 @@ static void seat_handle_key_event(struct seat_state *seat,
             return;
         }
 
-        /* Alt+Tab: cycle focus to next window */
+        /* Alt+Tab: show window switcher overlay and cycle */
         if ((compositor_mods & COMP_MOD_ALT) && keycode == 15 /* Tab */) {
             if (seat->comp) {
-                struct comp_surface *current = seat->comp->focused_surface;
-                struct comp_surface *next = NULL;
-
-                if (current) {
-                    /* Find next surface after current in the list */
-                    struct comp_surface *s;
-                    bool found_current = false;
-                    wl_list_for_each(s, &seat->comp->surfaces, link) {
-                        if (!s->has_backing || s->minimized) continue;
-                        if (found_current) { next = s; break; }
-                        if (s == current) found_current = true;
-                    }
-                    /* Wrap around to first */
-                    if (!next) {
-                        wl_list_for_each(s, &seat->comp->surfaces, link) {
-                            if (s->has_backing && !s->minimized) { next = s; break; }
-                        }
-                    }
-                } else {
-                    /* No focused window — focus first */
-                    struct comp_surface *s;
-                    wl_list_for_each(s, &seat->comp->surfaces, link) {
-                        if (s->has_backing && !s->minimized) { next = s; break; }
-                    }
+                /* Count switchable windows */
+                int count = 0;
+                struct comp_surface *s;
+                wl_list_for_each(s, &seat->comp->surfaces, link) {
+                    if (s->has_backing && !s->minimized) count++;
                 }
-
-                if (next && next != current) {
-                    comp_surface_raise(seat->comp, next);
-                    seat_focus_surface(seat, next);
+                if (count > 0) {
+                    if (!seat->comp->alt_tab_active) {
+                        /* First press: activate switcher, start at index 1 (next window) */
+                        seat->comp->alt_tab_active = true;
+                        seat->comp->alt_tab_count = count;
+                        seat->comp->alt_tab_index = count > 1 ? 1 : 0;
+                    } else {
+                        /* Subsequent Tab press: advance index */
+                        seat->comp->alt_tab_index = (seat->comp->alt_tab_index + 1) % count;
+                    }
                     comp_damage_add_full(seat->comp);
                     seat->comp->needs_repaint = true;
                 }

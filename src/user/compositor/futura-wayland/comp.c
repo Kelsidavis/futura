@@ -905,6 +905,10 @@ int comp_state_init(struct compositor_state *comp) {
     comp->vsync_hint_ms = comp->target_ms;
     comp->last_clock_min = -1;
     comp->dock_hover_index = -1;
+    comp->alt_tab_active = false;
+    comp->alt_tab_index = 0;
+    comp->alt_tab_count = 0;
+    comp->dock_tooltip_index = -1;
 
     /* Try to open /dev/fb0, but fall back to virtual framebuffer if not available */
     int fd = (int)sys_open("/dev/fb0", O_RDWR, 0);
@@ -1624,7 +1628,7 @@ void comp_render_frame(struct compositor_state *comp) {
     {
         int32_t fb_w = (int32_t)comp->fb_info.width;
         int32_t fb_h = (int32_t)comp->fb_info.height;
-        const char *watermark = "Futura OS 0.8";
+        const char *watermark = "Futura OS 0.9";
         int wm_len = 0;
         while (watermark[wm_len]) wm_len++;
         int wm_x = fb_w - wm_len * UI_FONT_WIDTH - 12;
@@ -2206,6 +2210,65 @@ void comp_render_frame(struct compositor_state *comp) {
             }
         }
 
+        /* Dock tooltip: floating label above hovered dock item */
+        if (comp->dock_tooltip_index >= 0) {
+            /* Find the window for this dock index */
+            int tip_idx = 0;
+            struct comp_surface *tip_surf = NULL;
+            struct comp_surface *tds;
+            wl_list_for_each(tds, &comp->surfaces, link) {
+                if (!tds->has_backing) continue;
+                if (tip_idx == comp->dock_tooltip_index) { tip_surf = tds; break; }
+                tip_idx++;
+            }
+            if (tip_surf) {
+                const char *tip_text = tip_surf->title[0]
+                    ? tip_surf->title
+                    : (tip_surf->app_id[0] ? tip_surf->app_id : "Window");
+                int tip_len = 0;
+                while (tip_text[tip_len] && tip_len < 30) tip_len++;
+                int tip_w = tip_len * UI_FONT_WIDTH + 12;
+                int tip_h = UI_FONT_HEIGHT + 8;
+                int tip_x = comp->dock_tooltip_x - tip_w / 2;
+                int tip_y = comp->dock_tooltip_y - tip_h - 6;
+                /* Clamp to screen */
+                if (tip_x < 2) tip_x = 2;
+                if (tip_x + tip_w > fb_w - 2) tip_x = fb_w - 2 - tip_w;
+
+                fut_rect_t tip_rect = { tip_x, tip_y, tip_w, tip_h };
+                for (int i = 0; i < damage->count; ++i) {
+                    fut_rect_t tip_clip;
+                    if (!rect_intersection(damage->rects[i], tip_rect, &tip_clip))
+                        continue;
+                    /* Tooltip background with rounded corners */
+                    char *tbase = (char *)dst->px;
+                    for (int32_t py = tip_clip.y; py < tip_clip.y + tip_clip.h; py++) {
+                        uint32_t *row = (uint32_t *)(tbase + (size_t)py * dst->pitch);
+                        int32_t ry = py - tip_y;
+                        int32_t dy2 = ry < tip_h / 2 ? ry : (tip_h - 1 - ry);
+                        for (int32_t px = tip_clip.x; px < tip_clip.x + tip_clip.w; px++) {
+                            int32_t rx = px - tip_x;
+                            int32_t dx2 = rx < tip_w / 2 ? rx : (tip_w - 1 - rx);
+                            if (dx2 < 4 && dy2 < 4) {
+                                int32_t ccx = 4 - dx2, ccy = 4 - dy2;
+                                if (ccx * ccx + ccy * ccy > 16) continue;
+                            }
+                            ABLEND(0xE8202030u, row[px]);
+                        }
+                    }
+                    /* Tooltip text */
+                    char tip_buf[32];
+                    int ti = 0;
+                    while (ti < tip_len) { tip_buf[ti] = tip_text[ti]; ti++; }
+                    tip_buf[ti] = '\0';
+                    ui_draw_text(dst->px, dst->pitch,
+                                 tip_x + 6, tip_y + 4,
+                                 0xFFE0E0E8u, tip_buf,
+                                 tip_clip.x, tip_clip.y, tip_clip.w, tip_clip.h);
+                }
+            }
+        }
+
         #undef ABLEND
     }
 
@@ -2647,6 +2710,207 @@ void comp_render_frame(struct compositor_state *comp) {
         #undef CTX_SEP
     }
 
+    /* Alt+Tab window switcher overlay */
+    if (comp->alt_tab_active) {
+        #define TAB_ITEM_W    140
+        #define TAB_ITEM_H    100
+        #define TAB_ITEM_PAD  10
+        #define TAB_PAD       16
+        #define TAB_TITLE_H   22
+        #define TAB_BG        0xE0181828u
+        #define TAB_SEL       0xFF334466u
+        #define TAB_BORDER    0x40667799u
+        #define TAB_CORNER    10
+        #define TAB_THUMB_BG  0xFF0A0A18u
+
+        int32_t fb_w = (int32_t)comp->fb_info.width;
+        int32_t fb_h = (int32_t)comp->fb_info.height;
+
+        /* Count switchable windows */
+        int n_tab = 0;
+        struct comp_surface *ts;
+        wl_list_for_each(ts, &comp->surfaces, link) {
+            if (ts->has_backing && !ts->minimized) n_tab++;
+        }
+        if (n_tab > 8) n_tab = 8;  /* limit to 8 visible items */
+
+        int total_w = TAB_PAD * 2 + n_tab * TAB_ITEM_W + (n_tab > 1 ? (n_tab - 1) * TAB_ITEM_PAD : 0);
+        int total_h = TAB_PAD * 2 + TAB_ITEM_H + TAB_TITLE_H;
+        int tab_x = (fb_w - total_w) / 2;
+        int tab_y = (fb_h - total_h) / 2;
+        fut_rect_t tab_rect = { tab_x, tab_y, total_w, total_h };
+
+        /* Dim background */
+        for (int i = 0; i < damage->count; ++i) {
+            fut_rect_t fc;
+            fut_rect_t full = { 0, 0, fb_w, fb_h };
+            if (!rect_intersection(damage->rects[i], full, &fc)) continue;
+            char *dbase = (char *)dst->px;
+            for (int32_t py = fc.y; py < fc.y + fc.h; py++) {
+                uint32_t *row = (uint32_t *)(dbase + (size_t)py * dst->pitch);
+                for (int32_t px = fc.x; px < fc.x + fc.w; px++) {
+                    uint32_t d = row[px];
+                    uint32_t r = ((d >> 16) & 0xFF) * 140 / 255;
+                    uint32_t g = ((d >> 8) & 0xFF) * 140 / 255;
+                    uint32_t b = (d & 0xFF) * 140 / 255;
+                    row[px] = 0xFF000000u | (r << 16) | (g << 8) | b;
+                }
+            }
+        }
+
+        /* Draw switcher panel background with rounded corners */
+        for (int i = 0; i < damage->count; ++i) {
+            fut_rect_t tc;
+            if (!rect_intersection(damage->rects[i], tab_rect, &tc)) continue;
+            char *tbase = (char *)dst->px;
+            for (int32_t py = tc.y; py < tc.y + tc.h; py++) {
+                uint32_t *row = (uint32_t *)(tbase + (size_t)py * dst->pitch);
+                int32_t ry = py - tab_y;
+                int32_t dy = ry < total_h / 2 ? ry : (total_h - 1 - ry);
+                for (int32_t px = tc.x; px < tc.x + tc.w; px++) {
+                    int32_t rx = px - tab_x;
+                    int32_t dx = rx < total_w / 2 ? rx : (total_w - 1 - rx);
+                    /* Round corners */
+                    if (dx < TAB_CORNER && dy < TAB_CORNER) {
+                        int32_t cx = TAB_CORNER - dx;
+                        int32_t cy = TAB_CORNER - dy;
+                        if (cx * cx + cy * cy > TAB_CORNER * TAB_CORNER) continue;
+                    }
+                    uint32_t sa = (TAB_BG >> 24) & 0xFF;
+                    uint32_t da = 255u - sa;
+                    uint32_t sr = (TAB_BG >> 16) & 0xFF;
+                    uint32_t sg = (TAB_BG >> 8) & 0xFF;
+                    uint32_t sb = TAB_BG & 0xFF;
+                    uint32_t d = row[px];
+                    uint32_t or_ = (sr * sa + ((d >> 16) & 0xFF) * da) / 255u;
+                    uint32_t og = (sg * sa + ((d >> 8) & 0xFF) * da) / 255u;
+                    uint32_t ob = (sb * sa + (d & 0xFF) * da) / 255u;
+                    row[px] = 0xFF000000u | (or_ << 16) | (og << 8) | ob;
+                }
+            }
+
+            /* Draw each window item */
+            int item_idx = 0;
+            struct comp_surface *ws2;
+            wl_list_for_each(ws2, &comp->surfaces, link) {
+                if (!ws2->has_backing || ws2->minimized) continue;
+                if (item_idx >= 8) break;
+
+                int ix = tab_x + TAB_PAD + item_idx * (TAB_ITEM_W + TAB_ITEM_PAD);
+                int iy = tab_y + TAB_PAD;
+                bool selected = (item_idx == comp->alt_tab_index);
+
+                /* Selection highlight */
+                if (selected) {
+                    fut_rect_t sel_rect = { ix - 3, iy - 3, TAB_ITEM_W + 6, TAB_ITEM_H + TAB_TITLE_H + 6 };
+                    fut_rect_t sel_clip;
+                    if (rect_intersection(tc, sel_rect, &sel_clip)) {
+                        for (int32_t sy = sel_clip.y; sy < sel_clip.y + sel_clip.h; sy++) {
+                            uint32_t *srow = (uint32_t *)(tbase + (size_t)sy * dst->pitch);
+                            int32_t sry = sy - sel_rect.y;
+                            int32_t sdy = sry < sel_rect.h / 2 ? sry : (sel_rect.h - 1 - sry);
+                            for (int32_t sx = sel_clip.x; sx < sel_clip.x + sel_clip.w; sx++) {
+                                int32_t srx = sx - sel_rect.x;
+                                int32_t sdx = srx < sel_rect.w / 2 ? srx : (sel_rect.w - 1 - srx);
+                                if (sdx < 6 && sdy < 6) {
+                                    int32_t ccx = 6 - sdx, ccy = 6 - sdy;
+                                    if (ccx * ccx + ccy * ccy > 36) continue;
+                                }
+                                uint32_t ssa = (TAB_SEL >> 24) & 0xFF;
+                                uint32_t sda = 255u - ssa;
+                                uint32_t d = srow[sx];
+                                uint32_t or_ = (((TAB_SEL >> 16) & 0xFF) * ssa + ((d >> 16) & 0xFF) * sda) / 255u;
+                                uint32_t og = (((TAB_SEL >> 8) & 0xFF) * ssa + ((d >> 8) & 0xFF) * sda) / 255u;
+                                uint32_t ob = ((TAB_SEL & 0xFF) * ssa + (d & 0xFF) * sda) / 255u;
+                                srow[sx] = 0xFF000000u | (or_ << 16) | (og << 8) | ob;
+                            }
+                        }
+                    }
+                }
+
+                /* Window thumbnail area: draw scaled-down preview of window content */
+                fut_rect_t thumb_rect = { ix, iy, TAB_ITEM_W, TAB_ITEM_H };
+                fut_rect_t thumb_clip;
+                if (rect_intersection(tc, thumb_rect, &thumb_clip)) {
+                    /* Dark background for thumbnail */
+                    for (int32_t ty = thumb_clip.y; ty < thumb_clip.y + thumb_clip.h; ty++) {
+                        uint32_t *trow = (uint32_t *)(tbase + (size_t)ty * dst->pitch);
+                        for (int32_t tx = thumb_clip.x; tx < thumb_clip.x + thumb_clip.w; tx++)
+                            trow[tx] = TAB_THUMB_BG;
+                    }
+
+                    /* Scale window content into thumbnail */
+                    if (ws2->backing && ws2->content_height > 0 && ws2->width > 0) {
+                        int src_w = ws2->width;
+                        int src_h = ws2->content_height;
+                        /* Fit within thumbnail while preserving aspect ratio */
+                        int thumb_inner_w = TAB_ITEM_W - 4;
+                        int thumb_inner_h = TAB_ITEM_H - 4;
+                        int scale_w = thumb_inner_w;
+                        int scale_h = src_h * thumb_inner_w / src_w;
+                        if (scale_h > thumb_inner_h) {
+                            scale_h = thumb_inner_h;
+                            scale_w = src_w * thumb_inner_h / src_h;
+                        }
+                        int ox = ix + (TAB_ITEM_W - scale_w) / 2;
+                        int oy = iy + (TAB_ITEM_H - scale_h) / 2;
+                        fut_rect_t prev_rect = { ox, oy, scale_w, scale_h };
+                        fut_rect_t prev_clip;
+                        if (rect_intersection(thumb_clip, prev_rect, &prev_clip)) {
+                            for (int32_t py = prev_clip.y; py < prev_clip.y + prev_clip.h; py++) {
+                                uint32_t *prow = (uint32_t *)(tbase + (size_t)py * dst->pitch);
+                                int sy = (py - oy) * src_h / scale_h;
+                                if (sy < 0 || sy >= src_h) continue;
+                                const uint32_t *src_row = (const uint32_t *)((const char *)ws2->backing + (size_t)sy * ws2->stride);
+                                for (int32_t ppx = prev_clip.x; ppx < prev_clip.x + prev_clip.w; ppx++) {
+                                    int sx = (ppx - ox) * src_w / scale_w;
+                                    if (sx < 0 || sx >= src_w) continue;
+                                    prow[ppx] = src_row[sx] | 0xFF000000u;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                /* Window title below thumbnail */
+                {
+                    const char *ttl = ws2->title[0] ? ws2->title
+                                    : (ws2->app_id[0] ? ws2->app_id : "Window");
+                    int max_c = (TAB_ITEM_W - 4) / UI_FONT_WIDTH;
+                    if (max_c > 18) max_c = 18;
+                    char tbuf[20];
+                    int ti = 0;
+                    int slen = 0;
+                    while (ttl[slen]) slen++;
+                    bool ellip = slen > max_c && max_c >= 3;
+                    int clen = ellip ? max_c - 2 : (slen < max_c ? slen : max_c);
+                    while (ti < clen) { tbuf[ti] = ttl[ti]; ti++; }
+                    if (ellip) { tbuf[ti++] = '.'; tbuf[ti++] = '.'; }
+                    tbuf[ti] = '\0';
+                    int tw = ti * UI_FONT_WIDTH;
+                    int ttx = ix + (TAB_ITEM_W - tw) / 2;
+                    int tty = iy + TAB_ITEM_H + 4;
+                    uint32_t tcol = selected ? 0xFFFFFFFFu : 0xFFA0A0B0u;
+                    ui_draw_text(dst->px, dst->pitch, ttx, tty, tcol, tbuf,
+                                 tc.x, tc.y, tc.w, tc.h);
+                }
+
+                item_idx++;
+            }
+        }
+
+        #undef TAB_ITEM_W
+        #undef TAB_ITEM_H
+        #undef TAB_ITEM_PAD
+        #undef TAB_PAD
+        #undef TAB_TITLE_H
+        #undef TAB_BG
+        #undef TAB_SEL
+        #undef TAB_BORDER
+        #undef TAB_CORNER
+        #undef TAB_THUMB_BG
+    }
+
     /* About Futura dialog overlay */
     if (comp->about_active) {
         #define ABOUT_W    280
@@ -2743,7 +3007,7 @@ void comp_render_frame(struct compositor_state *comp) {
 
             /* Version */
             ui_draw_text(dst->px, dst->pitch, ax + ABOUT_W / 2 - 5 * UI_FONT_WIDTH, ay + 44,
-                         0xFFE0E0E8u, "Version 0.8.0",
+                         0xFFE0E0E8u, "Version 0.9.0",
                          ac.x, ac.y, ac.w, ac.h);
 
             /* Separator */
@@ -2767,7 +3031,7 @@ void comp_render_frame(struct compositor_state *comp) {
                          0xFFA0A0B0u, "Wayland Compositor",
                          ac.x, ac.y, ac.w, ac.h);
             ui_draw_text(dst->px, dst->pitch, ax + 20, ay + 120,
-                         0xFF808098u, "Copyright 2025",
+                         0xFF808098u, "Copyright 2025-2026",
                          ac.x, ac.y, ac.w, ac.h);
 
             /* Dismiss hint */
@@ -3061,13 +3325,21 @@ int comp_run(struct compositor_state *comp) {
     int dispatch_errors = 0;
 
     while (comp->running) {
+        /* Poll input FIRST — never let epoll_wait starvation delay mouse/kbd.
+         * On a single-CPU kernel, epoll_wait can sometimes overshoot its
+         * timeout, freezing the cursor.  Polling before and after epoll
+         * ensures responsive input regardless of timer accuracy. */
+        if (comp->seat) {
+            seat_poll_input(comp->seat);
+        }
+
         wl_display_flush_clients(comp->display);
 
-        /* Dispatch Wayland events with 16ms timeout (~60Hz frame rate).
-         * This blocks in epoll_wait until events arrive or timeout expires.
-         * On our custom kernel, epoll may return transient errors — tolerate
-         * them rather than exiting the compositor event loop. */
-        int rc = wl_event_loop_dispatch(comp->loop, 16);
+        /* Dispatch Wayland events with short timeout.  Use 1ms instead of
+         * 16ms to keep input responsive — if the kernel's epoll timeout
+         * overshoots, we still recover quickly.  The 1ms nanosleep below
+         * provides additional pacing to avoid busy-spinning. */
+        int rc = wl_event_loop_dispatch(comp->loop, 1);
         if (rc < 0 && errno != EINTR) {
             dispatch_errors++;
             if (dispatch_errors > 1000) {
@@ -3075,11 +3347,14 @@ int comp_run(struct compositor_state *comp) {
                        dispatch_errors);
                 break;
             }
-            /* Brief yield on error to avoid busy spin */
-            struct timespec ts = { .tv_sec = 0, .tv_nsec = 1000000 }; /* 1ms */
-            nanosleep(&ts, NULL);
         } else {
             dispatch_errors = 0;
+        }
+
+        /* Poll input again after epoll dispatch — catch any events that
+         * arrived while we were processing Wayland protocol messages. */
+        if (comp->seat) {
+            seat_poll_input(comp->seat);
         }
 
         /* Manually handle timer events.
@@ -3114,11 +3389,6 @@ int comp_run(struct compositor_state *comp) {
         /* Reap zombie child processes (launched terminals) */
         while (sys_wait4_call(-1, NULL, 1 /* WNOHANG */, NULL) > 0) {
             /* reaped one */
-        }
-
-        /* Poll input devices for keyboard/mouse events */
-        if (comp->seat) {
-            seat_poll_input(comp->seat);
         }
 
         /* Flush events generated by input polling to clients.
@@ -3379,6 +3649,7 @@ void comp_pointer_motion(struct compositor_state *comp, int32_t new_x, int32_t n
         int32_t dock_y = fb_h - 36 - 6;
         int old_hover = comp->dock_hover_index;
         int new_hover = -1;
+        int tooltip_cx = 0;  /* center x for tooltip */
 
         if (comp->pointer_y >= dock_y && comp->pointer_y < fb_h) {
             int n_win = 0;
@@ -3406,6 +3677,7 @@ void comp_pointer_motion(struct compositor_state *comp, int32_t new_x, int32_t n
                     if (comp->pointer_x >= item_x &&
                         comp->pointer_x < item_x + 120) {
                         new_hover = idx;
+                        tooltip_cx = item_x + 60;
                         break;
                     }
                     item_x += 120 + 2;
@@ -3417,8 +3689,17 @@ void comp_pointer_motion(struct compositor_state *comp, int32_t new_x, int32_t n
         if (new_hover != old_hover) {
             comp->dock_hover_index = new_hover;
             /* Damage dock area for hover highlight update */
-            fut_rect_t dock_damage = { 0, dock_y, fb_w, fb_h - dock_y };
+            fut_rect_t dock_damage = { 0, dock_y - 30, fb_w, fb_h - dock_y + 30 };
             comp_damage_add_rect(comp, dock_damage);
+
+            /* Update tooltip state */
+            if (new_hover >= 0) {
+                comp->dock_tooltip_index = new_hover;
+                comp->dock_tooltip_x = tooltip_cx;
+                comp->dock_tooltip_y = dock_y;
+            } else {
+                comp->dock_tooltip_index = -1;
+            }
         }
     }
 

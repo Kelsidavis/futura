@@ -161,6 +161,14 @@ struct compositor_state {
     int ctx_menu_hover;            /* hovered item index, -1 = none */
     /* About dialog */
     bool about_active;
+    /* Alt+Tab switcher overlay */
+    bool alt_tab_active;
+    int alt_tab_index;             /* currently highlighted index in switcher */
+    int alt_tab_count;             /* number of switchable windows */
+    /* Dock tooltip */
+    int dock_tooltip_index;        /* dock item showing tooltip, -1 = none */
+    int32_t dock_tooltip_x;
+    int32_t dock_tooltip_y;
 };
 
 struct comp_surface {

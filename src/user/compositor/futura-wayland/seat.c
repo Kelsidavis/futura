@@ -1102,6 +1102,27 @@ static void seat_handle_key_event(struct seat_state *seat,
             return;
         }
 
+        /* Super+Q: close focused window */
+        if (compositor_mods == COMP_MOD_SUPER && keycode == 16 /* Q */) {
+            if (seat->comp && seat->comp->focused_surface) {
+                struct comp_surface *s = seat->comp->focused_surface;
+                if (s->xdg_toplevel) {
+                    xdg_shell_toplevel_send_close(s);
+                }
+            }
+            return;
+        }
+
+        /* Super+F: toggle fullscreen for focused window */
+        if (compositor_mods == COMP_MOD_SUPER && keycode == 33 /* F */) {
+            if (seat->comp && seat->comp->focused_surface) {
+                comp_surface_toggle_fullscreen(seat->comp->focused_surface);
+                comp_damage_add_full(seat->comp);
+                seat->comp->needs_repaint = true;
+            }
+            return;
+        }
+
         /* Alt+F4: close focused window */
         if ((compositor_mods & COMP_MOD_ALT) && keycode == 62 /* F4 */) {
             if (seat->comp && seat->comp->focused_surface) {

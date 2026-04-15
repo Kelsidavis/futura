@@ -2636,8 +2636,8 @@ void comp_render_frame(struct compositor_state *comp) {
     /* Draw snap preview overlay (translucent blue rectangle with rounded corners) */
     if (comp->snap_preview_active) {
         fut_rect_t sp = comp->snap_preview_rect;
-        #define SNAP_PREVIEW_COLOR  0x20446699u  /* Semi-transparent blue */
-        #define SNAP_BORDER_COLOR   0x607799DDu  /* Brighter blue border */
+        #define SNAP_PREVIEW_COLOR  0x38446699u  /* Semi-transparent blue */
+        #define SNAP_BORDER_COLOR   0x807799DDu  /* Brighter blue border */
         #define SP_CORNER_R 8
         for (int i = 0; i < damage->count; ++i) {
             fut_rect_t sc;
@@ -3043,7 +3043,7 @@ void comp_render_frame(struct compositor_state *comp) {
         int32_t fb_w = (int32_t)comp->fb_info.width;
         int32_t fb_h = (int32_t)comp->fb_info.height;
         #define SO_W 340
-        #define SO_H 280
+        #define SO_H 320
         #define SO_R 10
         #define SO_BG 0xF0181828u
         int32_t sox = (fb_w - SO_W) / 2;
@@ -3118,7 +3118,8 @@ void comp_render_frame(struct compositor_state *comp) {
             const char *so_keys[] = {
                 "Ctrl+Alt+T", "Super+Enter",
                 "Alt+Tab", "Alt+F4",
-                "Super+D", "Super+M",
+                "Super+Q", "Super+D",
+                "Super+M", "Super+F",
                 "Super+Left", "Super+Right",
                 "Super+Up", "Super+Down",
                 "F11", "Super+/",
@@ -3126,12 +3127,13 @@ void comp_render_frame(struct compositor_state *comp) {
             const char *so_desc[] = {
                 "New terminal", "New terminal",
                 "Switch windows", "Close window",
-                "Show desktop", "Minimize",
+                "Close window", "Show desktop",
+                "Minimize", "Fullscreen",
                 "Tile left", "Tile right",
                 "Maximize", "Restore",
                 "Fullscreen", "This overlay",
             };
-            int so_n = 12;
+            int so_n = 14;
             for (int si = 0; si < so_n; si++) {
                 int ty = soy + 50 + si * 18;
                 ui_draw_text(dst->px, dst->pitch, sox + 20, ty,
@@ -3162,8 +3164,8 @@ void comp_render_frame(struct compositor_state *comp) {
         #define TAB_PAD       16
         #define TAB_TITLE_H   22
         #define TAB_BG        0xE0181828u
-        #define TAB_SEL       0xFF334466u
-        #define TAB_BORDER    0x40667799u
+        #define TAB_SEL       0xFF3A5588u
+        #define TAB_BORDER    0x60667799u
         #define TAB_CORNER    10
         #define TAB_THUMB_BG  0xFF0A0A18u
 
@@ -3230,6 +3232,33 @@ void comp_render_frame(struct compositor_state *comp) {
                     uint32_t og = (sg * sa + ((d >> 8) & 0xFF) * da) / 255u;
                     uint32_t ob = (sb * sa + (d & 0xFF) * da) / 255u;
                     row[px] = 0xFF000000u | (or_ << 16) | (og << 8) | ob;
+                }
+            }
+
+            /* 1px panel border */
+            {
+                int32_t bedges[4][4] = {
+                    { tab_x, tab_y, total_w, 1 },
+                    { tab_x, tab_y + total_h - 1, total_w, 1 },
+                    { tab_x, tab_y, 1, total_h },
+                    { tab_x + total_w - 1, tab_y, 1, total_h },
+                };
+                for (int e = 0; e < 4; e++) {
+                    fut_rect_t edge = { bedges[e][0], bedges[e][1], bedges[e][2], bedges[e][3] };
+                    fut_rect_t ec;
+                    if (!rect_intersection(tc, edge, &ec)) continue;
+                    for (int32_t py2 = ec.y; py2 < ec.y + ec.h; py2++) {
+                        uint32_t *brow = (uint32_t *)((char *)dst->px + (size_t)py2 * dst->pitch);
+                        for (int32_t px2 = ec.x; px2 < ec.x + ec.w; px2++) {
+                            uint32_t d = brow[px2];
+                            uint32_t bsa = (TAB_BORDER >> 24) & 0xFF;
+                            uint32_t bda = 255u - bsa;
+                            uint32_t or_ = (((TAB_BORDER >> 16) & 0xFF) * bsa + ((d >> 16) & 0xFF) * bda) / 255u;
+                            uint32_t og = (((TAB_BORDER >> 8) & 0xFF) * bsa + ((d >> 8) & 0xFF) * bda) / 255u;
+                            uint32_t ob = ((TAB_BORDER & 0xFF) * bsa + (d & 0xFF) * bda) / 255u;
+                            brow[px2] = 0xFF000000u | (or_ << 16) | (og << 8) | ob;
+                        }
+                    }
                 }
             }
 
@@ -3357,11 +3386,11 @@ void comp_render_frame(struct compositor_state *comp) {
 
     /* About Futura dialog overlay */
     if (comp->about_active) {
-        #define ABOUT_W    280
-        #define ABOUT_H    180
-        #define ABOUT_R    10
+        #define ABOUT_W    320
+        #define ABOUT_H    260
+        #define ABOUT_R    12
         #define ABOUT_BG   0xF0181828u
-        #define ABOUT_BORDER 0x60667799u
+        #define ABOUT_BORDER 0x70667799u
         int32_t fb_w = (int32_t)comp->fb_info.width;
         int32_t fb_h = (int32_t)comp->fb_info.height;
         int32_t ax = (fb_w - ABOUT_W) / 2;
@@ -3444,19 +3473,25 @@ void comp_render_frame(struct compositor_state *comp) {
                 }
             }
 
-            /* Title */
-            ui_draw_text(dst->px, dst->pitch, ax + ABOUT_W / 2 - 5 * UI_FONT_WIDTH, ay + 20,
-                         0xFF7799DDu, "Futura OS",
+            /* Title — centered large text */
+            ui_draw_text_scaled(dst->px, dst->pitch,
+                         ax + (ABOUT_W - 9 * UI_FONT_WIDTH * 2) / 2, ay + 16,
+                         0xFF7799DDu, "Futura OS", 2,
                          ac.x, ac.y, ac.w, ac.h);
 
-            /* Version */
-            ui_draw_text(dst->px, dst->pitch, ax + ABOUT_W / 2 - 5 * UI_FONT_WIDTH, ay + 44,
-                         0xFFE0E0E8u, "Version 0.9.0",
-                         ac.x, ac.y, ac.w, ac.h);
+            /* Tagline */
+            {
+                const char *tag = "The Future of Computing";
+                int tag_len = 23;
+                int tag_x = ax + (ABOUT_W - tag_len * UI_FONT_WIDTH) / 2;
+                ui_draw_text(dst->px, dst->pitch, tag_x, ay + 52,
+                             0xFF8090A8u, tag,
+                             ac.x, ac.y, ac.w, ac.h);
+            }
 
             /* Separator */
             {
-                fut_rect_t sep = { ax + 20, ay + 66, ABOUT_W - 40, 1 };
+                fut_rect_t sep = { ax + 20, ay + 74, ABOUT_W - 40, 1 };
                 fut_rect_t sc;
                 if (rect_intersection(ac, sep, &sc)) {
                     for (int32_t spy = sc.y; spy < sc.y + sc.h; spy++) {
@@ -3468,20 +3503,79 @@ void comp_render_frame(struct compositor_state *comp) {
             }
 
             /* Info lines */
-            ui_draw_text(dst->px, dst->pitch, ax + 20, ay + 80,
-                         0xFFA0A0B0u, "Horizon Desktop",
+            ui_draw_text(dst->px, dst->pitch, ax + 24, ay + 88,
+                         0xFFA0A0B0u, "Version       0.9.0",
                          ac.x, ac.y, ac.w, ac.h);
-            ui_draw_text(dst->px, dst->pitch, ax + 20, ay + 100,
-                         0xFFA0A0B0u, "Wayland Compositor",
+            ui_draw_text(dst->px, dst->pitch, ax + 24, ay + 108,
+                         0xFFA0A0B0u, "Desktop       Horizon",
                          ac.x, ac.y, ac.w, ac.h);
-            ui_draw_text(dst->px, dst->pitch, ax + 20, ay + 120,
-                         0xFF808098u, "Copyright 2025-2026",
+            ui_draw_text(dst->px, dst->pitch, ax + 24, ay + 128,
+                         0xFFA0A0B0u, "Display       Wayland",
+                         ac.x, ac.y, ac.w, ac.h);
+            ui_draw_text(dst->px, dst->pitch, ax + 24, ay + 148,
+                         0xFFA0A0B0u, "Kernel        Futura",
+                         ac.x, ac.y, ac.w, ac.h);
+            ui_draw_text(dst->px, dst->pitch, ax + 24, ay + 168,
+                         0xFFA0A0B0u, "Architecture  x86_64",
                          ac.x, ac.y, ac.w, ac.h);
 
+            /* Resolution line — dynamic */
+            {
+                char res_buf[40];
+                int ri = 0;
+                /* "Resolution    WxH" */
+                const char *prefix = "Resolution    ";
+                while (*prefix) res_buf[ri++] = *prefix++;
+                int fw = (int)comp->fb_info.width;
+                int fh = (int)comp->fb_info.height;
+                /* width digits */
+                if (fw >= 1000) res_buf[ri++] = '0' + (char)(fw / 1000 % 10);
+                if (fw >= 100) res_buf[ri++] = '0' + (char)(fw / 100 % 10);
+                if (fw >= 10) res_buf[ri++] = '0' + (char)(fw / 10 % 10);
+                res_buf[ri++] = '0' + (char)(fw % 10);
+                res_buf[ri++] = 'x';
+                if (fh >= 1000) res_buf[ri++] = '0' + (char)(fh / 1000 % 10);
+                if (fh >= 100) res_buf[ri++] = '0' + (char)(fh / 100 % 10);
+                if (fh >= 10) res_buf[ri++] = '0' + (char)(fh / 10 % 10);
+                res_buf[ri++] = '0' + (char)(fh % 10);
+                res_buf[ri] = '\0';
+                ui_draw_text(dst->px, dst->pitch, ax + 24, ay + 188,
+                             0xFFA0A0B0u, res_buf,
+                             ac.x, ac.y, ac.w, ac.h);
+            }
+
+            /* Second separator */
+            {
+                fut_rect_t sep2 = { ax + 20, ay + 212, ABOUT_W - 40, 1 };
+                fut_rect_t sc2;
+                if (rect_intersection(ac, sep2, &sc2)) {
+                    for (int32_t spy = sc2.y; spy < sc2.y + sc2.h; spy++) {
+                        uint32_t *srow = (uint32_t *)(abase + (size_t)spy * dst->pitch);
+                        for (int32_t spx = sc2.x; spx < sc2.x + sc2.w; spx++)
+                            srow[spx] = 0xFF333344u;
+                    }
+                }
+            }
+
+            /* Copyright */
+            {
+                const char *cr = "Copyright 2025-2026";
+                int cr_len = 19;
+                int cr_x = ax + (ABOUT_W - cr_len * UI_FONT_WIDTH) / 2;
+                ui_draw_text(dst->px, dst->pitch, cr_x, ay + 222,
+                             0xFF707088u, cr,
+                             ac.x, ac.y, ac.w, ac.h);
+            }
+
             /* Dismiss hint */
-            ui_draw_text(dst->px, dst->pitch, ax + ABOUT_W / 2 - 10 * UI_FONT_WIDTH, ay + ABOUT_H - 26,
-                         0xFF606078u, "Click anywhere to close",
-                         ac.x, ac.y, ac.w, ac.h);
+            {
+                const char *hint = "Click anywhere to close";
+                int hint_len = 23;
+                int hint_x = ax + (ABOUT_W - hint_len * UI_FONT_WIDTH) / 2;
+                ui_draw_text(dst->px, dst->pitch, hint_x, ay + ABOUT_H - 24,
+                             0xFF505068u, hint,
+                             ac.x, ac.y, ac.w, ac.h);
+            }
         }
         #undef ABOUT_W
         #undef ABOUT_H

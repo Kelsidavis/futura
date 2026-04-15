@@ -1732,32 +1732,44 @@ void comp_render_frame(struct compositor_state *comp) {
         wc_date[di] = '\0';
         int wc_date_len = di;
 
-        /* Large clock: scale=3, centered at 35% from top */
-        int clock_scale = 3;
+        /* Large clock: scale=4, centered at 30% from top */
+        int clock_scale = 4;
         int clock_char_w = UI_FONT_WIDTH * clock_scale;
         int clock_char_h = UI_FONT_HEIGHT * clock_scale;
         int clock_text_w = 5 * clock_char_w;  /* "HH:MM" */
         int clock_x = (fb_w - clock_text_w) / 2;
-        int clock_y = fb_h * 30 / 100;
+        int clock_y = fb_h * 28 / 100;
 
-        /* Date line below clock */
+        /* Date line below clock at 1x scale */
         int date_w = wc_date_len * UI_FONT_WIDTH;
         int date_x = (fb_w - date_w) / 2;
-        int date_y = clock_y + clock_char_h + 8;
+        int date_y = clock_y + clock_char_h + 12;
 
-        /* Render clock (semi-transparent white) */
-        fut_rect_t clock_rect = { clock_x - 4, clock_y - 4,
-                                  clock_text_w + 8, clock_char_h + UI_FONT_HEIGHT + 20 };
+        /* Render clock with subtle drop shadow for readability */
+        fut_rect_t clock_rect = { clock_x - 6, clock_y - 6,
+                                  clock_text_w + 12, clock_char_h + UI_FONT_HEIGHT + 28 };
         for (int i = 0; i < damage->count; ++i) {
             fut_rect_t cc;
             if (!rect_intersection(damage->rects[i], clock_rect, &cc)) continue;
+            /* Shadow layer (offset +2,+2, dark) */
+            ui_draw_text_scaled(dst->px, dst->pitch,
+                                clock_x + 2, clock_y + 2,
+                                0x40000000u, wc_time, clock_scale,
+                                cc.x, cc.y, cc.w, cc.h);
+            /* Main clock text */
             ui_draw_text_scaled(dst->px, dst->pitch,
                                 clock_x, clock_y,
-                                0xB0FFFFFFu, wc_time, clock_scale,
+                                0xC0FFFFFFu, wc_time, clock_scale,
                                 cc.x, cc.y, cc.w, cc.h);
+            /* Date shadow */
+            ui_draw_text(dst->px, dst->pitch,
+                         date_x + 1, date_y + 1,
+                         0x30000000u, wc_date,
+                         cc.x, cc.y, cc.w, cc.h);
+            /* Date text */
             ui_draw_text(dst->px, dst->pitch,
                          date_x, date_y,
-                         0x80D0D0E0u, wc_date,
+                         0x90D8D8F0u, wc_date,
                          cc.x, cc.y, cc.w, cc.h);
         }
     }

@@ -1702,6 +1702,22 @@ void comp_render_frame(struct compositor_state *comp) {
                     : (comp->focused_surface->app_id[0]
                        ? comp->focused_surface->app_id : NULL);
                 if (win_title) {
+                    int sep_x = 10 + 6 * UI_FONT_WIDTH + 6;
+                    /* Thin separator between branding and title */
+                    fut_rect_t sep = { sep_x, 5, 1, MENUBAR_HEIGHT - 10 };
+                    fut_rect_t sep_c;
+                    if (rect_intersection(mbar_clip, sep, &sep_c)) {
+                        for (int32_t sy = sep_c.y; sy < sep_c.y + sep_c.h; sy++) {
+                            uint32_t *srow = (uint32_t *)(base + (size_t)sy * dst->pitch);
+                            for (int32_t sx = sep_c.x; sx < sep_c.x + sep_c.w; sx++) {
+                                uint32_t old = srow[sx];
+                                uint32_t or_ = ((old >> 16) & 0xFF) * 180 / 255;
+                                uint32_t og = ((old >> 8) & 0xFF) * 180 / 255;
+                                uint32_t ob = (old & 0xFF) * 180 / 255;
+                                srow[sx] = 0xFF000000u | (or_ << 16) | (og << 8) | ob;
+                            }
+                        }
+                    }
                     /* Truncate to max 30 chars */
                     char mbar_title[32];
                     int mti = 0;
@@ -1710,9 +1726,9 @@ void comp_render_frame(struct compositor_state *comp) {
                         mti++;
                     }
                     mbar_title[mti] = '\0';
-                    int title_x = 10 + 6 * UI_FONT_WIDTH + 12; /* after "Futura" + gap */
+                    int title_x = sep_x + 7;
                     ui_draw_text(dst->px, dst->pitch, title_x, 4,
-                                 0xFFA0A0B0u, mbar_title,
+                                 0xFFB0B0C0u, mbar_title,
                                  mbar_clip.x, mbar_clip.y, mbar_clip.w, mbar_clip.h);
                 }
             }
@@ -2410,6 +2426,163 @@ void comp_render_frame(struct compositor_state *comp) {
         #undef SP_CORNER_R
     }
 
+    /* Draw desktop right-click context menu */
+    if (comp->ctx_menu_active) {
+        #define CTX_W     180
+        #define CTX_ITEM_H 28
+        #define CTX_ITEMS  2
+        #define CTX_PAD    4
+        #define CTX_CORNER 6
+        #define CTX_BG     0xE8202030u
+        #define CTX_HOVER  0xFF334466u
+        #define CTX_TEXT   0xFFE0E0E8u
+        #define CTX_SEP    0x40667788u
+
+        int32_t menu_h = CTX_PAD + CTX_ITEMS * CTX_ITEM_H + CTX_PAD;
+        int32_t menu_x = comp->ctx_menu_x;
+        int32_t menu_y = comp->ctx_menu_y;
+        /* Clamp to screen */
+        int32_t fb_w = (int32_t)comp->fb_info.width;
+        int32_t fb_h = (int32_t)comp->fb_info.height;
+        if (menu_x + CTX_W > fb_w) menu_x = fb_w - CTX_W;
+        if (menu_y + menu_h > fb_h) menu_y = fb_h - menu_h;
+        fut_rect_t menu_rect = { menu_x, menu_y, CTX_W, menu_h };
+
+        const char *ctx_labels[] = { "New Terminal", "Show Desktop" };
+
+        for (int i = 0; i < damage->count; ++i) {
+            fut_rect_t mc;
+            if (!rect_intersection(damage->rects[i], menu_rect, &mc)) continue;
+            char *mbase = (char *)dst->px;
+
+            /* Draw menu background with rounded corners */
+            for (int32_t py = mc.y; py < mc.y + mc.h; py++) {
+                uint32_t *row = (uint32_t *)(mbase + (size_t)py * dst->pitch);
+                int32_t ry = py - menu_y;
+                int32_t dy_edge = ry < menu_h / 2 ? ry : (menu_h - 1 - ry);
+                for (int32_t px = mc.x; px < mc.x + mc.w; px++) {
+                    int32_t rx = px - menu_x;
+                    int32_t dx_edge = rx < CTX_W / 2 ? rx : (CTX_W - 1 - rx);
+
+                    /* Rounded corner check */
+                    if (dx_edge < CTX_CORNER && dy_edge < CTX_CORNER) {
+                        int32_t cx_d = CTX_CORNER - dx_edge;
+                        int32_t cy_d = CTX_CORNER - dy_edge;
+                        if (cx_d * cx_d + cy_d * cy_d > CTX_CORNER * CTX_CORNER)
+                            continue;
+                    }
+
+                    /* Check if this pixel is in a hovered item */
+                    int item_idx = -1;
+                    if (ry >= CTX_PAD && ry < CTX_PAD + CTX_ITEMS * CTX_ITEM_H) {
+                        item_idx = (ry - CTX_PAD) / CTX_ITEM_H;
+                    }
+
+                    uint32_t bg = CTX_BG;
+                    if (item_idx >= 0 && item_idx == comp->ctx_menu_hover) {
+                        bg = CTX_HOVER;
+                    }
+
+                    /* Alpha blend */
+                    uint32_t sa = (bg >> 24) & 0xFF;
+                    uint32_t da = 255u - sa;
+                    uint32_t sr = (bg >> 16) & 0xFF;
+                    uint32_t sg = (bg >> 8) & 0xFF;
+                    uint32_t sb = bg & 0xFF;
+                    uint32_t d = row[px];
+                    uint32_t or_ = (sr * sa + ((d >> 16) & 0xFF) * da) / 255u;
+                    uint32_t og = (sg * sa + ((d >> 8) & 0xFF) * da) / 255u;
+                    uint32_t ob = (sb * sa + (d & 0xFF) * da) / 255u;
+                    row[px] = 0xFF000000u | (or_ << 16) | (og << 8) | ob;
+                }
+            }
+
+            /* Draw 1px border */
+            uint32_t border = 0x50667799u;
+            int32_t bedges[4][4] = {
+                { menu_x, menu_y, CTX_W, 1 },
+                { menu_x, menu_y + menu_h - 1, CTX_W, 1 },
+                { menu_x, menu_y, 1, menu_h },
+                { menu_x + CTX_W - 1, menu_y, 1, menu_h },
+            };
+            for (int e = 0; e < 4; e++) {
+                fut_rect_t edge = { bedges[e][0], bedges[e][1], bedges[e][2], bedges[e][3] };
+                fut_rect_t ec;
+                if (!rect_intersection(mc, edge, &ec)) continue;
+                uint32_t bsa = (border >> 24) & 0xFF;
+                uint32_t bda = 255u - bsa;
+                uint32_t bsr = (border >> 16) & 0xFF;
+                uint32_t bsg = (border >> 8) & 0xFF;
+                uint32_t bsb = border & 0xFF;
+                for (int32_t py = ec.y; py < ec.y + ec.h; py++) {
+                    uint32_t *row = (uint32_t *)(mbase + (size_t)py * dst->pitch);
+                    for (int32_t px = ec.x; px < ec.x + ec.w; px++) {
+                        uint32_t d = row[px];
+                        uint32_t or_ = (bsr * bsa + ((d >> 16) & 0xFF) * bda) / 255u;
+                        uint32_t og = (bsg * bsa + ((d >> 8) & 0xFF) * bda) / 255u;
+                        uint32_t ob = (bsb * bsa + (d & 0xFF) * bda) / 255u;
+                        row[px] = 0xFF000000u | (or_ << 16) | (og << 8) | ob;
+                    }
+                }
+            }
+
+            /* Draw menu item labels */
+            for (int item = 0; item < CTX_ITEMS; item++) {
+                int text_x = menu_x + 12;
+                int text_y = menu_y + CTX_PAD + item * CTX_ITEM_H +
+                             (CTX_ITEM_H - UI_FONT_HEIGHT) / 2;
+                ui_draw_text(dst->px, dst->pitch, text_x, text_y,
+                             CTX_TEXT, ctx_labels[item],
+                             mc.x, mc.y, mc.w, mc.h);
+            }
+        }
+
+        /* Draw shadow under menu */
+        {
+            #define CTX_SHADOW_SIZE 6
+            fut_rect_t shadow_r = { menu_x + 3, menu_y + menu_h,
+                                    CTX_W - 3, CTX_SHADOW_SIZE };
+            fut_rect_t shadow_b = { menu_x + CTX_W, menu_y + 3,
+                                    CTX_SHADOW_SIZE, menu_h - 3 };
+            for (int si = 0; si < 2; si++) {
+                fut_rect_t sr = si == 0 ? shadow_r : shadow_b;
+                for (int di = 0; di < damage->count; ++di) {
+                    fut_rect_t sc;
+                    if (!rect_intersection(damage->rects[di], sr, &sc)) continue;
+                    char *sbase = (char *)dst->px;
+                    for (int32_t py = sc.y; py < sc.y + sc.h; py++) {
+                        uint32_t *row = (uint32_t *)(sbase + (size_t)py * dst->pitch);
+                        for (int32_t px = sc.x; px < sc.x + sc.w; px++) {
+                            int32_t dx = si == 1 ? (px - menu_x - CTX_W) : 0;
+                            int32_t dy = si == 0 ? (py - menu_y - menu_h) : (py - menu_y - 3);
+                            int d2 = (si == 0 ? dy : dx);
+                            if (d2 < 0) d2 = 0;
+                            int alpha = 30 - d2 * 5;
+                            if (alpha <= 0) continue;
+                            uint32_t old = row[px];
+                            uint32_t f = (uint32_t)(255 - alpha);
+                            uint32_t or_ = ((old >> 16) & 0xFF) * f / 255u;
+                            uint32_t og = ((old >> 8) & 0xFF) * f / 255u;
+                            uint32_t ob = (old & 0xFF) * f / 255u;
+                            row[px] = 0xFF000000u | (or_ << 16) | (og << 8) | ob;
+                        }
+                    }
+                }
+            }
+            #undef CTX_SHADOW_SIZE
+        }
+
+        #undef CTX_W
+        #undef CTX_ITEM_H
+        #undef CTX_ITEMS
+        #undef CTX_PAD
+        #undef CTX_CORNER
+        #undef CTX_BG
+        #undef CTX_HOVER
+        #undef CTX_TEXT
+        #undef CTX_SEP
+    }
+
     if (comp->cursor) {
         struct fut_fb_info info = comp->fb_info;
         info.pitch = (uint32_t)dst->pitch;
@@ -3048,6 +3221,34 @@ void comp_pointer_motion(struct compositor_state *comp, int32_t new_x, int32_t n
             fut_rect_t dock_damage = { 0, dock_y, fb_w, fb_h - dock_y };
             comp_damage_add_rect(comp, dock_damage);
         }
+    }
+
+    /* Update context menu hover state */
+    if (comp->ctx_menu_active) {
+        #define CTX_MENU_W     180
+        #define CTX_MENU_ITEM_H 28
+        #define CTX_MENU_ITEMS  2   /* "New Terminal", "Show Desktop" */
+        #define CTX_MENU_PAD    4
+        int32_t menu_h = CTX_MENU_PAD + CTX_MENU_ITEMS * CTX_MENU_ITEM_H + CTX_MENU_PAD;
+        int32_t mx = comp->pointer_x - comp->ctx_menu_x;
+        int32_t my = comp->pointer_y - comp->ctx_menu_y;
+        int old_hover = comp->ctx_menu_hover;
+        int new_hover = -1;
+        if (mx >= 0 && mx < CTX_MENU_W && my >= CTX_MENU_PAD &&
+            my < CTX_MENU_PAD + CTX_MENU_ITEMS * CTX_MENU_ITEM_H) {
+            new_hover = (my - CTX_MENU_PAD) / CTX_MENU_ITEM_H;
+            if (new_hover >= CTX_MENU_ITEMS) new_hover = -1;
+        }
+        if (new_hover != old_hover) {
+            comp->ctx_menu_hover = new_hover;
+            fut_rect_t md = { comp->ctx_menu_x, comp->ctx_menu_y,
+                              CTX_MENU_W, menu_h };
+            comp_damage_add_rect(comp, md);
+        }
+        #undef CTX_MENU_W
+        #undef CTX_MENU_ITEM_H
+        #undef CTX_MENU_ITEMS
+        #undef CTX_MENU_PAD
     }
 
     comp_update_drag(comp);

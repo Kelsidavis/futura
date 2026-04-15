@@ -666,8 +666,8 @@ static void seat_handle_button(struct seat_state *seat,
         }
     }
 
-    /* Right-click on desktop background: launch a new terminal */
-    if (code == FUT_BTN_RIGHT && !pressed) {
+    /* Right-click on desktop background: show context menu */
+    if (code == FUT_BTN_RIGHT && pressed) {
         struct comp_surface *hit_surface = NULL;
         resize_edge_t edge = RSZ_NONE;
         hit_role_t role = comp_hit_test(seat->comp,
@@ -676,9 +676,45 @@ static void seat_handle_button(struct seat_state *seat,
                                         &hit_surface,
                                         &edge);
         (void)role; (void)edge;
-        if (!hit_surface) {
+        if (!hit_surface && seat->comp) {
+            seat->comp->ctx_menu_active = true;
+            seat->comp->ctx_menu_x = seat->comp->pointer_x;
+            seat->comp->ctx_menu_y = seat->comp->pointer_y;
+            seat->comp->ctx_menu_hover = -1;
+            comp_damage_add_full(seat->comp);
+            seat->comp->needs_repaint = true;
+        }
+    }
+
+    /* Left-click dismisses context menu, or selects an item */
+    if (code == FUT_BTN_LEFT && pressed && seat->comp && seat->comp->ctx_menu_active) {
+        int sel = seat->comp->ctx_menu_hover;
+        seat->comp->ctx_menu_active = false;
+        comp_damage_add_full(seat->comp);
+        seat->comp->needs_repaint = true;
+        if (sel == 0) {
+            /* "New Terminal" */
             compositor_launch_terminal();
         }
+        /* sel == 1: "Show Desktop" handled below */
+        if (sel == 1) {
+            /* Toggle show desktop */
+            bool any_visible = false;
+            struct comp_surface *s;
+            wl_list_for_each(s, &seat->comp->surfaces, link) {
+                if (s->has_backing && !s->minimized)
+                    any_visible = true;
+            }
+            wl_list_for_each(s, &seat->comp->surfaces, link) {
+                if (s->has_backing)
+                    s->minimized = any_visible;
+            }
+            seat->comp->dock_all_minimized = any_visible;
+            comp_damage_add_full(seat->comp);
+            seat->comp->needs_repaint = true;
+        }
+        /* Don't process this click further if menu was open */
+        return;
     }
 
     seat_update_hover(seat);

@@ -154,6 +154,11 @@ struct compositor_state {
     /* Edge-snap preview overlay */
     bool snap_preview_active;
     fut_rect_t snap_preview_rect;
+    /* Desktop context menu */
+    bool ctx_menu_active;
+    int32_t ctx_menu_x;
+    int32_t ctx_menu_y;
+    int ctx_menu_hover;            /* hovered item index, -1 = none */
 };
 
 struct comp_surface {

@@ -1634,7 +1634,7 @@ static void cmd_help(int argc, char *argv[]) {
     (void)argc;
     (void)argv;
 
-    write_str(1, "Futura OS Shell v0.5 - Available Commands:\n");
+    write_str(1, "Futura OS Shell v0.9 - Available Commands:\n");
     write_str(1, "\n");
     write_str(1, "Navigation:\n");
     write_str(1, "  cd [dir]        - Change directory\n");
@@ -5394,7 +5394,7 @@ static void cmd_sysinfo(int argc, char *argv[]) {
         }
     }
     /* Shell */
-    write_str(1, "  Shell:   Futura Shell v0.5 (230 builtins)\n");
+    write_str(1, "  Shell:   Futura Shell v0.9 (230 builtins)\n");
 }
 
 /* Helper: count lines, words, bytes, and max line length in a file descriptor */
@@ -21502,7 +21502,7 @@ int main(int argc, char **argv, char **envp) {
 
     write_str(1, "\n\033[1m");
     write_str(1, "+------------------------------------------+\n");
-    write_str(1, "|   Futura OS Shell v0.5                   |\n");
+    write_str(1, "|   Futura OS Shell v0.9                   |\n");
     write_str(1, "|   620 built-in commands — type 'help'    |\n");
     write_str(1, "|   Built-in editor: type 'edit <file>'     |\n");
     write_str(1, "+------------------------------------------+\n");

@@ -1547,70 +1547,116 @@ void comp_render_frame(struct compositor_state *comp) {
         surface->composed_this_tick = false;
     }
 
-    /* Desktop background: vertical gradient with centered radial glow + stars */
+    /* Desktop background: gradient + radial glows + aurora bands + stars */
     for (int i = 0; i < damage->count; ++i) {
         fut_rect_t r = damage->rects[i];
         if (r.w <= 0 || r.h <= 0) continue;
         int32_t fb_w = (int32_t)comp->fb_info.width;
         int32_t fb_h = (int32_t)comp->fb_info.height;
         int32_t cx = fb_w / 2;
-        int32_t cy = fb_h * 2 / 5;  /* glow center: 40% from top */
-        /* max_dist_sq scaled so glow fades across ~60% of screen diagonal */
+        int32_t cy = fb_h * 2 / 5;
         int32_t max_r = (fb_w > fb_h ? fb_w : fb_h) * 3 / 5;
         int64_t max_r_sq = (int64_t)max_r * max_r;
-        /* Secondary glow: soft warm accent in the bottom-right */
         int32_t cx2 = fb_w * 3 / 4;
         int32_t cy2 = fb_h * 3 / 4;
         int32_t max_r2 = (fb_w > fb_h ? fb_w : fb_h) * 2 / 5;
         int64_t max_r2_sq = (int64_t)max_r2 * max_r2;
+        /* Aurora band parameters */
+        int32_t aurora_y_center = fb_h * 3 / 10;  /* band at 30% from top */
+        int32_t aurora_half_h = fb_h / 8;          /* band spread */
         char *base = (char *)dst->px;
         for (int32_t y = 0; y < r.h; ++y) {
             int32_t gy = r.y + y;
-            /* Vertical gradient: top=#0A0A18, bottom=#1E1E38 — deeper & richer */
             int t = (fb_h > 0) ? (gy * 255 / fb_h) : 0;
-            int base_r = 0x0A + (0x1E - 0x0A) * t / 255;
-            int base_g = 0x0A + (0x1E - 0x0A) * t / 255;
-            int base_b = 0x18 + (0x38 - 0x18) * t / 255;
+            int base_r = 0x08 + (0x1A - 0x08) * t / 255;
+            int base_g = 0x08 + (0x18 - 0x08) * t / 255;
+            int base_b = 0x16 + (0x34 - 0x16) * t / 255;
             int32_t dy = gy - cy;
             int32_t dy2 = gy - cy2;
+            /* Aurora Y falloff: Gaussian-ish bell curve */
+            int32_t aurora_dy = gy - aurora_y_center;
+            int aurora_env = 0;
+            if (aurora_dy > -aurora_half_h && aurora_dy < aurora_half_h) {
+                int32_t ad = aurora_dy < 0 ? -aurora_dy : aurora_dy;
+                aurora_env = (aurora_half_h - ad) * 255 / aurora_half_h;
+                aurora_env = aurora_env * aurora_env / 255;  /* quadratic falloff */
+            }
             uint32_t *row = (uint32_t *)(base + (size_t)gy * dst->pitch);
             for (int32_t x = 0; x < r.w; ++x) {
                 int32_t gx = r.x + x;
                 int32_t dx = gx - cx;
                 int64_t dist_sq = (int64_t)dx * dx + (int64_t)dy * dy;
-                /* Primary radial glow: blue-purple near center */
                 int glow = 0;
                 if (dist_sq < max_r_sq) {
                     glow = (int)((max_r_sq - dist_sq) * 22 / max_r_sq);
                 }
-                /* Secondary glow: subtle warm purple in bottom-right */
                 int32_t dx2 = gx - cx2;
                 int64_t dist2_sq = (int64_t)dx2 * dx2 + (int64_t)dy2 * dy2;
                 int glow2 = 0;
                 if (dist2_sq < max_r2_sq) {
                     glow2 = (int)((max_r2_sq - dist2_sq) * 12 / max_r2_sq);
                 }
-                int pr = base_r + glow / 3 + glow2 * 2 / 3;
-                int pg = base_g + glow / 4 + glow2 / 5;
-                int pb = base_b + glow + glow2 / 2;
+
+                /* Aurora band: smooth horizontal waves with gentle undulation */
+                int aurora_r = 0, aurora_g = 0, aurora_b = 0;
+                if (aurora_env > 0) {
+                    /* Slow horizontal wave — period ~200px, with y-wobble */
+                    int32_t wave_phase = ((gx * 327 / 100) + (gy * 41 / 100)) & 0xFF;
+                    int wave_val;
+                    if (wave_phase < 128) {
+                        int32_t p = wave_phase - 64;
+                        wave_val = 64 - (p * p * 64 / (64 * 64));
+                    } else {
+                        int32_t p = wave_phase - 192;
+                        wave_val = -64 + (p * p * 64 / (64 * 64));
+                    }
+                    /* Second wave at different frequency for organic layering */
+                    int32_t wave2_phase = ((gx * 173 / 100) + (gy * 67 / 100) + 137) & 0xFF;
+                    int wave2_val;
+                    if (wave2_phase < 128) {
+                        int32_t p = wave2_phase - 64;
+                        wave2_val = 64 - (p * p * 64 / (64 * 64));
+                    } else {
+                        int32_t p = wave2_phase - 192;
+                        wave2_val = -64 + (p * p * 64 / (64 * 64));
+                    }
+                    /* Gentle hash turbulence at large scale */
+                    uint32_t ah = (uint32_t)((gx / 4) * 2971 + (gy / 3) * 6337);
+                    ah ^= ah >> 13; ah *= 0x45d9f3bu; ah ^= ah >> 16;
+                    int turb = (int)(ah & 0xF) - 8;  /* -8..7 */
+                    int combined = (wave_val + wave2_val / 2 + turb);
+                    int intensity = aurora_env * (80 + combined) / (80 * 4);
+                    if (intensity < 0) intensity = 0;
+                    if (intensity > 18) intensity = 18;
+                    /* Color: smoothly shift from teal to purple across screen */
+                    int x_frac = fb_w > 0 ? gx * 255 / fb_w : 0;
+                    int cr = intensity * x_frac / (255 * 4);           /* warm up on right */
+                    int cg = intensity * (255 - x_frac / 2) / 255;     /* green stronger on left */
+                    int cb = intensity * (128 + x_frac / 2) / 255;     /* blue everywhere */
+                    aurora_r = cr;
+                    aurora_g = cg;
+                    aurora_b = cb;
+                }
+
+                int pr = base_r + glow / 3 + glow2 * 2 / 3 + aurora_r;
+                int pg = base_g + glow / 4 + glow2 / 5 + aurora_g;
+                int pb = base_b + glow + glow2 / 2 + aurora_b;
                 if (pr > 255) pr = 255;
                 if (pg > 255) pg = 255;
                 if (pb > 255) pb = 255;
 
-                /* Deterministic star field: hash pixel position for star placement */
+                /* Deterministic star field */
                 uint32_t hash = (uint32_t)(gx * 7919 + gy * 104729);
                 hash ^= hash >> 13;
                 hash *= 0x5bd1e995u;
                 hash ^= hash >> 15;
                 if ((hash & 0x3FF) < 3) {
-                    /* Bright star — tiny white dot */
-                    int brightness = 100 + (int)(hash >> 10 & 0x7F);  /* 100-227 */
+                    int brightness = 100 + (int)(hash >> 10 & 0x7F);
                     pr += brightness; pg += brightness; pb += brightness;
                     if (pr > 255) pr = 255;
                     if (pg > 255) pg = 255;
                     if (pb > 255) pb = 255;
                 } else if ((hash & 0x7FF) < 5) {
-                    /* Dim star — faint speck */
                     int brightness = 40 + (int)(hash >> 11 & 0x3F);
                     pr += brightness; pg += brightness; pb += brightness + 8;
                     if (pr > 255) pr = 255;
@@ -1763,11 +1809,46 @@ void comp_render_frame(struct compositor_state *comp) {
             mb_time[ci++] = '0' + (char)(mb_min % 10);
             mb_time[ci] = '\0';
 
-            /* Clock (right-aligned) */
-            int clock_tx = fb_w - ci * UI_FONT_WIDTH - 10;
+            /* System tray indicators (right side, before clock) */
+            /* Render: [net] [vol] [DOW  HH:MM] */
+            int tray_right = fb_w - 10;
+
+            /* Clock (rightmost) */
+            int clock_tx = tray_right - ci * UI_FONT_WIDTH;
             ui_draw_text(dst->px, dst->pitch, clock_tx, 4,
                          0xFFE0E0E8u, mb_time,
                          mbar_clip.x, mbar_clip.y, mbar_clip.w, mbar_clip.h);
+
+            /* Separator before clock */
+            {
+                int sep_x2 = clock_tx - 8;
+                fut_rect_t sep2 = { sep_x2, 5, 1, MENUBAR_HEIGHT - 10 };
+                fut_rect_t sep2_c;
+                if (rect_intersection(mbar_clip, sep2, &sep2_c)) {
+                    for (int32_t sy = sep2_c.y; sy < sep2_c.y + sep2_c.h; sy++) {
+                        uint32_t *srow = (uint32_t *)((char *)dst->px + (size_t)sy * dst->pitch);
+                        for (int32_t sx = sep2_c.x; sx < sep2_c.x + sep2_c.w; sx++) {
+                            uint32_t old = srow[sx];
+                            uint32_t or_ = ((old >> 16) & 0xFF) * 160 / 255;
+                            uint32_t og = ((old >> 8) & 0xFF) * 160 / 255;
+                            uint32_t ob = (old & 0xFF) * 160 / 255;
+                            srow[sx] = 0xFF000000u | (or_ << 16) | (og << 8) | ob;
+                        }
+                    }
+                }
+
+                /* Volume indicator: "vol" */
+                int vol_x = sep_x2 - 4 * UI_FONT_WIDTH - 4;
+                ui_draw_text(dst->px, dst->pitch, vol_x, 4,
+                             0xFF90A0B8u, "vol",
+                             mbar_clip.x, mbar_clip.y, mbar_clip.w, mbar_clip.h);
+
+                /* Network indicator: "net" */
+                int net_x = vol_x - 4 * UI_FONT_WIDTH - 2;
+                ui_draw_text(dst->px, dst->pitch, net_x, 4,
+                             0xFF70C890u, "net",
+                             mbar_clip.x, mbar_clip.y, mbar_clip.w, mbar_clip.h);
+            }
         }
     }
 
@@ -2006,14 +2087,27 @@ void comp_render_frame(struct compositor_state *comp) {
                         item_bg = 0x00000000u;  /* transparent — dock bg shows through */
 
                     if (item_bg & 0xFF000000u) {
-                        /* Alpha blend the item highlight over existing dock bg */
+                        /* Alpha blend the item highlight with rounded corners */
+                        #define DOCK_ITEM_R 6
                         char *base = (char *)dst->px;
                         for (int32_t py = item_clip.y; py < item_clip.y + item_clip.h; py++) {
                             uint32_t *row = (uint32_t *)(base + (size_t)py * dst->pitch);
+                            int32_t iry = py - item_y;
+                            int32_t idy = iry < DOCK_ITEM_H / 2 ? iry : (DOCK_ITEM_H - 1 - iry);
                             for (int32_t px = item_clip.x; px < item_clip.x + item_clip.w; px++) {
+                                int32_t irx = px - item_x;
+                                int32_t idx = irx < DOCK_ITEM_W / 2 ? irx : (DOCK_ITEM_W - 1 - irx);
+                                /* Round corners */
+                                if (idx < DOCK_ITEM_R && idy < DOCK_ITEM_R) {
+                                    int32_t cxd = DOCK_ITEM_R - idx;
+                                    int32_t cyd = DOCK_ITEM_R - idy;
+                                    if (cxd * cxd + cyd * cyd > DOCK_ITEM_R * DOCK_ITEM_R)
+                                        continue;
+                                }
                                 ABLEND(item_bg, row[px]);
                             }
                         }
+                        #undef DOCK_ITEM_R
                     }
 
                     /* Focused indicator: small pill-shaped dot below the title */

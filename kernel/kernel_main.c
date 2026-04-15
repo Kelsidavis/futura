@@ -1378,10 +1378,10 @@ void fut_kernel_main(void) {
                   "nobody:x:65534:\n");
         ETC_WRITE("/etc/os-release",
                   "NAME=\"Futura OS\"\n"
-                  "VERSION=\"0.8.0\"\n"
+                  "VERSION=\"0.9.0\"\n"
                   "ID=futura\n"
-                  "VERSION_ID=0.8.0\n"
-                  "PRETTY_NAME=\"Futura OS 0.8.0\"\n"
+                  "VERSION_ID=0.9.0\n"
+                  "PRETTY_NAME=\"Futura OS 0.9.0\"\n"
                   "HOME_URL=\"https://github.com/netrunner-labs/futura\"\n");
         ETC_WRITE("/etc/profile",
                   "# Futura OS system profile\n"
@@ -1410,7 +1410,7 @@ void fut_kernel_main(void) {
                   "cat /etc/motd\n");
         ETC_WRITE("/etc/motd",
                   "\n"
-                  "  \033[1;36mFutura OS 0.8.0\033[0m\n"
+                  "  \033[1;36mFutura OS 0.9.0\033[0m\n"
                   "\n"
                   "  \033[33m620+ built-in commands\033[0m  type '\033[1mhelp\033[0m' or '\033[1mman <cmd>\033[0m'\n"
                   "\n"

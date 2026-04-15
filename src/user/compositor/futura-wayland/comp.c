@@ -1670,6 +1670,95 @@ void comp_render_frame(struct compositor_state *comp) {
         }
     }
 
+    /* ── Desktop clock widget (centered, large) ── */
+    {
+        int32_t fb_w = (int32_t)comp->fb_info.width;
+        int32_t fb_h = (int32_t)comp->fb_info.height;
+
+        /* Get current time */
+        struct { long tv_sec; long tv_nsec; } wc_ts = {0, 0};
+        extern long sys_call2(long nr, long a, long b);
+        sys_call2(98, 0, (long)&wc_ts);
+        long wc_secs = wc_ts.tv_sec;
+        long wc_daytime = wc_secs % 86400;
+        int wc_hr = (int)(wc_daytime / 3600);
+        int wc_min = (int)((wc_daytime % 3600) / 60);
+
+        /* Format: "HH:MM" */
+        char wc_time[8];
+        wc_time[0] = '0' + (char)(wc_hr / 10);
+        wc_time[1] = '0' + (char)(wc_hr % 10);
+        wc_time[2] = ':';
+        wc_time[3] = '0' + (char)(wc_min / 10);
+        wc_time[4] = '0' + (char)(wc_min % 10);
+        wc_time[5] = '\0';
+
+        /* Date line: "Wednesday, April 15" */
+        long wc_days = wc_secs / 86400;
+        int wc_dow = (int)((wc_days + 4) % 7);
+        const char *wc_dow_full[] = {"Sunday","Monday","Tuesday","Wednesday",
+                                     "Thursday","Friday","Saturday"};
+        int wc_year = 1970;
+        long wc_rem = wc_days;
+        for (;;) {
+            int diy = 365;
+            if ((wc_year % 4 == 0 && wc_year % 100 != 0) || wc_year % 400 == 0) diy = 366;
+            if (wc_rem < diy) break;
+            wc_rem -= diy;
+            wc_year++;
+        }
+        bool wc_leap = (wc_year % 4 == 0 && wc_year % 100 != 0) || wc_year % 400 == 0;
+        int wc_md[] = {31, wc_leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+        int wc_mon = 0;
+        while (wc_mon < 11 && wc_rem >= wc_md[wc_mon]) { wc_rem -= wc_md[wc_mon]; wc_mon++; }
+        int wc_day = (int)wc_rem + 1;
+        const char *wc_mon_full[] = {"January","February","March","April","May","June",
+                                     "July","August","September","October","November","December"};
+
+        /* Build: "Wednesday, April 15" */
+        char wc_date[48];
+        int di = 0;
+        const char *dn = wc_dow_full[wc_dow];
+        while (*dn && di < 40) wc_date[di++] = *dn++;
+        wc_date[di++] = ','; wc_date[di++] = ' ';
+        const char *mn = wc_mon_full[wc_mon];
+        while (*mn && di < 44) wc_date[di++] = *mn++;
+        wc_date[di++] = ' ';
+        if (wc_day >= 10) wc_date[di++] = '0' + (char)(wc_day / 10);
+        wc_date[di++] = '0' + (char)(wc_day % 10);
+        wc_date[di] = '\0';
+        int wc_date_len = di;
+
+        /* Large clock: scale=3, centered at 35% from top */
+        int clock_scale = 3;
+        int clock_char_w = UI_FONT_WIDTH * clock_scale;
+        int clock_char_h = UI_FONT_HEIGHT * clock_scale;
+        int clock_text_w = 5 * clock_char_w;  /* "HH:MM" */
+        int clock_x = (fb_w - clock_text_w) / 2;
+        int clock_y = fb_h * 30 / 100;
+
+        /* Date line below clock */
+        int date_w = wc_date_len * UI_FONT_WIDTH;
+        int date_x = (fb_w - date_w) / 2;
+        int date_y = clock_y + clock_char_h + 8;
+
+        /* Render clock (semi-transparent white) */
+        fut_rect_t clock_rect = { clock_x - 4, clock_y - 4,
+                                  clock_text_w + 8, clock_char_h + UI_FONT_HEIGHT + 20 };
+        for (int i = 0; i < damage->count; ++i) {
+            fut_rect_t cc;
+            if (!rect_intersection(damage->rects[i], clock_rect, &cc)) continue;
+            ui_draw_text_scaled(dst->px, dst->pitch,
+                                clock_x, clock_y,
+                                0xB0FFFFFFu, wc_time, clock_scale,
+                                cc.x, cc.y, cc.w, cc.h);
+            ui_draw_text(dst->px, dst->pitch,
+                         date_x, date_y,
+                         0x80D0D0E0u, wc_date,
+                         cc.x, cc.y, cc.w, cc.h);
+        }
+    }
+
     /* ── Desktop watermark (bottom-right) ── */
     {
         int32_t fb_w = (int32_t)comp->fb_info.width;
@@ -1684,7 +1773,6 @@ void comp_render_frame(struct compositor_state *comp) {
             fut_rect_t wm_clip;
             if (!rect_intersection(damage->rects[i], wm_rect, &wm_clip))
                 continue;
-            /* Very subtle: just a few shades lighter than the background */
             ui_draw_text(dst->px, dst->pitch, wm_x, wm_y,
                          0xFF252538u, watermark,
                          wm_clip.x, wm_clip.y, wm_clip.w, wm_clip.h);

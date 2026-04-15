@@ -265,6 +265,7 @@ memcpy(void *dest, const void *src, size_t n) {
     if (n == 0) return dest;
 
     void *ret = dest;
+#if defined(__x86_64__) || defined(__i386__)
     __asm__ volatile (
         "cld\n\t"
         "rep movsb\n\t"
@@ -272,6 +273,12 @@ memcpy(void *dest, const void *src, size_t n) {
         :
         : "memory"
     );
+#else
+    unsigned char *d = (unsigned char *)dest;
+    const unsigned char *s = (const unsigned char *)src;
+    for (size_t i = 0; i < n; i++)
+        d[i] = s[i];
+#endif
     return ret;
 }
 

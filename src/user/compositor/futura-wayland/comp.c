@@ -3028,6 +3028,45 @@ void comp_end_drag(struct compositor_state *comp) {
     if (!comp) {
         return;
     }
+
+    /* Edge-snap: snap window to half-screen when dragged to left/right edge,
+     * or maximize when dragged to top edge */
+    struct comp_surface *surface = comp->drag_surface;
+    if (surface && surface->has_backing && !surface->maximized) {
+        int32_t fb_w = (int32_t)comp->fb_info.width;
+        int32_t fb_h = (int32_t)comp->fb_info.height;
+        int32_t px = comp->pointer_x;
+        int32_t py = comp->pointer_y;
+        #define SNAP_THRESHOLD 4  /* pixels from edge to trigger snap */
+
+        if (px <= SNAP_THRESHOLD || px >= fb_w - SNAP_THRESHOLD - 1) {
+            /* Save geometry for restore */
+            if (!surface->have_saved_geom) {
+                surface->saved_x = surface->x;
+                surface->saved_y = surface->y;
+                surface->saved_w = surface->width;
+                surface->saved_h = surface->content_height;
+                surface->have_saved_geom = true;
+            }
+            int32_t snap_w = fb_w / 2;
+            int32_t snap_content_h = fb_h - MENUBAR_HEIGHT - 48 - surface->bar_height;
+            if (snap_content_h < 100) snap_content_h = 100;
+            int32_t snap_x = (px <= SNAP_THRESHOLD) ? 0 : (fb_w - snap_w);
+
+            surface->pend_x = snap_x;
+            surface->pend_y = MENUBAR_HEIGHT;
+            surface->have_pending_pos = true;
+
+            uint32_t flags = comp_surface_state_flags(surface);
+            xdg_shell_surface_send_configure(surface, snap_w, snap_content_h, flags);
+            comp_update_surface_position(comp, surface, snap_x, MENUBAR_HEIGHT);
+        } else if (py <= SNAP_THRESHOLD + (int32_t)MENUBAR_HEIGHT) {
+            /* Snap to top = maximize */
+            comp_surface_set_maximized(surface, true);
+        }
+        #undef SNAP_THRESHOLD
+    }
+
     comp->dragging = false;
     comp->drag_surface = NULL;
 }

@@ -2181,6 +2181,44 @@ void comp_render_frame(struct compositor_state *comp) {
             touched = true;
         }
 
+        /* Draw a subtle 1px window border for definition */
+        if (touched && comp->deco_enabled) {
+            bool is_focused = (surface == comp->focused_surface);
+            uint32_t border_color = is_focused ? 0x60000000u : 0x30000000u;
+            fut_rect_t wr = comp_window_rect(surface);
+            char *bbase = (char *)dst->px;
+
+            /* Top, bottom, left, right 1px border lines */
+            int32_t edges[4][4] = {
+                { wr.x, wr.y, wr.w, 1 },               /* top */
+                { wr.x, wr.y + wr.h - 1, wr.w, 1 },    /* bottom */
+                { wr.x, wr.y, 1, wr.h },                /* left */
+                { wr.x + wr.w - 1, wr.y, 1, wr.h },    /* right */
+            };
+            for (int e = 0; e < 4; e++) {
+                fut_rect_t edge = { edges[e][0], edges[e][1], edges[e][2], edges[e][3] };
+                for (int di = 0; di < damage->count; ++di) {
+                    fut_rect_t ec;
+                    if (!rect_intersection(damage->rects[di], edge, &ec)) continue;
+                    for (int32_t py = ec.y; py < ec.y + ec.h; py++) {
+                        uint32_t *row = (uint32_t *)(bbase + (size_t)py * dst->pitch);
+                        uint32_t sa = (border_color >> 24) & 0xFF;
+                        uint32_t da = 255u - sa;
+                        uint32_t sr = (border_color >> 16) & 0xFF;
+                        uint32_t sg = (border_color >> 8) & 0xFF;
+                        uint32_t sb = border_color & 0xFF;
+                        for (int32_t px = ec.x; px < ec.x + ec.w; px++) {
+                            uint32_t d = row[px];
+                            uint32_t or_ = (sr * sa + ((d >> 16) & 0xFF) * da) / 255u;
+                            uint32_t og = (sg * sa + ((d >> 8) & 0xFF) * da) / 255u;
+                            uint32_t ob = (sb * sa + (d & 0xFF) * da) / 255u;
+                            row[px] = 0xFF000000u | (or_ << 16) | (og << 8) | ob;
+                        }
+                    }
+                }
+            }
+        }
+
         if (touched) {
             surface->composed_this_tick = true;
         }

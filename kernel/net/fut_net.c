@@ -65,6 +65,31 @@ static fut_spinlock_t net_lock;
 static struct fut_socket *socket_list = NULL;
 static fut_netdev_t *primary_dev = NULL;
 
+/* IRQ-safe lock helpers: net_lock is acquired from both thread context
+ * and IRQ context (fut_net_provider_irq), so we must disable interrupts
+ * before acquiring from thread context to prevent deadlock on single-CPU. */
+static inline unsigned long _net_irq_save(void) {
+    unsigned long flags;
+#if defined(__x86_64__)
+    __asm__ volatile("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
+#elif defined(__aarch64__)
+    __asm__ volatile("mrs %0, daif; msr daifset, #2" : "=r"(flags) :: "memory");
+#else
+    flags = 0;
+#endif
+    return flags;
+}
+
+static inline void _net_irq_restore(unsigned long flags) {
+#if defined(__x86_64__)
+    __asm__ volatile("pushq %0; popfq" :: "r"(flags) : "memory", "cc");
+#elif defined(__aarch64__)
+    __asm__ volatile("msr daif, %0" :: "r"(flags) : "memory");
+#else
+    (void)flags;
+#endif
+}
+
 /* Forward declarations provided by fut_net_dev.c */
 void fut_net_dev_system_init(void);
 fut_status_t fut_net_dev_tx_all(const void *frame, size_t len);
@@ -210,10 +235,12 @@ fut_status_t fut_net_listen(uint16_t port, fut_socket_t **out) {
     }
     sock->handle = handle;
 
+    unsigned long nf = _net_irq_save();
     fut_spinlock_acquire(&net_lock);
     sock->next = socket_list;
     socket_list = sock;
     fut_spinlock_release(&net_lock);
+    _net_irq_restore(nf);
 
     *out = sock;
     NETDBG("[net] listen port=%u socket=%p\n", port, (void *)sock);
@@ -352,6 +379,7 @@ void fut_net_close(fut_socket_t *socket) {
     fut_spinlock_release(&socket->lock);
 
     bool dump_stats = false;
+    unsigned long nf = _net_irq_save();
     fut_spinlock_acquire(&net_lock);
     struct fut_socket **prev = &socket_list;
     struct fut_socket *cur = socket_list;
@@ -367,6 +395,7 @@ void fut_net_close(fut_socket_t *socket) {
         dump_stats = true;
     }
     fut_spinlock_release(&net_lock);
+    _net_irq_restore(nf);
 
     if (socket->handle != FUT_INVALID_HANDLE) {
         fut_object_destroy(socket->handle);
@@ -386,10 +415,12 @@ void fut_net_close(fut_socket_t *socket) {
 }
 
 const char *fut_net_primary_provider(void) {
+    unsigned long nf = _net_irq_save();
     fut_spinlock_acquire(&net_lock);
     fut_netdev_t *dev = primary_dev;
     const char *name = dev ? dev->name : "loopback0";
     fut_spinlock_release(&net_lock);
+    _net_irq_restore(nf);
     return name;
 }
 
@@ -416,6 +447,7 @@ static void fut_net_dispatch_frame(fut_netdev_t *dev,
     }
 
     bool delivered = false;
+    unsigned long nf = _net_irq_save();
     fut_spinlock_acquire(&net_lock);
     struct fut_socket *sock = socket_list;
     while (sock) {
@@ -433,6 +465,7 @@ static void fut_net_dispatch_frame(fut_netdev_t *dev,
         sock = sock->next;
     }
     fut_spinlock_release(&net_lock);
+    _net_irq_restore(nf);
 
     fut_net_dev_record_rx(dev, delivered);
 }
@@ -462,11 +495,13 @@ void fut_net_provider_irq(fut_netdev_t *dev) {
 }
 
 void fut_net_set_primary_dev(fut_netdev_t *dev) {
+    unsigned long nf = _net_irq_save();
     fut_spinlock_acquire(&net_lock);
     if (!primary_dev && dev && dev->name && !fut_net_is_loopback_name(dev->name)) {
         primary_dev = dev;
     }
     fut_spinlock_release(&net_lock);
+    _net_irq_restore(nf);
 }
 
 /* -------------------------------------------------------------------------- */

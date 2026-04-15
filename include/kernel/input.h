@@ -48,11 +48,39 @@ static inline bool fut_input_queue_empty(const fut_input_queue_t *q) {
     return q->head == q->tail;
 }
 
+/* IRQ-safe lock helpers for the input queue lock.  This lock is acquired
+ * from both IRQ context (keyboard/mouse ISR calling push) and thread
+ * context (compositor calling read).  Without IRQ-safe locking, a
+ * keyboard IRQ firing while a thread holds the lock causes a deadlock
+ * on single-CPU systems. */
+static inline unsigned long _input_irq_save(void) {
+    unsigned long flags;
+#if defined(__x86_64__)
+    __asm__ volatile("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
+#elif defined(__aarch64__)
+    __asm__ volatile("mrs %0, daif; msr daifset, #2" : "=r"(flags) :: "memory");
+#else
+    flags = 0;
+#endif
+    return flags;
+}
+
+static inline void _input_irq_restore(unsigned long flags) {
+#if defined(__x86_64__)
+    __asm__ volatile("pushq %0; popfq" :: "r"(flags) : "memory", "cc");
+#elif defined(__aarch64__)
+    __asm__ volatile("msr daif, %0" :: "r"(flags) : "memory");
+#else
+    (void)flags;
+#endif
+}
+
 static inline void fut_input_queue_push(fut_input_queue_t *q,
                                         const struct fut_input_event *ev) {
     if (!q || !ev) {
         return;
     }
+    unsigned long flags = _input_irq_save();
     fut_spinlock_acquire(&q->lock);
     uint32_t next = (q->tail + 1u) & FUT_INPUT_QUEUE_MASK;
     if (next == q->head) {
@@ -62,6 +90,7 @@ static inline void fut_input_queue_push(fut_input_queue_t *q,
     q->events[q->tail] = *ev;
     q->tail = next;
     fut_spinlock_release(&q->lock);
+    _input_irq_restore(flags);
     fut_waitq_wake_one(&q->wait);
 }
 
@@ -83,9 +112,11 @@ static inline ssize_t fut_input_queue_read(fut_input_queue_t *q,
     struct fut_input_event ev;
 
     while (copied < capacity) {
+        unsigned long irqflags = _input_irq_save();
         fut_spinlock_acquire(&q->lock);
         while (fut_input_queue_empty(q)) {
             fut_spinlock_release(&q->lock);
+            _input_irq_restore(irqflags);
             if (copied > 0) {
                 return (ssize_t)(copied * ev_size);
             }
@@ -100,12 +131,14 @@ static inline ssize_t fut_input_queue_read(fut_input_queue_t *q,
                     return -EINTR;
             }
             fut_waitq_sleep_locked(&q->wait, &q->lock, FUT_THREAD_BLOCKED);
+            irqflags = _input_irq_save();
             fut_spinlock_acquire(&q->lock);
         }
 
         ev = q->events[q->head];
         q->head = (q->head + 1u) & FUT_INPUT_QUEUE_MASK;
         fut_spinlock_release(&q->lock);
+        _input_irq_restore(irqflags);
 
         /* Note: u_buf is a kernel buffer (from sys_read's fut_malloc), not userspace.
          * The VFS layer handles the final copy to userspace, so we use memcpy here. */
@@ -122,7 +155,7 @@ static inline ssize_t fut_input_queue_read(fut_input_queue_t *q,
 }
 
 static inline uint64_t fut_input_now_ns(void) {
-    return fut_get_ticks() * 1000000ull;
+    return fut_get_ticks() * 10000000ull;
 }
 
 #if defined(__x86_64__)

@@ -20,11 +20,14 @@
 #include <wayland-client-protocol.h>
 #include "xdg-shell-client-protocol.h"
 
-#define PANEL_HEIGHT    32
+#define PANEL_HEIGHT    28
 #define PANEL_WIDTH     1024
-#define PANEL_COLOR     0xFF2A2A2A  /* Dark gray panel */
-#define TEXT_COLOR      0xFFFFFFFF  /* White text */
-#define ACCENT_COLOR    0xFF4A90E2  /* Blue accent */
+#define PANEL_COLOR_TOP 0xFF222230  /* Dark panel top */
+#define PANEL_COLOR_BOT 0xFF1A1A28  /* Darker panel bottom */
+#define TEXT_COLOR      0xFFE0E0E8  /* Soft white text */
+#define TEXT_DIM        0xFF909098  /* Dimmed text */
+#define ACCENT_COLOR    0xFF6A8FD8  /* Softer blue accent */
+#define SEPARATOR_COLOR 0xFF3A3A48  /* Subtle separator */
 
 #define O_RDWR      0x0002
 #define O_CREAT     0x0040
@@ -61,10 +64,9 @@ struct panel_state {
     bool launcher_hovered;
 };
 
-/* Draw a simple 5x7 font character */
+/* Draw a simple 5x7 font character — extended with uppercase letters */
 static void draw_char(uint32_t *framebuffer, int fb_width, int x, int y, char c, uint32_t color) {
-    /* Simple 5x7 bitmap font for digits and : */
-    static const uint8_t font[11][7] = {
+    static const uint8_t font_digits[11][5] = {
         /* 0 */ {0x1F, 0x11, 0x11, 0x11, 0x1F},
         /* 1 */ {0x08, 0x0C, 0x08, 0x08, 0x1C},
         /* 2 */ {0x1F, 0x01, 0x1F, 0x10, 0x1F},
@@ -77,18 +79,45 @@ static void draw_char(uint32_t *framebuffer, int fb_width, int x, int y, char c,
         /* 9 */ {0x1F, 0x11, 0x1F, 0x01, 0x1F},
         /* : */ {0x00, 0x0C, 0x00, 0x0C, 0x00},
     };
+    /* Minimal uppercase letter bitmaps (5x5 grid) */
+    static const uint8_t font_alpha[26][5] = {
+        /* A */ {0x0E, 0x11, 0x1F, 0x11, 0x11},
+        /* B */ {0x1E, 0x11, 0x1E, 0x11, 0x1E},
+        /* C */ {0x0F, 0x10, 0x10, 0x10, 0x0F},
+        /* D */ {0x1E, 0x11, 0x11, 0x11, 0x1E},
+        /* E */ {0x1F, 0x10, 0x1E, 0x10, 0x1F},
+        /* F */ {0x1F, 0x10, 0x1E, 0x10, 0x10},
+        /* G */ {0x0F, 0x10, 0x17, 0x11, 0x0F},
+        /* H */ {0x11, 0x11, 0x1F, 0x11, 0x11},
+        /* I */ {0x1F, 0x04, 0x04, 0x04, 0x1F},
+        /* J */ {0x1F, 0x02, 0x02, 0x12, 0x0C},
+        /* K */ {0x11, 0x12, 0x1C, 0x12, 0x11},
+        /* L */ {0x10, 0x10, 0x10, 0x10, 0x1F},
+        /* M */ {0x11, 0x1B, 0x15, 0x11, 0x11},
+        /* N */ {0x11, 0x19, 0x15, 0x13, 0x11},
+        /* O */ {0x0E, 0x11, 0x11, 0x11, 0x0E},
+        /* P */ {0x1E, 0x11, 0x1E, 0x10, 0x10},
+        /* Q */ {0x0E, 0x11, 0x15, 0x12, 0x0D},
+        /* R */ {0x1E, 0x11, 0x1E, 0x12, 0x11},
+        /* S */ {0x0F, 0x10, 0x0E, 0x01, 0x1E},
+        /* T */ {0x1F, 0x04, 0x04, 0x04, 0x04},
+        /* U */ {0x11, 0x11, 0x11, 0x11, 0x0E},
+        /* V */ {0x11, 0x11, 0x11, 0x0A, 0x04},
+        /* W */ {0x11, 0x11, 0x15, 0x1B, 0x11},
+        /* X */ {0x11, 0x0A, 0x04, 0x0A, 0x11},
+        /* Y */ {0x11, 0x0A, 0x04, 0x04, 0x04},
+        /* Z */ {0x1F, 0x02, 0x04, 0x08, 0x1F},
+    };
 
-    int idx = -1;
-    if (c >= '0' && c <= '9') {
-        idx = c - '0';
-    } else if (c == ':') {
-        idx = 10;
-    }
-
-    if (idx < 0) return;
+    const uint8_t *glyph = NULL;
+    if (c >= '0' && c <= '9') glyph = font_digits[c - '0'];
+    else if (c == ':') glyph = font_digits[10];
+    else if (c >= 'A' && c <= 'Z') glyph = font_alpha[c - 'A'];
+    else if (c >= 'a' && c <= 'z') glyph = font_alpha[c - 'a'];
+    else return;
 
     for (int row = 0; row < 5; row++) {
-        uint8_t bits = font[idx][row];
+        uint8_t bits = glyph[row];
         for (int col = 0; col < 5; col++) {
             if (bits & (1 << (4 - col))) {
                 int px = x + col;
@@ -146,23 +175,35 @@ static void get_time_string(char *buf) {
 }
 
 static void panel_draw(struct panel_state *state) {
-    /* Clear panel */
-    for (size_t i = 0; i < PANEL_WIDTH * PANEL_HEIGHT; i++) {
-        state->shm_data[i] = PANEL_COLOR;
+    /* Gradient background: subtle vertical gradient for depth */
+    for (int y = 0; y < PANEL_HEIGHT; y++) {
+        int t = y * 255 / (PANEL_HEIGHT > 1 ? PANEL_HEIGHT - 1 : 1);
+        uint32_t r = 0x22 + (0x1A - 0x22) * t / 255;
+        uint32_t g = 0x22 + (0x1A - 0x22) * t / 255;
+        uint32_t b = 0x30 + (0x28 - 0x30) * t / 255;
+        uint32_t color = 0xFF000000u | (r << 16) | (g << 8) | b;
+        for (int x = 0; x < PANEL_WIDTH; x++) {
+            state->shm_data[y * PANEL_WIDTH + x] = color;
+        }
     }
 
-    /* Draw launcher button (left side) */
-    uint32_t launcher_color = state->launcher_hovered ? ACCENT_COLOR : 0xFF3A3A3A;
-    draw_rect(state->shm_data, PANEL_WIDTH, 4, 4, 80, 24, launcher_color);
-    draw_text(state->shm_data, PANEL_WIDTH, 12, 10, "APPS", TEXT_COLOR);
+    /* 1px bottom separator line */
+    for (int x = 0; x < PANEL_WIDTH; x++) {
+        state->shm_data[(PANEL_HEIGHT - 1) * PANEL_WIDTH + x] = SEPARATOR_COLOR;
+    }
 
-    /* Draw clock (center-right) */
+    /* Draw launcher button (left side) with rounded-look highlight */
+    uint32_t launcher_color = state->launcher_hovered ? ACCENT_COLOR : 0xFF333340;
+    draw_rect(state->shm_data, PANEL_WIDTH, 6, 4, 72, 20, launcher_color);
+    draw_text(state->shm_data, PANEL_WIDTH, 14, 8, "APPS", TEXT_COLOR);
+
+    /* Branding: "FUTURA" left of center */
+    draw_text(state->shm_data, PANEL_WIDTH, 90, 11, "FUTURA", ACCENT_COLOR);
+
+    /* Draw clock and date (right side) */
     char time_str[6];
     get_time_string(time_str);
-    draw_text(state->shm_data, PANEL_WIDTH, PANEL_WIDTH - 150, 12, time_str, TEXT_COLOR);
-
-    /* Draw system info (right side) */
-    draw_text(state->shm_data, PANEL_WIDTH, PANEL_WIDTH - 80, 12, "FUTURA", ACCENT_COLOR);
+    draw_text(state->shm_data, PANEL_WIDTH, PANEL_WIDTH - 48, 11, time_str, TEXT_COLOR);
 
     wl_surface_attach(state->surface, state->buffer, 0, 0);
     wl_surface_damage_buffer(state->surface, 0, 0, PANEL_WIDTH, PANEL_HEIGHT);
@@ -213,8 +254,8 @@ static void pointer_motion(void *data, struct wl_pointer *pointer, uint32_t time
 
     /* Check if hovering over launcher button */
     bool was_hovered = state->launcher_hovered;
-    state->launcher_hovered = (state->pointer_x >= 4 && state->pointer_x < 84 &&
-                              state->pointer_y >= 4 && state->pointer_y < 28);
+    state->launcher_hovered = (state->pointer_x >= 6 && state->pointer_x < 78 &&
+                              state->pointer_y >= 4 && state->pointer_y < 24);
 
     if (was_hovered != state->launcher_hovered) {
         panel_draw(state);

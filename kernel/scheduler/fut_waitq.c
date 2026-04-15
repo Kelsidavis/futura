@@ -9,6 +9,36 @@
 #include "../../include/kernel/fut_waitq.h"
 #include <stdbool.h>
 
+/* ── IRQ-safe lock helpers ─────────────────────────────────────────
+ * q->lock is acquired from both thread context AND IRQ context
+ * (timer callbacks call fut_waitq_wake_all).  On single-CPU, if a
+ * thread is preempted while holding q->lock and another thread later
+ * disables interrupts and tries to acquire the same lock, the system
+ * deadlocks.  By always disabling IRQs before acquiring q->lock, no
+ * thread can be preempted while holding it, eliminating the deadlock.
+ */
+static inline unsigned long wq_irq_save(void) {
+    unsigned long flags;
+#if defined(__x86_64__)
+    __asm__ volatile("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
+#elif defined(__aarch64__)
+    __asm__ volatile("mrs %0, daif; msr daifset, #2" : "=r"(flags) :: "memory");
+#else
+    flags = 0;
+#endif
+    return flags;
+}
+
+static inline void wq_irq_restore(unsigned long flags) {
+#if defined(__x86_64__)
+    __asm__ volatile("pushq %0; popfq" :: "r"(flags) : "memory", "cc");
+#elif defined(__aarch64__)
+    __asm__ volatile("msr daif, %0" :: "r"(flags) : "memory");
+#else
+    (void)flags;
+#endif
+}
+
 void fut_waitq_init(fut_waitq_t *q) {
     if (!q) {
         return;
@@ -51,10 +81,9 @@ void fut_waitq_sleep_locked(fut_waitq_t *q, fut_spinlock_t *released_lock,
     thread->state = state;
     thread->blocked_waitq = q;
 
-    // Check if released_lock is the same as q->lock to avoid double-acquire deadlock
-    // This can happen when caller already holds the wait queue lock
     int lock_already_held = (released_lock == &q->lock);
 
+    unsigned long flags = wq_irq_save();
     if (!lock_already_held) {
         fut_spinlock_acquire(&q->lock);
     }
@@ -63,9 +92,14 @@ void fut_waitq_sleep_locked(fut_waitq_t *q, fut_spinlock_t *released_lock,
         fut_spinlock_release(&q->lock);
     }
 
+    /* Release the caller's lock BEFORE restoring IRQs.  This prevents a
+     * deadlock: if we restored IRQs first, a timer ISR could fire and
+     * spin on released_lock (still held by this thread) → deadlock.
+     * With this ordering, released_lock is free before any ISR can run. */
     if (released_lock) {
         fut_spinlock_release(released_lock);
     }
+    wq_irq_restore(flags);
 
     fut_schedule();
 }
@@ -96,9 +130,11 @@ void fut_waitq_wake_one(fut_waitq_t *q) {
     if (!q) {
         return;
     }
+    unsigned long flags = wq_irq_save();
     fut_spinlock_acquire(&q->lock);
     fut_thread_t *thread = fut_waitq_dequeue(q);
     fut_spinlock_release(&q->lock);
+    wq_irq_restore(flags);
     fut_waitq_make_ready(thread);
 }
 
@@ -106,11 +142,13 @@ void fut_waitq_wake_all(fut_waitq_t *q) {
     if (!q) {
         return;
     }
+    unsigned long flags = wq_irq_save();
     fut_spinlock_acquire(&q->lock);
     fut_thread_t *thread = q->head;
     q->head = NULL;
     q->tail = NULL;
     fut_spinlock_release(&q->lock);
+    wq_irq_restore(flags);
 
     while (thread) {
         fut_thread_t *next = thread->wait_next;
@@ -126,6 +164,7 @@ bool fut_waitq_remove_thread(fut_waitq_t *q, fut_thread_t *thread) {
     }
 
     bool removed = false;
+    unsigned long flags = wq_irq_save();
     fut_spinlock_acquire(&q->lock);
     fut_thread_t *prev = NULL;
     fut_thread_t *curr = q->head;
@@ -147,6 +186,7 @@ bool fut_waitq_remove_thread(fut_waitq_t *q, fut_thread_t *thread) {
         curr = curr->wait_next;
     }
     fut_spinlock_release(&q->lock);
+    wq_irq_restore(flags);
     return removed;
 }
 
@@ -202,61 +242,56 @@ void fut_waitq_sleep_timed(fut_waitq_t *q, uint64_t timeout_ticks,
 
     /* Step 1: Start the timer with interrupts ENABLED.  fut_timer_start
      * calls fut_malloc, which may spin on the heap lock — this is safe
-     * only with interrupts enabled so preempted lock holders can run. */
+     * only with interrupts enabled so preempted lock holders can run.
+     * If the timer allocation fails (-ENOMEM), bail out immediately —
+     * without a timer, the thread would sleep forever on the waitqueue. */
+    int timer_ok = 0;
     if (timeout_ticks > 0) {
         extern int fut_timer_start(uint64_t ticks, void (*cb)(void *), void *arg);
-        fut_timer_start(timeout_ticks, timed_wakeup_cb, &ctx);
+        timer_ok = fut_timer_start(timeout_ticks, timed_wakeup_cb, &ctx);
+        if (timer_ok != 0) {
+            /* Timer allocation failed — don't block, return immediately */
+            if (released_lock)
+                fut_spinlock_release(released_lock);
+            return;
+        }
     }
 
-    /* Step 2: Disable interrupts for the enqueue sequence. */
-#if defined(__x86_64__)
-    unsigned long flags;
-    __asm__ volatile("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
-#elif defined(__aarch64__)
-    unsigned long flags;
-    __asm__ volatile("mrs %0, daif; msr daifset, #2" : "=r"(flags) :: "memory");
-#else
-    unsigned long flags = 0;
-#endif
-
-    /* Step 3: Check if the timer already fired between step 1 and step 2.
-     * If so, skip blocking — the wakeup already happened. */
-    if (timeout_ticks > 0 && ctx.fired) {
-#if defined(__x86_64__)
-        __asm__ volatile("pushq %0; popfq" :: "r"(flags) : "memory", "cc");
-#elif defined(__aarch64__)
-        __asm__ volatile("msr daif, %0" :: "r"(flags) : "memory");
-#endif
-        if (released_lock)
-            fut_spinlock_release(released_lock);
-        /* Timer already removed from list by process_timer_events. */
-        return;
-    }
-
-    /* Step 4: Set BLOCKED + enqueue atomically (IRQs off, timer can't
-     * fire until we re-enable).  The timer callback will find the thread
-     * on the queue when it eventually fires. */
+    /* Step 2: Acquire q->lock with IRQ-safe locking, then check the
+     * fired flag and enqueue atomically.  IRQ-safe locking prevents
+     * deadlock: no thread can be preempted while holding q->lock. */
     thread->state = FUT_THREAD_BLOCKED;
     thread->blocked_waitq = q;
 
     int lock_already_held = (released_lock == &q->lock);
+    unsigned long flags = wq_irq_save();
     if (!lock_already_held)
         fut_spinlock_acquire(&q->lock);
+
+    /* Step 3: Check if the timer already fired before we got the lock.
+     * If so, undo the BLOCKED state and bail out. */
+    if (timeout_ticks > 0 && ctx.fired) {
+        thread->state = FUT_THREAD_RUNNING;
+        thread->blocked_waitq = NULL;
+        if (!lock_already_held)
+            fut_spinlock_release(&q->lock);
+        wq_irq_restore(flags);
+        if (released_lock)
+            fut_spinlock_release(released_lock);
+        return;
+    }
+
+    /* Step 4: Enqueue (still holding lock with IRQs off). */
     fut_waitq_enqueue(q, thread);
     if (!lock_already_held)
         fut_spinlock_release(&q->lock);
+    wq_irq_restore(flags);
 
     if (released_lock)
         fut_spinlock_release(released_lock);
 
-    /* Step 5: Re-enable interrupts and schedule.  When the timer fires
-     * it will find the thread on the waitqueue and wake it. */
-#if defined(__x86_64__)
-    __asm__ volatile("pushq %0; popfq" :: "r"(flags) : "memory", "cc");
-#elif defined(__aarch64__)
-    __asm__ volatile("msr daif, %0" :: "r"(flags) : "memory");
-#endif
-
+    /* Step 5: Schedule away.  When the timer fires it will find the
+     * thread on the waitqueue and wake it. */
     fut_schedule();
 
     /* Step 6: Cancel the timer (harmless no-op if already fired). */

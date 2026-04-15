@@ -91,6 +91,8 @@ static fut_timer_event_t *deferred_free_head = nullptr;
 static fut_spinlock_t deferred_free_lock = { .locked = 0 };
 
 static void drain_deferred_frees(void);
+static inline unsigned long timer_irq_save(void);
+static inline void timer_irq_restore(unsigned long flags);
 
 /* ============================================================
  *   Sleep Queue Management
@@ -122,6 +124,9 @@ void fut_sleep_until(fut_thread_t *thread, uint64_t millis) {
 
 
     // Insert into sleep queue (sorted by wake_time)
+    // IRQ-safe: sleep_lock is also acquired from wake_sleeping_threads()
+    // which runs in timer ISR context.
+    unsigned long slflags = timer_irq_save();
     fut_spinlock_acquire(&sleep_lock);
 
     if (!sleep_queue_head || thread->wake_time < sleep_queue_head->wake_time) {
@@ -149,6 +154,7 @@ void fut_sleep_until(fut_thread_t *thread, uint64_t millis) {
     }
 
     fut_spinlock_release(&sleep_lock);
+    timer_irq_restore(slflags);
 }
 
 /**
@@ -157,8 +163,8 @@ void fut_sleep_until(fut_thread_t *thread, uint64_t millis) {
 static void wake_sleeping_threads(void) {
     uint64_t current = atomic_load_explicit(&system_ticks, memory_order_relaxed);
 
+    unsigned long slflags = timer_irq_save();
     fut_spinlock_acquire(&sleep_lock);
-
 
     // Check sleep queue head
     while (sleep_queue_head && sleep_queue_head->wake_time <= current) {
@@ -177,11 +183,14 @@ static void wake_sleeping_threads(void) {
         thread->state = FUT_THREAD_READY;
 
         fut_spinlock_release(&sleep_lock);
+        timer_irq_restore(slflags);
         fut_sched_add_thread(thread);
+        slflags = timer_irq_save();
         fut_spinlock_acquire(&sleep_lock);
     }
 
     fut_spinlock_release(&sleep_lock);
+    timer_irq_restore(slflags);
 }
 
 /**
@@ -193,11 +202,13 @@ int fut_thread_wake_sleeping(fut_thread_t *target) {
     if (!target || target->state != FUT_THREAD_SLEEPING)
         return 0;
 
+    unsigned long slflags = timer_irq_save();
     fut_spinlock_acquire(&sleep_lock);
 
     /* Verify still sleeping (may have been woken by timer between check and lock) */
     if (target->state != FUT_THREAD_SLEEPING) {
         fut_spinlock_release(&sleep_lock);
+        timer_irq_restore(slflags);
         return 0;
     }
 
@@ -216,6 +227,7 @@ int fut_thread_wake_sleeping(fut_thread_t *target) {
     target->state = FUT_THREAD_READY;
 
     fut_spinlock_release(&sleep_lock);
+    timer_irq_restore(slflags);
 
     fut_sched_add_thread(target);
     return 1;

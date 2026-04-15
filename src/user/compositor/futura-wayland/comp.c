@@ -488,16 +488,19 @@ static void blit_argb(const char *src_base,
 }
 
 static void draw_bar_segment(struct backbuffer *dst, fut_rect_t rect, bool focused) {
-    /* Subtle vertical gradient on the title bar for depth */
-    uint32_t top = focused ? 0xFFF0F0F0u : 0xFFFAFAFAu;
-    uint32_t bot = focused ? 0xFFDCDCDCu : 0xFFF0F0F0u;
+    /* Refined title bar gradient with highlight at top for polish */
+    uint32_t top = focused ? 0xFFF4F4F6u : 0xFFFAFAFBu;
+    uint32_t bot = focused ? 0xFFDEDEE2u : 0xFFEEEEF0u;
     char *base = (char *)dst->px;
     for (int32_t y = 0; y < rect.h; ++y) {
         int32_t gy = rect.y + y;
         uint32_t color;
-        if (y == rect.h - 1) {
+        if (y == 0) {
+            /* 1px top highlight for raised/lit look */
+            color = focused ? 0xFFFCFCFEu : 0xFFFEFEFEu;
+        } else if (y == rect.h - 1) {
             /* 1px bottom border for clean separation from content */
-            color = focused ? 0xFFC0C0C0u : 0xFFD8D8D8u;
+            color = focused ? 0xFFB8B8BEu : 0xFFD0D0D4u;
         } else {
             int t = (rect.h > 2) ? (y * 255 / (rect.h - 2)) : 0;
             uint8_t r_c = (uint8_t)(((top >> 16) & 0xFF) + ((int)((bot >> 16) & 0xFF) - (int)((top >> 16) & 0xFF)) * t / 255);
@@ -1519,7 +1522,7 @@ void comp_render_frame(struct compositor_state *comp) {
         surface->composed_this_tick = false;
     }
 
-    /* Desktop background: vertical gradient with centered radial glow */
+    /* Desktop background: vertical gradient with centered radial glow + stars */
     for (int i = 0; i < damage->count; ++i) {
         fut_rect_t r = damage->rects[i];
         if (r.w <= 0 || r.h <= 0) continue;
@@ -1530,31 +1533,66 @@ void comp_render_frame(struct compositor_state *comp) {
         /* max_dist_sq scaled so glow fades across ~60% of screen diagonal */
         int32_t max_r = (fb_w > fb_h ? fb_w : fb_h) * 3 / 5;
         int64_t max_r_sq = (int64_t)max_r * max_r;
+        /* Secondary glow: soft warm accent in the bottom-right */
+        int32_t cx2 = fb_w * 3 / 4;
+        int32_t cy2 = fb_h * 3 / 4;
+        int32_t max_r2 = (fb_w > fb_h ? fb_w : fb_h) * 2 / 5;
+        int64_t max_r2_sq = (int64_t)max_r2 * max_r2;
         char *base = (char *)dst->px;
         for (int32_t y = 0; y < r.h; ++y) {
             int32_t gy = r.y + y;
-            /* Vertical gradient: top=#0D0D1A, bottom=#2A2A40 */
+            /* Vertical gradient: top=#0A0A18, bottom=#1E1E38 — deeper & richer */
             int t = (fb_h > 0) ? (gy * 255 / fb_h) : 0;
-            int base_r = 0x0D + (0x2A - 0x0D) * t / 255;
-            int base_g = 0x0D + (0x2A - 0x0D) * t / 255;
-            int base_b = 0x1A + (0x40 - 0x1A) * t / 255;
+            int base_r = 0x0A + (0x1E - 0x0A) * t / 255;
+            int base_g = 0x0A + (0x1E - 0x0A) * t / 255;
+            int base_b = 0x18 + (0x38 - 0x18) * t / 255;
             int32_t dy = gy - cy;
+            int32_t dy2 = gy - cy2;
             uint32_t *row = (uint32_t *)(base + (size_t)gy * dst->pitch);
             for (int32_t x = 0; x < r.w; ++x) {
                 int32_t gx = r.x + x;
                 int32_t dx = gx - cx;
                 int64_t dist_sq = (int64_t)dx * dx + (int64_t)dy * dy;
-                /* Radial glow: subtle blue-purple boost near center */
+                /* Primary radial glow: blue-purple near center */
                 int glow = 0;
                 if (dist_sq < max_r_sq) {
-                    glow = (int)((max_r_sq - dist_sq) * 18 / max_r_sq);
+                    glow = (int)((max_r_sq - dist_sq) * 22 / max_r_sq);
                 }
-                int pr = base_r + glow / 3;
-                int pg = base_g + glow / 4;
-                int pb = base_b + glow;
+                /* Secondary glow: subtle warm purple in bottom-right */
+                int32_t dx2 = gx - cx2;
+                int64_t dist2_sq = (int64_t)dx2 * dx2 + (int64_t)dy2 * dy2;
+                int glow2 = 0;
+                if (dist2_sq < max_r2_sq) {
+                    glow2 = (int)((max_r2_sq - dist2_sq) * 12 / max_r2_sq);
+                }
+                int pr = base_r + glow / 3 + glow2 * 2 / 3;
+                int pg = base_g + glow / 4 + glow2 / 5;
+                int pb = base_b + glow + glow2 / 2;
                 if (pr > 255) pr = 255;
                 if (pg > 255) pg = 255;
                 if (pb > 255) pb = 255;
+
+                /* Deterministic star field: hash pixel position for star placement */
+                uint32_t hash = (uint32_t)(gx * 7919 + gy * 104729);
+                hash ^= hash >> 13;
+                hash *= 0x5bd1e995u;
+                hash ^= hash >> 15;
+                if ((hash & 0x3FF) < 3) {
+                    /* Bright star — tiny white dot */
+                    int brightness = 100 + (int)(hash >> 10 & 0x7F);  /* 100-227 */
+                    pr += brightness; pg += brightness; pb += brightness;
+                    if (pr > 255) pr = 255;
+                    if (pg > 255) pg = 255;
+                    if (pb > 255) pb = 255;
+                } else if ((hash & 0x7FF) < 5) {
+                    /* Dim star — faint speck */
+                    int brightness = 40 + (int)(hash >> 11 & 0x3F);
+                    pr += brightness; pg += brightness; pb += brightness + 8;
+                    if (pr > 255) pr = 255;
+                    if (pg > 255) pg = 255;
+                    if (pb > 255) pb = 255;
+                }
+
                 row[gx] = 0xFF000000u | ((uint32_t)pr << 16)
                          | ((uint32_t)pg << 8) | (uint32_t)pb;
             }
@@ -1563,18 +1601,19 @@ void comp_render_frame(struct compositor_state *comp) {
 
     /* ── Bottom dock panel ── */
     {
-        #define DOCK_HEIGHT 36
-        #define DOCK_COLOR      0xD0222233u  /* Semi-transparent dark panel */
+        #define DOCK_HEIGHT 38
+        #define DOCK_COLOR      0xC8181828u  /* Frosted dark panel */
         #define DOCK_ITEM_W     120
-        #define DOCK_ITEM_H     26
-        #define DOCK_ITEM_PAD   2            /* thin gap between items */
-        #define DOCK_FOCUSED    0xD0505070u  /* Focused window highlight */
-        #define DOCK_HOVER      0xD03A3A50u  /* Hover highlight */
-        #define DOCK_SEP_COLOR  0x60888899u  /* Thin separator */
-        #define DOCK_TEXT       0xFFD0D0D8u  /* Light text on dark dock */
-        #define DOCK_TEXT_DIM   0xFF909098u  /* Dimmer text for unfocused */
-        #define DOCK_CORNER_R   8            /* Corner radius for rounded look */
+        #define DOCK_ITEM_H     28
+        #define DOCK_ITEM_PAD   3            /* gap between items */
+        #define DOCK_FOCUSED    0xD0506080u  /* Focused: blue-tinted highlight */
+        #define DOCK_HOVER      0xC03A3A55u  /* Hover highlight */
+        #define DOCK_SEP_COLOR  0x40667788u  /* Subtle separator */
+        #define DOCK_TEXT       0xFFD8D8E0u  /* Light text on dark dock */
+        #define DOCK_TEXT_DIM   0xFFA0A0B0u  /* Dimmer text for unfocused */
+        #define DOCK_CORNER_R   10           /* Larger corner radius */
         #define DOCK_DSKBTN_W   28           /* Desktop-show button width */
+        #define DOCK_HIGHLIGHT  0x30FFFFFFu  /* Frosted glass top highlight */
 
         int32_t fb_w = (int32_t)comp->fb_info.width;
         int32_t fb_h = (int32_t)comp->fb_info.height;
@@ -1720,7 +1759,7 @@ void comp_render_frame(struct compositor_state *comp) {
             if (!rect_intersection(damage->rects[i], dock_rect, &dock_clip))
                 continue;
 
-            /* Draw dock background with rounded corners via alpha blending */
+            /* Draw dock background with rounded corners, frosted glass effect */
             {
                 char *base = (char *)dst->px;
                 for (int32_t py = dock_clip.y; py < dock_clip.y + dock_clip.h; py++) {
@@ -1732,7 +1771,7 @@ void comp_render_frame(struct compositor_state *comp) {
                         int32_t dx = rx < dock_w / 2 ? rx : (dock_w - 1 - rx);
 
                         /* Compute corner alpha fade with smooth anti-aliasing */
-                        uint32_t alpha = 0xD0;
+                        uint32_t alpha = 0xC8;
                         if (dx < DOCK_CORNER_R && dy < DOCK_CORNER_R) {
                             int32_t cx_d = DOCK_CORNER_R - dx;
                             int32_t cy_d = DOCK_CORNER_R - dy;
@@ -1744,13 +1783,28 @@ void comp_render_frame(struct compositor_state *comp) {
                                 alpha = 0;   /* outside the rounded corner */
                             } else if (dist_sq > inner_sq) {
                                 /* Smooth falloff in the 2px edge band */
-                                alpha = (uint32_t)(0xD0 * (r_sq - dist_sq) / (r_sq - inner_sq));
+                                alpha = (uint32_t)(0xC8 * (r_sq - dist_sq) / (r_sq - inner_sq));
                             }
                         }
 
                         if (alpha > 0) {
-                            uint32_t col = (alpha << 24) | 0x00222233u;
+                            /* Subtle vertical gradient: lighter at top for glass feel */
+                            int vgrad = ry < 6 ? (6 - ry) * 4 : 0;
+                            uint32_t bg_r = 0x18 + vgrad;
+                            uint32_t bg_g = 0x18 + vgrad;
+                            uint32_t bg_b = 0x28 + vgrad;
+                            if (bg_r > 0xFF) bg_r = 0xFF;
+                            if (bg_g > 0xFF) bg_g = 0xFF;
+                            if (bg_b > 0xFF) bg_b = 0xFF;
+                            uint32_t col = (alpha << 24) | (bg_r << 16) | (bg_g << 8) | bg_b;
                             ABLEND(col, row[px]);
+
+                            /* 1px frosted highlight at top edge */
+                            if (ry == 0 && alpha > 0x20) {
+                                uint32_t hi_alpha = alpha * 0x30 / 0xC8;
+                                uint32_t hi = (hi_alpha << 24) | 0x00FFFFFFu;
+                                ABLEND(hi, row[px]);
+                            }
                         }
                     }
                 }
@@ -1789,13 +1843,29 @@ void comp_render_frame(struct compositor_state *comp) {
                         }
                     }
 
-                    /* Focused indicator: a 2px accent bar at the bottom of the item */
+                    /* Focused indicator: glowing 2px accent bar at the bottom */
                     if (is_focused) {
+                        /* Glow halo above the accent bar */
+                        fut_rect_t glow = { item_x + 12, item_y + DOCK_ITEM_H - 5,
+                                            DOCK_ITEM_W - 24, 3 };
+                        fut_rect_t glow_clip;
+                        if (rect_intersection(dock_clip, glow, &glow_clip)) {
+                            char *gbase = (char *)dst->px;
+                            for (int32_t gy = glow_clip.y; gy < glow_clip.y + glow_clip.h; gy++) {
+                                uint32_t *grow = (uint32_t *)(gbase + (size_t)gy * dst->pitch);
+                                int gy_off = gy - glow.y;
+                                uint32_t ga = (uint32_t)(15 + gy_off * 10);
+                                uint32_t gc = (ga << 24) | 0x006688CCu;
+                                for (int32_t gx = glow_clip.x; gx < glow_clip.x + glow_clip.w; gx++)
+                                    ABLEND(gc, grow[gx]);
+                            }
+                        }
+                        /* Solid accent bar */
                         fut_rect_t accent = { item_x + 8, item_y + DOCK_ITEM_H - 2,
                                               DOCK_ITEM_W - 16, 2 };
                         fut_rect_t accent_clip;
                         if (rect_intersection(dock_clip, accent, &accent_clip))
-                            bb_fill_rect(dst, accent_clip, 0xFF6688CCu);
+                            bb_fill_rect(dst, accent_clip, 0xFF7799DDu);
                     }
 
                     /* Draw window title text, centered in the item */

@@ -435,6 +435,32 @@
 #define KERNEL_VIRTUAL_BASE 0xFFFFFFFF80000000ULL
 #endif
 
+/* ── IRQ-safe lock helpers for timerfd ────────────────────────────
+ * timerfd_timer_cb runs in timer ISR context and acquires ctx->lock.
+ * Thread-context code (timerfd_read_op, fut_timerfd_poll) must disable
+ * interrupts before acquiring ctx->lock to prevent deadlock on single-CPU. */
+static inline unsigned long _evfd_irq_save(void) {
+    unsigned long flags;
+#if defined(__x86_64__)
+    __asm__ volatile("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
+#elif defined(__aarch64__)
+    __asm__ volatile("mrs %0, daif; msr daifset, #2" : "=r"(flags) :: "memory");
+#else
+    flags = 0;
+#endif
+    return flags;
+}
+
+static inline void _evfd_irq_restore(unsigned long flags) {
+#if defined(__x86_64__)
+    __asm__ volatile("pushq %0; popfq" :: "r"(flags) : "memory", "cc");
+#elif defined(__aarch64__)
+    __asm__ volatile("msr daif, %0" :: "r"(flags) : "memory");
+#else
+    (void)flags;
+#endif
+}
+
 static inline int sfd_copy_to_user(void *dst, const void *src, size_t n) {
 #ifdef KERNEL_VIRTUAL_BASE
     if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
@@ -1153,15 +1179,18 @@ static ssize_t timerfd_read_op(void *inode, void *priv, void *u_buf, size_t len,
     bool nonblock = tfile->file && (tfile->file->flags & O_NONBLOCK);
 
     while (true) {
+        unsigned long tfd_flags = _evfd_irq_save();
         fut_spinlock_acquire(&ctx->lock);
         if (ctx->counter > 0) {
             value = ctx->counter;
             ctx->counter = 0;
             fut_spinlock_release(&ctx->lock);
+            _evfd_irq_restore(tfd_flags);
             break;
         }
         if (nonblock) {
             fut_spinlock_release(&ctx->lock);
+            _evfd_irq_restore(tfd_flags);
             return -EAGAIN;
         }
         /* Check for pending signals → EINTR */
@@ -1175,10 +1204,18 @@ static ssize_t timerfd_read_op(void *inode, void *priv, void *u_buf, size_t len,
                     __atomic_load_n(&stask->signal_mask, __ATOMIC_ACQUIRE);
                 if (pending & ~blocked) {
                     fut_spinlock_release(&ctx->lock);
+                    _evfd_irq_restore(tfd_flags);
                     return -EINTR;
                 }
             }
         }
+        /* Re-enable IRQs before sleeping (so timer ISR can fire), but
+         * keep ctx->lock held and pass it to sleep_locked.  sleep_locked
+         * enqueues the thread on the wait queue (with IRQs off via its
+         * own wq_irq_save), then releases ctx->lock (still IRQs off),
+         * then restores IRQs.  This eliminates the lost-wakeup window
+         * where a timer fires between lock release and enqueue. */
+        _evfd_irq_restore(tfd_flags);
         fut_waitq_sleep_locked(&ctx->read_waitq, &ctx->lock, FUT_THREAD_BLOCKED);
     }
 
@@ -1192,9 +1229,11 @@ static ssize_t timerfd_read_op(void *inode, void *priv, void *u_buf, size_t len,
     tfd_copy = fut_copy_to_user(u_buf, &value, sizeof(value));
     if (tfd_copy != 0) {
         /* Restore counter on copy failure */
+        unsigned long tfd_rf = _evfd_irq_save();
         fut_spinlock_acquire(&ctx->lock);
         ctx->counter += value;
         fut_spinlock_release(&ctx->lock);
+        _evfd_irq_restore(tfd_rf);
         return -EFAULT;
     }
 
@@ -1227,11 +1266,13 @@ bool fut_timerfd_poll(struct fut_file *file, uint32_t requested, uint32_t *ready
     if (!ctx) return false;
 
     uint32_t ready = 0;
+    unsigned long tfd_pf = _evfd_irq_save();
     fut_spinlock_acquire(&ctx->lock);
     if (ctx->counter > 0 && (requested & (EPOLLIN | EPOLLRDNORM))) {
         ready |= (EPOLLIN | EPOLLRDNORM);
     }
     fut_spinlock_release(&ctx->lock);
+    _evfd_irq_restore(tfd_pf);
 
     if (ready_out) *ready_out = ready;
     return true;
@@ -1391,6 +1432,7 @@ long sys_timerfd_settime(int ufd, int flags,
     uint64_t value_ms = timespec_to_ms(&kits.it_value);
     uint64_t interval_ms = timespec_to_ms(&kits.it_interval);
 
+    unsigned long tfd_sf = _evfd_irq_save();
     fut_spinlock_acquire(&ctx->lock);
     ctx->counter = 0;
 
@@ -1399,6 +1441,7 @@ long sys_timerfd_settime(int ufd, int flags,
         ctx->armed = false;
         ctx->next_expiry_ms = 0;
         fut_spinlock_release(&ctx->lock);
+        _evfd_irq_restore(tfd_sf);
         /* Timer disarmed */
         return 0;
     }
@@ -1445,6 +1488,7 @@ long sys_timerfd_settime(int ufd, int flags,
     ctx->interval_ms = interval_ticks;  /* Store interval in ticks */
     ctx->armed = true;
     fut_spinlock_release(&ctx->lock);
+    _evfd_irq_restore(tfd_sf);
 
     fut_timer_start(delay_ticks, timerfd_timer_cb, ctx);
 
@@ -1467,6 +1511,7 @@ long sys_timerfd_gettime(int ufd, struct itimerspec *curr_value) {
     if (!ctx) return -EBADF;
 
     struct itimerspec kits = {0};
+    unsigned long tfd_gf = _evfd_irq_save();
     fut_spinlock_acquire(&ctx->lock);
     /* ctx->interval_ms stores ticks (10ms/tick); convert to real ms first */
     uint64_t interval_ms = ctx->interval_ms * 10;
@@ -1480,6 +1525,7 @@ long sys_timerfd_gettime(int ufd, struct itimerspec *curr_value) {
         kits.it_value.tv_nsec = (long)((remain_ms % 1000) * 1000000);
     }
     fut_spinlock_release(&ctx->lock);
+    _evfd_irq_restore(tfd_gf);
 
 #ifdef KERNEL_VIRTUAL_BASE
     if ((uintptr_t)curr_value >= KERNEL_VIRTUAL_BASE) {

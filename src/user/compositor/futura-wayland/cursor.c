@@ -13,37 +13,44 @@ struct cursor_state {
 };
 
 #define CURSOR_W 16
-#define CURSOR_H 16
+#define CURSOR_H 20
 
-/* Arrow cursor bitmap — white fill with black outline, hotspot at (0,0).
- * _ = transparent, K = black outline, W = white fill, G = light gray fill.
- * Layout is a classic left-pointing arrow. */
+/* Arrow cursor bitmap — white fill with black outline, subtle shadow.
+ * _ = transparent, K = black outline, W = white fill, G = light gray,
+ * S = semi-transparent shadow (drop shadow for depth).
+ * Slightly taller for a more refined, modern look. */
 #define _ 0x00000000u
 #define K 0xFF000000u
 #define W 0xFFFFFFFFu
-#define G 0xFFD0D0D0u
+#define G 0xFFE0E0E0u
+#define S 0x30000000u
 static const uint32_t cursor_pixels[CURSOR_W * CURSOR_H] = {
     K,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,
     K,K,_,_,_,_,_,_,_,_,_,_,_,_,_,_,
     K,W,K,_,_,_,_,_,_,_,_,_,_,_,_,_,
-    K,W,W,K,_,_,_,_,_,_,_,_,_,_,_,_,
-    K,W,W,W,K,_,_,_,_,_,_,_,_,_,_,_,
-    K,W,W,W,W,K,_,_,_,_,_,_,_,_,_,_,
-    K,W,W,W,W,W,K,_,_,_,_,_,_,_,_,_,
-    K,W,W,W,W,W,W,K,_,_,_,_,_,_,_,_,
-    K,W,W,W,W,W,W,W,K,_,_,_,_,_,_,_,
-    K,W,W,W,W,W,W,W,W,K,_,_,_,_,_,_,
-    K,W,W,W,W,W,K,K,K,K,K,_,_,_,_,_,
-    K,W,W,K,W,W,K,_,_,_,_,_,_,_,_,_,
-    K,W,K,_,K,W,W,K,_,_,_,_,_,_,_,_,
-    K,K,_,_,K,W,W,K,_,_,_,_,_,_,_,_,
-    K,_,_,_,_,K,W,W,K,_,_,_,_,_,_,_,
-    _,_,_,_,_,K,K,K,_,_,_,_,_,_,_,_,
+    K,W,W,K,S,_,_,_,_,_,_,_,_,_,_,_,
+    K,W,W,W,K,S,_,_,_,_,_,_,_,_,_,_,
+    K,W,W,W,W,K,S,_,_,_,_,_,_,_,_,_,
+    K,W,W,W,W,W,K,S,_,_,_,_,_,_,_,_,
+    K,W,W,W,W,W,W,K,S,_,_,_,_,_,_,_,
+    K,W,W,W,W,W,W,W,K,S,_,_,_,_,_,_,
+    K,W,W,W,W,W,W,W,W,K,S,_,_,_,_,_,
+    K,W,W,W,W,W,W,W,W,W,K,S,_,_,_,_,
+    K,W,W,W,W,W,W,K,K,K,K,K,_,_,_,_,
+    K,W,W,W,K,W,W,K,S,_,_,_,_,_,_,_,
+    K,W,W,K,_,K,W,W,K,S,_,_,_,_,_,_,
+    K,W,K,_,_,K,W,W,K,S,_,_,_,_,_,_,
+    K,K,_,_,_,_,K,W,W,K,S,_,_,_,_,_,
+    K,_,_,_,_,_,K,W,W,K,S,_,_,_,_,_,
+    _,_,_,_,_,_,_,K,W,K,S,_,_,_,_,_,
+    _,_,_,_,_,_,_,K,K,S,_,_,_,_,_,_,
+    _,_,_,_,_,_,_,_,S,_,_,_,_,_,_,_,
 };
 #undef _
 #undef K
 #undef W
 #undef G
+#undef S
 
 struct cursor_state *cursor_create(void) {
     struct cursor_state *cursor = malloc(sizeof(*cursor));

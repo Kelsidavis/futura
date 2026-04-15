@@ -489,7 +489,8 @@ static void blit_argb(const char *src_base,
 }
 
 static void draw_bar_segment(struct backbuffer *dst, fut_rect_t rect, bool focused) {
-    /* Refined title bar gradient with highlight at top for polish */
+    /* Refined title bar gradient with rounded top corners */
+    #define BAR_CORNER_R 6  /* Radius for rounded top corners */
     uint32_t top = focused ? 0xFFF4F4F6u : 0xFFFAFAFBu;
     uint32_t bot = focused ? 0xFFDEDEE2u : 0xFFEEEEF0u;
     char *base = (char *)dst->px;
@@ -497,10 +498,8 @@ static void draw_bar_segment(struct backbuffer *dst, fut_rect_t rect, bool focus
         int32_t gy = rect.y + y;
         uint32_t color;
         if (y == 0) {
-            /* 1px top highlight for raised/lit look */
             color = focused ? 0xFFFCFCFEu : 0xFFFEFEFEu;
         } else if (y == rect.h - 1) {
-            /* 1px bottom border for clean separation from content */
             color = focused ? 0xFFB8B8BEu : 0xFFD0D0D4u;
         } else {
             int t = (rect.h > 2) ? (y * 255 / (rect.h - 2)) : 0;
@@ -511,9 +510,30 @@ static void draw_bar_segment(struct backbuffer *dst, fut_rect_t rect, bool focus
         }
         uint32_t *row = (uint32_t *)(base + (size_t)gy * dst->pitch);
         for (int32_t x = 0; x < rect.w; ++x) {
+            /* Round top-left and top-right corners */
+            if (y < BAR_CORNER_R) {
+                int32_t dx_left = x;
+                int32_t dx_right = rect.w - 1 - x;
+                int32_t dy = BAR_CORNER_R - y;
+                bool in_left = (dx_left < BAR_CORNER_R);
+                bool in_right = (dx_right < BAR_CORNER_R);
+                if (in_left) {
+                    int32_t cx_d = BAR_CORNER_R - dx_left;
+                    int32_t dist_sq = cx_d * cx_d + dy * dy;
+                    int32_t r_sq = BAR_CORNER_R * BAR_CORNER_R;
+                    if (dist_sq > r_sq) continue;  /* Outside rounded corner */
+                }
+                if (in_right) {
+                    int32_t cx_d = BAR_CORNER_R - dx_right;
+                    int32_t dist_sq = cx_d * cx_d + dy * dy;
+                    int32_t r_sq = BAR_CORNER_R * BAR_CORNER_R;
+                    if (dist_sq > r_sq) continue;
+                }
+            }
             row[rect.x + x] = color;
         }
     }
+    #undef BAR_CORNER_R
 }
 
 static void draw_minimize_button(struct backbuffer *dst,
@@ -1670,10 +1690,32 @@ void comp_render_frame(struct compositor_state *comp) {
                 }
             }
 
-            /* "Futura" branding (left) */
+            /* "Futura" branding (left) — bold accent */
             ui_draw_text(dst->px, dst->pitch, 10, 4,
                          0xFF7799DDu, "Futura",
                          mbar_clip.x, mbar_clip.y, mbar_clip.w, mbar_clip.h);
+
+            /* Show focused window title in menu bar (after branding) */
+            if (comp->focused_surface) {
+                const char *win_title = comp->focused_surface->title[0]
+                    ? comp->focused_surface->title
+                    : (comp->focused_surface->app_id[0]
+                       ? comp->focused_surface->app_id : NULL);
+                if (win_title) {
+                    /* Truncate to max 30 chars */
+                    char mbar_title[32];
+                    int mti = 0;
+                    while (win_title[mti] && mti < 30) {
+                        mbar_title[mti] = win_title[mti];
+                        mti++;
+                    }
+                    mbar_title[mti] = '\0';
+                    int title_x = 10 + 6 * UI_FONT_WIDTH + 12; /* after "Futura" + gap */
+                    ui_draw_text(dst->px, dst->pitch, title_x, 4,
+                                 0xFFA0A0B0u, mbar_title,
+                                 mbar_clip.x, mbar_clip.y, mbar_clip.w, mbar_clip.h);
+                }
+            }
 
             /* Get current time for menubar clock */
             struct { long tv_sec; long tv_nsec; } mb_ts = {0, 0};
@@ -1953,29 +1995,56 @@ void comp_render_frame(struct compositor_state *comp) {
                         }
                     }
 
-                    /* Focused indicator: glowing 2px accent bar at the bottom */
+                    /* Focused indicator: small pill-shaped dot below the title */
                     if (is_focused) {
-                        /* Glow halo above the accent bar */
-                        fut_rect_t glow = { item_x + 12, item_y + DOCK_ITEM_H - 5,
-                                            DOCK_ITEM_W - 24, 3 };
-                        fut_rect_t glow_clip;
-                        if (rect_intersection(dock_clip, glow, &glow_clip)) {
+                        /* Glowing dot indicator — small bright pill, 8x3px */
+                        int dot_w = 8, dot_h = 3;
+                        int dot_x = item_x + (DOCK_ITEM_W - dot_w) / 2;
+                        int dot_y = item_y + DOCK_ITEM_H - dot_h - 1;
+                        fut_rect_t dot_rect = { dot_x, dot_y, dot_w, dot_h };
+                        fut_rect_t dot_clip;
+                        if (rect_intersection(dock_clip, dot_rect, &dot_clip)) {
                             char *gbase = (char *)dst->px;
-                            for (int32_t gy = glow_clip.y; gy < glow_clip.y + glow_clip.h; gy++) {
+                            for (int32_t gy = dot_clip.y; gy < dot_clip.y + dot_clip.h; gy++) {
                                 uint32_t *grow = (uint32_t *)(gbase + (size_t)gy * dst->pitch);
-                                int gy_off = gy - glow.y;
-                                uint32_t ga = (uint32_t)(15 + gy_off * 10);
-                                uint32_t gc = (ga << 24) | 0x006688CCu;
-                                for (int32_t gx = glow_clip.x; gx < glow_clip.x + glow_clip.w; gx++)
+                                for (int32_t gx = dot_clip.x; gx < dot_clip.x + dot_clip.w; gx++) {
+                                    /* Rounded pill shape with soft edges */
+                                    int lx = gx - dot_x, ly = gy - dot_y;
+                                    int half_h = dot_h / 2;
+                                    int fade_x = (lx < 2) ? lx : ((dot_w - 1 - lx < 2) ? (dot_w - 1 - lx) : 2);
+                                    int fade_y = (ly <= half_h) ? ly : (dot_h - 1 - ly);
+                                    int alpha = 200 * fade_x / 2;
+                                    if (fade_y == 0) alpha = alpha * 2 / 3;
+                                    if (alpha > 255) alpha = 255;
+                                    uint32_t gc = ((uint32_t)alpha << 24) | 0x007799DDu;
                                     ABLEND(gc, grow[gx]);
+                                }
                             }
                         }
-                        /* Solid accent bar */
-                        fut_rect_t accent = { item_x + 8, item_y + DOCK_ITEM_H - 2,
-                                              DOCK_ITEM_W - 16, 2 };
-                        fut_rect_t accent_clip;
-                        if (rect_intersection(dock_clip, accent, &accent_clip))
-                            bb_fill_rect(dst, accent_clip, 0xFF7799DDu);
+                        /* Subtle glow halo around the dot */
+                        fut_rect_t halo = { dot_x - 3, dot_y - 2, dot_w + 6, dot_h + 4 };
+                        fut_rect_t halo_clip;
+                        if (rect_intersection(dock_clip, halo, &halo_clip)) {
+                            char *hbase = (char *)dst->px;
+                            for (int32_t hy = halo_clip.y; hy < halo_clip.y + halo_clip.h; hy++) {
+                                uint32_t *hrow = (uint32_t *)(hbase + (size_t)hy * dst->pitch);
+                                for (int32_t hx = halo_clip.x; hx < halo_clip.x + halo_clip.w; hx++) {
+                                    /* Skip the dot area itself */
+                                    if (hx >= dot_x && hx < dot_x + dot_w &&
+                                        hy >= dot_y && hy < dot_y + dot_h) continue;
+                                    int dx = hx < dot_x ? dot_x - hx : (hx >= dot_x + dot_w ? hx - (dot_x + dot_w - 1) : 0);
+                                    int dy = hy < dot_y ? dot_y - hy : (hy >= dot_y + dot_h ? hy - (dot_y + dot_h - 1) : 0);
+                                    int dist = dx * dx + dy * dy;
+                                    if (dist < 12) {
+                                        int ha = 20 - dist * 2;
+                                        if (ha > 0) {
+                                            uint32_t hc = ((uint32_t)ha << 24) | 0x007799DDu;
+                                            ABLEND(hc, hrow[hx]);
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     /* Draw window title text, centered in the item */
@@ -2213,38 +2282,77 @@ void comp_render_frame(struct compositor_state *comp) {
             touched = true;
         }
 
-        /* Draw a subtle 1px window border for definition */
+        /* Draw window border: focused gets a subtle blue glow, unfocused gets thin dark line */
         if (touched && comp->deco_enabled) {
             bool is_focused = (surface == comp->focused_surface);
-            uint32_t border_color = is_focused ? 0x60000000u : 0x30000000u;
             fut_rect_t wr = comp_window_rect(surface);
             char *bbase = (char *)dst->px;
 
-            /* Top, bottom, left, right 1px border lines */
-            int32_t edges[4][4] = {
-                { wr.x, wr.y, wr.w, 1 },               /* top */
-                { wr.x, wr.y + wr.h - 1, wr.w, 1 },    /* bottom */
-                { wr.x, wr.y, 1, wr.h },                /* left */
-                { wr.x + wr.w - 1, wr.y, 1, wr.h },    /* right */
-            };
-            for (int e = 0; e < 4; e++) {
-                fut_rect_t edge = { edges[e][0], edges[e][1], edges[e][2], edges[e][3] };
-                for (int di = 0; di < damage->count; ++di) {
-                    fut_rect_t ec;
-                    if (!rect_intersection(damage->rects[di], edge, &ec)) continue;
-                    for (int32_t py = ec.y; py < ec.y + ec.h; py++) {
-                        uint32_t *row = (uint32_t *)(bbase + (size_t)py * dst->pitch);
+            if (is_focused) {
+                /* Focused: 2px outer glow with blue tint + 1px inner border */
+                for (int glow_i = 0; glow_i < 3; glow_i++) {
+                    /* glow_i: 0 = outermost (2px out), 1 = 1px out, 2 = border itself */
+                    int offset = 2 - glow_i;
+                    uint32_t glow_color;
+                    if (glow_i == 0) glow_color = 0x18445588u;  /* Faint outer */
+                    else if (glow_i == 1) glow_color = 0x30556699u;  /* Mid glow */
+                    else glow_color = 0x50334466u;  /* Inner border */
+                    fut_rect_t gr = { wr.x - offset, wr.y - offset,
+                                      wr.w + offset * 2, wr.h + offset * 2 };
+                    int32_t gedges[4][4] = {
+                        { gr.x, gr.y, gr.w, 1 },
+                        { gr.x, gr.y + gr.h - 1, gr.w, 1 },
+                        { gr.x, gr.y, 1, gr.h },
+                        { gr.x + gr.w - 1, gr.y, 1, gr.h },
+                    };
+                    for (int e = 0; e < 4; e++) {
+                        fut_rect_t edge = { gedges[e][0], gedges[e][1], gedges[e][2], gedges[e][3] };
+                        for (int di = 0; di < damage->count; ++di) {
+                            fut_rect_t ec;
+                            if (!rect_intersection(damage->rects[di], edge, &ec)) continue;
+                            uint32_t sa = (glow_color >> 24) & 0xFF;
+                            uint32_t da_ = 255u - sa;
+                            uint32_t sr = (glow_color >> 16) & 0xFF;
+                            uint32_t sg = (glow_color >> 8) & 0xFF;
+                            uint32_t sb = glow_color & 0xFF;
+                            for (int32_t py = ec.y; py < ec.y + ec.h; py++) {
+                                uint32_t *row = (uint32_t *)(bbase + (size_t)py * dst->pitch);
+                                for (int32_t px = ec.x; px < ec.x + ec.w; px++) {
+                                    uint32_t d = row[px];
+                                    uint32_t or_ = (sr * sa + ((d >> 16) & 0xFF) * da_) / 255u;
+                                    uint32_t og = (sg * sa + ((d >> 8) & 0xFF) * da_) / 255u;
+                                    uint32_t ob = (sb * sa + (d & 0xFF) * da_) / 255u;
+                                    row[px] = 0xFF000000u | (or_ << 16) | (og << 8) | ob;
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                /* Unfocused: simple 1px dark border */
+                uint32_t border_color = 0x30000000u;
+                int32_t edges[4][4] = {
+                    { wr.x, wr.y, wr.w, 1 },
+                    { wr.x, wr.y + wr.h - 1, wr.w, 1 },
+                    { wr.x, wr.y, 1, wr.h },
+                    { wr.x + wr.w - 1, wr.y, 1, wr.h },
+                };
+                for (int e = 0; e < 4; e++) {
+                    fut_rect_t edge = { edges[e][0], edges[e][1], edges[e][2], edges[e][3] };
+                    for (int di = 0; di < damage->count; ++di) {
+                        fut_rect_t ec;
+                        if (!rect_intersection(damage->rects[di], edge, &ec)) continue;
                         uint32_t sa = (border_color >> 24) & 0xFF;
-                        uint32_t da = 255u - sa;
-                        uint32_t sr = (border_color >> 16) & 0xFF;
-                        uint32_t sg = (border_color >> 8) & 0xFF;
-                        uint32_t sb = border_color & 0xFF;
-                        for (int32_t px = ec.x; px < ec.x + ec.w; px++) {
-                            uint32_t d = row[px];
-                            uint32_t or_ = (sr * sa + ((d >> 16) & 0xFF) * da) / 255u;
-                            uint32_t og = (sg * sa + ((d >> 8) & 0xFF) * da) / 255u;
-                            uint32_t ob = (sb * sa + (d & 0xFF) * da) / 255u;
-                            row[px] = 0xFF000000u | (or_ << 16) | (og << 8) | ob;
+                        uint32_t da_ = 255u - sa;
+                        for (int32_t py = ec.y; py < ec.y + ec.h; py++) {
+                            uint32_t *row = (uint32_t *)(bbase + (size_t)py * dst->pitch);
+                            for (int32_t px = ec.x; px < ec.x + ec.w; px++) {
+                                uint32_t d = row[px];
+                                uint32_t or_ = ((d >> 16) & 0xFF) * da_ / 255u;
+                                uint32_t og = ((d >> 8) & 0xFF) * da_ / 255u;
+                                uint32_t ob = (d & 0xFF) * da_ / 255u;
+                                row[px] = 0xFF000000u | (or_ << 16) | (og << 8) | ob;
+                            }
                         }
                     }
                 }
@@ -2497,6 +2605,9 @@ static void comp_handle_timer_tick(struct compositor_state *comp, uint64_t expir
             int32_t fb_w = (int32_t)comp->fb_info.width;
             fut_rect_t dock_damage = { 0, fb_h - 42, fb_w, 42 };
             comp_damage_add_rect(comp, dock_damage);
+            /* Also damage the menu bar (clock + active window title) */
+            fut_rect_t mbar_damage = { 0, 0, fb_w, MENUBAR_HEIGHT };
+            comp_damage_add_rect(comp, mbar_damage);
         }
     }
 

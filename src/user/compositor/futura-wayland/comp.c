@@ -2043,6 +2043,19 @@ void comp_render_frame(struct compositor_state *comp) {
         for (int i = 0; i < damage->count; ++i) {
             fut_rect_t cc;
             if (!rect_intersection(damage->rects[i], clock_rect, &cc)) continue;
+            /* Skip if clipped area is fully behind an opaque window —
+             * prevents single-buffer flash where clock renders briefly
+             * before the window blit overwrites it. */
+            bool clk_occluded = false;
+            for (int oi = 0; oi < n_occluders; oi++) {
+                fut_rect_t w = occluders[oi];
+                if (cc.x >= w.x && cc.y >= w.y &&
+                    cc.x + cc.w <= w.x + w.w && cc.y + cc.h <= w.y + w.h) {
+                    clk_occluded = true;
+                    break;
+                }
+            }
+            if (clk_occluded) continue;
             /* Soft radial glow backdrop for readability */
             {
                 int glow_cx = clock_x + clock_text_w / 2;
@@ -2143,6 +2156,18 @@ void comp_render_frame(struct compositor_state *comp) {
             fut_rect_t wm_clip;
             if (!rect_intersection(damage->rects[i], wm_rect, &wm_clip))
                 continue;
+            /* Skip if fully behind a window */
+            bool wm_occluded = false;
+            for (int oi = 0; oi < n_occluders; oi++) {
+                fut_rect_t w = occluders[oi];
+                if (wm_clip.x >= w.x && wm_clip.y >= w.y &&
+                    wm_clip.x + wm_clip.w <= w.x + w.w &&
+                    wm_clip.y + wm_clip.h <= w.y + w.h) {
+                    wm_occluded = true;
+                    break;
+                }
+            }
+            if (wm_occluded) continue;
             /* Shadow offset (+2,+2) for depth at 2x */
             ui_draw_text_scaled(dst->px, dst->pitch, wm_x + 2, wm_y + 2,
                          0x18000000u, watermark, wm_scale,
@@ -2165,6 +2190,18 @@ void comp_render_frame(struct compositor_state *comp) {
                 fut_rect_t ver_clip;
                 if (!rect_intersection(damage->rects[i], ver_rect, &ver_clip))
                     continue;
+                /* Skip if fully behind a window */
+                bool ver_occluded = false;
+                for (int oi = 0; oi < n_occluders; oi++) {
+                    fut_rect_t w = occluders[oi];
+                    if (ver_clip.x >= w.x && ver_clip.y >= w.y &&
+                        ver_clip.x + ver_clip.w <= w.x + w.w &&
+                        ver_clip.y + ver_clip.h <= w.y + w.h) {
+                        ver_occluded = true;
+                        break;
+                    }
+                }
+                if (ver_occluded) continue;
                 ui_draw_text_scaled(dst->px, dst->pitch, ver_x + 1, ver_y + 1,
                              0x10000000u, ver, 1,
                              ver_clip.x, ver_clip.y, ver_clip.w, ver_clip.h);

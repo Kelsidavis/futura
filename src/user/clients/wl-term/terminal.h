@@ -99,7 +99,8 @@ int term_read_shell(struct terminal *term);
 void term_send_key(struct terminal *term, char ch);
 
 /* Render terminal to pixel buffer */
-void term_render(struct terminal *term, uint32_t *pixels, int32_t width, int32_t height, int32_t stride);
+void term_render(struct terminal *term, uint32_t *pixels, int32_t width, int32_t height, int32_t stride,
+                 int32_t pad_x, int32_t pad_y);
 
 /* Resize terminal grid (clamps to MAX dimensions, updates cursor) */
 void term_resize(struct terminal *term, int new_cols, int new_rows);

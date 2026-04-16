@@ -33,12 +33,16 @@
 #define WLTERM_LOG(...) ((void)0)
 #endif
 
-/* Initial terminal window size (80x25 chars = 640x400 pixels) */
-#define TERM_WIDTH  (TERM_COLS * FONT_WIDTH)
-#define TERM_HEIGHT (TERM_ROWS * FONT_HEIGHT)
-/* Maximum buffer size (matches TERM_MAX dimensions) */
-#define TERM_MAX_WIDTH  (TERM_MAX_COLS * FONT_WIDTH)
-#define TERM_MAX_HEIGHT (TERM_MAX_ROWS * FONT_HEIGHT)
+/* Inner padding around terminal content (px) */
+#define TERM_PAD_X  6
+#define TERM_PAD_Y  4
+
+/* Initial terminal window size (80x25 chars + padding) */
+#define TERM_WIDTH  (TERM_COLS * FONT_WIDTH + 2 * TERM_PAD_X)
+#define TERM_HEIGHT (TERM_ROWS * FONT_HEIGHT + 2 * TERM_PAD_Y)
+/* Maximum buffer size (matches TERM_MAX dimensions + padding) */
+#define TERM_MAX_WIDTH  (TERM_MAX_COLS * FONT_WIDTH + 2 * TERM_PAD_X)
+#define TERM_MAX_HEIGHT (TERM_MAX_ROWS * FONT_HEIGHT + 2 * TERM_PAD_Y)
 
 #define O_RDWR      0x0002
 #define O_CREAT     0x0040
@@ -136,9 +140,9 @@ static void xdg_toplevel_configure(void *data, struct xdg_toplevel *toplevel,
         return;
     }
 
-    /* Compute new grid dimensions from pixel size */
-    int new_cols = width / FONT_WIDTH;
-    int new_rows = height / FONT_HEIGHT;
+    /* Compute new grid dimensions from pixel size (subtract padding) */
+    int new_cols = (width - 2 * TERM_PAD_X) / FONT_WIDTH;
+    int new_rows = (height - 2 * TERM_PAD_Y) / FONT_HEIGHT;
     if (new_cols < 1) new_cols = 1;
     if (new_rows < 1) new_rows = 1;
     if (new_cols > TERM_MAX_COLS) new_cols = TERM_MAX_COLS;
@@ -152,9 +156,9 @@ static void xdg_toplevel_configure(void *data, struct xdg_toplevel *toplevel,
     /* Resize the terminal grid */
     term_resize(&state->term, new_cols, new_rows);
 
-    /* Update pixel dimensions to match grid (snap to char boundaries) */
-    state->pixel_width = new_cols * FONT_WIDTH;
-    state->pixel_height = new_rows * FONT_HEIGHT;
+    /* Update pixel dimensions to match grid (snap to char boundaries + padding) */
+    state->pixel_width = new_cols * FONT_WIDTH + 2 * TERM_PAD_X;
+    state->pixel_height = new_rows * FONT_HEIGHT + 2 * TERM_PAD_Y;
 
     /* Recreate buffer at new size */
     recreate_buffer(state);
@@ -698,7 +702,8 @@ static void redraw(struct client_state *state) {
 
     /* Render terminal to pixel buffer */
     uint32_t *pixels = (uint32_t *)state->shm_data;
-    term_render(&state->term, pixels, state->pixel_width, state->pixel_height, state->pixel_width);
+    term_render(&state->term, pixels, state->pixel_width, state->pixel_height, state->pixel_width,
+                TERM_PAD_X, TERM_PAD_Y);
 
     /* Destroy any old frame callback that was superseded by timeout */
     if (state->frame_cb) {
@@ -912,8 +917,8 @@ int main(void) {
     xdg_surface_ack_configure(state.xdg_surface, state.configure_serial);
 
     /* Set pixel dimensions from terminal grid (may have been resized by configure) */
-    state.pixel_width = state.term.cols * FONT_WIDTH;
-    state.pixel_height = state.term.rows * FONT_HEIGHT;
+    state.pixel_width = state.term.cols * FONT_WIDTH + 2 * TERM_PAD_X;
+    state.pixel_height = state.term.rows * FONT_HEIGHT + 2 * TERM_PAD_Y;
 
     /* Create shared memory buffer (unique per instance via PID).
      * Allocate at MAX size so we can resize without re-mmap. */

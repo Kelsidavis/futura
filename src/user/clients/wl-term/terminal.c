@@ -632,7 +632,8 @@ void term_send_key(struct terminal *term, char ch) {
     sys_write(term->shell_stdin_fd, &ch, 1);
 }
 
-void term_render(struct terminal *term, uint32_t *pixels, int32_t width, int32_t height, int32_t stride) {
+void term_render(struct terminal *term, uint32_t *pixels, int32_t width, int32_t height, int32_t stride,
+                 int32_t pad_x, int32_t pad_y) {
 
     /* Defensive check: reject NULL or suspiciously low pointer values */
     if (!term || !term->grid || !pixels || (uintptr_t)pixels < 0x10000) {
@@ -644,15 +645,10 @@ void term_render(struct terminal *term, uint32_t *pixels, int32_t width, int32_t
         return;
     }
 
-    /* Clear background - use min of expected size and actual buffer size */
-    int32_t clear_height = term->rows * FONT_HEIGHT;
-    int32_t clear_width = term->cols * FONT_WIDTH;
-    if (clear_height > height) clear_height = height;
-    if (clear_width > width) clear_width = width;
-
-    for (int y = 0; y < clear_height; y++) {
+    /* Clear entire background including padding area */
+    for (int y = 0; y < height; y++) {
         uint32_t *line = pixels + (size_t)y * (size_t)stride;
-        for (int x = 0; x < clear_width; x++) {
+        for (int x = 0; x < width; x++) {
             line[x] = COLOR_BLACK;
         }
     }
@@ -678,8 +674,8 @@ void term_render(struct terminal *term, uint32_t *pixels, int32_t width, int32_t
         }
 
         for (int col = 0; col < term->cols; col++) {
-            int px = col * FONT_WIDTH;
-            int py = row * FONT_HEIGHT;
+            int px = col * FONT_WIDTH + pad_x;
+            int py = row * FONT_HEIGHT + pad_y;
             font_render_char(cell_row[col].ch, pixels, px, py, stride, width, height,
                            cell_row[col].fg_color, cell_row[col].bg_color);
         }
@@ -691,8 +687,8 @@ void term_render(struct terminal *term, uint32_t *pixels, int32_t width, int32_t
     if (term->cursor_visible && term->cursor_blink_on &&
         term->cursor_x >= 0 && term->cursor_x < term->cols &&
         term->cursor_y >= 0 && term->cursor_y < term->rows) {
-        int cx = term->cursor_x * FONT_WIDTH;
-        int cy = term->cursor_y * FONT_HEIGHT;
+        int cx = term->cursor_x * FONT_WIDTH + pad_x;
+        int cy = term->cursor_y * FONT_HEIGHT + pad_y;
         char under_ch = term->grid[term->cursor_y][term->cursor_x].ch;
         uint32_t cursor_fg = COLOR_BLACK;
         uint32_t cursor_bg = 0xFF7AA2F7u;  /* Tokyo Night blue accent */

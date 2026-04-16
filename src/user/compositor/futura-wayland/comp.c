@@ -1574,6 +1574,14 @@ void comp_render_frame(struct compositor_state *comp) {
         surface->composed_this_tick = false;
     }
 
+    /* Get time for animated wallpaper elements */
+    struct { long tv_sec; long tv_nsec; } wp_ts = {0, 0};
+    {
+        extern long sys_call2(long nr, long a, long b);
+        sys_call2(98, 1, (long)&wp_ts);  /* CLOCK_MONOTONIC */
+    }
+    int wp_sec = (int)(wp_ts.tv_sec & 0x7FFFFFFF);
+
     /* Desktop background: gradient + radial glows + aurora bands + stars */
     for (int i = 0; i < damage->count; ++i) {
         fut_rect_t r = damage->rects[i];
@@ -1735,6 +1743,42 @@ void comp_render_frame(struct compositor_state *comp) {
                     if (pb > 255) pb = 255;
                 }
 
+                /* Shooting stars — 1 meteor every 3 seconds */
+                if ((wp_sec % 3) == 0) {
+                    uint32_t seed = (uint32_t)(wp_sec / 3) * 2654435761u;
+                    /* Only show on ~1/3 of cycles for rarity */
+                    if ((seed & 0x3) < 3) {
+                        int sx = (int)((seed >> 4) % (uint32_t)(fb_w * 2 / 3)) + fb_w / 6;
+                        int sy = (int)((seed >> 14) % (uint32_t)(fb_h / 4)) + 30;
+                        int trail_len = 35 + (int)((seed >> 22) & 0x1F);
+                        /* Trail endpoint: going down-right */
+                        int ex_t = sx + trail_len;
+                        int ey_t = sy + trail_len * 2 / 3;
+                        /* Check if pixel is near the trail line (sx,sy)->(ex_t,ey_t) */
+                        int tx = gx - sx, ty = gy - sy;
+                        int lx = ex_t - sx, ly = ey_t - sy;
+                        int len2 = lx * lx + ly * ly;
+                        if (len2 > 0) {
+                            int dot = tx * lx + ty * ly;
+                            if (dot >= 0 && dot <= len2) {
+                                /* Perpendicular distance squared */
+                                int cross = tx * ly - ty * lx;
+                                int perp2 = cross * cross / len2;
+                                if (perp2 <= 2) {
+                                    int t_frac = dot * 255 / len2;
+                                    /* Brighter at head (high t), fading toward tail */
+                                    int bright = t_frac * 180 / 255;
+                                    if (perp2 > 0) bright = bright * 2 / 3;
+                                    pr += bright; pg += bright; pb += bright * 3 / 4;
+                                    if (pr > 255) pr = 255;
+                                    if (pg > 255) pg = 255;
+                                    if (pb > 255) pb = 255;
+                                }
+                            }
+                        }
+                    }
+                }
+
                 /* Crescent moon in upper-right quadrant */
                 {
                     int moon_cx = fb_w * 4 / 5;
@@ -1752,13 +1796,17 @@ void comp_render_frame(struct compositor_state *comp) {
                         int dy_i = gy - inner_cy;
                         int d2_i = dx_i * dx_i + dy_i * dy_i;
                         if (d2_i > inner_r * inner_r) {
-                            /* In crescent — bright moon surface */
+                            /* In crescent — bright moon surface with craters */
                             int dist = d2_m * 255 / (moon_r * moon_r);
                             int edge_fade = dist > 220 ? (255 - dist) * 7 : 255;
                             if (edge_fade < 0) edge_fade = 0;
-                            int mr = 0xD0 * edge_fade / 255;
-                            int mg = 0xCC * edge_fade / 255;
-                            int mb = 0xB8 * edge_fade / 255;
+                            /* Crater texture: hash noise darkens some spots */
+                            uint32_t ch = (uint32_t)(gx * 1373 + gy * 7393);
+                            ch ^= ch >> 13; ch *= 0x5bd1e995u; ch ^= ch >> 15;
+                            int crater = (int)(ch & 0xF);  /* 0-15 */
+                            int mr = (0xD0 - (crater > 10 ? 20 : 0)) * edge_fade / 255;
+                            int mg = (0xCC - (crater > 10 ? 18 : 0)) * edge_fade / 255;
+                            int mb = (0xB8 - (crater > 10 ? 15 : 0)) * edge_fade / 255;
                             pr = pr + (mr - pr) * edge_fade / 255;
                             pg = pg + (mg - pg) * edge_fade / 255;
                             pb = pb + (mb - pb) * edge_fade / 255;
@@ -2381,6 +2429,7 @@ void comp_render_frame(struct compositor_state *comp) {
         long daytime = total_secs % 86400;
         int clock_hr = (int)(daytime / 3600);
         int clock_min = (int)((daytime % 3600) / 60);
+        int clock_sec = (int)(daytime % 60);
 
         /* Compute month and day from epoch seconds */
         long days_since_epoch = total_secs / 86400;
@@ -2421,7 +2470,7 @@ void comp_render_frame(struct compositor_state *comp) {
         clock_str[ci++] = ' ';
         clock_str[ci++] = '0' + (char)(clock_hr / 10);
         clock_str[ci++] = '0' + (char)(clock_hr % 10);
-        clock_str[ci++] = ':';
+        clock_str[ci++] = (clock_sec & 1) ? ' ' : ':';  /* Blink colon */
         clock_str[ci++] = '0' + (char)(clock_min / 10);
         clock_str[ci++] = '0' + (char)(clock_min % 10);
         clock_str[ci] = '\0';
@@ -4709,6 +4758,14 @@ static void comp_handle_timer_tick(struct compositor_state *comp, uint64_t expir
             comp->last_clock_min = (comp->last_clock_min & 0xFF) | (cur_sec << 8);
             int32_t fb_h = (int32_t)comp->fb_info.height;
             int32_t fb_w = (int32_t)comp->fb_info.width;
+
+            /* Damage shooting star area every 3 seconds */
+            if ((cur_sec % 3) == 0 || ((cur_sec - 1 + 60) % 3) == 0) {
+                /* Damage upper portion of wallpaper where meteors appear */
+                fut_rect_t meteor_dmg = { 0, 0, fb_w, fb_h / 3 };
+                comp_damage_add_rect(comp, meteor_dmg);
+            }
+
             int32_t clock_cy = fb_h * 28 / 100;
             fut_rect_t clock_dmg = { fb_w / 2 - 120, clock_cy - 6, 240, 120 };
             comp_damage_add_rect(comp, clock_dmg);

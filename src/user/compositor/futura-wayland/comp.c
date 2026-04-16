@@ -1804,6 +1804,46 @@ void comp_render_frame(struct compositor_state *comp) {
         for (int i = 0; i < damage->count; ++i) {
             fut_rect_t cc;
             if (!rect_intersection(damage->rects[i], clock_rect, &cc)) continue;
+            /* Soft radial glow backdrop for readability */
+            {
+                int glow_cx = clock_x + clock_text_w / 2;
+                int glow_cy = clock_y + clock_char_h / 2 + 16;
+                int glow_rx = clock_text_w / 2 + 40;
+                int glow_ry = clock_char_h + 32;
+                int gx0 = glow_cx - glow_rx, gx1 = glow_cx + glow_rx;
+                int gy0 = glow_cy - glow_ry, gy1 = glow_cy + glow_ry;
+                if (gx0 < cc.x) gx0 = cc.x;
+                if (gy0 < cc.y) gy0 = cc.y;
+                if (gx1 > cc.x + cc.w) gx1 = cc.x + cc.w;
+                if (gy1 > cc.y + cc.h) gy1 = cc.y + cc.h;
+                char *gbase = (char *)dst->px;
+                for (int gy = gy0; gy < gy1; gy++) {
+                    uint32_t *grow = (uint32_t *)(gbase + (size_t)gy * dst->pitch);
+                    int dy = gy - glow_cy;
+                    int dy2 = dy * dy * glow_rx * glow_rx;
+                    for (int gx = gx0; gx < gx1; gx++) {
+                        int ddx = gx - glow_cx;
+                        /* Elliptical distance: (dx/rx)^2 + (dy/ry)^2 */
+                        int d2 = ddx * ddx * glow_ry * glow_ry + dy2;
+                        int r2 = glow_rx * glow_rx * glow_ry * glow_ry;
+                        if (d2 >= r2) continue;
+                        /* Smooth falloff: alpha peaks at center */
+                        int alpha = 28 * (r2 - d2) / r2;
+                        if (alpha < 1) continue;
+                        /* Inline alpha blend */
+                        uint32_t _s = ((uint32_t)alpha << 24) | 0x00080810u;
+                        uint32_t _d = grow[gx];
+                        uint32_t _sa = _s >> 24;
+                        uint32_t _sr = (_s >> 16) & 0xFF, _sg = (_s >> 8) & 0xFF, _sb = _s & 0xFF;
+                        uint32_t _dr = (_d >> 16) & 0xFF, _dg = (_d >> 8) & 0xFF, _db = _d & 0xFF;
+                        uint32_t _ia = 255 - _sa;
+                        grow[gx] = 0xFF000000u
+                            | (((_sr * _sa + _dr * _ia) / 255) << 16)
+                            | (((_sg * _sa + _dg * _ia) / 255) << 8)
+                            | ((_sb * _sa + _db * _ia) / 255);
+                    }
+                }
+            }
             /* Shadow layer (offset +2,+2, dark) */
             ui_draw_text_scaled(dst->px, dst->pitch,
                                 clock_x + 2, clock_y + 2,
@@ -1930,26 +1970,65 @@ void comp_render_frame(struct compositor_state *comp) {
                 }
             }
 
-            /* "Futura" branding (left) — bold accent with subtle text shadow */
-            /* Active highlight when Futura menu is open */
-            if (comp->futura_menu_active) {
-                fut_rect_t brand_rect = { 4, 2, 6 * UI_FONT_WIDTH + 14, MENUBAR_HEIGHT - 4 };
-                fut_rect_t brand_clip;
-                if (rect_intersection(mbar_clip, brand_rect, &brand_clip)) {
-                    char *bbase = (char *)dst->px;
-                    for (int32_t by = brand_clip.y; by < brand_clip.y + brand_clip.h; by++) {
-                        uint32_t *brow = (uint32_t *)(bbase + (size_t)by * dst->pitch);
-                        for (int32_t bx = brand_clip.x; bx < brand_clip.x + brand_clip.w; bx++)
-                            ABLEND(0x20446688u, brow[bx]);
+            /* "Futura" branding (left) — diamond logo + text with active highlight */
+            {
+                int brand_w = 10 + 6 * UI_FONT_WIDTH + 10;
+                /* Active/hover highlight background */
+                bool brand_hover = (!comp->futura_menu_active &&
+                                    comp->pointer_y < MENUBAR_HEIGHT &&
+                                    comp->pointer_x >= 4 &&
+                                    comp->pointer_x < 4 + brand_w);
+                if (comp->futura_menu_active || brand_hover) {
+                    uint32_t hl_col = comp->futura_menu_active
+                        ? 0x28446688u : 0x18446688u;
+                    fut_rect_t brand_rect = { 4, 2, brand_w, MENUBAR_HEIGHT - 4 };
+                    fut_rect_t brand_clip;
+                    if (rect_intersection(mbar_clip, brand_rect, &brand_clip)) {
+                        char *bbase = (char *)dst->px;
+                        for (int32_t by = brand_clip.y; by < brand_clip.y + brand_clip.h; by++) {
+                            uint32_t *brow = (uint32_t *)(bbase + (size_t)by * dst->pitch);
+                            for (int32_t bx = brand_clip.x; bx < brand_clip.x + brand_clip.w; bx++)
+                                ABLEND(hl_col, brow[bx]);
+                        }
                     }
                 }
+
+                /* Tiny 8x8 diamond logo */
+                {
+                    int lx = 6, ly = 8;
+                    char *lbase = (char *)dst->px;
+                    for (int iy = 0; iy < 8; iy++) {
+                        int gy = ly + iy;
+                        if (gy < mbar_clip.y || gy >= mbar_clip.y + mbar_clip.h) continue;
+                        uint32_t *lrow = (uint32_t *)(lbase + (size_t)gy * dst->pitch);
+                        for (int ix = 0; ix < 8; ix++) {
+                            int gx = lx + ix;
+                            if (gx < mbar_clip.x || gx >= mbar_clip.x + mbar_clip.w) continue;
+                            /* Diamond shape: manhattan distance from center <= 3 */
+                            int dx = ix - 3, dy = iy - 3;
+                            if (dx < 0) dx = -dx;
+                            if (dy < 0) dy = -dy;
+                            if (dx + dy > 3) continue;
+                            /* Gradient: bright center to blue edge */
+                            int dist = dx + dy;
+                            uint32_t r, g, b;
+                            if (dist <= 1) { r = 0xBB; g = 0xCC; b = 0xFF; }
+                            else if (dist == 2) { r = 0x77; g = 0x99; b = 0xDD; }
+                            else { r = 0x55; g = 0x77; b = 0xBB; }
+                            uint32_t col = 0xFF000000u | (r << 16) | (g << 8) | b;
+                            lrow[gx] = col;
+                        }
+                    }
+                }
+
+                /* Text shadow + text */
+                ui_draw_text(dst->px, dst->pitch, 17, 5,
+                             0x40000000u, "Futura",
+                             mbar_clip.x, mbar_clip.y, mbar_clip.w, mbar_clip.h);
+                ui_draw_text(dst->px, dst->pitch, 16, 4,
+                             0xFF7799DDu, "Futura",
+                             mbar_clip.x, mbar_clip.y, mbar_clip.w, mbar_clip.h);
             }
-            ui_draw_text(dst->px, dst->pitch, 11, 5,
-                         0x40000000u, "Futura",
-                         mbar_clip.x, mbar_clip.y, mbar_clip.w, mbar_clip.h);
-            ui_draw_text(dst->px, dst->pitch, 10, 4,
-                         0xFF7799DDu, "Futura",
-                         mbar_clip.x, mbar_clip.y, mbar_clip.w, mbar_clip.h);
 
             /* Show focused window title in menu bar (after branding) */
             if (comp->focused_surface) {
@@ -1958,7 +2037,7 @@ void comp_render_frame(struct compositor_state *comp) {
                     : (comp->focused_surface->app_id[0]
                        ? comp->focused_surface->app_id : NULL);
                 if (win_title) {
-                    int sep_x = 10 + 6 * UI_FONT_WIDTH + 6;
+                    int sep_x = 16 + 6 * UI_FONT_WIDTH + 6;
                     /* Thin separator between branding and title */
                     fut_rect_t sep = { sep_x, 5, 1, MENUBAR_HEIGHT - 10 };
                     fut_rect_t sep_c;

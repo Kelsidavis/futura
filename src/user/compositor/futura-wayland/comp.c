@@ -1709,7 +1709,7 @@ void comp_render_frame(struct compositor_state *comp) {
                 if (pg > 255) pg = 255;
                 if (pb > 255) pb = 255;
 
-                /* Deterministic star field with colored stars */
+                /* Deterministic star field with colored stars + twinkling */
                 uint32_t hash = (uint32_t)(gx * 7919 + gy * 104729);
                 hash ^= hash >> 13;
                 hash *= 0x5bd1e995u;
@@ -1717,6 +1717,11 @@ void comp_render_frame(struct compositor_state *comp) {
                 if ((hash & 0x3FF) < 3) {
                     /* Bright star — with subtle color tint */
                     int brightness = 100 + (int)(hash >> 10 & 0x7F);
+                    /* Twinkling: modulate brightness with per-star phase */
+                    int twinkle_phase = (wp_sec + (int)(hash >> 20)) & 0x7;
+                    /* 8-step triangle wave: 0,1,2,3,4,3,2,1 → scale 60..100% */
+                    int wave = twinkle_phase < 4 ? twinkle_phase : (7 - twinkle_phase);
+                    brightness = brightness * (60 + wave * 10) / 100;
                     int star_type = (hash >> 17) & 0x7;
                     if (star_type == 0) {
                         /* Blue-white star */
@@ -1737,6 +1742,9 @@ void comp_render_frame(struct compositor_state *comp) {
                     if (pb > 255) pb = 255;
                 } else if ((hash & 0x7FF) < 5) {
                     int brightness = 40 + (int)(hash >> 11 & 0x3F);
+                    /* Dim stars twinkle too */
+                    int twinkle2 = (wp_sec + (int)(hash >> 14)) & 0x3;
+                    brightness = brightness * (70 + twinkle2 * 10) / 100;
                     pr += brightness; pg += brightness; pb += brightness + 8;
                     if (pr > 255) pr = 255;
                     if (pg > 255) pg = 255;
@@ -2238,13 +2246,14 @@ void comp_render_frame(struct compositor_state *comp) {
             long mb_daytime = mb_secs % 86400;
             int mb_hr = (int)(mb_daytime / 3600);
             int mb_min = (int)((mb_daytime % 3600) / 60);
+            int mb_sec = (int)(mb_daytime % 60);
 
             /* Day of week from epoch (Jan 1 1970 was Thursday) */
             int mb_dow = (int)((mb_secs / 86400 + 4) % 7);
             const char *dow_names[] = {"Sun","Mon","Tue","Wed","Thu","Fri","Sat"};
 
-            /* Build "Tue  20:43" */
-            char mb_time[16];
+            /* Build "Tue  20:43:05" */
+            char mb_time[20];
             const char *dn = dow_names[mb_dow];
             int ci = 0;
             mb_time[ci++] = dn[0]; mb_time[ci++] = dn[1]; mb_time[ci++] = dn[2];
@@ -2254,6 +2263,9 @@ void comp_render_frame(struct compositor_state *comp) {
             mb_time[ci++] = ':';
             mb_time[ci++] = '0' + (char)(mb_min / 10);
             mb_time[ci++] = '0' + (char)(mb_min % 10);
+            mb_time[ci++] = ':';
+            mb_time[ci++] = '0' + (char)(mb_sec / 10);
+            mb_time[ci++] = '0' + (char)(mb_sec % 10);
             mb_time[ci] = '\0';
 
             /* System tray indicators (right side, before clock) */
@@ -2456,8 +2468,8 @@ void comp_render_frame(struct compositor_state *comp) {
         const char *month_names[] = {"Jan","Feb","Mar","Apr","May","Jun",
                                      "Jul","Aug","Sep","Oct","Nov","Dec"};
 
-        /* Format: "Mar 28  14:05" */
-        char clock_str[16];
+        /* Format: "Mar 28  14:05:30" */
+        char clock_str[20];
         const char *mn = month_names[month];
         int ci = 0;
         clock_str[ci++] = mn[0];
@@ -2473,10 +2485,13 @@ void comp_render_frame(struct compositor_state *comp) {
         clock_str[ci++] = (clock_sec & 1) ? ' ' : ':';  /* Blink colon */
         clock_str[ci++] = '0' + (char)(clock_min / 10);
         clock_str[ci++] = '0' + (char)(clock_min % 10);
+        clock_str[ci++] = ':';
+        clock_str[ci++] = '0' + (char)(clock_sec / 10);
+        clock_str[ci++] = '0' + (char)(clock_sec % 10);
         clock_str[ci] = '\0';
         int clock_text_len = ci;
 
-        #define CLOCK_WIDTH_NEW (13 * UI_FONT_WIDTH + 16)  /* "Mar 28  HH:MM" + padding */
+        #define CLOCK_WIDTH_NEW (16 * UI_FONT_WIDTH + 16)  /* "Mar 28  HH:MM:SS" + padding */
 
         /* Dock geometry: items + separators + clock + desktop button */
         int items_w = n_windows > 0
@@ -4753,7 +4768,7 @@ static void comp_handle_timer_tick(struct compositor_state *comp, uint64_t expir
         sys_call2(98, 0, (long)&cts);  /* SYS_clock_gettime(CLOCK_REALTIME) */
         int cur_sec = (int)(cts.tv_sec % 60);
         int cur_min = (int)((cts.tv_sec % 3600) / 60);
-        /* Per-second: damage desktop clock area (blinking colon + seconds) */
+        /* Per-second: damage desktop clock, menubar clock, dock clock, and stars */
         if (cur_sec != (comp->last_clock_min >> 8)) {
             comp->last_clock_min = (comp->last_clock_min & 0xFF) | (cur_sec << 8);
             int32_t fb_h = (int32_t)comp->fb_info.height;
@@ -4766,19 +4781,22 @@ static void comp_handle_timer_tick(struct compositor_state *comp, uint64_t expir
                 comp_damage_add_rect(comp, meteor_dmg);
             }
 
+            /* Desktop clock */
             int32_t clock_cy = fb_h * 28 / 100;
             fut_rect_t clock_dmg = { fb_w / 2 - 120, clock_cy - 6, 240, 120 };
             comp_damage_add_rect(comp, clock_dmg);
-        }
-        /* Per-minute: damage dock and menubar clocks */
-        if (cur_min != (comp->last_clock_min & 0xFF)) {
-            comp->last_clock_min = (cur_sec << 8) | cur_min;
-            int32_t fb_h = (int32_t)comp->fb_info.height;
-            int32_t fb_w = (int32_t)comp->fb_info.width;
-            fut_rect_t dock_damage = { 0, fb_h - 42, fb_w, 42 };
-            comp_damage_add_rect(comp, dock_damage);
+
+            /* Menubar clock (seconds now displayed) */
             fut_rect_t mbar_damage = { 0, 0, fb_w, MENUBAR_HEIGHT };
             comp_damage_add_rect(comp, mbar_damage);
+
+            /* Dock clock (seconds + blinking colon) */
+            fut_rect_t dock_damage = { 0, fb_h - 48, fb_w, 48 };
+            comp_damage_add_rect(comp, dock_damage);
+        }
+        /* Per-minute: keep last_clock_min in sync */
+        if (cur_min != (comp->last_clock_min & 0xFF)) {
+            comp->last_clock_min = (cur_sec << 8) | cur_min;
         }
     }
 

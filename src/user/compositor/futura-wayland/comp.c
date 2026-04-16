@@ -508,8 +508,8 @@ static void draw_bar_segment(struct backbuffer *dst, fut_rect_t rect,
                              int32_t bar_top, int32_t bar_h, bool focused) {
     /* Refined title bar gradient with rounded top corners + focused accent */
     #define BAR_CORNER_R 6  /* Radius for rounded top corners */
-    uint32_t top_col = focused ? 0xFFF0F0F4u : 0xFFF8F8FAu;
-    uint32_t bot_col = focused ? 0xFFD8D8DEu : 0xFFEAEAEEu;
+    uint32_t top_col = focused ? 0xFFECECF6u : 0xFFF8F8FAu;
+    uint32_t bot_col = focused ? 0xFFD4D4E2u : 0xFFEAEAEEu;
     char *base = (char *)dst->px;
     for (int32_t y = 0; y < rect.h; ++y) {
         int32_t gy = rect.y + y;
@@ -3241,9 +3241,9 @@ void comp_render_frame(struct compositor_state *comp) {
                 }
             }
 
-            /* Focused window: subtle blue glow border */
+            /* Focused window: blue glow border */
             if (surface == comp->focused_surface && surface->shadow_px > 0) {
-                #define FOCUS_GLOW 4
+                #define FOCUS_GLOW 6
                 fut_rect_t glow_outer = {
                     window_rect.x - FOCUS_GLOW,
                     window_rect.y - FOCUS_GLOW,
@@ -3271,7 +3271,7 @@ void comp_render_frame(struct compositor_state *comp) {
                                 dx_in = gx - (window_rect.x + window_rect.w) + 1;
                             int dist = dx_in > dy_in ? dx_in : dy_in;
                             if (dist > 0 && dist <= FOCUS_GLOW) {
-                                int alpha = 40 * (FOCUS_GLOW + 1 - dist) / (FOCUS_GLOW + 1);
+                                int alpha = 55 * (FOCUS_GLOW + 1 - dist) / (FOCUS_GLOW + 1);
                                 uint32_t gc = ((uint32_t)alpha << 24) | 0x005577CCu;
                                 ABLEND(gc, grow[gx]);
                             }
@@ -3432,6 +3432,46 @@ void comp_render_frame(struct compositor_state *comp) {
                     }
                 }
                 #undef INSET_H
+            }
+
+            /* Thin 1px border outline on focused windows for crisp edge */
+            if (comp->deco_enabled && surface == comp->focused_surface) {
+                uint32_t border_col = 0x30445588u;
+                /* Left edge */
+                fut_rect_t bl = { content_rect.x, content_rect.y, 1, content_rect.h };
+                fut_rect_t blc;
+                if (rect_intersection(damage->rects[i], bl, &blc)) {
+                    char *bbase = (char *)dst->px;
+                    for (int32_t py = blc.y; py < blc.y + blc.h; py++) {
+                        uint32_t *brow = (uint32_t *)(bbase + (size_t)py * dst->pitch);
+                        for (int32_t px = blc.x; px < blc.x + blc.w; px++)
+                            ABLEND(border_col, brow[px]);
+                    }
+                }
+                /* Right edge */
+                fut_rect_t br = { content_rect.x + content_rect.w - 1, content_rect.y,
+                                  1, content_rect.h };
+                fut_rect_t brc;
+                if (rect_intersection(damage->rects[i], br, &brc)) {
+                    char *bbase = (char *)dst->px;
+                    for (int32_t py = brc.y; py < brc.y + brc.h; py++) {
+                        uint32_t *brow = (uint32_t *)(bbase + (size_t)py * dst->pitch);
+                        for (int32_t px = brc.x; px < brc.x + brc.w; px++)
+                            ABLEND(border_col, brow[px]);
+                    }
+                }
+                /* Bottom edge */
+                fut_rect_t bb = { content_rect.x, content_rect.y + content_rect.h - 1,
+                                  content_rect.w, 1 };
+                fut_rect_t bbc;
+                if (rect_intersection(damage->rects[i], bb, &bbc)) {
+                    char *bbase = (char *)dst->px;
+                    for (int32_t py = bbc.y; py < bbc.y + bbc.h; py++) {
+                        uint32_t *brow = (uint32_t *)(bbase + (size_t)py * dst->pitch);
+                        for (int32_t px = bbc.x; px < bbc.x + bbc.w; px++)
+                            ABLEND(border_col, brow[px]);
+                    }
+                }
             }
 
             /* Resize grip: 3 diagonal lines at bottom-right corner */

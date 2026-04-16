@@ -1841,9 +1841,20 @@ void comp_render_frame(struct compositor_state *comp) {
         int sec_x = (fb_w - sec_text_w) / 2;
         int sec_y = date_y + UI_FONT_HEIGHT + 6;
 
+        /* Time-of-day greeting below seconds */
+        const char *greeting;
+        if (wc_hr >= 5 && wc_hr < 12)       greeting = "Good Morning";
+        else if (wc_hr >= 12 && wc_hr < 17) greeting = "Good Afternoon";
+        else if (wc_hr >= 17 && wc_hr < 21) greeting = "Good Evening";
+        else                                 greeting = "Good Night";
+        int greet_len = 0;
+        while (greeting[greet_len]) greet_len++;
+        int greet_x = (fb_w - greet_len * UI_FONT_WIDTH) / 2;
+        int greet_y = sec_y + UI_FONT_HEIGHT * sec_scale + 16;
+
         /* Render clock with subtle drop shadow for readability */
         fut_rect_t clock_rect = { clock_x - 6, clock_y - 6,
-                                  clock_text_w + 12, clock_char_h + UI_FONT_HEIGHT + UI_FONT_HEIGHT * sec_scale + 40 };
+                                  clock_text_w + 12, greet_y + UI_FONT_HEIGHT + 8 - (clock_y - 6) };
         for (int i = 0; i < damage->count; ++i) {
             fut_rect_t cc;
             if (!rect_intersection(damage->rects[i], clock_rect, &cc)) continue;
@@ -1916,6 +1927,15 @@ void comp_render_frame(struct compositor_state *comp) {
                                 sec_x, sec_y,
                                 0x60C0C0E0u, wc_secs_str, sec_scale,
                                 cc.x, cc.y, cc.w, cc.h);
+            /* Time-of-day greeting */
+            ui_draw_text(dst->px, dst->pitch,
+                         greet_x + 1, greet_y + 1,
+                         0x20000000u, greeting,
+                         cc.x, cc.y, cc.w, cc.h);
+            ui_draw_text(dst->px, dst->pitch,
+                         greet_x, greet_y,
+                         0x70A0B0D0u, greeting,
+                         cc.x, cc.y, cc.w, cc.h);
         }
     }
 
@@ -4317,6 +4337,36 @@ void comp_render_frame(struct compositor_state *comp) {
         }
     }
 
+    /* Subtle cursor spotlight glow */
+    {
+        int32_t mx = comp->pointer_x;
+        int32_t my = comp->pointer_y;
+        int glow_r = 24;
+        int32_t gx0 = mx - glow_r, gy0 = my - glow_r;
+        int32_t gx1 = mx + glow_r, gy1 = my + glow_r;
+        int32_t fw = (int32_t)comp->fb_info.width;
+        int32_t fh = (int32_t)comp->fb_info.height;
+        if (gx0 < 0) gx0 = 0;
+        if (gy0 < 0) gy0 = 0;
+        if (gx1 > fw) gx1 = fw;
+        if (gy1 > fh) gy1 = fh;
+        char *gbase = (char *)dst->px;
+        for (int32_t gy = gy0; gy < gy1; gy++) {
+            uint32_t *grow = (uint32_t *)(gbase + (size_t)gy * dst->pitch);
+            int dy = gy - my;
+            for (int32_t gx = gx0; gx < gx1; gx++) {
+                int dx = gx - mx;
+                int d2 = dx * dx + dy * dy;
+                int r2 = glow_r * glow_r;
+                if (d2 >= r2) continue;
+                int a = 12 * (r2 - d2) / r2;
+                if (a < 1) continue;
+                uint32_t overlay = ((uint32_t)a << 24) | 0x00C0D0FFu;
+                ABLEND(overlay, grow[gx]);
+            }
+        }
+    }
+
     if (comp->cursor) {
         struct fut_fb_info info = comp->fb_info;
         info.pitch = (uint32_t)dst->pitch;
@@ -4929,13 +4979,17 @@ void comp_pointer_motion(struct compositor_state *comp, int32_t new_x, int32_t n
         return;
     }
 
-    comp_cursor_damage(comp, comp->pointer_x, comp->pointer_y, cursor_w, cursor_h);
+    /* Damage old cursor position + glow radius */
+    comp_cursor_damage(comp, comp->pointer_x - 24, comp->pointer_y - 24,
+                       cursor_w + 48, cursor_h + 48);
 
     comp->pointer_x = clamped_x;
     comp->pointer_y = clamped_y;
     cursor_set_position(comp->cursor, comp->pointer_x, comp->pointer_y);
 
-    comp_cursor_damage(comp, comp->pointer_x, comp->pointer_y, cursor_w, cursor_h);
+    /* Damage new cursor position + glow radius */
+    comp_cursor_damage(comp, comp->pointer_x - 24, comp->pointer_y - 24,
+                       cursor_w + 48, cursor_h + 48);
     comp->needs_repaint = true;
 
     /* Update dock hover state */

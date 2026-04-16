@@ -2393,7 +2393,7 @@ void comp_render_frame(struct compositor_state *comp) {
                         }
                     }
 
-                    /* Draw window title text, centered in the item */
+                    /* Draw window title text with small app color dot */
                     {
                         const char *src_title = ws->title[0]
                             ? ws->title
@@ -2405,8 +2405,38 @@ void comp_render_frame(struct compositor_state *comp) {
                             text_color = 0xFFFFFFFFu;
                         else
                             text_color = ws->title[0] ? DOCK_TEXT : DOCK_TEXT_DIM;
-                        int max_chars = (DOCK_ITEM_W - 12) / UI_FONT_WIDTH;
-                        if (max_chars > 15) max_chars = 15;
+
+                        /* Small colored circle icon (6x6) derived from title */
+                        {
+                            uint32_t th = 5381;
+                            for (int ci = 0; src_title[ci]; ci++)
+                                th = th * 33 + (uint8_t)src_title[ci];
+                            /* Pastel color from hash */
+                            uint32_t cr = 100 + (th & 0x7F);
+                            uint32_t cg = 100 + ((th >> 7) & 0x7F);
+                            uint32_t cb = 120 + ((th >> 14) & 0x7F);
+                            uint32_t dot_col = 0xFF000000u | (cr << 16) | (cg << 8) | cb;
+                            if (is_minimized) dot_col = 0xFF505060u;
+                            int dcx = item_x + 6;
+                            int dcy = item_y + DOCK_ITEM_H / 2;
+                            int dr = 3;
+                            fut_rect_t dot_r = { dcx - dr, dcy - dr, dr * 2, dr * 2 };
+                            fut_rect_t dot_c;
+                            if (rect_intersection(dock_clip, dot_r, &dot_c)) {
+                                char *dbase = (char *)dst->px;
+                                for (int32_t dy = dot_c.y; dy < dot_c.y + dot_c.h; dy++) {
+                                    uint32_t *drow = (uint32_t *)(dbase + (size_t)dy * dst->pitch);
+                                    for (int32_t ddx = dot_c.x; ddx < dot_c.x + dot_c.w; ddx++) {
+                                        int rx = ddx - dcx, ry = dy - dcy;
+                                        if (rx * rx + ry * ry <= dr * dr)
+                                            drow[ddx] = dot_col;
+                                    }
+                                }
+                            }
+                        }
+
+                        int max_chars = (DOCK_ITEM_W - 20) / UI_FONT_WIDTH;
+                        if (max_chars > 13) max_chars = 13;
                         if (max_chars > 0) {
                             int src_len = 0;
                             while (src_title[src_len]) src_len++;
@@ -2425,7 +2455,7 @@ void comp_render_frame(struct compositor_state *comp) {
                             dock_title[ti] = '\0';
 
                             int text_w = ti * UI_FONT_WIDTH;
-                            int tx = item_x + (DOCK_ITEM_W - text_w) / 2;
+                            int tx = item_x + 14 + (DOCK_ITEM_W - 14 - text_w) / 2;
                             int ty = item_y + (DOCK_ITEM_H - UI_FONT_HEIGHT) / 2;
                             ui_draw_text(dst->px, dst->pitch, tx, ty,
                                          text_color, dock_title,

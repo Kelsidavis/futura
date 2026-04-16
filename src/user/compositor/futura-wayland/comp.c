@@ -1727,11 +1727,12 @@ void comp_render_frame(struct compositor_state *comp) {
         int wc_min = (int)((wc_daytime % 3600) / 60);
         int wc_sec = (int)(wc_daytime % 60);
 
-        /* Format: "HH:MM" */
+        /* Format: "HH:MM" — colon blinks every second for live feel */
+        bool colon_on = (wc_sec & 1) == 0;
         char wc_time[8];
         wc_time[0] = '0' + (char)(wc_hr / 10);
         wc_time[1] = '0' + (char)(wc_hr % 10);
-        wc_time[2] = ':';
+        wc_time[2] = colon_on ? ':' : ' ';
         wc_time[3] = '0' + (char)(wc_min / 10);
         wc_time[4] = '0' + (char)(wc_min % 10);
         wc_time[5] = '\0';
@@ -1930,6 +1931,19 @@ void comp_render_frame(struct compositor_state *comp) {
             }
 
             /* "Futura" branding (left) — bold accent with subtle text shadow */
+            /* Active highlight when Futura menu is open */
+            if (comp->futura_menu_active) {
+                fut_rect_t brand_rect = { 4, 2, 6 * UI_FONT_WIDTH + 14, MENUBAR_HEIGHT - 4 };
+                fut_rect_t brand_clip;
+                if (rect_intersection(mbar_clip, brand_rect, &brand_clip)) {
+                    char *bbase = (char *)dst->px;
+                    for (int32_t by = brand_clip.y; by < brand_clip.y + brand_clip.h; by++) {
+                        uint32_t *brow = (uint32_t *)(bbase + (size_t)by * dst->pitch);
+                        for (int32_t bx = brand_clip.x; bx < brand_clip.x + brand_clip.w; bx++)
+                            ABLEND(0x20446688u, brow[bx]);
+                    }
+                }
+            }
             ui_draw_text(dst->px, dst->pitch, 11, 5,
                          0x40000000u, "Futura",
                          mbar_clip.x, mbar_clip.y, mbar_clip.w, mbar_clip.h);
@@ -2322,9 +2336,9 @@ void comp_render_frame(struct compositor_state *comp) {
                             uint32_t col = (alpha << 24) | (bg_r << 16) | (bg_g << 8) | bg_b;
                             ABLEND(col, row[px]);
 
-                            /* 1px frosted highlight at top edge */
-                            if (ry == 0 && alpha > 0x20) {
-                                uint32_t hi_alpha = alpha * 0x30 / 0xC8;
+                            /* 2px frosted glass highlight at top edge */
+                            if (ry <= 1 && alpha > 0x20) {
+                                uint32_t hi_alpha = alpha * (ry == 0 ? 0x40u : 0x18u) / 0xC8;
                                 uint32_t hi = (hi_alpha << 24) | 0x00FFFFFFu;
                                 ABLEND(hi, row[px]);
                             }
@@ -4398,15 +4412,24 @@ static void comp_handle_timer_tick(struct compositor_state *comp, uint64_t expir
         struct { long tv_sec; long tv_nsec; } cts = {0, 0};
         extern long sys_call2(long nr, long a, long b);
         sys_call2(98, 0, (long)&cts);  /* SYS_clock_gettime(CLOCK_REALTIME) */
+        int cur_sec = (int)(cts.tv_sec % 60);
         int cur_min = (int)((cts.tv_sec % 3600) / 60);
-        if (cur_min != comp->last_clock_min) {
-            comp->last_clock_min = cur_min;
-            /* Damage the dock strip at the bottom of the screen */
+        /* Per-second: damage desktop clock area (blinking colon + seconds) */
+        if (cur_sec != (comp->last_clock_min >> 8)) {
+            comp->last_clock_min = (comp->last_clock_min & 0xFF) | (cur_sec << 8);
+            int32_t fb_h = (int32_t)comp->fb_info.height;
+            int32_t fb_w = (int32_t)comp->fb_info.width;
+            int32_t clock_cy = fb_h * 28 / 100;
+            fut_rect_t clock_dmg = { fb_w / 2 - 120, clock_cy - 6, 240, 120 };
+            comp_damage_add_rect(comp, clock_dmg);
+        }
+        /* Per-minute: damage dock and menubar clocks */
+        if (cur_min != (comp->last_clock_min & 0xFF)) {
+            comp->last_clock_min = (cur_sec << 8) | cur_min;
             int32_t fb_h = (int32_t)comp->fb_info.height;
             int32_t fb_w = (int32_t)comp->fb_info.width;
             fut_rect_t dock_damage = { 0, fb_h - 42, fb_w, 42 };
             comp_damage_add_rect(comp, dock_damage);
-            /* Also damage the menu bar (clock + active window title) */
             fut_rect_t mbar_damage = { 0, 0, fb_w, MENUBAR_HEIGHT };
             comp_damage_add_rect(comp, mbar_damage);
         }

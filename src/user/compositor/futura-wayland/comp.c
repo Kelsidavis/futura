@@ -2038,30 +2038,54 @@ void comp_render_frame(struct compositor_state *comp) {
         }
     }
 
-    /* ── Desktop watermark (bottom-right, subtle translucent) ── */
+    /* ── Desktop watermark (bottom-right, elegant 2x scale) ── */
     {
         int32_t fb_w = (int32_t)comp->fb_info.width;
         int32_t fb_h = (int32_t)comp->fb_info.height;
-        const char *watermark = "Futura OS 0.9";
+        const char *watermark = "Futura OS";
         int wm_len = 0;
         while (watermark[wm_len]) wm_len++;
-        int wm_x = fb_w - wm_len * UI_FONT_WIDTH - 14;
-        int wm_y = fb_h - UI_FONT_HEIGHT - 54;  /* above dock area */
-        int wm_w = wm_len * UI_FONT_WIDTH + 4;
-        int wm_h = UI_FONT_HEIGHT + 4;
-        fut_rect_t wm_rect = { wm_x - 2, wm_y - 2, wm_w, wm_h };
+        int wm_scale = 2;
+        int wm_char_w = UI_FONT_WIDTH * wm_scale;
+        int wm_char_h = UI_FONT_HEIGHT * wm_scale;
+        int wm_x = fb_w - wm_len * wm_char_w - 18;
+        int wm_y = fb_h - wm_char_h - 58;  /* above dock area */
+        int wm_w = wm_len * wm_char_w + 8;
+        int wm_h = wm_char_h + 8;
+        fut_rect_t wm_rect = { wm_x - 4, wm_y - 4, wm_w + 4, wm_h + 4 };
         for (int i = 0; i < damage->count; ++i) {
             fut_rect_t wm_clip;
             if (!rect_intersection(damage->rects[i], wm_rect, &wm_clip))
                 continue;
-            /* Shadow offset (+1,+1) */
-            ui_draw_text_scaled(dst->px, dst->pitch, wm_x + 1, wm_y + 1,
-                         0x18000000u, watermark, 1,
+            /* Shadow offset (+2,+2) for depth at 2x */
+            ui_draw_text_scaled(dst->px, dst->pitch, wm_x + 2, wm_y + 2,
+                         0x18000000u, watermark, wm_scale,
                          wm_clip.x, wm_clip.y, wm_clip.w, wm_clip.h);
             /* Main text: semi-transparent light */
             ui_draw_text_scaled(dst->px, dst->pitch, wm_x, wm_y,
-                         0x28C0C8E0u, watermark, 1,
+                         0x30C0C8E0u, watermark, wm_scale,
                          wm_clip.x, wm_clip.y, wm_clip.w, wm_clip.h);
+        }
+        /* Version number below, at 1x scale, slightly dimmer */
+        {
+            const char *ver = "v0.9.0";
+            int ver_len = 0;
+            while (ver[ver_len]) ver_len++;
+            int ver_x = fb_w - ver_len * UI_FONT_WIDTH - 18;
+            int ver_y = wm_y + wm_char_h + 4;
+            fut_rect_t ver_rect = { ver_x - 2, ver_y - 2,
+                                    ver_len * UI_FONT_WIDTH + 4, UI_FONT_HEIGHT + 4 };
+            for (int i = 0; i < damage->count; ++i) {
+                fut_rect_t ver_clip;
+                if (!rect_intersection(damage->rects[i], ver_rect, &ver_clip))
+                    continue;
+                ui_draw_text_scaled(dst->px, dst->pitch, ver_x + 1, ver_y + 1,
+                             0x10000000u, ver, 1,
+                             ver_clip.x, ver_clip.y, ver_clip.w, ver_clip.h);
+                ui_draw_text_scaled(dst->px, dst->pitch, ver_x, ver_y,
+                             0x20A0A8B8u, ver, 1,
+                             ver_clip.x, ver_clip.y, ver_clip.w, ver_clip.h);
+            }
         }
     }
 
@@ -3048,6 +3072,47 @@ void comp_render_frame(struct compositor_state *comp) {
                 }
             }
 
+            /* Focused window: subtle blue glow border */
+            if (surface == comp->focused_surface && surface->shadow_px > 0) {
+                #define FOCUS_GLOW 4
+                fut_rect_t glow_outer = {
+                    window_rect.x - FOCUS_GLOW,
+                    window_rect.y - FOCUS_GLOW,
+                    window_rect.w + FOCUS_GLOW * 2,
+                    window_rect.h + FOCUS_GLOW * 2
+                };
+                fut_rect_t glow_clip;
+                if (rect_intersection(damage->rects[i], glow_outer, &glow_clip)) {
+                    char *gbase = (char *)dst->px;
+                    for (int32_t gy = glow_clip.y; gy < glow_clip.y + glow_clip.h; gy++) {
+                        uint32_t *grow = (uint32_t *)(gbase + (size_t)gy * dst->pitch);
+                        /* Distance to nearest window edge */
+                        int dy_in = 0;
+                        if (gy < window_rect.y) dy_in = window_rect.y - gy;
+                        else if (gy >= window_rect.y + window_rect.h)
+                            dy_in = gy - (window_rect.y + window_rect.h) + 1;
+                        for (int32_t gx = glow_clip.x; gx < glow_clip.x + glow_clip.w; gx++) {
+                            /* Skip pixels inside the window */
+                            if (gx >= window_rect.x && gx < window_rect.x + window_rect.w &&
+                                gy >= window_rect.y && gy < window_rect.y + window_rect.h)
+                                continue;
+                            int dx_in = 0;
+                            if (gx < window_rect.x) dx_in = window_rect.x - gx;
+                            else if (gx >= window_rect.x + window_rect.w)
+                                dx_in = gx - (window_rect.x + window_rect.w) + 1;
+                            int dist = dx_in > dy_in ? dx_in : dy_in;
+                            if (dist > 0 && dist <= FOCUS_GLOW) {
+                                int alpha = 40 * (FOCUS_GLOW + 1 - dist) / (FOCUS_GLOW + 1);
+                                uint32_t gc = ((uint32_t)alpha << 24) | 0x005577CCu;
+                                ABLEND(gc, grow[gx]);
+                            }
+                        }
+                    }
+                    touched = true;
+                }
+                #undef FOCUS_GLOW
+            }
+
             fut_rect_t clip;
             if (!rect_intersection(damage->rects[i], window_rect, &clip)) {
                 continue;
@@ -3198,6 +3263,35 @@ void comp_render_frame(struct compositor_state *comp) {
                     }
                 }
                 #undef INSET_H
+            }
+
+            /* Resize grip: 3 diagonal lines at bottom-right corner */
+            if (comp->deco_enabled && !surface->maximized) {
+                #define GRIP_SIZE 12
+                int32_t gr_x0 = content_rect.x + content_rect.w - GRIP_SIZE;
+                int32_t gr_y0 = content_rect.y + content_rect.h - GRIP_SIZE;
+                fut_rect_t grip_rect = { gr_x0, gr_y0, GRIP_SIZE, GRIP_SIZE };
+                fut_rect_t grip_clip;
+                if (rect_intersection(damage->rects[i], grip_rect, &grip_clip)) {
+                    char *grbase = (char *)dst->px;
+                    for (int32_t gy = grip_clip.y; gy < grip_clip.y + grip_clip.h; gy++) {
+                        uint32_t *grow = (uint32_t *)(grbase + (size_t)gy * dst->pitch);
+                        for (int32_t gx = grip_clip.x; gx < grip_clip.x + grip_clip.w; gx++) {
+                            int lx = gx - gr_x0;
+                            int ly = gy - gr_y0;
+                            /* Diagonal lines: lx + ly == GRIP_SIZE-2, -5, -8 */
+                            int sum = lx + ly;
+                            if (sum == GRIP_SIZE - 3 || sum == GRIP_SIZE - 6 ||
+                                sum == GRIP_SIZE - 9) {
+                                ABLEND(0x30FFFFFFu, grow[gx]);
+                            } else if (sum == GRIP_SIZE - 2 || sum == GRIP_SIZE - 5 ||
+                                       sum == GRIP_SIZE - 8) {
+                                ABLEND(0x20000000u, grow[gx]);
+                            }
+                        }
+                    }
+                }
+                #undef GRIP_SIZE
             }
 
             touched = true;

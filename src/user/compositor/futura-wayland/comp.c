@@ -1735,6 +1735,49 @@ void comp_render_frame(struct compositor_state *comp) {
                     if (pb > 255) pb = 255;
                 }
 
+                /* Crescent moon in upper-right quadrant */
+                {
+                    int moon_cx = fb_w * 4 / 5;
+                    int moon_cy = fb_h / 6;
+                    int moon_r = fb_h / 14;
+                    int dx_m = gx - moon_cx;
+                    int dy_m = gy - moon_cy;
+                    int d2_m = dx_m * dx_m + dy_m * dy_m;
+                    if (d2_m <= moon_r * moon_r) {
+                        /* Outer circle hit — check inner (shadow) circle offset */
+                        int inner_cx = moon_cx + moon_r / 3;
+                        int inner_cy = moon_cy - moon_r / 5;
+                        int inner_r = moon_r * 4 / 5;
+                        int dx_i = gx - inner_cx;
+                        int dy_i = gy - inner_cy;
+                        int d2_i = dx_i * dx_i + dy_i * dy_i;
+                        if (d2_i > inner_r * inner_r) {
+                            /* In crescent — bright moon surface */
+                            int dist = d2_m * 255 / (moon_r * moon_r);
+                            int edge_fade = dist > 220 ? (255 - dist) * 7 : 255;
+                            if (edge_fade < 0) edge_fade = 0;
+                            int mr = 0xD0 * edge_fade / 255;
+                            int mg = 0xCC * edge_fade / 255;
+                            int mb = 0xB8 * edge_fade / 255;
+                            pr = pr + (mr - pr) * edge_fade / 255;
+                            pg = pg + (mg - pg) * edge_fade / 255;
+                            pb = pb + (mb - pb) * edge_fade / 255;
+                        }
+                    }
+                    /* Moon glow halo */
+                    else if (d2_m <= (moon_r + 20) * (moon_r + 20)) {
+                        int dist = d2_m - moon_r * moon_r;
+                        int halo_area = (moon_r + 20) * (moon_r + 20) - moon_r * moon_r;
+                        int glow_i = 12 * (halo_area - dist) / halo_area;
+                        if (glow_i > 0) {
+                            pr += glow_i; pg += glow_i; pb += glow_i / 2;
+                            if (pr > 255) pr = 255;
+                            if (pg > 255) pg = 255;
+                            if (pb > 255) pb = 255;
+                        }
+                    }
+                }
+
                 /* Edge vignette: darken corners/edges for depth */
                 {
                     int ex = gx < cx ? gx : (fb_w - 1 - gx);
@@ -3068,6 +3111,31 @@ void comp_render_frame(struct compositor_state *comp) {
                 }
                 #undef CONTENT_CORNER_R
             }
+
+            /* Subtle inset shadow at top of content for recessed depth */
+            {
+                #define INSET_H 3
+                fut_rect_t inset_rect = { content_rect.x, content_rect.y,
+                                          content_rect.w, INSET_H };
+                fut_rect_t inset_clip;
+                if (rect_intersection(damage->rects[i], inset_rect, &inset_clip)) {
+                    char *ibase = (char *)dst->px;
+                    for (int32_t py = inset_clip.y; py < inset_clip.y + inset_clip.h; py++) {
+                        uint32_t *irow = (uint32_t *)(ibase + (size_t)py * dst->pitch);
+                        int row_in = py - content_rect.y;
+                        int darken = (INSET_H - row_in) * 18 / INSET_H;
+                        for (int32_t px = inset_clip.x; px < inset_clip.x + inset_clip.w; px++) {
+                            uint32_t d = irow[px];
+                            uint32_t dr = ((d >> 16) & 0xFF) * (255 - darken) / 255;
+                            uint32_t dg = ((d >> 8) & 0xFF) * (255 - darken) / 255;
+                            uint32_t db = (d & 0xFF) * (255 - darken) / 255;
+                            irow[px] = 0xFF000000u | (dr << 16) | (dg << 8) | db;
+                        }
+                    }
+                }
+                #undef INSET_H
+            }
+
             touched = true;
         }
 

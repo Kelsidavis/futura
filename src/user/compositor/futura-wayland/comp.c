@@ -1725,6 +1725,7 @@ void comp_render_frame(struct compositor_state *comp) {
         long wc_daytime = wc_secs % 86400;
         int wc_hr = (int)(wc_daytime / 3600);
         int wc_min = (int)((wc_daytime % 3600) / 60);
+        int wc_sec = (int)(wc_daytime % 60);
 
         /* Format: "HH:MM" */
         char wc_time[8];
@@ -1784,9 +1785,21 @@ void comp_render_frame(struct compositor_state *comp) {
         int date_x = (fb_w - date_w) / 2;
         int date_y = clock_y + clock_char_h + 12;
 
+        /* Seconds line: ":SS" below date, scale=2 */
+        char wc_secs_str[4];
+        wc_secs_str[0] = ':';
+        wc_secs_str[1] = '0' + (char)(wc_sec / 10);
+        wc_secs_str[2] = '0' + (char)(wc_sec % 10);
+        wc_secs_str[3] = '\0';
+        int sec_scale = 2;
+        int sec_char_w = UI_FONT_WIDTH * sec_scale;
+        int sec_text_w = 3 * sec_char_w;
+        int sec_x = (fb_w - sec_text_w) / 2;
+        int sec_y = date_y + UI_FONT_HEIGHT + 6;
+
         /* Render clock with subtle drop shadow for readability */
         fut_rect_t clock_rect = { clock_x - 6, clock_y - 6,
-                                  clock_text_w + 12, clock_char_h + UI_FONT_HEIGHT + 28 };
+                                  clock_text_w + 12, clock_char_h + UI_FONT_HEIGHT + UI_FONT_HEIGHT * sec_scale + 40 };
         for (int i = 0; i < damage->count; ++i) {
             fut_rect_t cc;
             if (!rect_intersection(damage->rects[i], clock_rect, &cc)) continue;
@@ -1810,6 +1823,15 @@ void comp_render_frame(struct compositor_state *comp) {
                          date_x, date_y,
                          0x90D8D8F0u, wc_date,
                          cc.x, cc.y, cc.w, cc.h);
+            /* Seconds display (smaller, dimmer) */
+            ui_draw_text_scaled(dst->px, dst->pitch,
+                                sec_x + 1, sec_y + 1,
+                                0x20000000u, wc_secs_str, sec_scale,
+                                cc.x, cc.y, cc.w, cc.h);
+            ui_draw_text_scaled(dst->px, dst->pitch,
+                                sec_x, sec_y,
+                                0x60C0C0E0u, wc_secs_str, sec_scale,
+                                cc.x, cc.y, cc.w, cc.h);
         }
     }
 
@@ -2072,6 +2094,44 @@ void comp_render_frame(struct compositor_state *comp) {
                             if (dist_sq >= 90 && dist_sq <= 125 && dy <= -6 && dx >= -10 && dx <= 10) pixel = true;
                             if (pixel) {
                                 ABLEND(0xD070C890u, nrow[gx]);
+                            }
+                        }
+                    }
+                }
+
+                /* Battery icon: rounded rectangle with charge level (16x10 px) */
+                {
+                    int bix = sep_x2 - 60;
+                    int biy = 7;
+                    /* Battery body: 13x10 rounded rect, +2px tip on right */
+                    char *bbase = (char *)dst->px;
+                    uint32_t bat_col = 0xD090B890u;  /* Green tint */
+                    for (int by = 0; by < 10; by++) {
+                        int gy = biy + by;
+                        if (gy < mbar_clip.y || gy >= mbar_clip.y + mbar_clip.h) continue;
+                        uint32_t *brow = (uint32_t *)(bbase + (size_t)gy * dst->pitch);
+                        for (int bx = 0; bx < 16; bx++) {
+                            int gx = bix + bx;
+                            if (gx < mbar_clip.x || gx >= mbar_clip.x + mbar_clip.w) continue;
+                            bool pixel = false;
+                            /* Battery tip (right nub): cols 13-14, rows 3-6 */
+                            if (bx >= 13 && bx <= 14 && by >= 3 && by <= 6) {
+                                pixel = true;
+                            }
+                            /* Body outline (0-12 x 0-9) with rounded corners */
+                            else if (bx <= 12) {
+                                bool is_edge = (by == 0 || by == 9 || bx == 0 || bx == 12);
+                                /* Round corners: skip 1px at each corner */
+                                if (bx == 0 && (by == 0 || by == 9)) is_edge = false;
+                                if (bx == 12 && (by == 0 || by == 9)) is_edge = false;
+                                if (is_edge) pixel = true;
+                                /* Fill interior: charge level (80% = 8 of 10 cols) */
+                                if (bx >= 2 && bx <= 10 && by >= 2 && by <= 7) {
+                                    if (bx <= 9) pixel = true;  /* ~80% charge */
+                                }
+                            }
+                            if (pixel) {
+                                ABLEND(bat_col, brow[gx]);
                             }
                         }
                     }
@@ -2686,7 +2746,6 @@ void comp_render_frame(struct compositor_state *comp) {
             }
         }
 
-        #undef ABLEND
     }
 
     int surface_count = 0;
@@ -3676,7 +3735,7 @@ void comp_render_frame(struct compositor_state *comp) {
     /* About Futura dialog overlay */
     if (comp->about_active) {
         #define ABOUT_W    320
-        #define ABOUT_H    260
+        #define ABOUT_H    290
         #define ABOUT_R    12
         #define ABOUT_BG   0xF0181828u
         #define ABOUT_BORDER 0x70667799u
@@ -3762,9 +3821,75 @@ void comp_render_frame(struct compositor_state *comp) {
                 }
             }
 
-            /* Title — centered large text */
+            /* Futura logo: geometric diamond/star shape (24x24 px) */
+            {
+                int logo_cx = ax + ABOUT_W / 2;
+                int logo_cy = ay + 28;
+                int logo_r = 12;
+                char *lbase = (char *)dst->px;
+                for (int ly = -logo_r; ly <= logo_r; ly++) {
+                    int gy = logo_cy + ly;
+                    if (gy < ac.y || gy >= ac.y + ac.h) continue;
+                    uint32_t *lrow = (uint32_t *)(lbase + (size_t)gy * dst->pitch);
+                    int aly = ly < 0 ? -ly : ly;
+                    for (int lx = -logo_r; lx <= logo_r; lx++) {
+                        int gx = logo_cx + lx;
+                        if (gx < ac.x || gx >= ac.x + ac.w) continue;
+                        int alx = lx < 0 ? -lx : lx;
+                        /* Diamond shape: |x| + |y| <= r */
+                        int manhattan = alx + aly;
+                        if (manhattan > logo_r) continue;
+                        /* Gradient from bright center to blue edge */
+                        int frac = manhattan * 255 / logo_r;
+                        uint32_t lr = 0x99 + (0x44 - 0x99) * frac / 255;
+                        if (lr > 255) lr = 0;
+                        uint32_t lg = 0xBB + (0x66 - 0xBB) * frac / 255;
+                        if (lg > 255) lg = 0;
+                        uint32_t lb = 0xFF + (0xBB - 0xFF) * frac / 255;
+                        if (lb > 255) lb = 0xFF;
+                        /* Anti-aliased edge: soften outermost 2px */
+                        uint32_t la = 0xFF;
+                        if (manhattan >= logo_r - 1) {
+                            la = (uint32_t)((logo_r - manhattan + 1) * 200);
+                            if (la > 0xFF) la = 0xFF;
+                        }
+                        uint32_t lc = (la << 24) | (lr << 16) | (lg << 8) | lb;
+                        ABLEND(lc, lrow[gx]);
+                    }
+                }
+                /* Inner "F" letter cutout (dark) — 6x10 centered */
+                /* F shape: top bar, middle bar, left stem */
+                static const uint8_t f_bits[10] = {
+                    0x7C, /* .#####. */
+                    0x7C, /* .#####. */
+                    0x60, /* .##.... */
+                    0x60, /* .##.... */
+                    0x78, /* .####.. */
+                    0x78, /* .####.. */
+                    0x60, /* .##.... */
+                    0x60, /* .##.... */
+                    0x60, /* .##.... */
+                    0x60, /* .##.... */
+                };
+                int fx0 = logo_cx - 3;
+                int fy0 = logo_cy - 5;
+                for (int fy = 0; fy < 10; fy++) {
+                    int gy = fy0 + fy;
+                    if (gy < ac.y || gy >= ac.y + ac.h) continue;
+                    uint32_t *frow = (uint32_t *)(lbase + (size_t)gy * dst->pitch);
+                    uint8_t bits = f_bits[fy];
+                    for (int fx = 0; fx < 7; fx++) {
+                        if (!(bits & (0x80u >> fx))) continue;
+                        int gx = fx0 + fx;
+                        if (gx < ac.x || gx >= ac.x + ac.w) continue;
+                        ABLEND(0xC0101020u, frow[gx]);
+                    }
+                }
+            }
+
+            /* Title — centered large text below logo */
             ui_draw_text_scaled(dst->px, dst->pitch,
-                         ax + (ABOUT_W - 9 * UI_FONT_WIDTH * 2) / 2, ay + 16,
+                         ax + (ABOUT_W - 9 * UI_FONT_WIDTH * 2) / 2, ay + 46,
                          0xFF7799DDu, "Futura OS", 2,
                          ac.x, ac.y, ac.w, ac.h);
 
@@ -3773,14 +3898,14 @@ void comp_render_frame(struct compositor_state *comp) {
                 const char *tag = "The Future of Computing";
                 int tag_len = 23;
                 int tag_x = ax + (ABOUT_W - tag_len * UI_FONT_WIDTH) / 2;
-                ui_draw_text(dst->px, dst->pitch, tag_x, ay + 52,
+                ui_draw_text(dst->px, dst->pitch, tag_x, ay + 82,
                              0xFF8090A8u, tag,
                              ac.x, ac.y, ac.w, ac.h);
             }
 
             /* Separator */
             {
-                fut_rect_t sep = { ax + 20, ay + 74, ABOUT_W - 40, 1 };
+                fut_rect_t sep = { ax + 20, ay + 100, ABOUT_W - 40, 1 };
                 fut_rect_t sc;
                 if (rect_intersection(ac, sep, &sc)) {
                     for (int32_t spy = sc.y; spy < sc.y + sc.h; spy++) {
@@ -3792,19 +3917,19 @@ void comp_render_frame(struct compositor_state *comp) {
             }
 
             /* Info lines */
-            ui_draw_text(dst->px, dst->pitch, ax + 24, ay + 88,
+            ui_draw_text(dst->px, dst->pitch, ax + 24, ay + 114,
                          0xFFA0A0B0u, "Version       0.9.0",
                          ac.x, ac.y, ac.w, ac.h);
-            ui_draw_text(dst->px, dst->pitch, ax + 24, ay + 108,
+            ui_draw_text(dst->px, dst->pitch, ax + 24, ay + 134,
                          0xFFA0A0B0u, "Desktop       Horizon",
                          ac.x, ac.y, ac.w, ac.h);
-            ui_draw_text(dst->px, dst->pitch, ax + 24, ay + 128,
+            ui_draw_text(dst->px, dst->pitch, ax + 24, ay + 154,
                          0xFFA0A0B0u, "Display       Wayland",
                          ac.x, ac.y, ac.w, ac.h);
-            ui_draw_text(dst->px, dst->pitch, ax + 24, ay + 148,
+            ui_draw_text(dst->px, dst->pitch, ax + 24, ay + 174,
                          0xFFA0A0B0u, "Kernel        Futura",
                          ac.x, ac.y, ac.w, ac.h);
-            ui_draw_text(dst->px, dst->pitch, ax + 24, ay + 168,
+            ui_draw_text(dst->px, dst->pitch, ax + 24, ay + 194,
                          0xFFA0A0B0u, "Architecture  x86_64",
                          ac.x, ac.y, ac.w, ac.h);
 
@@ -3828,14 +3953,14 @@ void comp_render_frame(struct compositor_state *comp) {
                 if (fh >= 10) res_buf[ri++] = '0' + (char)(fh / 10 % 10);
                 res_buf[ri++] = '0' + (char)(fh % 10);
                 res_buf[ri] = '\0';
-                ui_draw_text(dst->px, dst->pitch, ax + 24, ay + 188,
+                ui_draw_text(dst->px, dst->pitch, ax + 24, ay + 214,
                              0xFFA0A0B0u, res_buf,
                              ac.x, ac.y, ac.w, ac.h);
             }
 
             /* Second separator */
             {
-                fut_rect_t sep2 = { ax + 20, ay + 212, ABOUT_W - 40, 1 };
+                fut_rect_t sep2 = { ax + 20, ay + 238, ABOUT_W - 40, 1 };
                 fut_rect_t sc2;
                 if (rect_intersection(ac, sep2, &sc2)) {
                     for (int32_t spy = sc2.y; spy < sc2.y + sc2.h; spy++) {
@@ -3851,7 +3976,7 @@ void comp_render_frame(struct compositor_state *comp) {
                 const char *cr = "Copyright 2025-2026";
                 int cr_len = 19;
                 int cr_x = ax + (ABOUT_W - cr_len * UI_FONT_WIDTH) / 2;
-                ui_draw_text(dst->px, dst->pitch, cr_x, ay + 222,
+                ui_draw_text(dst->px, dst->pitch, cr_x, ay + 250,
                              0xFF707088u, cr,
                              ac.x, ac.y, ac.w, ac.h);
             }
@@ -3979,6 +4104,8 @@ void comp_render_frame(struct compositor_state *comp) {
 #else
     (void)frame_cb_count;
 #endif
+
+    #undef ABLEND
 
     comp->frame_damage.count = 0;
     comp->needs_repaint = false;

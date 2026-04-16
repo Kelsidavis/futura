@@ -389,11 +389,13 @@ long sys_wait4(int pid, int *u_status, int flags, void *rusage_ptr) {
     /* Snapshot parent's accumulated child stats before reap so we can
      * compute the delta (= reaped child's own stats) for wait4 rusage. */
     fut_task_t *w4_task = fut_task_current();
-    uint64_t pre_child_minflt  = w4_task ? w4_task->child_minflt : 0;
-    uint64_t pre_child_majflt  = w4_task ? w4_task->child_majflt : 0;
-    uint64_t pre_child_nvcsw   = w4_task ? w4_task->child_context_switches : 0;
-    uint64_t pre_child_vol     = w4_task ? w4_task->child_voluntary_switches : 0;
-    uint64_t pre_child_maxrss  = w4_task ? w4_task->child_maxrss_kb : 0;
+    if (!w4_task)
+        return -ECHILD;
+    uint64_t pre_child_minflt  = w4_task->child_minflt;
+    uint64_t pre_child_majflt  = w4_task->child_majflt;
+    uint64_t pre_child_nvcsw   = w4_task->child_context_switches;
+    uint64_t pre_child_vol     = w4_task->child_voluntary_switches;
+    uint64_t pre_child_maxrss  = w4_task->child_maxrss_kb;
 
     int status = 0;
     uint64_t child_ticks = 0;

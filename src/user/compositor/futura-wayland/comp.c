@@ -3027,10 +3027,12 @@ void comp_render_frame(struct compositor_state *comp) {
 
     /* Draw desktop right-click context menu */
     if (comp->ctx_menu_active) {
-        #define CTX_W     220
+        #define CTX_W     240
         #define CTX_ITEM_H 28
         #define CTX_ITEMS  6
         #define CTX_SEP_AFTER_1 1   /* separator after item index 1 */
+        #define CTX_SEP_AFTER_2 3   /* separator after item index 3 */
+        #define CTX_NUM_SEPS 2
         #define CTX_SEP_H  9       /* separator row height */
         #define CTX_PAD    4
         #define CTX_CORNER 6
@@ -3040,8 +3042,8 @@ void comp_render_frame(struct compositor_state *comp) {
         #define CTX_HINT   0xFF808098u  /* Dimmer shortcut hint */
         #define CTX_SEP    0x40667788u
 
-        /* Menu height: items + separator row + padding */
-        int32_t menu_h = CTX_PAD + CTX_ITEMS * CTX_ITEM_H + CTX_SEP_H + CTX_PAD;
+        /* Menu height: items + separator rows + padding */
+        int32_t menu_h = CTX_PAD + CTX_ITEMS * CTX_ITEM_H + CTX_NUM_SEPS * CTX_SEP_H + CTX_PAD;
         int32_t menu_x = comp->ctx_menu_x;
         int32_t menu_y = comp->ctx_menu_y;
         /* Clamp to screen */
@@ -3081,21 +3083,30 @@ void comp_render_frame(struct compositor_state *comp) {
                     }
 
                     /* Check if this pixel is in a hovered item
-                     * Layout: PAD | item0 | item1 | SEP_H | item2 | item3 | PAD */
+                     * Layout: PAD | item0 | item1 | SEP | item2..3 | SEP | item4..5 | PAD */
                     int item_idx = -1;
                     int32_t local_ry = ry - CTX_PAD;
                     if (local_ry >= 0) {
-                        /* Items before separator */
-                        int before_sep = (CTX_SEP_AFTER_1 + 1) * CTX_ITEM_H;
-                        if (local_ry < before_sep) {
+                        /* Group 1: items 0..CTX_SEP_AFTER_1 */
+                        int g1_h = (CTX_SEP_AFTER_1 + 1) * CTX_ITEM_H;
+                        /* Group 2: items (CTX_SEP_AFTER_1+1)..CTX_SEP_AFTER_2 */
+                        int g2_start = g1_h + CTX_SEP_H;
+                        int g2_count = CTX_SEP_AFTER_2 - CTX_SEP_AFTER_1;
+                        int g2_h = g2_count * CTX_ITEM_H;
+                        /* Group 3: items (CTX_SEP_AFTER_2+1)..end */
+                        int g3_start = g2_start + g2_h + CTX_SEP_H;
+                        int g3_count = CTX_ITEMS - CTX_SEP_AFTER_2 - 1;
+                        int g3_h = g3_count * CTX_ITEM_H;
+                        if (local_ry < g1_h) {
                             item_idx = local_ry / CTX_ITEM_H;
-                        } else if (local_ry >= before_sep + CTX_SEP_H &&
-                                   local_ry < before_sep + CTX_SEP_H +
-                                   (CTX_ITEMS - CTX_SEP_AFTER_1 - 1) * CTX_ITEM_H) {
+                        } else if (local_ry >= g2_start && local_ry < g2_start + g2_h) {
                             item_idx = CTX_SEP_AFTER_1 + 1 +
-                                       (local_ry - before_sep - CTX_SEP_H) / CTX_ITEM_H;
+                                       (local_ry - g2_start) / CTX_ITEM_H;
+                        } else if (local_ry >= g3_start && local_ry < g3_start + g3_h) {
+                            item_idx = CTX_SEP_AFTER_2 + 1 +
+                                       (local_ry - g3_start) / CTX_ITEM_H;
                         }
-                        /* else: in the separator gap → item_idx stays -1 */
+                        (void)g3_h;
                     }
 
                     uint32_t bg = CTX_BG;
@@ -3146,39 +3157,72 @@ void comp_render_frame(struct compositor_state *comp) {
                 }
             }
 
-            /* Draw separator line between groups */
+            /* Draw separator lines between groups */
             {
-                int sep_top = (CTX_SEP_AFTER_1 + 1) * CTX_ITEM_H + CTX_PAD;
-                int32_t sy = menu_y + sep_top + CTX_SEP_H / 2;
-                fut_rect_t sep_line = { menu_x + 8, sy, CTX_W - 16, 1 };
-                fut_rect_t slc;
-                if (rect_intersection(mc, sep_line, &slc)) {
-                    char *slbase = (char *)dst->px;
-                    for (int32_t spy = slc.y; spy < slc.y + slc.h; spy++) {
-                        uint32_t *srow = (uint32_t *)(slbase + (size_t)spy * dst->pitch);
-                        for (int32_t spx = slc.x; spx < slc.x + slc.w; spx++) {
-                            uint32_t sa = (CTX_SEP >> 24) & 0xFF;
-                            uint32_t da = 255u - sa;
-                            uint32_t sr = (CTX_SEP >> 16) & 0xFF;
-                            uint32_t sg = (CTX_SEP >> 8) & 0xFF;
-                            uint32_t sb_ = CTX_SEP & 0xFF;
-                            uint32_t d = srow[spx];
-                            uint32_t or_ = (sr * sa + ((d >> 16) & 0xFF) * da) / 255u;
-                            uint32_t og = (sg * sa + ((d >> 8) & 0xFF) * da) / 255u;
-                            uint32_t ob = (sb_ * sa + (d & 0xFF) * da) / 255u;
-                            srow[spx] = 0xFF000000u | (or_ << 16) | (og << 8) | ob;
+                int sep_positions[2] = { CTX_SEP_AFTER_1, CTX_SEP_AFTER_2 };
+                for (int si = 0; si < CTX_NUM_SEPS; si++) {
+                    /* Y position: items before this sep + previous seps */
+                    int items_above = sep_positions[si] + 1;
+                    int seps_above = si;
+                    int sep_top = items_above * CTX_ITEM_H + seps_above * CTX_SEP_H + CTX_PAD;
+                    int32_t sy = menu_y + sep_top + CTX_SEP_H / 2;
+                    fut_rect_t sep_line = { menu_x + 8, sy, CTX_W - 16, 1 };
+                    fut_rect_t slc;
+                    if (rect_intersection(mc, sep_line, &slc)) {
+                        char *slbase = (char *)dst->px;
+                        for (int32_t spy = slc.y; spy < slc.y + slc.h; spy++) {
+                            uint32_t *srow = (uint32_t *)(slbase + (size_t)spy * dst->pitch);
+                            for (int32_t spx = slc.x; spx < slc.x + slc.w; spx++)
+                                ABLEND(CTX_SEP, srow[spx]);
                         }
                     }
                 }
             }
 
-            /* Draw menu item labels + shortcut hints */
+            /* Draw menu item icons + labels + shortcut hints */
+            /* 8x8 pixel-art icons for each context menu item */
+            static const uint8_t ctx_icons[CTX_ITEMS][8] = {
+                /* Terminal: >_ prompt */
+                { 0x00, 0x20, 0x30, 0x18, 0x30, 0x20, 0x0E, 0x00 },
+                /* Desktop: monitor outline */
+                { 0x7E, 0x42, 0x42, 0x42, 0x7E, 0x18, 0x3C, 0x00 },
+                /* Tile left: filled left half */
+                { 0xFF, 0xF1, 0xF1, 0xF1, 0xF1, 0xF1, 0xFF, 0x00 },
+                /* Tile right: filled right half */
+                { 0xFF, 0x8F, 0x8F, 0x8F, 0x8F, 0x8F, 0xFF, 0x00 },
+                /* Fullscreen: expand arrows */
+                { 0xE1, 0x61, 0x30, 0x18, 0x0C, 0x86, 0x87, 0x00 },
+                /* About: circled 'i' */
+                { 0x3C, 0x42, 0x5A, 0x42, 0x5A, 0x5A, 0x42, 0x3C },
+            };
             for (int item = 0; item < CTX_ITEMS; item++) {
-                /* Y offset: items after separator are shifted down by CTX_SEP_H */
-                int y_offset = (item > CTX_SEP_AFTER_1) ? CTX_SEP_H : 0;
-                int text_x = menu_x + 12;
+                /* Y offset: items after each separator get shifted */
+                int y_offset = 0;
+                if (item > CTX_SEP_AFTER_1) y_offset += CTX_SEP_H;
+                if (item > CTX_SEP_AFTER_2) y_offset += CTX_SEP_H;
                 int text_y = menu_y + CTX_PAD + item * CTX_ITEM_H + y_offset +
                              (CTX_ITEM_H - UI_FONT_HEIGHT) / 2;
+                /* Draw 8x8 icon */
+                {
+                    int icon_x = menu_x + 10;
+                    int icon_y = text_y + (UI_FONT_HEIGHT - 8) / 2;
+                    char *ibase = (char *)dst->px;
+                    uint32_t icon_col = (item == comp->ctx_menu_hover)
+                        ? 0xFFBBCCEEu : 0xB0A0A8C0u;
+                    for (int iy = 0; iy < 8; iy++) {
+                        int gy = icon_y + iy;
+                        if (gy < mc.y || gy >= mc.y + mc.h) continue;
+                        uint32_t *irow = (uint32_t *)(ibase + (size_t)gy * dst->pitch);
+                        uint8_t bits = ctx_icons[item][iy];
+                        for (int ix = 0; ix < 8; ix++) {
+                            if (!(bits & (uint8_t)(0x80u >> ix))) continue;
+                            int gx = icon_x + ix;
+                            if (gx < mc.x || gx >= mc.x + mc.w) continue;
+                            ABLEND(icon_col, irow[gx]);
+                        }
+                    }
+                }
+                int text_x = menu_x + 24;
                 ui_draw_text(dst->px, dst->pitch, text_x, text_y,
                              CTX_TEXT, ctx_labels[item],
                              mc.x, mc.y, mc.w, mc.h);
@@ -3233,6 +3277,8 @@ void comp_render_frame(struct compositor_state *comp) {
         #undef CTX_ITEM_H
         #undef CTX_ITEMS
         #undef CTX_SEP_AFTER_1
+        #undef CTX_SEP_AFTER_2
+        #undef CTX_NUM_SEPS
         #undef CTX_SEP_H
         #undef CTX_PAD
         #undef CTX_CORNER
@@ -3245,7 +3291,7 @@ void comp_render_frame(struct compositor_state *comp) {
 
     /* Futura menu dropdown (top-left, below "Futura" branding) */
     if (comp->futura_menu_active) {
-        #define FM_W       200
+        #define FM_W       220
         #define FM_ITEM_H  26
         #define FM_ITEMS   6
         #define FM_SEP_AFTER 3   /* separator after item index 3 */
@@ -3352,12 +3398,51 @@ void comp_render_frame(struct compositor_state *comp) {
                 }
             }
 
-            /* Item labels + hints */
+            /* Item icons + labels + hints */
+            /* 8x8 pixel-art icons for Futura menu */
+            static const uint8_t fm_icons[FM_ITEMS][8] = {
+                /* Terminal: >_ prompt */
+                { 0x00, 0x20, 0x30, 0x18, 0x30, 0x20, 0x0E, 0x00 },
+                /* About: circled 'i' */
+                { 0x3C, 0x42, 0x5A, 0x42, 0x5A, 0x5A, 0x42, 0x3C },
+                /* Shortcuts: keyboard outline */
+                { 0x00, 0xFF, 0x81, 0xAD, 0x81, 0xBD, 0xFF, 0x00 },
+                /* System info: gear/cog */
+                { 0x18, 0x5A, 0xFF, 0xDB, 0xDB, 0xFF, 0x5A, 0x18 },
+                /* Desktop: monitor */
+                { 0x7E, 0x42, 0x42, 0x42, 0x7E, 0x18, 0x3C, 0x00 },
+                /* Quit: power icon */
+                { 0x18, 0x18, 0x7E, 0xC3, 0xC3, 0xC3, 0x7E, 0x3C },
+            };
             for (int item = 0; item < FM_ITEMS; item++) {
                 int y_off = (item > FM_SEP_AFTER) ? FM_SEP_H : 0;
                 int ty = fm_y + FM_PAD + item * FM_ITEM_H + y_off +
                          (FM_ITEM_H - UI_FONT_HEIGHT) / 2;
-                ui_draw_text(dst->px, dst->pitch, fm_x + 12, ty,
+                /* Draw 8x8 icon */
+                {
+                    int icon_x = fm_x + 10;
+                    int icon_y = ty + (UI_FONT_HEIGHT - 8) / 2;
+                    char *ibase = (char *)dst->px;
+                    uint32_t icon_col = (item == comp->futura_menu_hover)
+                        ? 0xFFBBCCEEu : 0xB0A0A8C0u;
+                    /* "Quit" item gets red tint */
+                    if (item == FM_ITEMS - 1)
+                        icon_col = (item == comp->futura_menu_hover)
+                            ? 0xFFFF8888u : 0xB0CC6060u;
+                    for (int iy = 0; iy < 8; iy++) {
+                        int gy = icon_y + iy;
+                        if (gy < fc.y || gy >= fc.y + fc.h) continue;
+                        uint32_t *irow = (uint32_t *)(ibase + (size_t)gy * dst->pitch);
+                        uint8_t bits = fm_icons[item][iy];
+                        for (int ix = 0; ix < 8; ix++) {
+                            if (!(bits & (uint8_t)(0x80u >> ix))) continue;
+                            int gx = icon_x + ix;
+                            if (gx < fc.x || gx >= fc.x + fc.w) continue;
+                            ABLEND(icon_col, irow[gx]);
+                        }
+                    }
+                }
+                ui_draw_text(dst->px, dst->pitch, fm_x + 24, ty,
                              FM_TEXT, fm_labels[item],
                              fc.x, fc.y, fc.w, fc.h);
                 if (fm_hints[item]) {
@@ -4327,6 +4412,13 @@ static void comp_handle_timer_tick(struct compositor_state *comp, uint64_t expir
         }
     }
 
+    /* Auto-damage the toast area while it's active so the expiry check fires */
+    if (comp->toast_active) {
+        int32_t fb_w = (int32_t)comp->fb_info.width;
+        fut_rect_t toast_d = { fb_w - 300, MENUBAR_HEIGHT, 300, 40 };
+        comp_damage_add_rect(comp, toast_d);
+    }
+
     if (comp->frame_damage.count > 0) {
         comp_render_frame(comp);
     }
@@ -4748,27 +4840,37 @@ void comp_pointer_motion(struct compositor_state *comp, int32_t new_x, int32_t n
 
     /* Update context menu hover state */
     if (comp->ctx_menu_active) {
-        #define CTX_MENU_W       220
+        #define CTX_MENU_W       240
         #define CTX_MENU_ITEM_H  28
         #define CTX_MENU_ITEMS   6
         #define CTX_MENU_PAD     4
-        #define CTX_MENU_SEP_AFTER 1
+        #define CTX_MENU_SEP1    1   /* separator after item 1 */
+        #define CTX_MENU_SEP2    3   /* separator after item 3 */
         #define CTX_MENU_SEP_H   9
         int32_t menu_h = CTX_MENU_PAD + CTX_MENU_ITEMS * CTX_MENU_ITEM_H +
-                          CTX_MENU_SEP_H + CTX_MENU_PAD;
+                          2 * CTX_MENU_SEP_H + CTX_MENU_PAD;
         int32_t mx = comp->pointer_x - comp->ctx_menu_x;
         int32_t my = comp->pointer_y - comp->ctx_menu_y;
         int old_hover = comp->ctx_menu_hover;
         int new_hover = -1;
         if (mx >= 0 && mx < CTX_MENU_W && my >= CTX_MENU_PAD) {
-            int local_y = my - CTX_MENU_PAD;
-            int before_sep = (CTX_MENU_SEP_AFTER + 1) * CTX_MENU_ITEM_H;
-            if (local_y < before_sep) {
-                new_hover = local_y / CTX_MENU_ITEM_H;
-            } else if (local_y >= before_sep + CTX_MENU_SEP_H) {
-                int after_y = local_y - before_sep - CTX_MENU_SEP_H;
-                new_hover = CTX_MENU_SEP_AFTER + 1 + after_y / CTX_MENU_ITEM_H;
+            int ly = my - CTX_MENU_PAD;
+            /* Group 1: items 0..1 */
+            int g1_h = (CTX_MENU_SEP1 + 1) * CTX_MENU_ITEM_H;
+            int g2_start = g1_h + CTX_MENU_SEP_H;
+            int g2_count = CTX_MENU_SEP2 - CTX_MENU_SEP1;
+            int g2_h = g2_count * CTX_MENU_ITEM_H;
+            int g3_start = g2_start + g2_h + CTX_MENU_SEP_H;
+            int g3_count = CTX_MENU_ITEMS - CTX_MENU_SEP2 - 1;
+            int g3_h = g3_count * CTX_MENU_ITEM_H;
+            if (ly < g1_h) {
+                new_hover = ly / CTX_MENU_ITEM_H;
+            } else if (ly >= g2_start && ly < g2_start + g2_h) {
+                new_hover = CTX_MENU_SEP1 + 1 + (ly - g2_start) / CTX_MENU_ITEM_H;
+            } else if (ly >= g3_start && ly < g3_start + g3_h) {
+                new_hover = CTX_MENU_SEP2 + 1 + (ly - g3_start) / CTX_MENU_ITEM_H;
             }
+            (void)g3_h;
             if (new_hover >= CTX_MENU_ITEMS) new_hover = -1;
         }
         if (new_hover != old_hover) {
@@ -4781,17 +4883,18 @@ void comp_pointer_motion(struct compositor_state *comp, int32_t new_x, int32_t n
         #undef CTX_MENU_ITEM_H
         #undef CTX_MENU_ITEMS
         #undef CTX_MENU_PAD
-        #undef CTX_MENU_SEP_AFTER
+        #undef CTX_MENU_SEP1
+        #undef CTX_MENU_SEP2
         #undef CTX_MENU_SEP_H
     }
 
     /* Update Futura menu hover state */
     if (comp->futura_menu_active) {
-        #define FM_MENU_W       200
+        #define FM_MENU_W       220
         #define FM_MENU_ITEM_H  26
-        #define FM_MENU_ITEMS   5
+        #define FM_MENU_ITEMS   6
         #define FM_MENU_PAD     4
-        #define FM_MENU_SEP_AFTER 2
+        #define FM_MENU_SEP_AFTER 3
         #define FM_MENU_SEP_H   7
         int32_t fm_h = FM_MENU_PAD + FM_MENU_ITEMS * FM_MENU_ITEM_H +
                         FM_MENU_SEP_H + FM_MENU_PAD;

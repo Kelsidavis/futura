@@ -3994,7 +3994,7 @@ void comp_render_frame(struct compositor_state *comp) {
     /* About Futura dialog overlay */
     if (comp->about_active) {
         #define ABOUT_W    320
-        #define ABOUT_H    290
+        #define ABOUT_H    330
         #define ABOUT_R    12
         #define ABOUT_BG   0xF0181828u
         #define ABOUT_BORDER 0x70667799u
@@ -4217,9 +4217,41 @@ void comp_render_frame(struct compositor_state *comp) {
                              ac.x, ac.y, ac.w, ac.h);
             }
 
+            /* Uptime line — dynamic */
+            {
+                struct { long tv_sec; long tv_nsec; } up_ts = {0, 0};
+                extern long sys_call2(long nr, long a, long b);
+                sys_call2(98, 1, (long)&up_ts);  /* CLOCK_MONOTONIC */
+                long up_secs = up_ts.tv_sec;
+                int up_h = (int)(up_secs / 3600);
+                int up_m = (int)((up_secs % 3600) / 60);
+                int up_s = (int)(up_secs % 60);
+                char up_buf[40];
+                int ui = 0;
+                const char *up_pfx = "Uptime        ";
+                while (*up_pfx) up_buf[ui++] = *up_pfx++;
+                if (up_h > 0) {
+                    if (up_h >= 10) up_buf[ui++] = '0' + (char)(up_h / 10);
+                    up_buf[ui++] = '0' + (char)(up_h % 10);
+                    up_buf[ui++] = 'h'; up_buf[ui++] = ' ';
+                }
+                if (up_m >= 10) up_buf[ui++] = '0' + (char)(up_m / 10);
+                else up_buf[ui++] = '0';
+                up_buf[ui++] = '0' + (char)(up_m % 10);
+                up_buf[ui++] = 'm'; up_buf[ui++] = ' ';
+                if (up_s >= 10) up_buf[ui++] = '0' + (char)(up_s / 10);
+                else up_buf[ui++] = '0';
+                up_buf[ui++] = '0' + (char)(up_s % 10);
+                up_buf[ui++] = 's';
+                up_buf[ui] = '\0';
+                ui_draw_text(dst->px, dst->pitch, ax + 24, ay + 234,
+                             0xFFA0A0B0u, up_buf,
+                             ac.x, ac.y, ac.w, ac.h);
+            }
+
             /* Second separator */
             {
-                fut_rect_t sep2 = { ax + 20, ay + 238, ABOUT_W - 40, 1 };
+                fut_rect_t sep2 = { ax + 20, ay + 258, ABOUT_W - 40, 1 };
                 fut_rect_t sc2;
                 if (rect_intersection(ac, sep2, &sc2)) {
                     for (int32_t spy = sc2.y; spy < sc2.y + sc2.h; spy++) {
@@ -4235,7 +4267,7 @@ void comp_render_frame(struct compositor_state *comp) {
                 const char *cr = "Copyright 2025-2026";
                 int cr_len = 19;
                 int cr_x = ax + (ABOUT_W - cr_len * UI_FONT_WIDTH) / 2;
-                ui_draw_text(dst->px, dst->pitch, cr_x, ay + 250,
+                ui_draw_text(dst->px, dst->pitch, cr_x, ay + 270,
                              0xFF707088u, cr,
                              ac.x, ac.y, ac.w, ac.h);
             }
@@ -4630,6 +4662,15 @@ static void comp_handle_timer_tick(struct compositor_state *comp, uint64_t expir
         int32_t fb_w = (int32_t)comp->fb_info.width;
         fut_rect_t toast_d = { fb_w - 300, MENUBAR_HEIGHT, 300, 40 };
         comp_damage_add_rect(comp, toast_d);
+    }
+
+    /* Auto-damage the About dialog for live uptime counter */
+    if (comp->about_active) {
+        int32_t fb_w = (int32_t)comp->fb_info.width;
+        int32_t fb_h = (int32_t)comp->fb_info.height;
+        fut_rect_t about_d = { (fb_w - 320) / 2 + 20, (fb_h - 330) / 2 + 230,
+                                280, 20 };
+        comp_damage_add_rect(comp, about_d);
     }
 
     if (comp->frame_damage.count > 0) {

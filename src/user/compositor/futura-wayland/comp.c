@@ -2582,13 +2582,25 @@ void comp_render_frame(struct compositor_state *comp) {
                     : (tip_surf->app_id[0] ? tip_surf->app_id : "Window");
                 int tip_len = 0;
                 while (tip_text[tip_len] && tip_len < 30) tip_len++;
-                int tip_w = tip_len * UI_FONT_WIDTH + 12;
+                int text_w = tip_len * UI_FONT_WIDTH + 12;
+
+                /* Compute thumbnail dimensions if window has content */
+                #define TIP_THUMB_W 160
+                #define TIP_THUMB_H 100
+                #define TIP_THUMB_PAD 6
+                bool has_thumb = (tip_surf->backing && tip_surf->content_height > 0 && tip_surf->width > 0);
+                int tip_w = text_w;
+                if (has_thumb && tip_w < TIP_THUMB_W + TIP_THUMB_PAD * 2)
+                    tip_w = TIP_THUMB_W + TIP_THUMB_PAD * 2;
                 int tip_h = UI_FONT_HEIGHT + 8;
+                if (has_thumb) tip_h += TIP_THUMB_H + TIP_THUMB_PAD;
+
                 int tip_x = comp->dock_tooltip_x - tip_w / 2;
                 int tip_y = comp->dock_tooltip_y - tip_h - 6;
                 /* Clamp to screen */
                 if (tip_x < 2) tip_x = 2;
                 if (tip_x + tip_w > fb_w - 2) tip_x = fb_w - 2 - tip_w;
+                if (tip_y < 2) tip_y = 2;
 
                 fut_rect_t tip_rect = { tip_x, tip_y, tip_w, tip_h };
                 for (int i = 0; i < damage->count; ++i) {
@@ -2597,6 +2609,7 @@ void comp_render_frame(struct compositor_state *comp) {
                         continue;
                     /* Tooltip background with rounded corners */
                     char *tbase = (char *)dst->px;
+                    #define TIP_CORNER 6
                     for (int32_t py = tip_clip.y; py < tip_clip.y + tip_clip.h; py++) {
                         uint32_t *row = (uint32_t *)(tbase + (size_t)py * dst->pitch);
                         int32_t ry = py - tip_y;
@@ -2604,23 +2617,72 @@ void comp_render_frame(struct compositor_state *comp) {
                         for (int32_t px = tip_clip.x; px < tip_clip.x + tip_clip.w; px++) {
                             int32_t rx = px - tip_x;
                             int32_t dx2 = rx < tip_w / 2 ? rx : (tip_w - 1 - rx);
-                            if (dx2 < 4 && dy2 < 4) {
-                                int32_t ccx = 4 - dx2, ccy = 4 - dy2;
-                                if (ccx * ccx + ccy * ccy > 16) continue;
+                            if (dx2 < TIP_CORNER && dy2 < TIP_CORNER) {
+                                int32_t ccx = TIP_CORNER - dx2, ccy = TIP_CORNER - dy2;
+                                if (ccx * ccx + ccy * ccy > TIP_CORNER * TIP_CORNER) continue;
                             }
                             ABLEND(0xE8202030u, row[px]);
                         }
                     }
+                    #undef TIP_CORNER
+
+                    /* Window preview thumbnail */
+                    if (has_thumb) {
+                        int src_w = tip_surf->width;
+                        int src_h = tip_surf->content_height;
+                        int scale_w = TIP_THUMB_W - 4;
+                        int scale_h = src_h * scale_w / src_w;
+                        if (scale_h > TIP_THUMB_H - 4) {
+                            scale_h = TIP_THUMB_H - 4;
+                            scale_w = src_w * scale_h / src_h;
+                        }
+                        int tx = tip_x + (tip_w - scale_w) / 2;
+                        int ty2 = tip_y + TIP_THUMB_PAD;
+                        /* Dark preview background */
+                        fut_rect_t pb = { tip_x + TIP_THUMB_PAD, tip_y + TIP_THUMB_PAD,
+                                          tip_w - TIP_THUMB_PAD * 2, TIP_THUMB_H };
+                        fut_rect_t pbc;
+                        if (rect_intersection(tip_clip, pb, &pbc)) {
+                            for (int32_t py = pbc.y; py < pbc.y + pbc.h; py++) {
+                                uint32_t *pr = (uint32_t *)(tbase + (size_t)py * dst->pitch);
+                                for (int32_t px = pbc.x; px < pbc.x + pbc.w; px++)
+                                    pr[px] = 0xFF0A0A18u;
+                            }
+                        }
+                        /* Scale content into preview */
+                        fut_rect_t prev = { tx, ty2, scale_w, scale_h };
+                        fut_rect_t pc;
+                        if (rect_intersection(tip_clip, prev, &pc)) {
+                            for (int32_t py = pc.y; py < pc.y + pc.h; py++) {
+                                uint32_t *pr = (uint32_t *)(tbase + (size_t)py * dst->pitch);
+                                int sy = (py - ty2) * src_h / scale_h;
+                                if (sy < 0 || sy >= src_h) continue;
+                                const uint32_t *sr = (const uint32_t *)
+                                    ((const char *)tip_surf->backing + (size_t)sy * tip_surf->stride);
+                                for (int32_t px = pc.x; px < pc.x + pc.w; px++) {
+                                    int sx = (px - tx) * src_w / scale_w;
+                                    if (sx >= 0 && sx < src_w) pr[px] = sr[sx];
+                                }
+                            }
+                        }
+                    }
+
                     /* Tooltip text */
                     char tip_buf[32];
                     int ti = 0;
                     while (ti < tip_len) { tip_buf[ti] = tip_text[ti]; ti++; }
                     tip_buf[ti] = '\0';
+                    int text_y = has_thumb ? (tip_y + TIP_THUMB_PAD + TIP_THUMB_H + 4)
+                                           : (tip_y + 4);
+                    int text_x = tip_x + (tip_w - tip_len * UI_FONT_WIDTH) / 2;
                     ui_draw_text(dst->px, dst->pitch,
-                                 tip_x + 6, tip_y + 4,
+                                 text_x, text_y,
                                  0xFFE0E0E8u, tip_buf,
                                  tip_clip.x, tip_clip.y, tip_clip.w, tip_clip.h);
                 }
+                #undef TIP_THUMB_W
+                #undef TIP_THUMB_H
+                #undef TIP_THUMB_PAD
             }
         }
 
@@ -4541,7 +4603,9 @@ void comp_pointer_motion(struct compositor_state *comp, int32_t new_x, int32_t n
         if (new_hover != old_hover) {
             comp->dock_hover_index = new_hover;
             /* Damage dock area for hover highlight update */
-            fut_rect_t dock_damage = { 0, dock_y - 30, fb_w, fb_h - dock_y + 30 };
+            /* Damage includes tooltip preview area above dock */
+            int tip_damage_h = 140;  /* tooltip with thumbnail */
+            fut_rect_t dock_damage = { 0, dock_y - tip_damage_h, fb_w, fb_h - dock_y + tip_damage_h };
             comp_damage_add_rect(comp, dock_damage);
 
             /* Update tooltip state */

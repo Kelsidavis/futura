@@ -2117,7 +2117,7 @@ void comp_render_frame(struct compositor_state *comp) {
         int wm_char_w = UI_FONT_WIDTH * wm_scale;
         int wm_char_h = UI_FONT_HEIGHT * wm_scale;
         int wm_x = fb_w - wm_len * wm_char_w - 18;
-        int wm_y = fb_h - wm_char_h - 58;  /* above dock area */
+        int wm_y = fb_h - wm_char_h - 68;  /* above dock area + shadow */
         int wm_w = wm_len * wm_char_w + 8;
         int wm_h = wm_char_h + 8;
         fut_rect_t wm_rect = { wm_x - 4, wm_y - 4, wm_w + 4, wm_h + 4 };
@@ -2535,8 +2535,10 @@ void comp_render_frame(struct compositor_state *comp) {
         int clock_min = (int)((daytime % 3600) / 60);
         int clock_sec = (int)(daytime % 60);
 
-        /* Compute month and day from epoch seconds */
+        /* Compute month, day, and day-of-week from epoch seconds */
         long days_since_epoch = total_secs / 86400;
+        int dock_dow = (int)((days_since_epoch + 4) % 7); /* Jan 1 1970 = Thursday */
+        const char *dock_dow_names[] = {"Sun","Mon","Tue","Wed","Thu","Fri","Sat"};
         /* Approximate year from days (good enough for date display) */
         int year = 1970;
         long remaining_days = days_since_epoch;
@@ -2560,21 +2562,21 @@ void comp_render_frame(struct compositor_state *comp) {
         const char *month_names[] = {"Jan","Feb","Mar","Apr","May","Jun",
                                      "Jul","Aug","Sep","Oct","Nov","Dec"};
 
-        /* Format: "Mar 28  14:05:30" */
-        char clock_str[20];
+        /* Format: "Thu, Apr 16  13:34" — clean date+time for dock */
+        char clock_str[28];
+        const char *ddn = dock_dow_names[dock_dow];
         const char *mn = month_names[month];
         int ci = 0;
-        clock_str[ci++] = mn[0];
-        clock_str[ci++] = mn[1];
-        clock_str[ci++] = mn[2];
+        clock_str[ci++] = ddn[0]; clock_str[ci++] = ddn[1]; clock_str[ci++] = ddn[2];
+        clock_str[ci++] = ','; clock_str[ci++] = ' ';
+        clock_str[ci++] = mn[0]; clock_str[ci++] = mn[1]; clock_str[ci++] = mn[2];
         clock_str[ci++] = ' ';
         if (day >= 10) clock_str[ci++] = '0' + (char)(day / 10);
         clock_str[ci++] = '0' + (char)(day % 10);
-        clock_str[ci++] = ' ';
-        clock_str[ci++] = ' ';
+        clock_str[ci++] = ' '; clock_str[ci++] = ' ';
         clock_str[ci++] = '0' + (char)(clock_hr / 10);
         clock_str[ci++] = '0' + (char)(clock_hr % 10);
-        clock_str[ci++] = ':';  /* Solid colon */
+        clock_str[ci++] = ':';
         clock_str[ci++] = '0' + (char)(clock_min / 10);
         clock_str[ci++] = '0' + (char)(clock_min % 10);
         clock_str[ci++] = ':';
@@ -2583,7 +2585,7 @@ void comp_render_frame(struct compositor_state *comp) {
         clock_str[ci] = '\0';
         int clock_text_len = ci;
 
-        #define CLOCK_WIDTH_NEW (16 * UI_FONT_WIDTH + 16)  /* "Mar 28  HH:MM:SS" + padding */
+        #define CLOCK_WIDTH_NEW (22 * UI_FONT_WIDTH + 16)  /* "Thu, Apr 16  HH:MM:SS" + padding */
 
         /* Dock geometry: items + separators + clock + desktop button */
         int items_w = n_windows > 0
@@ -5012,14 +5014,18 @@ static void comp_handle_timer_tick(struct compositor_state *comp, uint64_t expir
                                        mbar_clock_w + 4, MENUBAR_HEIGHT };
             comp_damage_add_rect(comp, mbar_damage);
 
-            /* Dock clock — only the clock portion of the dock */
-            int dock_clock_w = 18 * UI_FONT_WIDTH + 20;
-            int dock_x_right = fb_w / 2 + 150;
-            fut_rect_t dock_damage = { dock_x_right - dock_clock_w,
-                                       fb_h - 48, dock_clock_w + 40, 48 };
+            /* Dock — damage a generous center strip covering the dock.
+             * The dock is centered and typically ≤500px wide, but we use
+             * a wider band to account for all dock sizes. */
+            int dock_dmg_w = fb_w / 2 + 80;  /* generous half-width */
+            int dock_dmg_x = (fb_w - dock_dmg_w) / 2;
+            fut_rect_t dock_damage = { dock_dmg_x, fb_h - 48, dock_dmg_w, 48 };
             comp_damage_add_rect(comp, dock_damage);
         }
-        /* Per-minute: damage desktop clock + shooting star areas */
+        /* Per-minute: damage desktop clock + shooting star areas,
+         * but ONLY if no window covers them. On a single-buffer FB,
+         * re-compositing the wallpaper briefly shows through windows
+         * (visible flash). Skip damage when a window occludes the area. */
         if (cur_min != (comp->last_clock_min & 0xFF)) {
             comp->last_clock_min = (cur_sec << 8) | cur_min;
             int32_t fb_h = (int32_t)comp->fb_info.height;
@@ -5028,11 +5034,44 @@ static void comp_handle_timer_tick(struct compositor_state *comp, uint64_t expir
             /* Desktop clock widget — only updates per minute now */
             int32_t clock_cy = fb_h * 28 / 100;
             fut_rect_t clock_dmg = { fb_w / 2 - 100, clock_cy - 4, 200, 90 };
-            comp_damage_add_rect(comp, clock_dmg);
 
-            /* Shooting stars — refresh upper wallpaper per minute */
+            /* Check if any window overlaps the desktop clock area */
+            bool clock_occluded = false;
+            struct comp_surface *cs;
+            wl_list_for_each(cs, &comp->surfaces, link) {
+                if (!cs->has_backing || cs->minimized) continue;
+                fut_rect_t wr = comp_frame_rect(cs);
+                /* Simple overlap test */
+                if (wr.x < clock_dmg.x + clock_dmg.w &&
+                    wr.x + wr.w > clock_dmg.x &&
+                    wr.y < clock_dmg.y + clock_dmg.h &&
+                    wr.y + wr.h > clock_dmg.y) {
+                    clock_occluded = true;
+                    break;
+                }
+            }
+            if (!clock_occluded) {
+                comp_damage_add_rect(comp, clock_dmg);
+            }
+
+            /* Shooting stars — only if no window covers the top area */
             fut_rect_t meteor_dmg = { 0, 0, fb_w, fb_h / 4 };
-            comp_damage_add_rect(comp, meteor_dmg);
+            bool meteor_occluded = false;
+            wl_list_for_each(cs, &comp->surfaces, link) {
+                if (!cs->has_backing || cs->minimized) continue;
+                fut_rect_t wr = comp_frame_rect(cs);
+                /* If any window covers more than half the meteor strip width,
+                 * skip the damage to avoid flashing */
+                if (wr.y < fb_h / 4 &&
+                    wr.x < fb_w * 3 / 4 &&
+                    wr.x + wr.w > fb_w / 4) {
+                    meteor_occluded = true;
+                    break;
+                }
+            }
+            if (!meteor_occluded) {
+                comp_damage_add_rect(comp, meteor_dmg);
+            }
         }
     }
 
@@ -5156,7 +5195,7 @@ int comp_run(struct compositor_state *comp) {
                 int32_t fb_h = (int32_t)comp->fb_info.height;
                 fut_rect_t menubar_clock = { fb_w - 160, 0, 160, MENUBAR_HEIGHT };
                 comp_damage_add_rect(comp, menubar_clock);
-                fut_rect_t dock_clock = { fb_w / 2 - 40, fb_h - 38, 80, 38 };
+                fut_rect_t dock_clock = { 0, fb_h - 48, fb_w, 48 };
                 comp_damage_add_rect(comp, dock_clock);
                 comp->last_timer_tick_ms = now_check;
             }

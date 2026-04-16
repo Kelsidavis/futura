@@ -448,6 +448,13 @@ isr_syscall_fastpath:
 
     addq $16, %rsp                /* Remove stack arguments */
 
+    /* Disable interrupts during register restoration.  R15 holds the
+     * syscall return value and will be moved to RAX after all pops.
+     * If a timer interrupt fires during this window, the context-switch
+     * path can corrupt the partially-restored register state delivered
+     * to userspace.  IRETQ below restores IF from the saved RFLAGS. */
+    cli
+
     /* Restore segment registers (discard GS and FS - must preserve MSR bases!) */
     popq %rax                     /* Discard saved GS */
     popq %rax                     /* Discard saved FS - must preserve MSR_FS_BASE */

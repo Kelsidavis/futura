@@ -1138,6 +1138,40 @@ static void seat_handle_key_event(struct seat_state *seat,
             return;
         }
 
+        /* Super+I: show system info toast */
+        if (compositor_mods == COMP_MOD_SUPER && keycode == 23 /* I */) {
+            if (seat->comp) {
+                int32_t w = (int32_t)seat->comp->fb_info.width;
+                int32_t h = (int32_t)seat->comp->fb_info.height;
+                int n_win = 0;
+                struct comp_surface *ws;
+                wl_list_for_each(ws, &seat->comp->surfaces, link) {
+                    if (ws->has_backing) n_win++;
+                }
+                char info[128];
+                int ci = 0;
+                const char *prefix = "Horizon | ";
+                while (*prefix) info[ci++] = *prefix++;
+                /* Resolution: WxH */
+                if (w >= 1000) info[ci++] = '0' + (char)(w / 1000);
+                if (w >= 100)  info[ci++] = '0' + (char)((w / 100) % 10);
+                info[ci++] = '0' + (char)((w / 10) % 10);
+                info[ci++] = '0' + (char)(w % 10);
+                info[ci++] = 'x';
+                if (h >= 1000) info[ci++] = '0' + (char)(h / 1000);
+                if (h >= 100)  info[ci++] = '0' + (char)((h / 100) % 10);
+                info[ci++] = '0' + (char)((h / 10) % 10);
+                info[ci++] = '0' + (char)(h % 10);
+                const char *mid = " | Windows: ";
+                while (*mid) info[ci++] = *mid++;
+                if (n_win >= 10) info[ci++] = '0' + (char)(n_win / 10);
+                info[ci++] = '0' + (char)(n_win % 10);
+                info[ci] = '\0';
+                comp_show_toast(seat->comp, info);
+            }
+            return;
+        }
+
         /* Alt+F4: close focused window */
         if ((compositor_mods & COMP_MOD_ALT) && keycode == 62 /* F4 */) {
             if (seat->comp && seat->comp->focused_surface) {

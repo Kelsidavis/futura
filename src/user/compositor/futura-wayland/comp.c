@@ -1813,22 +1813,29 @@ void comp_render_frame(struct compositor_state *comp) {
         }
     }
 
-    /* ── Desktop watermark (bottom-right) ── */
+    /* ── Desktop watermark (bottom-right, subtle translucent) ── */
     {
         int32_t fb_w = (int32_t)comp->fb_info.width;
         int32_t fb_h = (int32_t)comp->fb_info.height;
         const char *watermark = "Futura OS 0.9";
         int wm_len = 0;
         while (watermark[wm_len]) wm_len++;
-        int wm_x = fb_w - wm_len * UI_FONT_WIDTH - 12;
-        int wm_y = fb_h - UI_FONT_HEIGHT - 50;  /* above dock area */
-        fut_rect_t wm_rect = { wm_x, wm_y, wm_len * UI_FONT_WIDTH, UI_FONT_HEIGHT };
+        int wm_x = fb_w - wm_len * UI_FONT_WIDTH - 14;
+        int wm_y = fb_h - UI_FONT_HEIGHT - 54;  /* above dock area */
+        int wm_w = wm_len * UI_FONT_WIDTH + 4;
+        int wm_h = UI_FONT_HEIGHT + 4;
+        fut_rect_t wm_rect = { wm_x - 2, wm_y - 2, wm_w, wm_h };
         for (int i = 0; i < damage->count; ++i) {
             fut_rect_t wm_clip;
             if (!rect_intersection(damage->rects[i], wm_rect, &wm_clip))
                 continue;
-            ui_draw_text(dst->px, dst->pitch, wm_x, wm_y,
-                         0xFF252538u, watermark,
+            /* Shadow offset (+1,+1) */
+            ui_draw_text_scaled(dst->px, dst->pitch, wm_x + 1, wm_y + 1,
+                         0x18000000u, watermark, 1,
+                         wm_clip.x, wm_clip.y, wm_clip.w, wm_clip.h);
+            /* Main text: semi-transparent light */
+            ui_draw_text_scaled(dst->px, dst->pitch, wm_x, wm_y,
+                         0x28C0C8E0u, watermark, 1,
                          wm_clip.x, wm_clip.y, wm_clip.w, wm_clip.h);
         }
     }
@@ -2624,6 +2631,27 @@ void comp_render_frame(struct compositor_state *comp) {
                     touched = true;
                 }
 
+                /* 2px shadow at bottom of title bar for depth */
+                {
+                    int32_t sy = bar_rect.y + bar_rect.h;
+                    fut_rect_t shadow = { bar_rect.x, sy, bar_rect.w, 2 };
+                    fut_rect_t sc;
+                    if (rect_intersection(damage->rects[i], shadow, &sc)) {
+                        char *sbase = (char *)dst->px;
+                        for (int32_t py = sc.y; py < sc.y + sc.h; py++) {
+                            uint32_t *srow = (uint32_t *)(sbase + (size_t)py * dst->pitch);
+                            int dark = (py == sy) ? 30 : 15;
+                            for (int32_t px = sc.x; px < sc.x + sc.w; px++) {
+                                uint32_t d = srow[px];
+                                uint32_t dr = ((d >> 16) & 0xFF) * (255 - dark) / 255;
+                                uint32_t dg = ((d >> 8) & 0xFF) * (255 - dark) / 255;
+                                uint32_t db = (d & 0xFF) * (255 - dark) / 255;
+                                srow[px] = 0xFF000000u | (dr << 16) | (dg << 8) | db;
+                            }
+                        }
+                    }
+                }
+
                 fut_rect_t min_btn_rect = comp_min_btn_rect(surface);
                 fut_rect_t min_btn_clip;
                 if (min_btn_rect.w > 0 && min_btn_rect.h > 0 &&
@@ -3177,7 +3205,7 @@ void comp_render_frame(struct compositor_state *comp) {
         int32_t fb_w = (int32_t)comp->fb_info.width;
         int32_t fb_h = (int32_t)comp->fb_info.height;
         #define SO_W 340
-        #define SO_H 320
+        #define SO_H 338
         #define SO_R 10
         #define SO_BG 0xF0181828u
         int32_t sox = (fb_w - SO_W) / 2;
@@ -3256,7 +3284,8 @@ void comp_render_frame(struct compositor_state *comp) {
                 "Super+M", "Super+F",
                 "Super+Left", "Super+Right",
                 "Super+Up", "Super+Down",
-                "F11", "Super+/",
+                "F11", "Super+I",
+                "Super+/",
             };
             const char *so_desc[] = {
                 "New terminal", "New terminal",
@@ -3265,9 +3294,10 @@ void comp_render_frame(struct compositor_state *comp) {
                 "Minimize", "Fullscreen",
                 "Tile left", "Tile right",
                 "Maximize", "Restore",
-                "Fullscreen", "This overlay",
+                "Fullscreen", "System info",
+                "This overlay",
             };
-            int so_n = 14;
+            int so_n = 15;
             for (int si = 0; si < so_n; si++) {
                 int ty = soy + 50 + si * 18;
                 ui_draw_text(dst->px, dst->pitch, sox + 20, ty,

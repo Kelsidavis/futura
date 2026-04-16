@@ -1869,12 +1869,11 @@ void comp_render_frame(struct compositor_state *comp) {
         int wc_min = (int)((wc_daytime % 3600) / 60);
         int wc_sec = (int)(wc_daytime % 60);
 
-        /* Format: "HH:MM" — colon blinks every second for live feel */
-        bool colon_on = (wc_sec & 1) == 0;
+        /* Format: "HH:MM" — solid colon (clock updates per-minute) */
         char wc_time[8];
         wc_time[0] = '0' + (char)(wc_hr / 10);
         wc_time[1] = '0' + (char)(wc_hr % 10);
-        wc_time[2] = colon_on ? ':' : ' ';
+        wc_time[2] = ':';
         wc_time[3] = '0' + (char)(wc_min / 10);
         wc_time[4] = '0' + (char)(wc_min % 10);
         wc_time[5] = '\0';
@@ -2506,7 +2505,7 @@ void comp_render_frame(struct compositor_state *comp) {
         clock_str[ci++] = ' ';
         clock_str[ci++] = '0' + (char)(clock_hr / 10);
         clock_str[ci++] = '0' + (char)(clock_hr % 10);
-        clock_str[ci++] = (clock_sec & 1) ? ' ' : ':';  /* Blink colon */
+        clock_str[ci++] = ':';  /* Solid colon */
         clock_str[ci++] = '0' + (char)(clock_min / 10);
         clock_str[ci++] = '0' + (char)(clock_min % 10);
         clock_str[ci++] = ':';
@@ -4862,61 +4861,42 @@ static void comp_handle_timer_tick(struct compositor_state *comp, uint64_t expir
         sys_call2(98, 0, (long)&cts);  /* SYS_clock_gettime(CLOCK_REALTIME) */
         int cur_sec = (int)(cts.tv_sec % 60);
         int cur_min = (int)((cts.tv_sec % 3600) / 60);
-        /* Per-second: damage only the small clock text regions */
+        /* Per-second: damage ONLY menubar and dock clock text areas.
+         * The desktop clock (center of screen) is NOT damaged per-second
+         * because it overlaps windows and causes visible flashing
+         * (wallpaper re-rendered before window re-blit on single-buffer FB). */
         if (cur_sec != (comp->last_clock_min >> 8)) {
             comp->last_clock_min = (comp->last_clock_min & 0xFF) | (cur_sec << 8);
             int32_t fb_h = (int32_t)comp->fb_info.height;
             int32_t fb_w = (int32_t)comp->fb_info.width;
 
-            /* Shooting stars: damage only the specific trail area, not 1/3 screen */
-            if ((cur_sec % 3) == 0 || ((cur_sec - 1 + 60) % 3) == 0) {
-                /* Compute the same seed as the renderer to find the trail */
-                struct { long tv_sec; long tv_nsec; } mt = {0, 0};
-                extern long sys_call2(long nr, long a, long b);
-                sys_call2(98, 1, (long)&mt);
-                int ms = (int)(mt.tv_sec & 0x7FFFFFFF);
-                int ms3 = ms / 3;
-                /* Also damage previous meteor (might still be showing) */
-                for (int mi = 0; mi < 2; mi++) {
-                    uint32_t seed = (uint32_t)(ms3 - mi) * 2654435761u;
-                    if ((seed & 0x3) < 3) {
-                        int sx = (int)((seed >> 4) % (uint32_t)(fb_w * 2 / 3)) + fb_w / 6;
-                        int sy = (int)((seed >> 14) % (uint32_t)(fb_h / 4)) + 30;
-                        int tl = 35 + (int)((seed >> 22) & 0x1F);
-                        /* Bounding box of trail with margin */
-                        int mx0 = sx - 4, my0 = sy - 4;
-                        int mx1 = sx + tl + 4, my1 = sy + tl * 2 / 3 + 4;
-                        if (mx0 < 0) mx0 = 0;
-                        if (my0 < 0) my0 = 0;
-                        if (mx1 > fb_w) mx1 = fb_w;
-                        if (my1 > fb_h) my1 = fb_h;
-                        fut_rect_t meteor_dmg = { mx0, my0, mx1 - mx0, my1 - my0 };
-                        comp_damage_add_rect(comp, meteor_dmg);
-                    }
-                }
-            }
-
-            /* Desktop clock — tight rect around time text only */
-            int32_t clock_cy = fb_h * 28 / 100;
-            fut_rect_t clock_dmg = { fb_w / 2 - 100, clock_cy - 4, 200, 90 };
-            comp_damage_add_rect(comp, clock_dmg);
-
             /* Menubar clock — only the rightmost clock text area */
-            int mbar_clock_w = 14 * UI_FONT_WIDTH + 16;  /* "Thu  HH:MM:SS" + pad */
+            int mbar_clock_w = 14 * UI_FONT_WIDTH + 16;
             fut_rect_t mbar_damage = { fb_w - mbar_clock_w - 4, 0,
                                        mbar_clock_w + 4, MENUBAR_HEIGHT };
             comp_damage_add_rect(comp, mbar_damage);
 
             /* Dock clock — only the clock portion of the dock */
-            int dock_clock_w = 18 * UI_FONT_WIDTH + 20;  /* "Mon DD  HH:MM:SS" + pad */
-            int dock_x_right = fb_w / 2 + 150;  /* approximate right edge */
+            int dock_clock_w = 18 * UI_FONT_WIDTH + 20;
+            int dock_x_right = fb_w / 2 + 150;
             fut_rect_t dock_damage = { dock_x_right - dock_clock_w,
                                        fb_h - 48, dock_clock_w + 40, 48 };
             comp_damage_add_rect(comp, dock_damage);
         }
-        /* Per-minute: keep last_clock_min in sync */
+        /* Per-minute: damage desktop clock + shooting star areas */
         if (cur_min != (comp->last_clock_min & 0xFF)) {
             comp->last_clock_min = (cur_sec << 8) | cur_min;
+            int32_t fb_h = (int32_t)comp->fb_info.height;
+            int32_t fb_w = (int32_t)comp->fb_info.width;
+
+            /* Desktop clock widget — only updates per minute now */
+            int32_t clock_cy = fb_h * 28 / 100;
+            fut_rect_t clock_dmg = { fb_w / 2 - 100, clock_cy - 4, 200, 90 };
+            comp_damage_add_rect(comp, clock_dmg);
+
+            /* Shooting stars — refresh upper wallpaper per minute */
+            fut_rect_t meteor_dmg = { 0, 0, fb_w, fb_h / 4 };
+            comp_damage_add_rect(comp, meteor_dmg);
         }
     }
 

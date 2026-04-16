@@ -1665,9 +1665,38 @@ void comp_render_frame(struct compositor_state *comp) {
                     aurora_b = cb;
                 }
 
-                int pr = base_r + glow / 3 + glow2 * 2 / 3 + aurora_r;
-                int pg = base_g + glow / 4 + glow2 / 5 + aurora_g;
-                int pb = base_b + glow + glow2 / 2 + aurora_b;
+                /* Nebula wisps: deterministic noise patches for cosmic depth */
+                int nebula_r = 0, nebula_g = 0, nebula_b = 0;
+                {
+                    /* Large-scale noise at two octaves for organic shapes */
+                    uint32_t nh1 = (uint32_t)((gx / 6) * 48271 + (gy / 6) * 8171);
+                    nh1 ^= nh1 >> 13; nh1 *= 0x45d9f3bu; nh1 ^= nh1 >> 16;
+                    uint32_t nh2 = (uint32_t)((gx / 12) * 16381 + (gy / 12) * 32749);
+                    nh2 ^= nh2 >> 13; nh2 *= 0x45d9f3bu; nh2 ^= nh2 >> 16;
+                    int n1 = (int)(nh1 & 0xFF) - 128;  /* -128..127 */
+                    int n2 = (int)(nh2 & 0xFF) - 128;
+                    int nebula_val = (n1 + n2 / 2) / 3;
+                    if (nebula_val > 0) {
+                        /* Purple-blue nebula in upper-right quadrant */
+                        int nx_frac = fb_w > 0 ? gx * 255 / fb_w : 0;
+                        int ny_frac = fb_h > 0 ? gy * 255 / fb_h : 0;
+                        int region1 = nx_frac * (255 - ny_frac) / 255;  /* upper-right */
+                        int region2 = (255 - nx_frac) * ny_frac / 255;  /* lower-left */
+                        int i1 = nebula_val * region1 / (255 * 3);
+                        int i2 = nebula_val * region2 / (255 * 4);
+                        /* Region 1: purple-magenta tint */
+                        nebula_r = i1 * 2 / 3;
+                        nebula_g = i1 / 5;
+                        nebula_b = i1;
+                        /* Region 2: teal tint */
+                        nebula_g += i2 * 2 / 3;
+                        nebula_b += i2 / 2;
+                    }
+                }
+
+                int pr = base_r + glow / 3 + glow2 * 2 / 3 + aurora_r + nebula_r;
+                int pg = base_g + glow / 4 + glow2 / 5 + aurora_g + nebula_g;
+                int pb = base_b + glow + glow2 / 2 + aurora_b + nebula_b;
                 if (pr > 255) pr = 255;
                 if (pg > 255) pg = 255;
                 if (pb > 255) pb = 255;
@@ -2431,6 +2460,16 @@ void comp_render_frame(struct compositor_state *comp) {
                             uint32_t bg_r = 0x18 + vgrad;
                             uint32_t bg_g = 0x18 + vgrad;
                             uint32_t bg_b = 0x28 + vgrad;
+                            if (bg_r > 0xFF) bg_r = 0xFF;
+                            if (bg_g > 0xFF) bg_g = 0xFF;
+                            if (bg_b > 0xFF) bg_b = 0xFF;
+                            /* Subtle noise dither for premium feel */
+                            uint32_t dither = (uint32_t)(px * 2971 + py * 6337);
+                            dither ^= dither >> 13; dither *= 0x45d9f3bu; dither ^= dither >> 16;
+                            int noise = (int)(dither & 0x7) - 3;  /* -3..4 */
+                            bg_r = (uint32_t)((int)bg_r + noise < 0 ? 0 : (int)bg_r + noise);
+                            bg_g = (uint32_t)((int)bg_g + noise < 0 ? 0 : (int)bg_g + noise);
+                            bg_b = (uint32_t)((int)bg_b + noise < 0 ? 0 : (int)bg_b + noise);
                             if (bg_r > 0xFF) bg_r = 0xFF;
                             if (bg_g > 0xFF) bg_g = 0xFF;
                             if (bg_b > 0xFF) bg_b = 0xFF;

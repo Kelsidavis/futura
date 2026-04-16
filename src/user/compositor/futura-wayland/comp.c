@@ -1644,6 +1644,20 @@ void comp_render_frame(struct compositor_state *comp) {
         char *base = (char *)dst->px;
         for (int32_t y = 0; y < r.h; ++y) {
             int32_t gy = r.y + y;
+            /* Per-scanline occlusion: skip rows fully behind a window.
+             * This prevents single-buffer flash when damage rects only
+             * PARTIALLY overlap a window (the full-rect check above
+             * only catches rects entirely inside a window). */
+            bool row_occluded = false;
+            for (int oi = 0; oi < n_occluders; oi++) {
+                fut_rect_t w = occluders[oi];
+                if (gy >= w.y && gy < w.y + w.h &&
+                    r.x >= w.x && r.x + r.w <= w.x + w.w) {
+                    row_occluded = true;
+                    break;
+                }
+            }
+            if (row_occluded) continue;
             int t = (fb_h > 0) ? (gy * 255 / fb_h) : 0;
             int base_r = 0x08 + (0x1A - 0x08) * t / 255;
             int base_g = 0x08 + (0x18 - 0x08) * t / 255;

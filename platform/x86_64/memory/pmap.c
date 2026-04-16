@@ -20,6 +20,16 @@ static inline pte_t *pmap_context_pml4(fut_vmem_context_t *ctx) {
     }
 
     uintptr_t raw = (uintptr_t)ctx->pml4;
+
+    /* Reject suspiciously small values — a valid PML4 is either a kernel
+     * virtual address (>= PMAP_DIRECT_VIRT_BASE) or a physical frame
+     * number that maps to one.  Values < 0x1000 (one page) cannot be a
+     * legitimate page-table pointer and indicate corruption (e.g. a
+     * forked child whose vmem context was not fully initialized). */
+    if (raw < 0x1000) {
+        return NULL;
+    }
+
     if (raw >= PMAP_DIRECT_VIRT_BASE) {
         return (pte_t *)raw;
     }

@@ -2236,16 +2236,24 @@ void comp_render_frame(struct compositor_state *comp) {
                 }
             }
 
-            /* 1px bottom separator */
+            /* 1px bottom accent + separator for depth */
+            if (MENUBAR_HEIGHT - 2 >= mbar_clip.y &&
+                MENUBAR_HEIGHT - 2 < mbar_clip.y + mbar_clip.h) {
+                /* Subtle blue accent line (1px) */
+                uint32_t *acc_row = (uint32_t *)(base + (size_t)(MENUBAR_HEIGHT - 2) * dst->pitch);
+                for (int32_t px = mbar_clip.x; px < mbar_clip.x + mbar_clip.w; px++) {
+                    ABLEND(0x183060A0u, acc_row[px]);
+                }
+            }
             if (MENUBAR_HEIGHT - 1 >= mbar_clip.y &&
                 MENUBAR_HEIGHT - 1 < mbar_clip.y + mbar_clip.h) {
+                /* Dark separator below accent */
                 uint32_t *sep_row = (uint32_t *)(base + (size_t)(MENUBAR_HEIGHT - 1) * dst->pitch);
                 for (int32_t px = mbar_clip.x; px < mbar_clip.x + mbar_clip.w; px++) {
-                    /* Subtle separator */
                     uint32_t old = sep_row[px];
-                    uint32_t or_ = ((old >> 16) & 0xFF) * 160 / 255;
-                    uint32_t og = ((old >> 8) & 0xFF) * 160 / 255;
-                    uint32_t ob = (old & 0xFF) * 160 / 255;
+                    uint32_t or_ = ((old >> 16) & 0xFF) * 140 / 255;
+                    uint32_t og = ((old >> 8) & 0xFF) * 140 / 255;
+                    uint32_t ob = (old & 0xFF) * 150 / 255;
                     sep_row[px] = 0xFF000000u | (or_ << 16) | (og << 8) | ob;
                 }
             }
@@ -2521,9 +2529,9 @@ void comp_render_frame(struct compositor_state *comp) {
     {
         #define DOCK_HEIGHT 38
         #define DOCK_COLOR      0xC8181828u  /* Frosted dark panel */
-        #define DOCK_ITEM_W     120
+        #define DOCK_ITEM_W     148
         #define DOCK_ITEM_H     28
-        #define DOCK_ITEM_PAD   3            /* gap between items */
+        #define DOCK_ITEM_PAD   4            /* gap between items */
         #define DOCK_FOCUSED    0xD0506080u  /* Focused: blue-tinted highlight */
         #define DOCK_HOVER      0xC03A3A55u  /* Hover highlight */
         #define DOCK_SEP_COLOR  0x40667788u  /* Subtle separator */
@@ -2889,7 +2897,7 @@ void comp_render_frame(struct compositor_state *comp) {
                         }
 
                         int max_chars = (DOCK_ITEM_W - 20) / UI_FONT_WIDTH;
-                        if (max_chars > 13) max_chars = 13;
+                        if (max_chars > 16) max_chars = 16;
                         if (max_chars > 0) {
                             int src_len = 0;
                             while (src_title[src_len]) src_len++;

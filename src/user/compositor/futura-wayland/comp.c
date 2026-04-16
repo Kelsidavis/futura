@@ -4595,11 +4595,11 @@ void comp_render_frame(struct compositor_state *comp) {
         }
     }
 
-    /* Subtle cursor spotlight glow */
+    /* Subtle cursor spotlight glow (reduced radius for performance) */
     {
         int32_t mx = comp->pointer_x;
         int32_t my = comp->pointer_y;
-        int glow_r = 24;
+        int glow_r = 12;
         int32_t gx0 = mx - glow_r, gy0 = my - glow_r;
         int32_t gx1 = mx + glow_r, gy1 = my + glow_r;
         int32_t fw = (int32_t)comp->fb_info.width;
@@ -4617,7 +4617,7 @@ void comp_render_frame(struct compositor_state *comp) {
                 int d2 = dx * dx + dy * dy;
                 int r2 = glow_r * glow_r;
                 if (d2 >= r2) continue;
-                int a = 12 * (r2 - d2) / r2;
+                int a = 14 * (r2 - d2) / r2;
                 if (a < 1) continue;
                 uint32_t overlay = ((uint32_t)a << 24) | 0x00C0D0FFu;
                 ABLEND(overlay, grow[gx]);
@@ -4862,30 +4862,56 @@ static void comp_handle_timer_tick(struct compositor_state *comp, uint64_t expir
         sys_call2(98, 0, (long)&cts);  /* SYS_clock_gettime(CLOCK_REALTIME) */
         int cur_sec = (int)(cts.tv_sec % 60);
         int cur_min = (int)((cts.tv_sec % 3600) / 60);
-        /* Per-second: damage desktop clock, menubar clock, dock clock, and stars */
+        /* Per-second: damage only the small clock text regions */
         if (cur_sec != (comp->last_clock_min >> 8)) {
             comp->last_clock_min = (comp->last_clock_min & 0xFF) | (cur_sec << 8);
             int32_t fb_h = (int32_t)comp->fb_info.height;
             int32_t fb_w = (int32_t)comp->fb_info.width;
 
-            /* Damage shooting star area every 3 seconds */
+            /* Shooting stars: damage only the specific trail area, not 1/3 screen */
             if ((cur_sec % 3) == 0 || ((cur_sec - 1 + 60) % 3) == 0) {
-                /* Damage upper portion of wallpaper where meteors appear */
-                fut_rect_t meteor_dmg = { 0, 0, fb_w, fb_h / 3 };
-                comp_damage_add_rect(comp, meteor_dmg);
+                /* Compute the same seed as the renderer to find the trail */
+                struct { long tv_sec; long tv_nsec; } mt = {0, 0};
+                extern long sys_call2(long nr, long a, long b);
+                sys_call2(98, 1, (long)&mt);
+                int ms = (int)(mt.tv_sec & 0x7FFFFFFF);
+                int ms3 = ms / 3;
+                /* Also damage previous meteor (might still be showing) */
+                for (int mi = 0; mi < 2; mi++) {
+                    uint32_t seed = (uint32_t)(ms3 - mi) * 2654435761u;
+                    if ((seed & 0x3) < 3) {
+                        int sx = (int)((seed >> 4) % (uint32_t)(fb_w * 2 / 3)) + fb_w / 6;
+                        int sy = (int)((seed >> 14) % (uint32_t)(fb_h / 4)) + 30;
+                        int tl = 35 + (int)((seed >> 22) & 0x1F);
+                        /* Bounding box of trail with margin */
+                        int mx0 = sx - 4, my0 = sy - 4;
+                        int mx1 = sx + tl + 4, my1 = sy + tl * 2 / 3 + 4;
+                        if (mx0 < 0) mx0 = 0;
+                        if (my0 < 0) my0 = 0;
+                        if (mx1 > fb_w) mx1 = fb_w;
+                        if (my1 > fb_h) my1 = fb_h;
+                        fut_rect_t meteor_dmg = { mx0, my0, mx1 - mx0, my1 - my0 };
+                        comp_damage_add_rect(comp, meteor_dmg);
+                    }
+                }
             }
 
-            /* Desktop clock */
+            /* Desktop clock — tight rect around time text only */
             int32_t clock_cy = fb_h * 28 / 100;
-            fut_rect_t clock_dmg = { fb_w / 2 - 120, clock_cy - 6, 240, 120 };
+            fut_rect_t clock_dmg = { fb_w / 2 - 100, clock_cy - 4, 200, 90 };
             comp_damage_add_rect(comp, clock_dmg);
 
-            /* Menubar clock (seconds now displayed) */
-            fut_rect_t mbar_damage = { 0, 0, fb_w, MENUBAR_HEIGHT };
+            /* Menubar clock — only the rightmost clock text area */
+            int mbar_clock_w = 14 * UI_FONT_WIDTH + 16;  /* "Thu  HH:MM:SS" + pad */
+            fut_rect_t mbar_damage = { fb_w - mbar_clock_w - 4, 0,
+                                       mbar_clock_w + 4, MENUBAR_HEIGHT };
             comp_damage_add_rect(comp, mbar_damage);
 
-            /* Dock clock (seconds + blinking colon) */
-            fut_rect_t dock_damage = { 0, fb_h - 48, fb_w, 48 };
+            /* Dock clock — only the clock portion of the dock */
+            int dock_clock_w = 18 * UI_FONT_WIDTH + 20;  /* "Mon DD  HH:MM:SS" + pad */
+            int dock_x_right = fb_w / 2 + 150;  /* approximate right edge */
+            fut_rect_t dock_damage = { dock_x_right - dock_clock_w,
+                                       fb_h - 48, dock_clock_w + 40, 48 };
             comp_damage_add_rect(comp, dock_damage);
         }
         /* Per-minute: keep last_clock_min in sync */
@@ -5258,16 +5284,16 @@ void comp_pointer_motion(struct compositor_state *comp, int32_t new_x, int32_t n
     }
 
     /* Damage old cursor position + glow radius */
-    comp_cursor_damage(comp, comp->pointer_x - 24, comp->pointer_y - 24,
-                       cursor_w + 48, cursor_h + 48);
+    comp_cursor_damage(comp, comp->pointer_x - 12, comp->pointer_y - 12,
+                       cursor_w + 24, cursor_h + 24);
 
     comp->pointer_x = clamped_x;
     comp->pointer_y = clamped_y;
     cursor_set_position(comp->cursor, comp->pointer_x, comp->pointer_y);
 
     /* Damage new cursor position + glow radius */
-    comp_cursor_damage(comp, comp->pointer_x - 24, comp->pointer_y - 24,
-                       cursor_w + 48, cursor_h + 48);
+    comp_cursor_damage(comp, comp->pointer_x - 12, comp->pointer_y - 12,
+                       cursor_w + 24, cursor_h + 24);
     comp->needs_repaint = true;
 
     /* Update dock hover state */

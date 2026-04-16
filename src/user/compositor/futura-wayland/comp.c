@@ -2708,8 +2708,41 @@ void comp_render_frame(struct compositor_state *comp) {
             char *dst_ptr = (char *)dst->px +
                 (size_t)content_clip.y * dst->pitch +
                 (size_t)content_clip.x * 4u;
-            blit_argb(src_ptr, surface->stride, dst_ptr, dst->pitch,
-                      content_clip.w, content_clip.h);
+            /* Blit content with rounded bottom corners (radius 6) */
+            {
+                #define CONTENT_CORNER_R 6
+                int32_t bot_y = content_rect.y + content_rect.h;
+                const char *s = src_ptr;
+                char *d = dst_ptr;
+                for (int32_t row = 0; row < content_clip.h; row++) {
+                    int32_t abs_y = content_clip.y + row;
+                    int32_t dy_bot = bot_y - 1 - abs_y;  /* rows from bottom */
+                    if (dy_bot < CONTENT_CORNER_R) {
+                        /* In the bottom corner zone — per-pixel check */
+                        const uint32_t *sp = (const uint32_t *)s;
+                        uint32_t *dp = (uint32_t *)d;
+                        for (int32_t col = 0; col < content_clip.w; col++) {
+                            int32_t abs_x = content_clip.x + col;
+                            int32_t dx_left = abs_x - content_rect.x;
+                            int32_t dx_right = (content_rect.x + content_rect.w - 1) - abs_x;
+                            int32_t dx = dx_left < dx_right ? dx_left : dx_right;
+                            bool skip = false;
+                            if (dx < CONTENT_CORNER_R) {
+                                int32_t cxd = CONTENT_CORNER_R - dx;
+                                int32_t cyd = CONTENT_CORNER_R - dy_bot;
+                                if (cxd * cxd + cyd * cyd > CONTENT_CORNER_R * CONTENT_CORNER_R)
+                                    skip = true;
+                            }
+                            if (!skip) dp[col] = sp[col];
+                        }
+                    } else {
+                        memcpy(d, s, (size_t)content_clip.w * 4u);
+                    }
+                    s += surface->stride;
+                    d += dst->pitch;
+                }
+                #undef CONTENT_CORNER_R
+            }
             touched = true;
         }
 
@@ -3063,8 +3096,8 @@ void comp_render_frame(struct compositor_state *comp) {
     if (comp->futura_menu_active) {
         #define FM_W       200
         #define FM_ITEM_H  26
-        #define FM_ITEMS   5
-        #define FM_SEP_AFTER 2   /* separator after item index 2 */
+        #define FM_ITEMS   6
+        #define FM_SEP_AFTER 3   /* separator after item index 3 */
         #define FM_SEP_H   7
         #define FM_PAD     4
         #define FM_CORNER  6
@@ -3080,10 +3113,10 @@ void comp_render_frame(struct compositor_state *comp) {
         fut_rect_t fm_rect = { fm_x, fm_y, FM_W, fm_h };
 
         const char *fm_labels[] = { "New Terminal", "About Futura",
-                                     "Shortcuts",
+                                     "Shortcuts", "System Info",
                                      "Show Desktop", "Quit" };
         const char *fm_hints[] = { "Ctrl+Alt+T", NULL,
-                                    "Super+/",
+                                    "Super+/", "Super+I",
                                     "Super+D", "Ctrl+Alt+Del" };
 
         for (int i = 0; i < damage->count; ++i) {

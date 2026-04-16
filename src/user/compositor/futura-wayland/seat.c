@@ -727,6 +727,35 @@ static void seat_handle_button(struct seat_state *seat,
         if (sel == 1) { seat->comp->about_active = true; }
         if (sel == 2) { seat->comp->shortcut_overlay_active = true; }
         if (sel == 3) {
+            /* System Info — show toast */
+            int32_t w = (int32_t)seat->comp->fb_info.width;
+            int32_t h = (int32_t)seat->comp->fb_info.height;
+            int n_win = 0;
+            struct comp_surface *ws;
+            wl_list_for_each(ws, &seat->comp->surfaces, link) {
+                if (ws->has_backing) n_win++;
+            }
+            char info[128];
+            int ci = 0;
+            const char *prefix = "Horizon | ";
+            while (*prefix) info[ci++] = *prefix++;
+            if (w >= 1000) info[ci++] = '0' + (char)(w / 1000);
+            if (w >= 100)  info[ci++] = '0' + (char)((w / 100) % 10);
+            info[ci++] = '0' + (char)((w / 10) % 10);
+            info[ci++] = '0' + (char)(w % 10);
+            info[ci++] = 'x';
+            if (h >= 1000) info[ci++] = '0' + (char)(h / 1000);
+            if (h >= 100)  info[ci++] = '0' + (char)((h / 100) % 10);
+            info[ci++] = '0' + (char)((h / 10) % 10);
+            info[ci++] = '0' + (char)(h % 10);
+            const char *mid = " | Windows: ";
+            while (*mid) info[ci++] = *mid++;
+            if (n_win >= 10) info[ci++] = '0' + (char)(n_win / 10);
+            info[ci++] = '0' + (char)(n_win % 10);
+            info[ci] = '\0';
+            comp_show_toast(seat->comp, info);
+        }
+        if (sel == 4) {
             /* Show Desktop */
             bool any_vis = false;
             struct comp_surface *s;
@@ -738,7 +767,7 @@ static void seat_handle_button(struct seat_state *seat,
             }
             seat->comp->dock_all_minimized = any_vis;
         }
-        /* sel == 4: Quit — not implemented, just dismiss */
+        /* sel == 5: Quit — not implemented, just dismiss */
         comp_damage_add_full(seat->comp);
         seat->comp->needs_repaint = true;
         return;

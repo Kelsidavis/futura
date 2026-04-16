@@ -961,8 +961,15 @@ int main(void) {
     }
     WLTERM_LOG("[WL-TERM] shm_data verified: %p\n", state.shm_data);
 
-    /* Initialize buffer to black */
-    uint32_t *pixels = (uint32_t *)state.shm_data;
+    /* Initialize buffer to background color.
+     * Use a volatile pointer to force re-read from memory each iteration.
+     * Without volatile, the compiler keeps the base pointer in a register
+     * (RAX) across the entire loop.  If a timer interrupt triggers a
+     * context switch mid-loop, the register can be corrupted by the
+     * scheduler (INT 0x80 saves the return value in R11, but cooperative
+     * context switching doesn't preserve caller-saved registers), causing
+     * a page fault on an invalid address. */
+    volatile uint32_t *pixels = (volatile uint32_t *)state.shm_data;
     for (size_t i = 0; i < state.shm_size / 4; i++) {
         pixels[i] = 0xFF1A1B26u;  /* Match terminal background */
     }

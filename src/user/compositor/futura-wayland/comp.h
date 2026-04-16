@@ -178,6 +178,8 @@ struct compositor_state {
     bool toast_active;
     char toast_text[128];
     uint64_t toast_expire_ns;      /* timestamp when toast should disappear */
+    /* Timer watchdog — detects stalled timerfd and forces re-arm */
+    uint64_t last_timer_tick_ms;   /* comp_now_msec() at last successful timer tick */
 };
 
 struct comp_surface {

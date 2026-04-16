@@ -2416,7 +2416,8 @@ try_ramdisk: (void)0;
         char xdg_runtime[] = "XDG_RUNTIME_DIR=/tmp";
         char wayland_display_env[] = "WAYLAND_DISPLAY=wayland-0";
         char wayland_multi_env[] = "WAYLAND_MULTI=1";
-        /* Default to single-buffered mode; allocator cannot recycle double 3 MiB slabs yet */
+        /* Single-buffered mode; heap cannot safely allocate 6 MiB for dual backbuffers.
+         * Wallpaper occlusion culling prevents single-buffer flashing instead. */
         char wayland_backbuffer_env[] = "WAYLAND_BACKBUFFER=0";
         char wayland_deco_env[] = "WAYLAND_DECO=1";
         char wayland_shadow_env[] = "WAYLAND_SHADOW=1";

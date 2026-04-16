@@ -200,6 +200,7 @@ isr_syscall_int80_stub:
      * will see in_irq=true in fut_schedule() and incorrectly use the IRETQ
      * path, saving this INT 0x80 frame (RAX=syscall_number) as irq_frame.
      * When later restored via IRETQ, RAX=syscall_number goes to userspace. */
+    movb $0, fut_in_interrupt(%rip)   /* Clear stale flag (see comment above) */
     movq %rsp, fut_current_frame(%rip)
 
     /* Extract syscall arguments from saved registers
@@ -240,6 +241,14 @@ isr_syscall_int80_stub:
     movq $0, fut_current_frame(%rip)
 
     addq $16, %rsp            /* Remove stack arguments */
+
+    /* Disable interrupts during register restoration.  R11 holds the
+     * syscall return value and will be moved to RAX at the end.  If a
+     * timer interrupt fires in this window, the IRETQ context-switch
+     * path can save/restore the frame with RAX = syscall number instead
+     * of the actual return value, corrupting the result delivered to
+     * userspace.  IRETQ below restores IF from the saved RFLAGS. */
+    cli
 
     /* Restore registers in reverse order to match push order */
     popq %rax                 /* Discard saved GS value */

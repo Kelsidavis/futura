@@ -284,8 +284,10 @@ void lapic_timer_oneshot(uint32_t initial_count, uint8_t vector) {
  * Enable LAPIC timer in periodic mode.
  */
 void lapic_timer_periodic(uint32_t initial_count, uint8_t vector) {
-    /* Set divide configuration to divide by 1 */
-    lapic_write(LAPIC_REG_TIMER_DIVIDE, LAPIC_TIMER_DIV_1);
+    /* Set divide configuration to divide by 16 — must match calibration divider
+     * used in lapic_timer_calibrate_and_start(), otherwise the timer fires at
+     * the wrong frequency (DIV_1 with a DIV_16-calibrated count = 16x too fast) */
+    lapic_write(LAPIC_REG_TIMER_DIVIDE, LAPIC_TIMER_DIV_16);
 
     /* Set LVT Timer Register (periodic mode, not masked) */
     lapic_write(LAPIC_REG_LVT_TIMER, vector | LAPIC_TIMER_PERIODIC);

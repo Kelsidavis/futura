@@ -551,7 +551,20 @@ static void draw_bar_segment(struct backbuffer *dst, fut_rect_t rect,
                     if (dist_sq > r_sq) continue;
                 }
             }
-            row[rect.x + x] = color;
+            /* Subtle noise dither for frosted-glass texture */
+            uint32_t nh = (uint32_t)((rect.x + x) * 2971 + gy * 6337);
+            nh ^= nh >> 13; nh *= 0x45d9f3bu; nh ^= nh >> 16;
+            int noise = (int)(nh & 0x3) - 1;  /* -1..2 */
+            int nr = (int)((color >> 16) & 0xFF) + noise;
+            int ng = (int)((color >> 8) & 0xFF) + noise;
+            int nb = (int)(color & 0xFF) + noise;
+            if (nr < 0) nr = 0;
+            if (nr > 255) nr = 255;
+            if (ng < 0) ng = 0;
+            if (ng > 255) ng = 255;
+            if (nb < 0) nb = 0;
+            if (nb > 255) nb = 255;
+            row[rect.x + x] = 0xFF000000u | ((uint32_t)nr << 16) | ((uint32_t)ng << 8) | (uint32_t)nb;
         }
     }
     #undef BAR_CORNER_R
@@ -923,6 +936,7 @@ int comp_state_init(struct compositor_state *comp) {
     comp->timer_source = NULL;
     comp->next_tick_ms = 0;
     comp->target_ms = 16u;
+    comp->last_timer_tick_ms = 0;
     comp->vsync_hint_ms = comp->target_ms;
     comp->last_clock_min = -1;
     comp->dock_hover_index = -1;
@@ -1267,14 +1281,14 @@ void comp_surface_damage(struct comp_surface *surface,
     surface->has_pending_damage = true;
 }
 
-static uint32_t comp_now_msec(void) {
+static uint64_t comp_now_msec(void) {
     /* sys_time_millis_call() returns the kernel tick counter, not
      * milliseconds.  The LAPIC timer runs at 100 Hz (10 ms/tick),
-     * so multiply by 10 to get real milliseconds.  This matters
-     * because timerfd_settime(TFD_TIMER_ABSTIME) compares against
-     * CLOCK_MONOTONIC which is also tick-based but converted to
-     * nanoseconds inside the kernel. */
-    return (uint32_t)(sys_time_millis_call() * 10);
+     * so multiply by 10 to get real milliseconds.  Must return
+     * uint64_t to match timerfd's now_ms() — a uint32_t would
+     * diverge from the timerfd clock after ~49 days and stall the
+     * timer permanently. */
+    return (uint64_t)sys_time_millis_call() * 10;
 }
 
 static void frame_callback_resource_destroy(struct wl_resource *resource) {
@@ -1509,7 +1523,7 @@ static void present_damage(struct compositor_state *comp, const struct damage_ac
     }
 }
 
-static int comp_flush_frame_callbacks(struct compositor_state *comp, uint32_t now_msec) {
+static int comp_flush_frame_callbacks(struct compositor_state *comp, uint64_t now_msec) {
     if (!comp) {
         return 0;
     }
@@ -1582,10 +1596,38 @@ void comp_render_frame(struct compositor_state *comp) {
     }
     int wp_sec = (int)(wp_ts.tv_sec & 0x7FFFFFFF);
 
+    /* Build occlusion list: opaque window rects that fully cover wallpaper pixels.
+     * Damage rects fully inside a window don't need wallpaper rendering because
+     * the window blit will overwrite every pixel. This prevents single-buffer
+     * flashing where wallpaper is briefly visible behind windows. */
+    #define MAX_OCCLUDERS 8
+    fut_rect_t occluders[MAX_OCCLUDERS];
+    int n_occluders = 0;
+    {
+        struct comp_surface *os;
+        wl_list_for_each(os, &comp->surfaces, link) {
+            if (!os->has_backing || os->minimized) continue;
+            if (n_occluders >= MAX_OCCLUDERS) break;
+            occluders[n_occluders++] = comp_window_rect(os);
+        }
+    }
+
     /* Desktop background: gradient + radial glows + aurora bands + stars */
     for (int i = 0; i < damage->count; ++i) {
         fut_rect_t r = damage->rects[i];
         if (r.w <= 0 || r.h <= 0) continue;
+
+        /* Skip wallpaper for damage rects fully inside an opaque window */
+        bool fully_occluded = false;
+        for (int oi = 0; oi < n_occluders; oi++) {
+            fut_rect_t w = occluders[oi];
+            if (r.x >= w.x && r.y >= w.y &&
+                r.x + r.w <= w.x + w.w && r.y + r.h <= w.y + w.h) {
+                fully_occluded = true;
+                break;
+            }
+        }
+        if (fully_occluded) continue;
         int32_t fb_w = (int32_t)comp->fb_info.width;
         int32_t fb_h = (int32_t)comp->fb_info.height;
         int32_t cx = fb_w / 2;
@@ -1617,8 +1659,35 @@ void comp_render_frame(struct compositor_state *comp) {
                 aurora_env = aurora_env * aurora_env / 255;  /* quadratic falloff */
             }
             uint32_t *row = (uint32_t *)(base + (size_t)gy * dst->pitch);
+            /* Per-scanline occlusion: skip x-ranges covered by opaque windows.
+             * Build a skip list of up to MAX_OCCLUDERS x-intervals for this row. */
+            int32_t skip_x0[MAX_OCCLUDERS], skip_x1[MAX_OCCLUDERS];
+            int n_skips = 0;
+            for (int oi = 0; oi < n_occluders; oi++) {
+                fut_rect_t w = occluders[oi];
+                if (gy >= w.y && gy < w.y + w.h) {
+                    int32_t sx0 = w.x > r.x ? w.x : r.x;
+                    int32_t sx1 = (w.x + w.w) < (r.x + r.w) ? (w.x + w.w) : (r.x + r.w);
+                    if (sx0 < sx1) {
+                        skip_x0[n_skips] = sx0;
+                        skip_x1[n_skips] = sx1;
+                        n_skips++;
+                    }
+                }
+            }
             for (int32_t x = 0; x < r.w; ++x) {
                 int32_t gx = r.x + x;
+                /* Skip pixel if inside any opaque window */
+                bool skip = false;
+                for (int si = 0; si < n_skips; si++) {
+                    if (gx >= skip_x0[si] && gx < skip_x1[si]) {
+                        /* Jump x to end of this skip range */
+                        x = skip_x1[si] - r.x - 1;
+                        skip = true;
+                        break;
+                    }
+                }
+                if (skip) continue;
                 int32_t dx = gx - cx;
                 int64_t dist_sq = (int64_t)dx * dx + (int64_t)dy * dy;
                 int glow = 0;
@@ -2829,17 +2898,25 @@ void comp_render_frame(struct compositor_state *comp) {
                     }
                 }
 
-                /* Thin 1px separator after this item (except the last) */
+                /* Thin 1px separator with vertical fade */
                 {
                     int sep_x = item_x + DOCK_ITEM_W;
-                    fut_rect_t sep_rect = { sep_x, dock_y + 6, 1, DOCK_HEIGHT - 12 };
+                    int sep_top = dock_y + 6;
+                    int sep_h = DOCK_HEIGHT - 12;
+                    fut_rect_t sep_rect = { sep_x, sep_top, 1, sep_h };
                     fut_rect_t sep_clip;
                     if (rect_intersection(dock_clip, sep_rect, &sep_clip)) {
                         char *base = (char *)dst->px;
                         for (int32_t py = sep_clip.y; py < sep_clip.y + sep_clip.h; py++) {
                             uint32_t *row = (uint32_t *)(base + (size_t)py * dst->pitch);
+                            /* Fade alpha at top and bottom of separator */
+                            int sy = py - sep_top;
+                            int edge = sy < sep_h / 2 ? sy : (sep_h - 1 - sy);
+                            int fade = edge < 4 ? (edge + 1) * 255 / 5 : 255;
+                            uint32_t sep_a = ((DOCK_SEP_COLOR >> 24) & 0xFF) * (uint32_t)fade / 255;
+                            uint32_t sep_c = (sep_a << 24) | (DOCK_SEP_COLOR & 0x00FFFFFFu);
                             for (int32_t px = sep_clip.x; px < sep_clip.x + sep_clip.w; px++)
-                                ABLEND(DOCK_SEP_COLOR, row[px]);
+                                ABLEND(sep_c, row[px]);
                         }
                     }
                 }
@@ -2862,16 +2939,23 @@ void comp_render_frame(struct compositor_state *comp) {
                                  cclip.x, cclip.y, cclip.w, cclip.h);
                 }
 
-                /* Thin separator before clock */
+                /* Thin separator before clock with vertical fade */
                 {
-                    fut_rect_t sep = { clock_x - 4, dock_y + 6, 1, DOCK_HEIGHT - 12 };
+                    int cs_top = dock_y + 6;
+                    int cs_h = DOCK_HEIGHT - 12;
+                    fut_rect_t sep = { clock_x - 4, cs_top, 1, cs_h };
                     fut_rect_t sc;
                     if (rect_intersection(dock_clip, sep, &sc)) {
                         char *base = (char *)dst->px;
                         for (int32_t py = sc.y; py < sc.y + sc.h; py++) {
                             uint32_t *row = (uint32_t *)(base + (size_t)py * dst->pitch);
+                            int sy = py - cs_top;
+                            int edge = sy < cs_h / 2 ? sy : (cs_h - 1 - sy);
+                            int fade = edge < 4 ? (edge + 1) * 255 / 5 : 255;
+                            uint32_t sep_a = ((DOCK_SEP_COLOR >> 24) & 0xFF) * (uint32_t)fade / 255;
+                            uint32_t sep_c = (sep_a << 24) | (DOCK_SEP_COLOR & 0x00FFFFFFu);
                             for (int32_t px = sc.x; px < sc.x + sc.w; px++)
-                                ABLEND(DOCK_SEP_COLOR, row[px]);
+                                ABLEND(sep_c, row[px]);
                         }
                     }
                 }
@@ -2893,16 +2977,23 @@ void comp_render_frame(struct compositor_state *comp) {
                                 ABLEND(DOCK_HOVER, row[px]);
                         }
                     }
-                    /* Separator before desktop button */
+                    /* Separator before desktop button with vertical fade */
                     {
-                        fut_rect_t sep = { btn_x - 3, dock_y + 6, 1, DOCK_HEIGHT - 12 };
+                        int ds_top = dock_y + 6;
+                        int ds_h = DOCK_HEIGHT - 12;
+                        fut_rect_t sep = { btn_x - 3, ds_top, 1, ds_h };
                         fut_rect_t sc;
                         if (rect_intersection(dock_clip, sep, &sc)) {
                             char *base = (char *)dst->px;
                             for (int32_t py = sc.y; py < sc.y + sc.h; py++) {
                                 uint32_t *row = (uint32_t *)(base + (size_t)py * dst->pitch);
+                                int sy = py - ds_top;
+                                int edge = sy < ds_h / 2 ? sy : (ds_h - 1 - sy);
+                                int fade = edge < 4 ? (edge + 1) * 255 / 5 : 255;
+                                uint32_t sep_a = ((DOCK_SEP_COLOR >> 24) & 0xFF) * (uint32_t)fade / 255;
+                                uint32_t sep_c = (sep_a << 24) | (DOCK_SEP_COLOR & 0x00FFFFFFu);
                                 for (int32_t px = sc.x; px < sc.x + sc.w; px++)
-                                    ABLEND(DOCK_SEP_COLOR, row[px]);
+                                    ABLEND(sep_c, row[px]);
                             }
                         }
                     }
@@ -3291,6 +3382,49 @@ void comp_render_frame(struct compositor_state *comp) {
                     }
                 }
                 #undef GRIP_SIZE
+            }
+
+            /* 1px side and bottom borders for framed window look */
+            if (comp->deco_enabled && surface->bar_height > 0) {
+                uint32_t border_col = (surface == comp->focused_surface)
+                    ? 0xFFB0B0B8u : 0xFFCCCCD0u;
+                char *bbase = (char *)dst->px;
+                /* Left border */
+                if (content_rect.x > 0) {
+                    int32_t bx = content_rect.x - 1;
+                    fut_rect_t lb = { bx, content_rect.y, 1, content_rect.h };
+                    fut_rect_t lbc;
+                    if (rect_intersection(damage->rects[i], lb, &lbc)) {
+                        for (int32_t by = lbc.y; by < lbc.y + lbc.h; by++) {
+                            uint32_t *brow = (uint32_t *)(bbase + (size_t)by * dst->pitch);
+                            brow[bx] = border_col;
+                        }
+                    }
+                }
+                /* Right border */
+                {
+                    int32_t bx = content_rect.x + content_rect.w;
+                    fut_rect_t rb = { bx, content_rect.y, 1, content_rect.h };
+                    fut_rect_t rbc;
+                    if (rect_intersection(damage->rects[i], rb, &rbc)) {
+                        for (int32_t by = rbc.y; by < rbc.y + rbc.h; by++) {
+                            uint32_t *brow = (uint32_t *)(bbase + (size_t)by * dst->pitch);
+                            brow[bx] = border_col;
+                        }
+                    }
+                }
+                /* Bottom border */
+                {
+                    int32_t by = content_rect.y + content_rect.h;
+                    fut_rect_t bb = { content_rect.x - 1, by,
+                                      content_rect.w + 2, 1 };
+                    fut_rect_t bbc;
+                    if (rect_intersection(damage->rects[i], bb, &bbc)) {
+                        uint32_t *brow = (uint32_t *)(bbase + (size_t)by * dst->pitch);
+                        for (int32_t bx = bbc.x; bx < bbc.x + bbc.w; bx++)
+                            brow[bx] = border_col;
+                    }
+                }
             }
 
             touched = true;
@@ -4836,7 +4970,9 @@ static void comp_handle_timer_tick(struct compositor_state *comp, uint64_t expir
         expirations = 1;
     }
 
-    uint64_t now_ms = (uint64_t)comp_now_msec();
+    uint64_t now_ms = comp_now_msec();
+    comp->last_timer_tick_ms = now_ms;
+
     if (comp->next_tick_ms == 0) {
         comp->next_tick_ms = now_ms + comp->target_ms;
     } else {
@@ -5002,6 +5138,27 @@ int comp_run(struct compositor_state *comp) {
                 }
                 comp_handle_timer_tick(comp, expirations);
                 rendered_this_iter = true;
+            }
+        }
+
+        /* Timer watchdog: if the timerfd hasn't fired in >200ms, the
+         * timer is stuck.  Force re-arm and add clock damage so the
+         * desktop doesn't freeze.  This catches races where the one-shot
+         * timerfd disarms itself but comp_timer_arm fails to re-arm. */
+        if (!rendered_this_iter && comp->timerfd >= 0) {
+            uint64_t now_check = comp_now_msec();
+            uint64_t since_tick = now_check - comp->last_timer_tick_ms;
+            if (comp->last_timer_tick_ms > 0 && since_tick > 200) {
+                comp->next_tick_ms = 0;
+                comp_timer_arm(comp);
+                /* Force per-second clock damage so clocks keep ticking */
+                int32_t fb_w = (int32_t)comp->fb_info.width;
+                int32_t fb_h = (int32_t)comp->fb_info.height;
+                fut_rect_t menubar_clock = { fb_w - 160, 0, 160, MENUBAR_HEIGHT };
+                comp_damage_add_rect(comp, menubar_clock);
+                fut_rect_t dock_clock = { fb_w / 2 - 40, fb_h - 38, 80, 38 };
+                comp_damage_add_rect(comp, dock_clock);
+                comp->last_timer_tick_ms = now_check;
             }
         }
 

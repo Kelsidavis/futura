@@ -1706,6 +1706,20 @@ void comp_render_frame(struct compositor_state *comp) {
                     if (pb > 255) pb = 255;
                 }
 
+                /* Edge vignette: darken corners/edges for depth */
+                {
+                    int ex = gx < cx ? gx : (fb_w - 1 - gx);
+                    int ey = gy < cy ? gy : (fb_h - 1 - gy);
+                    int edge = ex < ey ? ex : ey;
+                    int vignette_r = fb_w < fb_h ? fb_w / 3 : fb_h / 3;
+                    if (edge < vignette_r) {
+                        int darken = 30 * (vignette_r - edge) / vignette_r;
+                        pr = pr * (255 - darken) / 255;
+                        pg = pg * (255 - darken) / 255;
+                        pb = pb * (255 - darken) / 255;
+                    }
+                }
+
                 row[gx] = 0xFF000000u | ((uint32_t)pr << 16)
                          | ((uint32_t)pg << 8) | (uint32_t)pb;
             }
@@ -1953,6 +1967,14 @@ void comp_render_frame(struct compositor_state *comp) {
                     uint32_t og = (sg * sa + dg * da) / 255u;
                     uint32_t ob = (sb * sa + db * da) / 255u;
                     row[px] = 0xFF000000u | (or_ << 16) | (og << 8) | ob;
+                }
+            }
+
+            /* 1px top highlight for glass edge */
+            if (0 >= mbar_clip.y && 0 < mbar_clip.y + mbar_clip.h) {
+                uint32_t *top_row = (uint32_t *)(base + 0);
+                for (int32_t px = mbar_clip.x; px < mbar_clip.x + mbar_clip.w; px++) {
+                    ABLEND(0x18FFFFFFu, top_row[px]);
                 }
             }
 

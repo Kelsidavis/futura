@@ -513,7 +513,10 @@ static void draw_bar_segment(struct backbuffer *dst, fut_rect_t rect, bool focus
     for (int32_t y = 0; y < rect.h; ++y) {
         int32_t gy = rect.y + y;
         uint32_t color;
-        if (y == 0) {
+        if (focused && y < 2) {
+            /* 2px accent line at top of focused window (blue-purple) */
+            color = (y == 0) ? 0xFF5577CCu : 0xFF6688DDu;
+        } else if (y == 0) {
             color = focused ? 0xFFFCFCFEu : 0xFFFEFEFEu;
         } else if (y == rect.h - 1) {
             color = focused ? 0xFFB8B8BEu : 0xFFD0D0D4u;
@@ -1828,6 +1831,24 @@ void comp_render_frame(struct compositor_state *comp) {
         }
     }
 
+    /* Alpha-blend helper: blend src (with alpha) over dst pixel */
+    #define ABLEND(src_argb, dst_px) do { \
+        uint32_t _sa = ((src_argb) >> 24) & 0xFF; \
+        if (_sa == 0xFF) { (dst_px) = (src_argb); } \
+        else if (_sa > 0) { \
+            uint32_t _da = 255u - _sa; \
+            uint32_t _sr = ((src_argb) >> 16) & 0xFF; \
+            uint32_t _sg = ((src_argb) >>  8) & 0xFF; \
+            uint32_t _sb = ((src_argb)      ) & 0xFF; \
+            uint32_t _dr = ((dst_px) >> 16) & 0xFF; \
+            uint32_t _dg = ((dst_px) >>  8) & 0xFF; \
+            uint32_t _db = ((dst_px)      ) & 0xFF; \
+            uint32_t _or = (_sr * _sa + _dr * _da) / 255u; \
+            uint32_t _og = (_sg * _sa + _dg * _da) / 255u; \
+            uint32_t _ob = (_sb * _sa + _db * _da) / 255u; \
+            (dst_px) = 0xFF000000u | (_or << 16) | (_og << 8) | _ob; \
+        } } while (0)
+
     /* ── Top menu bar ── */
     {
         #define MENUBAR_COLOR   0xE0181828u  /* Dark frosted panel */
@@ -1977,17 +1998,78 @@ void comp_render_frame(struct compositor_state *comp) {
                     }
                 }
 
-                /* Volume indicator: "vol" */
-                int vol_x = sep_x2 - 4 * UI_FONT_WIDTH - 4;
-                ui_draw_text(dst->px, dst->pitch, vol_x, 4,
-                             0xFF90A0B8u, "vol",
-                             mbar_clip.x, mbar_clip.y, mbar_clip.w, mbar_clip.h);
+                /* Volume icon: small speaker with sound wave */
+                {
+                    int vix = sep_x2 - 20;
+                    int viy = 5;
+                    /* Speaker body (small rectangle + triangle cone) */
+                    char *vbase = (char *)dst->px;
+                    for (int vy = 0; vy < 12; vy++) {
+                        int gy = viy + vy;
+                        if (gy < mbar_clip.y || gy >= mbar_clip.y + mbar_clip.h) continue;
+                        uint32_t *vrow = (uint32_t *)(vbase + (size_t)gy * dst->pitch);
+                        for (int vx = 0; vx < 16; vx++) {
+                            int gx = vix + vx;
+                            if (gx < mbar_clip.x || gx >= mbar_clip.x + mbar_clip.w) continue;
+                            bool pixel = false;
+                            /* Speaker body: rect 0-2, rows 3-8 */
+                            if (vx >= 0 && vx <= 2 && vy >= 3 && vy <= 8) pixel = true;
+                            /* Speaker cone: triangle 3-6, rows 1-10 */
+                            if (vx >= 3 && vx <= 6) {
+                                int half = (vx - 2);  /* 1..4 */
+                                if (vy >= (6 - half) && vy <= (5 + half)) pixel = true;
+                            }
+                            /* Sound wave 1: arc at x=8-9 */
+                            if (vx >= 8 && vx <= 9) {
+                                int dy = vy - 6;
+                                if (dy >= -2 && dy <= 2 && (dy == -2 || dy == 2 || (vx == 9 && dy >= -1 && dy <= 1)))
+                                    pixel = true;
+                            }
+                            /* Sound wave 2: arc at x=11-12 */
+                            if (vx >= 11 && vx <= 12) {
+                                int dy = vy - 6;
+                                if (dy >= -4 && dy <= 4 && (dy == -4 || dy == 4 || (vx == 12 && dy >= -3 && dy <= 3 && (dy == -3 || dy == 3))))
+                                    pixel = true;
+                            }
+                            if (pixel) {
+                                ABLEND(0xD090A0B8u, vrow[gx]);
+                            }
+                        }
+                    }
+                }
 
-                /* Network indicator: "net" */
-                int net_x = vol_x - 4 * UI_FONT_WIDTH - 2;
-                ui_draw_text(dst->px, dst->pitch, net_x, 4,
-                             0xFF70C890u, "net",
-                             mbar_clip.x, mbar_clip.y, mbar_clip.w, mbar_clip.h);
+                /* Network/WiFi icon: concentric arcs with dot */
+                {
+                    int nix = sep_x2 - 40;
+                    int niy = 4;
+                    char *nbase = (char *)dst->px;
+                    int ncx = nix + 6;  /* center x */
+                    int ncy = niy + 12; /* center y (bottom) */
+                    for (int ny = 0; ny < 14; ny++) {
+                        int gy = niy + ny;
+                        if (gy < mbar_clip.y || gy >= mbar_clip.y + mbar_clip.h) continue;
+                        uint32_t *nrow = (uint32_t *)(nbase + (size_t)gy * dst->pitch);
+                        for (int nx = 0; nx < 14; nx++) {
+                            int gx = nix + nx;
+                            if (gx < mbar_clip.x || gx >= mbar_clip.x + mbar_clip.w) continue;
+                            int dx = gx - ncx;
+                            int dy = gy - ncy;
+                            int dist_sq = dx * dx + dy * dy;
+                            bool pixel = false;
+                            /* Center dot: radius 1 */
+                            if (dist_sq <= 2 && dy <= 0) pixel = true;
+                            /* Arc 1: radius 4-5 */
+                            if (dist_sq >= 14 && dist_sq <= 27 && dy <= -2 && dx >= -4 && dx <= 4) pixel = true;
+                            /* Arc 2: radius 7-8 */
+                            if (dist_sq >= 42 && dist_sq <= 68 && dy <= -4 && dx >= -7 && dx <= 7) pixel = true;
+                            /* Arc 3: radius 10-11 */
+                            if (dist_sq >= 90 && dist_sq <= 125 && dy <= -6 && dx >= -10 && dx <= 10) pixel = true;
+                            if (pixel) {
+                                ABLEND(0xD070C890u, nrow[gx]);
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -2085,24 +2167,6 @@ void comp_render_frame(struct compositor_state *comp) {
         int dock_y = fb_h - DOCK_HEIGHT - 6;
 
         fut_rect_t dock_rect = { dock_x, dock_y, dock_w, DOCK_HEIGHT };
-
-        /* Alpha-blend helper: blend src (with alpha) over dst pixel */
-        #define ABLEND(src_argb, dst_px) do { \
-            uint32_t _sa = ((src_argb) >> 24) & 0xFF; \
-            if (_sa == 0xFF) { (dst_px) = (src_argb); } \
-            else if (_sa > 0) { \
-                uint32_t _da = 255u - _sa; \
-                uint32_t _sr = ((src_argb) >> 16) & 0xFF; \
-                uint32_t _sg = ((src_argb) >>  8) & 0xFF; \
-                uint32_t _sb = ((src_argb)      ) & 0xFF; \
-                uint32_t _dr = ((dst_px) >> 16) & 0xFF; \
-                uint32_t _dg = ((dst_px) >>  8) & 0xFF; \
-                uint32_t _db = ((dst_px)      ) & 0xFF; \
-                uint32_t _or = (_sr * _sa + _dr * _da) / 255u; \
-                uint32_t _og = (_sg * _sa + _dg * _da) / 255u; \
-                uint32_t _ob = (_sb * _sa + _db * _da) / 255u; \
-                (dst_px) = 0xFF000000u | (_or << 16) | (_og << 8) | _ob; \
-            } } while (0)
 
         /* Inline pixel darkening for dock shadow */
         #define shadow_darken_pixel_inline(px_ptr, a) do { \
@@ -2297,6 +2361,27 @@ void comp_render_frame(struct compositor_state *comp) {
                                             ABLEND(hc, hrow[hx]);
                                         }
                                     }
+                                }
+                            }
+                        }
+                    }
+
+                    /* Non-focused running indicator: small dim dot */
+                    if (!is_focused && !is_minimized) {
+                        int rdot_w = 4, rdot_h = 2;
+                        int rdot_x = item_x + (DOCK_ITEM_W - rdot_w) / 2;
+                        int rdot_y = item_y + DOCK_ITEM_H - rdot_h - 1;
+                        fut_rect_t rdot_rect = { rdot_x, rdot_y, rdot_w, rdot_h };
+                        fut_rect_t rdot_clip;
+                        if (rect_intersection(dock_clip, rdot_rect, &rdot_clip)) {
+                            char *rbase = (char *)dst->px;
+                            for (int32_t ry = rdot_clip.y; ry < rdot_clip.y + rdot_clip.h; ry++) {
+                                uint32_t *rrow = (uint32_t *)(rbase + (size_t)ry * dst->pitch);
+                                for (int32_t rx = rdot_clip.x; rx < rdot_clip.x + rdot_clip.w; rx++) {
+                                    int lx = rx - rdot_x;
+                                    int fade = (lx == 0 || lx == rdot_w - 1) ? 40 : 80;
+                                    uint32_t rc = ((uint32_t)fade << 24) | 0x009090A0u;
+                                    ABLEND(rc, rrow[rx]);
                                 }
                             }
                         }

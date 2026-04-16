@@ -504,27 +504,29 @@ static void blit_argb(const char *src_base,
     }
 }
 
-static void draw_bar_segment(struct backbuffer *dst, fut_rect_t rect, bool focused) {
-    /* Refined title bar gradient with rounded top corners */
+static void draw_bar_segment(struct backbuffer *dst, fut_rect_t rect,
+                             int32_t bar_top, int32_t bar_h, bool focused) {
+    /* Refined title bar gradient with rounded top corners + focused accent */
     #define BAR_CORNER_R 6  /* Radius for rounded top corners */
-    uint32_t top = focused ? 0xFFF0F0F4u : 0xFFF8F8FAu;
-    uint32_t bot = focused ? 0xFFD8D8DEu : 0xFFEAEAEEu;
+    uint32_t top_col = focused ? 0xFFF0F0F4u : 0xFFF8F8FAu;
+    uint32_t bot_col = focused ? 0xFFD8D8DEu : 0xFFEAEAEEu;
     char *base = (char *)dst->px;
     for (int32_t y = 0; y < rect.h; ++y) {
         int32_t gy = rect.y + y;
+        int32_t bar_y = gy - bar_top;  /* row within full bar (0..bar_h-1) */
         uint32_t color;
-        if (focused && y < 2) {
-            /* 2px accent line at top of focused window (blue-purple) */
-            color = (y == 0) ? 0xFF5577CCu : 0xFF6688DDu;
-        } else if (y == 0) {
+        if (focused && bar_y >= 0 && bar_y < 2) {
+            /* 2px accent line at actual top of focused window */
+            color = (bar_y == 0) ? 0xFF5577CCu : 0xFF6688DDu;
+        } else if (bar_y == 0) {
             color = focused ? 0xFFFCFCFEu : 0xFFFEFEFEu;
-        } else if (y == rect.h - 1) {
+        } else if (bar_y == bar_h - 1) {
             color = focused ? 0xFFB8B8BEu : 0xFFD0D0D4u;
         } else {
-            int t = (rect.h > 2) ? (y * 255 / (rect.h - 2)) : 0;
-            uint8_t r_c = (uint8_t)(((top >> 16) & 0xFF) + ((int)((bot >> 16) & 0xFF) - (int)((top >> 16) & 0xFF)) * t / 255);
-            uint8_t g_c = (uint8_t)(((top >> 8) & 0xFF) + ((int)((bot >> 8) & 0xFF) - (int)((top >> 8) & 0xFF)) * t / 255);
-            uint8_t b_c = (uint8_t)((top & 0xFF) + ((int)(bot & 0xFF) - (int)(top & 0xFF)) * t / 255);
+            int t = (bar_h > 2) ? (bar_y * 255 / (bar_h - 2)) : 0;
+            uint8_t r_c = (uint8_t)(((top_col >> 16) & 0xFF) + ((int)((bot_col >> 16) & 0xFF) - (int)((top_col >> 16) & 0xFF)) * t / 255);
+            uint8_t g_c = (uint8_t)(((top_col >> 8) & 0xFF) + ((int)((bot_col >> 8) & 0xFF) - (int)((top_col >> 8) & 0xFF)) * t / 255);
+            uint8_t b_c = (uint8_t)((top_col & 0xFF) + ((int)(bot_col & 0xFF) - (int)(top_col & 0xFF)) * t / 255);
             color = 0xFF000000u | ((uint32_t)r_c << 16) | ((uint32_t)g_c << 8) | b_c;
         }
         uint32_t *row = (uint32_t *)(base + (size_t)gy * dst->pitch);
@@ -1998,42 +2000,39 @@ void comp_render_frame(struct compositor_state *comp) {
                     }
                 }
 
-                /* Volume icon: small speaker with sound wave */
+                /* Volume icon: speaker + sound waves (14x12 px) */
                 {
-                    int vix = sep_x2 - 20;
-                    int viy = 5;
-                    /* Speaker body (small rectangle + triangle cone) */
+                    /* Bitmap rows for speaker shape (14 columns, 12 rows)
+                     * Bit layout per row: columns 0..13, MSB=col0
+                     * Speaker body + cone, then two arc waves */
+                    static const uint16_t vol_bits[12] = {
+                        0x0000, /*               */
+                        0x0000, /*               */
+                        0x0800, /*     #         */
+                        0x1900, /*    ## #       */
+                        0xFA20, /*  ##### #   #  */
+                        0xFA20, /*  ##### #   #  */
+                        0xFA20, /*  ##### #   #  */
+                        0xFA20, /*  ##### #   #  */
+                        0x1900, /*    ## #       */
+                        0x0800, /*     #         */
+                        0x0000, /*               */
+                        0x0000, /*               */
+                    };
+                    int vix = sep_x2 - 18;
+                    int viy = 6;
                     char *vbase = (char *)dst->px;
                     for (int vy = 0; vy < 12; vy++) {
                         int gy = viy + vy;
                         if (gy < mbar_clip.y || gy >= mbar_clip.y + mbar_clip.h) continue;
                         uint32_t *vrow = (uint32_t *)(vbase + (size_t)gy * dst->pitch);
-                        for (int vx = 0; vx < 16; vx++) {
+                        uint16_t bits = vol_bits[vy];
+                        if (!bits) continue;
+                        for (int vx = 0; vx < 14; vx++) {
+                            if (!(bits & (uint16_t)(0x8000u >> vx))) continue;
                             int gx = vix + vx;
                             if (gx < mbar_clip.x || gx >= mbar_clip.x + mbar_clip.w) continue;
-                            bool pixel = false;
-                            /* Speaker body: rect 0-2, rows 3-8 */
-                            if (vx >= 0 && vx <= 2 && vy >= 3 && vy <= 8) pixel = true;
-                            /* Speaker cone: triangle 3-6, rows 1-10 */
-                            if (vx >= 3 && vx <= 6) {
-                                int half = (vx - 2);  /* 1..4 */
-                                if (vy >= (6 - half) && vy <= (5 + half)) pixel = true;
-                            }
-                            /* Sound wave 1: arc at x=8-9 */
-                            if (vx >= 8 && vx <= 9) {
-                                int dy = vy - 6;
-                                if (dy >= -2 && dy <= 2 && (dy == -2 || dy == 2 || (vx == 9 && dy >= -1 && dy <= 1)))
-                                    pixel = true;
-                            }
-                            /* Sound wave 2: arc at x=11-12 */
-                            if (vx >= 11 && vx <= 12) {
-                                int dy = vy - 6;
-                                if (dy >= -4 && dy <= 4 && (dy == -4 || dy == 4 || (vx == 12 && dy >= -3 && dy <= 3 && (dy == -3 || dy == 3))))
-                                    pixel = true;
-                            }
-                            if (pixel) {
-                                ABLEND(0xD090A0B8u, vrow[gx]);
-                            }
+                            ABLEND(0xD090A0B8u, vrow[gx]);
                         }
                     }
                 }
@@ -2619,7 +2618,8 @@ void comp_render_frame(struct compositor_state *comp) {
                 fut_rect_t bar_rect = comp_bar_rect(surface);
                 fut_rect_t bar_clip;
                 if (rect_intersection(damage->rects[i], bar_rect, &bar_clip)) {
-                    draw_bar_segment(dst, bar_clip, surface == comp->focused_surface);
+                    draw_bar_segment(dst, bar_clip, bar_rect.y, bar_rect.h,
+                                     surface == comp->focused_surface);
                     draw_title_text(dst, surface, &bar_clip);
                     touched = true;
                 }

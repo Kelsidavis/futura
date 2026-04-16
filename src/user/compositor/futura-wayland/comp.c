@@ -1903,6 +1903,24 @@ void comp_render_frame(struct compositor_state *comp) {
                     }
                 }
 
+                /* Horizon glow: warm ambient light at the bottom edge */
+                {
+                    int horizon_zone = fb_h / 4;  /* bottom 25% */
+                    int hy = gy - (fb_h - horizon_zone);
+                    if (hy > 0) {
+                        int intensity = hy * 18 / horizon_zone;
+                        /* Warm purple-orange tint */
+                        int hx_frac = fb_w > 0 ? gx * 255 / fb_w : 0;
+                        int hr = intensity * (180 + hx_frac / 5) / 255;
+                        int hg = intensity * (80 + hx_frac / 8) / 255;
+                        int hb = intensity * (140 + (255 - hx_frac) / 4) / 255;
+                        pr += hr; pg += hg; pb += hb;
+                        if (pr > 255) pr = 255;
+                        if (pg > 255) pg = 255;
+                        if (pb > 255) pb = 255;
+                    }
+                }
+
                 /* Edge vignette: darken corners/edges for depth */
                 {
                     int ex = gx < cx ? gx : (fb_w - 1 - gx);

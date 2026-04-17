@@ -1170,6 +1170,10 @@ WL_TERM_BIN := $(BIN_DIR)/$(PLATFORM)/user/wl-term
 WL_TERM_BLOB := $(OBJ_DIR)/kernel/blobs/wl_term_blob.o
 WL_PANEL_BIN := $(BIN_DIR)/$(PLATFORM)/user/wl-panel
 WL_PANEL_BLOB := $(OBJ_DIR)/kernel/blobs/wl_panel_blob.o
+WL_EDIT_BIN := $(BIN_DIR)/$(PLATFORM)/user/wl-edit
+WL_EDIT_BLOB := $(OBJ_DIR)/kernel/blobs/wl_edit_blob.o
+WL_SYSMON_BIN := $(BIN_DIR)/$(PLATFORM)/user/wl-sysmon
+WL_SYSMON_BLOB := $(OBJ_DIR)/kernel/blobs/wl_sysmon_blob.o
 
 # ARM64 userland binaries
 ARM64_INIT_BIN := $(BIN_DIR)/arm64/user/init
@@ -1198,7 +1202,7 @@ endif
 # Core Wayland binaries (production) - only when ENABLE_WAYLAND=1 on Linux
 ifeq ($(ENABLE_WAYLAND),1)
 ifneq ($(shell uname -s),Darwin)
-OBJECTS += $(WAYLAND_COMPOSITOR_BLOB) $(WAYLAND_SHELL_BLOB) $(WL_TERM_BLOB) $(WL_PANEL_BLOB)
+OBJECTS += $(WAYLAND_COMPOSITOR_BLOB) $(WAYLAND_SHELL_BLOB) $(WL_TERM_BLOB) $(WL_PANEL_BLOB) $(WL_EDIT_BLOB) $(WL_SYSMON_BLOB)
 ifeq ($(ENABLE_WAYLAND_TEST_CLIENTS),1)
 OBJECTS += $(WAYLAND_CLIENT_BLOB) $(WAYLAND_COLOR_BLOB)
 endif
@@ -1544,6 +1548,12 @@ $(WAYLAND_CLIENT_BIN):
 $(WL_TERM_BIN):
 	@$(MAKE) -C src/user/clients/wl-term all
 
+$(WL_EDIT_BIN):
+	@$(MAKE) -C src/user/clients/wl-edit all
+
+$(WL_SYSMON_BIN):
+	@$(MAKE) -C src/user/clients/wl-sysmon all
+
 $(WAYLAND_COLOR_BIN):
 	@$(MAKE) -C src/user/clients/wl-colorwheel all
 
@@ -1586,6 +1596,14 @@ $(WL_TERM_BLOB): $(WL_TERM_BIN) | $(OBJ_DIR)/kernel/blobs
 	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
 
 $(WL_PANEL_BLOB): $(WL_PANEL_BIN) | $(OBJ_DIR)/kernel/blobs
+	@echo "OBJCOPY $@"
+	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
+
+$(WL_EDIT_BLOB): $(WL_EDIT_BIN) | $(OBJ_DIR)/kernel/blobs
+	@echo "OBJCOPY $@"
+	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
+
+$(WL_SYSMON_BLOB): $(WL_SYSMON_BIN) | $(OBJ_DIR)/kernel/blobs
 	@echo "OBJCOPY $@"
 	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
 
@@ -1702,6 +1720,8 @@ stage: userland
 	@chmod 1777 $(INITROOT)/tmp
 	@if [ -f $(WAYLAND_COMPOSITOR_BIN) ]; then install -m 0755 $(WAYLAND_COMPOSITOR_BIN) $(INITROOT)/sbin/futura-wayland; fi
 	@if [ -f $(WL_TERM_BIN) ]; then install -m 0755 $(WL_TERM_BIN) $(INITROOT)/bin/wl-term; fi
+	@if [ -f $(WL_EDIT_BIN) ]; then install -m 0755 $(WL_EDIT_BIN) $(INITROOT)/bin/wl-edit; fi
+	@if [ -f $(WL_SYSMON_BIN) ]; then install -m 0755 $(WL_SYSMON_BIN) $(INITROOT)/bin/wl-sysmon; fi
 	@if [ -f $(WAYLAND_CLIENT_BIN) ]; then install -m 0755 $(WAYLAND_CLIENT_BIN) $(INITROOT)/bin/wl-simple; fi
 	@if [ -f $(WAYLAND_COLOR_BIN) ]; then install -m 0755 $(WAYLAND_COLOR_BIN) $(INITROOT)/bin/wl-colorwheel; fi
 	@if [ -f $(WAYLAND_SHELL_BIN) ]; then install -m 0755 $(WAYLAND_SHELL_BIN) $(INITROOT)/sbin/futura-shell && install -m 0755 $(WAYLAND_SHELL_BIN) $(INITROOT)/bin/futura-shell; fi

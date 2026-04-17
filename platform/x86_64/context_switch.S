@@ -67,6 +67,25 @@ fut_switch_context:
     movq %rbx, CTX_RBX(%rdi)
     movq %rbp, CTX_RBP(%rdi)
 
+    /* Save caller-saved registers. The restore path (below, and the
+     * .kernel_coop_restore path in fut_switch_context_irq) unconditionally
+     * reloads CTX_RDI..CTX_RAX on resume. Without a matching save those
+     * slots retain stale values — initial values from fut_thread_create
+     * the first time, or CS/SS validation scratch from the IRQ path on
+     * later runs — and clobber the resumed thread's live register state.
+     * Symptom: sporadic user-mode faults with RAX = 0x23 or small int in
+     * tight loops (wl-term pixel fill, compositor occluder loop).
+     *
+     * RDI at entry is the prev-ctx pointer (function arg); the caller's
+     * original RDI is already unrecoverable. RSI is the next-ctx pointer.
+     * That's fine — caller-saved is ABI-clobbered across function calls
+     * anyway, so any self-consistent value restored here is acceptable. */
+    movq %rax, CTX_RAX(%rdi)
+    movq %rcx, CTX_RCX(%rdi)
+    movq %rdx, CTX_RDX(%rdi)
+    movq %rdi, CTX_RDI(%rdi)
+    movq %rsi, CTX_RSI(%rdi)
+
     movq (%rsp), %rax
     movq %rax, CTX_RIP(%rdi)
     leaq 8(%rsp), %rax
@@ -395,6 +414,19 @@ fut_switch_context_irq:
 
     movq $0x08, (48 + 72)(%r12)   /* context.cs = kernel CS */
     movq $0x10, (48 + 80)(%r12)   /* context.ss = kernel SS */
+
+    /* Save caller-saved register slots so .kernel_coop_restore (lines ~1455-
+     * 1459) sees self-consistent values rather than stale ones from the last
+     * cooperative save or from thread_create. The cooperative restore treats
+     * these as scratch since System V AMD64 ABI marks them caller-saved, but
+     * the slots need to be written to at least once per save to avoid feeding
+     * uninitialised memory into user-mode register state further down the
+     * resume chain. Matches the symmetric save in fut_switch_context. */
+    movq $0, (48 + 120)(%r12)     /* context.rdi */
+    movq $0, (48 + 128)(%r12)     /* context.rsi */
+    movq $0, (48 + 136)(%r12)     /* context.rdx */
+    movq $0, (48 + 144)(%r12)     /* context.rcx */
+    movq $0, (48 + 152)(%r12)     /* context.rax */
 
     /* Save FX state so FPU registers are preserved on cooperative restore */
     leaq (48 + 160)(%r12), %rax

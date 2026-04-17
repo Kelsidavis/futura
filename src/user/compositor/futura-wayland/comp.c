@@ -3945,8 +3945,8 @@ void comp_render_frame(struct compositor_state *comp) {
     if (comp->futura_menu_active) {
         #define FM_W       220
         #define FM_ITEM_H  26
-        #define FM_ITEMS   6
-        #define FM_SEP_AFTER 3   /* separator after item index 3 */
+        #define FM_ITEMS   8
+        #define FM_SEP_AFTER 2   /* separator after Task Manager (apps group) */
         #define FM_SEP_H   7
         #define FM_PAD     4
         #define FM_CORNER  6
@@ -3961,10 +3961,12 @@ void comp_render_frame(struct compositor_state *comp) {
         int32_t fm_y = MENUBAR_HEIGHT;
         fut_rect_t fm_rect = { fm_x, fm_y, FM_W, fm_h };
 
-        const char *fm_labels[] = { "New Terminal", "About Futura",
+        const char *fm_labels[] = { "New Terminal", "Text Editor",
+                                     "Task Manager", "About Futura",
                                      "Shortcuts", "System Info",
                                      "Show Desktop", "Quit" };
         const char *fm_hints[] = { "Ctrl+Alt+T", NULL,
+                                    NULL, NULL,
                                     "Super+/", "Super+I",
                                     "Super+D", "Ctrl+Alt+Del" };
 
@@ -4055,6 +4057,10 @@ void comp_render_frame(struct compositor_state *comp) {
             static const uint8_t fm_icons[FM_ITEMS][8] = {
                 /* Terminal: >_ prompt */
                 { 0x00, 0x20, 0x30, 0x18, 0x30, 0x20, 0x0E, 0x00 },
+                /* Text Editor: document with lines */
+                { 0x7E, 0x42, 0x7E, 0x42, 0x7E, 0x42, 0x7E, 0x00 },
+                /* Task Manager: bar chart */
+                { 0x00, 0x02, 0x0A, 0x2A, 0xAA, 0xAA, 0xAA, 0xFF },
                 /* About: circled 'i' */
                 { 0x3C, 0x42, 0x5A, 0x42, 0x5A, 0x5A, 0x42, 0x3C },
                 /* Shortcuts: keyboard outline */
@@ -5706,9 +5712,9 @@ void comp_pointer_motion(struct compositor_state *comp, int32_t new_x, int32_t n
     if (comp->futura_menu_active) {
         #define FM_MENU_W       220
         #define FM_MENU_ITEM_H  26
-        #define FM_MENU_ITEMS   6
+        #define FM_MENU_ITEMS   8
         #define FM_MENU_PAD     4
-        #define FM_MENU_SEP_AFTER 3
+        #define FM_MENU_SEP_AFTER 2
         #define FM_MENU_SEP_H   7
         int32_t fm_h = FM_MENU_PAD + FM_MENU_ITEMS * FM_MENU_ITEM_H +
                         FM_MENU_SEP_H + FM_MENU_PAD;

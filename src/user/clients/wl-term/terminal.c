@@ -681,6 +681,50 @@ void term_render(struct terminal *term, uint32_t *pixels, int32_t width, int32_t
         }
     }
 
+    /* Thin scrollbar track on the right edge (2px wide).
+     * Shows position relative to total content (grid + scrollback). */
+    {
+        int total_lines = term->rows + term->scrollback_count;
+        if (total_lines > term->rows && width > 4) {
+            int track_x = width - 2;
+            int track_top = pad_y;
+            int track_h = term->rows * FONT_HEIGHT;
+            if (track_h < 8) track_h = 8;
+
+            /* Draw subtle track background */
+            for (int y = track_top; y < track_top + track_h && y < height; y++) {
+                uint32_t *line = pixels + (size_t)y * (size_t)stride;
+                for (int x = track_x; x < track_x + 2 && x < width; x++) {
+                    /* Darken existing pixel slightly for track */
+                    uint32_t p = line[x];
+                    uint32_t r = ((p >> 16) & 0xFF) * 200 / 255;
+                    uint32_t g = ((p >> 8) & 0xFF) * 200 / 255;
+                    uint32_t b = (p & 0xFF) * 200 / 255;
+                    line[x] = 0xFF000000u | (r << 16) | (g << 8) | b;
+                }
+            }
+
+            /* Calculate thumb position and size */
+            int visible = term->rows;
+            int thumb_h = visible * track_h / total_lines;
+            if (thumb_h < 6) thumb_h = 6;
+            /* Position: scroll_offset=0 means at bottom (latest), max=scrollback_count */
+            int scroll_pos = term->scrollback_count - term->scroll_offset;
+            int thumb_y = track_top + scroll_pos * (track_h - thumb_h) / total_lines;
+            if (thumb_y + thumb_h > track_top + track_h)
+                thumb_y = track_top + track_h - thumb_h;
+
+            /* Draw thumb (brighter when scrolled up) */
+            uint32_t thumb_col = term->scroll_offset > 0 ? 0xFF5577AAu : 0xFF404060u;
+            for (int y = thumb_y; y < thumb_y + thumb_h && y < height; y++) {
+                uint32_t *line = pixels + (size_t)y * (size_t)stride;
+                for (int x = track_x; x < track_x + 2 && x < width; x++) {
+                    line[x] = thumb_col;
+                }
+            }
+        }
+    }
+
     /* Render blinking block cursor.
      * When blink phase is off, render the character under the cursor normally
      * (i.e., skip the cursor overlay) so the cursor appears to vanish. */

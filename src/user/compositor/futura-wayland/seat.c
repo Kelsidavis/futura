@@ -455,6 +455,8 @@ static void seat_update_pointer_focus(struct seat_state *seat, uint32_t time_mse
 }
 
 static void compositor_launch_terminal(void);
+static void compositor_launch_edit(void);
+static void compositor_launch_sysmon(void);
 
 static void seat_handle_button(struct seat_state *seat,
                                uint16_t code,
@@ -724,9 +726,11 @@ static void seat_handle_button(struct seat_state *seat,
         comp_damage_add_full(seat->comp);
         seat->comp->needs_repaint = true;
         if (sel == 0) compositor_launch_terminal();
-        if (sel == 1) { seat->comp->about_active = true; }
-        if (sel == 2) { seat->comp->shortcut_overlay_active = true; }
-        if (sel == 3) {
+        if (sel == 1) compositor_launch_edit();
+        if (sel == 2) compositor_launch_sysmon();
+        if (sel == 3) { seat->comp->about_active = true; }
+        if (sel == 4) { seat->comp->shortcut_overlay_active = true; }
+        if (sel == 5) {
             /* System Info — show toast */
             int32_t w = (int32_t)seat->comp->fb_info.width;
             int32_t h = (int32_t)seat->comp->fb_info.height;
@@ -755,7 +759,7 @@ static void seat_handle_button(struct seat_state *seat,
             info[ci] = '\0';
             comp_show_toast(seat->comp, info);
         }
-        if (sel == 4) {
+        if (sel == 6) {
             /* Show Desktop */
             bool any_vis = false;
             struct comp_surface *s;
@@ -767,7 +771,7 @@ static void seat_handle_button(struct seat_state *seat,
             }
             seat->comp->dock_all_minimized = any_vis;
         }
-        /* sel == 5: Quit — not implemented, just dismiss */
+        /* sel == 7: Quit — not implemented, just dismiss */
         comp_damage_add_full(seat->comp);
         seat->comp->needs_repaint = true;
         return;
@@ -913,6 +917,30 @@ static void compositor_launch_terminal(void) {
         char *envp[] = { "WAYLAND_DISPLAY=wayland-0", "XDG_RUNTIME_DIR=/tmp",
                          "TERM=xterm-256color", (void*)0 };
         sys_execve_call("/bin/wl-term", argv, envp);
+        sys_exit(127);
+    }
+}
+
+/* Launch the text editor */
+static void compositor_launch_edit(void) {
+    long pid = sys_fork_call();
+    if (pid == 0) {
+        char *argv[] = { "/bin/wl-edit", (void*)0 };
+        char *envp[] = { "WAYLAND_DISPLAY=wayland-0", "XDG_RUNTIME_DIR=/tmp",
+                         (void*)0 };
+        sys_execve_call("/bin/wl-edit", argv, envp);
+        sys_exit(127);
+    }
+}
+
+/* Launch the task manager */
+static void compositor_launch_sysmon(void) {
+    long pid = sys_fork_call();
+    if (pid == 0) {
+        char *argv[] = { "/bin/wl-sysmon", (void*)0 };
+        char *envp[] = { "WAYLAND_DISPLAY=wayland-0", "XDG_RUNTIME_DIR=/tmp",
+                         (void*)0 };
+        sys_execve_call("/bin/wl-sysmon", argv, envp);
         sys_exit(127);
     }
 }

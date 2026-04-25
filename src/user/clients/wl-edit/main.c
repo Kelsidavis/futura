@@ -230,7 +230,12 @@ static bool ed_save_file(const char *path) {
 /* ─── Edit ops ─── */
 
 static void ed_insert_char(char ch) {
-    if (ed_line_len[ed_cursor_row] >= ED_MAX_COL) return;
+    if (ed_line_len[ed_cursor_row] >= ED_MAX_COL) {
+        /* Line full — silently dropping the keystroke looked like a stuck
+         * editor. (Only fires once per keystroke, so the noise is bounded.) */
+        ed_set_status("line full", tick_ms);
+        return;
+    }
     char *line = ed_lines[ed_cursor_row];
     int len = ed_line_len[ed_cursor_row];
     for (int i = len; i > ed_cursor_col; i--) line[i] = line[i - 1];
@@ -242,7 +247,11 @@ static void ed_insert_char(char ch) {
 }
 
 static void ed_split_line(void) {
-    if (ed_line_count >= ED_MAX_LINES) return;
+    if (ed_line_count >= ED_MAX_LINES) {
+        /* Buffer full — silently dropping Enter looked like a hung editor. */
+        ed_set_status("buffer full", tick_ms);
+        return;
+    }
     /* Shift lines below down by one */
     for (int i = ed_line_count; i > ed_cursor_row + 1; i--) {
         memcpy(ed_lines[i], ed_lines[i - 1], ED_MAX_COL + 1);

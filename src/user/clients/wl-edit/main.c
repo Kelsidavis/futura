@@ -215,7 +215,22 @@ static bool ed_write_all(int fd, const char *data, long len) {
 }
 
 static bool ed_save_file(const char *path) {
-    int fd = sys_open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    /* Write to a sibling .tmp file and rename. Atomically replaces the
+     * target so a write failure (disk full, signal, etc.) leaves the
+     * original file intact instead of truncated and half-written. */
+    char tmp_path[sizeof(ed_filename) + 16];
+    int tlen = 0;
+    while (path[tlen] && tlen < (int)sizeof(tmp_path) - 8) {
+        tmp_path[tlen] = path[tlen];
+        tlen++;
+    }
+    const char *suffix = ".wled.tmp";
+    while (*suffix && tlen < (int)sizeof(tmp_path) - 1) {
+        tmp_path[tlen++] = *suffix++;
+    }
+    tmp_path[tlen] = '\0';
+
+    int fd = sys_open(tmp_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd < 0) return false;
     /* Always terminate every line with \n. Without this, trailing empty
      * lines are lost on save (saving N empty lines wrote only N-1 newlines,
@@ -235,8 +250,16 @@ static bool ed_save_file(const char *path) {
         }
     }
     sys_close(fd);
-    if (ok) ed_dirty = false;
-    return ok;
+    if (!ok) {
+        /* Leave the temp file behind for inspection rather than silently
+         * deleting it; the user already sees "save failed" status. */
+        return false;
+    }
+    if (sys_rename_call(tmp_path, path) < 0) {
+        return false;
+    }
+    ed_dirty = false;
+    return true;
 }
 
 /* ─── Edit ops ─── */

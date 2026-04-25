@@ -339,7 +339,8 @@ static void process_key(struct client_state *state, uint32_t key) {
     /* Home/End */
     if (key == 102) { term_send_key(&state->term, '\033'); term_send_key(&state->term, '['); term_send_key(&state->term, 'H'); state->needs_redraw = true; return; }
     if (key == 107) { term_send_key(&state->term, '\033'); term_send_key(&state->term, '['); term_send_key(&state->term, 'F'); state->needs_redraw = true; return; }
-    /* Delete */
+    /* Insert / Delete */
+    if (key == 110) { term_send_key(&state->term, '\033'); term_send_key(&state->term, '['); term_send_key(&state->term, '2'); term_send_key(&state->term, '~'); state->needs_redraw = true; return; }
     if (key == 111) { term_send_key(&state->term, '\033'); term_send_key(&state->term, '['); term_send_key(&state->term, '3'); term_send_key(&state->term, '~'); state->needs_redraw = true; return; }
     /* PageUp / PageDown — Shift+PgUp/PgDn is consumed above for scrollback;
      * plain PgUp/PgDn forwards the xterm escape so less, vim, etc. can

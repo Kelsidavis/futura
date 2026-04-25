@@ -835,7 +835,12 @@ static void seat_handle_button(struct seat_state *seat,
                  * overwrite the original rect with a tiled one. */
                 if (!sf->have_saved_geom) {
                     sf->saved_x = sf->x; sf->saved_y = sf->y;
-                    sf->saved_w = sf->width; sf->saved_h = sf->height;
+                    sf->saved_w = sf->width;
+                    /* saved_h is the *content* height across the codebase
+                     * (matches comp_surface_set_maximized + drag-snap), so
+                     * the unified restore in Super+Down doesn't need any
+                     * bar_height arithmetic. */
+                    sf->saved_h = sf->content_height;
                     sf->have_saved_geom = true;
                 }
                 int32_t tile_y = 24 /* MENUBAR_HEIGHT */;
@@ -1123,7 +1128,12 @@ static void seat_handle_key_event(struct seat_state *seat,
                  * way to restore the user's actual window position. */
                 if (!sf->have_saved_geom) {
                     sf->saved_x = sf->x; sf->saved_y = sf->y;
-                    sf->saved_w = sf->width; sf->saved_h = sf->height;
+                    sf->saved_w = sf->width;
+                    /* saved_h is the *content* height across the codebase
+                     * (matches comp_surface_set_maximized + drag-snap), so
+                     * the unified restore in Super+Down doesn't need any
+                     * bar_height arithmetic. */
+                    sf->saved_h = sf->content_height;
                     sf->have_saved_geom = true;
                 }
                 int32_t tile_y = 24 /* MENUBAR_HEIGHT */;
@@ -1144,7 +1154,12 @@ static void seat_handle_key_event(struct seat_state *seat,
                 if (sf->fullscreen) comp_surface_set_fullscreen(sf, false);
                 if (!sf->have_saved_geom) {
                     sf->saved_x = sf->x; sf->saved_y = sf->y;
-                    sf->saved_w = sf->width; sf->saved_h = sf->height;
+                    sf->saved_w = sf->width;
+                    /* saved_h is the *content* height across the codebase
+                     * (matches comp_surface_set_maximized + drag-snap), so
+                     * the unified restore in Super+Down doesn't need any
+                     * bar_height arithmetic. */
+                    sf->saved_h = sf->content_height;
                     sf->have_saved_geom = true;
                 }
                 int32_t tile_y = 24 /* MENUBAR_HEIGHT */;
@@ -1174,7 +1189,9 @@ static void seat_handle_key_event(struct seat_state *seat,
                     comp_surface_set_maximized(sf, false);
                 } else if (sf->have_saved_geom) {
                     comp_update_surface_position(seat->comp, sf, sf->saved_x, sf->saved_y);
-                    int32_t content_h = sf->saved_h - sf->bar_height;
+                    /* saved_h is content height (see set_maximized/drag-snap);
+                     * pass it straight through to configure. */
+                    int32_t content_h = sf->saved_h;
                     if (content_h < 1) content_h = 1;
                     xdg_shell_surface_send_configure(sf, sf->saved_w, content_h,
                         comp_surface_state_flags(sf));

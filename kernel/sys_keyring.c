@@ -623,6 +623,15 @@ long sys_keyctl(int operation, unsigned long arg2, unsigned long arg3,
         struct kernel_key *kr = key_find_serial(kr_serial);
         if (!kr || !kr->is_keyring) return -ENOTDIR;
 
+        /* Linux: requires WRITE permission on the keyring (modeled here
+         * as owner-or-CAP_SYS_ADMIN). Without this any process could
+         * attach a forged key into another user's session keyring. */
+        {
+            fut_task_t *cur = fut_task_current();
+            if (cur && cur->uid != 0 && cur->uid != kr->uid &&
+                !(cur->cap_effective & (1ULL << 21 /* CAP_SYS_ADMIN */)))
+                return -EACCES;
+        }
         return keyring_link(kr, key_serial);
     }
 
@@ -633,6 +642,15 @@ long sys_keyctl(int operation, unsigned long arg2, unsigned long arg3,
         int32_t kr_serial = resolve_keyring(kr_id);
         if (kr_serial < 0) return kr_serial;
         struct kernel_key *kr = key_find_serial(kr_serial);
+        if (!kr) return -ENOKEY;
+        /* Same WRITE-permission gate as LINK so a non-owner can't strip
+         * keys out of another user's keyring. */
+        {
+            fut_task_t *cur = fut_task_current();
+            if (cur && cur->uid != 0 && cur->uid != kr->uid &&
+                !(cur->cap_effective & (1ULL << 21 /* CAP_SYS_ADMIN */)))
+                return -EACCES;
+        }
         return keyring_unlink(kr, key_serial);
     }
 

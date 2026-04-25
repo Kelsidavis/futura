@@ -662,6 +662,11 @@ long sys_getxattr(const char *path, const char *name, void *value, size_t size) 
     if (!kbuf) return -ENOMEM;
     ssize_t got = vnode_getxattr_by_path(path_buf, name_buf, kbuf, (size_t)attr_size);
     if (got < 0) { fut_free(kbuf); return (long)got; }
+    /* Clamp against TOCTOU: a concurrent setxattr could swap the value
+     * for a longer one between the size query and this fetch, leaving
+     * got > the kbuf we allocated and the copy_to_user reading past the
+     * heap allocation into adjacent memory. */
+    if ((size_t)got > (size_t)attr_size) got = (ssize_t)attr_size;
     if (value && xattr_copy_to_user(value, kbuf, (size_t)got) != 0) {
         fut_free(kbuf); return -EFAULT;
     }
@@ -699,6 +704,7 @@ long sys_lgetxattr(const char *path, const char *name, void *value, size_t size)
     if (!kbuf) return -ENOMEM;
     ssize_t got = vnode_getxattr_nofollow(path_buf, name_buf, kbuf, (size_t)attr_size);
     if (got < 0) { fut_free(kbuf); return (long)got; }
+    if ((size_t)got > (size_t)attr_size) got = (ssize_t)attr_size;
     if (value && xattr_copy_to_user(value, kbuf, (size_t)got) != 0) {
         fut_free(kbuf); return -EFAULT;
     }
@@ -751,6 +757,7 @@ long sys_fgetxattr(int fd, const char *name, void *value, size_t size) {
         got = vnode_generic_getxattr(vnode, name_buf, kbuf, (size_t)attr_size);
     }
     if (got < 0) { fut_free(kbuf); return (long)got; }
+    if ((size_t)got > (size_t)attr_size) got = (ssize_t)attr_size;
     if (value && xattr_copy_to_user(value, kbuf, (size_t)got) != 0) {
         fut_free(kbuf); return -EFAULT;
     }

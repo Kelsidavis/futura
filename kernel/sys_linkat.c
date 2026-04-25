@@ -278,25 +278,62 @@ long sys_linkat(int olddirfd, const char *oldpath, int newdirfd, const char *new
         return rret;
     }
 
-    /* Phase 3: AT_SYMLINK_FOLLOW support.
-     * Without AT_SYMLINK_FOLLOW, refuse to hard-link a symlink (POSIX/Linux behaviour).
-     * With AT_SYMLINK_FOLLOW, sys_link already follows symlinks via VFS lookup. */
-    if (!(local_flags & AT_SYMLINK_FOLLOW)) {
-        struct fut_vnode *old_vnode_nofollow = NULL;
-        int lret = fut_vfs_lookup_nofollow(resolved_oldpath, &old_vnode_nofollow);
-        if (lret == 0 && old_vnode_nofollow) {
-            if (old_vnode_nofollow->type == VN_LNK) {
-                fut_vnode_unref(old_vnode_nofollow);
-                fut_printf("[LINKAT] linkat(oldpath='%s') -> EPERM (oldpath is a symlink and AT_SYMLINK_FOLLOW not set)\n",
-                           resolved_oldpath);
-                return -EPERM;
+    /* AT_SYMLINK_FOLLOW: linkat with this flag wants to hard-link the
+     * file the symlink points at, not the symlink itself. sys_link
+     * (correctly per POSIX) does NOT follow leaf symlinks anymore, so
+     * we resolve the symlink chain here when the flag is set and pass
+     * the dereferenced target path to sys_link. Without the flag, the
+     * default sys_link behaviour (link the symlink itself) is what
+     * the user asked for. */
+    char follow_buf[256];
+    const char *link_old = resolved_oldpath;
+    if (local_flags & AT_SYMLINK_FOLLOW) {
+        /* Resolve up to 8 nested symlinks to their final non-symlink target. */
+        char cur[256];
+        size_t curlen = 0;
+        for (curlen = 0; curlen < sizeof(cur) - 1 && resolved_oldpath[curlen]; curlen++)
+            cur[curlen] = resolved_oldpath[curlen];
+        cur[curlen] = '\0';
+        for (int hop = 0; hop < 8; hop++) {
+            struct fut_vnode *v = NULL;
+            int lret = fut_vfs_lookup_nofollow(cur, &v);
+            if (lret != 0 || !v)
+                break;
+            int is_link = (v->type == VN_LNK);
+            fut_vnode_unref(v);
+            if (!is_link)
+                break;
+            ssize_t rl = fut_vfs_readlink(cur, follow_buf, sizeof(follow_buf) - 1);
+            if (rl <= 0)
+                break;
+            follow_buf[rl] = '\0';
+            /* Absolute target replaces cur; relative target needs to
+             * be resolved against cur's parent. For the common case
+             * absolute-target symlinks this is enough. */
+            if (follow_buf[0] == '/') {
+                size_t fl = (size_t)rl < sizeof(cur) - 1 ? (size_t)rl : sizeof(cur) - 1;
+                __builtin_memcpy(cur, follow_buf, fl);
+                cur[fl] = '\0';
+            } else {
+                /* Relative: replace cur's leaf with follow_buf */
+                int slash = -1;
+                for (int i = 0; cur[i]; i++) if (cur[i] == '/') slash = i;
+                size_t base = (slash >= 0) ? (size_t)slash + 1 : 0;
+                size_t room = sizeof(cur) - 1 - base;
+                size_t fl = (size_t)rl < room ? (size_t)rl : room;
+                __builtin_memcpy(cur + base, follow_buf, fl);
+                cur[base + fl] = '\0';
             }
-            fut_vnode_unref(old_vnode_nofollow);
         }
+        size_t fl = 0;
+        for (fl = 0; fl < sizeof(follow_buf) - 1 && cur[fl]; fl++)
+            follow_buf[fl] = cur[fl];
+        follow_buf[fl] = '\0';
+        link_old = follow_buf;
     }
 
     /* Perform the link via existing sys_link implementation */
-    int ret = (int)sys_link(resolved_oldpath, resolved_newpath);
+    int ret = (int)sys_link(link_old, resolved_newpath);
 
     /* Handle errors */
     if (ret < 0) {

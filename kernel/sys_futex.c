@@ -611,6 +611,13 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
                 fut_printf("[FUTEX] FUTEX_REQUEUE - uaddr2 is NULL\n");
                 return -EINVAL;
             }
+            /* Validate uaddr2 is a real userspace pointer; otherwise a
+             * caller could pass a kernel address as uaddr2 and have
+             * thread->futex_addr stored as a kernel pointer (not
+             * directly exploitable but lets future FUTEX_WAKE ops on
+             * the same kernel address wake those threads). */
+            if (futex_access_ok_write(uaddr2, sizeof(uint32_t)) != 0)
+                return -EFAULT;
 
             /* Get both futex buckets - lock in address order to avoid deadlock */
             futex_bucket_t *bucket1 = futex_get_bucket(uaddr);
@@ -722,6 +729,8 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
                 fut_printf("[FUTEX] FUTEX_CMP_REQUEUE - uaddr2 is NULL\n");
                 return -EINVAL;
             }
+            if (futex_access_ok_write(uaddr2, sizeof(uint32_t)) != 0)
+                return -EFAULT;
 
             /* Get both futex buckets - lock in address order to avoid deadlock */
             futex_bucket_t *bucket1 = futex_get_bucket(uaddr);
@@ -862,6 +871,11 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
                 fut_printf("[FUTEX] FUTEX_WAKE_OP - uaddr2 is NULL\n");
                 return -EINVAL;
             }
+            /* FUTEX_WAKE_OP performs an atomic op on *uaddr2 — must be
+             * a real userspace pointer or we'd write through a kernel
+             * address. */
+            if (futex_access_ok_write(uaddr2, sizeof(uint32_t)) != 0)
+                return -EFAULT;
 
             /* Decode val3. oparg (bits 8-19) and cmparg (bits 20-31) are
              * 12-bit signed values per the documented encoding above —

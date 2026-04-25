@@ -153,6 +153,14 @@ long sys_openat2(int dirfd, const char *path, const struct open_how *how,
     if (kow.resolve & ~RESOLVE_VALID)
         return -EINVAL;
 
+    /* Linux openat2(2): mode must be zero unless O_CREAT or O_TMPFILE
+     * is set in flags. Without this check a caller could pass a mode
+     * for an open that won't create the file, which on Linux gives
+     * -EINVAL. Glibc relies on this to detect kernels that lack
+     * openat2 ABI semantics. */
+    if (kow.mode != 0 && !(kow.flags & ((uint64_t)O_CREAT | (uint64_t)O_TMPFILE)))
+        return -EINVAL;
+
     /* RESOLVE_NO_XDEV, RESOLVE_NO_MAGICLINKS, RESOLVE_CACHED: naturally satisfied
      * by Futura's in-memory VFS (no mount points or magic links).
      * RESOLVE_NO_SYMLINKS: enforced via per-task flag in VFS path resolution.

@@ -504,6 +504,17 @@ void term_putchar(struct terminal *term, char ch) {
             return;
         }
 
+        /* ESC \ is the String Terminator (ST). It can legitimately
+         * arrive right after we've committed an OSC sequence (the OSC
+         * branch transitions to TERM_STATE_ESC on bare ESC). Treat the
+         * trailing backslash as a no-op terminator instead of stuffing
+         * it into escape_buf, where it would otherwise eat real output
+         * up to the next letter. */
+        if (term->escape_len == 0 && ch == '\\') {
+            term->parser_state = TERM_STATE_NORMAL;
+            return;
+        }
+
         if (term->escape_len < (int)sizeof(term->escape_buf) - 1) {
             term->escape_buf[term->escape_len++] = ch;
         } else {

@@ -204,6 +204,16 @@ static int fuse_mount_impl(const char *device, int flags, void *data,
 static int fuse_unmount_impl(struct fut_mount *m) {
     struct fuse_connection *conn = (struct fuse_connection *)m->fs_data;
     if (conn) conn->active = false;
+    /* Free root vnode + its fs_data (allocated in fuse_mount_impl);
+     * fs_data points at a static g_fuse_conns[] slot, so don't free it. */
+    if (m->root) {
+        if (m->root->fs_data) {
+            fut_free(m->root->fs_data);
+            m->root->fs_data = NULL;
+        }
+        fut_free(m->root);
+        m->root = NULL;
+    }
     return 0;
 }
 

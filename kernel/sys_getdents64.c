@@ -341,13 +341,18 @@ long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
      * - Phase 4: Added d_off overflow detection via cookie comparison ✓ (lines 471-477)
      * - See Linux kernel: fs/readdir.c filldir64() for reference
      */
-    /* Validate buffer writable (skip for kernel selftests) */
+    /* Validate buffer writable (skip for kernel selftests). Probe the
+     * PTE non-destructively via fut_access_ok rather than copy_to_user
+     * with a literal 0 — clobbering the first byte of the caller's
+     * buffer was harmless for a pure-output ioctl-style call but
+     * inconsistent with the rest of the syscall fixes that route
+     * through fut_access_ok, and would corrupt the buffer if a future
+     * getdents variant ever read input from it. */
 #ifdef KERNEL_VIRTUAL_BASE
     if ((uintptr_t)dirp < KERNEL_VIRTUAL_BASE)
 #endif
     {
-        char test_byte = 0;
-        if (fut_copy_to_user(dirp, &test_byte, 1) != 0) {
+        if (fut_access_ok(dirp, 1, 1) != 0) {
             return -EFAULT;
         }
     }

@@ -577,11 +577,15 @@ static void seat_handle_button(struct seat_state *seat,
                             wl_list_for_each(ds, &seat->comp->surfaces, link) {
                                 if (!ds->has_backing) continue;
                                 if (mx >= item_x && mx < item_x + SEAT_DOCK_ITEM_W) {
-                                    /* Click on this window's dock entry — toggle minimize or focus */
+                                    /* Click on this window's dock entry — toggle minimize or focus.
+                                     * Go through comp_surface_set_minimized so the focus/active-
+                                     * surface bookkeeping happens; setting ds->minimized = true
+                                     * directly leaves keyboard_focus pointing at the now-hidden
+                                     * surface, dropping subsequent keys into the void. */
                                     if (ds == seat->comp->focused_surface && !ds->minimized) {
-                                        ds->minimized = true;
+                                        comp_surface_set_minimized(ds, true);
                                     } else {
-                                        ds->minimized = false;
+                                        comp_surface_set_minimized(ds, false);
                                         comp_surface_raise(seat->comp, ds);
                                         seat_focus_surface(seat, ds);
                                     }

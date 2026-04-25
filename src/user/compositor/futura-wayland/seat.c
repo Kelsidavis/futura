@@ -1001,6 +1001,7 @@ static uint32_t compositor_mods = 0;
 #define COMP_MOD_CTRL  (1u << 0)
 #define COMP_MOD_ALT   (1u << 1)
 #define COMP_MOD_SUPER (1u << 2)
+#define COMP_MOD_SHIFT (1u << 3)
 
 /* Launch a new terminal instance */
 static void compositor_launch_terminal(void) {
@@ -1111,6 +1112,10 @@ static void seat_handle_key_event(struct seat_state *seat,
         if (pressed) compositor_mods |= COMP_MOD_SUPER;
         else compositor_mods &= ~COMP_MOD_SUPER;
     }
+    if (keycode == 42 || keycode == 54) {  /* Left/Right Shift */
+        if (pressed) compositor_mods |= COMP_MOD_SHIFT;
+        else compositor_mods &= ~COMP_MOD_SHIFT;
+    }
 
     /* Compositor keybindings (consumed, not forwarded to clients) */
     if (pressed) {
@@ -1137,14 +1142,26 @@ static void seat_handle_key_event(struct seat_state *seat,
                  * window the user couldn't see was selected. */
                 if (count > ALT_TAB_MAX_VISIBLE) count = ALT_TAB_MAX_VISIBLE;
                 if (count > 0) {
+                    bool reverse = (compositor_mods & COMP_MOD_SHIFT) != 0;
                     if (!seat->comp->alt_tab_active) {
-                        /* First press: activate switcher, start at index 1 (next window) */
+                        /* First press: activate switcher.
+                         * Forward: start at index 1 (next window).
+                         * Reverse (shift+alt+tab): start at last index. */
                         seat->comp->alt_tab_active = true;
                         seat->comp->alt_tab_count = count;
-                        seat->comp->alt_tab_index = count > 1 ? 1 : 0;
+                        if (count > 1) {
+                            seat->comp->alt_tab_index = reverse ? (count - 1) : 1;
+                        } else {
+                            seat->comp->alt_tab_index = 0;
+                        }
                     } else {
-                        /* Subsequent Tab press: advance index */
-                        seat->comp->alt_tab_index = (seat->comp->alt_tab_index + 1) % count;
+                        /* Subsequent Tab press: advance/retreat index */
+                        if (reverse) {
+                            seat->comp->alt_tab_index =
+                                (seat->comp->alt_tab_index + count - 1) % count;
+                        } else {
+                            seat->comp->alt_tab_index = (seat->comp->alt_tab_index + 1) % count;
+                        }
                     }
                     comp_damage_add_full(seat->comp);
                     seat->comp->needs_repaint = true;

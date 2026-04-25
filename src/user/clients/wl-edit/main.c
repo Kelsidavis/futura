@@ -185,13 +185,15 @@ static void ed_load_file(const char *path) {
 static bool ed_save_file(const char *path) {
     int fd = sys_open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd < 0) return false;
+    /* Always terminate every line with \n. Without this, trailing empty
+     * lines are lost on save (saving N empty lines wrote only N-1 newlines,
+     * which reloads as N-1 lines). The loader treats a trailing \n as a
+     * line terminator, so this round-trips correctly. */
     for (int r = 0; r < ed_line_count; r++) {
         if (ed_line_len[r] > 0) {
             sys_write(fd, ed_lines[r], ed_line_len[r]);
         }
-        if (r < ed_line_count - 1) {
-            sys_write(fd, "\n", 1);
-        }
+        sys_write(fd, "\n", 1);
     }
     sys_close(fd);
     ed_dirty = false;

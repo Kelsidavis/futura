@@ -502,6 +502,22 @@ static void term_handle_escape(struct terminal *term) {
         }
         break;
     }
+    case 's': { /* SCOSC — Save Cursor Position */
+        term->saved_cursor_x = term->cursor_x;
+        term->saved_cursor_y = term->cursor_y;
+        break;
+    }
+    case 'u': { /* SCORC — Restore Cursor Position */
+        int sx = term->saved_cursor_x;
+        int sy = term->saved_cursor_y;
+        if (sx < 0) sx = 0;
+        if (sx >= term->cols) sx = term->cols - 1;
+        if (sy < 0) sy = 0;
+        if (sy >= term->rows) sy = term->rows - 1;
+        term->cursor_x = sx;
+        term->cursor_y = sy;
+        break;
+    }
     case 'X': { /* ECH — Erase Character (n cells from cursor, no scroll) */
         int n = (nparams > 0 && params[0] > 0) ? params[0] : 1;
         int y = term->cursor_y;

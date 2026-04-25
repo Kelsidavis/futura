@@ -41,6 +41,8 @@ struct terminal {
     int rows;  /* current row count (dynamic, <= TERM_MAX_ROWS) */
     int cursor_x;
     int cursor_y;
+    int saved_cursor_x;  /* For ESC[s / ESC[u (SCO save/restore cursor) */
+    int saved_cursor_y;
     uint32_t fg_color;
     uint32_t bg_color;
     bool cursor_visible;

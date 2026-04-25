@@ -5211,10 +5211,22 @@ static void comp_handle_timer_tick(struct compositor_state *comp, uint64_t expir
         }
     }
 
-    /* Auto-damage the toast area while it's active so the expiry check fires */
+    /* Auto-damage the toast area while it's active so the expiry check
+     * fires and the toast pixels survive other partial repaints. The
+     * 300px hardcoded width was narrower than long toast strings (up to
+     * 127 chars * 8px + 24px padding = 1040px), so the leftmost portion
+     * of long toasts could be erased by overlapping wallpaper damage. */
     if (comp->toast_active) {
         int32_t fb_w = (int32_t)comp->fb_info.width;
-        fut_rect_t toast_d = { fb_w - 300, MENUBAR_HEIGHT, 300, 40 };
+        int tl = 0;
+        while (comp->toast_text[tl] && tl < 127) tl++;
+        int toast_w = tl * UI_FONT_WIDTH + 24;
+        int toast_h = UI_FONT_HEIGHT + 16;
+        int toast_x = fb_w - toast_w - 12;
+        if (toast_x < 0) toast_x = 0;
+        /* Pad a few px around the rect for the rounded-corner glow. */
+        fut_rect_t toast_d = { toast_x - 4, MENUBAR_HEIGHT,
+                               toast_w + 8, toast_h + 8 };
         comp_damage_add_rect(comp, toast_d);
     }
 

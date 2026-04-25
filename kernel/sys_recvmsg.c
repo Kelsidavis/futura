@@ -403,10 +403,13 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
             goto iov_loop_done;
         }
 
-        /* Probe write permission with 1-byte test */
-        uint8_t test_byte;
-        if (recvmsg_copy_from_user(&test_byte, iov.iov_base, 1) != 0 ||
-            recvmsg_copy_to_user(iov.iov_base, &test_byte, 1) != 0) {
+        /* Validate the buffer is writable without touching its contents.
+         * The previous read-byte-then-write-it-back probe was racy: a
+         * concurrent thread writing into iov_base between probe and the
+         * real copy_to_user would have its write silently clobbered
+         * when the probe wrote the stale byte back. fut_access_ok
+         * checks the page-table permissions non-destructively. */
+        if (fut_access_ok(iov.iov_base, iov.iov_len, 1) != 0) {
             RECVMSG_LOG("[RECVMSG] recvmsg(sockfd=%d) -> EFAULT "
                        "(iov_base[%zu] not writable, len=%zu)\n",
                        local_sockfd, i, iov.iov_len);

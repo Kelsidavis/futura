@@ -827,6 +827,21 @@ static int frame_wait_ticks = 0;
 static bool main_loop_iteration(struct client_state *state) {
     tick_ms += 10;  /* Each iteration is ~10ms (matches nanosleep below) */
 
+    /* Detect shell exit. The PTY master read intentionally treats EOF /
+     * EIO as no-data (Futura quirk), so a clean shell exit doesn't
+     * surface as a read error. Poll waitpid(WNOHANG) periodically and
+     * exit when the shell is gone — otherwise wl-term lingered after
+     * the shell did. */
+    if (state->term.shell_pid > 0 && (tick_ms % 500) < 10) {
+        int status = 0;
+        long rc = sys_wait4_call((long)state->term.shell_pid, &status,
+                                 1 /* WNOHANG */, NULL);
+        if (rc == state->term.shell_pid) {
+            state->term.shell_pid = -1;
+            return false;
+        }
+    }
+
     /* Drain all available shell output before rendering.
      * Reading in a loop avoids thousands of render cycles when the shell
      * dumps large output (e.g., "help" with 620+ commands).  Cap at 16

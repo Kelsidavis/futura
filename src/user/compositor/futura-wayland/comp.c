@@ -1342,8 +1342,9 @@ void comp_surface_commit(struct comp_surface *surface) {
             /* Defense in depth: validate buffer before use */
             if (!buffer.data || buffer.width <= 0 || buffer.height <= 0 || buffer.stride <= 0
                 || buffer.stride < buffer.width * 4) {
+                /* shm_buffer_release already sends wl_buffer.release; the
+                 * extra wl_buffer_send_release here was a double-release. */
                 shm_buffer_release(&buffer);
-                wl_buffer_send_release(surface->pending_buffer_resource);
                 surface->pending_buffer_resource = NULL;
                 surface->has_pending_buffer = false;
                 goto commit_done;
@@ -1366,8 +1367,9 @@ void comp_surface_commit(struct comp_surface *surface) {
             }
             bool had_backing = surface->has_backing;
             if (!surface->backing || (uintptr_t)surface->backing < 0x10000) {
+                /* shm_buffer_release already releases on the wire — don't
+                 * double-release. */
                 shm_buffer_release(&buffer);
-                wl_buffer_send_release(surface->pending_buffer_resource);
                 surface->pending_buffer_resource = NULL;
                 surface->has_pending_buffer = false;
                 goto commit_done;

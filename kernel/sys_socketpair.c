@@ -212,10 +212,18 @@ pair_alloc_fail:
                 s1->flags |= O_NONBLOCK;
             }
             if (type_flags & SOCK_CLOEXEC) {
-                if (fd0 < task->max_fds)
-                    task->fd_flags[fd0] |= FD_CLOEXEC;
-                if (fd1 < task->max_fds)
-                    task->fd_flags[fd1] |= FD_CLOEXEC;
+                /* Guard against tasks that haven't allocated fd_flags
+                 * (early init / kernel threads). Other syscalls — pipe2,
+                 * dup3, pidfd_open — already check; socketpair was
+                 * relying on fd_flags being non-NULL for any task that
+                 * could call socket(2). Keep the guard for symmetry and
+                 * to avoid a NULL deref if that invariant ever slips. */
+                if (task->fd_flags) {
+                    if (fd0 < task->max_fds)
+                        task->fd_flags[fd0] |= FD_CLOEXEC;
+                    if (fd1 < task->max_fds)
+                        task->fd_flags[fd1] |= FD_CLOEXEC;
+                }
             }
         }
     }

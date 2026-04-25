@@ -140,6 +140,23 @@ long sys_copy_file_range(int fd_in, int64_t *off_in,
         len = COPY_FILE_RANGE_MAX;
     }
 
+    /* Same-file overlap rejection: when fd_in and fd_out refer to the same
+     * underlying vnode, the source and destination byte ranges must not
+     * overlap. Without this check the per-chunk read/write loop can read
+     * back data it just wrote (or wrote-then-overwrites unread data),
+     * silently corrupting the destination. Linux returns EINVAL in this
+     * case (man 2 copy_file_range). O_APPEND is treated as overlap-by-
+     * extension since the write offset becomes EOF after the first write. */
+    if (f_in->vnode == f_out->vnode) {
+        int64_t a_start = off_in  ? pos_in  : (int64_t)f_in->offset;
+        int64_t b_start = off_out ? pos_out : (int64_t)f_out->offset;
+        int64_t a_end = a_start + (int64_t)len;
+        int64_t b_end = b_start + (int64_t)len;
+        if (a_start < b_end && b_start < a_end) {
+            return -EINVAL;
+        }
+    }
+
     /* Allocate kernel bounce buffer */
     size_t buf_size = (len < 65536) ? len : 65536;
     void *kbuf = fut_malloc(buf_size);

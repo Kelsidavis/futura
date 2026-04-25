@@ -523,12 +523,15 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
                 return -ETIMEDOUT;
             }
 
-            /* Check for pending signals → EINTR */
+            /* Check for pending signals → EINTR. Include thread_pending_signals
+             * so tgkill/pthread_kill targets fire EINTR here. */
             {
                 fut_task_t *sig_task = fut_task_current();
                 if (sig_task) {
                     uint64_t pending = __atomic_load_n(&sig_task->pending_signals, __ATOMIC_ACQUIRE);
                     fut_thread_t *scur_thr = fut_thread_current();
+                    if (scur_thr)
+                        pending |= __atomic_load_n(&scur_thr->thread_pending_signals, __ATOMIC_ACQUIRE);
                     uint64_t blocked = scur_thr ?
                         __atomic_load_n(&scur_thr->signal_mask, __ATOMIC_ACQUIRE) :
                         __atomic_load_n(&sig_task->signal_mask, __ATOMIC_ACQUIRE);
@@ -1098,9 +1101,10 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
                 if (has_timeout && fut_get_ticks() >= deadline_ticks)
                     return -ETIMEDOUT;
 
-                /* Check pending signals */
+                /* Check pending signals (task-wide OR thread-directed). */
                 if (cur && cur->task) {
-                    uint64_t pend = __atomic_load_n(&cur->task->pending_signals, __ATOMIC_ACQUIRE);
+                    uint64_t pend = __atomic_load_n(&cur->task->pending_signals, __ATOMIC_ACQUIRE)
+                                  | __atomic_load_n(&cur->thread_pending_signals, __ATOMIC_ACQUIRE);
                     uint64_t mask = __atomic_load_n(&cur->signal_mask, __ATOMIC_ACQUIRE);
                     if (pend & ~mask)
                         return -EINTR;
@@ -1195,9 +1199,10 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
                 if (timed_out)
                     return -ETIMEDOUT;
 
-                /* Check signals after wakeup */
+                /* Check signals after wakeup (task-wide OR thread-directed). */
                 if (cur && cur->task) {
-                    uint64_t pend = __atomic_load_n(&cur->task->pending_signals, __ATOMIC_ACQUIRE);
+                    uint64_t pend = __atomic_load_n(&cur->task->pending_signals, __ATOMIC_ACQUIRE)
+                                  | __atomic_load_n(&cur->thread_pending_signals, __ATOMIC_ACQUIRE);
                     uint64_t mask = __atomic_load_n(&cur->signal_mask, __ATOMIC_ACQUIRE);
                     if (pend & ~mask)
                         return -EINTR;
@@ -1875,9 +1880,11 @@ long sys_futex_waitv(const void *waiters_ptr, unsigned int nr_futexes,
 
     if (timed_out) return -ETIMEDOUT;
 
-    /* Check for pending signals */
+    /* Check for pending signals (task-wide OR thread-directed). */
     {
         uint64_t pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
+        if (thread)
+            pending |= __atomic_load_n(&thread->thread_pending_signals, __ATOMIC_ACQUIRE);
         uint64_t blocked = __atomic_load_n(
             thread ? &thread->signal_mask : &task->signal_mask, __ATOMIC_ACQUIRE);
         if (pending & ~blocked) return -EINTR;

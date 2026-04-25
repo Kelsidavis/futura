@@ -378,6 +378,28 @@ long uffd_ioctl(int fd, unsigned int cmd, unsigned long arg) {
  * Returns: fd on success, negative errno on failure.
  */
 long sys_userfaultfd(int flags) {
+    /* Validate flags: only the documented bits are accepted. Unknown
+     * bits get -EINVAL like Linux. */
+    const int VALID_UFFD_FLAGS = O_CLOEXEC_UFFD | 0x800 /* O_NONBLOCK */
+                                  | UFFD_USER_MODE_ONLY;
+    if (flags & ~VALID_UFFD_FLAGS)
+        return -EINVAL;
+
+    /* Permission gate: Linux defaults vm.unprivileged_userfaultfd=0
+     * since 5.2, meaning userfaultfd(2) requires CAP_SYS_PTRACE for
+     * non-root callers. uffd lets the holder pause arbitrary page
+     * faults, including kernel-mode ones, which has been used as a
+     * use-after-free exploitation primitive in the past — gate behind
+     * the same capability. UFFD_USER_MODE_ONLY restricts the new fd
+     * to user-mode faults and is allowed without CAP_SYS_PTRACE on
+     * Linux 5.11+. */
+    fut_task_t *task = fut_task_current();
+    if (task && task->uid != 0 &&
+        !(flags & UFFD_USER_MODE_ONLY) &&
+        !(task->cap_effective & (1ULL << 19 /* CAP_SYS_PTRACE */))) {
+        return -EPERM;
+    }
+
     /* Find free slot */
     struct uffd_ctx *ctx = NULL;
     for (int i = 0; i < MAX_UFFD_INSTANCES; i++) {
@@ -389,7 +411,6 @@ long sys_userfaultfd(int flags) {
     ctx->active = true;
     ctx->flags = (uint32_t)flags;
 
-    fut_task_t *task = fut_task_current();
     ctx->owner_pid = task ? task->pid : 0;
 
     int fd = chrdev_alloc_fd(&uffd_fops, NULL, ctx);

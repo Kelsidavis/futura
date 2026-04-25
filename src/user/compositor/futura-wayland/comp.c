@@ -3364,7 +3364,9 @@ void comp_render_frame(struct compositor_state *comp) {
 
             fut_rect_t content_rect = comp_content_rect(surface);
             if (content_rect.h <= 0) {
+#ifdef DEBUG_WAYLAND
                 printf("[WAYLAND] Skipping content: h=%d\n", content_rect.h);
+#endif
                 continue;
             }
             fut_rect_t content_clip;

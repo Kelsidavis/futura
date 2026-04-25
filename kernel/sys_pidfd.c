@@ -229,6 +229,18 @@ long sys_pidfd_send_signal(int pidfd, int sig, const void *info, unsigned int fl
     if (!target)
         return -ESRCH;
 
+    /* Permission check: same as sys_kill — caller's real or effective
+     * uid must match the target's real uid, or caller must be root or
+     * hold CAP_KILL. Without this gate, any process holding a pidfd can
+     * SIGKILL arbitrary tasks (including root daemons), bypassing the
+     * usual kill(2) credential check. */
+    if (target != task &&
+        task->ruid != 0 &&
+        !(task->cap_effective & (1ULL << 5 /* CAP_KILL */)) &&
+        task->ruid != target->ruid &&
+        task->uid  != target->ruid)
+        return -EPERM;
+
     /* sig == 0: existence check only */
     if (sig == 0)
         return 0;

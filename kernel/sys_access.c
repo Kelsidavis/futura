@@ -336,8 +336,17 @@ long sys_access(const char *pathname, int mode) {
     uint32_t check_uid = task ? userns_ns_to_host_uid(task->user_ns, task->ruid) : 0;
     uint32_t check_gid = task ? userns_ns_to_host_gid(task->user_ns, task->rgid) : 0;
 
-    /* Root (real uid=0) always has access */
-    if (check_uid != 0) {
+    /* Root override: full DAC bypass except that X_OK on a regular file
+     * still requires at least one execute bit set (Linux generic_permission
+     * + CAP_DAC_OVERRIDE semantics). Directories always grant search to
+     * root regardless of mode bits. */
+    if (check_uid == 0) {
+        if ((local_mode & X_OK) && vnode->type == VN_REG &&
+            !(file_mode & 0111)) {
+            fut_vnode_unref(vnode);
+            return -EACCES;
+        }
+    } else {
         /* Determine permission bits based on real uid/gid + supplementary groups */
         uint32_t perm;
         if (check_uid == vnode->uid) {

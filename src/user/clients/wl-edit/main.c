@@ -75,6 +75,9 @@ static char ed_filename[256] = "/tmp/scratch.txt";
 static char ed_status_msg[64] = "";
 static uint64_t ed_status_expire_ms = 0;
 
+/* Forward decl for tick_ms — defined later with the keyboard-repeat state. */
+static uint64_t tick_ms;
+
 /* Client state */
 struct client_state {
     struct wl_display *display;
@@ -246,14 +249,17 @@ static void ed_backspace(void) {
         ed_cursor_col--;
         ed_dirty = true;
     } else if (ed_cursor_row > 0) {
-        /* Merge with previous line */
+        /* Merge with previous line. Refuse if it would truncate. */
         int prev_len = ed_line_len[ed_cursor_row - 1];
         int cur_len = ed_line_len[ed_cursor_row];
+        if (prev_len + cur_len > ED_MAX_COL) {
+            ed_set_status("line too long to join", tick_ms);
+            return;
+        }
         int new_len = prev_len + cur_len;
-        if (new_len > ED_MAX_COL) new_len = ED_MAX_COL;
         char *prev = ed_lines[ed_cursor_row - 1];
         char *cur = ed_lines[ed_cursor_row];
-        for (int i = 0; i < new_len - prev_len; i++) prev[prev_len + i] = cur[i];
+        for (int i = 0; i < cur_len; i++) prev[prev_len + i] = cur[i];
         prev[new_len] = '\0';
         ed_line_len[ed_cursor_row - 1] = new_len;
         /* Shift lines up */
@@ -277,13 +283,18 @@ static void ed_delete_forward(void) {
         ed_line_len[ed_cursor_row] = len - 1;
         ed_dirty = true;
     } else if (ed_cursor_row < ed_line_count - 1) {
-        /* Join next line */
+        /* Join next line. Refuse if the merged line would exceed
+         * ED_MAX_COL — silently truncating discards the user's text
+         * with no warning. Better to leave the lines split. */
         int next_len = ed_line_len[ed_cursor_row + 1];
+        if (len + next_len > ED_MAX_COL) {
+            ed_set_status("line too long to join", tick_ms);
+            return;
+        }
         int new_len = len + next_len;
-        if (new_len > ED_MAX_COL) new_len = ED_MAX_COL;
         char *cur = ed_lines[ed_cursor_row];
         char *next = ed_lines[ed_cursor_row + 1];
-        for (int i = 0; i < new_len - len; i++) cur[len + i] = next[i];
+        for (int i = 0; i < next_len; i++) cur[len + i] = next[i];
         cur[new_len] = '\0';
         ed_line_len[ed_cursor_row] = new_len;
         for (int i = ed_cursor_row + 1; i < ed_line_count - 1; i++) {
@@ -500,7 +511,7 @@ static const struct xdg_toplevel_listener xdg_toplevel_listener = {
 
 /* Modifier state */
 static uint32_t kbd_mods = 0;
-static uint64_t tick_ms = 0;
+static uint64_t tick_ms = 0;  /* tentative def above; this is the real one */
 static uint32_t repeat_key = 0;
 static uint64_t repeat_deadline_ms = 0;
 static uint64_t repeat_start_ms = 0;

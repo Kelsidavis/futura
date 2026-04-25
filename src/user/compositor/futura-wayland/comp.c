@@ -308,13 +308,13 @@ static void comp_apply_committed_size(struct compositor_state *comp,
     comp_damage_add_rect(comp, new_frame);
     comp_surface_mark_damage(surface);
 
-    if (!surface->maximized) {
-        surface->saved_x = surface->x;
-        surface->saved_y = surface->y;
-        surface->saved_w = surface->width;
-        surface->saved_h = surface->content_height;
-        surface->have_saved_geom = true;
-    }
+    /* Don't auto-snapshot saved_geom on every commit. set_maximized,
+     * set_fullscreen, the drag-snap, and the tile keybinds all capture
+     * current geometry on entry, and surface->x/y/w/h are already kept
+     * up to date by drag updates and pending-pos handling above. The
+     * old per-commit overwrite clobbered the pre-tile rect as soon as
+     * a client committed its post-configure buffer, breaking
+     * Super+Left -> Super+Right -> Super+Down restore. */
 }
 
 static int bb_create(struct backbuffer *bb, int width, int height, int pitch) {

@@ -704,15 +704,28 @@ void term_render(struct terminal *term, uint32_t *pixels, int32_t width, int32_t
                 }
             }
 
-            /* Calculate thumb position and size */
+            /* Calculate thumb position and size.
+             *
+             * Map the visible window onto the track in "total_lines" units:
+             *   thumb_top_y = track_top + scroll_pos * track_h / total_lines
+             *   thumb_h     = visible   * track_h / total_lines
+             *
+             * Adding them gives (scroll_pos + visible) * track_h / total_lines,
+             * which equals track_h exactly at scroll_pos = scrollback_count, so
+             * the thumb bottom sits flush with the track bottom at maximum
+             * scroll. Using (track_h - thumb_h) as the position scale (as we
+             * did before) under-shoots and leaves a gap at the bottom. */
             int visible = term->rows;
             int thumb_h = visible * track_h / total_lines;
-            if (thumb_h < 6) thumb_h = 6;
+            int min_thumb_h = 6;
+            if (thumb_h < min_thumb_h) thumb_h = min_thumb_h;
             /* Position: scroll_offset=0 means at bottom (latest), max=scrollback_count */
             int scroll_pos = term->scrollback_count - term->scroll_offset;
-            int thumb_y = track_top + scroll_pos * (track_h - thumb_h) / total_lines;
+            int thumb_y = track_top + scroll_pos * track_h / total_lines;
+            /* Clamp so an inflated minimum thumb_h can't run past the track. */
             if (thumb_y + thumb_h > track_top + track_h)
                 thumb_y = track_top + track_h - thumb_h;
+            if (thumb_y < track_top) thumb_y = track_top;
 
             /* Draw thumb (brighter when scrolled up) */
             uint32_t thumb_col = term->scroll_offset > 0 ? 0xFF5577AAu : 0xFF404060u;

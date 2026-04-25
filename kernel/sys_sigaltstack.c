@@ -179,6 +179,25 @@ long sys_sigaltstack(const struct sigaltstack *ss, struct sigaltstack *old_ss) {
                 fut_printf("[SIGALTSTACK] sigaltstack(ss_sp=NULL) -> EINVAL (null stack pointer)\n");
                 return -EINVAL;
             }
+
+            /* Reject kernel-half ss_sp / overflowing range. The signal-
+             * delivery path uses ss_sp + ss_size as the user-mode SP for
+             * SA_ONSTACK handlers; without these checks an unprivileged
+             * caller could land the eventual signal frame at a kernel
+             * address (or have the +ss_size addition wrap into one). */
+#ifdef KERNEL_VIRTUAL_BASE
+            uintptr_t sp_base = (uintptr_t)new_stack.ss_sp;
+            uintptr_t sp_end;
+            if (__builtin_add_overflow(sp_base,
+                                       (uintptr_t)new_stack.ss_size,
+                                       &sp_end) ||
+                sp_base >= KERNEL_VIRTUAL_BASE ||
+                sp_end  >  KERNEL_VIRTUAL_BASE) {
+                fut_printf("[SIGALTSTACK] sigaltstack(ss_sp=%p, size=%zu) -> EFAULT (range exits user space)\n",
+                          new_stack.ss_sp, new_stack.ss_size);
+                return -EFAULT;
+            }
+#endif
         }
 
         /* Install new stack */

@@ -841,7 +841,10 @@ static void xdg_toplevel_set_minimized(struct wl_client *client,
     if (!state || !state->surface) {
         return;
     }
-    comp_surface_toggle_minimize(state->surface);
+    /* Per xdg-shell: this request unconditionally minimizes. Toggling here
+     * would un-minimize a window that's already iconified, which is not
+     * what the client asked for. */
+    comp_surface_set_minimized(state->surface, true);
 }
 
 void xdg_shell_surface_send_configure(struct comp_surface *surface,

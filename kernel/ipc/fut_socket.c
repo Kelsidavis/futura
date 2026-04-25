@@ -1172,12 +1172,14 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
             fut_spinlock_release(&pair->lock);
             return -EAGAIN;
         }
-        /* Check for pending signals → EINTR */
+        /* Check for pending signals → EINTR (task-wide OR thread-directed). */
         {
             fut_task_t *stask = fut_task_current();
             if (stask) {
                 uint64_t pending = __atomic_load_n(&stask->pending_signals, __ATOMIC_ACQUIRE);
                 fut_thread_t *scur_thr = fut_thread_current();
+                if (scur_thr)
+                    pending |= __atomic_load_n(&scur_thr->thread_pending_signals, __ATOMIC_ACQUIRE);
                 uint64_t blocked = scur_thr ?
                     __atomic_load_n(&scur_thr->signal_mask, __ATOMIC_ACQUIRE) :
                     __atomic_load_n(&stask->signal_mask, __ATOMIC_ACQUIRE);
@@ -1403,12 +1405,14 @@ ssize_t fut_socket_recv(fut_socket_t *socket, void *buf, size_t len) {
             fut_spinlock_release(&pair->lock);
             return -EAGAIN;
         }
-        /* Check for pending signals → EINTR */
+        /* Check for pending signals → EINTR (task-wide OR thread-directed). */
         {
             fut_task_t *stask = fut_task_current();
             if (stask) {
                 uint64_t pending = __atomic_load_n(&stask->pending_signals, __ATOMIC_ACQUIRE);
                 fut_thread_t *scur_thr = fut_thread_current();
+                if (scur_thr)
+                    pending |= __atomic_load_n(&scur_thr->thread_pending_signals, __ATOMIC_ACQUIRE);
                 uint64_t blocked = scur_thr ?
                     __atomic_load_n(&scur_thr->signal_mask, __ATOMIC_ACQUIRE) :
                     __atomic_load_n(&stask->signal_mask, __ATOMIC_ACQUIRE);
@@ -2055,12 +2059,14 @@ ssize_t fut_socket_recvfrom_dgram(fut_socket_t *socket, void *buf, size_t len,
             fut_spinlock_release(&dq->lock);
             return -EAGAIN;
         }
-        /* Check for pending signals */
+        /* Check for pending signals (task-wide OR thread-directed). */
         {
             fut_task_t *t = fut_task_current();
             if (t) {
                 uint64_t pending = __atomic_load_n(&t->pending_signals, __ATOMIC_ACQUIRE);
                 fut_thread_t *thr = fut_thread_current();
+                if (thr)
+                    pending |= __atomic_load_n(&thr->thread_pending_signals, __ATOMIC_ACQUIRE);
                 uint64_t blocked = thr ?
                     __atomic_load_n(&thr->signal_mask, __ATOMIC_ACQUIRE) :
                     __atomic_load_n(&t->signal_mask, __ATOMIC_ACQUIRE);

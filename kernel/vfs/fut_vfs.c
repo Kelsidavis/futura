@@ -3677,7 +3677,11 @@ int fut_vfs_rename(const char *oldpath, const char *newpath) {
         return -ENOSYS;
     }
 
-    /* Sticky bit enforcement on source directory */
+    /* Sticky bit enforcement on source directory. Same fix as
+     * fut_vfs_unlink: use lookup_nofollow so a symlink's own uid is
+     * checked, and fail closed if the lookup can't resolve the
+     * source — the prior code silently skipped the entire check
+     * whenever lookup returned an error or NULL. */
     if (old_parent->mode & 01000) {
         fut_task_t *task = fut_task_current();
         uint32_t caller_uid = task ? task->uid : 0;
@@ -3685,15 +3689,17 @@ int fut_vfs_rename(const char *oldpath, const char *newpath) {
             (task->cap_effective & (1ULL << 3 /* CAP_FOWNER */));
         if (caller_uid != 0 && !has_cap_fowner && caller_uid != old_parent->uid) {
             struct fut_vnode *src = NULL;
-            int lret = fut_vfs_lookup(oldpath, &src);
-            if (lret == 0 && src) {
-                if (caller_uid != src->uid) {
-                    release_lookup_ref(src);
-                    fut_vnode_unref(old_parent);
-                    return -EACCES;
-                }
-                release_lookup_ref(src);
+            int lret = fut_vfs_lookup_nofollow(oldpath, &src);
+            if (lret != 0 || !src) {
+                fut_vnode_unref(old_parent);
+                return -EACCES;
             }
+            if (caller_uid != src->uid) {
+                release_lookup_ref(src);
+                fut_vnode_unref(old_parent);
+                return -EACCES;
+            }
+            release_lookup_ref(src);
         }
     }
 

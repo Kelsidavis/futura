@@ -851,6 +851,16 @@ long sys_keyctl(int operation, unsigned long arg2, unsigned long arg3,
         struct kernel_key *k = key_find_serial(serial);
         if (!k) return -ENOKEY;
 
+        /* Linux KEYCTL_GET_SECURITY requires VIEW permission on the
+         * key (LSM security label is privileged metadata). Same gate
+         * as KEYCTL_DESCRIBE. */
+        {
+            fut_task_t *cur = fut_task_current();
+            if (cur && cur->uid != 0 && cur->uid != k->uid &&
+                !(cur->cap_effective & (1ULL << 21 /* CAP_SYS_ADMIN */)))
+                return -EACCES;
+        }
+
         const char *label = "unconfined";
         size_t len = strlen(label);
         if (buf && buflen > 0) {

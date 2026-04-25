@@ -220,11 +220,17 @@ long sys_nanosleep(const fut_timespec_t *u_req, fut_timespec_t *u_rem) {
                req.tv_sec, req.tv_nsec, duration_category, duration_desc,
                total_ns, millis);
 
-    /* Check for pending unblocked signals before sleeping (use thread mask) */
+    /* Check for pending unblocked signals before sleeping (use thread mask).
+     * Include per-thread pending signals — tgkill/pthread_kill queue into
+     * thread_pending_signals, not task->pending_signals, so without the OR
+     * an already-queued thread-directed signal is invisible here and
+     * nanosleep blocks until something else kicks signal_waitq. */
     fut_task_t *task = fut_task_current();
     if (task) {
         fut_thread_t *ns_thr = fut_thread_current();
         uint64_t pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
+        if (ns_thr)
+            pending |= __atomic_load_n(&ns_thr->thread_pending_signals, __ATOMIC_ACQUIRE);
         uint64_t blocked = ns_thr ?
             __atomic_load_n(&ns_thr->signal_mask, __ATOMIC_ACQUIRE) :
             task->signal_mask;

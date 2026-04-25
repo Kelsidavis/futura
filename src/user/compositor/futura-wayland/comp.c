@@ -3372,8 +3372,10 @@ void comp_render_frame(struct compositor_state *comp) {
                 continue;
             }
             if (!surface->backing || surface->stride <= 0) {
+#ifdef DEBUG_WAYLAND
                 printf("[WAYLAND] No backing buffer: backing=%p stride=%d\n",
                        surface->backing, surface->stride);
+#endif
                 continue;
             }
             /* Bounds-check the backing buffer read */

@@ -5493,7 +5493,7 @@ struct comp_surface *comp_surface_at(struct compositor_state *comp,
     }
     struct comp_surface *surface;
     wl_list_for_each_reverse(surface, &comp->surfaces, link) {
-        if (!surface->has_backing) {
+        if (!surface->has_backing || surface->minimized) {
             continue;
         }
         int32_t sx = px - surface->x;

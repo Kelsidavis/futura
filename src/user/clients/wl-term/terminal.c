@@ -493,6 +493,15 @@ static void term_handle_escape(struct terminal *term) {
         }
         break;
     }
+    case 'c': { /* DA — Device Attributes. Reply as a VT102 (most apps
+                 * just need *something* back; this lets curses-style
+                 * programs that probe terminfo features proceed.) */
+        if (term->shell_stdin_fd >= 0) {
+            const char *resp = "\033[?6c";  /* VT102 */
+            for (const char *p = resp; *p; p++) sys_write(term->shell_stdin_fd, p, 1);
+        }
+        break;
+    }
     case 'P': { /* DCH — Delete Character (shift cursor row left by n) */
         int n = (nparams > 0 && params[0] > 0) ? params[0] : 1;
         int y = term->cursor_y;

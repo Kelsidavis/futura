@@ -268,6 +268,8 @@ long sys_kill(int pid, int sig) {
             return -ESRCH;
         }
 
+        /* POSIX: succeed if at least one signal was actually delivered. */
+        if (psd.count > 0) return 0;
         return psd.error ? psd.error : 0;
 
     } else if (pid == -1) {
@@ -293,6 +295,7 @@ long sys_kill(int pid, int sig) {
             return -ESRCH;
         }
 
+        if (psd.count > 0) return 0;
         return psd.error ? psd.error : 0;
 
     } else if (pid < -1) {
@@ -323,6 +326,7 @@ long sys_kill(int pid, int sig) {
             return -ESRCH;
         }
 
+        if (psd.count > 0) return 0;
         return psd.error ? psd.error : 0;
 
     } else {

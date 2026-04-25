@@ -239,12 +239,16 @@ long sys_semop(int semid, void *sops, unsigned int nsops) {
         return -EFAULT;
     if (nsops == 0)
         return -EINVAL;
-    if (nsops > SEM_E2BIG_NSOPS)
+    /* The stack ops[] buffer caps how many operations we can actually
+     * stage. Reject anything over that cap up front rather than
+     * silently truncating to copy_n; otherwise semop() would lie about
+     * atomically applying the full op array. */
+    if (nsops > (unsigned int)SEMMSL)
         return -E2BIG;
 
     /* Copy operations from user before taking lock (avoid holding lock during copy) */
-    struct sem_sembuf ops[SEM_E2BIG_NSOPS > SEMMSL ? SEMMSL : SEM_E2BIG_NSOPS];
-    unsigned int copy_n = nsops < (unsigned int)SEMMSL ? nsops : (unsigned int)SEMMSL;
+    struct sem_sembuf ops[SEMMSL];
+    unsigned int copy_n = nsops;
     if (sem_copy_from_user(ops, sops, copy_n * sizeof(struct sem_sembuf)) != 0)
         return -EFAULT;
 
@@ -461,7 +465,9 @@ long sys_semtimedop(int semid, void *sops, unsigned int nsops,
         return -EFAULT;
     if (nsops == 0)
         return -EINVAL;
-    if (nsops > SEM_E2BIG_NSOPS)
+    /* See sys_semop: the stack ops[] buffer is sized for SEMMSL ops
+     * total; reject any nsops above that to avoid silent truncation. */
+    if (nsops > (unsigned int)SEMMSL)
         return -E2BIG;
 
     /* Parse optional timeout */
@@ -484,8 +490,8 @@ long sys_semtimedop(int semid, void *sops, unsigned int nsops,
     }
 
     /* Copy operations from user */
-    struct sem_sembuf ops[SEM_E2BIG_NSOPS > SEMMSL ? SEMMSL : SEM_E2BIG_NSOPS];
-    unsigned int copy_n = nsops < (unsigned int)SEMMSL ? nsops : (unsigned int)SEMMSL;
+    struct sem_sembuf ops[SEMMSL];
+    unsigned int copy_n = nsops;
     if (sem_copy_from_user(ops, sops, copy_n * sizeof(struct sem_sembuf)) != 0)
         return -EFAULT;
 

@@ -514,9 +514,13 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                 int req = 0;
                 if (sso_copy_from_user(&req, optval, sizeof(int)) != 0) return -EFAULT;
                 if (req < 0) return -EINVAL;
-                /* Double the requested value (Linux convention), enforce min 2048,
-                 * cap at sysctl rmem_max/wmem_max */
-                uint32_t effective = (uint32_t)(req * 2);
+                /* Double the requested value in unsigned arithmetic; the
+                 * old 'req * 2' on a signed int triggered UB once req
+                 * reached INT_MAX/2. Saturate at UINT32_MAX/2 before the
+                 * doubling so the unsigned multiply can't wrap either. */
+                uint32_t ureq = (uint32_t)req;
+                if (ureq > 0x7FFFFFFFu) ureq = 0x7FFFFFFFu;
+                uint32_t effective = ureq * 2u;
                 if (effective < 2048) effective = 2048;
                 uint32_t max_buf = (optname == SO_SNDBUF)
                     ? g_net_sysctl.wmem_max : g_net_sysctl.rmem_max;

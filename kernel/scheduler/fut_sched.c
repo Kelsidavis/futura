@@ -167,7 +167,12 @@ static void idle_thread_entry(void *arg) {
 #ifdef __x86_64__
         __asm__ volatile("sti\n\thlt" ::: "memory");  /* Enable interrupts and halt */
 #elif defined(__aarch64__)
-        __asm__ volatile("msr daifset, #2\nwfi" ::: "memory");  /* Enable IRQ and wait for interrupt */
+        /* Enable IRQ (daifclr #2 clears the I bit, unmasking IRQ) and then
+         * wait for interrupt. The previous 'daifset #2' did the opposite:
+         * it masked IRQ before wfi, so even when wfi unblocked on a pending
+         * timer the IRQ handler couldn't fire and the scheduler tick never
+         * ran from idle. */
+        __asm__ volatile("msr daifclr, #2\nwfi" ::: "memory");
 #else
         /* Generic idle: just loop */
         __asm__ volatile("" ::: "memory");

@@ -342,22 +342,39 @@ long sys_munlock(const void *addr, size_t len) {
         return -ENOMEM;
     }
 
-    /* Decrement cumulative locked pages counter and clear VMA_LOCKED */
+    /* Decrement cumulative locked pages counter and clear VMA_LOCKED.
+     * Count *actually-locked* pages in the range — not the request size.
+     * The previous version subtracted ceil(len / PAGE_SIZE) regardless of
+     * which pages had VMA_LOCKED set, so a caller could munlock(addr,
+     * 1GiB) on a never-locked region to free up RLIMIT_MEMLOCK quota
+     * without touching any pinned pages, then mlock something new past
+     * the original cap. */
     fut_mm_t *mm = fut_task_get_mm(task);
     if (mm) {
-        size_t unlock_pages = (local_len + PAGE_SIZE - 1) / PAGE_SIZE;
-        if (mm->locked_vm >= unlock_pages) {
-            mm->locked_vm -= unlock_pages;
-        } else {
-            mm->locked_vm = 0;
-        }
-        /* Clear VMA_LOCKED on affected VMAs */
+        uintptr_t aligned_end = end_addr;
+        if (aligned_end & (PAGE_SIZE - 1))
+            aligned_end = (aligned_end + PAGE_SIZE - 1) & ~(uintptr_t)(PAGE_SIZE - 1);
+        size_t actually_unlocked = 0;
         struct fut_vma *vma = mm->vma_list;
         while (vma) {
-            if (vma->start < end_addr && vma->end > addr_val)
-                vma->flags &= ~VMA_LOCKED;
+            if (vma->start < aligned_end && vma->end > addr_val &&
+                (vma->flags & VMA_LOCKED)) {
+                uintptr_t s = vma->start > addr_val     ? vma->start : addr_val;
+                uintptr_t e = vma->end   < aligned_end  ? vma->end   : aligned_end;
+                if (e > s)
+                    actually_unlocked += (e - s) / PAGE_SIZE;
+                /* Only clear the lock bit when the request fully covers the
+                 * VMA; partial coverage would otherwise unlock the whole
+                 * VMA from the perspective of madvise/MADV_DONTNEED guards. */
+                if (vma->start >= addr_val && vma->end <= aligned_end)
+                    vma->flags &= ~VMA_LOCKED;
+            }
             vma = vma->next;
         }
+        if (mm->locked_vm >= actually_unlocked)
+            mm->locked_vm -= actually_unlocked;
+        else
+            mm->locked_vm = 0;
     }
 
     /* Phase 1: Stub - accept parameters */

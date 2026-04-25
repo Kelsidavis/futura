@@ -179,32 +179,35 @@ long sys_io_setup(unsigned int nr_events, void *ctxp) {
     return 0;
 }
 
+/* Resolve a ctx_id to a context owned by the caller (or accessible
+ * via root/CAP_SYS_ADMIN). Returns NULL with errno-compatible code in
+ * *err on failure. */
+static struct aio_context *aio_ctx_for_caller(unsigned long ctx_id, long *err) {
+    unsigned int idx = (unsigned int)(ctx_id - 0x10000);
+    if (idx >= MAX_AIO_CONTEXTS) { *err = -EINVAL; return NULL; }
+    struct aio_context *ctx = &aio_contexts[idx];
+    if (!ctx->active) { *err = -EINVAL; return NULL; }
+
+    fut_task_t *task = fut_task_current();
+    if (task && ctx->owner_pid && task->pid != ctx->owner_pid) {
+        bool privileged = (task->uid == 0) ||
+            (task->cap_effective & (1ULL << 21 /* CAP_SYS_ADMIN */));
+        if (!privileged) { *err = -EINVAL; return NULL; }
+    }
+    return ctx;
+}
+
 /**
  * sys_io_destroy - Destroy an AIO context
  * @ctx_id: Context ID from io_setup
  */
 long sys_io_destroy(unsigned long ctx_id) {
-    unsigned int idx = (unsigned int)(ctx_id - 0x10000);
-    if (idx >= MAX_AIO_CONTEXTS)
-        return -EINVAL;
-
-    struct aio_context *ctx = &aio_contexts[idx];
-    if (!ctx->active)
-        return -EINVAL;
-
-    /* Linux io_destroy(2): only the process that created the AIO
-     * context may destroy it. Without this check, ctx_id is just
-     * (0x10000 + slot_index) — easily guessable by any process — and
-     * any caller could free another process's outstanding I/O state.
-     * Allow root / CAP_SYS_ADMIN to clean up across owners for
-     * containers and the test harness. */
-    fut_task_t *task = fut_task_current();
-    if (task && ctx->owner_pid && task->pid != ctx->owner_pid) {
-        bool privileged = (task->uid == 0) ||
-            (task->cap_effective & (1ULL << 21 /* CAP_SYS_ADMIN */));
-        if (!privileged)
-            return -EINVAL;
-    }
+    /* The aio_ctx_for_caller helper applies the same owner-or-
+     * CAP_SYS_ADMIN check that all the other AIO syscalls now use,
+     * keeping the protection consistent. */
+    long err = 0;
+    struct aio_context *ctx = aio_ctx_for_caller(ctx_id, &err);
+    if (!ctx) return err;
 
     ctx->active = false;
     return 0;
@@ -224,13 +227,9 @@ long sys_io_submit(unsigned long ctx_id, long nr, void **iocbpp) {
     if (nr == 0)
         return 0;
 
-    unsigned int idx = (unsigned int)(ctx_id - 0x10000);
-    if (idx >= MAX_AIO_CONTEXTS)
-        return -EINVAL;
-
-    struct aio_context *ctx = &aio_contexts[idx];
-    if (!ctx->active)
-        return -EINVAL;
+    long err = 0;
+    struct aio_context *ctx = aio_ctx_for_caller(ctx_id, &err);
+    if (!ctx) return err;
 
     /* Stage iocbpp[i] and *iocb through copy_from_user instead of
      * dereferencing the user pointer arrays directly. The previous
@@ -366,13 +365,9 @@ long sys_io_getevents(unsigned long ctx_id, long min_nr, long nr,
     if (min_nr < 0 || nr < 0 || min_nr > nr || !events)
         return -EINVAL;
 
-    unsigned int idx = (unsigned int)(ctx_id - 0x10000);
-    if (idx >= MAX_AIO_CONTEXTS)
-        return -EINVAL;
-
-    struct aio_context *ctx = &aio_contexts[idx];
-    if (!ctx->active)
-        return -EINVAL;
+    long err = 0;
+    struct aio_context *ctx = aio_ctx_for_caller(ctx_id, &err);
+    if (!ctx) return err;
 
     long collected = 0;
 
@@ -411,16 +406,12 @@ long sys_io_getevents(unsigned long ctx_id, long min_nr, long nr,
  * Returns: 0 on success, -EAGAIN if not cancellable (already completed)
  */
 long sys_io_cancel(unsigned long ctx_id, void *iocb, void *result) {
-    unsigned int idx = (unsigned int)(ctx_id - 0x10000);
-    if (idx >= MAX_AIO_CONTEXTS)
-        return -EINVAL;
-
-    struct aio_context *ctx = &aio_contexts[idx];
-    if (!ctx->active)
-        return -EINVAL;
+    long err = 0;
+    struct aio_context *ctx = aio_ctx_for_caller(ctx_id, &err);
+    if (!ctx) return err;
 
     /* Our AIO completes synchronously, so there's nothing to cancel */
-    (void)iocb; (void)result;
+    (void)iocb; (void)result; (void)ctx;
     return -EAGAIN;
 }
 

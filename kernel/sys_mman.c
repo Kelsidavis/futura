@@ -198,6 +198,31 @@ long sys_mlock(const void *addr, size_t len) {
     /* Calculate number of pages to lock (round up to page boundary) */
     size_t new_pages = (local_len + PAGE_SIZE - 1) / PAGE_SIZE;
 
+    /* Linux mlock(2): return -ENOMEM if any part of the requested range
+     * is not mapped. Without this check the syscall silently inflates
+     * mm->locked_vm against RLIMIT_MEMLOCK without actually locking
+     * anything, letting a caller consume their lock quota by passing an
+     * unmapped range. Verify by walking VMAs and summing the page
+     * coverage of the request. */
+    {
+        uintptr_t lock_start_aligned = addr_val;
+        uintptr_t lock_end_aligned   = lock_start_aligned + new_pages * PAGE_SIZE;
+        size_t covered_pages = 0;
+        for (struct fut_vma *v = mm->vma_list; v; v = v->next) {
+            if (v->start >= lock_end_aligned || v->end <= lock_start_aligned)
+                continue;
+            uintptr_t s = v->start > lock_start_aligned ? v->start : lock_start_aligned;
+            uintptr_t e = v->end   < lock_end_aligned   ? v->end   : lock_end_aligned;
+            covered_pages += (e - s) / PAGE_SIZE;
+        }
+        if (covered_pages < new_pages) {
+            fut_printf("[MLOCK] mlock(addr=%p, len=%zu) -> ENOMEM "
+                       "(range not fully mapped: %zu/%zu pages)\n",
+                       local_addr, local_len, covered_pages, new_pages);
+            return -ENOMEM;
+        }
+    }
+
     /* Get RLIMIT_MEMLOCK from task (in bytes) */
     uint64_t rlimit_memlock = task->rlimits[8].rlim_cur;  /* RLIMIT_MEMLOCK = 8 */
 

@@ -195,10 +195,11 @@ ssize_t sys_read(int fd, void *buf, size_t count) {
      * - CVE-2016-10229: Linux udp.c recvmsg write to readonly
      * - CVE-2018-5953: Linux kernel swiotlb map_sg write to readonly
      */
-    char test_byte = 0;
-    if (read_copy_to_user(local_buf, &test_byte, 1) != 0) {
-        /* fut_printf("[READ] read(fd=%d, buf=%p, count=%zu) -> EFAULT "
-                   "(buffer not writable)\n", local_fd, local_buf, local_count); */
+    /* Validate writability without touching buffer contents. The
+     * previous code wrote a literal 0 to local_buf[0] as a probe — on
+     * EOF (return 0) or EAGAIN the user's buffer would silently come
+     * back with byte 0 zeroed instead of left untouched. */
+    if (fut_access_ok(local_buf, local_count, 1) != 0) {
         return -EFAULT;
     }
 

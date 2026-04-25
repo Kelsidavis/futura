@@ -176,13 +176,15 @@ long sys_pread64(unsigned int fd, void *buf, size_t count, int64_t offset) {
      * IEEE Std 1003.1-2017 pread(): "shall fail with EFAULT if buf invalid"
      * - Does not require expensive operations before validation
      * - Early detection improves performance and security */
-    /* Skip for kernel buffers (selftest calls) */
+    /* Validate writability non-destructively. The previous probe wrote
+     * a literal 0 to buf[0] before the actual read; on EOF or EAGAIN
+     * the user buffer's first byte was silently zeroed instead of
+     * left untouched. Skip the check for in-kernel callers. */
 #ifdef KERNEL_VIRTUAL_BASE
     if ((uintptr_t)buf < KERNEL_VIRTUAL_BASE)
 #endif
     {
-        char test_byte = 0;
-        if (fut_copy_to_user(buf, &test_byte, 1) != 0) {
+        if (fut_access_ok(buf, count, 1) != 0) {
             return -EFAULT;
         }
     }

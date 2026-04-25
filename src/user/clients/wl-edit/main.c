@@ -46,7 +46,11 @@
 #define ED_MARGIN_X   4
 #define ED_VIS_COLS   80
 #define ED_VIS_ROWS   24
-#define ED_WIDTH      (ED_VIS_COLS * FONT_WIDTH + 2 * ED_PAD)
+#define ED_GUTTER_W   (4 * FONT_WIDTH + 4)
+/* Width must include the line-number gutter and both content margins,
+ * otherwise the visible text column count is gutter-bytes shorter than
+ * ED_VIS_COLS and long lines get clipped. */
+#define ED_WIDTH      (ED_GUTTER_W + 2 * ED_MARGIN_X + ED_VIS_COLS * FONT_WIDTH)
 #define ED_HEIGHT     (ED_VIS_ROWS * FONT_HEIGHT + 2 * ED_PAD + ED_STATUS_H)
 
 /* Buffer limits */
@@ -371,8 +375,9 @@ static void redraw_all(struct client_state *state) {
     /* Background */
     fill_rect(px, stride, 0, 0, w, h, COL_BG);
 
-    /* Gutter (line numbers) */
-    int gutter_w = 4 * FONT_WIDTH + 4;
+    /* Gutter (line numbers) — width must match ED_GUTTER_W so window
+     * sizing and rendering stay in sync. */
+    int gutter_w = ED_GUTTER_W;
     fill_rect(px, stride, 0, 0, gutter_w, h - ED_STATUS_H, COL_GUTTER);
 
     /* Visible rows */

@@ -425,7 +425,7 @@ static void seat_update_pointer_focus(struct seat_state *seat, uint32_t time_mse
 
     struct comp_surface *iter;
     wl_list_for_each_reverse(iter, &seat->comp->surfaces, link) {
-        if (!iter->has_backing) {
+        if (!iter->has_backing || iter->minimized) {
             continue;
         }
         if (comp_pointer_inside_surface(seat->comp, iter,

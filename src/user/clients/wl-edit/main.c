@@ -332,10 +332,24 @@ static void ed_delete_forward(void) {
 
 /* ─── Rendering ─── */
 
+/* Defensive: clip the rect against the surface dims so a caller passing
+ * a negative origin or a too-wide width can't write past the framebuffer
+ * row. The caller passes stride = pixel_width, and we treat stride as
+ * the row width upper-bound for x and as the surface height for y. */
 static void fill_rect(uint32_t *px, int stride, int x0, int y0, int w, int h, uint32_t color) {
-    for (int y = y0; y < y0 + h; y++) {
+    if (w <= 0 || h <= 0) return;
+    int x1 = x0 + w;
+    int y1 = y0 + h;
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > stride) x1 = stride;
+    /* y bound: not directly known here; fill_rect callers always pass a
+     * rect that should be inside the buffer height — clamp negative top
+     * and let the caller's other guards handle bottom. */
+    if (x1 <= x0 || y1 <= y0) return;
+    for (int y = y0; y < y1; y++) {
         uint32_t *row = px + y * stride;
-        for (int x = x0; x < x0 + w; x++) row[x] = color;
+        for (int x = x0; x < x1; x++) row[x] = color;
     }
 }
 

@@ -348,6 +348,33 @@ static void process_key(struct client_state *state, uint32_t key) {
     if (key == 104) { term_send_key(&state->term, '\033'); term_send_key(&state->term, '['); term_send_key(&state->term, '5'); term_send_key(&state->term, '~'); state->needs_redraw = true; return; }
     if (key == 109) { term_send_key(&state->term, '\033'); term_send_key(&state->term, '['); term_send_key(&state->term, '6'); term_send_key(&state->term, '~'); state->needs_redraw = true; return; }
 
+    /* F1-F12 — xterm convention. F11 is intercepted by the compositor
+     * for fullscreen toggle, so it never reaches us; the rest are
+     * forwarded. F1-F4 use the SS3 form (ESC O <letter>); F5-F12 use
+     * the CSI form (ESC [ <n> ~). */
+    {
+        const char *seq = NULL;
+        switch (key) {
+            case 59: seq = "\033OP";   break; /* F1 */
+            case 60: seq = "\033OQ";   break; /* F2 */
+            case 61: seq = "\033OR";   break; /* F3 */
+            case 62: seq = "\033OS";   break; /* F4 */
+            case 63: seq = "\033[15~"; break; /* F5 */
+            case 64: seq = "\033[17~"; break; /* F6 */
+            case 65: seq = "\033[18~"; break; /* F7 */
+            case 66: seq = "\033[19~"; break; /* F8 */
+            case 67: seq = "\033[20~"; break; /* F9 */
+            case 68: seq = "\033[21~"; break; /* F10 */
+            case 88: seq = "\033[24~"; break; /* F12 */
+            default: break;
+        }
+        if (seq) {
+            for (const char *p = seq; *p; p++) term_send_key(&state->term, *p);
+            state->needs_redraw = true;
+            return;
+        }
+    }
+
     bool ctrl = (kbd_mods_depressed & 4) != 0;  /* Ctrl modifier */
 
     /* Ctrl+key: send control characters (Ctrl+C=0x03, Ctrl+D=0x04, etc.)

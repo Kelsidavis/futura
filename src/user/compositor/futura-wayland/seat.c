@@ -341,6 +341,12 @@ static void seat_keyboard_leave(struct seat_state *seat, struct comp_surface *su
     }
 }
 
+/* Forward declaration: defined further below alongside the rest of the
+ * compositor-side modifier tracking. seat_keyboard_enter needs the
+ * current XKB-format mod mask to send a real value (rather than zeros)
+ * when a client first acquires keyboard focus. */
+static uint32_t compositor_mods_to_xkb(void);
+
 static void seat_keyboard_enter(struct seat_state *seat, struct comp_surface *surface) {
     if (!seat || !surface || !surface->surface_resource) {
         return;

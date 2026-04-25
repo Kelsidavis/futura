@@ -337,12 +337,28 @@ long sys_fstatat(int dirfd, const char *pathname, void *statbuf, int flags) {
 
     /* Perform the stat operation via VFS */
     int ret;
+    /* Stage stat through a kernel-local struct, then copy_to_user.
+     * The previous code passed local_statbuf (a user pointer) straight
+     * into fut_vfs_stat/lstat, which write through it as if it were a
+     * kernel pointer (stat->st_ino = ..., etc.). A bad user pointer
+     * faulted the kernel; a kernel-pointer caller turned the syscall
+     * into a write-anywhere primitive across the stat fields. */
+    struct fut_stat kstat = {0};
     if (local_flags & AT_SYMLINK_NOFOLLOW) {
         /* lstat behavior - don't follow symlinks */
-        ret = fut_vfs_lstat(resolved_path, local_statbuf);
+        ret = fut_vfs_lstat(resolved_path, &kstat);
     } else {
         /* stat behavior - follow symlinks */
-        ret = fut_vfs_stat(resolved_path, local_statbuf);
+        ret = fut_vfs_stat(resolved_path, &kstat);
+    }
+    if (ret == 0) {
+#ifdef KERNEL_VIRTUAL_BASE
+        if ((uintptr_t)local_statbuf >= KERNEL_VIRTUAL_BASE) {
+            __builtin_memcpy(local_statbuf, &kstat, sizeof(kstat));
+        } else
+#endif
+        if (fut_copy_to_user(local_statbuf, &kstat, sizeof(kstat)) != 0)
+            return -EFAULT;
     }
 
     /* Handle errors */

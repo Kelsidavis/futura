@@ -199,8 +199,26 @@ long sys_clone3(const struct fut_clone_args *uargs, size_t size) {
          * from base + size.  If stack_size is 0, pass stack as-is (caller
          * already computed the top, matching legacy clone() semantics). */
         uint64_t stack_top = args.stack;
-        if (args.stack_size > 0)
-            stack_top = args.stack + args.stack_size;
+        if (args.stack_size > 0) {
+            /* Reject overflow on stack + stack_size and any range that
+             * crosses into the kernel half. The earlier kernel-pointer
+             * gate (lines 139-144) only covered tid/pidfd output pointers;
+             * args.stack itself was unfiltered, so an unprivileged caller
+             * could supply a kernel-half stack base and have the new
+             * thread's user-mode SP point into kernel memory. */
+            if (__builtin_add_overflow(args.stack, args.stack_size, &stack_top))
+                return -EINVAL;
+#ifdef KERNEL_VIRTUAL_BASE
+            if (args.stack >= KERNEL_VIRTUAL_BASE ||
+                stack_top   >  KERNEL_VIRTUAL_BASE)
+                return -EFAULT;
+#endif
+        } else {
+#ifdef KERNEL_VIRTUAL_BASE
+            if (args.stack && args.stack >= KERNEL_VIRTUAL_BASE)
+                return -EFAULT;
+#endif
+        }
         return sys_clone_thread(flags, stack_top, args.parent_tid,
                                 args.child_tid, args.tls);
     }

@@ -6208,15 +6208,22 @@ void comp_surface_set_minimized(struct comp_surface *surface, bool minimized) {
             comp_damage_add_rect(comp, comp_frame_rect(surface));
             comp_surface_mark_damage(surface);
         }
-        /* Transfer focus to next visible window */
+        /* Transfer focus to next visible window. Use seat_focus_surface so
+         * the keyboard leave/enter events are actually delivered — directly
+         * assigning comp->focused_surface left the seat's keyboard_focus
+         * pointing at the now-hidden surface, dropping subsequent keys. */
         if (comp->focused_surface == surface) {
-            comp->focused_surface = NULL;
+            struct comp_surface *next = NULL;
             struct comp_surface *other;
             wl_list_for_each_reverse(other, &comp->surfaces, link) {
-                if (other != surface && !other->minimized) {
-                    comp->focused_surface = other;
+                if (other != surface && !other->minimized && other->has_backing) {
+                    next = other;
                     break;
                 }
+            }
+            comp->focused_surface = next;
+            if (comp->seat) {
+                seat_focus_surface(comp->seat, next);
             }
         }
         if (comp->active_surface == surface) {
@@ -6229,9 +6236,13 @@ void comp_surface_set_minimized(struct comp_surface *surface, bool minimized) {
             comp_damage_add_rect(comp, comp_frame_rect(surface));
             comp_surface_mark_damage(surface);
         }
-        /* Bring to front and focus */
+        /* Bring to front and focus, including the seat-side keyboard focus
+         * so the restored window actually receives input. */
         comp_surface_raise(comp, surface);
         comp->focused_surface = surface;
+        if (comp->seat) {
+            seat_focus_surface(comp->seat, surface);
+        }
     }
 }
 

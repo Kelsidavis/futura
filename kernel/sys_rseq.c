@@ -93,15 +93,22 @@ long sys_rseq(void *rseq, uint32_t rseq_len, int flags, uint32_t sig) {
     if (thread->rseq_ptr)
         return -EBUSY;
 
-    /* Store registration */
+    /* Initialize cpu_id and cpu_id_start fields in the userspace rseq
+     * struct BEFORE storing the registration. If the user pointer faults
+     * we must return -EFAULT without leaving the thread half-registered
+     * (which would later prevent re-registration with -EBUSY and orphan
+     * the rseq_sig validation). On uniprocessor Futura, CPU is always 0. */
+    uint32_t cpu_id = 0;
+    if (rseq_copy_to_user((char *)rseq + RSEQ_OFFSET_CPU_ID_START,
+                          &cpu_id, sizeof(cpu_id)) != 0)
+        return -EFAULT;
+    if (rseq_copy_to_user((char *)rseq + RSEQ_OFFSET_CPU_ID,
+                          &cpu_id, sizeof(cpu_id)) != 0)
+        return -EFAULT;
+
+    /* Store registration only after the user struct is initialized. */
     thread->rseq_ptr = rseq;
     thread->rseq_sig = sig;
-
-    /* Initialize cpu_id and cpu_id_start fields in the userspace rseq struct.
-     * On uniprocessor Futura, the CPU is always 0. */
-    uint32_t cpu_id = 0;
-    rseq_copy_to_user((char *)rseq + RSEQ_OFFSET_CPU_ID_START, &cpu_id, sizeof(cpu_id));
-    rseq_copy_to_user((char *)rseq + RSEQ_OFFSET_CPU_ID, &cpu_id, sizeof(cpu_id));
 
     return 0;
 }

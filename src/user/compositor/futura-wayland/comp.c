@@ -419,10 +419,13 @@ void comp_show_toast(struct compositor_state *comp, const char *text) {
     int i = 0;
     while (text[i] && i < 127) { comp->toast_text[i] = text[i]; i++; }
     comp->toast_text[i] = '\0';
-    /* Get current time and set expiry 3 seconds from now */
+    /* Set expiry 5 seconds from now using CLOCK_MONOTONIC, not REALTIME —
+     * a wall-clock step (NTP, manual set) shouldn't strand a toast on
+     * screen forever or vanish it prematurely. The expiry-check in
+     * comp_render_frame is updated to match. */
     struct { long tv_sec; long tv_nsec; } ts = {0, 0};
     extern long sys_call2(long nr, long a, long b);
-    sys_call2(98, 0, (long)&ts);
+    sys_call2(98, 1, (long)&ts);  /* CLOCK_MONOTONIC */
     comp->toast_expire_ns = (uint64_t)ts.tv_sec * 1000000000ULL +
                             (uint64_t)ts.tv_nsec + 5000000000ULL;  /* 5 seconds */
     comp->toast_active = true;
@@ -4784,10 +4787,11 @@ void comp_render_frame(struct compositor_state *comp) {
 
     /* Toast notification (top-right, auto-dismiss) */
     if (comp->toast_active) {
-        /* Check expiry */
+        /* Check expiry — must match the clock used in comp_show_toast
+         * (CLOCK_MONOTONIC), not CLOCK_REALTIME. */
         struct { long tv_sec; long tv_nsec; } toast_ts = {0, 0};
         extern long sys_call2(long nr, long a, long b);
-        sys_call2(98, 0, (long)&toast_ts);
+        sys_call2(98, 1, (long)&toast_ts);  /* CLOCK_MONOTONIC */
         uint64_t now_ns = (uint64_t)toast_ts.tv_sec * 1000000000ULL +
                           (uint64_t)toast_ts.tv_nsec;
         if (now_ns >= comp->toast_expire_ns) {

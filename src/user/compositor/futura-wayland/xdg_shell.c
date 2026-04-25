@@ -781,56 +781,26 @@ static void xdg_toplevel_set_fullscreen(struct wl_client *client,
     (void)client;
     (void)output;
     struct xdg_surface_state *state = wl_resource_get_user_data(resource);
-    if (!state || !state->surface || !state->comp) {
+    if (!state || !state->surface) {
         return;
     }
-    struct comp_surface *surface = state->surface;
-    if (surface->fullscreen) {
-        return;
-    }
-    /* Save current geometry for restore */
-    surface->pre_fs_x = surface->x;
-    surface->pre_fs_y = surface->y;
-    surface->pre_fs_w = surface->width;
-    surface->pre_fs_h = surface->content_height;
-    surface->fullscreen = true;
-    /* Position at origin, resize to fill screen */
-    const struct fut_fb_info *fb = comp_get_fb_info(state->comp);
-    int32_t fs_w = (int32_t)fb->width;
-    int32_t fs_h = (int32_t)fb->height;
-    surface->pend_x = 0;
-    surface->pend_y = 0;
-    surface->have_pending_pos = true;
-    surface->bar_height = 0;
-    surface->shadow_px = 0;
-    xdg_surface_issue_configure(state, fs_w, fs_h,
-                                comp_surface_state_flags(surface));
+    /* Route through the canonical helper instead of duplicating the
+     * save/configure logic. The duplicate path here didn't call
+     * comp_update_surface_position(0, 0), so the fullscreen surface only
+     * moved to the origin once the client committed; F11 toggle and
+     * the client-driven request also went out of sync about whether the
+     * position update happens immediately or on commit. */
+    comp_surface_set_fullscreen(state->surface, true);
 }
 
 static void xdg_toplevel_unset_fullscreen(struct wl_client *client,
                                           struct wl_resource *resource) {
     (void)client;
     struct xdg_surface_state *state = wl_resource_get_user_data(resource);
-    if (!state || !state->surface || !state->comp) {
+    if (!state || !state->surface) {
         return;
     }
-    struct comp_surface *surface = state->surface;
-    if (!surface->fullscreen) {
-        return;
-    }
-    surface->fullscreen = false;
-    /* Restore saved geometry */
-    surface->pend_x = surface->pre_fs_x;
-    surface->pend_y = surface->pre_fs_y;
-    surface->have_pending_pos = true;
-    if (state->comp->deco_enabled) {
-        surface->bar_height = WINDOW_BAR_HEIGHT;
-    }
-    if (state->comp->shadow_enabled) {
-        surface->shadow_px = state->comp->shadow_radius;
-    }
-    xdg_surface_issue_configure(state, surface->pre_fs_w, surface->pre_fs_h,
-                                comp_surface_state_flags(surface));
+    comp_surface_set_fullscreen(state->surface, false);
 }
 
 static void xdg_toplevel_set_minimized(struct wl_client *client,

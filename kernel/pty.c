@@ -363,9 +363,11 @@ static int ptmx_ioctl(void *inode, void *priv, unsigned long req, unsigned long 
         return 0;
     }
     case TIOCSCTTY: {
-        /* TIOCSCTTY - Make this PTY the controlling terminal for the session leader.
-         * arg is the "steal" flag (0 or 1), ignored for simplicity.
-         * Sets task->tty_nr to MKDEV(136, index) and records the session in the PTY. */
+        /* TIOCSCTTY - Make this PTY the controlling terminal for the
+         * session leader. arg is the "steal" flag: when nonzero AND the
+         * caller has CAP_SYS_ADMIN, may steal the PTY from another
+         * session. Without that, return -EPERM if another session
+         * already controls this PTY (matches Linux behavior). */
         fut_task_t *task = fut_task_current();
         if (!task)
             return -ESRCH;
@@ -373,6 +375,14 @@ static int ptmx_ioctl(void *inode, void *priv, unsigned long req, unsigned long 
         if (task->sid != task->pid)
             return -EPERM;
         fut_spinlock_acquire(&p->lock);
+        if (p->session_id != 0 && p->session_id != task->sid) {
+            int may_steal = (arg != 0) &&
+                            (task->cap_effective & (1ULL << 21 /* CAP_SYS_ADMIN */));
+            if (!may_steal) {
+                fut_spinlock_release(&p->lock);
+                return -EPERM;
+            }
+        }
         task->tty_nr = (136u << 8) | (uint32_t)p->index;
         p->session_id = task->sid;
         if (p->fg_pgid == 0)

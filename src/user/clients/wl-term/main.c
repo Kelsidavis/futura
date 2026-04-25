@@ -368,6 +368,13 @@ static void process_key(struct client_state *state, uint32_t key) {
     /* Convert keycode to ASCII */
     char ch = keycode_to_ascii(key, shift);
     if (ch != 0) {
+        /* Alt+letter is the ESC+letter convention used by readline,
+         * vim, emacs, and friends (Alt+b for word-back, Alt+. etc.).
+         * Without this, Alt-modified keystrokes were silently dropped. */
+        bool alt = (kbd_mods_depressed & 8) != 0;
+        if (alt) {
+            term_send_key(&state->term, 0x1B);
+        }
         term_send_key(&state->term, ch);
         state->needs_redraw = true;
     }

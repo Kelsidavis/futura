@@ -321,7 +321,12 @@ static void redraw_all(struct client_state *state) {
         int x = SM_PAD;
         draw_text(px, w, h, stride, x, cy, "PID", 3, COL_DIM, COL_BG); x += 7 * FONT_WIDTH;
         draw_text(px, w, h, stride, x, cy, "S", 1, COL_DIM, COL_BG);    x += 4 * FONT_WIDTH;
-        draw_text(px, w, h, stride, x, cy, "RSS", 3, COL_DIM, COL_BG);  x += 9 * FONT_WIDTH;
+        /* RSS values are right-aligned in 7 chars, so right-align the
+         * header to match (4 leading spaces + "RSS" ends at col +
+         * 7*FONT_WIDTH). Without this the header floated at the left
+         * edge of the column while the numbers sat at the right edge. */
+        draw_text(px, w, h, stride, x, cy, "    RSS", 7, COL_DIM, COL_BG);
+        x += 9 * FONT_WIDTH;
         draw_text(px, w, h, stride, x, cy, "NAME", 4, COL_DIM, COL_BG);
         /* Underline */
         fill_rect(px, stride, SM_PAD, col_y + SM_ROW_H - 2, w - 2 * SM_PAD, 1, 0xFF313244u);

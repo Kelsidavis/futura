@@ -13,6 +13,26 @@
 #include <kernel/errno.h>
 #include <stdint.h>
 
+#include <platform/platform.h>
+
+/* Helper: copy a 64-bit value to either a user or kernel pointer.
+ * Kernel-pointer self-tests must NOT cause copy_to_user to be the only
+ * gate; otherwise on its failure the original code wrote *uptr = val
+ * directly, which let a user supply a kernel address and turn this
+ * syscall into a write-anywhere primitive. */
+static inline int aprctl_put_u64(uint64_t *uptr, uint64_t val) {
+    if (!uptr) return -EFAULT;
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)uptr >= KERNEL_VIRTUAL_BASE) {
+        *uptr = val;
+        return 0;
+    }
+#endif
+    if (fut_copy_to_user(uptr, &val, sizeof(val)) != 0)
+        return -EFAULT;
+    return 0;
+}
+
 #ifdef __x86_64__
 #include <arch/x86_64/msr.h>
 #define MSR_FS_BASE 0xC0000100
@@ -85,17 +105,7 @@ long sys_arch_prctl(int code, unsigned long addr) {
         return 0;
 
     case ARCH_GET_FS: {
-        /* Get current FS base */
-        uint64_t *uptr = (uint64_t *)addr;
-        if (!uptr) {
-            return -EFAULT;
-        }
-        uint64_t val = thread->fs_base;
-        if (fut_copy_to_user(uptr, &val, sizeof(val)) != 0) {
-            /* Kernel pointer fallback for self-tests */
-            *uptr = val;
-        }
-        return 0;
+        return aprctl_put_u64((uint64_t *)addr, thread->fs_base);
     }
 
     case ARCH_SET_GS:
@@ -108,15 +118,8 @@ long sys_arch_prctl(int code, unsigned long addr) {
         return 0;
 
     case ARCH_GET_GS: {
-        uint64_t *uptr = (uint64_t *)addr;
-        if (!uptr) {
-            return -EFAULT;
-        }
-        uint64_t val = thread ? thread->gs_base : 0;
-        if (fut_copy_to_user(uptr, &val, sizeof(val)) != 0) {
-            *uptr = val;
-        }
-        return 0;
+        return aprctl_put_u64((uint64_t *)addr,
+                              thread ? thread->gs_base : 0);
     }
 
     case ARCH_GET_CPUID:
@@ -129,39 +132,20 @@ long sys_arch_prctl(int code, unsigned long addr) {
             return -EINVAL;
         return 0;
 
-    case ARCH_GET_XCOMP_SUPP: {
-        /* Return supported extended state component mask */
-        uint64_t *uptr = (uint64_t *)addr;
-        if (!uptr) return -EFAULT;
-        uint64_t val = XFEATURE_SUPP;
-        if (fut_copy_to_user(uptr, &val, sizeof(val)) != 0)
-            *uptr = val;
-        return 0;
-    }
+    case ARCH_GET_XCOMP_SUPP:
+        return aprctl_put_u64((uint64_t *)addr, XFEATURE_SUPP);
 
-    case ARCH_GET_XCOMP_PERM: {
-        /* Return permitted extended state component mask (same as supported) */
-        uint64_t *uptr = (uint64_t *)addr;
-        if (!uptr) return -EFAULT;
-        uint64_t val = XFEATURE_SUPP;
-        if (fut_copy_to_user(uptr, &val, sizeof(val)) != 0)
-            *uptr = val;
-        return 0;
-    }
+    case ARCH_GET_XCOMP_PERM:
+        /* Permitted == supported on Futura */
+        return aprctl_put_u64((uint64_t *)addr, XFEATURE_SUPP);
 
     case ARCH_REQ_XCOMP_PERM:
         /* Grant permission to use any supported xstate component */
         return 0;
 
-    case ARCH_GET_XCOMP_GUEST_PERM: {
-        /* Return 0 — no guest VM support */
-        uint64_t *uptr = (uint64_t *)addr;
-        if (!uptr) return -EFAULT;
-        uint64_t val = 0;
-        if (fut_copy_to_user(uptr, &val, sizeof(val)) != 0)
-            *uptr = val;
-        return 0;
-    }
+    case ARCH_GET_XCOMP_GUEST_PERM:
+        /* No guest VM support — guest perm is 0 */
+        return aprctl_put_u64((uint64_t *)addr, 0);
 
     case ARCH_REQ_XCOMP_GUEST_PERM:
         /* No guest VM support — return EINVAL per Linux behavior */

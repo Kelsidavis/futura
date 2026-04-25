@@ -28,10 +28,13 @@
 #include <kernel/errno.h>
 #include <kernel/fut_task.h>
 #include <kernel/chrdev.h>
+#include <kernel/uaccess.h>
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
 #include <string.h>
+
+#include <platform/platform.h>
 
 /* ── perf_event_attr constants (Linux ABI) ── */
 
@@ -287,7 +290,24 @@ long sys_perf_event_open(const void *attr, int pid, int cpu,
     (void)group_fd;
 
     if (!attr) return -EINVAL;
-    const struct perf_event_attr *a = (const struct perf_event_attr *)attr;
+
+    /* Copy perf_event_attr from user before reading any fields. The
+     * previous code cast attr directly and dereferenced a->type /
+     * a->config / a->flags, which let any caller pass a kernel
+     * address as 'attr' and have those fields read from kernel
+     * memory (info disclosure into the perf_event slot's type/config
+     * fields, and a kernel page-fault on a bad user pointer). */
+    struct perf_event_attr a_copy;
+    {
+#ifdef KERNEL_VIRTUAL_BASE
+        if ((uintptr_t)attr >= KERNEL_VIRTUAL_BASE) {
+            __builtin_memcpy(&a_copy, attr, sizeof(a_copy));
+        } else
+#endif
+        if (fut_copy_from_user(&a_copy, attr, sizeof(a_copy)) != 0)
+            return -EFAULT;
+    }
+    const struct perf_event_attr *a = &a_copy;
 
     /* Validate event type */
     if (a->type > PERF_TYPE_BREAKPOINT) return -EINVAL;
@@ -296,6 +316,31 @@ long sys_perf_event_open(const void *attr, int pid, int cpu,
     if (a->type == PERF_TYPE_TRACEPOINT) return -ENOENT;
     if (a->type == PERF_TYPE_BREAKPOINT) return -EINVAL;
     if (a->type == PERF_TYPE_RAW) return -EINVAL;
+
+    fut_task_t *task = fut_task_current();
+    if (!task) return -ESRCH;
+
+    /* Cross-task / system-wide monitoring requires CAP_PERFMON (or the
+     * historical CAP_SYS_ADMIN). Without this gate any process could
+     * sample CPU cycles or cache misses on another user's tasks — a
+     * known cross-uid side-channel vector. Linux additionally gates
+     * pid==-1 (system-wide) on perf_event_paranoid; we treat any
+     * cross-task or system-wide request as needing the cap. */
+    {
+        bool privileged = (task->uid == 0) ||
+            (task->cap_effective & ((1ULL << 21 /* CAP_SYS_ADMIN */) |
+                                    (1ULL << 38 /* CAP_PERFMON */)));
+        bool same_task = (pid == -1)            ? false :
+                         (pid == 0)             ? true  :
+                         ((uint32_t)pid == task->pid);
+        if (!same_task && !privileged) {
+            return -EPERM;
+        }
+        if (pid == -1 && !privileged) {
+            /* System-wide monitoring */
+            return -EPERM;
+        }
+    }
 
     /* Find free slot */
     struct perf_event *ev = NULL;
@@ -312,7 +357,6 @@ long sys_perf_event_open(const void *attr, int pid, int cpu,
     ev->target_cpu = cpu;
     ev->enabled = !(a->flags & 1); /* Bit 0 = disabled */
 
-    fut_task_t *task = fut_task_current();
     ev->owner_pid = task ? task->pid : 0;
 
     extern uint64_t fut_get_ticks(void);

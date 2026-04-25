@@ -815,14 +815,16 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                 }
             }
 
-            /* Validate write permission for output ioctls (skip for kernel buffers) */
+            /* Validate write permission for output ioctls (skip for kernel buffers).
+             * Must NOT actually write — _IOWR ioctls have a value in argp that the
+             * device handler is about to read back. Use fut_access_ok which probes
+             * the PTE without mutating user memory. */
             if (requires_write && argp != NULL) {
 #ifdef KERNEL_VIRTUAL_BASE
                 if ((uintptr_t)argp < KERNEL_VIRTUAL_BASE)
 #endif
                 {
-                    char test_byte = 0;
-                    if (fut_copy_to_user(argp, &test_byte, 1) != 0) {
+                    if (fut_access_ok(argp, 1, 1) != 0) {
                         return -EFAULT;
                     }
                 }
@@ -834,8 +836,7 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
                 if ((uintptr_t)argp < KERNEL_VIRTUAL_BASE)
 #endif
                 {
-                    char test_byte;
-                    if (fut_copy_from_user(&test_byte, argp, 1) != 0) {
+                    if (fut_access_ok(argp, 1, 0) != 0) {
                         return -EFAULT;
                     }
                 }

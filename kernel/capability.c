@@ -57,11 +57,14 @@ int fut_capability_check_expiry(uint64_t cap) {
 
     uint16_t current = get_current_time_minutes();
 
-    /* Handle wraparound: if current time is significantly less than expiry,
-     * it means we wrapped around the 16-bit counter (unlikely in practice
-     * since 65535 minutes is ~45 days) */
-    if (current > expiry) {
-        /* Expired */
+    /* Wraparound-safe compare: treat (current - expiry) as a signed 16-bit
+     * delta. Positive means current is at or past expiry. Negative means
+     * the capability is still in its (≤32k-minute / ~22-day) future. This
+     * survives the 65536-minute uptime wrap that breaks plain '>' compare:
+     * e.g. cap created at minute 65500 with 1000 min lifetime stores
+     * expiry=464, and at minute 65600 a naive 65600 > 464 would falsely
+     * report expired. */
+    if ((int16_t)(current - expiry) >= 0) {
         return -ETIMEDOUT;
     }
 

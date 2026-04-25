@@ -293,6 +293,7 @@ long sys_mq_open(const char *name, int oflag, unsigned int mode,
     fut_spinlock_acquire(&mq_global_lock);
 
     struct mqueue *mq = mq_table_find(kname);
+    bool created_here = false;
 
     if (mq) {
         /* Queue exists */
@@ -335,6 +336,7 @@ long sys_mq_open(const char *name, int oflag, unsigned int mode,
             fut_free(mq);
             return err;
         }
+        created_here = true;
         fut_spinlock_release(&mq_global_lock);
     }
 
@@ -350,8 +352,19 @@ long sys_mq_open(const char *name, int oflag, unsigned int mode,
     int fd = chrdev_alloc_fd(&mq_fops, NULL, mfd);
     if (fd < 0) {
         fut_free(mfd);
-        mq_put(mq);
-        return -EMFILE;
+        /* If we just created this queue and the fd alloc failed, the
+         * queue would otherwise be orphaned in mq_table forever
+         * (refcnt=1 held by the table, no fd to close it through).
+         * Remove it so a retry with O_CREAT|O_EXCL doesn't see a
+         * ghost EEXIST and the kernel doesn't leak the buffer. */
+        if (created_here) {
+            fut_spinlock_acquire(&mq_global_lock);
+            mq_table_remove(mq);
+            fut_spinlock_release(&mq_global_lock);
+            mq_put(mq); /* drop the table's reference */
+        }
+        mq_put(mq); /* drop the fd-side reference taken above */
+        return fd;
     }
     return fd;
 }

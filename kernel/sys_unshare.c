@@ -143,6 +143,27 @@ long sys_unshare(unsigned long flags) {
         return -EINVAL;
     }
 
+    /* Permission check: every namespace flag except CLONE_NEWUSER
+     * requires CAP_SYS_ADMIN, matching Linux. CLONE_NEWUSER is the
+     * one explicit exception — its whole purpose is to let an
+     * unprivileged caller obtain a fresh uid mapping it controls.
+     * Without this gate any contained process could bypass its
+     * mount/network/PID isolation by simply unshare()ing into a
+     * fresh namespace. */
+    {
+        const unsigned long PRIVILEGED_NS_FLAGS =
+            CLONE_NEWNS | CLONE_NEWUTS | CLONE_NEWIPC |
+            CLONE_NEWPID | CLONE_NEWNET | CLONE_NEWCGROUP;
+        if ((flags & PRIVILEGED_NS_FLAGS) &&
+            task->uid != 0 &&
+            !(task->cap_effective & (1ULL << 21 /* CAP_SYS_ADMIN */))) {
+            fut_printf("[UNSHARE] unshare(flags=0x%lx, pid=%d) -> EPERM "
+                       "(namespace creation requires CAP_SYS_ADMIN)\n",
+                       flags, task->pid);
+            return -EPERM;
+        }
+    }
+
     /* Categorize unshare operation */
     const char *operation_desc __attribute__((unused));
     if (flags == 0) {

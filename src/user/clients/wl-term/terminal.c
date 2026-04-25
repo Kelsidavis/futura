@@ -475,6 +475,40 @@ static void term_handle_escape(struct terminal *term) {
         }
         break;
     }
+    case '@': { /* ICH — Insert Character (shift cursor row right by n) */
+        int n = (nparams > 0 && params[0] > 0) ? params[0] : 1;
+        int y = term->cursor_y;
+        int x = term->cursor_x;
+        if (n > term->cols - x) n = term->cols - x;
+        if (n <= 0) break;
+        /* Shift existing cells from x..(cols-n-1) right by n */
+        for (int i = term->cols - 1; i >= x + n; i--) {
+            term->grid[y][i] = term->grid[y][i - n];
+        }
+        /* Fill the inserted gap with spaces in the current style */
+        for (int i = 0; i < n; i++) {
+            term->grid[y][x + i].ch = ' ';
+            term->grid[y][x + i].fg_color = term->fg_color;
+            term->grid[y][x + i].bg_color = term->bg_color;
+        }
+        break;
+    }
+    case 'P': { /* DCH — Delete Character (shift cursor row left by n) */
+        int n = (nparams > 0 && params[0] > 0) ? params[0] : 1;
+        int y = term->cursor_y;
+        int x = term->cursor_x;
+        if (n > term->cols - x) n = term->cols - x;
+        if (n <= 0) break;
+        for (int i = x; i < term->cols - n; i++) {
+            term->grid[y][i] = term->grid[y][i + n];
+        }
+        for (int i = term->cols - n; i < term->cols; i++) {
+            term->grid[y][i].ch = ' ';
+            term->grid[y][i].fg_color = term->fg_color;
+            term->grid[y][i].bg_color = term->bg_color;
+        }
+        break;
+    }
     default:
         break; /* Ignore unknown sequences */
     }

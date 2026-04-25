@@ -1473,24 +1473,33 @@ int fut_vfs_unlink(const char *path) {
     }
 
     /* Sticky bit enforcement: in a directory with 01000 (sticky bit),
-     * only the file owner, directory owner, or CAP_FOWNER can unlink. */
+     * only the file owner, directory owner, or CAP_FOWNER can unlink.
+     * Two correctness fixes vs. the prior version:
+     *  1. Use lookup_nofollow so a symlink's own uid is checked, not
+     *     the target it points at — otherwise an attacker could plant
+     *     a symlink in /tmp pointing to a victim-owned file and pass
+     *     the check via the target's uid.
+     *  2. If lookup fails, FAIL CLOSED (-EACCES). The previous code
+     *     silently proceeded to unlink whenever the lookup couldn't
+     *     resolve the target, bypassing the sticky check entirely. */
     if (parent->mode & 01000) {
         fut_task_t *task = fut_task_current();
         uint32_t caller_uid = task ? task->uid : 0;
         int has_cap_fowner = task &&
             (task->cap_effective & (1ULL << 3 /* CAP_FOWNER */));
         if (caller_uid != 0 && !has_cap_fowner && caller_uid != parent->uid) {
-            /* Need to check if caller owns the target file */
             struct fut_vnode *target = NULL;
-            int lret = fut_vfs_lookup(path, &target);
-            if (lret == 0 && target) {
-                if (caller_uid != target->uid) {
-                    release_lookup_ref(target);
-                    release_lookup_ref(parent);
-                    return -EACCES;
-                }
-                release_lookup_ref(target);
+            int lret = fut_vfs_lookup_nofollow(path, &target);
+            if (lret != 0 || !target) {
+                release_lookup_ref(parent);
+                return -EACCES;
             }
+            if (caller_uid != target->uid) {
+                release_lookup_ref(target);
+                release_lookup_ref(parent);
+                return -EACCES;
+            }
+            release_lookup_ref(target);
         }
     }
 
@@ -1514,7 +1523,9 @@ int fut_vfs_rmdir(const char *path) {
         return -ENOSYS;
     }
 
-    /* Sticky bit enforcement: same check as unlink */
+    /* Sticky bit enforcement: same check as unlink. Use nofollow lookup
+     * and fail closed when the lookup can't resolve the target — see
+     * the corresponding comment in fut_vfs_unlink for why. */
     if (parent->mode & 01000) {
         fut_task_t *task = fut_task_current();
         uint32_t caller_uid = task ? task->uid : 0;
@@ -1522,15 +1533,17 @@ int fut_vfs_rmdir(const char *path) {
             (task->cap_effective & (1ULL << 3 /* CAP_FOWNER */));
         if (caller_uid != 0 && !has_cap_fowner && caller_uid != parent->uid) {
             struct fut_vnode *target = NULL;
-            int lret = fut_vfs_lookup(path, &target);
-            if (lret == 0 && target) {
-                if (caller_uid != target->uid) {
-                    release_lookup_ref(target);
-                    release_lookup_ref(parent);
-                    return -EACCES;
-                }
-                release_lookup_ref(target);
+            int lret = fut_vfs_lookup_nofollow(path, &target);
+            if (lret != 0 || !target) {
+                release_lookup_ref(parent);
+                return -EACCES;
             }
+            if (caller_uid != target->uid) {
+                release_lookup_ref(target);
+                release_lookup_ref(parent);
+                return -EACCES;
+            }
+            release_lookup_ref(target);
         }
     }
 

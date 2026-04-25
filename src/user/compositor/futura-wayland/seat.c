@@ -387,17 +387,12 @@ static void seat_send_key(struct seat_state *seat,
      * Due to Wayland protocol ordering, the keyboard enter event may not have
      * been sent yet (e.g. get_keyboard processed before create_surface). */
     bool any_entered = false;
-    int n_clients = 0;
-    int n_kbd = 0;
     struct seat_client *client;
     wl_list_for_each(client, &seat->clients, link) {
-        n_clients++;
-        if (client->keyboard_resource) {
-            n_kbd++;
-            if (client->keyboard_entered &&
-                wl_resource_get_client(client->keyboard_resource) == target) {
-                any_entered = true;
-            }
+        if (client->keyboard_resource && client->keyboard_entered &&
+            wl_resource_get_client(client->keyboard_resource) == target) {
+            any_entered = true;
+            break;
         }
     }
     if (!any_entered) {
@@ -409,7 +404,6 @@ static void seat_send_key(struct seat_state *seat,
         ? WL_KEYBOARD_KEY_STATE_PRESSED
         : WL_KEYBOARD_KEY_STATE_RELEASED;
 
-    int sent = 0;
     wl_list_for_each(client, &seat->clients, link) {
         if (!client->keyboard_resource || !client->keyboard_entered) {
             continue;
@@ -418,9 +412,7 @@ static void seat_send_key(struct seat_state *seat,
             continue;
         }
         wl_keyboard_send_key(client->keyboard_resource, serial, time_msec, keycode, state);
-        sent++;
     }
-    (void)sent;
 }
 
 void seat_focus_surface(struct seat_state *seat, struct comp_surface *surface) {

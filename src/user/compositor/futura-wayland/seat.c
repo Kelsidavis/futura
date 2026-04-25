@@ -472,6 +472,24 @@ void seat_focus_surface(struct seat_state *seat, struct comp_surface *surface) {
         WLOG("[WAYLAND] deco: focus win=%p\n", (void *)surface);
 #endif
     }
+
+    /* Re-issue configure on both the old and new focused surfaces so the
+     * ACTIVATED toplevel state actually reaches clients. The size doesn't
+     * change — comp_surface_state_flags() already reflects max/fs/resize,
+     * and xdg_surface_issue_configure() injects ACTIVATED based on the
+     * current focused_surface (now updated above). */
+    if (previous && previous->xdg_toplevel) {
+        xdg_shell_surface_send_configure(previous,
+                                         previous->width,
+                                         previous->content_height,
+                                         comp_surface_state_flags(previous));
+    }
+    if (surface && surface->xdg_toplevel) {
+        xdg_shell_surface_send_configure(surface,
+                                         surface->width,
+                                         surface->content_height,
+                                         comp_surface_state_flags(surface));
+    }
     #undef FOCUS_HALO_PAD
 }
 

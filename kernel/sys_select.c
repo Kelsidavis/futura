@@ -352,9 +352,13 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
      * with no FDs to monitor (which would sleep indefinitely with no wakeup). */
     if (local_nfds == 0 && !local_readfds && !local_writefds && !local_exceptfds) {
         if (has_timeout) {
-            /* Check for pending unblocked signals before sleeping */
+            /* Check for pending unblocked signals before sleeping. Include
+             * thread_pending_signals so an already-queued tgkill/pthread_kill
+             * signal isn't lost. */
             uint64_t pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
             fut_thread_t *thr0 = fut_thread_current();
+            if (thr0)
+                pending |= __atomic_load_n(&thr0->thread_pending_signals, __ATOMIC_ACQUIRE);
             uint64_t blocked0 = thr0 ?
                 __atomic_load_n(&thr0->signal_mask, __ATOMIC_ACQUIRE) :
                 task->signal_mask;
@@ -485,9 +489,12 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
         if (ready_count > 0 || is_immediate)
             break;
 
-        /* Check for pending signals → EINTR (use thread mask if available) */
+        /* Check for pending signals → EINTR (use thread mask if available).
+         * thread_pending_signals covers tgkill/pthread_kill targets. */
         uint64_t pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
         fut_thread_t *sel_thr = fut_thread_current();
+        if (sel_thr)
+            pending |= __atomic_load_n(&sel_thr->thread_pending_signals, __ATOMIC_ACQUIRE);
         uint64_t blocked = sel_thr ?
             __atomic_load_n(&sel_thr->signal_mask, __ATOMIC_ACQUIRE) :
             task->signal_mask;
@@ -1004,9 +1011,12 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
         if (!ps_has_timeout && local_timeout)
             break;  /* zero-timeout: already handled */
 
-        /* Check for pending unblocked signals → EINTR (use thread mask if available) */
+        /* Check for pending unblocked signals → EINTR (use thread mask if available).
+         * Include thread_pending_signals so tgkill-queued signals fire EINTR here. */
         uint64_t pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
         fut_thread_t *psel_thr = fut_thread_current();
+        if (psel_thr)
+            pending |= __atomic_load_n(&psel_thr->thread_pending_signals, __ATOMIC_ACQUIRE);
         uint64_t blocked = psel_thr ?
             __atomic_load_n(&psel_thr->signal_mask, __ATOMIC_ACQUIRE) :
             task->signal_mask;

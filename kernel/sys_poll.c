@@ -265,6 +265,8 @@ long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
             if (t0) {
                 uint64_t pending = __atomic_load_n(&t0->pending_signals, __ATOMIC_ACQUIRE);
                 fut_thread_t *thr0 = fut_thread_current();
+                if (thr0)
+                    pending |= __atomic_load_n(&thr0->thread_pending_signals, __ATOMIC_ACQUIRE);
                 uint64_t blocked0 = thr0 ?
                     __atomic_load_n(&thr0->signal_mask, __ATOMIC_ACQUIRE) :
                     t0->signal_mask;
@@ -482,6 +484,8 @@ long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
              * Use thread's signal mask when available (per-thread masking via sigprocmask). */
             uint64_t pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
             fut_thread_t *poll_thr = fut_thread_current();
+            if (poll_thr)
+                pending |= __atomic_load_n(&poll_thr->thread_pending_signals, __ATOMIC_ACQUIRE);
             uint64_t blocked = poll_thr ?
                 __atomic_load_n(&poll_thr->signal_mask, __ATOMIC_ACQUIRE) :
                 task->signal_mask;

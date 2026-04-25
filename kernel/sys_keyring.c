@@ -499,8 +499,14 @@ long sys_keyctl(int operation, unsigned long arg2, unsigned long arg3,
 
         if (buf && buflen > 0) {
             size_t copy = (size_t)len < buflen ? (size_t)len : buflen - 1;
-            memcpy(buf, desc, copy);
-            buf[copy] = '\0';
+            /* NUL-terminate inside the staging buffer first, then copy
+             * the whole thing through copy_to_user — direct memcpy here
+             * lets a caller point buf at kernel memory and dump the
+             * description plus a NUL byte into it as a write-anywhere
+             * primitive (and faults the kernel on bad pointers). */
+            desc[copy] = '\0';
+            if (keyring_copy_to_user(buf, desc, copy + 1) != 0)
+                return -EFAULT;
         }
 
         return (long)(len + 1); /* Include NUL terminator */
@@ -772,9 +778,14 @@ long sys_keyctl(int operation, unsigned long arg2, unsigned long arg3,
         const char *label = "unconfined";
         size_t len = strlen(label);
         if (buf && buflen > 0) {
+            char tmp[16];
             size_t copy = len < buflen ? len : buflen - 1;
-            memcpy(buf, label, copy);
-            buf[copy] = '\0';
+            if (copy >= sizeof(tmp))
+                copy = sizeof(tmp) - 1;
+            __builtin_memcpy(tmp, label, copy);
+            tmp[copy] = '\0';
+            if (keyring_copy_to_user(buf, tmp, copy + 1) != 0)
+                return -EFAULT;
         }
         return (long)(len + 1);
     }

@@ -620,7 +620,14 @@ static int spawn_shell(struct terminal *term) {
 
     /* Get slave PTY number */
     int slave_num = -1;
-    sys_ioctl(master_fd, 0x80045430 /* TIOCGPTN */, (long)&slave_num);
+    if (sys_ioctl(master_fd, 0x80045430 /* TIOCGPTN */, (long)&slave_num) < 0 ||
+        slave_num < 0) {
+        /* TIOCGPTN failed (or returned a bogus number). Without a valid
+         * slave path the spawn would build "/dev/pts//" or worse. Close
+         * the master and let the caller fall back to pipes. */
+        sys_close(master_fd);
+        return -1;
+    }
 
     /* Build slave path: /dev/pts/<n> */
     char slave_path[32];

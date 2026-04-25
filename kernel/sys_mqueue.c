@@ -516,11 +516,13 @@ long sys_mq_timedsend(int mqdes, const char *msg_ptr, size_t msg_len,
             return -ETIMEDOUT;
         }
 
-        /* Check for signals */
+        /* Check for signals (task-wide OR thread-directed). */
         fut_task_t *task = fut_task_current();
         if (task) {
             uint64_t pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
             fut_thread_t *thr = fut_thread_current();
+            if (thr)
+                pending |= __atomic_load_n(&thr->thread_pending_signals, __ATOMIC_ACQUIRE);
             uint64_t blocked = thr ? __atomic_load_n(&thr->signal_mask, __ATOMIC_ACQUIRE)
                                    : task->signal_mask;
             if (pending & ~blocked) {
@@ -626,11 +628,13 @@ long sys_mq_timedreceive(int mqdes, char *msg_ptr, size_t msg_len,
             return -ETIMEDOUT;
         }
 
-        /* Check for signals */
+        /* Check for signals (task-wide OR thread-directed). */
         fut_task_t *task = fut_task_current();
         if (task) {
             uint64_t pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
             fut_thread_t *thr = fut_thread_current();
+            if (thr)
+                pending |= __atomic_load_n(&thr->thread_pending_signals, __ATOMIC_ACQUIRE);
             uint64_t blocked = thr ? __atomic_load_n(&thr->signal_mask, __ATOMIC_ACQUIRE)
                                    : task->signal_mask;
             if (pending & ~blocked) {

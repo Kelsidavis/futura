@@ -535,12 +535,16 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
             return -EAGAIN;
         }
 
-        /* Check for pending signals → EINTR (use per-thread mask) */
+        /* Check for pending signals → EINTR (use per-thread mask). Include
+         * thread_pending_signals so tgkill / pthread_kill targets aren't
+         * lost across the accept_waitq sleep. */
         {
             fut_task_t *sig_task = fut_task_current();
             if (sig_task) {
                 fut_thread_t *acc_thr = fut_thread_current();
                 uint64_t pending = __atomic_load_n(&sig_task->pending_signals, __ATOMIC_ACQUIRE);
+                if (acc_thr)
+                    pending |= __atomic_load_n(&acc_thr->thread_pending_signals, __ATOMIC_ACQUIRE);
                 uint64_t blocked = acc_thr ?
                     __atomic_load_n(&acc_thr->signal_mask, __ATOMIC_ACQUIRE) :
                     sig_task->signal_mask;

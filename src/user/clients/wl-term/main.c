@@ -957,6 +957,12 @@ int main(void) {
         }
     }
     xdg_surface_ack_configure(state.xdg_surface, state.configure_serial);
+    /* Same fix as wl-edit/wl-sysmon: clear the latch so the main loop
+     * (state->configured = false at line 830) actually has something to
+     * skip; without this we re-ack the same serial on the next configure
+     * arrival because state->configure_serial is stale. */
+    state.configured = false;
+    state.configure_serial = 0;
 
     /* Set pixel dimensions from terminal grid (may have been resized by configure) */
     state.pixel_width = state.term.cols * FONT_WIDTH + 2 * TERM_PAD_X;

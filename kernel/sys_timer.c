@@ -8,9 +8,11 @@
  */
 
 #include <kernel/fut_task.h>
+#include <kernel/fut_thread.h>
 #include <kernel/fut_timer.h>
 #include <kernel/errno.h>
 #include <kernel/uaccess.h>
+#include <stdbool.h>
 #include <shared/fut_timespec.h>
 #include <shared/fut_sigevent.h>
 #include <kernel/signal.h>
@@ -143,11 +145,24 @@ long sys_timer_create(int clockid, struct sigevent *sevp, timer_t *timerid) {
             signo = sev.sigev_signo;
         }
 
-        /* SIGEV_THREAD_ID: caller specifies which thread receives the signal */
+        /* SIGEV_THREAD_ID: caller specifies which thread receives the
+         * signal. Linux requires the tid to belong to the caller's
+         * thread group (CLONE_THREAD siblings); otherwise the timer
+         * would let any process queue signals to threads in another
+         * task at expiry, bypassing the normal kill/tgkill credential
+         * gate. Validate by walking the calling task's thread list and
+         * matching the requested tid. */
         if (notify == SIGEV_THREAD_ID) {
             if (sev.sigev_notify_thread_id <= 0)
                 return -EINVAL;
-            target_tid = (uint64_t)sev.sigev_notify_thread_id;
+            uint64_t want = (uint64_t)sev.sigev_notify_thread_id;
+            bool in_group = false;
+            for (fut_thread_t *t = task->threads; t; t = t->next) {
+                if (t->tid == want) { in_group = true; break; }
+            }
+            if (!in_group)
+                return -EINVAL;
+            target_tid = want;
             /* Map to SIGEV_SIGNAL for delivery path — target_tid distinguishes it */
             notify = SIGEV_THREAD_ID;
         }

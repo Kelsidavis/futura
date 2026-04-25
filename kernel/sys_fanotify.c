@@ -23,10 +23,40 @@
 #include <kernel/fut_task.h>
 #include <kernel/fut_vfs.h>
 #include <kernel/chrdev.h>
+#include <kernel/uaccess.h>
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
 #include <string.h>
+
+#include <platform/platform.h>
+
+/* Stage a user pathname into a kernel buffer of size out_size, including
+ * the trailing NUL. Returns 0 on success, -EFAULT/-ENAMETOOLONG on error.
+ * Bypasses uaccess only for kernel-side self-test pointers; never
+ * dereferences a user pointer directly (the previous code used strcmp
+ * straight on the user pointer, which let a caller hand the kernel a
+ * kernel address as 'pathname' to read kernel memory or fault). */
+static int fan_copy_user_path(const char *upath, char *kpath, size_t out_size) {
+    if (!upath || out_size == 0) return -EINVAL;
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)upath >= KERNEL_VIRTUAL_BASE) {
+        size_t i = 0;
+        for (; i + 1 < out_size; i++) {
+            kpath[i] = upath[i];
+            if (upath[i] == '\0') return 0;
+        }
+        return -ENAMETOOLONG;
+    }
+#endif
+    for (size_t i = 0; i + 1 < out_size; i++) {
+        char c;
+        if (fut_copy_from_user(&c, upath + i, 1) != 0) return -EFAULT;
+        kpath[i] = c;
+        if (c == '\0') return 0;
+    }
+    return -ENAMETOOLONG;
+}
 
 /* ── fanotify constants (Linux ABI) ── */
 
@@ -242,6 +272,16 @@ long sys_fanotify_mark(int fanotify_fd, unsigned int flags,
     struct fanotify_group *grp = fan_find_fd(fanotify_fd);
     if (!grp) return -EBADF;
 
+    /* Stage the user-supplied path into a kernel buffer up front so we
+     * never strcmp/index a user pointer directly. */
+    char kpath[256];
+    bool have_path = false;
+    if (pathname) {
+        int rc = fan_copy_user_path(pathname, kpath, sizeof(kpath));
+        if (rc < 0) return rc;
+        have_path = true;
+    }
+
     /* Handle FAN_MARK_FLUSH */
     if (flags & FAN_MARK_FLUSH) {
         for (uint32_t i = 0; i < MAX_FANOTIFY_MARKS; i++)
@@ -254,7 +294,7 @@ long sys_fanotify_mark(int fanotify_fd, unsigned int flags,
     if (flags & FAN_MARK_REMOVE) {
         for (uint32_t i = 0; i < MAX_FANOTIFY_MARKS; i++) {
             if (!grp->marks[i].active) continue;
-            if (pathname && strcmp(grp->marks[i].path, pathname) != 0) continue;
+            if (have_path && strcmp(grp->marks[i].path, kpath) != 0) continue;
             if (flags & FAN_MARK_IGNORED_MASK) {
                 grp->marks[i].ignored_mask &= ~mask;
             } else {
@@ -274,8 +314,8 @@ long sys_fanotify_mark(int fanotify_fd, unsigned int flags,
         /* Check if mark already exists for this path */
         for (uint32_t i = 0; i < MAX_FANOTIFY_MARKS; i++) {
             if (!grp->marks[i].active) continue;
-            bool path_match = (!pathname && grp->marks[i].path[0] == '\0') ||
-                              (pathname && strcmp(grp->marks[i].path, pathname) == 0);
+            bool path_match = (!have_path && grp->marks[i].path[0] == '\0') ||
+                              (have_path && strcmp(grp->marks[i].path, kpath) == 0);
             if (path_match) {
                 if (flags & FAN_MARK_IGNORED_MASK) {
                     grp->marks[i].ignored_mask |= mask;
@@ -294,10 +334,10 @@ long sys_fanotify_mark(int fanotify_fd, unsigned int flags,
             grp->marks[i].mask = mask;
             grp->marks[i].ignored_mask = 0;
             grp->marks[i].flags = flags;
-            if (pathname) {
-                int j = 0;
-                while (pathname[j] && j < 255) {
-                    grp->marks[i].path[j] = pathname[j]; j++;
+            if (have_path) {
+                size_t j = 0;
+                while (kpath[j] && j < sizeof(grp->marks[i].path) - 1) {
+                    grp->marks[i].path[j] = kpath[j]; j++;
                 }
                 grp->marks[i].path[j] = '\0';
             } else {

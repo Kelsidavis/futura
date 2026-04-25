@@ -644,22 +644,42 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                 return 0;
             }
 
-            case 12: /* SO_PRIORITY — socket priority for QoS */
-            case 26: /* SO_ATTACH_FILTER — BPF filter (no-op: no packet filter engine) */
-            case 27: /* SO_DETACH_FILTER — detach BPF filter */
             case 32: /* SO_SNDBUFFORCE — forced send buffer (privileged) */
             case 33: /* SO_RCVBUFFORCE — forced recv buffer (privileged) */
-            case 34: /* SO_PASSSEC — SELinux label passing */
             case 36: /* SO_MARK — socket mark for policy routing */
+                /* Linux requires CAP_NET_ADMIN for these privileged
+                 * options; without the gate, an unprivileged caller
+                 * sees success when Linux would return EPERM,
+                 * masking sandbox-policy assumptions. We still don't
+                 * enforce the actual semantics, but we match the
+                 * permission ABI. */
+                if (task->uid != 0 &&
+                    !(task->cap_effective & (1ULL << 12 /* CAP_NET_ADMIN */)))
+                    return -EPERM;
+                return 0;
+
+            case 26: /* SO_ATTACH_FILTER — BPF filter */
+            case 27: /* SO_DETACH_FILTER — detach BPF filter */
+            case 47: /* SO_ATTACH_BPF */
+            case 52: /* SO_DETACH_BPF */
+            case 53: /* SO_ATTACH_REUSEPORT_CBPF */
+            case 54: /* SO_ATTACH_REUSEPORT_EBPF */
+                /* BPF attach/detach: Linux requires CAP_NET_ADMIN (or
+                 * CAP_BPF on newer kernels). Mirror the permission
+                 * even though Futura has no packet-filter engine — a
+                 * silent success here is wrong feedback to userspace. */
+                if (task->uid != 0 &&
+                    !(task->cap_effective & (1ULL << 12 /* CAP_NET_ADMIN */)))
+                    return -EPERM;
+                return 0;
+
+            case 12: /* SO_PRIORITY — socket priority for QoS */
+            case 34: /* SO_PASSSEC — SELinux label passing */
             case 37: /* SO_TIMESTAMPING — hardware timestamping */
             case 41: /* SO_WIFI_STATUS — WiFi status */
             case 42: /* SO_PEEK_OFF — MSG_PEEK offset */
             case 45: /* SO_BPF_EXTENSIONS */
             case 46: /* SO_INCOMING_CPU */
-            case 47: /* SO_ATTACH_BPF */
-            case 52: /* SO_DETACH_BPF */
-            case 53: /* SO_ATTACH_REUSEPORT_CBPF */
-            case 54: /* SO_ATTACH_REUSEPORT_EBPF */
             case 55: /* SO_CNX_ADVICE */
             case 57: /* SO_MEMINFO */
             case 58: /* SO_INCOMING_NAPI_ID */

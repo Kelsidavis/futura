@@ -566,7 +566,7 @@ static void seat_handle_button(struct seat_state *seat,
                             }
                             wl_list_for_each(ds, &seat->comp->surfaces, link) {
                                 if (ds->has_backing)
-                                    ds->minimized = any_visible;
+                                    comp_surface_set_minimized(ds, any_visible);
                             }
                             seat->comp->dock_all_minimized = any_visible;
                             comp_damage_add_full(seat->comp);
@@ -827,7 +827,7 @@ static void seat_handle_button(struct seat_state *seat,
                 if (s->has_backing && !s->minimized) any_vis = true;
             }
             wl_list_for_each(s, &seat->comp->surfaces, link) {
-                if (s->has_backing) s->minimized = any_vis;
+                if (s->has_backing) comp_surface_set_minimized(s, any_vis);
             }
             seat->comp->dock_all_minimized = any_vis;
         }
@@ -858,7 +858,7 @@ static void seat_handle_button(struct seat_state *seat,
             }
             wl_list_for_each(s, &seat->comp->surfaces, link) {
                 if (s->has_backing)
-                    s->minimized = any_visible;
+                    comp_surface_set_minimized(s, any_visible);
             }
             seat->comp->dock_all_minimized = any_visible;
             comp_damage_add_full(seat->comp);
@@ -1145,7 +1145,7 @@ static void seat_handle_key_event(struct seat_state *seat,
                 }
                 wl_list_for_each(s, &seat->comp->surfaces, link) {
                     if (s->has_backing)
-                        s->minimized = any_visible;
+                        comp_surface_set_minimized(s, any_visible);
                 }
                 seat->comp->dock_all_minimized = any_visible;
                 comp_damage_add_full(seat->comp);

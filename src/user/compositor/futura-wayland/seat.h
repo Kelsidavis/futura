@@ -44,6 +44,7 @@ struct seat_state {
     bool right_button_down;
     struct comp_surface *hover_btn_surface;
     struct comp_surface *hover_min_btn_surface;
+    struct comp_surface *hover_max_btn_surface;
     struct comp_surface *pressed_surface;
     hit_role_t pressed_role;
     resize_edge_t pressed_edge;

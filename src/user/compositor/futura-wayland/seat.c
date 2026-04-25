@@ -79,6 +79,36 @@ static void seat_set_min_button_hover(struct seat_state *seat, struct comp_surfa
     seat->hover_min_btn_surface = surface;
 }
 
+static void seat_clear_max_button_hover(struct seat_state *seat) {
+    if (!seat || !seat->hover_max_btn_surface) {
+        return;
+    }
+    struct comp_surface *surface = seat->hover_max_btn_surface;
+    if (surface->max_btn_hover) {
+        surface->max_btn_hover = false;
+        comp_damage_add_rect(seat->comp, comp_max_btn_rect(surface));
+        comp_surface_mark_damage(surface);
+    }
+    seat->hover_max_btn_surface = NULL;
+}
+
+static void seat_set_max_button_hover(struct seat_state *seat, struct comp_surface *surface) {
+    if (!seat) {
+        return;
+    }
+    if (seat->hover_max_btn_surface == surface) {
+        return;
+    }
+    seat_clear_max_button_hover(seat);
+    if (!surface) {
+        return;
+    }
+    surface->max_btn_hover = true;
+    comp_damage_add_rect(seat->comp, comp_max_btn_rect(surface));
+    comp_surface_mark_damage(surface);
+    seat->hover_max_btn_surface = surface;
+}
+
 static void seat_update_hover(struct seat_state *seat) {
     if (!seat) {
         return;
@@ -86,6 +116,7 @@ static void seat_update_hover(struct seat_state *seat) {
     if (!seat->comp->deco_enabled) {
         seat_clear_button_hover(seat);
         seat_clear_min_button_hover(seat);
+        seat_clear_max_button_hover(seat);
         return;
     }
 
@@ -99,12 +130,19 @@ static void seat_update_hover(struct seat_state *seat) {
     if (role == HIT_MINIMIZE && surface) {
         seat_set_min_button_hover(seat, surface);
         seat_clear_button_hover(seat);
+        seat_clear_max_button_hover(seat);
+    } else if (role == HIT_MAXIMIZE && surface) {
+        seat_set_max_button_hover(seat, surface);
+        seat_clear_button_hover(seat);
+        seat_clear_min_button_hover(seat);
     } else if (role == HIT_CLOSE && surface) {
         seat_set_button_hover(seat, surface);
         seat_clear_min_button_hover(seat);
+        seat_clear_max_button_hover(seat);
     } else {
         seat_clear_button_hover(seat);
         seat_clear_min_button_hover(seat);
+        seat_clear_max_button_hover(seat);
     }
 }
 
@@ -1656,6 +1694,9 @@ void seat_surface_destroyed(struct seat_state *seat, struct comp_surface *surfac
     }
     if (seat->hover_min_btn_surface == surface) {
         seat_clear_min_button_hover(seat);
+    }
+    if (seat->hover_max_btn_surface == surface) {
+        seat_clear_max_button_hover(seat);
     }
     if (seat->pressed_surface == surface) {
         seat->pressed_surface = NULL;

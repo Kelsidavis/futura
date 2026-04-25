@@ -257,9 +257,21 @@ static int perf_ioctl_handler(void *inode, void *priv, unsigned long req, unsign
         return 0; /* Accept refresh (overflow count) */
 
     case PERF_EVENT_IOC_ID: {
-        /* Return event ID */
-        uint64_t *id = (uint64_t *)(uintptr_t)arg;
-        if (id) *id = (uint64_t)(ev - perf_events);
+        /* Return event ID via copy_to_user. Direct '*id = ...' through
+         * the user-supplied arg pointer was a kernel-write-anywhere
+         * primitive: kernel-address arg lets the caller place a small
+         * value (0..MAX_PERF_EVENTS-1) at any kernel address. */
+        uint64_t event_id = (uint64_t)(ev - perf_events);
+        void *uptr = (void *)(uintptr_t)arg;
+        if (!uptr) return 0;
+#ifdef KERNEL_VIRTUAL_BASE
+        if ((uintptr_t)uptr >= KERNEL_VIRTUAL_BASE) {
+            *(uint64_t *)uptr = event_id;
+            return 0;
+        }
+#endif
+        if (fut_copy_to_user(uptr, &event_id, sizeof(event_id)) != 0)
+            return -EFAULT;
         return 0;
     }
 

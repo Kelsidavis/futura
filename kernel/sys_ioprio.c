@@ -14,6 +14,7 @@
 
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
+#include <stdbool.h>
 #include <stdint.h>
 
 #include <kernel/kprintf.h>
@@ -111,6 +112,33 @@ long sys_ioprio_set(int which, int who, int ioprio) {
         fut_printf("[IOPRIO] ioprio_set(which=%d, who=%d, ioprio=0x%x [invalid data=%d], pid=%d) "
                    "-> EINVAL\n", which, who, ioprio, data, task->pid);
         return -EINVAL;
+    }
+
+    /* IOPRIO_CLASS_RT can starve all other disk I/O; Linux requires
+     * CAP_SYS_ADMIN to enter that class. Without this gate any user
+     * could grab realtime I/O priority and DoS shared storage. */
+    if (class == IOPRIO_CLASS_RT &&
+        task->uid != 0 &&
+        !(task->cap_effective & (1ULL << 21 /* CAP_SYS_ADMIN */))) {
+        fut_printf("[IOPRIO] ioprio_set(class=RT) -> EPERM (CAP_SYS_ADMIN required)\n");
+        return -EPERM;
+    }
+
+    /* Reject cross-task / cross-user requests we don't actually
+     * implement. Previously the syscall accepted any (which, who) but
+     * silently updated the caller's task->ioprio instead of the named
+     * target, which is a confused-deputy hazard worse than not
+     * supporting it. Self-only (who == 0 || who == caller PID for
+     * IOPRIO_WHO_PROCESS) still works. */
+    {
+        bool is_self_process = (which == IOPRIO_WHO_PROCESS) &&
+                               (who == 0 || (uint32_t)who == task->pid);
+        if (!is_self_process) {
+            fut_printf("[IOPRIO] ioprio_set(which=%d, who=%d) -> ENOSYS "
+                       "(only self-targeting IOPRIO_WHO_PROCESS implemented)\n",
+                       which, who);
+            return -ENOSYS;
+        }
     }
 
     /* Categorize operation */

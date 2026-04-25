@@ -5603,9 +5603,17 @@ void comp_pointer_motion(struct compositor_state *comp, int32_t new_x, int32_t n
 
     /* Update dock hover state */
     {
+        /* Constants must match the dock renderer. They were copies of the
+         * old (pre-widening) values, so dock hover/tooltip targeted the
+         * wrong items in the same way the click handler did before. */
+        #define HOV_DOCK_HEIGHT  38
+        #define HOV_DOCK_ITEM_W  148
+        #define HOV_DOCK_PAD     4
+        #define HOV_DOCK_DSKBTN  28
+        #define HOV_CLOCK_W      (22 * 8 + 16)
         int32_t fb_h = (int32_t)comp->fb_info.height;
         int32_t fb_w = (int32_t)comp->fb_info.width;
-        int32_t dock_y = fb_h - 36 - 6;
+        int32_t dock_y = fb_h - HOV_DOCK_HEIGHT - 6;
         int old_hover = comp->dock_hover_index;
         int new_hover = -1;
         int tooltip_cx = 0;  /* center x for tooltip */
@@ -5616,16 +5624,17 @@ void comp_pointer_motion(struct compositor_state *comp, int32_t new_x, int32_t n
             wl_list_for_each(ds, &comp->surfaces, link)
                 if (ds->has_backing) n_win++;
 
-            int items_w = n_win > 0 ? n_win * 120 + (n_win - 1) * 2 : 0;
-            int clock_w = 13 * 8 + 16;
-            int dock_content_w = 8 + items_w + 8 + clock_w + 4 + 28 + 4;
+            int items_w = n_win > 0
+                ? n_win * HOV_DOCK_ITEM_W + (n_win - 1) * HOV_DOCK_PAD
+                : 0;
+            int dock_content_w = 8 + items_w + 8 + HOV_CLOCK_W + 4 + HOV_DOCK_DSKBTN + 4;
             if (dock_content_w < 240) dock_content_w = 240;
             int dock_x = (fb_w - dock_content_w) / 2;
 
             /* Check desktop button at far right */
-            int dskbtn_x = dock_x + dock_content_w - 28 - 2;
+            int dskbtn_x = dock_x + dock_content_w - HOV_DOCK_DSKBTN - 2;
             if (comp->pointer_x >= dskbtn_x &&
-                comp->pointer_x < dskbtn_x + 28) {
+                comp->pointer_x < dskbtn_x + HOV_DOCK_DSKBTN) {
                 new_hover = -2;
             } else {
                 /* Check window items */
@@ -5634,16 +5643,21 @@ void comp_pointer_motion(struct compositor_state *comp, int32_t new_x, int32_t n
                 wl_list_for_each(ds, &comp->surfaces, link) {
                     if (!ds->has_backing) continue;
                     if (comp->pointer_x >= item_x &&
-                        comp->pointer_x < item_x + 120) {
+                        comp->pointer_x < item_x + HOV_DOCK_ITEM_W) {
                         new_hover = idx;
-                        tooltip_cx = item_x + 60;
+                        tooltip_cx = item_x + HOV_DOCK_ITEM_W / 2;
                         break;
                     }
-                    item_x += 120 + 2;
+                    item_x += HOV_DOCK_ITEM_W + HOV_DOCK_PAD;
                     idx++;
                 }
             }
         }
+        #undef HOV_DOCK_HEIGHT
+        #undef HOV_DOCK_ITEM_W
+        #undef HOV_DOCK_PAD
+        #undef HOV_DOCK_DSKBTN
+        #undef HOV_CLOCK_W
 
         if (new_hover != old_hover) {
             comp->dock_hover_index = new_hover;

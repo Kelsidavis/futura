@@ -249,6 +249,15 @@ long sys_socket(int domain, int type, int protocol) {
         return -EINVAL;
     }
 
+    /* SOCK_RAW (and AF_NETLINK SOCK_RAW) lets a process see/inject raw
+     * IP packets — Linux gates this behind CAP_NET_RAW. Without this
+     * check any unprivileged caller could open an ICMP listener,
+     * forge IP source addresses, or sniff network traffic. */
+    if (base_type == SOCK_RAW && task->uid != 0 &&
+        !(task->cap_effective & (1ULL << 13 /* CAP_NET_RAW */))) {
+        return -EPERM;
+    }
+
     /* Validate protocol: AF_UNIX requires 0; AF_INET allows 0 or IPPROTO_TCP/UDP */
     if (local_domain == AF_UNIX && local_protocol != 0) {
         socket_printf("[SOCKET] socket(domain=%s, type=%s, flags=%s, protocol=%d [%s]) -> EINVAL (AF_UNIX requires protocol=0)\n",

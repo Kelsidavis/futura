@@ -467,9 +467,23 @@ int fut_signal_procmask(struct fut_task *task, int how,
     fut_thread_t *cur_thread = fut_thread_current();
     uint64_t *mask_ptr = cur_thread ? &cur_thread->signal_mask : &task->signal_mask;
 
-    /* Save old mask if requested */
+    /* Save old mask if requested. Use copy_to_user with the standard
+     * KERNEL_VIRTUAL_BASE bypass — direct '*oldset = ...' would let any
+     * caller passing a kernel-pointer oldset write the current mask
+     * into kernel memory (info-disclosure-free but still a kernel
+     * write-anywhere primitive) and would fault the kernel on a bad
+     * user pointer instead of returning -EFAULT. */
     if (oldset) {
-        oldset->__mask = __atomic_load_n(mask_ptr, __ATOMIC_ACQUIRE);
+        sigset_t old_mask;
+        old_mask.__mask = __atomic_load_n(mask_ptr, __ATOMIC_ACQUIRE);
+#ifdef KERNEL_VIRTUAL_BASE
+        if ((uintptr_t)oldset >= KERNEL_VIRTUAL_BASE) {
+            *oldset = old_mask;
+        } else
+#endif
+        if (fut_copy_to_user(oldset, &old_mask, sizeof(*oldset)) != 0) {
+            return -EFAULT;
+        }
     }
 
     /* security: SIGKILL and SIGSTOP cannot be blocked (POSIX requirement).
@@ -477,10 +491,20 @@ int fut_signal_procmask(struct fut_task *task, int how,
      * a process unkillable or unstoppable. */
     uint64_t unblockable = (1ULL << (SIGKILL - 1)) | (1ULL << (SIGSTOP - 1));
 
-    /* Modify mask according to 'how' — use atomic operations since signal
-     * delivery and other threads may read/write signal_mask concurrently. */
+    /* Read the new mask from userspace through copy_from_user so a
+     * kernel-pointer 'set' can't be used to read kernel memory into the
+     * sanitized mask. */
     if (set) {
-        uint64_t sanitized = set->__mask & ~unblockable;
+        sigset_t new_set;
+#ifdef KERNEL_VIRTUAL_BASE
+        if ((uintptr_t)set >= KERNEL_VIRTUAL_BASE) {
+            new_set = *set;
+        } else
+#endif
+        if (fut_copy_from_user(&new_set, set, sizeof(new_set)) != 0) {
+            return -EFAULT;
+        }
+        uint64_t sanitized = new_set.__mask & ~unblockable;
         switch (how) {
             case SIGPROCMASK_BLOCK:
                 __atomic_or_fetch(mask_ptr, sanitized, __ATOMIC_ACQ_REL);

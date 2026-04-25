@@ -198,7 +198,17 @@ ssize_t sys_read(int fd, void *buf, size_t count) {
     /* Validate writability without touching buffer contents. The
      * previous code wrote a literal 0 to local_buf[0] as a probe — on
      * EOF (return 0) or EAGAIN the user's buffer would silently come
-     * back with byte 0 zeroed instead of left untouched. */
+     * back with byte 0 zeroed instead of left untouched.
+     *
+     * Skip the access check for kernel-half pointers so in-kernel
+     * selftest callers (kernel-stack buffers) aren't rejected with
+     * EFAULT. fut_access_ok validates user-space ranges only and would
+     * otherwise turn every kernel-side sys_read(efd, &val, ...) into
+     * -EFAULT — which silently breaks tests that don't check the
+     * return value (e.g. the eventfd drain in the EPOLLET self-test). */
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)local_buf < KERNEL_VIRTUAL_BASE)
+#endif
     if (fut_access_ok(local_buf, local_count, 1) != 0) {
         return -EFAULT;
     }

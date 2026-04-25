@@ -915,6 +915,20 @@ int main(int argc, char **argv) {
             }
         }
 
+        /* Frame-callback timeout: if the compositor stops sending frame.done
+         * (e.g. surface fully outside damage region, dropped event), force
+         * frame_done so we don't deadlock with needs_redraw=true forever.
+         * Match wl-term's ~500ms threshold (50 ticks @ ~10ms). */
+        static int ed_frame_wait = 0;
+        if (!state.frame_done) {
+            if (++ed_frame_wait >= 50) {
+                state.frame_done = true;
+                ed_frame_wait = 0;
+            }
+        } else {
+            ed_frame_wait = 0;
+        }
+
         if (state.needs_redraw && state.frame_done) {
             redraw_all(&state);
             if (state.frame_cb) {

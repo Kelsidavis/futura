@@ -735,6 +735,19 @@ int main(void) {
             }
         }
 
+        /* Frame-callback timeout: if the compositor stops sending
+         * frame.done, force frame_done so a refresh isn't blocked
+         * indefinitely. ~500ms threshold (50 ticks @ ~10ms). */
+        static int sm_frame_wait = 0;
+        if (!state.frame_done) {
+            if (++sm_frame_wait >= 50) {
+                state.frame_done = true;
+                sm_frame_wait = 0;
+            }
+        } else {
+            sm_frame_wait = 0;
+        }
+
         if (state.needs_redraw && state.frame_done) {
             redraw_all(&state);
             if (state.frame_cb)

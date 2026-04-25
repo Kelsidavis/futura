@@ -72,6 +72,13 @@ static ssize_t memfd_write(void *inode, void *priv, const void *buf, size_t n, o
     if (offset < 0)
         return -EINVAL;
 
+    /* Reject offsets so large that offset + n would wrap size_t. Without
+     * this guard, a huge *pos plus a small n produces a small 'end' that
+     * passes the capacity check, after which 'mf->data + offset' walks
+     * arbitrarily far past the allocation. */
+    if ((size_t)offset > SIZE_MAX - n)
+        return -EFBIG;
+
     size_t end = (size_t)offset + n;
 
     /* Grow buffer if needed */
@@ -176,6 +183,10 @@ static void *memfd_mmap(void *inode, void *priv, void *u_addr,
     if (!mf)
         return (void *)(intptr_t)(-EINVAL);
     if (off < 0 || (size_t)off > mf->size)
+        return (void *)(intptr_t)(-EINVAL);
+    /* Reject overflow in off + len so the avail computation below stays
+     * sane; a huge len with a non-zero off would otherwise wrap. */
+    if (len > SIZE_MAX - (size_t)off)
         return (void *)(intptr_t)(-EINVAL);
 
     fut_mm_t *mm = fut_mm_current();

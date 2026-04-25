@@ -325,6 +325,13 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
         else if (fut_copy_from_user(&ktv, local_timeout, sizeof(ktv)) != 0)
             return -EFAULT;
 
+        /* Reject negative or out-of-range timeval. Without this check
+         * (uint64_t)ktv.tv_sec * 1000 below silently turns a negative
+         * tv_sec into a multi-thousand-year timeout. Match Linux EINVAL
+         * for invalid timeval. */
+        if (ktv.tv_sec < 0 || ktv.tv_usec < 0 || ktv.tv_usec >= 1000000)
+            return -EINVAL;
+
         if (ktv.tv_sec == 0 && ktv.tv_usec == 0) {
             is_immediate = 1;
         } else {

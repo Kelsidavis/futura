@@ -629,15 +629,24 @@ static int spawn_shell(struct terminal *term) {
         return -1;
     }
 
-    /* Build slave path: /dev/pts/<n> */
+    /* Build slave path: /dev/pts/<n>. Handle any number of digits — the
+     * old chain stopped at hundreds, so a slave_num of 1234 produced
+     * "/dev/pts/234". */
     char slave_path[32];
     slave_path[0]='/'; slave_path[1]='d'; slave_path[2]='e'; slave_path[3]='v';
     slave_path[4]='/'; slave_path[5]='p'; slave_path[6]='t'; slave_path[7]='s';
     slave_path[8]='/';
     int sp = 9;
-    if (slave_num >= 100) slave_path[sp++] = '0' + (char)(slave_num / 100 % 10);
-    if (slave_num >= 10) slave_path[sp++] = '0' + (char)(slave_num / 10 % 10);
-    slave_path[sp++] = '0' + (char)(slave_num % 10);
+    {
+        char digits[12];
+        int nd = 0;
+        int n = slave_num;
+        if (n == 0) { digits[nd++] = '0'; }
+        else { while (n > 0 && nd < (int)sizeof(digits)) { digits[nd++] = '0' + (char)(n % 10); n /= 10; } }
+        for (int i = nd - 1; i >= 0 && sp < (int)sizeof(slave_path) - 1; i--) {
+            slave_path[sp++] = digits[i];
+        }
+    }
     slave_path[sp] = '\0';
 
     /* Enable ECHO and line-editing flags for the terminal.

@@ -1069,6 +1069,15 @@ static void seat_handle_key_event(struct seat_state *seat,
         return;
     }
 
+    /* Escape cancels an in-flight Alt+Tab without committing focus to the
+     * highlighted window. The Alt-release path commits otherwise. */
+    if (pressed && keycode == 1 && seat->comp && seat->comp->alt_tab_active) {
+        seat->comp->alt_tab_active = false;
+        comp_damage_add_full(seat->comp);
+        seat->comp->needs_repaint = true;
+        return;
+    }
+
     /* Escape or any key dismisses about dialog */
     if (pressed && seat->comp && seat->comp->about_active) {
         seat->comp->about_active = false;

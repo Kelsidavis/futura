@@ -93,8 +93,13 @@ long sys_kcmp(int pid1, int pid2, int type,
     }
 
     case KCMP_VM:
-        /* In Futura all tasks share one address space — always same */
-        return 0;
+        /* Compare the actual mm. Two threads in the same process share one
+         * fut_mm; two ordinary fork()-children get distinct mms. The old
+         * blanket 'return 0' falsely told CRIU and similar tools that any
+         * two unrelated processes share VM, so dump-restore decisions
+         * based on kcmp would treat them as a single thread group. */
+        if (task1->mm == task2->mm) return 0;
+        return (uintptr_t)task1->mm < (uintptr_t)task2->mm ? 1 : 2;
 
     case KCMP_FILES:
         /* Compare fd tables: same pointer if shared (fork-without-CLONE_FILES gives separate) */

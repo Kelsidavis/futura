@@ -348,7 +348,17 @@ static void term_handle_escape(struct terminal *term) {
                 term->grid[term->cursor_y][x].bg_color = term->bg_color;
             }
         } else if (mode == 2) { /* Entire screen */
-            term_clear(term);
+            /* Per VT100/xterm: ESC[2J erases the screen but leaves the
+             * cursor where it is. term_clear() also resets the cursor to
+             * (0,0), which broke output sequences like
+             * "ESC[10;20H ESC[2J" that expect the cursor to stay put. */
+            for (int y = 0; y < term->rows; y++) {
+                for (int x = 0; x < term->cols; x++) {
+                    term->grid[y][x].ch = ' ';
+                    term->grid[y][x].fg_color = term->fg_color;
+                    term->grid[y][x].bg_color = term->bg_color;
+                }
+            }
         }
         break;
     }

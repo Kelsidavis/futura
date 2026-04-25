@@ -379,31 +379,51 @@ long sys_io_cancel(unsigned long ctx_id, void *iocb, void *result) {
 long sys_io_pgetevents(unsigned long ctx_id, long min_nr, long nr,
                         void *events, const void *timeout,
                         const void *usig) {
-    /* Apply signal mask if provided */
+    /* usig points to a userspace { const sigset_t *sigmask; size_t
+     * sigsetsize; } pair. copy both layers in via copy_from_user — the
+     * previous code dereferenced 'sig' and '*sig->ss' straight from
+     * userspace, so a kernel pointer here would read kernel memory into
+     * task->signal_mask (information disclosure plus arbitrary mask
+     * change), and an unmapped pointer would fault the kernel. */
     uint64_t old_mask = 0;
+    bool mask_installed = false;
+
     if (usig) {
-        /* usig points to { const sigset_t *sigmask; size_t sigsetsize; }
-         * For simplicity, just extract the sigmask pointer. */
-        struct { const uint64_t *ss; uint64_t ssz; } *sig = (void *)usig;
-        if (sig->ss) {
+        struct sigwrap { const uint64_t *ss; uint64_t ssz; } sig;
+#ifdef KERNEL_VIRTUAL_BASE
+        if ((uintptr_t)usig >= KERNEL_VIRTUAL_BASE) {
+            __builtin_memcpy(&sig, usig, sizeof(sig));
+        } else
+#endif
+        if (fut_copy_from_user(&sig, usig, sizeof(sig)) != 0)
+            return -EFAULT;
+
+        if (sig.ss) {
+            uint64_t newmask = 0;
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)sig.ss >= KERNEL_VIRTUAL_BASE) {
+                newmask = *sig.ss;
+            } else
+#endif
+            if (fut_copy_from_user(&newmask, sig.ss, sizeof(newmask)) != 0)
+                return -EFAULT;
+
             fut_task_t *task = fut_task_current();
             if (task) {
                 old_mask = task->signal_mask;
-                task->signal_mask = *sig->ss;
+                task->signal_mask = newmask;
+                mask_installed = true;
             }
         }
     }
 
     long ret = sys_io_getevents(ctx_id, min_nr, nr, events, timeout);
 
-    /* Restore signal mask */
-    if (usig) {
-        struct { const uint64_t *ss; uint64_t ssz; } *sig = (void *)usig;
-        if (sig->ss) {
-            fut_task_t *task = fut_task_current();
-            if (task)
-                task->signal_mask = old_mask;
-        }
+    /* Restore signal mask if we installed one */
+    if (mask_installed) {
+        fut_task_t *task = fut_task_current();
+        if (task)
+            task->signal_mask = old_mask;
     }
 
     return ret;

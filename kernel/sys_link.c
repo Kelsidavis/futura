@@ -430,9 +430,17 @@ long sys_link(const char *oldpath, const char *newpath) {
      * It is a fundamental limitation of path-based syscall interfaces.
      */
 
-    /* Phase 3: Lookup oldpath (existing file to hard link to) */
+    /* Phase 3: Lookup oldpath (existing file to hard link to).
+     * Linux link(2) does NOT follow a final-component symlink (it
+     * links the symlink itself, not what it points at). The previous
+     * code used fut_vfs_lookup which dereferences leaf symlinks; the
+     * concrete impact is that link("/tmp/attacker_symlink_to_passwd",
+     * "/tmp/other") creates a hard link to /etc/passwd rather than to
+     * the symlink, which combined with the sticky-bit ownership rules
+     * can be exploited. linkat() with AT_SYMLINK_FOLLOW set should
+     * follow, but plain link() must not. */
     struct fut_vnode *old_vnode = NULL;
-    int old_lookup_ret = fut_vfs_lookup(old_buf, &old_vnode);
+    int old_lookup_ret = fut_vfs_lookup_nofollow(old_buf, &old_vnode);
 
     if (old_lookup_ret < 0) {
         /* Return appropriate error code for oldpath lookup failure */

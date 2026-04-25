@@ -25,6 +25,7 @@
 #define CLONE_FS             0x00000200  /* Share filesystem information */
 #define CLONE_FILES          0x00000400  /* Share file descriptor table */
 #define CLONE_SIGHAND        0x00000800  /* Share signal handlers */
+#define CLONE_NEWTIME        0x00000080  /* New time namespace (Linux 5.6+) */
 #define CLONE_PIDFD          0x00001000  /* Return PID file descriptor */
 #define CLONE_THREAD         0x00010000  /* Share thread group */
 #define CLONE_NEWNS          0x00020000  /* New mount namespace */
@@ -153,7 +154,8 @@ long sys_unshare(unsigned long flags) {
     {
         const unsigned long PRIVILEGED_NS_FLAGS =
             CLONE_NEWNS | CLONE_NEWUTS | CLONE_NEWIPC |
-            CLONE_NEWPID | CLONE_NEWNET | CLONE_NEWCGROUP;
+            CLONE_NEWPID | CLONE_NEWNET | CLONE_NEWCGROUP |
+            CLONE_NEWTIME;  /* Match sys_clone3 — time namespace also needs CAP_SYS_ADMIN */
         if ((flags & PRIVILEGED_NS_FLAGS) &&
             task->uid != 0 &&
             !(task->cap_effective & (1ULL << 21 /* CAP_SYS_ADMIN */))) {

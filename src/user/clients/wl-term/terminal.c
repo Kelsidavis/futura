@@ -450,10 +450,15 @@ static void term_handle_escape(struct terminal *term) {
             int rp = 0;
             resp[rp++] = '\033'; resp[rp++] = '[';
             int r = term->cursor_y + 1, c = term->cursor_x + 1;
-            if (r >= 10) resp[rp++] = '0' + (char)(r / 10);
+            /* Handle up to 3-digit values — TERM_MAX_COLS is 128, so the
+             * column field can legitimately exceed 99 and the previous
+             * ">=10 ? 2 digits : 1" path emitted garbage like ":B" for 102. */
+            if (r >= 100) resp[rp++] = '0' + (char)((r / 100) % 10);
+            if (r >= 10)  resp[rp++] = '0' + (char)((r / 10) % 10);
             resp[rp++] = '0' + (char)(r % 10);
             resp[rp++] = ';';
-            if (c >= 10) resp[rp++] = '0' + (char)(c / 10);
+            if (c >= 100) resp[rp++] = '0' + (char)((c / 100) % 10);
+            if (c >= 10)  resp[rp++] = '0' + (char)((c / 10) % 10);
             resp[rp++] = '0' + (char)(c % 10);
             resp[rp++] = 'R';
             sys_write(term->shell_stdin_fd, resp, rp);

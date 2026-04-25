@@ -6242,9 +6242,13 @@ void comp_surface_set_minimized(struct comp_surface *surface, bool minimized) {
 
     if (minimized) {
         surface->minimized = true;
-        /* Mark for damage so it disappears from screen */
+        /* Mark for damage so it disappears from screen — pad to cover the
+         * focused-window glow / shadow halo, otherwise minimizing a focused
+         * window leaves a stale blue ring around its old position. */
         if (surface->has_backing) {
-            comp_damage_add_rect(comp, comp_frame_rect(surface));
+            fut_rect_t fr = comp_frame_rect(surface);
+            fut_rect_t halo = { fr.x - 12, fr.y - 12, fr.w + 24, fr.h + 24 };
+            comp_damage_add_rect(comp, halo);
             comp_surface_mark_damage(surface);
         }
         /* Transfer focus to next visible window. Use seat_focus_surface so
@@ -6270,9 +6274,12 @@ void comp_surface_set_minimized(struct comp_surface *surface, bool minimized) {
         }
     } else {
         surface->minimized = false;
-        /* Mark for damage so it reappears on screen */
+        /* Mark for damage so it reappears on screen — pad for the focus
+         * glow that will be drawn around the restored window. */
         if (surface->has_backing) {
-            comp_damage_add_rect(comp, comp_frame_rect(surface));
+            fut_rect_t fr = comp_frame_rect(surface);
+            fut_rect_t halo = { fr.x - 12, fr.y - 12, fr.w + 24, fr.h + 24 };
+            comp_damage_add_rect(comp, halo);
             comp_surface_mark_damage(surface);
         }
         /* Bring to front and focus, including the seat-side keyboard focus

@@ -1234,7 +1234,13 @@ void comp_surface_destroy(struct comp_surface *surface) {
     if (comp) {
         comp_surface_unlink(surface);
         if (surface->has_backing) {
-            comp_damage_add_rect(comp, comp_frame_rect(surface));
+            /* Damage a halo around the frame so the focus glow / shadow
+             * region (6-12px outside the window bounds) gets erased on
+             * destroy. The frame rect alone leaves a stale blue ring. */
+            fut_rect_t frame = comp_frame_rect(surface);
+            fut_rect_t halo = { frame.x - 12, frame.y - 12,
+                                frame.w + 24, frame.h + 24 };
+            comp_damage_add_rect(comp, halo);
             comp_surface_mark_damage(surface);
         }
         if (comp->active_surface == surface) {

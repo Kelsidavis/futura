@@ -6347,7 +6347,18 @@ hit_role_t comp_hit_test(struct compositor_state *comp,
         }
     }
 
-    if (comp->resize_enabled && !surface->maximized && !surface->fullscreen) {
+    /* Per xdg-shell: when a client pins min_size == max_size, the surface
+     * is fixed-size and the compositor should not offer resize handles.
+     * Without this, fixed-size clients (wl-edit, wl-sysmon) still saw a
+     * resize cursor at edges and the compositor would happily send them
+     * configure events they ignore, leaving the visible window stuck at
+     * the old buffer size. */
+    bool fixed_size = (surface->min_w > 0 && surface->max_w > 0 &&
+                       surface->min_h > 0 && surface->max_h > 0 &&
+                       surface->min_w == surface->max_w &&
+                       surface->min_h == surface->max_h);
+    if (comp->resize_enabled && !surface->maximized && !surface->fullscreen &&
+        !fixed_size) {
         fut_rect_t window_rect = comp_window_rect(surface);
         if (window_rect.w > 0 && window_rect.h > 0 &&
             rect_contains(&window_rect, px, py)) {

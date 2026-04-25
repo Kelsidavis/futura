@@ -751,6 +751,10 @@ int main(int argc, char **argv) {
     xdg_toplevel_add_listener(state.toplevel, &xdg_toplevel_listener, &state);
     xdg_toplevel_set_title(state.toplevel, "Text Editor");
     xdg_toplevel_set_app_id(state.toplevel, "wl-edit");
+    /* Fixed-size: this client doesn't handle resize. Pinning min == max
+     * tells the compositor to suppress resize handles. */
+    xdg_toplevel_set_min_size(state.toplevel, ED_WIDTH, ED_HEIGHT);
+    xdg_toplevel_set_max_size(state.toplevel, ED_WIDTH, ED_HEIGHT);
     wl_surface_commit(state.surface);
 
     int waited = 0;

@@ -617,6 +617,10 @@ int main(void) {
     xdg_toplevel_add_listener(state.toplevel, &xdg_toplevel_listener, &state);
     xdg_toplevel_set_title(state.toplevel, "Task Manager");
     xdg_toplevel_set_app_id(state.toplevel, "wl-sysmon");
+    /* Fixed-size: don't handle resize. Pin min == max so the compositor
+     * doesn't expose resize handles. */
+    xdg_toplevel_set_min_size(state.toplevel, SM_WIDTH, SM_HEIGHT);
+    xdg_toplevel_set_max_size(state.toplevel, SM_WIDTH, SM_HEIGHT);
     wl_surface_commit(state.surface);
 
     int waited = 0;

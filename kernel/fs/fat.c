@@ -321,7 +321,13 @@ static int fat_dir_iterate(struct fat_mount_info *fi, uint32_t first_cluster,
                             int n = fat_lfn_extract(lfn, frag);
                             for (int i = 0; i < n && base + (uint32_t)i < FAT_LFN_MAX; i++)
                                 lfn_buf[base + i] = frag[i];
+                            /* Cap end at FAT_LFN_MAX so the later
+                             * lfn_buf[lfn_len] = '\0' stays within the
+                             * (FAT_LFN_MAX + 1)-byte buffer. A malformed
+                             * LFN with seq=20 and n=13 would otherwise
+                             * push lfn_len to 260. */
                             uint32_t end = base + (uint32_t)n;
+                            if (end > FAT_LFN_MAX) end = FAT_LFN_MAX;
                             if (end > lfn_len) lfn_len = end;
                         }
                     }
@@ -386,7 +392,13 @@ static int fat_dir_iterate(struct fat_mount_info *fi, uint32_t first_cluster,
                             int n = fat_lfn_extract(lfn, frag);
                             for (int i = 0; i < n && base + (uint32_t)i < FAT_LFN_MAX; i++)
                                 lfn_buf[base + i] = frag[i];
+                            /* Cap end at FAT_LFN_MAX so the later
+                             * lfn_buf[lfn_len] = '\0' stays within the
+                             * (FAT_LFN_MAX + 1)-byte buffer. A malformed
+                             * LFN with seq=20 and n=13 would otherwise
+                             * push lfn_len to 260. */
                             uint32_t end = base + (uint32_t)n;
+                            if (end > FAT_LFN_MAX) end = FAT_LFN_MAX;
                             if (end > lfn_len) lfn_len = end;
                         }
                     }

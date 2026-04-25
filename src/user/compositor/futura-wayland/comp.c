@@ -1293,6 +1293,15 @@ void comp_surface_destroy(struct comp_surface *surface) {
             comp->alt_tab_active = false;
             comp_damage_add_full(comp);
         }
+        /* Clear dock hover/tooltip indices — they're positional offsets
+         * into the dock-item list, which has just shrunk. Leaving them
+         * set would highlight (or pop a tooltip on) a different window. */
+        if (comp->dock_hover_index >= 0) {
+            comp->dock_hover_index = -1;
+        }
+        if (comp->dock_tooltip_index >= 0) {
+            comp->dock_tooltip_index = -1;
+        }
         if (comp->seat) {
             seat_surface_destroyed(comp->seat, surface);
         }

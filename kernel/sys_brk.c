@@ -246,9 +246,15 @@ long sys_brk(uintptr_t new_break) {
     uintptr_t heap_size_new = new_break - brk_start;
     uintptr_t heap_limit_size = brk_limit - brk_start;
 
-    /* Phase 3: Calculate memory pressure as percentage of limit */
-    unsigned int mem_pressure_current = (heap_size_current * 100) / heap_limit_size;
-    unsigned int mem_pressure_new = (heap_size_new * 100) / heap_limit_size;
+    /* Phase 3: Calculate memory pressure as percentage of limit.
+     * Guard the divide: if brk_limit == brk_start (degenerate mm with no
+     * heap window), heap_limit_size is 0 and the unconditional divide is
+     * a kernel-half DoS. The pressure values are only used for log
+     * categorization, so reporting 100% on a zero-size heap is fine. */
+    unsigned int mem_pressure_current = heap_limit_size
+        ? (unsigned int)((heap_size_current * 100) / heap_limit_size) : 100u;
+    unsigned int mem_pressure_new = heap_limit_size
+        ? (unsigned int)((heap_size_new * 100) / heap_limit_size) : 100u;
 
     /* Phase 3: Categorize memory pressure levels */
     const char *pressure_category_current;

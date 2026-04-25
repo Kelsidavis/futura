@@ -185,12 +185,27 @@ long sys_mprotect(void *addr, size_t len, int prot) {
         return -EINVAL;
     }
 
-    /* Validate protection flags (only PROT_READ, PROT_WRITE, PROT_EXEC, PROT_NONE allowed) */
-    const int valid_prot = PROT_READ | PROT_WRITE | PROT_EXEC;
+    /* Validate protection flags. Match sys_mmap's accepted set so a
+     * region created with PROT_SEM can be re-protected; mismatched
+     * masks made PROT_SEM-bearing prot values fail mprotect even
+     * though mmap allowed them. */
+    const int valid_prot = PROT_READ | PROT_WRITE | PROT_EXEC | PROT_SEM;
     if ((prot & ~valid_prot) != 0) {
         fut_printf("[MPROTECT] mprotect(%p, %zu, 0x%x) -> EINVAL (invalid prot flags)\n",
                    addr, len, prot);
         return -EINVAL;
+    }
+
+    /* W^X enforcement (matches sys_mmap): without CAP_SYS_RAWIO,
+     * disallow simultaneous PROT_WRITE | PROT_EXEC. The mmap path
+     * already strips PROT_EXEC in this case; without the same check
+     * here, a process could call
+     *   mmap(PROT_READ|PROT_WRITE)
+     *   mprotect(PROT_READ|PROT_WRITE|PROT_EXEC)
+     * and re-introduce a writable+executable page, defeating W^X. */
+    if ((prot & PROT_WRITE) && (prot & PROT_EXEC) &&
+        !(task->cap_effective & (1ULL << 23 /* CAP_SYS_RAWIO */))) {
+        prot &= ~PROT_EXEC;
     }
 
     /* Validate len + PAGE_SIZE won't overflow before alignment

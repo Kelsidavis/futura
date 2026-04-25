@@ -485,19 +485,20 @@ static void seat_handle_button(struct seat_state *seat,
             seat->pressed_edge = edge;
 
             /* Dock click: if click is in the dock area, find which window and focus it.
-             * Geometry must match the dock renderer in comp.c exactly:
-             * DOCK_HEIGHT=36, DOCK_ITEM_W=120, DOCK_ITEM_PAD=2, margin=6px,
-             * CLOCK_WIDTH=13*8+16=120, DOCK_DSKBTN_W=28 */
+             * Geometry MUST match the dock renderer in comp.c exactly. The
+             * renderer was updated (commit e3d74639 widened items, prior
+             * commits added the date+seconds clock) without updating these
+             * numbers, so dock clicks were landing on the wrong items. */
             if (!hit_surface && seat->comp) {
                 int32_t mx = seat->comp->pointer_x;
                 int32_t my = seat->comp->pointer_y;
                 int32_t fb_h = (int32_t)seat->comp->fb_info.height;
                 int32_t fb_w = (int32_t)seat->comp->fb_info.width;
-                #define SEAT_DOCK_HEIGHT   36
-                #define SEAT_DOCK_ITEM_W   120
-                #define SEAT_DOCK_ITEM_PAD 2
-                #define SEAT_DOCK_DSKBTN_W 28
-                #define SEAT_CLOCK_W       (13 * 8 + 16)
+                #define SEAT_DOCK_HEIGHT   38                  /* DOCK_HEIGHT */
+                #define SEAT_DOCK_ITEM_W   148                 /* DOCK_ITEM_W */
+                #define SEAT_DOCK_ITEM_PAD 4                   /* DOCK_ITEM_PAD */
+                #define SEAT_DOCK_DSKBTN_W 28                  /* DOCK_DSKBTN_W */
+                #define SEAT_CLOCK_W       (22 * 8 + 16)       /* CLOCK_WIDTH_NEW: "Day, Mon DD  HH:MM:SS" */
                 int32_t dock_y = fb_h - SEAT_DOCK_HEIGHT - 6;
 
                 if (my >= dock_y && my < fb_h) {

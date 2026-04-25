@@ -502,6 +502,48 @@ static void term_handle_escape(struct terminal *term) {
         }
         break;
     }
+    case 'L': { /* IL — Insert Line (n lines at cursor row, push others down) */
+        int n = (nparams > 0 && params[0] > 0) ? params[0] : 1;
+        int y = term->cursor_y;
+        if (y < 0 || y >= term->rows) break;
+        if (n > term->rows - y) n = term->rows - y;
+        if (n <= 0) break;
+        /* Shift rows y..rows-n-1 down by n */
+        for (int r = term->rows - 1; r >= y + n; r--) {
+            for (int x = 0; x < term->cols; x++) {
+                term->grid[r][x] = term->grid[r - n][x];
+            }
+        }
+        /* Clear the n inserted rows */
+        for (int r = y; r < y + n; r++) {
+            for (int x = 0; x < term->cols; x++) {
+                term->grid[r][x].ch = ' ';
+                term->grid[r][x].fg_color = term->fg_color;
+                term->grid[r][x].bg_color = term->bg_color;
+            }
+        }
+        break;
+    }
+    case 'M': { /* DL — Delete Line (n lines at cursor row, pull others up) */
+        int n = (nparams > 0 && params[0] > 0) ? params[0] : 1;
+        int y = term->cursor_y;
+        if (y < 0 || y >= term->rows) break;
+        if (n > term->rows - y) n = term->rows - y;
+        if (n <= 0) break;
+        for (int r = y; r < term->rows - n; r++) {
+            for (int x = 0; x < term->cols; x++) {
+                term->grid[r][x] = term->grid[r + n][x];
+            }
+        }
+        for (int r = term->rows - n; r < term->rows; r++) {
+            for (int x = 0; x < term->cols; x++) {
+                term->grid[r][x].ch = ' ';
+                term->grid[r][x].fg_color = term->fg_color;
+                term->grid[r][x].bg_color = term->bg_color;
+            }
+        }
+        break;
+    }
     case 's': { /* SCOSC — Save Cursor Position */
         term->saved_cursor_x = term->cursor_x;
         term->saved_cursor_y = term->cursor_y;

@@ -691,10 +691,46 @@ long sys_keyctl(int operation, unsigned long arg2, unsigned long arg3,
         const char *desc = (const char *)(uintptr_t)arg4;
         if (!type || !desc) return -EINVAL;
 
+        /* Stage type and description through copy_from_user so the
+         * subsequent strcmp() walks a kernel-side buffer rather than
+         * the raw user pointer (which strcmp would otherwise follow
+         * across page boundaries until it hit a NUL — fault on bad
+         * user pointer, kernel-memory read on kernel-address args). */
+        char k_type[64];
+        char k_desc[256];
+        size_t i;
+        for (i = 0; i < sizeof(k_type) - 1; i++) {
+            char c;
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)(type + i) >= KERNEL_VIRTUAL_BASE)
+                c = type[i];
+            else
+#endif
+            if (fut_copy_from_user(&c, type + i, 1) != 0)
+                return -EFAULT;
+            k_type[i] = c;
+            if (c == '\0') break;
+        }
+        if (i == sizeof(k_type) - 1) k_type[i] = '\0'; /* truncated */
+
+        for (i = 0; i < sizeof(k_desc) - 1; i++) {
+            char c;
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)(desc + i) >= KERNEL_VIRTUAL_BASE)
+                c = desc[i];
+            else
+#endif
+            if (fut_copy_from_user(&c, desc + i, 1) != 0)
+                return -EFAULT;
+            k_desc[i] = c;
+            if (c == '\0') break;
+        }
+        if (i == sizeof(k_desc) - 1) k_desc[i] = '\0';
+
         int32_t kr_serial = resolve_keyring(kr_id);
         if (kr_serial < 0) return kr_serial;
 
-        struct kernel_key *found = key_find_in_keyring(kr_serial, type, desc);
+        struct kernel_key *found = key_find_in_keyring(kr_serial, k_type, k_desc);
         if (!found) return -ENOKEY;
 
         /* Optionally link to dest keyring */

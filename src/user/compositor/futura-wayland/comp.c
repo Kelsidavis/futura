@@ -6253,6 +6253,19 @@ void comp_surface_set_minimized(struct comp_surface *surface, bool minimized) {
 
     if (minimized) {
         surface->minimized = true;
+        /* Flush any pending frame callbacks. Minimized surfaces aren't
+         * composed, so comp_flush_frame_callbacks would never fire .done
+         * for them, leaving the per-surface callback list to grow each
+         * time the client commits a new frame. Send done now with the
+         * current time and destroy the resources. */
+        {
+            struct comp_frame_callback *cb, *tmp;
+            uint64_t now_msec = comp_now_msec();
+            wl_list_for_each_safe(cb, tmp, &surface->frame_callbacks, link) {
+                wl_callback_send_done(cb->resource, (uint32_t)now_msec);
+                wl_resource_destroy(cb->resource);
+            }
+        }
         /* Mark for damage so it disappears from screen — pad to cover the
          * focused-window glow / shadow halo, otherwise minimizing a focused
          * window leaves a stale blue ring around its old position. */

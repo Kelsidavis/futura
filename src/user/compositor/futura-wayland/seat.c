@@ -1522,8 +1522,23 @@ static void seat_pointer_release(struct wl_client *client, struct wl_resource *r
     wl_resource_destroy(resource);
 }
 
+/* wl_pointer.set_cursor is a v1 request that GTK/Qt and most toolkits
+ * call on pointer enter to swap the cursor surface. We don't render
+ * client-supplied cursors yet, but the handler must be non-NULL so
+ * libwayland-server doesn't dispatch through a NULL pointer and crash
+ * the compositor. */
+static void seat_pointer_set_cursor(struct wl_client *client,
+                                    struct wl_resource *resource,
+                                    uint32_t serial,
+                                    struct wl_resource *surface,
+                                    int32_t hotspot_x,
+                                    int32_t hotspot_y) {
+    (void)client; (void)resource; (void)serial;
+    (void)surface; (void)hotspot_x; (void)hotspot_y;
+}
+
 static const struct wl_pointer_interface pointer_impl = {
-    .set_cursor = NULL,
+    .set_cursor = seat_pointer_set_cursor,
     .release = seat_pointer_release,
 };
 
@@ -1644,10 +1659,37 @@ static void seat_resource_destroy(struct wl_resource *resource) {
     seat_client_destroy(client);
 }
 
+/* wl_seat.get_touch: we have no touch input, but a client calling
+ * get_touch must not dispatch through a NULL function pointer. Create
+ * a wl_touch resource with a release-only implementation so the
+ * client can still bind/destroy it; we just never send events on it. */
+static void seat_touch_release(struct wl_client *client,
+                               struct wl_resource *resource) {
+    (void)client;
+    wl_resource_destroy(resource);
+}
+
+static const struct wl_touch_interface touch_impl = {
+    .release = seat_touch_release,
+};
+
+static void seat_get_touch(struct wl_client *client,
+                           struct wl_resource *resource,
+                           uint32_t id) {
+    uint32_t version = wl_resource_get_version(resource);
+    struct wl_resource *touch =
+        wl_resource_create(client, &wl_touch_interface, version, id);
+    if (!touch) {
+        wl_client_post_no_memory(client);
+        return;
+    }
+    wl_resource_set_implementation(touch, &touch_impl, NULL, NULL);
+}
+
 static const struct wl_seat_interface seat_impl = {
     .get_pointer = seat_get_pointer,
     .get_keyboard = seat_get_keyboard,
-    .get_touch = NULL,
+    .get_touch = seat_get_touch,
     .release = seat_release,
 };
 

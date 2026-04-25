@@ -1916,15 +1916,21 @@ long sys_clone_thread(uint64_t flags, uint64_t child_stack,
     if (!child_stack)
         return -EINVAL;
 
-    /* Reject kernel-half pointers for parent_tid / child_tid. The
-     * CLONE_*_SETTID / CLONE_CHILD_CLEARTID paths below do direct
-     * stores to these addresses (with a KERNEL_VIRTUAL_BASE bypass
+    /* Reject kernel-half pointers for parent_tid / child_tid / child_stack.
+     * The CLONE_*_SETTID / CLONE_CHILD_CLEARTID paths below do direct
+     * stores to the tid addresses (with a KERNEL_VIRTUAL_BASE bypass
      * for self-tests); without this gate any unprivileged caller
      * could request the kernel to write the child TID — or zero at
-     * exit — to an arbitrary kernel address. */
+     * exit — to an arbitrary kernel address. child_stack is loaded
+     * straight into the new thread's user-mode SP (via the IRET frame
+     * on x86_64 / sp_el0 on ARM64); a kernel-half value here would
+     * spawn a thread whose user SP points into kernel memory. The
+     * legacy clone() path (subsystems/posix_compat) reaches us directly
+     * without this check, so it must live here too. */
 #ifdef KERNEL_VIRTUAL_BASE
     if ((parent_tid_ptr && parent_tid_ptr >= KERNEL_VIRTUAL_BASE) ||
-        (child_tid_ptr  && child_tid_ptr  >= KERNEL_VIRTUAL_BASE))
+        (child_tid_ptr  && child_tid_ptr  >= KERNEL_VIRTUAL_BASE) ||
+        (child_stack    >= KERNEL_VIRTUAL_BASE))
         return -EFAULT;
 #endif
 

@@ -614,6 +614,10 @@ int fut_socket_bind(fut_socket_t *socket, const char *path, size_t path_len) {
     if (socket->socket_type == SOCK_DGRAM && !socket->dgram_queue) {
         fut_dgram_queue_t *dq = fut_malloc(sizeof(fut_dgram_queue_t));
         if (!dq) {
+            if (socket->path_vnode) {
+                fut_vnode_unref(socket->path_vnode);
+                socket->path_vnode = NULL;
+            }
             fut_free(socket->bound_path);
             socket->bound_path = NULL;
             socket->bound_path_len = 0;
@@ -624,6 +628,10 @@ int fut_socket_bind(fut_socket_t *socket, const char *path, size_t path_len) {
         dq->recv_waitq = fut_malloc(sizeof(fut_waitq_t));
         if (!dq->recv_waitq) {
             fut_free(dq);
+            if (socket->path_vnode) {
+                fut_vnode_unref(socket->path_vnode);
+                socket->path_vnode = NULL;
+            }
             fut_free(socket->bound_path);
             socket->bound_path = NULL;
             socket->bound_path_len = 0;

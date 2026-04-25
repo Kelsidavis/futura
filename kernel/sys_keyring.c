@@ -535,9 +535,22 @@ long sys_keyctl(int operation, unsigned long arg2, unsigned long arg3,
         if (k->revoked) return -EKEYREVOKED;
         if (k->is_keyring) return -EOPNOTSUPP;
         if (plen > MAX_KEY_PAYLOAD) return -EDQUOT;
+        /* Linux: write permission required. We model that as owner-or-
+         * CAP_SYS_ADMIN; without any check anyone could overwrite any
+         * key's payload by serial number. */
+        {
+            fut_task_t *cur = fut_task_current();
+            if (cur && cur->uid != 0 && cur->uid != k->uid &&
+                !(cur->cap_effective & (1ULL << 21 /* CAP_SYS_ADMIN */)))
+                return -EACCES;
+        }
 
         if (payload && plen > 0) {
-            memcpy(k->payload, payload, plen);
+            /* Use the keyring copy helper so a user pointer can't be
+             * dereferenced as a kernel pointer (info disclosure) and a
+             * faulty pointer returns -EFAULT instead of crashing. */
+            if (keyring_copy_from_user(k->payload, payload, plen) != 0)
+                return -EFAULT;
             k->payload_len = plen;
         } else {
             k->payload_len = 0;
@@ -591,6 +604,15 @@ long sys_keyctl(int operation, unsigned long arg2, unsigned long arg3,
         struct kernel_key *kr = key_find_serial(serial);
         if (!kr) return -ENOKEY;
         if (!kr->is_keyring) return -ENOTDIR;
+        /* Linux: clear requires write permission on the keyring (owner
+         * or CAP_SYS_ADMIN here). Without this gate any process could
+         * empty the session/user keyring of another user. */
+        {
+            fut_task_t *cur = fut_task_current();
+            if (cur && cur->uid != 0 && cur->uid != kr->uid &&
+                !(cur->cap_effective & (1ULL << 21 /* CAP_SYS_ADMIN */)))
+                return -EACCES;
+        }
         kr->nr_children = 0;
         return 0;
     }

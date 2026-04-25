@@ -500,9 +500,6 @@ static void redraw_all(struct client_state *state) {
     state->frame_done = false;
     state->frame_cb = wl_surface_frame(state->surface);
     if (!state->frame_cb) state->frame_done = true;
-    else {
-        static const struct wl_callback_listener *frame_listener_ptr; (void)frame_listener_ptr;
-    }
 
     wl_surface_attach(state->surface, state->buffer, 0, 0);
     wl_surface_damage_buffer(state->surface, 0, 0, w, h);

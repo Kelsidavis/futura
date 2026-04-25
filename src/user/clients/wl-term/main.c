@@ -1066,11 +1066,18 @@ int main(void) {
     /* Cleanup */
     WLTERM_LOG("[WL-TERM] Shutting down\n");
 
+    /* In PTY mode shell_stdin_fd and shell_stdout_fd are the same master_fd;
+     * close once. In pipe-fallback mode they're separate. */
     if (state.term.shell_stdin_fd >= 0) {
         sys_close(state.term.shell_stdin_fd);
+        if (state.term.shell_stdout_fd == state.term.shell_stdin_fd) {
+            state.term.shell_stdout_fd = -1;
+        }
+        state.term.shell_stdin_fd = -1;
     }
     if (state.term.shell_stdout_fd >= 0) {
         sys_close(state.term.shell_stdout_fd);
+        state.term.shell_stdout_fd = -1;
     }
     term_destroy(&state.term);
 

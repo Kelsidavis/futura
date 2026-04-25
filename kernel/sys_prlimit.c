@@ -119,6 +119,22 @@ long sys_prlimit64(int pid, int resource,
         if (!target) {
             return -ESRCH;
         }
+
+        /* Permission gate for cross-task prlimit: Linux requires the
+         * caller's credentials to match the target's, or CAP_SYS_RESOURCE.
+         * Without this gate any unprivileged caller can both READ and
+         * WRITE another (e.g. root daemon) process's rlimits — only the
+         * 'raising hard limit' path was checked. */
+        if (target != task) {
+            bool has_cap = (task->cap_effective & (1ULL << CAP_SYS_RESOURCE)) != 0;
+            bool is_root = (task->uid == 0);
+            if (!has_cap && !is_root && task->uid != target->uid) {
+                fut_printf("[PRLIMIT] prlimit64(pid=%d, resource=%s) -> EPERM "
+                           "(uid mismatch and no CAP_SYS_RESOURCE)\n",
+                           local_pid, resource_name);
+                return -EPERM;
+            }
+        }
     }
 
     /* Validate userspace pointers before accessing */

@@ -185,6 +185,19 @@ static void ed_load_file(const char *path) {
     ed_dirty = false;
 }
 
+/* Writes the full buffer, looping past short writes. Returns false on any
+ * error so the caller can surface a "save failed" status instead of
+ * silently truncating the file. */
+static bool ed_write_all(int fd, const char *data, long len) {
+    long off = 0;
+    while (off < len) {
+        long w = sys_write(fd, data + off, len - off);
+        if (w <= 0) return false;
+        off += w;
+    }
+    return true;
+}
+
 static bool ed_save_file(const char *path) {
     int fd = sys_open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd < 0) return false;
@@ -192,15 +205,22 @@ static bool ed_save_file(const char *path) {
      * lines are lost on save (saving N empty lines wrote only N-1 newlines,
      * which reloads as N-1 lines). The loader treats a trailing \n as a
      * line terminator, so this round-trips correctly. */
-    for (int r = 0; r < ed_line_count; r++) {
+    bool ok = true;
+    for (int r = 0; r < ed_line_count && ok; r++) {
         if (ed_line_len[r] > 0) {
-            sys_write(fd, ed_lines[r], ed_line_len[r]);
+            if (!ed_write_all(fd, ed_lines[r], ed_line_len[r])) {
+                ok = false;
+                break;
+            }
         }
-        sys_write(fd, "\n", 1);
+        if (!ed_write_all(fd, "\n", 1)) {
+            ok = false;
+            break;
+        }
     }
     sys_close(fd);
-    ed_dirty = false;
-    return true;
+    if (ok) ed_dirty = false;
+    return ok;
 }
 
 /* ─── Edit ops ─── */

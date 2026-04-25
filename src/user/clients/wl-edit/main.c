@@ -564,6 +564,18 @@ static void xdg_toplevel_configure(void *d, struct xdg_toplevel *t,
 static void xdg_toplevel_close(void *d, struct xdg_toplevel *t) {
     (void)t;
     struct client_state *s = d;
+    /* Mirror Ctrl+Q's two-step confirmation: don't lose unsaved edits
+     * silently when the user clicks the close button or hits Alt+F4. */
+    static const char close_warn[] = "unsaved changes — close again to confirm";
+    if (ed_dirty) {
+        bool armed = (ed_status_msg[0] == close_warn[0] &&
+                      ed_strlen(ed_status_msg) == ed_strlen(close_warn));
+        if (!armed) {
+            ed_set_status(close_warn, tick_ms);
+            s->needs_redraw = true;
+            return;
+        }
+    }
     s->running = false;
 }
 static const struct xdg_toplevel_listener xdg_toplevel_listener = {

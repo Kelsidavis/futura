@@ -185,6 +185,18 @@ long sys_acct(const char *filename) {
         return -ESRCH;
     }
 
+    /* Linux: acct(2) requires CAP_SYS_PACCT (bit 32). The function
+     * comment claimed this gate existed but the check was never
+     * written, so any process could enable accounting — letting an
+     * unprivileged user direct kernel writes into a file of their
+     * choosing on every process exit. The disable path also needs the
+     * cap so an attacker can't silently turn off audit logging. */
+    if (task->uid != 0 &&
+        !(task->cap_effective & (1ULL << 32 /* CAP_SYS_PACCT */))) {
+        fut_printf("[ACCT] acct() -> EPERM (CAP_SYS_PACCT required)\n");
+        return -EPERM;
+    }
+
     /* Phase 2: Check if disabling accounting (NULL filename) */
     if (filename == NULL) {
         acct_enabled = false;

@@ -291,8 +291,13 @@ static void keyboard_key(void *data, struct wl_keyboard *keyboard, uint32_t seri
     /* Key pressed — process it and start repeat timer */
     process_key(state, key);
 
-    /* Modifier keys (shift, ctrl, alt) don't repeat */
-    if (key == 42 || key == 54 || key == 29 || key == 97 ||
+    /* Modifier keys (shift, ctrl, alt) don't repeat. Also skip repeat when
+     * ctrl/alt is held: otherwise releasing the modifier while still holding
+     * the key would re-fire process_key without it (e.g. Ctrl+C → literal 'c'
+     * spam to the shell once Ctrl is released). */
+    bool ctrl_or_alt = (kbd_mods_depressed & 0xCu) != 0;
+    if (ctrl_or_alt ||
+        key == 42 || key == 54 || key == 29 || key == 97 ||
         key == 56 || key == 100) {
         repeat_key = 0;
     } else {

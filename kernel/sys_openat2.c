@@ -164,13 +164,21 @@ long sys_openat2(int dirfd, const char *path, const struct open_how *how,
     if (!path)
         return -EFAULT;
     size_t plen = 0;
-    char ch;
+    char ch = 1;  /* non-zero so we know if loop terminated by length */
     while (plen < 255) {
         if (openat2_copy_from_user(&ch, path + plen, 1) != 0)
             return -EFAULT;
         kpath[plen] = ch;
         if (ch == '\0') break;
         plen++;
+    }
+    /* If the loop bailed because plen reached 255 without seeing NUL the
+     * path is too long for our 256-byte buffer. Returning silently would
+     * have us open a truncated path — possibly a completely different
+     * file (e.g. ".../malicious" for ".../malicious_no_evil"). Reject
+     * with ENAMETOOLONG, matching Linux. */
+    if (plen == 255 && ch != '\0') {
+        return -ENAMETOOLONG;
     }
     kpath[plen] = '\0';
 

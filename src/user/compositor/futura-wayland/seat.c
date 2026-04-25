@@ -695,9 +695,26 @@ static void seat_handle_button(struct seat_state *seat,
                                         &edge);
         (void)role; (void)edge;
         if (!hit_surface && seat->comp) {
+            /* Clamp the menu origin to the screen so the renderer's
+             * on-screen clamp and the hover detector's offset math agree.
+             * Without this, right-clicking near the right/bottom edge drew
+             * the menu in a clamped spot but computed hover/click offsets
+             * against the original pointer, so highlights never lit. */
+            #define SEAT_CTX_MENU_W   240
+            #define SEAT_CTX_MENU_H   (4 + 6 * 28 + 2 * 9 + 4)
+            int32_t fb_w = (int32_t)seat->comp->fb_info.width;
+            int32_t fb_h = (int32_t)seat->comp->fb_info.height;
+            int32_t mx = seat->comp->pointer_x;
+            int32_t my = seat->comp->pointer_y;
+            if (mx + SEAT_CTX_MENU_W > fb_w) mx = fb_w - SEAT_CTX_MENU_W;
+            if (my + SEAT_CTX_MENU_H > fb_h) my = fb_h - SEAT_CTX_MENU_H;
+            if (mx < 0) mx = 0;
+            if (my < 0) my = 0;
+            #undef SEAT_CTX_MENU_W
+            #undef SEAT_CTX_MENU_H
             seat->comp->ctx_menu_active = true;
-            seat->comp->ctx_menu_x = seat->comp->pointer_x;
-            seat->comp->ctx_menu_y = seat->comp->pointer_y;
+            seat->comp->ctx_menu_x = mx;
+            seat->comp->ctx_menu_y = my;
             seat->comp->ctx_menu_hover = -1;
             comp_damage_add_full(seat->comp);
             seat->comp->needs_repaint = true;

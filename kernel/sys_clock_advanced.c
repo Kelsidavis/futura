@@ -757,6 +757,26 @@ long sys_adjtimex(struct timex *txc) {
 
     unsigned int modes = tx.modes;
 
+    /* Linux: any modes != 0 (i.e., a write to the clock state) requires
+     * CAP_SYS_TIME. Read-only adjtimex (modes == 0) returns the current
+     * NTP state and is unprivileged. The previous code skipped this
+     * gate so any process could shift the realtime clock or rewrite
+     * the NTP frequency calibration. */
+    {
+        const unsigned int WRITE_MODES = (ADJ_OFFSET | ADJ_FREQUENCY |
+                                          ADJ_STATUS | ADJ_TICK |
+                                          ADJ_SETOFFSET |
+                                          ADJ_OFFSET_SINGLESHOT);
+        if ((modes & WRITE_MODES) &&
+            task->uid != 0 &&
+            !(task->cap_effective & (1ULL << CAP_SYS_TIME))) {
+            fut_printf("[ADJTIMEX] adjtimex(modes=0x%x, pid=%llu) -> EPERM "
+                       "(CAP_SYS_TIME required for clock-modifying modes)\n",
+                       modes, (unsigned long long)task->pid);
+            return -EPERM;
+        }
+    }
+
     /* Phase 2: Apply requested adjustments */
     if (modes & ADJ_SETOFFSET) {
         /* Add the specified offset directly to the realtime clock */

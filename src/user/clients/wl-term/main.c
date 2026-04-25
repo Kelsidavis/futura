@@ -591,10 +591,18 @@ static int spawn_shell(struct terminal *term) {
                           "[PTY unavailable, using pipes]\n";
         while (*msg) { term_putchar(term, (unsigned char)*msg); msg++; }
 
-        int stdin_pipe[2], stdout_pipe[2];
-        if (sys_pipe_call(stdin_pipe) < 0 || sys_pipe_call(stdout_pipe) < 0) return -1;
+        int stdin_pipe[2] = { -1, -1 }, stdout_pipe[2] = { -1, -1 };
+        if (sys_pipe_call(stdin_pipe) < 0) return -1;
+        if (sys_pipe_call(stdout_pipe) < 0) {
+            sys_close(stdin_pipe[0]); sys_close(stdin_pipe[1]);
+            return -1;
+        }
         long pid = sys_fork_call();
-        if (pid < 0) return -1;
+        if (pid < 0) {
+            sys_close(stdin_pipe[0]); sys_close(stdin_pipe[1]);
+            sys_close(stdout_pipe[0]); sys_close(stdout_pipe[1]);
+            return -1;
+        }
         if (pid == 0) {
             sys_close(stdin_pipe[1]); sys_close(stdout_pipe[0]);
             sys_close(0); sys_close(1); sys_close(2);

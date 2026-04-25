@@ -470,19 +470,21 @@ long sys_chown(const char *pathname, uint32_t uid, uint32_t gid) {
                uid_desc, gid_desc, operation_type);
 
     /* POSIX/Linux: clear S_ISUID/S_ISGID on ownership change.
-     * uid change clears both; gid-only change clears S_ISGID when S_IXGRP set. */
+     * S_ISUID is always cleared; S_ISGID is only cleared when the file is
+     * group-executable (S_IXGRP). Without the S_IXGRP gate, a uid change on
+     * a non-executable file would also clear S_ISGID — but on
+     * non-executable files S_ISGID denotes mandatory locking, not setgid
+     * execution, and Linux deliberately preserves it across chown. Apply
+     * the same rule for both uid-only and gid-only branches. */
     if (vnode->type == VN_REG) {
         uint32_t old_local_uid = userns_host_to_ns_uid(ns, old_uid);
         uint32_t old_local_gid = userns_host_to_ns_gid(ns, old_gid);
         int uid_changed = (local_uid != CHOWN_UNCHANGED && local_uid != old_local_uid);
         int gid_changed = (local_gid != CHOWN_UNCHANGED && local_gid != old_local_gid);
         if (uid_changed || gid_changed) {
-            if (uid_changed) {
-                vnode->mode &= ~(uint32_t)(04000 | 02000);
-            } else if (gid_changed) {
-                if ((vnode->mode & 02000) && (vnode->mode & 00010))
-                    vnode->mode &= ~(uint32_t)02000;
-            }
+            vnode->mode &= ~(uint32_t)04000;  /* always clear setuid */
+            if (vnode->mode & 00010)          /* only if group-executable */
+                vnode->mode &= ~(uint32_t)02000;
         }
     }
 

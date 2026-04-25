@@ -476,7 +476,7 @@ long sys_chmod(const char *pathname, uint32_t mode) {
                 if (userns_ns_to_host_gid(chmod_task->user_ns, chmod_task->gid) == vnode->gid)
                     in_group = 1;
                 else {
-                    for (uint32_t gi = 0; gi < chmod_task->ngroups; gi++) {
+                    for (int gi = 0; gi < chmod_task->ngroups; gi++) {
                         uint32_t gh = userns_ns_to_host_gid(chmod_task->user_ns,
                                                             chmod_task->groups[gi]);
                         if (gh == vnode->gid) { in_group = 1; break; }

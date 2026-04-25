@@ -807,7 +807,11 @@ long sys_accept4(int sockfd, void *addr, socklen_t *addrlen, int flags) {
                     asock->flags |= O_NONBLOCK;
             }
             if (local_flags & SOCK_CLOEXEC) {
-                atask->fd_flags[newfd] |= FD_CLOEXEC;
+                /* Guard fd_flags non-NULL: lazily allocated, may be NULL
+                 * for early-init / kernel-thread callers (same NULL-guard
+                 * fix already applied to socketpair / userfaultfd). */
+                if (atask->fd_flags)
+                    atask->fd_flags[newfd] |= FD_CLOEXEC;
             }
         }
     }

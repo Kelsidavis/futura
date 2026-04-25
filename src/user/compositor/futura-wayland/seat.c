@@ -933,6 +933,25 @@ static void seat_handle_button(struct seat_state *seat,
     }
 
     seat_update_hover(seat);
+    /* Don't forward decoration clicks (title bar, traffic-light buttons,
+     * resize edges) to the client — those zones are owned by the
+     * compositor's server-side decorations, not the client surface, and
+     * forwarding caused clients to receive spurious button events on
+     * pixels they don't render. Only forward content-area clicks. */
+    {
+        struct comp_surface *hit = NULL;
+        resize_edge_t edge = RSZ_NONE;
+        hit_role_t role = comp_hit_test(seat->comp,
+                                        seat->comp->pointer_x,
+                                        seat->comp->pointer_y,
+                                        &hit, &edge);
+        (void)edge; (void)hit;
+        if (role == HIT_BAR || role == HIT_CLOSE ||
+            role == HIT_MINIMIZE || role == HIT_MAXIMIZE ||
+            role == HIT_RESIZE) {
+            return;
+        }
+    }
     seat_pointer_button(seat, code, pressed, time_msec);
 }
 

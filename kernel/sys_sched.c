@@ -26,6 +26,18 @@
 #define PRIO_MAX     19
 #define PRIO_DEFAULT 0
 
+/* Per Linux setpriority(2): unprivileged callers may lower the nice
+ * value of a target down to (20 - RLIMIT_NICE.rlim_cur). With the
+ * default RLIMIT_NICE=0 this means no lowering at all. */
+#define PRIO_RLIMIT_NICE_INDEX 13
+static inline int sched_min_nice_for_target(fut_task_t *t) {
+    if (!t) return PRIO_DEFAULT;
+    int64_t lim = (int64_t)t->rlimits[PRIO_RLIMIT_NICE_INDEX].rlim_cur;
+    if (lim < 0) lim = 0;
+    if (lim > 40) lim = 40;
+    return 20 - (int)lim;
+}
+
 /**
  * sched_yield() - Yield the processor to other threads
  *
@@ -262,7 +274,7 @@ long sys_setpriority(int which, int who, int prio) {
                        which_desc, who, prio);
             return -EPERM;
         }
-        if (prio < target_task->nice && task->uid != 0 && !HAS_CAP_SYS_NICE(task)) {
+        if (prio < sched_min_nice_for_target(target_task) && task->uid != 0 && !HAS_CAP_SYS_NICE(task)) {
             fut_printf("[SCHED] setpriority(%s, who=%d, prio=%d) -> EACCES (not privileged)\n",
                        which_desc, who, prio);
             return -EACCES;
@@ -281,7 +293,7 @@ long sys_setpriority(int which, int who, int prio) {
                 return -EPERM;
             }
             /* Privilege check: raising priority (lowering nice) requires root */
-            if (prio < t->nice && task->uid != 0 && !HAS_CAP_SYS_NICE(task)) {
+            if (prio < sched_min_nice_for_target(t) && task->uid != 0 && !HAS_CAP_SYS_NICE(task)) {
                 fut_printf("[SCHED] setpriority(%s, who=%d, prio=%d) -> EACCES (not privileged)\n",
                            which_desc, who, prio);
                 return -EACCES;
@@ -298,7 +310,7 @@ long sys_setpriority(int which, int who, int prio) {
                 saw_uid_mismatch = 1;
                 continue; /* skip tasks we don't own in group */
             }
-            if (prio < t->nice && task->uid != 0 && !HAS_CAP_SYS_NICE(task)) {
+            if (prio < sched_min_nice_for_target(t) && task->uid != 0 && !HAS_CAP_SYS_NICE(task)) {
                 saw_need_privilege = 1;
                 continue; /* skip tasks we can't raise priority for */
             }
@@ -316,7 +328,7 @@ long sys_setpriority(int which, int who, int prio) {
         for (fut_task_t *t = fut_task_list; t; t = t->next) {
             if (t->uid != target_uid || t->state == FUT_TASK_ZOMBIE)
                 continue;
-            if (prio < t->nice && task->uid != 0 && !HAS_CAP_SYS_NICE(task)) {
+            if (prio < sched_min_nice_for_target(t) && task->uid != 0 && !HAS_CAP_SYS_NICE(task)) {
                 saw_need_privilege = 1;
                 continue; /* skip tasks we can't raise priority for */
             }

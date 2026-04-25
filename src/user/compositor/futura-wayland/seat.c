@@ -1166,11 +1166,15 @@ static void seat_handle_key_event(struct seat_state *seat,
         seat_send_current_modifiers(seat);
     }
 
-    /* Compositor keybindings (consumed, not forwarded to clients) */
+    /* Compositor keybindings (consumed, not forwarded to clients).
+     * For shortcut equality checks, mask out Shift so accidental Shift
+     * combinations (e.g. Super+Shift+D) still trigger. The Alt+Tab path
+     * below explicitly inspects Shift for reverse cycling. */
+    uint32_t mods_no_shift = compositor_mods & ~COMP_MOD_SHIFT;
     if (pressed) {
         /* Ctrl+Alt+T or Super+Enter: launch new terminal */
-        if ((compositor_mods == (COMP_MOD_CTRL | COMP_MOD_ALT) && keycode == 20 /* T */) ||
-            (compositor_mods == COMP_MOD_SUPER && keycode == 28 /* Enter */)) {
+        if ((mods_no_shift == (COMP_MOD_CTRL | COMP_MOD_ALT) && keycode == 20 /* T */) ||
+            (mods_no_shift == COMP_MOD_SUPER && keycode == 28 /* Enter */)) {
             compositor_launch_terminal();
             return;
         }
@@ -1220,7 +1224,7 @@ static void seat_handle_key_event(struct seat_state *seat,
         }
 
         /* Super+D: toggle show-desktop (minimize/restore all windows) */
-        if (compositor_mods == COMP_MOD_SUPER && keycode == 32 /* D */) {
+        if (mods_no_shift == COMP_MOD_SUPER && keycode == 32 /* D */) {
             if (seat->comp) {
                 bool any_visible = false;
                 struct comp_surface *s;
@@ -1240,7 +1244,7 @@ static void seat_handle_key_event(struct seat_state *seat,
         }
 
         /* Super+Arrow: window tiling / snap */
-        if (compositor_mods == COMP_MOD_SUPER && seat->comp && seat->comp->focused_surface) {
+        if (mods_no_shift == COMP_MOD_SUPER && seat->comp && seat->comp->focused_surface) {
             struct comp_surface *sf = seat->comp->focused_surface;
             int32_t fw = (int32_t)seat->comp->fb_info.width;
             int32_t fh = (int32_t)seat->comp->fb_info.height;
@@ -1331,7 +1335,7 @@ static void seat_handle_key_event(struct seat_state *seat,
         }
 
         /* Super+/: toggle shortcut overlay */
-        if (compositor_mods == COMP_MOD_SUPER && keycode == 53 /* / */) {
+        if (mods_no_shift == COMP_MOD_SUPER && keycode == 53 /* / */) {
             if (seat->comp) {
                 seat->comp->shortcut_overlay_active = !seat->comp->shortcut_overlay_active;
                 comp_damage_add_full(seat->comp);
@@ -1351,7 +1355,7 @@ static void seat_handle_key_event(struct seat_state *seat,
         }
 
         /* Super+M: minimize focused window */
-        if (compositor_mods == COMP_MOD_SUPER && keycode == 50 /* M */) {
+        if (mods_no_shift == COMP_MOD_SUPER && keycode == 50 /* M */) {
             if (seat->comp && seat->comp->focused_surface) {
                 comp_surface_set_minimized(seat->comp->focused_surface, true);
                 comp_damage_add_full(seat->comp);
@@ -1361,7 +1365,7 @@ static void seat_handle_key_event(struct seat_state *seat,
         }
 
         /* Super+Q: close focused window */
-        if (compositor_mods == COMP_MOD_SUPER && keycode == 16 /* Q */) {
+        if (mods_no_shift == COMP_MOD_SUPER && keycode == 16 /* Q */) {
             if (seat->comp && seat->comp->focused_surface) {
                 struct comp_surface *s = seat->comp->focused_surface;
                 if (s->xdg_toplevel) {
@@ -1372,7 +1376,7 @@ static void seat_handle_key_event(struct seat_state *seat,
         }
 
         /* Super+F: toggle fullscreen for focused window */
-        if (compositor_mods == COMP_MOD_SUPER && keycode == 33 /* F */) {
+        if (mods_no_shift == COMP_MOD_SUPER && keycode == 33 /* F */) {
             if (seat->comp && seat->comp->focused_surface) {
                 comp_surface_toggle_fullscreen(seat->comp->focused_surface);
                 comp_damage_add_full(seat->comp);
@@ -1382,7 +1386,7 @@ static void seat_handle_key_event(struct seat_state *seat,
         }
 
         /* Super+I: show system info toast */
-        if (compositor_mods == COMP_MOD_SUPER && keycode == 23 /* I */) {
+        if (mods_no_shift == COMP_MOD_SUPER && keycode == 23 /* I */) {
             if (seat->comp) {
                 int32_t w = (int32_t)seat->comp->fb_info.width;
                 int32_t h = (int32_t)seat->comp->fb_info.height;

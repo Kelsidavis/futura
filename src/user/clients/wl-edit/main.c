@@ -630,7 +630,12 @@ static void kb_key(void *d, struct wl_keyboard *k, uint32_t ser, uint32_t t,
         return;
     }
     process_key(s, key);
-    if (key == 42 || key == 54 || key == 29 || key == 97 ||
+    /* Don't auto-repeat modifier keys, or any key pressed with ctrl/alt held —
+     * otherwise Ctrl+S would re-save every 40ms, and releasing Ctrl mid-repeat
+     * would start inserting 's' as a regular character. */
+    bool ctrl_or_alt = (kbd_mods & 0xCu) != 0;
+    if (ctrl_or_alt ||
+        key == 42 || key == 54 || key == 29 || key == 97 ||
         key == 56 || key == 100) {
         repeat_key = 0;
     } else {

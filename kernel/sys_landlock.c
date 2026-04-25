@@ -146,9 +146,22 @@ long sys_landlock_add_rule(int ruleset_fd, unsigned int rule_type,
     r->allowed_access = 0;
     r->parent_fd = -1;
     if (rule_attr) {
-        /* First 8 bytes are allowed_access, next 4 bytes are parent_fd */
+        /* First 8 bytes are allowed_access, next 4 bytes are parent_fd.
+         * Copy through the standard helper: a kernel-pointer rule_attr
+         * is allowed (self-tests), but a user-pointer copy failure must
+         * return -EFAULT instead of crashing the kernel. The previous
+         * direct memcpy let any caller pass a kernel address as
+         * rule_attr and have the rule populated from kernel memory. */
         struct { uint64_t allowed; int32_t parent; } __attribute__((packed)) ra;
-        __builtin_memcpy(&ra, rule_attr, sizeof(ra));
+        extern int fut_copy_from_user(void *, const void *, size_t);
+#ifdef KERNEL_VIRTUAL_BASE
+        if ((uintptr_t)rule_attr >= KERNEL_VIRTUAL_BASE) {
+            __builtin_memcpy(&ra, rule_attr, sizeof(ra));
+        } else
+#endif
+        if (fut_copy_from_user(&ra, rule_attr, sizeof(ra)) != 0) {
+            return -EFAULT;
+        }
         r->allowed_access = ra.allowed;
         r->parent_fd = ra.parent;
     }

@@ -13,9 +13,31 @@
 #include <kernel/fut_mm.h>
 #include <kernel/errno.h>
 #include <kernel/kprintf.h>
+#include <kernel/uaccess.h>
+#include <platform/platform.h>
 #include <stdint.h>
 #include <stddef.h>
 #include <string.h>
+
+/* Stage user pointers through copy_*_user. Several PTRACE requests
+ * (GETEVENTMSG, GETSIGINFO, GET/SETREGS, GET/SETFPREGS, GET/SETREGSET)
+ * receive a userspace pointer in 'data'. A naive memcpy/store through
+ * that pointer is a kernel-write/read primitive when 'data' lives in
+ * kernel space, and faults on a bad user pointer instead of returning
+ * -EFAULT. Use the standard KERNEL_VIRTUAL_BASE bypass for in-kernel
+ * callers and fut_copy_*_user for genuine userspace pointers. */
+static inline int ptrace_copy_to_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_to_user(dst, src, n);
+}
+static inline int ptrace_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
 
 #ifdef __x86_64__
 #include <platform/x86_64/regs.h>
@@ -362,7 +384,11 @@ long sys_ptrace(int request, int pid, void *addr, void *data) {
             return -EIO;
 
         uintptr_t offset = (uintptr_t)addr;
-        if (offset >= sizeof(struct user_regs_struct))
+        /* Reject misaligned and any offset that would let us read past
+         * the end of the regs struct (was: offset >= sizeof(regs), which
+         * still leaks 1..7 bytes of stack for offsets in the last word). */
+        if ((offset & 7) != 0 ||
+            offset + sizeof(uint64_t) > sizeof(struct user_regs_struct))
             return -EIO;
 
         /* Return the value at the given byte offset in the regs struct */
@@ -398,7 +424,8 @@ long sys_ptrace(int request, int pid, void *addr, void *data) {
         int rc = ptrace_getregs(tracee, &regs);
         if (rc != 0)
             return rc;
-        memcpy(data, &regs, sizeof(regs));
+        if (ptrace_copy_to_user(data, &regs, sizeof(regs)) != 0)
+            return -EFAULT;
         return 0;
 #else
         /* ARM64: GETREGS not supported (use GETREGSET with NT_PRSTATUS instead) */
@@ -416,7 +443,8 @@ long sys_ptrace(int request, int pid, void *addr, void *data) {
 
 #ifdef __x86_64__
         struct user_regs_struct regs;
-        memcpy(&regs, data, sizeof(regs));
+        if (ptrace_copy_from_user(&regs, data, sizeof(regs)) != 0)
+            return -EFAULT;
         return ptrace_setregs(tracee, &regs);
 #else
         return -EIO;
@@ -433,7 +461,8 @@ long sys_ptrace(int request, int pid, void *addr, void *data) {
         /* Copy FXSAVE area from tracee's context */
         if (!tracee->threads)
             return -ESRCH;
-        memcpy(data, tracee->threads->context.fx_area, 512);
+        if (ptrace_copy_to_user(data, tracee->threads->context.fx_area, 512) != 0)
+            return -EFAULT;
         return 0;
 #else
         return -EIO;
@@ -448,7 +477,8 @@ long sys_ptrace(int request, int pid, void *addr, void *data) {
 #ifdef __x86_64__
         if (!tracee->threads)
             return -ESRCH;
-        memcpy(tracee->threads->context.fx_area, data, 512);
+        if (ptrace_copy_from_user(tracee->threads->context.fx_area, data, 512) != 0)
+            return -EFAULT;
         return 0;
 #else
         return -EIO;
@@ -554,7 +584,9 @@ long sys_ptrace(int request, int pid, void *addr, void *data) {
         if (!data)
             return -EFAULT;
 
-        *(uint64_t *)data = tracee->ptrace_eventmsg;
+        uint64_t msg = tracee->ptrace_eventmsg;
+        if (ptrace_copy_to_user(data, &msg, sizeof(msg)) != 0)
+            return -EFAULT;
         return 0;
     }
 
@@ -566,8 +598,10 @@ long sys_ptrace(int request, int pid, void *addr, void *data) {
         if (!data)
             return -EFAULT;
 
-        /* Return a minimal siginfo */
-        memset(data, 0, 128);  /* sizeof(siginfo_t) = 128 on Linux */
+        /* Return a minimal (zero-filled) siginfo. */
+        char zero_si[128] = {0};  /* sizeof(siginfo_t) on Linux */
+        if (ptrace_copy_to_user(data, zero_si, sizeof(zero_si)) != 0)
+            return -EFAULT;
         return 0;
     }
 
@@ -593,9 +627,14 @@ long sys_ptrace(int request, int pid, void *addr, void *data) {
         if (!data)
             return -EFAULT;
 
-        /* iovec: { void *base; size_t len; } */
-        struct { void *base; uint64_t len; } *iov = data;
-        if (!iov->base || iov->len == 0)
+        /* iovec lives in userspace: { void *base; size_t len; }. Copy it
+         * into the kernel before touching either field, then validate
+         * iov.base via copy_*_user when doing the actual register I/O. */
+        struct iovec_kabi { void *base; uint64_t len; };
+        struct iovec_kabi iov;
+        if (ptrace_copy_from_user(&iov, data, sizeof(iov)) != 0)
+            return -EFAULT;
+        if (!iov.base || iov.len == 0)
             return -EFAULT;
 
 #ifdef __x86_64__
@@ -604,14 +643,18 @@ long sys_ptrace(int request, int pid, void *addr, void *data) {
             if (request == PTRACE_GETREGSET) {
                 if (ptrace_getregs(tracee, &regs) != 0)
                     return -EIO;
-                uint64_t copy_len = iov->len < sizeof(regs) ? iov->len : sizeof(regs);
-                memcpy(iov->base, &regs, copy_len);
-                iov->len = copy_len;
+                uint64_t copy_len = iov.len < sizeof(regs) ? iov.len : sizeof(regs);
+                if (ptrace_copy_to_user(iov.base, &regs, copy_len) != 0)
+                    return -EFAULT;
+                iov.len = copy_len;
+                if (ptrace_copy_to_user(data, &iov, sizeof(iov)) != 0)
+                    return -EFAULT;
                 return 0;
             } else {
-                uint64_t copy_len = iov->len < sizeof(regs) ? iov->len : sizeof(regs);
+                uint64_t copy_len = iov.len < sizeof(regs) ? iov.len : sizeof(regs);
                 memset(&regs, 0, sizeof(regs));
-                memcpy(&regs, iov->base, copy_len);
+                if (ptrace_copy_from_user(&regs, iov.base, copy_len) != 0)
+                    return -EFAULT;
                 return ptrace_setregs(tracee, &regs);
             }
         }
@@ -642,15 +685,19 @@ long sys_ptrace(int request, int pid, void *addr, void *data) {
                 pt_regs[31] = ctx->sp_el0;  /* sp */
                 pt_regs[32] = ctx->pc;
                 pt_regs[33] = ctx->pstate;
-                uint64_t copy_len = iov->len < sizeof(pt_regs) ? iov->len : sizeof(pt_regs);
-                memcpy(iov->base, pt_regs, copy_len);
-                iov->len = copy_len;
+                uint64_t copy_len = iov.len < sizeof(pt_regs) ? iov.len : sizeof(pt_regs);
+                if (ptrace_copy_to_user(iov.base, pt_regs, copy_len) != 0)
+                    return -EFAULT;
+                iov.len = copy_len;
+                if (ptrace_copy_to_user(data, &iov, sizeof(iov)) != 0)
+                    return -EFAULT;
                 return 0;
             } else {
                 /* SETREGSET: write registers back */
-                uint64_t copy_len = iov->len < sizeof(pt_regs) ? iov->len : sizeof(pt_regs);
+                uint64_t copy_len = iov.len < sizeof(pt_regs) ? iov.len : sizeof(pt_regs);
                 memset(pt_regs, 0, sizeof(pt_regs));
-                memcpy(pt_regs, iov->base, copy_len);
+                if (ptrace_copy_from_user(pt_regs, iov.base, copy_len) != 0)
+                    return -EFAULT;
                 ctx->x0 = pt_regs[0]; ctx->x1 = pt_regs[1];
                 ctx->x19 = pt_regs[19]; ctx->x20 = pt_regs[20];
                 ctx->x21 = pt_regs[21]; ctx->x22 = pt_regs[22];

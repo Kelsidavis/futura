@@ -319,7 +319,9 @@ static void redraw_all(struct client_state *state) {
     {
         int cy = col_y + (SM_ROW_H - FONT_HEIGHT) / 2;
         int x = SM_PAD;
-        draw_text(px, w, h, stride, x, cy, "PID", 3, COL_DIM, COL_BG); x += 7 * FONT_WIDTH;
+        /* PID values use int_to_str(., 5) → right-aligned in 5 chars.
+         * Pad the header so "PID" ends at column + 5*FONT_WIDTH too. */
+        draw_text(px, w, h, stride, x, cy, "  PID", 5, COL_DIM, COL_BG); x += 7 * FONT_WIDTH;
         draw_text(px, w, h, stride, x, cy, "S", 1, COL_DIM, COL_BG);    x += 4 * FONT_WIDTH;
         /* RSS values are right-aligned in 7 chars, so right-align the
          * header to match (4 leading spaces + "RSS" ends at col +

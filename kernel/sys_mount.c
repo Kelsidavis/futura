@@ -880,6 +880,32 @@ long sys_open_tree(int dirfd, const char *pathname, unsigned int flags) {
     (void)dirfd;
     if (!pathname) return -EINVAL;
 
+    /* Stage pathname into a kernel buffer rather than walking the user
+     * pointer directly. The previous loop did 'pathname[i]' for up to
+     * 256 bytes — a kernel-address pathname read kernel memory into
+     * ctx->target (and could mount-context-target a kernel string), and
+     * a bad user pointer faulted the kernel instead of returning
+     * -EFAULT. */
+    char target_buf[256];
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)pathname >= KERNEL_VIRTUAL_BASE) {
+        int i = 0;
+        for (i = 0; i < (int)sizeof(target_buf) - 1 && pathname[i]; i++)
+            target_buf[i] = pathname[i];
+        target_buf[i] = '\0';
+    } else
+#endif
+    {
+        for (int i = 0; i < (int)sizeof(target_buf) - 1; i++) {
+            char c;
+            if (fut_copy_from_user(&c, pathname + i, 1) != 0)
+                return -EFAULT;
+            target_buf[i] = c;
+            if (c == '\0') break;
+        }
+        target_buf[sizeof(target_buf) - 1] = '\0';
+    }
+
     /* Allocate a context that represents the mount point */
     struct fs_context *ctx = NULL;
     for (int i = 0; i < MAX_FS_CONTEXTS; i++) {
@@ -892,7 +918,7 @@ long sys_open_tree(int dirfd, const char *pathname, unsigned int flags) {
     ctx->created = true; /* Already mounted — just a reference */
     {
         int i = 0;
-        while (pathname[i] && i < 255) { ctx->target[i] = pathname[i]; i++; }
+        while (target_buf[i] && i < 255) { ctx->target[i] = target_buf[i]; i++; }
         ctx->target[i] = '\0';
     }
 

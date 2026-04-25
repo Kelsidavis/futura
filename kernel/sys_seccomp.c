@@ -19,9 +19,37 @@
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
 #include <kernel/kprintf.h>
+#include <kernel/uaccess.h>
 #include <stdint.h>
 #include <stddef.h>
 #include <string.h>
+
+#include <platform/platform.h>
+
+/* uaccess helpers with the standard self-test bypass: kernel-pointer
+ * arguments (e.g. from kernel-side selftests) skip uaccess; everything
+ * else goes through fut_copy_*. The previous code dereferenced uargs
+ * directly, which let any caller pass a kernel address as the seccomp
+ * args pointer and read kernel memory or fault the kernel. */
+static inline int sec_copy_from_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) {
+        __builtin_memcpy(dst, src, n);
+        return 0;
+    }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
+
+static inline int sec_copy_to_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) {
+        __builtin_memcpy(dst, src, n);
+        return 0;
+    }
+#endif
+    return fut_copy_to_user(dst, src, n);
+}
 
 /* seccomp() operation types */
 #define SECCOMP_SET_MODE_STRICT    0
@@ -200,18 +228,19 @@ long sys_seccomp(unsigned int operation, unsigned int flags, const void *uargs) 
             !(task->cap_effective & (1ULL << 21))) /* CAP_SYS_ADMIN */
             return -EACCES;
 
-        /* Copy sock_fprog from user */
-        const struct sock_fprog *fprog = (const struct sock_fprog *)uargs;
-        uint16_t prog_len = fprog->len;
-        struct sock_filter *prog_filter = fprog->filter;
+        /* Copy sock_fprog header from user. The previous code did
+         * 'fprog = (const struct sock_fprog *)uargs' and then
+         * 'fprog->len' / 'fprog->filter' direct reads — meaning any
+         * caller passing a kernel address as uargs read program length
+         * and filter pointer straight out of kernel memory. */
+        struct sock_fprog kfprog;
+        if (sec_copy_from_user(&kfprog, uargs, sizeof(kfprog)) != 0)
+            return -EFAULT;
+        uint16_t prog_len = kfprog.len;
+        struct sock_filter *prog_filter = kfprog.filter;
 
         if (prog_len == 0 || prog_len > MAX_SECCOMP_INSNS) return -EINVAL;
         if (!prog_filter) return -EFAULT;
-
-        /* Validate BPF program: no backward jumps, bounds-checked, must end with RET */
-        long validate_err = seccomp_validate_bpf(prog_filter, prog_len);
-        if (validate_err)
-            return validate_err;
 
         /* Allocate or grow filter chain */
         struct seccomp_filter_chain *chain =
@@ -226,10 +255,20 @@ long sys_seccomp(unsigned int operation, unsigned int flags, const void *uargs) 
 
         if (chain->count >= MAX_SECCOMP_FILTERS) return -ENOMEM;
 
-        /* Copy the BPF program */
+        /* Copy the BPF instructions through copy_from_user — never raw
+         * memcpy from a user-controlled pointer. */
         struct seccomp_filter_prog *fp = &chain->filters[chain->count];
-        memcpy(fp->insns, prog_filter,
-               (size_t)prog_len * sizeof(struct sock_filter));
+        if (sec_copy_from_user(fp->insns, prog_filter,
+                               (size_t)prog_len * sizeof(struct sock_filter)) != 0)
+            return -EFAULT;
+
+        /* Validate BPF program (after the copy, on kernel-local data,
+         * so the verifier can't be bypassed by a TOCTOU swap of the
+         * user-side filter array). */
+        long validate_err = seccomp_validate_bpf(fp->insns, prog_len);
+        if (validate_err)
+            return validate_err;
+
         fp->len = prog_len;
         chain->count++;
         task->seccomp_filter_count = chain->count;
@@ -244,7 +283,8 @@ long sys_seccomp(unsigned int operation, unsigned int flags, const void *uargs) 
     case SECCOMP_GET_ACTION_AVAIL: {
         if (!uargs) return -EFAULT;
         uint32_t action = 0;
-        __builtin_memcpy(&action, uargs, sizeof(action));
+        if (sec_copy_from_user(&action, uargs, sizeof(action)) != 0)
+            return -EFAULT;
         switch (action) {
         case SECCOMP_RET_KILL_PROCESS:
         case SECCOMP_RET_KILL_THREAD:
@@ -270,11 +310,11 @@ long sys_seccomp(unsigned int operation, unsigned int flags, const void *uargs) 
         sizes.notif = 80;       /* sizeof(struct seccomp_notif) on Linux */
         sizes.notif_resp = 24;  /* sizeof(struct seccomp_notif_resp) */
         sizes.data = 64;        /* sizeof(struct seccomp_data) */
-        /* Copy to userspace */
-        uint16_t *out = (uint16_t *)(uintptr_t)uargs;
-        out[0] = sizes.notif;
-        out[1] = sizes.notif_resp;
-        out[2] = sizes.data;
+        /* Copy to userspace through copy_to_user — direct writes via
+         * out[i] = let any caller pass a kernel address as uargs and
+         * have the values written into kernel memory. */
+        if (sec_copy_to_user((void *)(uintptr_t)uargs, &sizes, sizeof(sizes)) != 0)
+            return -EFAULT;
         return 0;
     }
 

@@ -50,7 +50,11 @@ static void clear_client_offer(struct seat_client *client) {
     client->current_offer = NULL;
     client->offer_has_mime = false;
     client->offer_mime[0] = '\0';
-    wl_resource_set_user_data(offer, NULL);
+    /* Leave user_data intact so data_offer_resource_destroy can free
+     * the data_offer struct. The destroy handler's
+     * 'offer->client->current_offer == resource' guard already
+     * sees the cleared pointer above and skips re-clearing client
+     * state. */
     wl_resource_destroy(offer);
 }
 

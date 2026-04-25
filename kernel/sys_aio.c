@@ -456,6 +456,13 @@ long sys_io_pgetevents(unsigned long ctx_id, long min_nr, long nr,
             if (fut_copy_from_user(&newmask, sig.ss, sizeof(newmask)) != 0)
                 return -EFAULT;
 
+            /* SIGKILL and SIGSTOP cannot be blocked (POSIX). The previous
+             * version installed newmask raw, so a caller could pass
+             * { SIGKILL | SIGSTOP } and become unkillable for the
+             * duration of io_pgetevents. Strip those bits before
+             * applying. */
+            newmask &= ~((1ULL << (9  - 1)) |   /* SIGKILL */
+                         (1ULL << (19 - 1)));   /* SIGSTOP */
             fut_task_t *task = fut_task_current();
             if (task) {
                 old_mask = task->signal_mask;

@@ -203,6 +203,32 @@ size_t klog_read_buffer(char *dst, size_t len) {
 long sys_syslog(int type, char *buf, int len) {
     fut_task_t *task = fut_task_current();
 
+    /* Linux: syslog(2) requires CAP_SYSLOG (or CAP_SYS_ADMIN, which is
+     * accepted for backward compat) for every action except CLOSE/OPEN
+     * and SIZE_BUFFER. Without this gate any process can dump the whole
+     * kernel ring buffer (kernel pointers, addresses printed by drivers,
+     * boot-time secrets) and silence the console. */
+    int needs_cap = 0;
+    switch (type) {
+        case SYSLOG_ACTION_READ:
+        case SYSLOG_ACTION_READ_ALL:
+        case SYSLOG_ACTION_READ_CLEAR:
+        case SYSLOG_ACTION_CLEAR:
+        case SYSLOG_ACTION_CONSOLE_OFF:
+        case SYSLOG_ACTION_CONSOLE_ON:
+        case SYSLOG_ACTION_CONSOLE_LEVEL:
+        case SYSLOG_ACTION_SIZE_UNREAD:
+            needs_cap = 1;
+            break;
+        default:
+            break;
+    }
+    if (needs_cap && task && task->uid != 0 &&
+        !(task->cap_effective & (1ULL << 34 /* CAP_SYSLOG */)) &&
+        !(task->cap_effective & (1ULL << 21 /* CAP_SYS_ADMIN */))) {
+        return -EPERM;
+    }
+
     switch (type) {
     case SYSLOG_ACTION_CLOSE:
     case SYSLOG_ACTION_OPEN:
@@ -290,11 +316,7 @@ long sys_syslog(int type, char *buf, int len) {
     }
 
     case SYSLOG_ACTION_CLEAR:
-        /* Clear the ring buffer */
-        if (task && task->uid != 0 &&
-            !(task->cap_effective & (1ULL << 34 /* CAP_SYSLOG */))) {
-            return -EPERM;
-        }
+        /* Clear the ring buffer (capability checked above). */
         klog_count = 0;
         klog_head = klog_tail;
         klog_read_pos = klog_tail;

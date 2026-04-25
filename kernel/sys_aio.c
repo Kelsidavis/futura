@@ -25,10 +25,27 @@
 #include <kernel/fut_vfs.h>
 #include <kernel/fut_task.h>
 #include <kernel/chrdev.h>
+#include <kernel/uaccess.h>
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
 #include <string.h>
+
+#include <platform/platform.h>
+
+/* Copy helpers that bypass uaccess for kernel pointers (self-tests) and
+ * propagate -EFAULT for user pointers. Replaces direct *u = v writes
+ * that would otherwise let a caller pass a kernel address and turn
+ * io_setup / io_getevents into a write-anywhere primitive. */
+static inline int aio_put_user(void *u_dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)u_dst >= KERNEL_VIRTUAL_BASE) {
+        __builtin_memcpy(u_dst, src, n);
+        return 0;
+    }
+#endif
+    return fut_copy_to_user(u_dst, src, n);
+}
 
 /* ── Linux AIO implementation (syscalls 206-210) ──
  *
@@ -151,9 +168,13 @@ long sys_io_setup(unsigned int nr_events, void *ctxp) {
     ctx->event_head = 0;
     ctx->event_tail = 0;
 
-    /* Write context ID to userspace.
-     * Linux stores context as unsigned long at the pointer location. */
-    *(unsigned long *)ctxp = ctx_id;
+    /* Write context ID to userspace via copy_to_user — never deref ctxp
+     * directly: a caller may pass a kernel address and the previous code
+     * would happily write the new ctx_id wherever they pointed. */
+    if (aio_put_user(ctxp, &ctx_id, sizeof(ctx_id)) != 0) {
+        ctx->active = false;
+        return -EFAULT;
+    }
 
     return 0;
 }
@@ -296,12 +317,21 @@ long sys_io_getevents(unsigned long ctx_id, long min_nr, long nr,
     if (!ctx->active)
         return -EINVAL;
 
-    struct linux_io_event *ev_out = (struct linux_io_event *)events;
     long collected = 0;
 
-    /* Collect available events (up to nr) */
+    /* Collect available events (up to nr) into the user buffer through
+     * copy_to_user — must never write ev_out[i] directly, since the user
+     * pointer may target kernel memory or be unmapped. */
     while (collected < nr && ctx->event_head != ctx->event_tail) {
-        ev_out[collected] = ctx->events[ctx->event_head];
+        struct linux_io_event ev = ctx->events[ctx->event_head];
+        void *u_slot = (char *)events +
+                       (size_t)collected * sizeof(struct linux_io_event);
+        if (aio_put_user(u_slot, &ev, sizeof(ev)) != 0) {
+            /* Don't consume the event we couldn't deliver; if we already
+             * delivered some, return that partial count instead of the
+             * EFAULT so the caller can retry the rest. */
+            return collected > 0 ? collected : -EFAULT;
+        }
         ctx->event_head = (ctx->event_head + 1) % MAX_AIO_EVENTS;
         collected++;
     }

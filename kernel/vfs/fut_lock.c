@@ -252,6 +252,8 @@ int fut_vnode_lock_shared(struct fut_vnode *vnode, uint32_t pid, int nonblock) {
             if (sig_task) {
                 uint64_t pending = __atomic_load_n(&sig_task->pending_signals, __ATOMIC_ACQUIRE);
                 fut_thread_t *thr = fut_thread_current();
+                if (thr)
+                    pending |= __atomic_load_n(&thr->thread_pending_signals, __ATOMIC_ACQUIRE);
                 uint64_t blocked = thr ?
                     __atomic_load_n(&thr->signal_mask, __ATOMIC_ACQUIRE) :
                     __atomic_load_n(&sig_task->signal_mask, __ATOMIC_ACQUIRE);
@@ -319,6 +321,8 @@ int fut_vnode_lock_exclusive(struct fut_vnode *vnode, uint32_t pid, int nonblock
             if (sig_task) {
                 uint64_t pending = __atomic_load_n(&sig_task->pending_signals, __ATOMIC_ACQUIRE);
                 fut_thread_t *thr = fut_thread_current();
+                if (thr)
+                    pending |= __atomic_load_n(&thr->thread_pending_signals, __ATOMIC_ACQUIRE);
                 uint64_t blocked = thr ?
                     __atomic_load_n(&thr->signal_mask, __ATOMIC_ACQUIRE) :
                     __atomic_load_n(&sig_task->signal_mask, __ATOMIC_ACQUIRE);

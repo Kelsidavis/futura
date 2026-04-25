@@ -1658,7 +1658,11 @@ void comp_render_frame(struct compositor_state *comp) {
      * Damage rects fully inside a window don't need wallpaper rendering because
      * the window blit will overwrite every pixel. This prevents single-buffer
      * flashing where wallpaper is briefly visible behind windows. */
-    #define MAX_OCCLUDERS 8
+    /* Bumped from 8 → 32. With 8 the 9th+ visible window wasn't added
+     * as an occluder, so wallpaper flashed behind it on every redraw
+     * pass. 32 covers any realistic window count and only adds 16
+     * bytes/slot to the stack frame. */
+    #define MAX_OCCLUDERS 32
     fut_rect_t occluders[MAX_OCCLUDERS];
     int n_occluders = 0;
     {

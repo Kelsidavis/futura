@@ -169,7 +169,8 @@ struct compositor_state {
     /* Alt+Tab switcher overlay */
     bool alt_tab_active;
     int alt_tab_index;             /* currently highlighted index in switcher */
-    int alt_tab_count;             /* number of switchable windows */
+    int alt_tab_count;             /* number of switchable windows (clamped to ALT_TAB_MAX_VISIBLE) */
+#define ALT_TAB_MAX_VISIBLE 8      /* renderer in comp.c stops at this many items */
     /* Dock tooltip */
     int dock_tooltip_index;        /* dock item showing tooltip, -1 = none */
     int32_t dock_tooltip_x;

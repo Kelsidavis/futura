@@ -1036,6 +1036,12 @@ static void seat_handle_key_event(struct seat_state *seat,
                 wl_list_for_each(s, &seat->comp->surfaces, link) {
                     if (s->has_backing && !s->minimized) count++;
                 }
+                /* Cap to the renderer's visible cap so the highlight ring
+                 * stays in sync with what's actually drawn. Cycling past the
+                 * 8th window otherwise advanced the (invisible) selection
+                 * past the overlay; on Alt release the focus jumped to a
+                 * window the user couldn't see was selected. */
+                if (count > ALT_TAB_MAX_VISIBLE) count = ALT_TAB_MAX_VISIBLE;
                 if (count > 0) {
                     if (!seat->comp->alt_tab_active) {
                         /* First press: activate switcher, start at index 1 (next window) */

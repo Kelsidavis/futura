@@ -207,6 +207,18 @@ long sys_madvise(void *addr, size_t length, int advice) {
         if (mm) {
             uintptr_t range_start = addr_aligned;
             uintptr_t range_end   = addr_aligned + length_aligned;
+            /* Linux refuses MADV_DONTNEED on VM_LOCKED ranges with EINVAL —
+             * silently zeroing locked pages would destroy data that the user
+             * explicitly asked the kernel to keep resident. MADV_DONTNEED_LOCKED
+             * (advice 24) is the opt-in variant that allows it. Do this scan
+             * up-front so we either reject the whole call or commit fully —
+             * never leave the range half-zeroed. */
+            for (struct fut_vma *lv = mm->vma_list; lv; lv = lv->next) {
+                if (lv->start < range_end && lv->end > range_start &&
+                    (lv->flags & VMA_LOCKED)) {
+                    return -EINVAL;
+                }
+            }
             struct fut_vma *vma = mm->vma_list;
             while (vma) {
                 /* Only zero anonymous (vnode==NULL) private (not VMA_SHARED) VMAs */

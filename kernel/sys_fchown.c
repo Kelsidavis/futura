@@ -118,17 +118,34 @@ long sys_fchown(int fd, uint32_t uid, uint32_t gid) {
     }
 
     if (local_gid != (uint32_t)-1 && host_gid != vnode->gid) {
-        /* Changing group requires CAP_CHOWN, root, or:
-         * file owner changing group to their own effective GID.
-         * Linux allows supplementary groups too, but we check egid. */
+        /* Changing group requires CAP_CHOWN, root, or: file owner
+         * changing group to a group they're a member of (effective GID
+         * or any supplementary group — same as the path-based sys_chown
+         * fix). Without supplementary-group support a user couldn't
+         * fchown to a group they joined via 'groups[]'. */
         if (task_host_uid != 0 &&
             !(task->cap_effective & (1ULL << 0 /* CAP_CHOWN */))) {
-            /* Non-privileged: must own the file AND target must be own egid */
-            if (task_host_uid != vnode->uid || host_gid != task_host_gid) {
+            if (task_host_uid != vnode->uid) {
                 fut_printf("[FCHOWN] fchown(fd=%d [%s], vnode_ino=%lu, uid=%u [%s], gid=%u [%s]) "
                            "-> EPERM (user %u cannot change group from %u to %u)\n",
                            local_fd, fd_category, vnode->ino, local_uid, uid_desc, local_gid, gid_desc,
                            task_host_uid, vnode->gid, host_gid);
+                return -EPERM;
+            }
+            bool member = (host_gid == task_host_gid);
+            if (!member) {
+                for (int gi = 0; gi < task->ngroups; gi++) {
+                    if (userns_ns_to_host_gid(ns, task->groups[gi]) == host_gid) {
+                        member = true;
+                        break;
+                    }
+                }
+            }
+            if (!member) {
+                fut_printf("[FCHOWN] fchown(fd=%d [%s], vnode_ino=%lu, uid=%u [%s], gid=%u [%s]) "
+                           "-> EPERM (user %u not a member of target group %u)\n",
+                           local_fd, fd_category, vnode->ino, local_uid, uid_desc, local_gid, gid_desc,
+                           task_host_uid, host_gid);
                 return -EPERM;
             }
         }

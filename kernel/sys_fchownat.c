@@ -391,7 +391,23 @@ long sys_fchownat(int dirfd, const char *pathname, uint32_t uid, uint32_t gid, i
             return -EPERM;
         }
         if (gid != (uint32_t)-1 && host_gid != vnode->gid) {
-            if (task_host_ruid != vnode->uid || host_gid != task_host_gid) {
+            /* Same supplementary-group rule as sys_chown / sys_fchown:
+             * file owner may chgrp to any group they're a member of
+             * (effective GID or any group in the supplementary list). */
+            if (task_host_ruid != vnode->uid) {
+                fut_vnode_unref(vnode);
+                return -EPERM;
+            }
+            bool member = (host_gid == task_host_gid);
+            if (!member) {
+                for (int gi = 0; gi < task->ngroups; gi++) {
+                    if (userns_ns_to_host_gid(ns, task->groups[gi]) == host_gid) {
+                        member = true;
+                        break;
+                    }
+                }
+            }
+            if (!member) {
                 fut_vnode_unref(vnode);
                 return -EPERM;
             }

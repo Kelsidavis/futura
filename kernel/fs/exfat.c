@@ -80,14 +80,19 @@ static ssize_t exfat_vnode_read(struct fut_vnode *vn, void *buf, size_t size, ui
     }
 
     while (total < size && cluster >= 2) {
-        static uint8_t cbuf[4096];
-        size_t cs = ei->cluster_size < sizeof(cbuf) ? ei->cluster_size : sizeof(cbuf);
-        exfat_read_cluster(ei, cluster, cbuf);
-        uint32_t off_in = (uint32_t)skip;
-        size_t avail = cs - off_in;
-        if (avail > size - total) avail = size - total;
-        memcpy(out + total, cbuf + off_in, avail);
-        total += avail;
+        /* Read directly from the block device at the proper byte offset.
+         * Going through a fixed 4 KiB staging buffer overruns when the
+         * cluster size is larger (SDXC/large USB exFAT volumes use 32 KiB+
+         * clusters): skip > 4096 made cs - off_in underflow and the memcpy
+         * read past the end of the static buffer. */
+        uint64_t base = exfat_cluster_offset(ei, cluster);
+        size_t to_read = (size_t)(ei->cluster_size - skip);
+        if (to_read > size - total) to_read = size - total;
+        if (fut_blockdev_read_bytes(ei->dev, base + skip, to_read,
+                                    out + total) < 0) {
+            break;
+        }
+        total += to_read;
         skip = 0;
         cluster = exfat_next_cluster(ei, cluster);
     }

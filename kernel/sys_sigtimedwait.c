@@ -145,7 +145,18 @@ long sys_rt_sigtimedwait(const uint64_t *uthese, void *uinfo,
                  * fut_signal_send with the SENDER's pid/uid, not the target's). */
                 info.si_pid  = (uint32_t)qi->si_pid;
                 info.si_uid  = qi->si_uid;
-                sigtimedwait_copy_to_user(uinfo, &info, sizeof(info));
+                if (sigtimedwait_copy_to_user(uinfo, &info, sizeof(info)) != 0) {
+                    /* Restore the dequeued signal so the caller can retry —
+                     * silently consuming the signal here would leave them
+                     * with no way to learn which signal had arrived. */
+                    if (from_thread && cur_thread)
+                        __atomic_or_fetch(&cur_thread->thread_pending_signals,
+                                          bit, __ATOMIC_RELEASE);
+                    else
+                        __atomic_or_fetch(&task->pending_signals,
+                                          bit, __ATOMIC_RELEASE);
+                    return -EFAULT;
+                }
             }
 
             return signo;

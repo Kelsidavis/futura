@@ -539,8 +539,14 @@ void term_putchar(struct terminal *term, char ch) {
             return;
         }
 
-        /* Check if sequence is complete (ends with letter) */
-        if ((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z')) {
+        /* Check if sequence is complete. CSI's final byte is in the
+         * range 0x40-0x7E (per ECMA-48), which includes letters AND
+         * '@', '`', '{', '|', '}', '~'. Restricting to A-Z/a-z left
+         * sequences like ESC[3~ (which a shell could echo back from
+         * a remote terminal) accumulating until the buffer-full
+         * abandon path. */
+        if (ch >= 0x40 && ch <= 0x7E && ch != '[' && ch != ';' &&
+            !(ch >= '0' && ch <= '9') && ch != '?') {
             term_handle_escape(term);
             term->parser_state = TERM_STATE_NORMAL;
             term->escape_len = 0;

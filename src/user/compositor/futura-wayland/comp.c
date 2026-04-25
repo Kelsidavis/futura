@@ -731,7 +731,13 @@ static void draw_title_text(struct backbuffer *dst,
         return;
     }
 
-    int available_px = surface->width - (8 + WINDOW_BTN_WIDTH + WINDOW_BTN_PADDING + 8);
+    /* Reserve width for all three traffic-light buttons (close + minimize +
+     * maximize) plus the inset on each side. This must agree with btn_area
+     * computed below — otherwise narrow windows under-truncate the title
+     * and then the left clamp pushes the centered text past the right edge
+     * of the bar. */
+    int available_px = surface->width
+                       - (3 * (WINDOW_BTN_WIDTH + WINDOW_BTN_PADDING) + 16);
     if (available_px <= 0) {
         surface->title_dirty = false;
         return;

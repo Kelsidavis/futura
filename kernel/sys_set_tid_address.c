@@ -18,6 +18,7 @@
 #include <stdint.h>
 
 #include <kernel/kprintf.h>
+#include <platform/platform.h>
 
 /**
  * set_tid_address() - Set pointer to thread ID for signal delivery
@@ -82,6 +83,18 @@ long sys_set_tid_address(int *tidptr) {
     fut_task_t *task = fut_task_current();
     if (!task)
         return -ESRCH;
+
+    /* Reject kernel-space pointers from userspace. The thread-exit
+     * writeback in fut_thread.c does an unchecked direct write when
+     * clear_child_tid >= KERNEL_VIRTUAL_BASE (intended for in-kernel
+     * selftest callers); without this gate any unprivileged process
+     * could call set_tid_address(kernel_addr) and get a zero-write
+     * primitive at thread exit on an arbitrary kernel address.
+     * NULL is preserved as the "disable cleartid" sentinel. */
+#ifdef KERNEL_VIRTUAL_BASE
+    if (tidptr && (uintptr_t)tidptr >= KERNEL_VIRTUAL_BASE)
+        return -EFAULT;
+#endif
 
     /* For CLONE_THREAD threads, store in the per-thread field so that only
      * THIS thread's exit clears the address (not the whole task's exit).

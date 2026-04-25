@@ -302,10 +302,17 @@ static void comp_apply_committed_size(struct compositor_state *comp,
     surface->y = clamp_i32(surface->y, 0, max_y);
 
     fut_rect_t new_frame = comp_frame_rect(surface);
+    /* Pad to cover the focus glow / shadow halo, otherwise resizing a
+     * focused window leaves a faint blue ring at the old size's edge
+     * until something else triggers damage there. */
     if (was_backed && old_frame.w > 0 && old_frame.h > 0) {
-        comp_damage_add_rect(comp, old_frame);
+        fut_rect_t old_halo = { old_frame.x - 12, old_frame.y - 12,
+                                old_frame.w + 24, old_frame.h + 24 };
+        comp_damage_add_rect(comp, old_halo);
     }
-    comp_damage_add_rect(comp, new_frame);
+    fut_rect_t new_halo = { new_frame.x - 12, new_frame.y - 12,
+                            new_frame.w + 24, new_frame.h + 24 };
+    comp_damage_add_rect(comp, new_halo);
     comp_surface_mark_damage(surface);
 
     /* Don't auto-snapshot saved_geom on every commit. set_maximized,

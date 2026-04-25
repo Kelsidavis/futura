@@ -109,8 +109,7 @@ static void aio_post_event(struct aio_context *ctx, uint64_t data, uint64_t obj,
     ctx->events[tail].data = data;
     ctx->events[tail].obj = obj;
     ctx->events[tail].res = res;
-    ctx->events[tail].res2 = 0;
-    (void)res2;
+    ctx->events[tail].res2 = res2;
     ctx->event_tail = next;
 }
 

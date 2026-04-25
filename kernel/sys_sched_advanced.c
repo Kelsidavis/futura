@@ -595,6 +595,37 @@ long sys_sched_setattr(int pid, const struct sched_attr *uattr, unsigned int fla
     if (attr.sched_flags & ~SCHED_ATTR_VALID_FLAGS)
         return -EINVAL;
 
+    /* Cross-task permission gate: only the target's owner, root, or
+     * CAP_SYS_NICE may modify another task's scheduler. Mirrors the
+     * gate already in sys_sched_setparam / sys_sched_setscheduler so
+     * sched_setattr can't be used as a cross-task escape hatch. */
+    if (target != current && current->uid != 0 && !HAS_CAP_SYS_NICE(current) &&
+        current->uid != target->uid)
+        return -EPERM;
+
+    /* RLIMIT_RTPRIO gate for unprivileged callers requesting RT. */
+    if (current->uid != 0 && !HAS_CAP_SYS_NICE(current) &&
+        (policy == SCHED_FIFO || policy == SCHED_RR)) {
+        uint64_t rtprio_limit = current->rlimits[14 /* RLIMIT_RTPRIO */].rlim_cur;
+        if ((uint64_t)prio > rtprio_limit)
+            return -EPERM;
+    }
+
+    /* Pre-clamp the requested nice so we can apply the RLIMIT_NICE
+     * floor before mutating any state. Linux: unprivileged callers may
+     * only lower nice down to (20 - RLIMIT_NICE.rlim_cur). */
+    int nice = (int)attr.sched_nice;
+    if (nice < -20) nice = -20;
+    if (nice >  19) nice =  19;
+    if (current->uid != 0 && !HAS_CAP_SYS_NICE(current)) {
+        int64_t lim = (int64_t)current->rlimits[13 /* RLIMIT_NICE */].rlim_cur;
+        if (lim < 0) lim = 0;
+        if (lim > 40) lim = 40;
+        int min_nice = 20 - (int)lim;
+        if (nice < min_nice)
+            return -EPERM;
+    }
+
     /* All validation passed; apply atomically */
 
     /* Apply to all threads of the task */
@@ -605,10 +636,7 @@ long sys_sched_setattr(int pid, const struct sched_attr *uattr, unsigned int fla
         thr = thr->next;
     }
 
-    /* Apply nice value (clamp to -20..19) */
-    int nice = (int)attr.sched_nice;
-    if (nice < -20) nice = -20;
-    if (nice >  19) nice =  19;
+    /* Apply nice value */
     target->nice = nice;
     target->sched_flags = attr.sched_flags;
 

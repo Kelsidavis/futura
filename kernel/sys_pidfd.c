@@ -272,6 +272,15 @@ long sys_pidfd_getfd(int pidfd, int targetfd, unsigned int flags) {
     if (!target)
         return -ESRCH;
 
+    /* PTRACE_MODE_ATTACH equivalent: same uid OR CAP_SYS_PTRACE.
+     * Without this check, any unprivileged caller could pidfd_open a
+     * root daemon and duplicate its open fds (e.g. /dev/mem, an
+     * authenticated socket, a raw block device) into its own fd table. */
+    if (cur->uid != 0 &&
+        !(cur->cap_effective & (1ULL << 19 /* CAP_SYS_PTRACE */)) &&
+        cur->uid != target->uid)
+        return -EPERM;
+
     /* Look up targetfd in the target task */
     if (!target->fd_table || targetfd >= target->max_fds)
         return -EBADF;

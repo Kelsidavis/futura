@@ -349,9 +349,22 @@ long sys_quotactl(unsigned int cmd, const char *special, int id, void *addr) {
             case Q_GETNEXTQUOTA: {
                 if (privileged) break;
                 /* Self-query allowed: USRQUOTA on own uid, GRPQUOTA on
-                 * own gid. Anything else needs the cap. */
+                 * own gid (effective OR supplementary). Anything else
+                 * needs CAP_SYS_ADMIN. */
                 bool self_uid = (qtype == USRQUOTA && (uint32_t)id == task->uid);
-                bool self_gid = (qtype == GRPQUOTA && (uint32_t)id == task->gid);
+                bool self_gid = false;
+                if (qtype == GRPQUOTA) {
+                    if ((uint32_t)id == task->gid) {
+                        self_gid = true;
+                    } else {
+                        for (int gi = 0; gi < task->ngroups; gi++) {
+                            if ((uint32_t)id == task->groups[gi]) {
+                                self_gid = true;
+                                break;
+                            }
+                        }
+                    }
+                }
                 if (!self_uid && !self_gid) {
                     fut_printf("[QUOTACTL] quotactl(cmd=0x%x, id=%d) -> EPERM "
                                "(cross-uid quota query requires CAP_SYS_ADMIN)\n", cmd, id);

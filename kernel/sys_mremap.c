@@ -172,6 +172,26 @@ long sys_mremap(void *old_address, size_t old_size, size_t new_size,
         return -EINVAL;
     }
 
+    /* MREMAP_FIXED address-space bounds: mirror sys_mmap MAP_FIXED guards.
+     * Without this, mremap(.., MREMAP_FIXED, 0xffff800000000000) would drive
+     * fut_mm_unmap / fut_mm_map_* into kernel-half VMAs. Reject low addresses
+     * (mmap_min_addr = 65536) and any range that exits the user half
+     * (TASK_SIZE_MAX = 1<<47), with overflow guard. */
+    if (flags & MREMAP_FIXED) {
+        const uintptr_t MMAP_MIN_ADDR = 65536;
+        const uintptr_t TASK_SIZE_MAX = (1ULL << 47);
+        uintptr_t fixed_start = (uintptr_t)new_address;
+        if (fixed_start != 0 && fixed_start < MMAP_MIN_ADDR) {
+            return -EPERM;
+        }
+        size_t fixed_len = (new_size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+        uintptr_t fixed_end;
+        if (__builtin_add_overflow(fixed_start, fixed_len, &fixed_end) ||
+            fixed_end > TASK_SIZE_MAX) {
+            return -EINVAL;
+        }
+    }
+
     /* Security hardening - Validate size + PAGE_SIZE won't overflow before alignment
      * Prevent integer wraparound attacks where huge size wraps to tiny aligned value.
      *

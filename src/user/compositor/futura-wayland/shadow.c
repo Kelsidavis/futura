@@ -30,16 +30,6 @@ static void shadow_init_lut(void) {
     shadow_lut_initialized = true;
 }
 
-static inline uint8_t clamp_u8(int value) {
-    if (value < 0) {
-        return 0;
-    }
-    if (value > 255) {
-        return 255;
-    }
-    return (uint8_t)value;
-}
-
 static inline void shadow_darken_pixel(uint32_t *pixel, uint8_t alpha) {
     if (!pixel || alpha == 0) {
         return;

@@ -361,7 +361,8 @@ static void seat_keyboard_enter(struct seat_state *seat, struct comp_surface *su
         wl_array_init(&empty);
         wl_keyboard_send_enter(client->keyboard_resource, serial, surface->surface_resource, &empty);
         wl_array_release(&empty);
-        wl_keyboard_send_modifiers(client->keyboard_resource, serial, 0, 0, 0, 0);
+        wl_keyboard_send_modifiers(client->keyboard_resource, serial,
+                                   compositor_mods_to_xkb(), 0, 0, 0);
         client->keyboard_entered = true;
     }
 }
@@ -1003,6 +1004,36 @@ static uint32_t compositor_mods = 0;
 #define COMP_MOD_SUPER (1u << 2)
 #define COMP_MOD_SHIFT (1u << 3)
 
+/* Translate compositor_mods bits into the XKB layout that
+ * wl_keyboard.modifiers expects:
+ *   bit 0 = Shift, bit 2 = Ctrl, bit 3 = Mod1 (Alt), bit 6 = Mod4 (Super).
+ * Without this, clients see all-zero mods and Ctrl/Alt/Shift detection
+ * (Ctrl+S in wl-edit, Ctrl+C in wl-term, etc.) silently fails. */
+static uint32_t compositor_mods_to_xkb(void) {
+    uint32_t m = 0;
+    if (compositor_mods & COMP_MOD_SHIFT) m |= (1u << 0);
+    if (compositor_mods & COMP_MOD_CTRL)  m |= (1u << 2);
+    if (compositor_mods & COMP_MOD_ALT)   m |= (1u << 3);
+    if (compositor_mods & COMP_MOD_SUPER) m |= (1u << 6);
+    return m;
+}
+
+/* Send the current modifier state to all clients with keyboard focus on
+ * the focused surface. Called whenever a modifier key transition happens. */
+static void seat_send_current_modifiers(struct seat_state *seat) {
+    if (!seat || !seat->keyboard_focus || !seat->keyboard_focus->surface_resource)
+        return;
+    struct wl_client *target = wl_resource_get_client(seat->keyboard_focus->surface_resource);
+    uint32_t serial = wl_display_next_serial(seat->comp->display);
+    uint32_t xkb = compositor_mods_to_xkb();
+    struct seat_client *client;
+    wl_list_for_each(client, &seat->clients, link) {
+        if (!client->keyboard_resource || !client->keyboard_entered) continue;
+        if (wl_resource_get_client(client->keyboard_resource) != target) continue;
+        wl_keyboard_send_modifiers(client->keyboard_resource, serial, xkb, 0, 0, 0);
+    }
+}
+
 /* Launch a new terminal instance */
 static void compositor_launch_terminal(void) {
     long pid = sys_fork_call();
@@ -1087,15 +1118,19 @@ static void seat_handle_key_event(struct seat_state *seat,
     }
 
     /* Track modifier keys */
+    bool mods_changed = false;
     if (keycode == 29 || keycode == 97) {  /* Left/Right Ctrl */
         if (pressed) compositor_mods |= COMP_MOD_CTRL;
         else compositor_mods &= ~COMP_MOD_CTRL;
+        mods_changed = true;
     }
     if (keycode == 56 || keycode == 100) {  /* Left/Right Alt */
         if (pressed) {
             compositor_mods |= COMP_MOD_ALT;
+            mods_changed = true;
         } else {
             compositor_mods &= ~COMP_MOD_ALT;
+            mods_changed = true;
             /* Alt released: commit alt-tab selection */
             if (seat->comp && seat->comp->alt_tab_active) {
                 seat->comp->alt_tab_active = false;
@@ -1120,10 +1155,15 @@ static void seat_handle_key_event(struct seat_state *seat,
     if (keycode == 125 || keycode == 126) {  /* Super/Meta */
         if (pressed) compositor_mods |= COMP_MOD_SUPER;
         else compositor_mods &= ~COMP_MOD_SUPER;
+        mods_changed = true;
     }
     if (keycode == 42 || keycode == 54) {  /* Left/Right Shift */
         if (pressed) compositor_mods |= COMP_MOD_SHIFT;
         else compositor_mods &= ~COMP_MOD_SHIFT;
+        mods_changed = true;
+    }
+    if (mods_changed) {
+        seat_send_current_modifiers(seat);
     }
 
     /* Compositor keybindings (consumed, not forwarded to clients) */
@@ -1523,7 +1563,8 @@ static void seat_get_keyboard(struct wl_client *client,
             wl_keyboard_send_enter(keyboard, serial,
                                    seat->keyboard_focus->surface_resource, &empty);
             wl_array_release(&empty);
-            wl_keyboard_send_modifiers(keyboard, serial, 0, 0, 0, 0);
+            wl_keyboard_send_modifiers(keyboard, serial,
+                                       compositor_mods_to_xkb(), 0, 0, 0);
             seat_client->keyboard_entered = true;
         }
     }

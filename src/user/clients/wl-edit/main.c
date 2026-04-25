@@ -417,8 +417,13 @@ static void redraw_all(struct client_state *state) {
         int cy = ED_PAD + (ed_cursor_row - ed_scroll_y) * FONT_HEIGHT;
         if (cx + 2 <= w && cy + FONT_HEIGHT <= h - ED_STATUS_H) {
             fill_rect(px, stride, cx, cy, 2, FONT_HEIGHT, COL_CURSOR);
-            /* Underline existing char */
-            fill_rect(px, stride, cx, cy + FONT_HEIGHT - 2, FONT_WIDTH, 2, COL_CURSOR);
+            /* Underline existing char — clamp to remaining row width so the
+             * underline doesn't write past the buffer when the cursor sits
+             * near the right edge. */
+            int ul_w = FONT_WIDTH;
+            if (cx + ul_w > w) ul_w = w - cx;
+            if (ul_w > 0)
+                fill_rect(px, stride, cx, cy + FONT_HEIGHT - 2, ul_w, 2, COL_CURSOR);
         }
     }
 

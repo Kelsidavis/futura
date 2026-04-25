@@ -669,11 +669,19 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
 
             case 62: /* SO_RCVTIMEO_NEW — Y2038-safe variant (struct __kernel_sock_timeval) */
             case 63: { /* SO_SNDTIMEO_NEW */
-                /* struct __kernel_sock_timeval { int64_t tv_sec; int64_t tv_usec; } — always 16 bytes */
+                /* struct __kernel_sock_timeval { int64_t tv_sec; int64_t tv_usec; } — always 16 bytes.
+                 * Same validation as SO_RCVTIMEO/SO_SNDTIMEO above: reject
+                 * negative or out-of-range values rather than letting the
+                 * cast-to-uint64 produce a near-infinite timeout. */
                 if (optlen < 16) return -EINVAL;
                 struct { int64_t tv_sec; int64_t tv_usec; } tv = {0, 0};
                 if (sso_copy_from_user(&tv, optval, sizeof(tv)) != 0) return -EFAULT;
-                uint64_t ms = (uint64_t)tv.tv_sec * 1000ULL +
+                if (tv.tv_sec < 0 || tv.tv_usec < 0 || tv.tv_usec >= 1000000)
+                    return -EINVAL;
+                uint64_t sec = (uint64_t)tv.tv_sec;
+                if (sec > (UINT64_MAX / 1000ULL) - 1ULL)
+                    sec = (UINT64_MAX / 1000ULL) - 1ULL;
+                uint64_t ms = sec * 1000ULL +
                               ((uint64_t)tv.tv_usec + 999ULL) / 1000ULL;
                 if (optname == 62)
                     socket->rcvtimeo_ms = ms;

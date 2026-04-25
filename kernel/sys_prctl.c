@@ -194,14 +194,23 @@ long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
         if (!name) {
             return -EFAULT;
         }
-        /* Copy up to 15 bytes from userspace (or kernel pointer) */
+        /* Copy up to 15 bytes from userspace. The previous code fell
+         * back to dereferencing 'name' directly when copy_from_user
+         * failed — but a copy_from_user failure means the user pointer
+         * is bad, so the fallback faults the kernel. Use the standard
+         * KERNEL_VIRTUAL_BASE bypass for genuine in-kernel callers and
+         * propagate -EFAULT otherwise. */
         char kname[16];
         memset(kname, 0, sizeof(kname));
-        if (fut_copy_from_user(kname, name, 15) != 0) {
-            /* If copy_from_user fails, try direct copy (kernel pointer) */
+#ifdef KERNEL_VIRTUAL_BASE
+        if ((uintptr_t)name >= KERNEL_VIRTUAL_BASE) {
             for (int i = 0; i < 15 && name[i]; i++) {
                 kname[i] = name[i];
             }
+        } else
+#endif
+        if (fut_copy_from_user(kname, name, 15) != 0) {
+            return -EFAULT;
         }
         kname[15] = '\0';
         /* Set per-thread name */
@@ -221,10 +230,18 @@ long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
         }
         fut_thread_t *cur_thread = fut_thread_current();
         const char *src = (cur_thread && cur_thread->comm[0]) ? cur_thread->comm : task->comm;
-        if (fut_copy_to_user(uname, src, 16) != 0) {
-            /* If copy_to_user fails, try direct copy (kernel pointer) */
+        /* Standard KERNEL_VIRTUAL_BASE bypass for in-kernel callers; the
+         * previous "memcpy fallback after copy_to_user failure" would
+         * dereference the same bad user pointer that just rejected the
+         * copy and fault the kernel. */
+#ifdef KERNEL_VIRTUAL_BASE
+        if ((uintptr_t)uname >= KERNEL_VIRTUAL_BASE) {
             memcpy(uname, src, 16);
+            return 0;
         }
+#endif
+        if (fut_copy_to_user(uname, src, 16) != 0)
+            return -EFAULT;
         return 0;
     }
 

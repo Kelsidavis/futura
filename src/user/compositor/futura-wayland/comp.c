@@ -5909,7 +5909,8 @@ void comp_start_resize(struct compositor_state *comp,
     if (!comp || !surface || edge == RSZ_NONE) {
         return;
     }
-    if (!comp->resize_enabled || surface->maximized || !surface->has_backing) {
+    if (!comp->resize_enabled || surface->maximized || surface->fullscreen ||
+        !surface->has_backing) {
         return;
     }
     if (comp->resize_surface && comp->resize_surface != surface) {
@@ -6335,7 +6336,7 @@ hit_role_t comp_hit_test(struct compositor_state *comp,
         }
     }
 
-    if (comp->resize_enabled && !surface->maximized) {
+    if (comp->resize_enabled && !surface->maximized && !surface->fullscreen) {
         fut_rect_t window_rect = comp_window_rect(surface);
         if (window_rect.w > 0 && window_rect.h > 0 &&
             rect_contains(&window_rect, px, py)) {

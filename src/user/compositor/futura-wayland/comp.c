@@ -1274,6 +1274,13 @@ void comp_surface_destroy(struct comp_surface *surface) {
         if (comp->drag_surface == surface) {
             comp->drag_surface = NULL;
             comp->dragging = false;
+            /* Clear any in-flight snap preview — without this, destroying
+             * a window mid-drag (e.g. the client crashed) left the
+             * blue snap rect painted on the desktop. */
+            if (comp->snap_preview_active) {
+                comp_damage_add_rect(comp, comp->snap_preview_rect);
+                comp->snap_preview_active = false;
+            }
         }
         if (comp->resize_surface == surface) {
             comp->resize_surface = NULL;

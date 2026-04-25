@@ -160,13 +160,13 @@ long sys_stat(const char *path, struct fut_stat *statbuf) {
         return -EINVAL;
     }
 
-    /* Early buffer writability test before expensive VFS operation
-     * Test if we can write to statbuf before calling fut_vfs_stat(), which
-     * requires path lookup and inode access. This optimization fails fast if
-     * the buffer is in inaccessible memory. Use actual write test with first byte. */
-    char test_byte;
-    if (stat_copy_from_user(&test_byte, (const char *)local_statbuf, 1) != 0 ||
-        stat_copy_to_user((char *)local_statbuf, &test_byte, 1) != 0) {
+    /* Early buffer writability test before expensive VFS operation.
+     * The previous read-byte-then-write-it-back probe was racy: if a
+     * concurrent thread modifies statbuf between probe and the real
+     * copy_to_user, the probe's write-back clobbers their value with
+     * the stale pre-modification byte. fut_access_ok inspects page
+     * permissions without touching the buffer contents. */
+    if (fut_access_ok(local_statbuf, sizeof(struct fut_stat), 1) != 0) {
         fut_printf("[STAT] stat(path='%s' [%s, len=%lu], statbuf=%p) -> EFAULT "
                    "(buffer not accessible)\n",
                    path_buf, path_type, (unsigned long)path_len, (void *)local_statbuf);

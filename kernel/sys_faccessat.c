@@ -215,7 +215,11 @@ long sys_faccessat(int dirfd, const char *pathname, int mode, int flags) {
         uint32_t perm_bits;
 
         if (check_uid == 0) {
-            if ((local_mode & X_OK) && !(file_mode & 0111))
+            /* Root override: full DAC bypass except X_OK on a regular file
+             * still needs at least one execute bit (Linux CAP_DAC_OVERRIDE).
+             * Directories always grant search to root regardless of mode. */
+            if ((local_mode & X_OK) && vnode->type == VN_REG &&
+                !(file_mode & 0111))
                 return -EACCES;
             return 0;
         } else if (check_uid == vnode->uid) {
@@ -416,13 +420,13 @@ long sys_faccessat(int dirfd, const char *pathname, int mode, int flags) {
         uint32_t perm_bits;
 
         if (check_uid == 0) {
-            /* Root can access anything for R_OK and W_OK
-             * For X_OK, at least one execute bit must be set */
-            if (local_mode & X_OK) {
-                if (!(file_mode & 0111)) {
-                    ret = -EACCES;
-                    goto handle_error;
-                }
+            /* Root override: X_OK on a regular file still requires at least
+             * one execute bit. Directories grant search unconditionally. */
+            if ((local_mode & X_OK) &&
+                ((st.st_mode & 0170000) == 0100000 /* S_IFREG */) &&
+                !(file_mode & 0111)) {
+                ret = -EACCES;
+                goto handle_error;
             }
             ret = 0;
             goto success;
@@ -488,7 +492,10 @@ long sys_faccessat(int dirfd, const char *pathname, int mode, int flags) {
         uint32_t perm_bits;
 
         if (check_uid == 0) {
-            if ((local_mode & X_OK) && !(file_mode & 0111)) {
+            /* Root override: see notes above — directories always pass X_OK. */
+            if ((local_mode & X_OK) &&
+                ((st.st_mode & 0170000) == 0100000 /* S_IFREG */) &&
+                !(file_mode & 0111)) {
                 ret = -EACCES;
                 goto handle_error;
             }

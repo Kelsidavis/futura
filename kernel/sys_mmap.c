@@ -74,6 +74,21 @@ long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset) 
                        "(below mmap_min_addr %lu)\n", addr, MMAP_MIN_ADDR);
             return -EPERM;
         }
+        /* Upper bound: MAP_FIXED must land entirely within the user half of
+         * the address space. Without this, userspace can request a mapping
+         * that overlaps the kernel half (e.g. addr = 0xffff800000000000),
+         * driving fut_mm_map_anonymous into kernel-owned VMAs. Match Linux's
+         * TASK_SIZE_MAX = 1<<47 ceiling and check addr+len with overflow
+         * guard. */
+        const uintptr_t TASK_SIZE_MAX = (1ULL << 47);
+        uintptr_t fixed_start = (uintptr_t)addr;
+        uintptr_t fixed_end;
+        if (__builtin_add_overflow(fixed_start, len, &fixed_end) ||
+            fixed_end > TASK_SIZE_MAX) {
+            fut_printf("[MMAP] mmap(addr=%p, len=%zu, MAP_FIXED) -> EINVAL "
+                       "(range exits user address space)\n", addr, len);
+            return -EINVAL;
+        }
     }
 
     /* Validate length is within reasonable bounds before overflow arithmetic

@@ -48,6 +48,16 @@ static inline int keyring_copy_from_user(void *dst, const void *src, size_t n) {
     return fut_copy_from_user(dst, src, n);
 }
 
+static inline int keyring_copy_to_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) {
+        __builtin_memcpy(dst, src, n);
+        return 0;
+    }
+#endif
+    return fut_copy_to_user(dst, src, n);
+}
+
 /* ── Keyctl operations (Linux ABI) ── */
 #define KEYCTL_GET_KEYRING_ID         0
 #define KEYCTL_JOIN_SESSION_KEYRING   1
@@ -506,12 +516,32 @@ long sys_keyctl(int operation, unsigned long arg2, unsigned long arg3,
         if (!k) return -ENOKEY;
         if (k->revoked) return -EKEYREVOKED;
 
+        /* Linux: "logon" keys are write-only — even the owner cannot
+         * read the payload back. */
+        if (!k->is_keyring && strcmp(k->type, "logon") == 0)
+            return -EOPNOTSUPP;
+
+        /* Read permission required: owner or CAP_SYS_ADMIN. Without
+         * this gate any process could enumerate every key on the
+         * system and dump credentials/cred-cache contents by serial. */
+        {
+            fut_task_t *cur = fut_task_current();
+            if (cur && cur->uid != 0 && cur->uid != k->uid &&
+                !(cur->cap_effective & (1ULL << 21 /* CAP_SYS_ADMIN */)))
+                return -EACCES;
+        }
+
         if (k->is_keyring) {
             /* Reading a keyring returns the child serial numbers */
             size_t needed = k->nr_children * sizeof(int32_t);
             if (buf && buflen > 0) {
                 size_t copy = needed < buflen ? needed : buflen;
-                memcpy(buf, k->children, copy);
+                /* copy_to_user gates the kernel-pointer bypass to
+                 * self-tests; raw memcpy let a user point buf at any
+                 * kernel address and have the child serials written
+                 * there as a write-anywhere primitive. */
+                if (keyring_copy_to_user(buf, k->children, copy) != 0)
+                    return -EFAULT;
             }
             return (long)needed;
         }
@@ -519,7 +549,8 @@ long sys_keyctl(int operation, unsigned long arg2, unsigned long arg3,
         /* Regular key — return payload */
         if (buf && buflen > 0) {
             size_t copy = k->payload_len < buflen ? k->payload_len : buflen;
-            memcpy(buf, k->payload, copy);
+            if (keyring_copy_to_user(buf, k->payload, copy) != 0)
+                return -EFAULT;
         }
         return (long)k->payload_len;
     }

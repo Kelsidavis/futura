@@ -464,6 +464,17 @@ static void xdg_surface_issue_configure(struct xdg_surface_state *state,
         }
     }
 
+    /* Tell focused clients they're activated so GTK/Qt and similar
+     * toolkits paint focused decorations (and drive cursor-blink in
+     * text inputs). Without this every window draws as unfocused. */
+    if (state->surface && state->comp &&
+        state->comp->focused_surface == state->surface) {
+        uint32_t *entry = wl_array_add(&states, sizeof(uint32_t));
+        if (entry) {
+            *entry = 4 /* XDG_TOPLEVEL_STATE_ACTIVATED */;
+        }
+    }
+
     xdg_toplevel_send_configure(state->xdg_toplevel_res, width, height, &states);
     wl_array_release(&states);
     xdg_surface_send_configure(state->xdg_surface_res, serial);

@@ -12,6 +12,12 @@
 #include <kernel/fut_timer.h>
 #include <kernel/uaccess.h>
 #include <kernel/errno.h>
+#include <platform/platform.h>  /* KERNEL_VIRTUAL_BASE for the kernel-pointer
+                                 * bypass in fut_signal_procmask. Without this
+                                 * the #ifdef KERNEL_VIRTUAL_BASE blocks compile
+                                 * out and any kernel-side caller passing a
+                                 * kernel-stack &set/&oldset gets -EFAULT from
+                                 * copy_*_user. */
 #include <string.h>
 #include <stddef.h>
 

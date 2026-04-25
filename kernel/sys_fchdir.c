@@ -156,8 +156,12 @@ long sys_fchdir(int fd) {
     /* Phase 2: Categorize fd for enhanced error reporting - use shared helper */
     const char *fd_category = fut_fd_category(fd);
 
-    /* Phase 3: Validate fd is within valid range */
-    if (fd >= task->max_fds || fd >= 1024) {
+    /* Phase 3: Validate fd is within the task's actual fd_table range.
+     * The previous '|| fd >= 1024' clause was a stale hard cap that
+     * predated configurable max_fds; tasks with raised RLIMIT_NOFILE
+     * (open()/dup() honor max_fds) saw fchdir spuriously fail with
+     * EBADF on legitimately open directory descriptors. */
+    if (fd >= task->max_fds) {
         fut_printf("[FCHDIR] fchdir(fd=%d [%s], pid=%d) -> EBADF "
                    "(fd out of range, max_fds=%d)\n",
                    fd, fd_category, task->pid, task->max_fds);

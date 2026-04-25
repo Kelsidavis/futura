@@ -830,9 +830,14 @@ static void seat_handle_button(struct seat_state *seat,
                 int32_t fh = (int32_t)seat->comp->fb_info.height;
                 if (sf->maximized) comp_surface_set_maximized(sf, false);
                 if (sf->fullscreen) comp_surface_set_fullscreen(sf, false);
-                sf->saved_x = sf->x; sf->saved_y = sf->y;
-                sf->saved_w = sf->width; sf->saved_h = sf->height;
-                sf->have_saved_geom = true;
+                /* Same shape as the Super+Left/Right fix: only capture the
+                 * pre-tile geometry once, so tile-left → tile-right doesn't
+                 * overwrite the original rect with a tiled one. */
+                if (!sf->have_saved_geom) {
+                    sf->saved_x = sf->x; sf->saved_y = sf->y;
+                    sf->saved_w = sf->width; sf->saved_h = sf->height;
+                    sf->have_saved_geom = true;
+                }
                 int32_t tile_y = 24 /* MENUBAR_HEIGHT */;
                 int32_t tile_h = fh - 24 - 48;
                 int32_t tile_w = fw / 2;

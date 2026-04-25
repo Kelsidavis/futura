@@ -127,6 +127,22 @@ long sys_clone3(const struct fut_clone_args *uargs, size_t size) {
 
     uint64_t flags = args.flags;
 
+    /* Reject kernel-half pointers from userspace for the tid/pidfd
+     * fields. The fork/clone path does direct unchecked stores to
+     * these addresses for CLONE_PARENT_SETTID / CLONE_CHILD_SETTID,
+     * and stashes child_tid into the new task's clear_child_tid for
+     * CLONE_CHILD_CLEARTID. Without these checks any unprivileged
+     * process can request the kernel to write the child TID (or 0
+     * at exit) to an arbitrary kernel address — same write-anywhere
+     * class as the set_tid_address fix. NULL is permitted as the
+     * 'no address' sentinel. */
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((args.parent_tid && args.parent_tid >= KERNEL_VIRTUAL_BASE) ||
+        (args.child_tid  && args.child_tid  >= KERNEL_VIRTUAL_BASE) ||
+        (args.pidfd      && args.pidfd      >= KERNEL_VIRTUAL_BASE))
+        return -EFAULT;
+#endif
+
     /* Namespace flags: apply namespace isolation to the child process.
      * The child will be placed in new namespaces via unshare-style logic.
      *

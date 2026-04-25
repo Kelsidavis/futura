@@ -1916,6 +1916,18 @@ long sys_clone_thread(uint64_t flags, uint64_t child_stack,
     if (!child_stack)
         return -EINVAL;
 
+    /* Reject kernel-half pointers for parent_tid / child_tid. The
+     * CLONE_*_SETTID / CLONE_CHILD_CLEARTID paths below do direct
+     * stores to these addresses (with a KERNEL_VIRTUAL_BASE bypass
+     * for self-tests); without this gate any unprivileged caller
+     * could request the kernel to write the child TID — or zero at
+     * exit — to an arbitrary kernel address. */
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((parent_tid_ptr && parent_tid_ptr >= KERNEL_VIRTUAL_BASE) ||
+        (child_tid_ptr  && child_tid_ptr  >= KERNEL_VIRTUAL_BASE))
+        return -EFAULT;
+#endif
+
     /* Snapshot the interrupt frame before any potential context switches */
     fut_interrupt_frame_t *saved_frame = fut_current_frame;
     if (!saved_frame)

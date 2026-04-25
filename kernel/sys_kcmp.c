@@ -20,6 +20,7 @@
 #include <kernel/kprintf.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 /* kcmp types */
 #define KCMP_FILE      0
@@ -53,6 +54,22 @@ long sys_kcmp(int pid1, int pid2, int type,
     fut_task_t *task2 = fut_task_by_pid((uint64_t)pid2);
     if (!task1 || !task2)
         return -ESRCH;
+
+    /* PTRACE_MODE_READ_REALCREDS on both targets, matching Linux.
+     * Without this gate any unprivileged caller could probe whether
+     * two arbitrary processes share fd tables, file objects, or
+     * VM/IO/sighand objects — useful sandbox-escape recon (e.g.
+     * detecting that a privileged daemon shares a file with the
+     * caller's helper). */
+    fut_task_t *self = fut_task_current();
+    if (self) {
+        bool privileged = (self->uid == 0) ||
+            (self->cap_effective & (1ULL << 19 /* CAP_SYS_PTRACE */));
+        if (!privileged) {
+            if (self->uid != task1->uid || self->uid != task2->uid)
+                return -EPERM;
+        }
+    }
 
     switch (type) {
     case KCMP_FILE: {

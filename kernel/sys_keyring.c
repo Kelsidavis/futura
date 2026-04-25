@@ -549,6 +549,13 @@ long sys_keyctl(int operation, unsigned long arg2, unsigned long arg3,
         int32_t serial = (int32_t)(long)arg2;
         struct kernel_key *k = key_find_serial(serial);
         if (!k) return -ENOKEY;
+        /* Linux: only the key owner or CAP_SYS_ADMIN may revoke. */
+        {
+            fut_task_t *cur = fut_task_current();
+            if (cur && cur->uid != 0 && cur->uid != k->uid &&
+                !(cur->cap_effective & (1ULL << 21 /* CAP_SYS_ADMIN */)))
+                return -EACCES;
+        }
         k->revoked = true;
         return 0;
     }
@@ -674,6 +681,15 @@ long sys_keyctl(int operation, unsigned long arg2, unsigned long arg3,
         int32_t serial = (int32_t)(long)arg2;
         struct kernel_key *k = key_find_serial(serial);
         if (!k) return -ENOKEY;
+        /* Linux: invalidate requires SEARCH permission on the key, which
+         * the key owner and CAP_SYS_ADMIN always have. Without any check
+         * any unprivileged caller could destroy any key by serial. */
+        {
+            fut_task_t *cur = fut_task_current();
+            if (cur && cur->uid != 0 && cur->uid != k->uid &&
+                !(cur->cap_effective & (1ULL << 21 /* CAP_SYS_ADMIN */)))
+                return -EACCES;
+        }
         k->active = false;
         return 0;
     }

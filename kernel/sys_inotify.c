@@ -477,9 +477,12 @@ long sys_inotify_init1(int flags) {
     fut_waitq_init(&inst->read_waitq);
     inst->next_wd = 1;
 
-    /* Phase 4: Register this instance for VFS event dispatch */
-    inotify_registry_add(inst);
-
+    /* Allocate the fd FIRST so a failure doesn't leave a dangling
+     * pointer in the inotify registry. The previous order was
+     * registry_add, then chrdev_alloc_fd; on alloc failure the code
+     * fut_free()d 'inst' without removing it from the registry,
+     * leaving a use-after-free time bomb that the next VFS event
+     * dispatch could trip. */
     int fd = chrdev_alloc_fd(&inotify_fops, NULL, inst);
     if (fd < 0) {
         fut_free(inst);
@@ -487,6 +490,9 @@ long sys_inotify_init1(int flags) {
                    flags, task->pid, fd);
         return fd;
     }
+
+    /* Phase 4: Register this instance for VFS event dispatch */
+    inotify_registry_add(inst);
 
     /* Store back-pointer and set O_NONBLOCK/O_CLOEXEC on the file */
     if (task->fd_table && fd < task->max_fds && task->fd_table[fd]) {

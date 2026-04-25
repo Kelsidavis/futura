@@ -218,11 +218,36 @@ long sys_io_submit(unsigned long ctx_id, long nr, void **iocbpp) {
     if (!ctx->active)
         return -EINVAL;
 
+    /* Stage iocbpp[i] and *iocb through copy_from_user instead of
+     * dereferencing the user pointer arrays directly. The previous
+     * code did
+     *     struct linux_iocb *iocb = (struct linux_iocb *)iocbpp[i];
+     *     ... iocb->aio_lio_opcode / iocb->aio_buf ...
+     * which faulted the kernel for a bad user pointer and let a
+     * caller passing kernel addresses read kernel memory through the
+     * iocb fields. */
     long submitted = 0;
     for (long i = 0; i < nr; i++) {
-        struct linux_iocb *iocb = (struct linux_iocb *)iocbpp[i];
-        if (!iocb)
+        void *iocb_uptr = NULL;
+#ifdef KERNEL_VIRTUAL_BASE
+        if ((uintptr_t)&iocbpp[i] >= KERNEL_VIRTUAL_BASE) {
+            iocb_uptr = iocbpp[i];
+        } else
+#endif
+        if (fut_copy_from_user(&iocb_uptr, &iocbpp[i], sizeof(iocb_uptr)) != 0)
             break;
+        if (!iocb_uptr)
+            break;
+
+        struct linux_iocb iocb_copy;
+#ifdef KERNEL_VIRTUAL_BASE
+        if ((uintptr_t)iocb_uptr >= KERNEL_VIRTUAL_BASE) {
+            __builtin_memcpy(&iocb_copy, iocb_uptr, sizeof(iocb_copy));
+        } else
+#endif
+        if (fut_copy_from_user(&iocb_copy, iocb_uptr, sizeof(iocb_copy)) != 0)
+            break;
+        const struct linux_iocb *iocb = &iocb_copy;
 
         int64_t result = 0;
 
@@ -255,16 +280,33 @@ long sys_io_submit(unsigned long ctx_id, long nr, void **iocbpp) {
 
         case IOCB_CMD_PREADV:
         case IOCB_CMD_PWRITEV: {
-            /* Vectored I/O: aio_buf = iovec array, aio_nbytes = iovec count */
-            struct { uint64_t iov_base; uint64_t iov_len; } *iovs =
-                (void *)(uintptr_t)iocb->aio_buf;
+            /* Vectored I/O: aio_buf = iovec array, aio_nbytes = iovec count.
+             * Stage each iovec entry through copy_from_user so a kernel-
+             * pointer aio_buf or a bad user iovec page can't fault the
+             * kernel or leak kernel data. */
+            struct linux_iovec { uint64_t iov_base; uint64_t iov_len; };
+            struct linux_iovec *iovs_uptr =
+                (struct linux_iovec *)(uintptr_t)iocb->aio_buf;
             uint64_t nr_vecs = iocb->aio_nbytes;
-            if (!iovs || nr_vecs == 0) { result = -EINVAL; break; }
+            if (!iovs_uptr || nr_vecs == 0) { result = -EINVAL; break; }
+            /* Cap iovec count to a sane bound (UIO_MAXIOV). */
+            if (nr_vecs > 1024) { result = -EINVAL; break; }
 
             int64_t total = 0;
             for (uint64_t v = 0; v < nr_vecs; v++) {
-                void *base = (void *)(uintptr_t)iovs[v].iov_base;
-                size_t ilen = (size_t)iovs[v].iov_len;
+                struct linux_iovec iov_copy;
+#ifdef KERNEL_VIRTUAL_BASE
+                if ((uintptr_t)&iovs_uptr[v] >= KERNEL_VIRTUAL_BASE) {
+                    __builtin_memcpy(&iov_copy, &iovs_uptr[v], sizeof(iov_copy));
+                } else
+#endif
+                if (fut_copy_from_user(&iov_copy, &iovs_uptr[v],
+                                       sizeof(iov_copy)) != 0) {
+                    if (total == 0) total = -EFAULT;
+                    break;
+                }
+                void *base = (void *)(uintptr_t)iov_copy.iov_base;
+                size_t ilen = (size_t)iov_copy.iov_len;
                 long r;
                 if (iocb->aio_lio_opcode == IOCB_CMD_PREADV)
                     r = sys_pread64(iocb->aio_fildes, base, ilen,
@@ -285,8 +327,9 @@ long sys_io_submit(unsigned long ctx_id, long nr, void **iocbpp) {
             break;
         }
 
-        /* Post completion event */
-        aio_post_event(ctx, iocb->aio_data, (uint64_t)(uintptr_t)iocb,
+        /* Post completion event — use the user-space iocb pointer (not
+         * the kernel-side copy address) for the obj field. */
+        aio_post_event(ctx, iocb->aio_data, (uint64_t)(uintptr_t)iocb_uptr,
                        result, 0);
         submitted++;
     }

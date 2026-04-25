@@ -157,6 +157,29 @@ static struct {
 } g_swap_areas[MAX_SWAP_AREAS];
 static int g_swap_count = 0;
 
+/* Stage a user-supplied path into a kernel buffer. The previous code
+ * dereferenced path[i] / path[j] directly: a kernel-half pointer turned
+ * the loop into a kernel-memory read primitive, and an unmapped user
+ * pointer page-faulted the kernel. Use the standard uaccess helper with
+ * the KERNEL_VIRTUAL_BASE bypass for in-kernel test callers. */
+static int swap_copy_path(char *dst, const char *src, size_t n) {
+    extern int fut_copy_from_user(void *dst, const void *src, size_t n);
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) {
+        for (size_t i = 0; i < n; i++) {
+            dst[i] = src[i];
+            if (!src[i]) return 0;
+        }
+        dst[n - 1] = '\0';
+        return 0;
+    }
+#endif
+    if (fut_copy_from_user(dst, src, n) != 0)
+        return -1;
+    dst[n - 1] = '\0';
+    return 0;
+}
+
 long sys_swapon(const char *path, int swapflags) {
     if (!path) return -EINVAL;
 
@@ -166,15 +189,23 @@ long sys_swapon(const char *path, int swapflags) {
     if (task && task->uid != 0)
         return -EPERM;
 
-    /* Check for duplicate */
+    /* Stage the path into a kernel buffer before any further use. */
+    char kpath[128];
+    if (swap_copy_path(kpath, path, sizeof(kpath)) != 0)
+        return -EFAULT;
+
+    /* Check for duplicate using strcmp semantics (length must match too:
+     * the previous loop terminated as soon as either side hit NUL, so
+     * 'foo' would match a registered 'foobar' and incorrectly EBUSY). */
     for (int i = 0; i < g_swap_count; i++) {
-        if (g_swap_areas[i].active) {
-            int match = 1;
-            for (int j = 0; path[j] && g_swap_areas[i].path[j]; j++) {
-                if (path[j] != g_swap_areas[i].path[j]) { match = 0; break; }
-            }
-            if (match) return -EBUSY;
+        if (!g_swap_areas[i].active) continue;
+        int match = 1;
+        int j = 0;
+        for (; j < (int)sizeof(kpath); j++) {
+            if (kpath[j] != g_swap_areas[i].path[j]) { match = 0; break; }
+            if (kpath[j] == '\0') break;
         }
+        if (match) return -EBUSY;
     }
 
     if (g_swap_count >= MAX_SWAP_AREAS) return -ENOMEM;
@@ -184,7 +215,7 @@ long sys_swapon(const char *path, int swapflags) {
     g_swap_areas[slot].active = 1;
     g_swap_areas[slot].priority = swapflags & 0x7FFF; /* SWAP_FLAG_PRIO_MASK */
     int pl = 0;
-    while (path[pl] && pl < 127) { g_swap_areas[slot].path[pl] = path[pl]; pl++; }
+    while (kpath[pl] && pl < 127) { g_swap_areas[slot].path[pl] = kpath[pl]; pl++; }
     g_swap_areas[slot].path[pl] = '\0';
 
     extern void fut_printf(const char *, ...);
@@ -204,11 +235,17 @@ long sys_swapoff(const char *path) {
     if (task && task->uid != 0)
         return -EPERM;
 
+    char kpath[128];
+    if (swap_copy_path(kpath, path, sizeof(kpath)) != 0)
+        return -EFAULT;
+
     for (int i = 0; i < g_swap_count; i++) {
         if (!g_swap_areas[i].active) continue;
         int match = 1;
-        for (int j = 0; path[j] && g_swap_areas[i].path[j]; j++) {
-            if (path[j] != g_swap_areas[i].path[j]) { match = 0; break; }
+        int j = 0;
+        for (; j < (int)sizeof(kpath); j++) {
+            if (kpath[j] != g_swap_areas[i].path[j]) { match = 0; break; }
+            if (kpath[j] == '\0') break;
         }
         if (match) {
             g_swap_areas[i].active = 0;

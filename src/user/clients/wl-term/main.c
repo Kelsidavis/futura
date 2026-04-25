@@ -358,8 +358,20 @@ static void process_key(struct client_state *state, uint32_t key) {
         if (key == 43) { term_send_key(&state->term, 0x1C); state->needs_redraw = true; return; }  /* \ */
     }
 
-    /* Tab key */
-    if (key == 15) { term_send_key(&state->term, '\t'); state->needs_redraw = true; return; }
+    /* Tab key — Shift+Tab sends the back-tab sequence ESC[Z that
+     * readline / less / fzf / emacs use for reverse completion. Plain
+     * Tab still sends a literal '\t'. */
+    if (key == 15) {
+        if (shift) {
+            term_send_key(&state->term, '\033');
+            term_send_key(&state->term, '[');
+            term_send_key(&state->term, 'Z');
+        } else {
+            term_send_key(&state->term, '\t');
+        }
+        state->needs_redraw = true;
+        return;
+    }
     /* Backspace */
     if (key == 14) { term_send_key(&state->term, 0x7F); state->needs_redraw = true; return; }
     /* Escape */

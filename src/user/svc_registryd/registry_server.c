@@ -282,13 +282,16 @@ bool registryd_poll_once(struct registryd *rd, uint32_t timeout_ms) {
 
     char name[64] = {0};
     size_t nlen = ntohs(h.name_len);
+    if (nlen >= sizeof(name)) {
+        respond_error(rd->sock, &src, slen, SRG_ERR_MALFORMED);
+        return true;
+    }
     if (nlen > 0) {
         if ((size_t)n < sizeof(h) + nlen) {
             return true;
         }
-        size_t copy_len = nlen < sizeof(name) - 1 ? nlen : sizeof(name) - 1;
-        memcpy(name, buffer + sizeof(h), copy_len);
-        name[copy_len] = '\0';
+        memcpy(name, buffer + sizeof(h), nlen);
+        name[nlen] = '\0';
     }
 
     size_t auth_offset = sizeof(h) + nlen;

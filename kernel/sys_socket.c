@@ -249,11 +249,16 @@ long sys_socket(int domain, int type, int protocol) {
         return -EINVAL;
     }
 
-    /* SOCK_RAW (and AF_NETLINK SOCK_RAW) lets a process see/inject raw
-     * IP packets — Linux gates this behind CAP_NET_RAW. Without this
-     * check any unprivileged caller could open an ICMP listener,
-     * forge IP source addresses, or sniff network traffic. */
-    if (base_type == SOCK_RAW && task->uid != 0 &&
+    /* SOCK_RAW on AF_INET/AF_INET6 lets a process see/inject raw IP
+     * packets — Linux gates this behind CAP_NET_RAW. AF_NETLINK
+     * SOCK_RAW is the standard netlink mode (libnl, ip(8), and most
+     * tools open netlink sockets this way) and is not privileged on
+     * Linux. AF_UNIX/etc don't allow SOCK_RAW; if they ever do, the
+     * IP-style cap gate would still apply incorrectly to them, so
+     * keep the check tight to the IP families. */
+    if (base_type == SOCK_RAW &&
+        (local_domain == AF_INET || local_domain == AF_INET6) &&
+        task->uid != 0 &&
         !(task->cap_effective & (1ULL << 13 /* CAP_NET_RAW */))) {
         return -EPERM;
     }

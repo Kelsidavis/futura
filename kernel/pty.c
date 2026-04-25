@@ -429,6 +429,22 @@ static int ptmx_ioctl(void *inode, void *priv, unsigned long req, unsigned long 
         return 0;
     }
     case 0x5412: { /* TIOCSTI - inject byte into input queue */
+        /* TIOCSTI is a classic privilege-escalation vector: a process
+         * that can write to another process's tty (e.g. an attacker who
+         * gains the same uid as a sudo session) can use it to fake
+         * user keystrokes. Linux requires CAP_SYS_ADMIN here since the
+         * 2017 fix for CVE-2017-2636. Allow the caller's own controlling
+         * tty without the cap, but require CAP_SYS_ADMIN to inject into
+         * any other tty. */
+        {
+            fut_task_t *cur = fut_task_current();
+            uint32_t my_tty = (136u << 8) | (uint32_t)p->index;
+            bool same_ctty = cur && cur->tty_nr == my_tty;
+            bool has_admin = cur &&
+                (cur->cap_effective & (1ULL << 21 /* CAP_SYS_ADMIN */));
+            if (!same_ctty && !has_admin)
+                return -EPERM;
+        }
         uint8_t byte = 0;
         if ((uintptr_t)arg >= 0xFFFF800000000000ULL)
             byte = *(const uint8_t *)(uintptr_t)arg;

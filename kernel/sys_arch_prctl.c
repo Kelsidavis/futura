@@ -86,13 +86,15 @@ long sys_arch_prctl(int code, unsigned long addr) {
 
     switch (code) {
     case ARCH_SET_FS:
-        /* Set FS base — used for TLS by libc.
-         * Write MSR/register BEFORE updating the struct field.
-         * The x86_64 scheduler reads rdmsr(MSR_FS_BASE) and stores it back to
-         * thread->fs_base on every context switch. If a timer fires between
-         * the struct write and the MSR write, the scheduler reads the old MSR
-         * value and overwrites thread->fs_base with it, losing the new value.
-         * By writing the MSR first, the scheduler always sees the new value. */
+        /* Reject non-canonical / kernel-half FS bases before touching the MSR.
+         * On x86_64 with FSGSBASE enabled, wrmsr(MSR_FS_BASE, non_canonical)
+         * raises #GP and aborts the syscall in kernel mode — an unprivileged
+         * DoS primitive. Linux clamps to TASK_SIZE_MAX (~ (1<<47)-PAGE_SIZE);
+         * we apply the same upper bound. ARM64's TPIDR_EL0 takes any 64-bit
+         * value, but limiting it to user-space matches Linux's contract that
+         * a TLS pointer must address user memory. */
+        if (addr >= (1ULL << 47))
+            return -EPERM;
 #ifdef __x86_64__
         wrmsr(MSR_FS_BASE, addr);
 #elif defined(__aarch64__)
@@ -109,10 +111,12 @@ long sys_arch_prctl(int code, unsigned long addr) {
     }
 
     case ARCH_SET_GS:
-        /* Store in thread struct only — do NOT write MSR_GS_BASE because
-         * Futura uses GS for per-CPU data (no SWAPGS implemented).
-         * User-mode GS accesses won't use this base, but the value is
-         * preserved for ARCH_GET_GS and potential future SWAPGS support. */
+        /* Same canonical/user-space guard as ARCH_SET_FS: even though Futura
+         * does not currently write MSR_GS_BASE here, a future SWAPGS path
+         * would, and stashing a kernel-half value would let the eventual
+         * wrmsr trap. Reject non-canonical values up-front. */
+        if (addr >= (1ULL << 47))
+            return -EPERM;
         if (thread)
             thread->gs_base = addr;
         return 0;

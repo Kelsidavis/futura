@@ -426,11 +426,25 @@ void seat_focus_surface(struct seat_state *seat, struct comp_surface *surface) {
         return;
     }
 
+    /* Damage the focused-window halo (FOCUS_GLOW=6 in comp.c) plus a few
+     * extra pixels for the shadow region. Both the OLD and NEW focused
+     * window need this — without it the previously-focused window keeps
+     * its blue glow ring after focus moved on. */
+    #define FOCUS_HALO_PAD 12
     struct comp_surface *previous = seat->keyboard_focus;
     if (previous) {
         comp_surface_update_decorations(previous);
         if (previous->bar_height > 0) {
             comp_damage_add_rect(seat->comp, comp_bar_rect(previous));
+        }
+        if (previous->has_backing) {
+            fut_rect_t halo = {
+                previous->x - FOCUS_HALO_PAD,
+                previous->y - FOCUS_HALO_PAD,
+                previous->width + 2 * FOCUS_HALO_PAD,
+                previous->height + 2 * FOCUS_HALO_PAD,
+            };
+            comp_damage_add_rect(seat->comp, halo);
             comp_surface_mark_damage(previous);
         }
         seat_keyboard_leave(seat, previous);
@@ -445,12 +459,22 @@ void seat_focus_surface(struct seat_state *seat, struct comp_surface *surface) {
         comp_surface_update_decorations(surface);
         if (surface->bar_height > 0) {
             comp_damage_add_rect(seat->comp, comp_bar_rect(surface));
+        }
+        if (surface->has_backing) {
+            fut_rect_t halo = {
+                surface->x - FOCUS_HALO_PAD,
+                surface->y - FOCUS_HALO_PAD,
+                surface->width + 2 * FOCUS_HALO_PAD,
+                surface->height + 2 * FOCUS_HALO_PAD,
+            };
+            comp_damage_add_rect(seat->comp, halo);
             comp_surface_mark_damage(surface);
         }
 #ifdef DEBUG_WAYLAND
         WLOG("[WAYLAND] deco: focus win=%p\n", (void *)surface);
 #endif
     }
+    #undef FOCUS_HALO_PAD
 }
 
 static void seat_update_pointer_focus(struct seat_state *seat, uint32_t time_msec) {

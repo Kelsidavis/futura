@@ -5560,8 +5560,14 @@ void comp_pointer_motion(struct compositor_state *comp, int32_t new_x, int32_t n
 
     int32_t cursor_w = cursor_get_width(comp->cursor);
     int32_t cursor_h = cursor_get_height(comp->cursor);
-    int32_t max_x = (int32_t)comp->fb_info.width - cursor_w;
-    int32_t max_y = (int32_t)comp->fb_info.height - cursor_h;
+    /* Clamp the pointer hot-spot to the framebuffer's last pixel, not to
+     * (fb - cursor_size). cursor_draw already clips per-pixel, so letting
+     * the cursor visually overhang the right/bottom edge is fine — and the
+     * tighter clamp made it impossible to reach the snap-right zone, the
+     * close button on maximized windows, or anything pinned to the right
+     * or bottom edge of the screen. */
+    int32_t max_x = (int32_t)comp->fb_info.width - 1;
+    int32_t max_y = (int32_t)comp->fb_info.height - 1;
     if (max_x < 0) {
         max_x = 0;
     }

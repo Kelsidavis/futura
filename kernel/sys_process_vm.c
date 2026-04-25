@@ -96,14 +96,28 @@ long sys_process_vm_readv(int pid, const struct pvm_iovec *lvec, unsigned long l
             return -EPERM;
     }
 
-    /* Copy iovec arrays from user/kernel */
-    struct pvm_iovec lv[IOV_MAX];
-    struct pvm_iovec rv[IOV_MAX];
+    /* Copy iovec arrays from user/kernel. Heap-allocate sized to caller's
+     * iovcnt; previous version put two IOV_MAX (16 KB each = 32 KB) arrays
+     * on the kernel stack regardless of iovcnt — a stack-overflow primitive
+     * triggerable from any caller permitted to call this syscall. */
+    extern void *fut_malloc(uint64_t size);
+    extern void  fut_free(void *p);
+    struct pvm_iovec *lv = fut_malloc(liovcnt * sizeof(struct pvm_iovec));
+    struct pvm_iovec *rv = fut_malloc(riovcnt * sizeof(struct pvm_iovec));
+    if (!lv || !rv) {
+        if (lv) fut_free(lv);
+        if (rv) fut_free(rv);
+        return -ENOMEM;
+    }
 
-    if (pvm_copy_iov_from_user(lv, lvec, liovcnt * sizeof(struct pvm_iovec)) != 0)
+    if (pvm_copy_iov_from_user(lv, lvec, liovcnt * sizeof(struct pvm_iovec)) != 0) {
+        fut_free(lv); fut_free(rv);
         return -EFAULT;
-    if (pvm_copy_iov_from_user(rv, rvec, riovcnt * sizeof(struct pvm_iovec)) != 0)
+    }
+    if (pvm_copy_iov_from_user(rv, rvec, riovcnt * sizeof(struct pvm_iovec)) != 0) {
+        fut_free(lv); fut_free(rv);
         return -EFAULT;
+    }
 
     /* Validate cumulative lengths AND that every iov_base lives in
      * userspace, not the kernel half. Without this, a caller could
@@ -112,13 +126,13 @@ long sys_process_vm_readv(int pid, const struct pvm_iovec *lvec, unsigned long l
      * boundary — read/write-anywhere primitive. */
     size_t ltotal = 0, rtotal = 0;
     for (unsigned long i = 0; i < liovcnt; i++) {
-        if (lv[i].iov_len > (size_t)SSIZE_MAX - ltotal) return -EINVAL;
-        if (!pvm_iov_is_user(&lv[i])) return -EFAULT;
+        if (lv[i].iov_len > (size_t)SSIZE_MAX - ltotal) { fut_free(lv); fut_free(rv); return -EINVAL; }
+        if (!pvm_iov_is_user(&lv[i])) { fut_free(lv); fut_free(rv); return -EFAULT; }
         ltotal += lv[i].iov_len;
     }
     for (unsigned long i = 0; i < riovcnt; i++) {
-        if (rv[i].iov_len > (size_t)SSIZE_MAX - rtotal) return -EINVAL;
-        if (!pvm_iov_is_user(&rv[i])) return -EFAULT;
+        if (rv[i].iov_len > (size_t)SSIZE_MAX - rtotal) { fut_free(lv); fut_free(rv); return -EINVAL; }
+        if (!pvm_iov_is_user(&rv[i])) { fut_free(lv); fut_free(rv); return -EFAULT; }
         rtotal += rv[i].iov_len;
     }
 
@@ -162,6 +176,7 @@ long sys_process_vm_readv(int pid, const struct pvm_iovec *lvec, unsigned long l
         if (roff >= rv[ri].iov_len) { ri++; roff = 0; }
     }
 read_done:
+    fut_free(lv); fut_free(rv);
     return (long)done;
 }
 
@@ -197,23 +212,35 @@ long sys_process_vm_writev(int pid, const struct pvm_iovec *lvec, unsigned long 
             return -EPERM;
     }
 
-    struct pvm_iovec lv[IOV_MAX];
-    struct pvm_iovec rv[IOV_MAX];
+    /* Heap-allocate iovec staging — see sys_process_vm_readv for rationale. */
+    extern void *fut_malloc(uint64_t size);
+    extern void  fut_free(void *p);
+    struct pvm_iovec *lv = fut_malloc(liovcnt * sizeof(struct pvm_iovec));
+    struct pvm_iovec *rv = fut_malloc(riovcnt * sizeof(struct pvm_iovec));
+    if (!lv || !rv) {
+        if (lv) fut_free(lv);
+        if (rv) fut_free(rv);
+        return -ENOMEM;
+    }
 
-    if (pvm_copy_iov_from_user(lv, lvec, liovcnt * sizeof(struct pvm_iovec)) != 0)
+    if (pvm_copy_iov_from_user(lv, lvec, liovcnt * sizeof(struct pvm_iovec)) != 0) {
+        fut_free(lv); fut_free(rv);
         return -EFAULT;
-    if (pvm_copy_iov_from_user(rv, rvec, riovcnt * sizeof(struct pvm_iovec)) != 0)
+    }
+    if (pvm_copy_iov_from_user(rv, rvec, riovcnt * sizeof(struct pvm_iovec)) != 0) {
+        fut_free(lv); fut_free(rv);
         return -EFAULT;
+    }
 
     size_t ltotal = 0, rtotal = 0;
     for (unsigned long i = 0; i < liovcnt; i++) {
-        if (lv[i].iov_len > (size_t)SSIZE_MAX - ltotal) return -EINVAL;
-        if (!pvm_iov_is_user(&lv[i])) return -EFAULT;
+        if (lv[i].iov_len > (size_t)SSIZE_MAX - ltotal) { fut_free(lv); fut_free(rv); return -EINVAL; }
+        if (!pvm_iov_is_user(&lv[i])) { fut_free(lv); fut_free(rv); return -EFAULT; }
         ltotal += lv[i].iov_len;
     }
     for (unsigned long i = 0; i < riovcnt; i++) {
-        if (rv[i].iov_len > (size_t)SSIZE_MAX - rtotal) return -EINVAL;
-        if (!pvm_iov_is_user(&rv[i])) return -EFAULT;
+        if (rv[i].iov_len > (size_t)SSIZE_MAX - rtotal) { fut_free(lv); fut_free(rv); return -EINVAL; }
+        if (!pvm_iov_is_user(&rv[i])) { fut_free(lv); fut_free(rv); return -EFAULT; }
         rtotal += rv[i].iov_len;
     }
 
@@ -254,5 +281,6 @@ long sys_process_vm_writev(int pid, const struct pvm_iovec *lvec, unsigned long 
         if (roff >= rv[ri].iov_len) { ri++; roff = 0; }
     }
 write_done:
+    fut_free(lv); fut_free(rv);
     return (long)done;
 }

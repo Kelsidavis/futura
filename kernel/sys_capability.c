@@ -371,9 +371,17 @@ long sys_capset(struct __user_cap_header_struct *hdrp,
         return -EPERM;
     }
 
-    /* Validate: inheritable ⊆ (old_inheritable ∪ cap_bset) */
-    if (new_inheritable & ~(target_task->cap_inheritable | target_task->cap_bset)) {
-        fut_printf("[CAPABILITY] capset -> EPERM (inheritable exceeds inheritable∪bset)\n");
+    /* Validate: new_inheritable ⊆ (old_inheritable ∪ old_permitted ∪ cap_bset).
+     * Matches Linux's cap_capset(): inheritable can be promoted from any
+     * cap currently in permitted (so a setuid program can pass on caps it
+     * actually holds), in addition to whatever was already inheritable or
+     * remains in the bounding set. The previous check omitted permitted
+     * and broke standard cap management patterns. */
+    uint64_t allowed_inh = target_task->cap_inheritable |
+                           target_task->cap_permitted   |
+                           target_task->cap_bset;
+    if (new_inheritable & ~allowed_inh) {
+        fut_printf("[CAPABILITY] capset -> EPERM (inheritable exceeds inheritable∪permitted∪bset)\n");
         return -EPERM;
     }
 

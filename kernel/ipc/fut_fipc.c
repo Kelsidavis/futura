@@ -1244,7 +1244,10 @@ static int fut_fipc_admin_handle(struct fut_fipc_channel *channel,
     if (!cmd.has_op || !cmd.has_target) {
         rc = FIPC_EINVAL;
     } else if (!cmd.has_token || cmd.token_len != FIPC_ADMIN_TOKEN_LEN ||
-               memcmp(cmd.token, admin_token_current, FIPC_ADMIN_TOKEN_LEN) != 0) {
+               fut_hmac_sha256_verify(admin_token_current, cmd.token,
+                                      FIPC_ADMIN_TOKEN_LEN) != 0) {
+        /* Constant-time compare: memcmp's early-exit lets a remote caller
+         * recover the admin token byte-by-byte from response timing. */
         rc = FIPC_EPERM;
     } else {
         struct fut_fipc_channel *target = fut_fipc_channel_lookup(cmd.target);

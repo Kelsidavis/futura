@@ -109,12 +109,23 @@ long sys_sched_setparam(int pid, const struct sched_param *param) {
 
     /* Find target thread: pid=0 means self, otherwise look up by PID */
     fut_thread_t *target_thread = thread;
+    fut_task_t *target_task = task;
     if (pid != 0) {
-        fut_task_t *target_task = fut_task_by_pid((uint64_t)pid);
+        target_task = fut_task_by_pid((uint64_t)pid);
         if (!target_task) {
             return -ESRCH;
         }
         target_thread = target_task->threads;
+    }
+
+    /* Cross-task permission: only the target's owner, root, or
+     * CAP_SYS_NICE may modify another task's RT scheduling parameters.
+     * Without this gate any user could elevate their RT priority
+     * indirectly by setparam'ing on someone else's task — or DoS
+     * another user by changing their priority. */
+    if (target_task != task && task->uid != 0 && !HAS_CAP_SYS_NICE(task) &&
+        task->uid != target_task->uid) {
+        return -EPERM;
     }
 
     /* Enforce RLIMIT_RTPRIO for RT policies */
@@ -276,12 +287,22 @@ long sys_sched_setscheduler(int pid, int policy, const struct sched_param *param
 
     /* Find target thread: pid=0 means self, otherwise look up by PID */
     fut_thread_t *target_thread = thread;
+    fut_task_t *target_task = task;
     if (pid != 0) {
-        fut_task_t *target_task = fut_task_by_pid((uint64_t)pid);
+        target_task = fut_task_by_pid((uint64_t)pid);
         if (!target_task) {
             return -ESRCH;
         }
         target_thread = target_task->threads;
+    }
+
+    /* Cross-task permission: only target's owner, root, or CAP_SYS_NICE
+     * may flip another task's scheduling policy. Without this any
+     * unprivileged process could SCHED_IDLE a peer (DoS) or, with a
+     * raised RLIMIT_RTPRIO, push someone else into SCHED_FIFO. */
+    if (target_task != task && task->uid != 0 && !HAS_CAP_SYS_NICE(task) &&
+        task->uid != target_task->uid) {
+        return -EPERM;
     }
 
     /* Store policy and RT priority, return previous policy */

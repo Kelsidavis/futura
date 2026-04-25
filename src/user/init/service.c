@@ -128,7 +128,8 @@ static int spawn_service(struct fui_service *service) {
         long fd1 = sys_open("/dev/console", 2, 0);  /* stdout */
         long fd2 = sys_open("/dev/console", 2, 0);  /* stderr */
         if (fd0 < 0 || fd1 < 0 || fd2 < 0) {
-            sys_write(2, "[SERVICE] Failed to open /dev/console for stdio\n", 49);
+            static const char err[] = "[SERVICE] Failed to open /dev/console for stdio\n";
+            sys_write(2, err, sizeof(err) - 1);
         }
 
         /* Build argv - use service name as argv[0] */

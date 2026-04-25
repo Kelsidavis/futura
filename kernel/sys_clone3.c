@@ -128,8 +128,29 @@ long sys_clone3(const struct fut_clone_args *uargs, size_t size) {
     uint64_t flags = args.flags;
 
     /* Namespace flags: apply namespace isolation to the child process.
-     * The child will be placed in new namespaces via unshare-style logic. */
+     * The child will be placed in new namespaces via unshare-style logic.
+     *
+     * Permission gate: every namespace flag except CLONE_NEWUSER requires
+     * CAP_SYS_ADMIN, matching Linux and the matching gate added to
+     * sys_unshare. Without this check a contained process could clone3()
+     * a child into a fresh mount/PID/net namespace and escape its
+     * sandbox. */
     uint64_t ns_flags = flags & CLONE_NAMESPACE_FLAGS;
+    {
+        const uint64_t PRIVILEGED_NS_FLAGS = (uint64_t)CLONE_NEWNS  |
+                                             (uint64_t)CLONE_NEWUTS |
+                                             (uint64_t)CLONE_NEWIPC |
+                                             (uint64_t)CLONE_NEWPID |
+                                             (uint64_t)CLONE_NEWNET |
+                                             (uint64_t)CLONE_NEWCGROUP |
+                                             (uint64_t)CLONE_NEWTIME;
+        if (ns_flags & PRIVILEGED_NS_FLAGS) {
+            fut_task_t *cur = fut_task_current();
+            if (cur && cur->uid != 0 &&
+                !(cur->cap_effective & (1ULL << 21 /* CAP_SYS_ADMIN */)))
+                return -EPERM;
+        }
+    }
     flags &= ~CLONE_NAMESPACE_FLAGS;  /* Remove namespace flags before passing to fork */
 
     /* CLONE_CLEAR_SIGHAND and CLONE_SIGHAND are mutually exclusive (Linux 5.5) */

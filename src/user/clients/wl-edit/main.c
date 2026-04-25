@@ -669,7 +669,24 @@ static void process_key(struct client_state *s, uint32_t key) {
             s->needs_redraw = true;
             return;
         }
-        if (c == 'q') { s->running = false; return; }
+        if (c == 'q') {
+            /* Don't lose unsaved edits silently. First Ctrl+Q with a
+             * dirty buffer arms the warning; a second Ctrl+Q within
+             * the status's 2.5s expiry confirms and quits. The
+             * "armed" state piggybacks on a dedicated status string. */
+            static const char quit_warn[] = "unsaved changes — Ctrl+Q again to quit";
+            if (ed_dirty) {
+                bool armed = (ed_status_msg[0] == quit_warn[0] &&
+                              ed_strlen(ed_status_msg) == ed_strlen(quit_warn));
+                if (!armed) {
+                    ed_set_status(quit_warn, tick_ms);
+                    s->needs_redraw = true;
+                    return;
+                }
+            }
+            s->running = false;
+            return;
+        }
         /* ignore other ctrl combos */
         return;
     }

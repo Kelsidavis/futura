@@ -5778,7 +5778,10 @@ void comp_end_drag(struct compositor_state *comp) {
         int32_t fb_h = (int32_t)comp->fb_info.height;
         int32_t px = comp->pointer_x;
         int32_t py = comp->pointer_y;
-        #define SNAP_THRESHOLD 4  /* pixels from edge to trigger snap */
+        /* Must match SNAP_PREVIEW_THRESHOLD in comp_drag_motion. Otherwise
+         * the tile preview appears in the 5-8px band but releasing there
+         * doesn't actually snap, which feels broken. */
+        #define SNAP_THRESHOLD 8  /* pixels from edge to trigger snap */
 
         if (px <= SNAP_THRESHOLD || px >= fb_w - SNAP_THRESHOLD - 1) {
             /* Save geometry for restore */

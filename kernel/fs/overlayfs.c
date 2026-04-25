@@ -67,6 +67,7 @@ static bool has_whiteout(struct fut_vnode *upper_dir, const char *name) {
     if (!make_whiteout_name(name, wh_name, sizeof(wh_name))) return false;
     struct fut_vnode *wh = NULL;
     if (upper_dir->ops->lookup(upper_dir, wh_name, &wh) == 0 && wh) {
+        fut_vnode_unref(wh);
         return true;
     }
     return false;
@@ -159,7 +160,11 @@ static int overlay_lookup(struct fut_vnode *dir, const char *name,
 static bool upper_has_entry(struct fut_vnode *upper_dir, const char *name) {
     if (!upper_dir || !upper_dir->ops || !upper_dir->ops->lookup) return false;
     struct fut_vnode *child = NULL;
-    return (upper_dir->ops->lookup(upper_dir, name, &child) == 0 && child);
+    if (upper_dir->ops->lookup(upper_dir, name, &child) == 0 && child) {
+        fut_vnode_unref(child);
+        return true;
+    }
+    return false;
 }
 
 static int overlay_readdir(struct fut_vnode *dir, uint64_t *cookie,
@@ -232,16 +237,20 @@ static int overlay_unlink(struct fut_vnode *dir, const char *name) {
     bool in_upper = false;
     if (ovi->upper->ops && ovi->upper->ops->lookup) {
         struct fut_vnode *child = NULL;
-        if (ovi->upper->ops->lookup(ovi->upper, name, &child) == 0 && child)
+        if (ovi->upper->ops->lookup(ovi->upper, name, &child) == 0 && child) {
             in_upper = true;
+            fut_vnode_unref(child);
+        }
     }
 
     /* Check if file exists in the lower layer */
     bool in_lower = false;
     if (ovi->lower && ovi->lower->ops && ovi->lower->ops->lookup) {
         struct fut_vnode *child = NULL;
-        if (ovi->lower->ops->lookup(ovi->lower, name, &child) == 0 && child)
+        if (ovi->lower->ops->lookup(ovi->lower, name, &child) == 0 && child) {
             in_lower = true;
+            fut_vnode_unref(child);
+        }
     }
 
     if (!in_upper && !in_lower) return -ENOENT;

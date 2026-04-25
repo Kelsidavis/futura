@@ -619,6 +619,15 @@ long sys_keyctl(int operation, unsigned long arg2, unsigned long arg3,
         uint32_t perm = (uint32_t)arg3;
         struct kernel_key *k = key_find_serial(serial);
         if (!k) return -ENOKEY;
+        /* Linux: only the key owner or CAP_SYS_ADMIN may change perm.
+         * Without this check any process could grant itself any access
+         * to any key (including system keyrings owned by root). */
+        {
+            fut_task_t *cur = fut_task_current();
+            if (cur && cur->uid != 0 && cur->uid != k->uid &&
+                !(cur->cap_effective & (1ULL << 21 /* CAP_SYS_ADMIN */)))
+                return -EACCES;
+        }
         k->perm = perm;
         return 0;
     }
@@ -629,6 +638,19 @@ long sys_keyctl(int operation, unsigned long arg2, unsigned long arg3,
         uint32_t gid = (uint32_t)arg4;
         struct kernel_key *k = key_find_serial(serial);
         if (!k) return -ENOKEY;
+        /* Linux keyctl(2): "To change the UID the caller must have an
+         * effective UID of zero or possess CAP_SYS_ADMIN. The same
+         * condition applies to changing the GID, except that GID can
+         * also be changed to a group of which the caller is a member."
+         * Without any check, any unprivileged process could chown the
+         * root @us/@u keyrings to itself. */
+        {
+            fut_task_t *cur = fut_task_current();
+            bool privileged = cur && (cur->uid == 0 ||
+                (cur->cap_effective & (1ULL << 21 /* CAP_SYS_ADMIN */)));
+            if (!privileged)
+                return -EACCES;
+        }
         if (uid != (uint32_t)-1) k->uid = uid;
         if (gid != (uint32_t)-1) k->gid = gid;
         return 0;

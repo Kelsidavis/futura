@@ -1389,6 +1389,17 @@ long sys_timerfd_settime(int ufd, int flags,
         return -EFAULT;
     }
 
+    /* Validate the timespec fields. Without this a negative tv_sec casts
+     * to a huge uint64_t in timespec_to_ms() and arms a timer ~292 years
+     * out, and an out-of-range tv_nsec produces nonsense expiry math.
+     * Linux returns EINVAL for negative tv_sec or tv_nsec outside
+     * [0, 999_999_999]. */
+    if (kits.it_value.tv_sec    < 0 || kits.it_interval.tv_sec    < 0 ||
+        kits.it_value.tv_nsec   < 0 || kits.it_value.tv_nsec    >= 1000000000L ||
+        kits.it_interval.tv_nsec < 0 || kits.it_interval.tv_nsec >= 1000000000L) {
+        return -EINVAL;
+    }
+
     /* Look up the fd and get the timerfd context */
     if (!task->fd_table || ufd >= task->max_fds) return -EBADF;
     struct fut_file *file = task->fd_table[ufd];

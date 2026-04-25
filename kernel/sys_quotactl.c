@@ -14,6 +14,7 @@
 
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
 #include <string.h>
@@ -320,6 +321,48 @@ long sys_quotactl(unsigned int cmd, const char *special, int id, void *addr) {
                    "-> EINVAL (quota command out of range, valid: 0x800001-0x800009)\n",
                    cmd, qcmd, qtype, (const void *)special, id, addr, task->pid);
         return -EINVAL;
+    }
+
+    /* Permission gate (matches Linux do_quotactl):
+     *  - Q_QUOTAON / Q_QUOTAOFF / Q_SETQUOTA / Q_SETINFO require
+     *    CAP_SYS_ADMIN (or root).
+     *  - Q_GETQUOTA / Q_GETNEXTQUOTA are allowed without CAP for the
+     *    caller's own uid/gid; otherwise CAP_SYS_ADMIN required.
+     *  - Q_SYNC / Q_GETFMT / Q_GETINFO are unprivileged.
+     * Without these gates any user could enable/disable quotas, set
+     * arbitrary limits on any uid, or read other users' quota usage. */
+    {
+        bool privileged = (task->uid == 0) ||
+            (task->cap_effective & (1ULL << 21 /* CAP_SYS_ADMIN */));
+        switch (qcmd) {
+            case Q_QUOTAON:
+            case Q_QUOTAOFF:
+            case Q_SETQUOTA:
+            case Q_SETINFO:
+                if (!privileged) {
+                    fut_printf("[QUOTACTL] quotactl(cmd=0x%x) -> EPERM "
+                               "(privileged op requires CAP_SYS_ADMIN)\n", cmd);
+                    return -EPERM;
+                }
+                break;
+            case Q_GETQUOTA:
+            case Q_GETNEXTQUOTA: {
+                if (privileged) break;
+                /* Self-query allowed: USRQUOTA on own uid, GRPQUOTA on
+                 * own gid. Anything else needs the cap. */
+                bool self_uid = (qtype == USRQUOTA && (uint32_t)id == task->uid);
+                bool self_gid = (qtype == GRPQUOTA && (uint32_t)id == task->gid);
+                if (!self_uid && !self_gid) {
+                    fut_printf("[QUOTACTL] quotactl(cmd=0x%x, id=%d) -> EPERM "
+                               "(cross-uid quota query requires CAP_SYS_ADMIN)\n", cmd, id);
+                    return -EPERM;
+                }
+                break;
+            }
+            default:
+                /* Q_SYNC / Q_GETFMT / Q_GETINFO: unprivileged. */
+                break;
+        }
     }
 
     /* Phase 2: Validate special pointer (required) */

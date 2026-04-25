@@ -41,7 +41,11 @@ static inline int keyring_copy_from_user(void *dst, const void *src, size_t n) {
         return 0;
     }
 #endif
-    return keyring_copy_from_user(dst, src, n);
+    /* Previously called keyring_copy_from_user() — itself — which would
+     * infinite-recurse on any actual user-space pointer and blow the
+     * kernel stack the first time a userspace caller used add_key /
+     * request_key / keyctl with non-kernel buffers. */
+    return fut_copy_from_user(dst, src, n);
 }
 
 /* ── Keyctl operations (Linux ABI) ── */

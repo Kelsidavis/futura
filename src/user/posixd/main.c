@@ -175,20 +175,12 @@ static void handle_file_request(struct fut_fipc_msg *msg, size_t payload_len) {
                          * 2. Map it into our address space
                          * 3. Copy the data into it
                          * 4. Return the region ID and byte count
-                         *
-                         * For now, we fall back to inline transmission
-                         * if the data is small enough to fit in the response.
                          */
-                        /* Large read - would need shared buffer */
-                        resp.bytes_read = -ENOTSUP;  /* Not yet implemented */
-                        bytes = 0;
+                        resp.bytes_read = -ENOTSUP;
                     } else {
                         /* No shared buffer - inline copy not implemented yet */
-                        resp.bytes_read = -ENOTSUP;  /* Not yet implemented */
-                        bytes = 0;
+                        resp.bytes_read = -ENOTSUP;
                     }
-
-                    resp.bytes_read = bytes;
                 }
 
                 free(buf);

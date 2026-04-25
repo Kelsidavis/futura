@@ -442,8 +442,10 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
         uint16_t port = (inet6_addr.sin6_port >> 8) | ((inet6_addr.sin6_port & 0xFF) << 8);  /* Network to host byte order */
         const char *port_cat = categorize_port(port);
 
-        /* Enforce CAP_NET_BIND_SERVICE for privileged ports */
-        if (port < 1024 && !has_cap_net_bind_service(task)) {
+        /* Enforce CAP_NET_BIND_SERVICE for privileged ports.
+         * port=0 means "let the kernel pick an ephemeral port" and is
+         * always allowed (matches AF_INET branch above and Linux). */
+        if (port < 1024 && port != 0 && !has_cap_net_bind_service(task)) {
             bind_printf("[BIND] bind(sockfd=%d, family=%s, port=%u [%s]) -> EACCES "
                        "(privileged port requires CAP_NET_BIND_SERVICE, uid=%u)\n",
                        local_sockfd, family_name, port, port_cat, task->uid);

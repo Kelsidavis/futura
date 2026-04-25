@@ -5579,11 +5579,15 @@ void comp_surface_raise(struct compositor_state *comp, struct comp_surface *surf
     comp->active_surface = surface;
     comp_surface_update_decorations(surface);
     if (surface->has_backing) {
+        /* Pad to cover the focused-window glow / shadow halo when the
+         * surface comes to the top — without it, the new glow has no
+         * damage rect to render into and the previous topmost window's
+         * pixels remain in the halo region. */
         fut_rect_t rect = {
-            .x = surface->x,
-            .y = surface->y,
-            .w = surface->width,
-            .h = surface->height,
+            .x = surface->x - 12,
+            .y = surface->y - 12,
+            .w = surface->width + 24,
+            .h = surface->height + 24,
         };
         comp_damage_add_rect(comp, rect);
         comp_surface_mark_damage(surface);

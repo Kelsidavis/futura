@@ -174,8 +174,23 @@ static ssize_t signalfd_read_op(void *inode, void *priv,
                         return -EINTR;
                 }
             }
-            /* Block on task's signal waitq -- woken by fut_signal_send() */
+            /* Block on task's signal waitq -- woken by fut_signal_send().
+             *
+             * Lost-wakeup avoidance: a signal could arrive between the
+             * pending check above (after we released ctx->lock) and the
+             * point at which we put ourselves on signal_waitq. The wake
+             * call from fut_signal_send would hit an empty waitq, and
+             * then we'd queue ourselves and sleep forever for the next
+             * signal that may never come. Re-check pending under the
+             * waitq lock; if a signal landed in the gap, drop the lock
+             * and re-enter the outer loop to consume it. */
             fut_spinlock_acquire(&task->signal_waitq.lock);
+            uint64_t recheck = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE)
+                               & ctx->sigmask;
+            if (recheck) {
+                fut_spinlock_release(&task->signal_waitq.lock);
+                continue;
+            }
             fut_waitq_sleep_locked(&task->signal_waitq, &task->signal_waitq.lock, FUT_THREAD_BLOCKED);
             continue;
         }

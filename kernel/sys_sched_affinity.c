@@ -128,16 +128,31 @@ long sys_sched_setaffinity(int pid, unsigned int len, const void *user_mask) {
 
     /* Find target thread */
     fut_thread_t *thread = fut_thread_current();
+    fut_task_t *current = thread ? thread->task : NULL;
+    fut_task_t *target_task = current;
     if (pid != 0) {
-        fut_task_t *target = fut_task_by_pid((uint64_t)pid);
-        if (!target) {
+        target_task = fut_task_by_pid((uint64_t)pid);
+        if (!target_task) {
             return -ESRCH;
         }
-        thread = target->threads;
+        thread = target_task->threads;
     }
 
     if (!thread) {
         return -ESRCH;
+    }
+
+    /* Cross-task permission gate: only the target's owner, root, or
+     * CAP_SYS_NICE may change another task's affinity. Without this an
+     * unprivileged caller could pin another user's CPU-bound process
+     * to a single core (DoS) or strip a system daemon's affinity to
+     * prevent it from running on any CPU.
+     * CAP_SYS_NICE = bit 23. */
+    if (current && target_task && target_task != current &&
+        current->uid != 0 &&
+        !(current->cap_effective & (1ULL << 23 /* CAP_SYS_NICE */)) &&
+        current->uid != target_task->uid) {
+        return -EPERM;
     }
 
     /* Set the affinity mask — scheduler will honor this during dispatch */

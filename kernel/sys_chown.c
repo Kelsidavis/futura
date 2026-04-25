@@ -307,10 +307,27 @@ long sys_chown(const char *pathname, uint32_t uid, uint32_t gid) {
             fut_vnode_unref(vnode);
             return -EPERM;
         }
-        /* Non-privileged: can only change GID if file owner AND target
-         * is caller's effective GID (Linux also allows supplementary groups) */
+        /* Non-privileged: may only change GID if the file owner AND the
+         * target group is one the caller is a member of (effective GID
+         * or any supplementary group). The previous check accepted only
+         * the effective GID, so a user belonging to a group via groups[]
+         * couldn't chown a file they owned to that group — Linux allows
+         * it, and many setup scripts depend on it. */
         if (local_gid != CHOWN_UNCHANGED && host_gid != old_gid) {
-            if (task_host_ruid != old_uid || host_gid != task_host_gid) {
+            if (task_host_ruid != old_uid) {
+                fut_vnode_unref(vnode);
+                return -EPERM;
+            }
+            bool member = (host_gid == task_host_gid);
+            if (!member) {
+                for (int gi = 0; gi < task->ngroups; gi++) {
+                    if (userns_ns_to_host_gid(ns, task->groups[gi]) == host_gid) {
+                        member = true;
+                        break;
+                    }
+                }
+            }
+            if (!member) {
                 fut_vnode_unref(vnode);
                 return -EPERM;
             }

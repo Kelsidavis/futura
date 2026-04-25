@@ -1089,9 +1089,15 @@ static void seat_handle_key_event(struct seat_state *seat,
                 /* Tile to left half */
                 if (sf->maximized) comp_surface_set_maximized(sf, false);
                 if (sf->fullscreen) comp_surface_set_fullscreen(sf, false);
-                sf->saved_x = sf->x; sf->saved_y = sf->y;
-                sf->saved_w = sf->width; sf->saved_h = sf->height;
-                sf->have_saved_geom = true;
+                /* Only capture pre-tile geometry if we're not already in a
+                 * tiled/saved state — otherwise tile-left → tile-right
+                 * overwrites the original rect, leaving Super+Down with no
+                 * way to restore the user's actual window position. */
+                if (!sf->have_saved_geom) {
+                    sf->saved_x = sf->x; sf->saved_y = sf->y;
+                    sf->saved_w = sf->width; sf->saved_h = sf->height;
+                    sf->have_saved_geom = true;
+                }
                 int32_t tile_y = 24 /* MENUBAR_HEIGHT */;
                 int32_t tile_h = fh - 24 /* MENUBAR_HEIGHT */ - 48;
                 int32_t tile_w = fw / 2;
@@ -1108,9 +1114,11 @@ static void seat_handle_key_event(struct seat_state *seat,
                 /* Tile to right half */
                 if (sf->maximized) comp_surface_set_maximized(sf, false);
                 if (sf->fullscreen) comp_surface_set_fullscreen(sf, false);
-                sf->saved_x = sf->x; sf->saved_y = sf->y;
-                sf->saved_w = sf->width; sf->saved_h = sf->height;
-                sf->have_saved_geom = true;
+                if (!sf->have_saved_geom) {
+                    sf->saved_x = sf->x; sf->saved_y = sf->y;
+                    sf->saved_w = sf->width; sf->saved_h = sf->height;
+                    sf->have_saved_geom = true;
+                }
                 int32_t tile_y = 24 /* MENUBAR_HEIGHT */;
                 int32_t tile_h = fh - 24 /* MENUBAR_HEIGHT */ - 48;
                 int32_t tile_w = fw / 2;

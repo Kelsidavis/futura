@@ -5922,8 +5922,16 @@ void comp_update_surface_position(struct compositor_state *comp,
    surface->y = clamped_y;
    comp_surface_update_decorations(surface);
    fut_rect_t new_frame = comp_frame_rect(surface);
-   comp_damage_add_rect(comp, old_frame);
-   comp_damage_add_rect(comp, new_frame);
+   /* Pad the damage so the focus glow / shadow at the OLD position gets
+    * erased and the same at the new position gets repainted. Without
+    * this, dragging a focused window left a faint glow trail at every
+    * intermediate position. */
+   fut_rect_t old_halo = { old_frame.x - 12, old_frame.y - 12,
+                           old_frame.w + 24, old_frame.h + 24 };
+   fut_rect_t new_halo = { new_frame.x - 12, new_frame.y - 12,
+                           new_frame.w + 24, new_frame.h + 24 };
+   comp_damage_add_rect(comp, old_halo);
+   comp_damage_add_rect(comp, new_halo);
     comp_surface_mark_damage(surface);
    comp->needs_repaint = true;
    if (surface == comp->active_surface) {

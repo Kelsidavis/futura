@@ -42,6 +42,7 @@ static void output_bind(struct wl_client *client,
                         info->height,
                         60000);
     if (ver >= 2) {
+        wl_output_send_scale(resource, 1);
         wl_output_send_done(resource);
     }
 }

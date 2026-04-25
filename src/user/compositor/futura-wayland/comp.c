@@ -363,8 +363,15 @@ void comp_surface_update_decorations(struct comp_surface *surface) {
     }
 
     struct compositor_state *comp = surface->comp;
-    bool deco_enabled = comp && comp->deco_enabled;
-    surface->shadow_px = (comp && comp->shadow_enabled) ? comp->shadow_radius : 0;
+    /* Fullscreen surfaces explicitly opt out of decorations — set_fullscreen
+     * zeroes bar_height/shadow_px on entry, but apply_committed_size calls
+     * us on every buffer commit, which used to reset bar_height back to
+     * WINDOW_BAR_HEIGHT. content_height is the full screen height for
+     * fullscreen, so adding a phantom 24px bar made surface->height exceed
+     * the framebuffer. Treat fullscreen the same as deco-disabled here. */
+    bool deco_enabled = comp && comp->deco_enabled && !surface->fullscreen;
+    surface->shadow_px = (comp && comp->shadow_enabled && !surface->fullscreen)
+                         ? comp->shadow_radius : 0;
 
     if (!deco_enabled) {
         surface->bar_height = 0;

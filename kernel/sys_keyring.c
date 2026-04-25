@@ -451,6 +451,18 @@ long sys_keyctl(int operation, unsigned long arg2, unsigned long arg3,
         if (!k) return -ENOKEY;
         if (k->revoked) return -EKEYREVOKED;
 
+        /* Linux KEYCTL_DESCRIBE requires View permission. Match the
+         * same owner-or-CAP_SYS_ADMIN gate used elsewhere; without it
+         * any process can enumerate every key by serial number and
+         * read another user's key metadata (uid, gid, perm,
+         * description string). */
+        {
+            fut_task_t *cur = fut_task_current();
+            if (cur && cur->uid != 0 && cur->uid != k->uid &&
+                !(cur->cap_effective & (1ULL << 21 /* CAP_SYS_ADMIN */)))
+                return -EACCES;
+        }
+
         /* Format: "type;uid;gid;perm;description" */
         char desc[512];
         int len = 0;

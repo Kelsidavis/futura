@@ -6082,6 +6082,11 @@ void comp_surface_set_maximized(struct comp_surface *surface, bool maximized) {
         surface->pend_x = target_x;
         surface->pend_y = target_y;
         surface->have_pending_pos = true;
+        /* Clear the saved-geom latch so a subsequent maximize captures the
+         * user's *current* geometry (post-move/resize). Otherwise a sequence
+         * of max → unmax → move → max → unmax would restore the original
+         * pre-max geometry instead of the moved position. */
+        surface->have_saved_geom = false;
 
         uint32_t flags = comp_surface_state_flags(surface);
         xdg_shell_surface_send_configure(surface, target_w, target_h, flags);

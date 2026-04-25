@@ -68,8 +68,11 @@ long sys_kcmp(int pid1, int pid2, int type,
 
         /* Same pointer → same file object */
         if (f1 == f2) return 0;
-        /* Different objects: return ordering by pointer */
-        return (uintptr_t)f1 < (uintptr_t)f2 ? -1 : 1;
+        /* Different objects: return Linux kcmp ordering — 1 if v1 < v2,
+         * 2 if v1 > v2. Returning -1 here would be interpreted by
+         * userspace as an -EPERM errno, breaking CRIU's file-share
+         * detection. */
+        return (uintptr_t)f1 < (uintptr_t)f2 ? 1 : 2;
     }
 
     case KCMP_VM:

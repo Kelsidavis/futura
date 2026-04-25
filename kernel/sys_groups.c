@@ -99,8 +99,15 @@ long sys_setgroups(int size, const uint32_t *list) {
         return -EFAULT;
 
     if (size > 0) {
-        if (groups_copy_from_user(task->groups, list, size * sizeof(uint32_t)) != 0)
+        /* Stage in a kernel-local buffer first so a faulting copy never
+         * leaves task->groups partially overwritten — concurrent
+         * permission checks on another CPU would otherwise see torn
+         * credentials before EFAULT propagates back. */
+        uint32_t tmp[NGROUPS_MAX];
+        if (groups_copy_from_user(tmp, list, size * sizeof(uint32_t)) != 0)
             return -EFAULT;
+        for (int i = 0; i < size; i++)
+            task->groups[i] = tmp[i];
     }
 
     task->ngroups = size;

@@ -70,9 +70,13 @@ static void ms_to_timespec(uint64_t ms, struct timespec *ts) {
     ts->tv_nsec = (long)((ms % 1000) * 1000000);
 }
 
-/* Validate a timespec: tv_nsec must be in [0, 999999999] */
+/* Validate a timespec: tv_sec must be non-negative and tv_nsec must
+ * be in [0, 999999999]. The tv_sec check used to be missing, so a
+ * caller passing tv_sec=-1 to timer_settime silently disarmed the
+ * timer (timespec_to_ms clamps negatives to 0) instead of getting
+ * -EINVAL like Linux. */
 static int timespec_valid(const struct timespec *ts) {
-    return ts->tv_nsec >= 0 && ts->tv_nsec < 1000000000L;
+    return ts->tv_sec >= 0 && ts->tv_nsec >= 0 && ts->tv_nsec < 1000000000L;
 }
 
 /* Validate timer ID and return pointer, or NULL */

@@ -193,7 +193,14 @@ long sys_getcwd(char *buf, size_t size) {
         /* Validate writability without touching buffer contents. The
          * previous probe wrote a NUL to local_buf[0] before the path
          * was even built; on any subsequent error path the caller
-         * would see byte 0 silently zeroed instead of left untouched. */
+         * would see byte 0 silently zeroed instead of left untouched.
+         *
+         * Skip the access check for kernel-half pointers so in-kernel
+         * selftest callers (kernel-stack buffers) aren't rejected with
+         * EFAULT — same fix as sys_read. */
+#ifdef KERNEL_VIRTUAL_BASE
+        if ((uintptr_t)local_buf < KERNEL_VIRTUAL_BASE)
+#endif
         if (fut_access_ok(local_buf, local_size, 1) != 0) {
             fut_printf("[GETCWD] getcwd(buf=%p, size=%zu) -> EFAULT "
                        "(buffer not writable)\n",

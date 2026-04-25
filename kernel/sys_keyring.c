@@ -757,6 +757,16 @@ long sys_keyctl(int operation, unsigned long arg2, unsigned long arg3,
         unsigned int timeout = (unsigned int)arg3;
         struct kernel_key *k = key_find_serial(serial);
         if (!k) return -ENOKEY;
+        /* Linux KEYCTL_SET_TIMEOUT requires SETATTR permission on the
+         * key. Without this check any unprivileged caller could pin
+         * another user's key forever (timeout=0) or force it to
+         * expire immediately by serial number. */
+        {
+            fut_task_t *cur = fut_task_current();
+            if (cur && cur->uid != 0 && cur->uid != k->uid &&
+                !(cur->cap_effective & (1ULL << 21 /* CAP_SYS_ADMIN */)))
+                return -EACCES;
+        }
         if (timeout == 0) {
             k->expiry_ticks = 0; /* Never expires */
         } else {

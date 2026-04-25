@@ -206,6 +206,8 @@ static ssize_t pipe_read(void *inode, void *priv, void *buf, size_t len, off_t *
         if (task) {
             fut_thread_t *pipe_thr = fut_thread_current();
             uint64_t pending = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
+            if (pipe_thr)
+                pending |= __atomic_load_n(&pipe_thr->thread_pending_signals, __ATOMIC_ACQUIRE);
             uint64_t blocked = pipe_thr ?
                 __atomic_load_n(&pipe_thr->signal_mask, __ATOMIC_ACQUIRE) :
                 task->signal_mask;
@@ -320,6 +322,8 @@ static ssize_t pipe_write(void *inode, void *priv, const void *buf, size_t len, 
         if (stask) {
             fut_thread_t *pipe_thr = fut_thread_current();
             uint64_t pending = __atomic_load_n(&stask->pending_signals, __ATOMIC_ACQUIRE);
+            if (pipe_thr)
+                pending |= __atomic_load_n(&pipe_thr->thread_pending_signals, __ATOMIC_ACQUIRE);
             uint64_t blocked = pipe_thr ?
                 __atomic_load_n(&pipe_thr->signal_mask, __ATOMIC_ACQUIRE) :
                 stask->signal_mask;

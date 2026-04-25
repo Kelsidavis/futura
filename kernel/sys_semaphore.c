@@ -288,7 +288,8 @@ long sys_semop(int semid, void *sops, unsigned int nsops) {
         /* Would block: check for pending signals */
         fut_thread_t *thr = fut_thread_current();
         if (thr && task) {
-            uint64_t pend = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
+            uint64_t pend = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE)
+                          | __atomic_load_n(&thr->thread_pending_signals, __ATOMIC_ACQUIRE);
             uint64_t mask = __atomic_load_n(&thr->signal_mask, __ATOMIC_ACQUIRE);
             if (pend & ~mask) {
                 fut_spinlock_release(&s->lock);
@@ -538,7 +539,8 @@ long sys_semtimedop(int semid, void *sops, unsigned int nsops,
         /* Check pending signals */
         fut_thread_t *thr = fut_thread_current();
         if (thr && task) {
-            uint64_t pend = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE);
+            uint64_t pend = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE)
+                          | __atomic_load_n(&thr->thread_pending_signals, __ATOMIC_ACQUIRE);
             uint64_t mask = __atomic_load_n(&thr->signal_mask, __ATOMIC_ACQUIRE);
             if (pend & ~mask) {
                 fut_spinlock_release(&s->lock);

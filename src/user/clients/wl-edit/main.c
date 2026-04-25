@@ -155,8 +155,14 @@ static void ed_load_file(const char *path) {
     char buf[512];
     int row = 0, col = 0;
     long n;
+    bool truncated = false;
     while ((n = sys_read(fd, buf, sizeof(buf))) > 0) {
-        for (long i = 0; i < n && row < ED_MAX_LINES; i++) {
+        for (long i = 0; i < n; i++) {
+            if (row >= ED_MAX_LINES) {
+                /* Saw at least one more byte past the buffer cap. */
+                truncated = true;
+                break;
+            }
             char ch = buf[i];
             if (ch == '\n') {
                 ed_lines[row][col] = '\0';
@@ -178,6 +184,7 @@ static void ed_load_file(const char *path) {
                 ed_lines[row][col++] = ch;
             }
         }
+        if (truncated) break;
     }
     if (col > 0 || row == 0) {
         ed_lines[row][col] = '\0';
@@ -187,6 +194,11 @@ static void ed_load_file(const char *path) {
     ed_line_count = row > 0 ? row : 1;
     sys_close(fd);
     ed_dirty = false;
+    if (truncated) {
+        /* Warn the user: saving from this state would silently DROP
+         * the unloaded tail. */
+        ed_set_status("file truncated to fit buffer", 0);
+    }
 }
 
 /* Writes the full buffer, looping past short writes. Returns false on any

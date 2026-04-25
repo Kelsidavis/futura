@@ -612,6 +612,16 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
             }
 
             case 25: { /* SO_BINDTODEVICE — bind to specific NIC */
+                /* Linux requires CAP_NET_RAW (or CAP_NET_ADMIN) for
+                 * SO_BINDTODEVICE — pinning a socket to a specific
+                 * interface bypasses the routing table and is part of
+                 * the privileged-networking ABI. Without the gate,
+                 * unprivileged callers can interfere with multi-homed
+                 * routing decisions. */
+                if (task->uid != 0 &&
+                    !(task->cap_effective & ((1ULL << 13 /* CAP_NET_RAW */) |
+                                             (1ULL << 12 /* CAP_NET_ADMIN */))))
+                    return -EPERM;
                 if (!optval || optlen == 0) {
                     /* Unbind from device */
                     socket->bound_device_idx = 0;

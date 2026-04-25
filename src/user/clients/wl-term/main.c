@@ -1133,6 +1133,14 @@ int main(void) {
     /* Cleanup */
     WLTERM_LOG("[WL-TERM] Shutting down\n");
 
+    /* Send SIGHUP to the shell so it cleans up rather than orphaning.
+     * Without this, closing wl-term left the shell process running
+     * with closed fds (in pipe mode) or relying on the controlling-
+     * terminal hangup that doesn't always fire under our PTY. */
+    if (state.term.shell_pid > 0) {
+        sys_call2(62 /* SYS_kill */, (long)state.term.shell_pid, 1 /* SIGHUP */);
+    }
+
     /* In PTY mode shell_stdin_fd and shell_stdout_fd are the same master_fd;
      * close once. In pipe-fallback mode they're separate. */
     if (state.term.shell_stdin_fd >= 0) {

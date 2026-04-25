@@ -56,9 +56,12 @@ struct utsname {
     char release[_UTSNAME_LENGTH];      /* Operating system release */
     char version[_UTSNAME_LENGTH];      /* Operating system version */
     char machine[_UTSNAME_LENGTH];      /* Hardware identifier */
-#ifdef _GNU_SOURCE
-    char domainname[_UTSNAME_LENGTH];   /* NIS/YP domain name (GNU extension) */
-#endif
+    /* domainname is always present to match the Linux uname() ABI: the
+     * kernel always writes it, so hiding the field behind _GNU_SOURCE
+     * caused the kernel to clobber the byte after a userspace struct
+     * compiled without that macro (and broke kernel-side compilation
+     * once sys_uname started populating the field). */
+    char domainname[_UTSNAME_LENGTH];   /* NIS/YP domain name */
 };
 #endif
 

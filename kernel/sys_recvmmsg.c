@@ -61,10 +61,19 @@ long sys_recvmmsg(int sockfd, void *msgvec, unsigned int vlen,
      */
     int nonblock_subsequent = 0;
     if (timeout) {
-        /* struct timespec: { time_t tv_sec; long tv_nsec; } */
+        /* struct timespec: { time_t tv_sec; long tv_nsec; }.
+         * Propagate copy_from_user failures as -EFAULT instead of
+         * silently treating an unmapped timeout pointer as a zero
+         * timeout (which would force MSG_DONTWAIT on every recv). */
         long tv_sec = 0, tv_nsec = 0;
-        rcvmm_copy_from_user(&tv_sec,  timeout, sizeof(long));
-        rcvmm_copy_from_user(&tv_nsec, (const char *)timeout + sizeof(long), sizeof(long));
+        if (rcvmm_copy_from_user(&tv_sec, timeout, sizeof(long)) != 0)
+            return -EFAULT;
+        if (rcvmm_copy_from_user(&tv_nsec,
+                                 (const char *)timeout + sizeof(long),
+                                 sizeof(long)) != 0)
+            return -EFAULT;
+        if (tv_nsec < 0 || tv_nsec >= 1000000000L || tv_sec < 0)
+            return -EINVAL;
         if (tv_sec == 0 && tv_nsec == 0)
             nonblock_subsequent = 1;
     }

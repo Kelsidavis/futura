@@ -242,7 +242,27 @@ static int ptrace_setregs(fut_task_t *tracee, const struct user_regs_struct *reg
     ctx->rsi = regs->rsi;
     ctx->rdi = regs->rdi;
     ctx->rip = regs->rip;
-    ctx->rflags = regs->eflags;
+    /* RFLAGS write is privilege-bearing: bare assignment lets a tracer set
+     * IOPL=3 (port I/O), VM=1, VIF, VIP on the tracee, escalating tracee
+     * privileges on the next IRET. Mask to the same user-controllable
+     * subset Linux's ptrace_setregs uses (CF, PF, AF, ZF, SF, TF, DF, OF,
+     * RF, AC) and merge with the tracee's existing rflags so IF/IOPL/VM
+     * stay under kernel control. */
+    {
+        const uint64_t PTRACE_RFLAGS_MASK =
+            (1ULL <<  0) | /* CF */
+            (1ULL <<  2) | /* PF */
+            (1ULL <<  4) | /* AF */
+            (1ULL <<  6) | /* ZF */
+            (1ULL <<  7) | /* SF */
+            (1ULL <<  8) | /* TF (single-step — debuggers need this) */
+            (1ULL << 10) | /* DF */
+            (1ULL << 11) | /* OF */
+            (1ULL << 16) | /* RF */
+            (1ULL << 18);  /* AC */
+        ctx->rflags = (ctx->rflags & ~PTRACE_RFLAGS_MASK)
+                    | (regs->eflags & PTRACE_RFLAGS_MASK);
+    }
     ctx->rsp = regs->rsp;
 
     return 0;

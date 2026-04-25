@@ -734,6 +734,8 @@ static ssize_t eventfd_read(void *inode, void *priv, void *u_buf, size_t len, of
             if (stask) {
                 uint64_t pending = __atomic_load_n(&stask->pending_signals, __ATOMIC_ACQUIRE);
                 fut_thread_t *scur_thr = fut_thread_current();
+                if (scur_thr)
+                    pending |= __atomic_load_n(&scur_thr->thread_pending_signals, __ATOMIC_ACQUIRE);
                 uint64_t blocked = scur_thr ?
                     __atomic_load_n(&scur_thr->signal_mask, __ATOMIC_ACQUIRE) :
                     __atomic_load_n(&stask->signal_mask, __ATOMIC_ACQUIRE);
@@ -878,6 +880,8 @@ static ssize_t eventfd_write(void *inode, void *priv, const void *u_buf, size_t 
             if (stask) {
                 uint64_t pending = __atomic_load_n(&stask->pending_signals, __ATOMIC_ACQUIRE);
                 fut_thread_t *scur_thr = fut_thread_current();
+                if (scur_thr)
+                    pending |= __atomic_load_n(&scur_thr->thread_pending_signals, __ATOMIC_ACQUIRE);
                 uint64_t blocked = scur_thr ?
                     __atomic_load_n(&scur_thr->signal_mask, __ATOMIC_ACQUIRE) :
                     __atomic_load_n(&stask->signal_mask, __ATOMIC_ACQUIRE);
@@ -1199,6 +1203,8 @@ static ssize_t timerfd_read_op(void *inode, void *priv, void *u_buf, size_t len,
             if (stask) {
                 uint64_t pending = __atomic_load_n(&stask->pending_signals, __ATOMIC_ACQUIRE);
                 fut_thread_t *scur_thr = fut_thread_current();
+                if (scur_thr)
+                    pending |= __atomic_load_n(&scur_thr->thread_pending_signals, __ATOMIC_ACQUIRE);
                 uint64_t blocked = scur_thr ?
                     __atomic_load_n(&scur_thr->signal_mask, __ATOMIC_ACQUIRE) :
                     __atomic_load_n(&stask->signal_mask, __ATOMIC_ACQUIRE);

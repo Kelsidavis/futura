@@ -318,6 +318,8 @@ static ssize_t inotify_read_op(void *inode, void *priv, void *u_buf, size_t len,
                 if (stask) {
                     fut_thread_t *ino_thr = fut_thread_current();
                     uint64_t pending = __atomic_load_n(&stask->pending_signals, __ATOMIC_ACQUIRE);
+                    if (ino_thr)
+                        pending |= __atomic_load_n(&ino_thr->thread_pending_signals, __ATOMIC_ACQUIRE);
                     uint64_t blocked = ino_thr ?
                         __atomic_load_n(&ino_thr->signal_mask, __ATOMIC_ACQUIRE) :
                         stask->signal_mask;

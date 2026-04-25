@@ -1285,6 +1285,14 @@ void comp_surface_destroy(struct comp_surface *surface) {
         if (comp->resize_surface == surface) {
             comp->resize_surface = NULL;
         }
+        /* Cancel an in-flight Alt+Tab — the indexed slot may now point
+         * past the end of the remaining surfaces, and the user's mental
+         * model of which window will get focus on Alt-release is gone
+         * anyway. */
+        if (comp->alt_tab_active) {
+            comp->alt_tab_active = false;
+            comp_damage_add_full(comp);
+        }
         if (comp->seat) {
             seat_surface_destroyed(comp->seat, surface);
         }

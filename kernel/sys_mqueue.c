@@ -444,7 +444,11 @@ long sys_mq_timedsend(int mqdes, const char *msg_ptr, size_t msg_len,
         struct { long tv_sec; long tv_nsec; } ts;
         if (mq_copy_from_user(&ts, abs_timeout, sizeof(ts)) != 0)
             return -EFAULT;
-        if (ts.tv_nsec < 0 || ts.tv_nsec >= 1000000000L)
+        /* Reject negative tv_sec too — without this the (uint64_t)
+         * cast below produces a huge abs_ns and the timeout becomes
+         * effectively infinite (or fires immediately if the cast
+         * happens to land below now_ns). Linux returns EINVAL. */
+        if (ts.tv_sec < 0 || ts.tv_nsec < 0 || ts.tv_nsec >= 1000000000L)
             return -EINVAL;
         /* Convert absolute CLOCK_REALTIME to deadline in ticks.
          * Simplified: convert ns from now until timeout to ticks. */
@@ -560,7 +564,11 @@ long sys_mq_timedreceive(int mqdes, char *msg_ptr, size_t msg_len,
         struct { long tv_sec; long tv_nsec; } ts;
         if (mq_copy_from_user(&ts, abs_timeout, sizeof(ts)) != 0)
             return -EFAULT;
-        if (ts.tv_nsec < 0 || ts.tv_nsec >= 1000000000L)
+        /* Reject negative tv_sec too — without this the (uint64_t)
+         * cast below produces a huge abs_ns and the timeout becomes
+         * effectively infinite (or fires immediately if the cast
+         * happens to land below now_ns). Linux returns EINVAL. */
+        if (ts.tv_sec < 0 || ts.tv_nsec < 0 || ts.tv_nsec >= 1000000000L)
             return -EINVAL;
         uint64_t abs_ns = (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
         uint64_t now_ns = fut_get_ticks() * (1000000000ULL / FUT_TIMER_HZ);

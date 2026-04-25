@@ -247,8 +247,8 @@ long sys_pidfd_send_signal(int pidfd, int sig, const void *info, unsigned int fl
  * @return New FD in current process on success, -errno on error
  *
  * Linux 5.6+. Requires the pidfd to reference a live process and targetfd
- * to be open in that process. In Linux this requires PTRACE_MODE_ATTACH;
- * Futura allows it for any process (no ptrace credential model yet).
+ * to be open in that process. PTRACE_MODE_ATTACH equivalent: caller must
+ * be root, hold CAP_SYS_PTRACE, or share the target's uid.
  */
 long sys_pidfd_getfd(int pidfd, int targetfd, unsigned int flags) {
     if (flags != 0)

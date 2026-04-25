@@ -233,10 +233,20 @@ static void refresh_procs(void) {
 
 /* ─── Rendering helpers ─── */
 
+/* Clip rect against negative origin and stride width so callers passing
+ * over-wide rects (the row strip uses w - 2*(SM_PAD-2), the track at
+ * the right edge, etc.) can't run off the row. */
 static void fill_rect(uint32_t *px, int stride, int x0, int y0, int w, int h, uint32_t color) {
-    for (int y = y0; y < y0 + h; y++) {
+    if (w <= 0 || h <= 0) return;
+    int x1 = x0 + w;
+    int y1 = y0 + h;
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > stride) x1 = stride;
+    if (x1 <= x0 || y1 <= y0) return;
+    for (int y = y0; y < y1; y++) {
         uint32_t *row = px + y * stride;
-        for (int x = x0; x < x0 + w; x++) row[x] = color;
+        for (int x = x0; x < x1; x++) row[x] = color;
     }
 }
 

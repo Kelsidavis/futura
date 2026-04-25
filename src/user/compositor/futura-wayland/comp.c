@@ -1382,11 +1382,14 @@ void comp_surface_commit(struct comp_surface *surface) {
                 surface->comp->cascade_counter++;
                 cx += offset;
                 cy += offset;
-                /* Clamp so the window stays on screen */
+                /* Clamp so the window stays on screen.
+                 * Dock occupies fb_h - 44 .. fb_h (height 38 + 6px margin);
+                 * keep new windows 4px above the dock to match the tile
+                 * paths' 48px reservation. */
                 if (cx + buffer.width > fb_w)
                     cx = fb_w - buffer.width;
-                if (cy + total_h > fb_h - 42) /* 42 = dock area */
-                    cy = fb_h - 42 - total_h;
+                if (cy + total_h > fb_h - 48)
+                    cy = fb_h - 48 - total_h;
                 if (cx < 0) cx = 0;
                 if (cy < MENUBAR_HEIGHT) cy = MENUBAR_HEIGHT;
                 surface->x = cx;

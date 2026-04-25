@@ -341,6 +341,12 @@ static void process_key(struct client_state *state, uint32_t key) {
     if (key == 107) { term_send_key(&state->term, '\033'); term_send_key(&state->term, '['); term_send_key(&state->term, 'F'); state->needs_redraw = true; return; }
     /* Delete */
     if (key == 111) { term_send_key(&state->term, '\033'); term_send_key(&state->term, '['); term_send_key(&state->term, '3'); term_send_key(&state->term, '~'); state->needs_redraw = true; return; }
+    /* PageUp / PageDown — Shift+PgUp/PgDn is consumed above for scrollback;
+     * plain PgUp/PgDn forwards the xterm escape so less, vim, etc. can
+     * page through their own buffers. Without these wl-term silently
+     * dropped the keys. */
+    if (key == 104) { term_send_key(&state->term, '\033'); term_send_key(&state->term, '['); term_send_key(&state->term, '5'); term_send_key(&state->term, '~'); state->needs_redraw = true; return; }
+    if (key == 109) { term_send_key(&state->term, '\033'); term_send_key(&state->term, '['); term_send_key(&state->term, '6'); term_send_key(&state->term, '~'); state->needs_redraw = true; return; }
 
     bool ctrl = (kbd_mods_depressed & 4) != 0;  /* Ctrl modifier */
 

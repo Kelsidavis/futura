@@ -912,8 +912,22 @@ long sys_io_uring_setup(unsigned int entries, void *params) {
     if (!params) return -EFAULT;
     if (entries == 0 || entries > MAX_URING_ENTRIES) return -EINVAL;
 
-    /* Kernel-pointer bypass for self-tests */
-    struct io_uring_params *p = (struct io_uring_params *)params;
+    /* Stage params through copy_*_user. The previous code cast 'params'
+     * directly to a kernel pointer and then read flags/cq_entries and
+     * later wrote sq_entries/features/sq_off/cq_off through it — a
+     * full user-pointer boundary violation: a bad user pointer faulted
+     * the kernel, a kernel-pointer caller turned the syscall into a
+     * read/write-anywhere primitive. Use a local kernel copy and
+     * commit at the end via copy_to_user. */
+    struct io_uring_params local_p;
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)params >= KERNEL_VIRTUAL_BASE) {
+        __builtin_memcpy(&local_p, params, sizeof(local_p));
+    } else
+#endif
+    if (fut_copy_from_user(&local_p, params, sizeof(local_p)) != 0)
+        return -EFAULT;
+    struct io_uring_params *p = &local_p;
 
     /* We don't support SQPOLL or IOPOLL in this implementation */
     uint32_t unsupported = IORING_SETUP_SQPOLL | IORING_SETUP_IOPOLL;
@@ -1029,6 +1043,15 @@ long sys_io_uring_setup(unsigned int entries, void *params) {
     p->cq_off.overflow     = (uint32_t)((uintptr_t)&ctx->cq_overflow - (uintptr_t)ctx);
     p->cq_off.cqes         = 0;
     p->cq_off.flags        = 0;
+
+    /* Commit the populated params struct back to userspace. */
+    if (aio_put_user(params, &local_p, sizeof(local_p)) != 0) {
+        /* User pointer became unwritable between input copy and now;
+         * tear down the ring fd we just allocated so we don't leak it. */
+        extern int fut_vfs_close(int fd);
+        fut_vfs_close(fd);
+        return -EFAULT;
+    }
 
     return fd;
 }

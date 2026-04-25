@@ -159,12 +159,17 @@ long sys_statfs(const char *path, struct fut_linux_statfs *buf) {
     }
 
     /* Copy path from user space (SMAP prevents direct access).
-     * Use the bypass helper so kernel-space callers (tests) also work. */
-    char path_preview[256];
+     * Use the bypass helper so kernel-space callers (tests) also work.
+     * Use the standard path buffer size and detect truncation, so paths
+     * longer than the buffer return ENAMETOOLONG instead of silently
+     * resolving to a different (possibly more privileged) directory. */
+    char path_preview[FUT_VFS_PATH_BUFFER_SIZE];
     if (statfs_copy_from_user(path_preview, path, sizeof(path_preview)) != 0) {
         return -EFAULT;
     }
-    path_preview[sizeof(path_preview) - 1] = '\0';
+    if (memchr(path_preview, '\0', sizeof(path_preview)) == NULL) {
+        return -ENAMETOOLONG;
+    }
 
     size_t path_len = 0;
     while (path_len < sizeof(path_preview) - 1 && path_preview[path_len] != '\0')
@@ -261,8 +266,10 @@ long sys_fstatfs(int fd, struct fut_linux_statfs *buf) {
     }
 
     /* Return real physical memory stats with correct f_type from the file's path.
-     * Use file->path (absolute path) or vnode->mount->mountpoint as fallback. */
-    struct fut_linux_statfs stats;
+     * Use file->path (absolute path) or vnode->mount->mountpoint as fallback.
+     * Zero-initialize so any reserved/padding fields in fut_linux_statfs do
+     * not carry kernel-stack contents into userspace via copy_to_user. */
+    struct fut_linux_statfs stats = {0};
     fill_statfs_from_pmm(&stats);
     {
         const char *mp = file->path;

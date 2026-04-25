@@ -97,12 +97,20 @@ long sys_landlock_create_ruleset(const void *attr, size_t size,
     }
     if (slot < 0) return -ENOMEM;
 
-    /* Copy attribute from caller */
+    /* Copy attribute from caller. Bypass uaccess only for kernel-side
+     * self-test pointers; never silently fall back to memcpy on a
+     * user-pointer copy failure — the previous code did exactly that,
+     * turning any failed copy into a kernel-memory read primitive
+     * (kernel-address attr) or a kernel page fault (bad user attr). */
     struct landlock_ruleset_attr ka;
     extern int fut_copy_from_user(void *, const void *, size_t);
-    if (fut_copy_from_user(&ka, attr, sizeof(ka)) != 0) {
-        /* Kernel pointer — direct copy */
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)attr >= KERNEL_VIRTUAL_BASE) {
         __builtin_memcpy(&ka, attr, sizeof(ka));
+    } else
+#endif
+    if (fut_copy_from_user(&ka, attr, sizeof(ka)) != 0) {
+        return -EFAULT;
     }
 
     g_rulesets[slot].active = true;

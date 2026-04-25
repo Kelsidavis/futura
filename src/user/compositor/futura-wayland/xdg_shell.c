@@ -712,18 +712,17 @@ static void xdg_toplevel_show_window_menu(struct wl_client *client,
                                           int32_t x,
                                           int32_t y) {
     (void)client;
+    (void)resource;
     (void)seat;
     (void)serial;
-    struct xdg_surface_state *state = wl_resource_get_user_data(resource);
-    if (!state || !state->surface) {
-        return;
-    }
-    struct comp_surface *surface = state->surface;
-    surface->pend_x = surface->x + x;
-    surface->pend_y = surface->y + y;
-    surface->have_pending_pos = true;
-    xdg_surface_issue_configure(state, state->size.width, state->size.height,
-                                comp_surface_state_flags(surface));
+    (void)x;
+    (void)y;
+    /* xdg-shell asks the compositor to pop up a window menu (maximize /
+     * minimize / close / move) at (x, y) relative to the surface origin.
+     * The previous implementation instead translated the window by (x, y)
+     * and re-issued configure, so any client that called this request
+     * (e.g. on a decoration right-click) silently teleported the window.
+     * Until a real window-menu UI exists, treat it as a no-op. */
 }
 
 static void xdg_toplevel_move(struct wl_client *client,

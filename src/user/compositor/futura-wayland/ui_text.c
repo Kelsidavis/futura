@@ -47,6 +47,16 @@ void ui_draw_text(uint32_t *dst,
     const int clip_x2 = clip_x + clip_w;
     const int clip_y2 = clip_y + clip_h;
 
+    /* Pre-extract source channels and alpha so we don't redo it per pixel.
+     * Alpha-blend semi-transparent text against the existing framebuffer
+     * pixel — without this, callers passing alpha < 0xFF (e.g. the
+     * "Futura" menubar shadow at 0x40000000) got a flat write that
+     * stomped the destination instead of a blend. */
+    uint32_t sa = (argb >> 24) & 0xFFu;
+    uint32_t sr = (argb >> 16) & 0xFFu;
+    uint32_t sg = (argb >> 8) & 0xFFu;
+    uint32_t sb = argb & 0xFFu;
+
     for (size_t i = 0; i < max_len; ++i) {
         unsigned char ch = (unsigned char)text[i];
         const uint8_t *glyph = glyph_for_char(ch);
@@ -80,7 +90,16 @@ void ui_draw_text(uint32_t *dst,
                 if (gx < clip_x || gx >= clip_x2) {
                     continue;
                 }
-                row_ptr[gx] = argb;
+                if (sa == 0xFFu) {
+                    row_ptr[gx] = argb;
+                } else if (sa != 0u) {
+                    uint32_t da = 255u - sa;
+                    uint32_t d = row_ptr[gx];
+                    uint32_t or_ = (sr * sa + ((d >> 16) & 0xFFu) * da) / 255u;
+                    uint32_t og = (sg * sa + ((d >> 8) & 0xFFu) * da) / 255u;
+                    uint32_t ob = (sb * sa + (d & 0xFFu) * da) / 255u;
+                    row_ptr[gx] = 0xFF000000u | (or_ << 16) | (og << 8) | ob;
+                }
             }
         }
     }

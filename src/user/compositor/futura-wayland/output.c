@@ -3,8 +3,18 @@
 
 #include <wayland-server-protocol.h>
 
+static void output_release(struct wl_client *client,
+                           struct wl_resource *resource) {
+    (void)client;
+    /* wl_output.release was added in v3. A v3 client may invoke it to
+     * tear down the output binding; without a handler libwayland-server
+     * dispatches through a NULL function pointer and crashes the
+     * compositor. */
+    wl_resource_destroy(resource);
+}
+
 static const struct wl_output_interface output_impl = {
-    .release = NULL,
+    .release = output_release,
 };
 
 static void output_bind(struct wl_client *client,

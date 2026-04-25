@@ -548,11 +548,22 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
 
             case SO_RCVTIMEO:
             case SO_SNDTIMEO: {
-                /* Timeout — store for enforcement in recv/send blocking paths */
+                /* Timeout — store for enforcement in recv/send blocking paths.
+                 * Linux: negative tv_sec/tv_usec or tv_usec >= 1e6 give -EDOM.
+                 * Without these checks, negative values cast to uint64_t
+                 * produce a near-infinite ms value, silently disabling the
+                 * timeout instead of rejecting the call. */
                 if (optlen < (socklen_t)(2 * sizeof(long))) return -EINVAL;
                 struct { long tv_sec; long tv_usec; } tv = {0, 0};
                 if (sso_copy_from_user(&tv, optval, sizeof(tv)) != 0) return -EFAULT;
-                uint64_t ms = (uint64_t)tv.tv_sec * 1000ULL +
+                if (tv.tv_sec < 0 || tv.tv_usec < 0 || tv.tv_usec >= 1000000)
+                    return -EINVAL;
+                /* Cap tv_sec so the *1000 multiply can't overflow uint64_t.
+                 * UINT64_MAX/1000 is plenty (~5.8e14 seconds). */
+                uint64_t sec = (uint64_t)tv.tv_sec;
+                if (sec > (UINT64_MAX / 1000ULL) - 1ULL)
+                    sec = (UINT64_MAX / 1000ULL) - 1ULL;
+                uint64_t ms = sec * 1000ULL +
                               ((uint64_t)tv.tv_usec + 999ULL) / 1000ULL;
                 if (optname == SO_RCVTIMEO)
                     socket->rcvtimeo_ms = ms;

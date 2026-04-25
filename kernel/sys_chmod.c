@@ -463,15 +463,27 @@ long sys_chmod(const char *pathname, uint32_t mode) {
     }
 
     /* Linux: CAP_FSETID controls whether S_ISGID survives chmod when the
-     * caller is not in the file's group. */
+     * caller is not in the file's group. The check must consider
+     * supplementary groups too (in_group_p), otherwise users who own
+     * a shared-project directory only via a supplementary gid silently
+     * lose the setgid bit on every chmod. */
     {
         fut_task_t *chmod_task = fut_task_current();
         if (chmod_task) {
             int has_cap_fsetid = (chmod_task->cap_effective & (1ULL << 4 /* CAP_FSETID */));
             if ((local_mode & 02000) && !has_cap_fsetid) {
-                if (userns_ns_to_host_gid(chmod_task->user_ns, chmod_task->gid) != vnode->gid) {
-                    local_mode &= ~(uint32_t)02000;
+                int in_group = 0;
+                if (userns_ns_to_host_gid(chmod_task->user_ns, chmod_task->gid) == vnode->gid)
+                    in_group = 1;
+                else {
+                    for (uint32_t gi = 0; gi < chmod_task->ngroups; gi++) {
+                        uint32_t gh = userns_ns_to_host_gid(chmod_task->user_ns,
+                                                            chmod_task->groups[gi]);
+                        if (gh == vnode->gid) { in_group = 1; break; }
+                    }
                 }
+                if (!in_group)
+                    local_mode &= ~(uint32_t)02000;
             }
         }
     }

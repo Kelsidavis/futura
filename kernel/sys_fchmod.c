@@ -181,14 +181,24 @@ long sys_fchmod(int fd, uint32_t mode) {
 
     /* Linux: non-root without CAP_FSETID gets S_ISGID silently stripped
      * when the caller is not in the file's group. S_ISUID and sticky
-     * bit are allowed for file owners. */
+     * bit are allowed for file owners. The "in group" check must
+     * include supplementary groups (in_group_p), otherwise users in
+     * the file's group only via supplementary gids lose S_ISGID. */
     {
         int has_cap_fsetid = (task->cap_effective & (1ULL << 4 /* CAP_FSETID */));
-        /* Strip S_ISGID if caller not in file's group and no CAP_FSETID */
         if ((local_mode & 02000) && !has_cap_fsetid) {
-            if (userns_ns_to_host_gid(task->user_ns, task->gid) != vnode->gid) {
-                local_mode &= ~(uint32_t)02000;
+            int in_group = 0;
+            if (userns_ns_to_host_gid(task->user_ns, task->gid) == vnode->gid)
+                in_group = 1;
+            else {
+                for (int gi = 0; gi < task->ngroups; gi++) {
+                    uint32_t gh = userns_ns_to_host_gid(task->user_ns,
+                                                        task->groups[gi]);
+                    if (gh == vnode->gid) { in_group = 1; break; }
+                }
             }
+            if (!in_group)
+                local_mode &= ~(uint32_t)02000;
         }
     }
 

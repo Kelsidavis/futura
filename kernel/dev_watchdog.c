@@ -136,10 +136,15 @@ static int watchdog_ioctl(void *inode, void *priv, unsigned long request,
     (void)inode; (void)priv;
     switch (request) {
         case WDIOC_SETTIMEOUT: {
-            uint32_t timeout = (uint32_t)arg;
+            /* Linux ABI: arg is a pointer to int containing the requested
+             * timeout; the kernel writes back the actual (possibly clamped)
+             * timeout in the same location. */
+            if (!arg) return -EFAULT;
+            uint32_t timeout = *(uint32_t *)(uintptr_t)arg;
             if (timeout < 1 || timeout > 3600) return -EINVAL;
             g_watchdog.timeout_sec = timeout;
             g_watchdog.last_fed_ticks = fut_get_ticks();  /* Reset timer */
+            *(uint32_t *)(uintptr_t)arg = g_watchdog.timeout_sec;
             return 0;
         }
         case WDIOC_GETTIMEOUT: {

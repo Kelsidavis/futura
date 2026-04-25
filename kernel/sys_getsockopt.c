@@ -532,8 +532,11 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
      * This check prevents kernel page fault when writing to read-only memory
      */
     if (optval != NULL) {
-        char test_byte = 0;
-        if (gso_copy_to_user(optval, &test_byte, 1) != 0) {
+        /* Validate optval writability without touching its contents.
+         * The previous probe wrote a literal 0 to optval[0]; if the
+         * caller relied on optval being unmodified on EFAULT/short
+         * returns it would silently see a zeroed first byte. */
+        if (gso_access_ok(optval, len, 1) != 0) {
             fut_printf("[GETSOCKOPT] getsockopt(sockfd=%d, level=%d, optname=%d, optval=%p) -> EFAULT "
                        "(buffer not writable)\n",
                        sockfd, level, optname, optval);

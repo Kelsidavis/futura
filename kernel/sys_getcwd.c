@@ -190,12 +190,13 @@ long sys_getcwd(char *buf, size_t size) {
      * Critical: Validation must occur BEFORE line 207 direct write
      */
     if (local_size > 0) {
-        /* Probe buffer write permission with 1-byte test write
-         * Use fut_copy_to_user to safely check write access without faulting */
-        char probe = '\0';
-        if (getcwd_copy_to_user(local_buf, &probe, 1) != 0) {
+        /* Validate writability without touching buffer contents. The
+         * previous probe wrote a NUL to local_buf[0] before the path
+         * was even built; on any subsequent error path the caller
+         * would see byte 0 silently zeroed instead of left untouched. */
+        if (fut_access_ok(local_buf, local_size, 1) != 0) {
             fut_printf("[GETCWD] getcwd(buf=%p, size=%zu) -> EFAULT "
-                       "(buffer not writable write permission validation)\n",
+                       "(buffer not writable)\n",
                        (void *)local_buf, local_size);
             return -EFAULT;
         }

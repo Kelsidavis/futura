@@ -643,6 +643,15 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
 
         if (overlap_start == vma->start && overlap_end < vma->end) {
             /* Case 2: Unmap left part - shrink VMA from the left */
+            /* Decrement locked_vm by the unmapped portion if VMA was locked.
+             * Without this, partial-munmap of an mlock'd region leaks
+             * pages against RLIMIT_MEMLOCK forever — only the full-VMA
+             * Case 1 used to adjust locked_vm. */
+            if (vma->flags & VMA_LOCKED) {
+                size_t pages = (overlap_end - vma->start) / PAGE_SIZE;
+                if (mm->locked_vm >= pages) mm->locked_vm -= pages;
+                else mm->locked_vm = 0;
+            }
             /* Writeback shared pages in the unmapped portion before freeing */
             if ((vma->flags & 0x01) && vma->vnode && vma->vnode->ops &&
                 vma->vnode->ops->write && ctx) {
@@ -676,6 +685,12 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
 
         if (overlap_start > vma->start && overlap_end == vma->end) {
             /* Case 3: Unmap right part - shrink VMA from the right */
+            /* Decrement locked_vm by the unmapped portion if VMA was locked. */
+            if (vma->flags & VMA_LOCKED) {
+                size_t pages = (vma->end - overlap_start) / PAGE_SIZE;
+                if (mm->locked_vm >= pages) mm->locked_vm -= pages;
+                else mm->locked_vm = 0;
+            }
             /* Writeback shared pages in the unmapped portion before freeing */
             if ((vma->flags & 0x01) && vma->vnode && vma->vnode->ops &&
                 vma->vnode->ops->write && ctx) {
@@ -709,6 +724,15 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
             fut_vma_t *right_vma = fut_malloc(sizeof(*right_vma));
             if (!right_vma) {
                 fut_spinlock_release(&mm->mm_lock); return -ENOMEM;
+            }
+
+            /* Decrement locked_vm by the middle pages if VMA was locked.
+             * (The split keeps both halves locked since they retained
+             *  VMA_LOCKED via the flags copy below.) */
+            if (vma->flags & VMA_LOCKED) {
+                size_t pages = (overlap_end - overlap_start) / PAGE_SIZE;
+                if (mm->locked_vm >= pages) mm->locked_vm -= pages;
+                else mm->locked_vm = 0;
             }
 
             /* Writeback shared pages in the unmapped middle before freeing */
@@ -1519,6 +1543,15 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
 
         if (overlap_start == vma->start && overlap_end < vma->end) {
             /* Case 2: Unmap left part - shrink VMA from the left */
+            /* Decrement locked_vm by the unmapped portion if VMA was locked.
+             * Without this, partial-munmap of an mlock'd region leaks
+             * pages against RLIMIT_MEMLOCK forever — only the full-VMA
+             * Case 1 used to adjust locked_vm. */
+            if (vma->flags & VMA_LOCKED) {
+                size_t pages = (overlap_end - vma->start) / PAGE_SIZE;
+                if (mm->locked_vm >= pages) mm->locked_vm -= pages;
+                else mm->locked_vm = 0;
+            }
             /* Writeback shared pages in the unmapped portion before freeing */
             if ((vma->flags & 0x01) && vma->vnode && vma->vnode->ops &&
                 vma->vnode->ops->write && ctx) {
@@ -1552,6 +1585,12 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
 
         if (overlap_start > vma->start && overlap_end == vma->end) {
             /* Case 3: Unmap right part - shrink VMA from the right */
+            /* Decrement locked_vm by the unmapped portion if VMA was locked. */
+            if (vma->flags & VMA_LOCKED) {
+                size_t pages = (vma->end - overlap_start) / PAGE_SIZE;
+                if (mm->locked_vm >= pages) mm->locked_vm -= pages;
+                else mm->locked_vm = 0;
+            }
             /* Writeback shared pages in the unmapped portion before freeing */
             if ((vma->flags & 0x01) && vma->vnode && vma->vnode->ops &&
                 vma->vnode->ops->write && ctx) {
@@ -1585,6 +1624,15 @@ int fut_mm_unmap(fut_mm_t *mm, uintptr_t addr, size_t len) {
             fut_vma_t *right_vma = fut_malloc(sizeof(*right_vma));
             if (!right_vma) {
                 fut_spinlock_release(&mm->mm_lock); return -ENOMEM;
+            }
+
+            /* Decrement locked_vm by the middle pages if VMA was locked.
+             * (The split keeps both halves locked since they retained
+             *  VMA_LOCKED via the flags copy below.) */
+            if (vma->flags & VMA_LOCKED) {
+                size_t pages = (overlap_end - overlap_start) / PAGE_SIZE;
+                if (mm->locked_vm >= pages) mm->locked_vm -= pages;
+                else mm->locked_vm = 0;
             }
 
             /* Writeback shared pages in the unmapped middle before freeing */

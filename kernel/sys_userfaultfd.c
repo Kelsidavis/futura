@@ -25,6 +25,8 @@
 #include <stdbool.h>
 #include <string.h>
 
+#include <platform/platform.h>
+
 /* ── userfaultfd constants (Linux ABI) ── */
 
 /* userfaultfd flags */
@@ -304,6 +306,22 @@ long uffd_ioctl(int fd, unsigned int cmd, unsigned long arg) {
         if (!cp) return -EFAULT;
         if (cp->dst & 0xFFF) return -EINVAL;
         if (cp->len == 0 || (cp->len & 0xFFF)) return -EINVAL;
+        /* dst and src are user-space addresses for the userfaultfd-
+         * registered region. Reject any address that lands in kernel
+         * memory: the previous code did a raw memcpy(cp->dst, cp->src,
+         * cp->len) so a malicious caller could hand the kernel an
+         * arbitrary read-anywhere/write-anywhere primitive by pointing
+         * dst/src at kernel ranges. We also require dst+len to fit
+         * inside one of the registered regions to match Linux. */
+#ifdef KERNEL_VIRTUAL_BASE
+        if (cp->dst >= KERNEL_VIRTUAL_BASE ||
+            cp->src >= KERNEL_VIRTUAL_BASE ||
+            cp->dst + cp->len < cp->dst ||
+            cp->src + cp->len < cp->src ||
+            cp->dst + cp->len > KERNEL_VIRTUAL_BASE ||
+            cp->src + cp->len > KERNEL_VIRTUAL_BASE)
+            return -EFAULT;
+#endif
 
         /* In Futura's flat memory model, copy is a simple memcpy */
         memcpy((void *)(uintptr_t)cp->dst, (const void *)(uintptr_t)cp->src,
@@ -317,6 +335,15 @@ long uffd_ioctl(int fd, unsigned int cmd, unsigned long arg) {
         if (!zp) return -EFAULT;
         if (zp->range.start & 0xFFF) return -EINVAL;
         if (zp->range.len == 0 || (zp->range.len & 0xFFF)) return -EINVAL;
+        /* Same containment requirement as UFFDIO_COPY: range must fit
+         * within user space. Otherwise zp->range.start could point
+         * anywhere and the memset wipes arbitrary kernel pages. */
+#ifdef KERNEL_VIRTUAL_BASE
+        if (zp->range.start >= KERNEL_VIRTUAL_BASE ||
+            zp->range.start + zp->range.len < zp->range.start ||
+            zp->range.start + zp->range.len > KERNEL_VIRTUAL_BASE)
+            return -EFAULT;
+#endif
 
         memset((void *)(uintptr_t)zp->range.start, 0, (size_t)zp->range.len);
         zp->zeropage = (int64_t)zp->range.len;

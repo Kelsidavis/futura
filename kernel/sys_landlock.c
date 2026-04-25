@@ -259,8 +259,17 @@ long sys_process_madvise(int pidfd, const void *iovec_ptr, unsigned long vlen,
         return -EINVAL;
 
     /* Copy iovec array from user.
-     * struct iovec { void *iov_base; size_t iov_len; } — use matching layout. */
-    struct { void *iov_base; size_t iov_len; } iovecs[1024];
+     * struct iovec { void *iov_base; size_t iov_len; } — use matching layout.
+     * Heap-allocate sized to the caller's vlen. The previous code stack-
+     * allocated all 1024 slots (16 KB) on a typically 8–16 KB kernel
+     * stack — a stack-overflow primitive triggerable by any caller
+     * regardless of vlen. fut_malloc keeps stack usage bounded. */
+    typedef struct { void *iov_base; size_t iov_len; } pma_iovec_t;
+    extern void *fut_malloc(uint64_t size);
+    extern void  fut_free(void *p);
+    pma_iovec_t *iovecs = fut_malloc(vlen * sizeof(pma_iovec_t));
+    if (!iovecs)
+        return -ENOMEM;
 
     /* Kernel-pointer bypass for self-tests */
 #ifdef KERNEL_VIRTUAL_BASE
@@ -270,8 +279,10 @@ long sys_process_madvise(int pidfd, const void *iovec_ptr, unsigned long vlen,
 #endif
     {
         extern int fut_copy_from_user(void *dst, const void *src, uint64_t n);
-        if (fut_copy_from_user(iovecs, iovec_ptr, vlen * sizeof(iovecs[0])) != 0)
+        if (fut_copy_from_user(iovecs, iovec_ptr, vlen * sizeof(iovecs[0])) != 0) {
+            fut_free(iovecs);
             return -EFAULT;
+        }
     }
 
     /* Apply madvise to each iovec range */
@@ -283,10 +294,13 @@ long sys_process_madvise(int pidfd, const void *iovec_ptr, unsigned long vlen,
         long r = sys_madvise(iovecs[i].iov_base, iovecs[i].iov_len, advice);
         if (r < 0) {
             /* Return bytes processed so far if any, else propagate error */
-            return (total > 0) ? total : r;
+            ssize_t out = (total > 0) ? total : r;
+            fut_free(iovecs);
+            return out;
         }
         total += (ssize_t)iovecs[i].iov_len;
     }
+    fut_free(iovecs);
     return total;
 }
 

@@ -564,8 +564,15 @@ long sys_setitimer(int which, const struct itimerval *value, struct itimerval *o
         return -EFAULT;
     }
 
-    /* Validate timer values */
-    if (new_timer.it_value.tv_usec < 0 || new_timer.it_value.tv_usec >= 1000000 ||
+    /* Validate timer values. Negative tv_sec is rejected too — the
+     * previous version only checked tv_usec range, so a caller passing
+     * tv_sec=-1 would have (uint64_t)(-1) * 1000 wrap to a huge number
+     * during the ms calculation below, causing the timer to either
+     * fire immediately (after wrap to a small expires_ms) or appear
+     * essentially infinite. Linux setitimer rejects this with EINVAL. */
+    if (new_timer.it_value.tv_sec < 0 ||
+        new_timer.it_value.tv_usec < 0 || new_timer.it_value.tv_usec >= 1000000 ||
+        new_timer.it_interval.tv_sec < 0 ||
         new_timer.it_interval.tv_usec < 0 || new_timer.it_interval.tv_usec >= 1000000) {
         fut_printf("[SETITIMER] setitimer(which=%s) -> EINVAL (invalid timeval)\n", timer_name);
         return -EINVAL;

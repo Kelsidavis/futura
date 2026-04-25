@@ -644,6 +644,28 @@ void term_putchar(struct terminal *term, char ch) {
             return;
         }
 
+        /* DEC two-byte cursor save/restore (ESC 7 / ESC 8). These are
+         * raw ESC sequences (no CSI introducer) and would otherwise sit
+         * in escape_buf forever waiting for a final letter. */
+        if (term->escape_len == 0 && ch == '7') {
+            term->saved_cursor_x = term->cursor_x;
+            term->saved_cursor_y = term->cursor_y;
+            term->parser_state = TERM_STATE_NORMAL;
+            return;
+        }
+        if (term->escape_len == 0 && ch == '8') {
+            int sx = term->saved_cursor_x;
+            int sy = term->saved_cursor_y;
+            if (sx < 0) sx = 0;
+            if (sx >= term->cols) sx = term->cols - 1;
+            if (sy < 0) sy = 0;
+            if (sy >= term->rows) sy = term->rows - 1;
+            term->cursor_x = sx;
+            term->cursor_y = sy;
+            term->parser_state = TERM_STATE_NORMAL;
+            return;
+        }
+
         if (term->escape_len < (int)sizeof(term->escape_buf) - 1) {
             term->escape_buf[term->escape_len++] = ch;
         } else {

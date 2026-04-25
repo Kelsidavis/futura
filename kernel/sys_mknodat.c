@@ -325,6 +325,21 @@ long sys_mknodat(int dirfd, const char *pathname, uint32_t mode, uint32_t dev) {
      * Block devices route through the same devfs_create_chr mechanism but
      * mark the vnode as a block device for stat(). */
     if (file_type == S_IFBLK) {
+        /* Linux mknod(2): creating block device nodes requires
+         * CAP_MKNOD. The S_IFCHR path above checks this; S_IFBLK was
+         * missing the gate, so any unprivileged caller could mknod a
+         * block device pointing at a real disk (e.g. dev=8:0 for
+         * sda). If the resulting node is openable, that's raw disk
+         * access — bypassing all filesystem permissions on the
+         * mounted partitions. */
+        bool has_mknod_cap = (task->cap_effective & (1ULL << 27 /* CAP_MKNOD */)) != 0;
+        bool is_root = (task->uid == 0);
+        if (!has_mknod_cap && !is_root) {
+            fut_printf("[MKNODAT] mknodat('%s', S_IFBLK, %u:%u) -> EPERM (need CAP_MKNOD)\n",
+                       path_buf, major, minor);
+            return -EPERM;
+        }
+
         extern int devfs_create_chr(const char *, unsigned, unsigned);
         /* Create the block device node at the resolved path */
         char resolved_path_blk[256];

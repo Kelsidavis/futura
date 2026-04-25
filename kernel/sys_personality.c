@@ -63,6 +63,15 @@ long sys_personality(unsigned long persona) {
         return -ESRCH;
     }
 
+    /* Linux declares this syscall as taking unsigned int, so callers
+     * passing -1 (the canonical query value used by glibc) end up
+     * with 0xFFFFFFFF in the kernel — matching PER_QUERY. Futura's
+     * declaration is unsigned long, so the same -1 from userspace
+     * arrives as 0xFFFFFFFFFFFFFFFF and never equals PER_QUERY,
+     * silently breaking the query path. Mask to 32 bits at entry to
+     * match Linux ABI. */
+    persona &= 0xFFFFFFFFUL;
+
     /* Phase 3: Check if this is a query operation — return stored personality */
     if (persona == PER_QUERY) {
         return (long)task->personality;

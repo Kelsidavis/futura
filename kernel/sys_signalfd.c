@@ -41,9 +41,12 @@
 
 #include <kernel/kprintf.h>
 
-#ifndef KERNEL_VIRTUAL_BASE
-#define KERNEL_VIRTUAL_BASE 0xFFFFFFFF80000000ULL
-#endif
+#include <platform/platform.h>  /* KERNEL_VIRTUAL_BASE: do NOT fall back to a
+                                 * hardcoded x86_64 constant — on ARM64 the
+                                 * kernel half starts at 0xFFFF800000000000,
+                                 * not 0xFFFFFFFF80000000, so a hardcoded
+                                 * x86 default would skip the kernel-pointer
+                                 * bypass for ARM64 kernel addresses. */
 
 /* ---- user/kernel copy helpers ------------------------------------------ */
 

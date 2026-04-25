@@ -21,9 +21,9 @@
 /* Maximum copy size per call (4MB) */
 #define COPY_FILE_RANGE_MAX (4 * 1024 * 1024)
 
-#ifndef KERNEL_VIRTUAL_BASE
-#define KERNEL_VIRTUAL_BASE 0xFFFFFFFF80000000ULL
-#endif
+#include <platform/platform.h>  /* Real KERNEL_VIRTUAL_BASE — see signalfd
+                                 * note: hardcoded x86 fallback would miss
+                                 * ARM64 kernel pointers. */
 #define CFR_IS_KPTR(p) ((uintptr_t)(p) >= KERNEL_VIRTUAL_BASE)
 
 /* Read/write an int64_t through a possibly-userspace pointer */

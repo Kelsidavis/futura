@@ -431,9 +431,9 @@
 
 #include <kernel/kprintf.h>
 
-#ifndef KERNEL_VIRTUAL_BASE
-#define KERNEL_VIRTUAL_BASE 0xFFFFFFFF80000000ULL
-#endif
+#include <platform/platform.h>  /* Real KERNEL_VIRTUAL_BASE — see signalfd
+                                 * note: hardcoded x86 fallback would miss
+                                 * ARM64 kernel pointers. */
 
 /* ── IRQ-safe lock helpers for timerfd ────────────────────────────
  * timerfd_timer_cb runs in timer ISR context and acquires ctx->lock.

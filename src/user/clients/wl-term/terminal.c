@@ -740,8 +740,13 @@ void term_render(struct terminal *term, uint32_t *pixels, int32_t width, int32_t
 
     /* Render blinking block cursor.
      * When blink phase is off, render the character under the cursor normally
-     * (i.e., skip the cursor overlay) so the cursor appears to vanish. */
+     * (i.e., skip the cursor overlay) so the cursor appears to vanish.
+     * Hide the cursor entirely when viewing scrollback — the displayed rows
+     * are shifted by scroll_offset, so drawing at the raw grid (cursor_x,
+     * cursor_y) would paint the cursor block over arbitrary historical
+     * text rather than where the shell prompt actually lives. */
     if (term->cursor_visible && term->cursor_blink_on &&
+        term->scroll_offset == 0 &&
         term->cursor_x >= 0 && term->cursor_x < term->cols &&
         term->cursor_y >= 0 && term->cursor_y < term->rows) {
         int cx = term->cursor_x * FONT_WIDTH + pad_x;

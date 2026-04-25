@@ -799,6 +799,11 @@ long sys_listxattr(const char *path, char *list, size_t size) {
     if (!kbuf) return -ENOMEM;
     ssize_t got = vnode_listxattr_by_path(path_buf, kbuf, (size_t)total);
     if (got < 0) { fut_free(kbuf); return (long)got; }
+    /* Defensive clamp: the second call could in principle race with
+     * setxattr/removexattr and return more bytes than the size hint we
+     * sized kbuf for. Cap got to the buffer we actually allocated so the
+     * subsequent copy_to_user can never read past kbuf. */
+    if ((size_t)got > (size_t)total) got = (ssize_t)total;
     if (got > 0 && list && xattr_copy_to_user(list, kbuf, (size_t)got) != 0) {
         fut_free(kbuf); return -EFAULT;
     }
@@ -835,6 +840,7 @@ long sys_llistxattr(const char *path, char *list, size_t size) {
     if (!kbuf) return -ENOMEM;
     ssize_t got = vnode_listxattr_nofollow(path_buf, kbuf, (size_t)total);
     if (got < 0) { fut_free(kbuf); return (long)got; }
+    if ((size_t)got > (size_t)total) got = (ssize_t)total;
     if (got > 0 && list && xattr_copy_to_user(list, kbuf, (size_t)got) != 0) {
         fut_free(kbuf); return -EFAULT;
     }
@@ -877,6 +883,7 @@ long sys_flistxattr(int fd, char *list, size_t size) {
         got = vnode_generic_listxattr(vnode, kbuf, (size_t)total);
     }
     if (got < 0) { fut_free(kbuf); return (long)got; }
+    if ((size_t)got > (size_t)total) got = (ssize_t)total;
     if (got > 0 && list && xattr_copy_to_user(list, kbuf, (size_t)got) != 0) {
         fut_free(kbuf); return -EFAULT;
     }

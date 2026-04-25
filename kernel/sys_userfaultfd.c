@@ -20,6 +20,7 @@
 #include <kernel/errno.h>
 #include <kernel/fut_task.h>
 #include <kernel/chrdev.h>
+#include <fcntl.h>
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
@@ -417,8 +418,14 @@ long sys_userfaultfd(int flags) {
     if (fd < 0) { ctx->active = false; return fd; }
     ctx->fd = fd;
 
-    if ((flags & O_CLOEXEC_UFFD) && task && fd < task->max_fds)
-        task->fd_flags[fd] |= 1;
+    /* Apply FD_CLOEXEC. Guard task->fd_flags non-NULL: the field is lazily
+     * allocated and may still be NULL for early-init / kernel-thread
+     * callers. The previous unconditional task->fd_flags[fd] |= 1 was a
+     * straight NULL deref in those contexts (and FD_CLOEXEC is bit 1, so
+     * spell it out instead of the magic number). */
+    if ((flags & O_CLOEXEC_UFFD) && task && task->fd_flags &&
+        fd < task->max_fds)
+        task->fd_flags[fd] |= FD_CLOEXEC;
 
     return fd;
 }

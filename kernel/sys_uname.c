@@ -195,6 +195,18 @@ long sys_uname(struct utsname *buf) {
     const char *arch_desc = "unknown";
 #endif
 
+    /* NIS domain name (writable via setdomainname). Previously this
+     * field was left zero-filled by the memset above, so callers
+     * always saw an empty domainname even after a successful
+     * setdomainname() — uname() now reports the stored value. */
+    {
+        size_t dn_len = 0;
+        while (g_domainname[dn_len] && dn_len < sizeof(info.domainname) - 1)
+            dn_len++;
+        memcpy(info.domainname, g_domainname, dn_len);
+        info.domainname[dn_len] = '\0';
+    }
+
     /* Copy to userspace */
     if (uname_copy_to_user(buf, &info, sizeof(info)) != 0) {
         fut_printf("[UNAME] uname(buf=%p) -> EFAULT "

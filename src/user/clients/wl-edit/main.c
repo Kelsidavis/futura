@@ -819,6 +819,10 @@ int main(int argc, char **argv) {
         return -1;
     }
     xdg_surface_ack_configure(state.xdg_surface, state.configure_serial);
+    /* Clear the pending-configure latch so the main loop's ack-pending block
+     * doesn't re-ack the same serial on the very first iteration. */
+    state.configured = false;
+    state.configure_serial = 0;
 
     state.pixel_width = ED_WIDTH;
     state.pixel_height = ED_HEIGHT;

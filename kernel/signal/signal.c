@@ -10,6 +10,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/fut_thread.h>
 #include <kernel/fut_timer.h>
+#include <kernel/uaccess.h>
 #include <kernel/errno.h>
 #include <string.h>
 #include <stddef.h>

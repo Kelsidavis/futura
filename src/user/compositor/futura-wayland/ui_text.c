@@ -114,7 +114,11 @@ void ui_draw_text_scaled(uint32_t *dst,
                          int clip_x, int clip_y,
                          int clip_w, int clip_h) {
     if (!dst || !text || clip_w <= 0 || clip_h <= 0 ||
-        dpitch_bytes <= 0 || scale < 1 || scale > 8) {
+        dpitch_bytes <= 0 || scale < 1 || scale > 8 ||
+        clip_x < 0 || clip_y < 0) {
+        /* Reject negative clip origins like ui_draw_text does. The inner
+         * gx >= clip_x guard would otherwise allow negative pixel indices
+         * to reach row_ptr[gx], writing before the framebuffer base. */
         return;
     }
     const size_t max_len = safe_strlen(text, 512);

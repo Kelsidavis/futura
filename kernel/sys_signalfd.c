@@ -161,12 +161,16 @@ static ssize_t signalfd_read_op(void *inode, void *priv,
             if (total > 0) break;  /* Already returned some -- don't block */
             if (sfile->file && (sfile->file->flags & O_NONBLOCK))
                 return -EAGAIN;
-            /* Check for pending unblocked process signals -> EINTR */
+            /* Check for pending unblocked process signals -> EINTR.
+             * Include thread_pending_signals so a tgkill / pthread_kill
+             * targeted at this thread fires EINTR. */
             {
                 fut_task_t *stask = fut_task_current();
                 if (stask) {
                     uint64_t ppend = __atomic_load_n(&stask->pending_signals, __ATOMIC_ACQUIRE);
                     fut_thread_t *scur_thr = fut_thread_current();
+                    if (scur_thr)
+                        ppend |= __atomic_load_n(&scur_thr->thread_pending_signals, __ATOMIC_ACQUIRE);
                     uint64_t blocked = scur_thr ?
                         __atomic_load_n(&scur_thr->signal_mask, __ATOMIC_ACQUIRE) :
                         __atomic_load_n(&stask->signal_mask, __ATOMIC_ACQUIRE);

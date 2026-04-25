@@ -863,11 +863,16 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
                 return -EINVAL;
             }
 
-            /* Decode val3 */
+            /* Decode val3. oparg (bits 8-19) and cmparg (bits 20-31) are
+             * 12-bit signed values per the documented encoding above —
+             * sign-extend them so FUTEX_OP_ADD with a negative oparg (a
+             * common idiom for atomic decrement) and FUTEX_OP_CMP_LT/GT
+             * against signed values produce the correct results instead
+             * of treating 0xFFF as 4095. */
             int op_type = val3 & 0xf;
             int cmp_type = (val3 >> 4) & 0xf;
-            uint32_t oparg = (val3 >> 8) & 0xfff;
-            uint32_t cmparg = (val3 >> 20) & 0xfff;
+            int32_t oparg  = (int32_t)((uint32_t)val3 << 12) >> 20;
+            int32_t cmparg = (int32_t)val3 >> 20;
             uint32_t val2 = timeout ? (uint32_t)(uintptr_t)timeout : 0;
 
             /* Get both futex buckets */
@@ -895,14 +900,18 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
                 return -EFAULT;
             }
 
-            /* Compute new value based on operation */
+            /* Compute new value based on operation. oparg is a signed
+             * int32_t; the cast to uint32_t in the arithmetic ops uses
+             * defined modular semantics so e.g. ADD with oparg=-1 yields
+             * oldval - 1 (== oldval + 0xFFFFFFFFu). */
             uint32_t newval;
+            uint32_t uoparg = (uint32_t)oparg;
             switch (op_type) {
-                case FUTEX_OP_SET:  newval = oparg; break;
-                case FUTEX_OP_ADD:  newval = oldval + oparg; break;
-                case FUTEX_OP_OR:   newval = oldval | oparg; break;
-                case FUTEX_OP_ANDN: newval = oldval & ~oparg; break;
-                case FUTEX_OP_XOR:  newval = oldval ^ oparg; break;
+                case FUTEX_OP_SET:  newval = uoparg; break;
+                case FUTEX_OP_ADD:  newval = oldval + uoparg; break;
+                case FUTEX_OP_OR:   newval = oldval | uoparg; break;
+                case FUTEX_OP_ANDN: newval = oldval & ~uoparg; break;
+                case FUTEX_OP_XOR:  newval = oldval ^ uoparg; break;
                 default:
                     if (bucket1 < bucket2) {
                         fut_spinlock_release(&bucket2->lock);
@@ -953,15 +962,19 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
                 thread = next;
             }
 
-            /* Evaluate comparison */
+            /* Evaluate comparison. EQ/NE work on raw bits, but LT/LE/GT/GE
+             * are signed comparisons per the FUTEX_OP encoding — cast both
+             * sides to int32_t so cmparg=-1 vs oldval=0 evaluates as
+             * 'oldval > cmparg' rather than the bogus unsigned 0 > 4095. */
+            int32_t soldval = (int32_t)oldval;
             bool cmp_result;
             switch (cmp_type) {
-                case FUTEX_OP_CMP_EQ: cmp_result = (oldval == cmparg); break;
-                case FUTEX_OP_CMP_NE: cmp_result = (oldval != cmparg); break;
-                case FUTEX_OP_CMP_LT: cmp_result = (oldval < cmparg); break;
-                case FUTEX_OP_CMP_LE: cmp_result = (oldval <= cmparg); break;
-                case FUTEX_OP_CMP_GT: cmp_result = (oldval > cmparg); break;
-                case FUTEX_OP_CMP_GE: cmp_result = (oldval >= cmparg); break;
+                case FUTEX_OP_CMP_EQ: cmp_result = (oldval == (uint32_t)cmparg); break;
+                case FUTEX_OP_CMP_NE: cmp_result = (oldval != (uint32_t)cmparg); break;
+                case FUTEX_OP_CMP_LT: cmp_result = (soldval <  cmparg); break;
+                case FUTEX_OP_CMP_LE: cmp_result = (soldval <= cmparg); break;
+                case FUTEX_OP_CMP_GT: cmp_result = (soldval >  cmparg); break;
+                case FUTEX_OP_CMP_GE: cmp_result = (soldval >= cmparg); break;
                 default: cmp_result = false; break;
             }
 

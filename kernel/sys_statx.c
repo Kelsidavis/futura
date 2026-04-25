@@ -383,8 +383,12 @@ long sys_statx(int dirfd, const char *pathname, int flags,
             }
         }
 
-        /* Perform the stat via VFS to get the vnode */
-        struct fut_stat tmp;
+        /* Perform the stat via VFS to get the vnode.
+         * Zero-init: fut_vfs_stat fills only a subset of fields; any
+         * padding or reserved bytes would otherwise carry kernel-stack
+         * content into the fallback fill_statx path below (same class
+         * as the sys_fstatfs leak fixed earlier). */
+        struct fut_stat tmp = {0};
         int ret;
         if (local_flags & AT_SYMLINK_NOFOLLOW)
             ret = fut_vfs_lstat(resolved_path, &tmp);

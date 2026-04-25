@@ -566,7 +566,7 @@ static void xdg_toplevel_close(void *d, struct xdg_toplevel *t) {
     struct client_state *s = d;
     /* Mirror Ctrl+Q's two-step confirmation: don't lose unsaved edits
      * silently when the user clicks the close button or hits Alt+F4. */
-    static const char close_warn[] = "unsaved changes — close again to confirm";
+    static const char close_warn[] = "unsaved changes - close again to confirm";
     if (ed_dirty) {
         bool armed = (ed_status_msg[0] == close_warn[0] &&
                       ed_strlen(ed_status_msg) == ed_strlen(close_warn));
@@ -686,7 +686,7 @@ static void process_key(struct client_state *s, uint32_t key) {
              * dirty buffer arms the warning; a second Ctrl+Q within
              * the status's 2.5s expiry confirms and quits. The
              * "armed" state piggybacks on a dedicated status string. */
-            static const char quit_warn[] = "unsaved changes — Ctrl+Q again to quit";
+            static const char quit_warn[] = "unsaved changes - Ctrl+Q again to quit";
             if (ed_dirty) {
                 bool armed = (ed_status_msg[0] == quit_warn[0] &&
                               ed_strlen(ed_status_msg) == ed_strlen(quit_warn));

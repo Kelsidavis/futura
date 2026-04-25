@@ -1129,9 +1129,19 @@ long sys_io_uring_register(unsigned int fd, unsigned int opcode,
     switch (opcode) {
     case IORING_REGISTER_FILES: {
         if (!arg || nr_args == 0 || nr_args > MAX_URING_FILES) return -EINVAL;
-        const int *fds = (const int *)arg;
+        /* Stage the entire fds array through copy_from_user so a bad
+         * user pointer returns -EFAULT and a kernel-pointer caller
+         * can't read kernel memory into reg_files[]. */
+        int local_fds[MAX_URING_FILES];
+#ifdef KERNEL_VIRTUAL_BASE
+        if ((uintptr_t)arg >= KERNEL_VIRTUAL_BASE) {
+            __builtin_memcpy(local_fds, arg, nr_args * sizeof(int));
+        } else
+#endif
+        if (fut_copy_from_user(local_fds, arg, nr_args * sizeof(int)) != 0)
+            return -EFAULT;
         for (uint32_t i = 0; i < nr_args; i++)
-            ctx->reg_files[i] = fds[i];
+            ctx->reg_files[i] = local_fds[i];
         ctx->nr_reg_files = nr_args;
         return 0;
     }
@@ -1143,8 +1153,15 @@ long sys_io_uring_register(unsigned int fd, unsigned int opcode,
 
     case IORING_REGISTER_EVENTFD: {
         if (!arg || nr_args != 1) return -EINVAL;
-        const int *efd = (const int *)arg;
-        ctx->eventfd = *efd;
+        int local_efd;
+#ifdef KERNEL_VIRTUAL_BASE
+        if ((uintptr_t)arg >= KERNEL_VIRTUAL_BASE) {
+            local_efd = *(const int *)arg;
+        } else
+#endif
+        if (fut_copy_from_user(&local_efd, arg, sizeof(int)) != 0)
+            return -EFAULT;
+        ctx->eventfd = local_efd;
         return 0;
     }
 
@@ -1154,14 +1171,35 @@ long sys_io_uring_register(unsigned int fd, unsigned int opcode,
 
     case IORING_REGISTER_PROBE: {
         if (!arg) return -EFAULT;
-        struct io_uring_probe *probe = (struct io_uring_probe *)arg;
-        probe->last_op = IORING_OP_LAST - 1;
-        uint8_t max_ops = probe->ops_len;
+        /* Stage probe through a kernel-local copy: read ops_len from
+         * userspace, populate locally, commit back. The previous code
+         * cast arg to a kernel pointer and read ops_len + wrote
+         * last_op/ops[] directly through it. */
+        struct io_uring_probe local_probe;
+        /* Read just the header first to learn ops_len. */
+        struct io_uring_probe_hdr {
+            uint8_t  last_op;
+            uint8_t  ops_len;
+            uint16_t resv;
+            uint32_t resv2[3];
+        };
+        struct io_uring_probe_hdr hdr;
+#ifdef KERNEL_VIRTUAL_BASE
+        if ((uintptr_t)arg >= KERNEL_VIRTUAL_BASE) {
+            __builtin_memcpy(&hdr, arg, sizeof(hdr));
+        } else
+#endif
+        if (fut_copy_from_user(&hdr, arg, sizeof(hdr)) != 0)
+            return -EFAULT;
+
+        memset(&local_probe, 0, sizeof(local_probe));
+        local_probe.last_op = IORING_OP_LAST - 1;
+        uint8_t max_ops = hdr.ops_len;
         if (max_ops > IORING_OP_LAST) max_ops = IORING_OP_LAST;
+        local_probe.ops_len = max_ops;
         for (uint8_t i = 0; i < max_ops; i++) {
-            probe->ops[i].op = i;
-            probe->ops[i].flags = 0;
-            /* Mark supported opcodes */
+            local_probe.ops[i].op = i;
+            local_probe.ops[i].flags = 0;
             switch (i) {
             case IORING_OP_NOP:
             case IORING_OP_READV:
@@ -1174,12 +1212,17 @@ long sys_io_uring_register(unsigned int fd, unsigned int opcode,
             case IORING_OP_TIMEOUT:
             case IORING_OP_READ:
             case IORING_OP_WRITE:
-                probe->ops[i].flags = IO_URING_OP_SUPPORTED;
+                local_probe.ops[i].flags = IO_URING_OP_SUPPORTED;
                 break;
             default:
                 break;
             }
         }
+        /* Commit only the header + max_ops slots actually populated. */
+        size_t commit_sz = sizeof(hdr) +
+                           (size_t)max_ops * sizeof(local_probe.ops[0]);
+        if (aio_put_user(arg, &local_probe, commit_sz) != 0)
+            return -EFAULT;
         return 0;
     }
 

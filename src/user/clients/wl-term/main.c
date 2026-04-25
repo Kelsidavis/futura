@@ -310,7 +310,9 @@ static void keyboard_key(void *data, struct wl_keyboard *keyboard, uint32_t seri
 static void process_key(struct client_state *state, uint32_t key) {
     bool shift = (kbd_mods_depressed & 1) != 0;
 
-    /* Shift+PageUp/PageDown: scroll through scrollback history */
+    /* Shift+PageUp/PageDown: scroll through scrollback history.
+     * These are the only keys that should *not* return the user to the
+     * live view, since they're how the user navigates scrollback. */
     if (shift && key == 104) {  /* PageUp (evdev keycode) */
         term_scroll_view(&state->term, 5);
         state->needs_redraw = true;
@@ -322,6 +324,13 @@ static void process_key(struct client_state *state, uint32_t key) {
         return;
     }
 
+    /* Any other keypress sends input to the shell — pop back to the live
+     * view first so the user can see what they're typing. Previously the
+     * arrow / Home / End / Delete / Ctrl handlers below all returned
+     * before the scroll reset, so typing in scrollback view stayed in
+     * scrollback and the user typed blind. */
+    term_scroll_to_bottom(&state->term);
+
     /* Arrow keys: send VT100 escape sequences to shell */
     if (key == 103) { term_send_key(&state->term, '\033'); term_send_key(&state->term, '['); term_send_key(&state->term, 'A'); state->needs_redraw = true; return; } /* Up */
     if (key == 108) { term_send_key(&state->term, '\033'); term_send_key(&state->term, '['); term_send_key(&state->term, 'B'); state->needs_redraw = true; return; } /* Down */
@@ -332,9 +341,6 @@ static void process_key(struct client_state *state, uint32_t key) {
     if (key == 107) { term_send_key(&state->term, '\033'); term_send_key(&state->term, '['); term_send_key(&state->term, 'F'); state->needs_redraw = true; return; }
     /* Delete */
     if (key == 111) { term_send_key(&state->term, '\033'); term_send_key(&state->term, '['); term_send_key(&state->term, '3'); term_send_key(&state->term, '~'); state->needs_redraw = true; return; }
-
-    /* Any keypress resets scroll to bottom (live view) */
-    term_scroll_to_bottom(&state->term);
 
     bool ctrl = (kbd_mods_depressed & 4) != 0;  /* Ctrl modifier */
 

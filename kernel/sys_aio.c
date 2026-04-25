@@ -192,6 +192,20 @@ long sys_io_destroy(unsigned long ctx_id) {
     if (!ctx->active)
         return -EINVAL;
 
+    /* Linux io_destroy(2): only the process that created the AIO
+     * context may destroy it. Without this check, ctx_id is just
+     * (0x10000 + slot_index) — easily guessable by any process — and
+     * any caller could free another process's outstanding I/O state.
+     * Allow root / CAP_SYS_ADMIN to clean up across owners for
+     * containers and the test harness. */
+    fut_task_t *task = fut_task_current();
+    if (task && ctx->owner_pid && task->pid != ctx->owner_pid) {
+        bool privileged = (task->uid == 0) ||
+            (task->cap_effective & (1ULL << 21 /* CAP_SYS_ADMIN */));
+        if (!privileged)
+            return -EINVAL;
+    }
+
     ctx->active = false;
     return 0;
 }

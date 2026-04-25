@@ -70,8 +70,17 @@ long sys_pause(void) {
     uint64_t cur_mask = pause_thr ?
         __atomic_load_n(&pause_thr->signal_mask, __ATOMIC_ACQUIRE) :
         __atomic_load_n(&task->signal_mask, __ATOMIC_ACQUIRE);
+    /* Include per-thread pending signals (tgkill / pthread_kill).
+     * Without this a signal already queued for the calling thread is
+     * invisible to pause's pre-sleep check; pause then blocks waiting for
+     * a *new* signal that may never come, and the existing one is only
+     * delivered when something else wakes signal_waitq. sigsuspend
+     * already does this OR; mirror it for parity. */
+    uint64_t thread_pending = pause_thr ?
+        __atomic_load_n(&pause_thr->thread_pending_signals, __ATOMIC_ACQUIRE) : 0;
     uint64_t unblocked_pending =
-        __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE) & ~cur_mask;
+        (__atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE) | thread_pending)
+        & ~cur_mask;
 
     if (unblocked_pending != 0) {
         fut_spinlock_release(&task->signal_waitq.lock);

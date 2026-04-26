@@ -48,6 +48,24 @@ static inline int pvm_copy_iov_from_user(void *dst, const void *src, size_t n) {
     return fut_copy_from_user(dst, src, n);
 }
 
+/* Same bypass for the actual data copy. Once pvm_iov_is_user has been
+ * waived for a privileged caller (or always passed for an unprivileged
+ * one), the bounce loop must also handle kernel-half iov_base pointers
+ * — otherwise fut_copy_*_user rejects every kernel pointer at
+ * access_ok and the scatter-gather copy returns 0. */
+static inline int pvm_data_copy_from(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_from_user(dst, src, n);
+}
+static inline int pvm_data_copy_to(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    return fut_copy_to_user(dst, src, n);
+}
+
 /* Reject any iov_base in the kernel half of the address space — without
  * this check, a user could ask the kernel to copy to or from kernel
  * memory using process_vm_readv/writev. */
@@ -167,9 +185,9 @@ long sys_process_vm_readv(int pid, const struct pvm_iovec *lvec, unsigned long l
         while (off < chunk) {
             size_t step = chunk - off;
             if (step > sizeof(bounce)) step = sizeof(bounce);
-            if (fut_copy_from_user(bounce, (const char *)src + off, step) != 0)
+            if (pvm_data_copy_from(bounce, (const char *)src + off, step) != 0)
                 goto read_done;
-            if (fut_copy_to_user((char *)dst + off, bounce, step) != 0)
+            if (pvm_data_copy_to((char *)dst + off, bounce, step) != 0)
                 goto read_done;
             off += step;
             done += step;
@@ -277,9 +295,9 @@ long sys_process_vm_writev(int pid, const struct pvm_iovec *lvec, unsigned long 
         while (off < chunk) {
             size_t step = chunk - off;
             if (step > sizeof(bounce)) step = sizeof(bounce);
-            if (fut_copy_from_user(bounce, (const char *)src + off, step) != 0)
+            if (pvm_data_copy_from(bounce, (const char *)src + off, step) != 0)
                 goto write_done;
-            if (fut_copy_to_user((char *)dst + off, bounce, step) != 0)
+            if (pvm_data_copy_to((char *)dst + off, bounce, step) != 0)
                 goto write_done;
             off += step;
             done += step;

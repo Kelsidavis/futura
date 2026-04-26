@@ -1186,9 +1186,16 @@ long sys_io_uring_register(unsigned int fd, unsigned int opcode,
         /* Stage probe through a kernel-local copy: read ops_len from
          * userspace, populate locally, commit back. The previous code
          * cast arg to a kernel pointer and read ops_len + wrote
-         * last_op/ops[] directly through it. */
-        struct io_uring_probe local_probe;
-        /* Read just the header first to learn ops_len. */
+         * last_op/ops[] directly through it.
+         *
+         * struct io_uring_probe ends with a flexible array (ops[]).
+         * Allocating 'struct io_uring_probe local_probe' on the stack
+         * only reserves the header — writing local_probe.ops[i] for
+         * i < ops_len then walks PAST the local and clobbers saved
+         * RIP/RBP, producing a non-canonical RIP and GP fault on
+         * function return. Reserve the full header + ops_len slots
+         * worth of bytes via a fixed-size buffer of IORING_OP_LAST
+         * entries (the loop already caps at that). */
         struct io_uring_probe_hdr {
             uint8_t  last_op;
             uint8_t  ops_len;
@@ -1204,14 +1211,21 @@ long sys_io_uring_register(unsigned int fd, unsigned int opcode,
         if (fut_copy_from_user(&hdr, arg, sizeof(hdr)) != 0)
             return -EFAULT;
 
-        memset(&local_probe, 0, sizeof(local_probe));
-        local_probe.last_op = IORING_OP_LAST - 1;
         uint8_t max_ops = hdr.ops_len;
         if (max_ops > IORING_OP_LAST) max_ops = IORING_OP_LAST;
-        local_probe.ops_len = max_ops;
+
+        /* Backing store: full header + IORING_OP_LAST op entries. */
+        uint8_t probe_storage[sizeof(struct io_uring_probe) +
+                               IORING_OP_LAST * sizeof(struct io_uring_probe_op)]
+            __attribute__((aligned(_Alignof(struct io_uring_probe))));
+        memset(probe_storage, 0, sizeof(probe_storage));
+        struct io_uring_probe *local_probe =
+            (struct io_uring_probe *)probe_storage;
+        local_probe->last_op = IORING_OP_LAST - 1;
+        local_probe->ops_len = max_ops;
         for (uint8_t i = 0; i < max_ops; i++) {
-            local_probe.ops[i].op = i;
-            local_probe.ops[i].flags = 0;
+            local_probe->ops[i].op = i;
+            local_probe->ops[i].flags = 0;
             switch (i) {
             case IORING_OP_NOP:
             case IORING_OP_READV:
@@ -1224,7 +1238,7 @@ long sys_io_uring_register(unsigned int fd, unsigned int opcode,
             case IORING_OP_TIMEOUT:
             case IORING_OP_READ:
             case IORING_OP_WRITE:
-                local_probe.ops[i].flags = IO_URING_OP_SUPPORTED;
+                local_probe->ops[i].flags = IO_URING_OP_SUPPORTED;
                 break;
             default:
                 break;
@@ -1232,8 +1246,8 @@ long sys_io_uring_register(unsigned int fd, unsigned int opcode,
         }
         /* Commit only the header + max_ops slots actually populated. */
         size_t commit_sz = sizeof(hdr) +
-                           (size_t)max_ops * sizeof(local_probe.ops[0]);
-        if (aio_put_user(arg, &local_probe, commit_sz) != 0)
+                           (size_t)max_ops * sizeof(local_probe->ops[0]);
+        if (aio_put_user(arg, local_probe, commit_sz) != 0)
             return -EFAULT;
         return 0;
     }

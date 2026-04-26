@@ -480,8 +480,18 @@ long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
             return total_bytes > 0 ? (long)total_bytes : -EOVERFLOW;
         }
 
-        /* Calculate required size for this entry */
-        size_t name_len = strnlen(vdirent.d_name, 256);
+        /* Calculate required size for this entry. Cap name_len at
+         * FUT_VFS_NAME_MAX (255) so the subsequent copy loop, which
+         * reads vdirent.d_name[i] for i = 0..name_len inclusive, never
+         * touches vdirent.d_name[256] — that index is one past the end
+         * of the 256-byte d_name array and would be an OOB read into
+         * whatever struct field follows. strnlen(..., 256) returns 256
+         * exactly when no NUL is present in the first 256 bytes, which
+         * is precisely the pathological filesystem-misbehavior case
+         * this clamp neutralises. */
+        size_t name_len = strnlen(vdirent.d_name, FUT_VFS_NAME_MAX + 1);
+        if (name_len > FUT_VFS_NAME_MAX)
+            name_len = FUT_VFS_NAME_MAX;
 
         /* Validate reclen calculation won't overflow
          * Prevent integer overflow when calculating entry size */

@@ -307,11 +307,14 @@ long sys_truncate(const char *path, uint64_t length) {
     uint64_t current_size = vnode->size;
 
     /* Enforce RLIMIT_FSIZE: only when extending beyond the soft limit → EFBIG + SIGXFSZ.
-     * Shrinking is always permitted regardless of the limit (POSIX). */
+     * Shrinking is always permitted regardless of the limit (POSIX).
+     *
+     * Only RLIM_INFINITY ((uint64_t)-1) means 'no limit' on Linux. A
+     * limit of 0 is a valid setting that prohibits any growth (used by
+     * sandboxes / write fences); the previous check let it through. */
     if (local_length > current_size) {
         uint64_t fsize_limit = task->rlimits[1].rlim_cur; /* RLIMIT_FSIZE = 1 */
-        if (fsize_limit != (uint64_t)-1 && fsize_limit != 0 &&
-                local_length > fsize_limit) {
+        if (fsize_limit != (uint64_t)-1 && local_length > fsize_limit) {
             extern int fut_signal_send(struct fut_task *t, int sig);
             fut_signal_send(task, 25 /* SIGXFSZ */);
             fut_vnode_unref(vnode);

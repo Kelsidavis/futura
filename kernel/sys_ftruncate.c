@@ -270,11 +270,16 @@ long sys_ftruncate(int fd, uint64_t length) {
     }
 
     /* Enforce RLIMIT_FSIZE: only when extending beyond the soft limit → EFBIG + SIGXFSZ.
-     * Shrinking is always allowed regardless of the limit (POSIX). */
+     * Shrinking is always allowed regardless of the limit (POSIX).
+     *
+     * Only RLIM_INFINITY ((uint64_t)-1) means 'no limit' on Linux. A
+     * limit of 0 is a valid setting that prohibits any growth — common
+     * for sandboxes and write-fence scripts. The previous check skipped
+     * the gate when fsize_limit was 0, silently letting bytes through
+     * a fence the user explicitly closed. */
     if (length > vnode->size) {
         uint64_t fsize_limit = task->rlimits[1].rlim_cur; /* RLIMIT_FSIZE = 1 */
-        if (fsize_limit != (uint64_t)-1 && fsize_limit != 0 &&
-                length > fsize_limit) {
+        if (fsize_limit != (uint64_t)-1 && length > fsize_limit) {
             extern int fut_signal_send(struct fut_task *t, int sig);
             fut_signal_send(task, 25 /* SIGXFSZ */);
             fut_printf("[FTRUNCATE] ftruncate(fd=%d, length=%llu) -> EFBIG "

@@ -250,8 +250,12 @@ long sys_fanotify_init(unsigned int flags, unsigned int event_f_flags) {
     if (fd < 0) { grp->active = false; return fd; }
     grp->group_fd = fd;
 
-    /* Apply FAN_CLOEXEC */
-    if ((flags & FAN_CLOEXEC) && task && fd < task->max_fds)
+    /* Apply FAN_CLOEXEC. Guard against tasks that haven't allocated
+     * fd_flags (early init / kernel threads); pipe2, socketpair, dup3,
+     * pidfd_open, and perf_event_open all check fd_flags non-NULL — the
+     * previous code here would NULL-deref the kernel for any caller
+     * without an fd_flags table. */
+    if ((flags & FAN_CLOEXEC) && task && task->fd_flags && fd < task->max_fds)
         task->fd_flags[fd] |= 1;
 
     return fd;

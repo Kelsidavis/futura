@@ -601,17 +601,14 @@ long sys_mincore(void *addr, size_t length, unsigned char *vec) {
             uint64_t pte = 0;
             int rc = pmap_probe_pte(ctx, (uint64_t)page_addr, &pte);
             if (rc == 0 && (pte & PTE_PRESENT)) {
-                /* Bit 0: page is resident in physical memory */
+                /* Linux's mincore returns only bit 0 (resident). Exposing
+                 * the PTE dirty/accessed bits leaks shared-page access
+                 * patterns to other processes that map the same backing
+                 * file (libc.so, the page cache) — the same side channel
+                 * Linux closed in CVE-2019-5489 by restricting mincore.
+                 * Drop the extra bits so the output matches Linux and the
+                 * dirty/accessed metadata stays kernel-internal. */
                 status = 0x01;
-
-#if defined(__x86_64__)
-                /* Bit 1 (optional): page is dirty (written to) */
-                if (pte & PTE_DIRTY)
-                    status |= 0x02;
-                /* Bit 2 (optional): page has been accessed/referenced */
-                if (pte & PTE_ACCESSED)
-                    status |= 0x04;
-#endif
             }
         } else {
             /* No vmem context — fall back to VMA membership check */

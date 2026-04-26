@@ -130,7 +130,15 @@ static fut_task_t *ptrace_get_tracee(int pid, fut_task_t *tracer) {
     return tracee;
 }
 
-/* ── Helper: read a word from another process's address space ── */
+/* ── Helper: read a word from another process's address space ──
+ *
+ * PEEKDATA returns the 8-byte word at the requested address. The PTE
+ * probe and the page-offset must agree: probing `addr & ~7` while
+ * indexing the mapped page with `addr & (PAGE_SIZE-1)` lets an addr in
+ * the last 1-7 bytes of a page silently read into the *next* physical
+ * page in the kernel linear map (a different user page entirely).
+ * Align the address up front so probe and page-offset stay coherent
+ * and the read can never straddle the probed page. */
 static long ptrace_peek(fut_task_t *tracee, uintptr_t addr) {
     fut_mm_t *mm = fut_task_get_mm(tracee);
     if (!mm)
@@ -140,9 +148,11 @@ static long ptrace_peek(fut_task_t *tracee, uintptr_t addr) {
     if (!ctx)
         return -EIO;
 
+    addr &= ~(uintptr_t)7;  /* word-align: matches Linux PEEKDATA word semantics */
+
     /* Probe the page table to get the physical address */
     uint64_t pte = 0;
-    if (pmap_probe_pte(ctx, addr & ~(uintptr_t)7, &pte) != 0)
+    if (pmap_probe_pte(ctx, addr, &pte) != 0)
         return -EIO;
 
     if (!(pte & PTE_PRESENT))
@@ -161,7 +171,11 @@ static long ptrace_peek(fut_task_t *tracee, uintptr_t addr) {
     return (long)value;
 }
 
-/* ── Helper: write a word to another process's address space ── */
+/* ── Helper: write a word to another process's address space ──
+ *
+ * Same alignment requirement as ptrace_peek: an unaligned addr in the
+ * last 1-7 bytes of a page would clobber the next physical page in
+ * the linear map. Align before both probe and page-offset. */
 static int ptrace_poke(fut_task_t *tracee, uintptr_t addr, uint64_t value) {
     fut_mm_t *mm = fut_task_get_mm(tracee);
     if (!mm)
@@ -171,8 +185,10 @@ static int ptrace_poke(fut_task_t *tracee, uintptr_t addr, uint64_t value) {
     if (!ctx)
         return -EIO;
 
+    addr &= ~(uintptr_t)7;
+
     uint64_t pte = 0;
-    if (pmap_probe_pte(ctx, addr & ~(uintptr_t)7, &pte) != 0)
+    if (pmap_probe_pte(ctx, addr, &pte) != 0)
         return -EIO;
 
     if (!(pte & PTE_PRESENT))

@@ -231,11 +231,18 @@ long sys_mount(const char *source, const char *target, const char *filesystemtyp
      * - 100x performance improvement vs byte-by-byte
      */
     if (data) {
-        /* Mount options should be reasonable size (< 4KB per POSIX) */
+        /* Mount options should be reasonable size (< 4KB per POSIX). The
+         * previous version stack-allocated the full 4 KB validation
+         * buffer — half a typical 8 KB kernel stack budget once you
+         * factor in the VFS call depth that follows. Heap-allocate
+         * instead. */
         const size_t MAX_MOUNT_DATA_SIZE = 4096;
 
-        /* Allocate kernel buffer for bulk copy (stack-allocated for speed) */
-        char data_buf[MAX_MOUNT_DATA_SIZE];
+        extern void *fut_malloc(uint64_t size);
+        extern void  fut_free(void *p);
+        char *data_buf = fut_malloc(MAX_MOUNT_DATA_SIZE);
+        if (!data_buf)
+            return -ENOMEM;
 
         /* Bulk copy entire data buffer in ONE operation (not 4096 operations)
          * This is 100x faster than byte-by-byte scanning */
@@ -245,6 +252,7 @@ long sys_mount(const char *source, const char *target, const char *filesystemtyp
             fut_printf("[MOUNT] mount(source=%p, data=%p) -> EFAULT "
                        "(data not fully readable bulk validation)\n",
                        source, data);
+            fut_free(data_buf);
             return -EFAULT;
         }
 
@@ -261,6 +269,8 @@ long sys_mount(const char *source, const char *target, const char *filesystemtyp
                 break;
             }
         }
+
+        fut_free(data_buf);
 
         if (!found_null) {
             fut_printf("[MOUNT] mount(source=%p, data=%p) -> EINVAL "

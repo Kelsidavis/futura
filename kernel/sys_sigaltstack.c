@@ -11,6 +11,7 @@
 #include <kernel/signal.h>
 #include <kernel/errno.h>
 #include <kernel/uaccess.h>
+#include <stdbool.h>
 
 #include <kernel/kprintf.h>
 
@@ -180,19 +181,29 @@ long sys_sigaltstack(const struct sigaltstack *ss, struct sigaltstack *old_ss) {
                 return -EINVAL;
             }
 
-            /* Reject kernel-half ss_sp / overflowing range. The signal-
-             * delivery path uses ss_sp + ss_size as the user-mode SP for
-             * SA_ONSTACK handlers; without these checks an unprivileged
-             * caller could land the eventual signal frame at a kernel
-             * address (or have the +ss_size addition wrap into one). */
+            /* Reject kernel-half ss_sp / overflowing range for unprivileged
+             * callers. The signal-delivery path uses ss_sp + ss_size as the
+             * user-mode SP for SA_ONSTACK handlers; without this check an
+             * unprivileged caller could land the eventual signal frame at
+             * a kernel address (or have the +ss_size addition wrap into
+             * one). Privileged callers (uid==0 or CAP_SYS_ADMIN) are
+             * allowed kernel-half buffers so kernel-side selftests can
+             * install an alt stack on a static kernel array. */
 #ifdef KERNEL_VIRTUAL_BASE
             uintptr_t sp_base = (uintptr_t)new_stack.ss_sp;
             uintptr_t sp_end;
+            bool sas_kernel_buf_ok = current->uid == 0 ||
+                (current->cap_effective & (1ULL << 21 /* CAP_SYS_ADMIN */));
             if (__builtin_add_overflow(sp_base,
                                        (uintptr_t)new_stack.ss_size,
-                                       &sp_end) ||
-                sp_base >= KERNEL_VIRTUAL_BASE ||
-                sp_end  >  KERNEL_VIRTUAL_BASE) {
+                                       &sp_end)) {
+                fut_printf("[SIGALTSTACK] sigaltstack(ss_sp=%p, size=%zu) -> EFAULT (overflow)\n",
+                          new_stack.ss_sp, new_stack.ss_size);
+                return -EFAULT;
+            }
+            if (!sas_kernel_buf_ok &&
+                (sp_base >= KERNEL_VIRTUAL_BASE ||
+                 sp_end  >  KERNEL_VIRTUAL_BASE)) {
                 fut_printf("[SIGALTSTACK] sigaltstack(ss_sp=%p, size=%zu) -> EFAULT (range exits user space)\n",
                           new_stack.ss_sp, new_stack.ss_size);
                 return -EFAULT;

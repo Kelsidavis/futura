@@ -1098,6 +1098,20 @@ long sys_io_uring_enter(unsigned int fd, unsigned int to_submit,
                         const void *sig, size_t sigsz) {
     (void)sig; (void)sigsz;
 
+    /* Linux rejects unknown io_uring_enter flag bits with -EINVAL.
+     * Silently ignoring them lets a future flag (e.g. IORING_ENTER_EXT_ARG,
+     * IORING_ENTER_REGISTERED_RING) be set on an old kernel and run with
+     * the old behaviour, which has bitten programs that expected the
+     * kernel to reject the flag. Mirror Linux's gate. */
+    {
+        const unsigned int VALID_ENTER_FLAGS =
+            IORING_ENTER_GETEVENTS |
+            IORING_ENTER_SQ_WAKEUP |
+            IORING_ENTER_SQ_WAIT;
+        if (flags & ~VALID_ENTER_FLAGS)
+            return -EINVAL;
+    }
+
     struct io_uring_ctx *ctx = uring_get_ctx(fd);
     if (!ctx) return -EBADF;
 

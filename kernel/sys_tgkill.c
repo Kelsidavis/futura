@@ -67,13 +67,21 @@ long sys_tgkill(int tgid, int tid, int sig) {
         return -ESRCH;
     }
 
-    /* Permission check: same UID, root, or CAP_KILL required */
+    /* Permission check: Linux's kill_ok_by_cred uid-pair test (mirrors
+     * sys_kill). Match caller.{euid,ruid} against target.{uid,suid};
+     * the previous check only compared against target.ruid, so a
+     * thread whose owning task had dropped its effective UID to a
+     * regular user could not be tgkill'd by that user even though
+     * Linux allows it. */
     if (thread->task != current &&
         current->ruid != 0 &&
-        !(current->cap_effective & (1ULL << 5 /* CAP_KILL */)) &&
-        current->ruid != thread->task->ruid &&
-        current->uid  != thread->task->ruid) {
-        return -EPERM;
+        !(current->cap_effective & (1ULL << 5 /* CAP_KILL */))) {
+        int ok = (current->ruid == thread->task->uid)  ||
+                 (current->ruid == thread->task->suid) ||
+                 (current->uid  == thread->task->uid)  ||
+                 (current->uid  == thread->task->suid);
+        if (!ok)
+            return -EPERM;
     }
 
     /* Signal 0: permission check only */
@@ -124,13 +132,16 @@ long sys_tkill(int tid, int sig) {
     if (!thread || !thread->task)
         return -ESRCH;
 
-    /* Permission check */
+    /* Permission check: Linux uid-pair test, see sys_tgkill. */
     if (thread->task != current &&
         current->ruid != 0 &&
-        !(current->cap_effective & (1ULL << 5 /* CAP_KILL */)) &&
-        current->ruid != thread->task->ruid &&
-        current->uid  != thread->task->ruid) {
-        return -EPERM;
+        !(current->cap_effective & (1ULL << 5 /* CAP_KILL */))) {
+        int ok = (current->ruid == thread->task->uid)  ||
+                 (current->ruid == thread->task->suid) ||
+                 (current->uid  == thread->task->uid)  ||
+                 (current->uid  == thread->task->suid);
+        if (!ok)
+            return -EPERM;
     }
 
     /* Signal 0: permission check only */

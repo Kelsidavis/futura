@@ -69,13 +69,17 @@ long sys_rt_sigqueueinfo(int tgid, int sig, const void *uinfo) {
     if (rtq_copy_from_user(&info, uinfo, sizeof(siginfo_t)) != 0)
         return -EFAULT;
 
-    /* Security: userspace may only set si_code <= 0 (SI_USER, SI_QUEUE, etc.)
-     * Positive values are reserved for kernel-generated infos and cannot be
-     * forged by an unprivileged caller. */
-    if (info.si_code > 0) {
-        fut_task_t *caller = fut_task_current();
-        /* Allow if caller has CAP_KILL (capability bit 5) */
-        if (!caller || !(caller->cap_effective & (1ULL << 5)))
+    /* Linux origin-impersonation gate: when delivering to a *different*
+     * process, the caller may only set si_code to a negative value other
+     * than SI_TKILL. The previous 'si_code > 0' check let an unprivileged
+     * caller pass si_code = 0 (SI_USER) or SI_TKILL = -6 in the queued
+     * info, which forges the signal's apparent origin — a setuid program
+     * that trusts si_pid/si_uid from a SI_USER siginfo could be tricked
+     * into believing the signal came from a different sender, or that it
+     * was delivered via tkill(2) when it was not. */
+    fut_task_t *caller = fut_task_current();
+    if (caller && caller->pid != (uint64_t)tgid) {
+        if (info.si_code >= 0 || info.si_code == SI_TKILL)
             return -EPERM;
     }
 
@@ -89,7 +93,6 @@ long sys_rt_sigqueueinfo(int tgid, int sig, const void *uinfo) {
 
     /* Permission check: caller's eUID must match target's eUID, or caller
      * must have CAP_KILL (bit 5), unless sending SIGCONT to same session. */
-    fut_task_t *caller = fut_task_current();
     if (caller && caller->pid != (uint64_t)tgid) {
         bool cap_kill = (caller->cap_effective & (1ULL << 5)) != 0;
         bool same_uid = (caller->uid == target->uid) ||
@@ -124,9 +127,11 @@ long sys_rt_tgsigqueueinfo(int tgid, int tid, int sig, const void *uinfo) {
     if (rtq_copy_from_user(&info, uinfo, sizeof(siginfo_t)) != 0)
         return -EFAULT;
 
-    if (info.si_code > 0) {
-        fut_task_t *caller = fut_task_current();
-        if (!caller || !(caller->cap_effective & (1ULL << 5)))
+    /* Linux origin-impersonation gate (see rt_sigqueueinfo): forbid
+     * forged SI_USER (code 0) and SI_TKILL (-6) on cross-process delivery. */
+    fut_task_t *caller = fut_task_current();
+    if (caller && caller->pid != (uint64_t)tgid) {
+        if (info.si_code >= 0 || info.si_code == SI_TKILL)
             return -EPERM;
     }
 
@@ -138,7 +143,6 @@ long sys_rt_tgsigqueueinfo(int tgid, int tid, int sig, const void *uinfo) {
         return -ESRCH;
 
     /* Permission check (same rules as rt_sigqueueinfo) */
-    fut_task_t *caller = fut_task_current();
     if (caller && caller->pid != (uint64_t)tgid) {
         bool cap_kill = (caller->cap_effective & (1ULL << 5)) != 0;
         bool same_uid = (caller->uid == target->uid) ||

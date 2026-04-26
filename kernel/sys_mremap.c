@@ -165,6 +165,21 @@ long sys_mremap(void *old_address, size_t old_size, size_t new_size,
         return -EINVAL;
     }
 
+    /* Linux MREMAP_DONTUNMAP semantics (mm/mremap.c): must be combined with
+     * MREMAP_MAYMOVE — DONTUNMAP's whole point is to keep the source mapping
+     * while creating a *new* mapping at a different address — and old_size
+     * must equal new_size, since DONTUNMAP does not resize, only relocates.
+     * The previous code accepted DONTUNMAP alone or with a size change,
+     * which would either silently drop the keep-source semantics or expose
+     * the "moved-but-also-unresized" state Linux explicitly rejects. */
+    if ((flags & MREMAP_DONTUNMAP) &&
+        (!(flags & MREMAP_MAYMOVE) || old_size != new_size)) {
+        fut_printf("[MREMAP] mremap(%p, %zu, %zu, 0x%x, %p) -> EINVAL "
+                   "(MREMAP_DONTUNMAP requires MREMAP_MAYMOVE and old_size == new_size)\n",
+                   old_address, old_size, new_size, flags, new_address);
+        return -EINVAL;
+    }
+
     /* If MREMAP_FIXED, validate new_address alignment */
     if ((flags & MREMAP_FIXED) && ((uintptr_t)new_address % PAGE_SIZE != 0)) {
         fut_printf("[MREMAP] mremap(%p, %zu, %zu, 0x%x, %p) -> EINVAL (new_address not page-aligned)\n",

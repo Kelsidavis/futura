@@ -345,14 +345,30 @@ long sys_kill(int pid, int sig) {
             return -ESRCH;  /* No such process */
         }
 
-        /* Permission check: can only signal processes with same UID,
-         * unless sender is root or has CAP_KILL. POSIX/Linux requirement. */
+        /* Permission check: Linux's kill_ok_by_cred allows the signal
+         * when ANY of these caller-uid × target-uid pairs match:
+         *
+         *   caller.euid ↔ target.uid       (effective)
+         *   caller.euid ↔ target.suid      (saved)
+         *   caller.ruid ↔ target.uid
+         *   caller.ruid ↔ target.suid
+         *
+         * Plus root (uid==0) and CAP_KILL bypass. The previous check
+         * only compared the caller's real / effective UIDs against the
+         * target's *real* UID, missing the target.uid (effective) and
+         * target.suid (saved) sides — so a privileged target that
+         * dropped its effective UID to a regular user (the standard
+         * setuid pattern) was un-killable by that user, even though
+         * Linux explicitly permits this case. */
         if (target != current &&
             current->ruid != 0 &&
-            !(current->cap_effective & (1ULL << CAP_KILL)) &&
-            current->ruid != target->ruid &&
-            current->uid  != target->ruid) {
-            return -EPERM;
+            !(current->cap_effective & (1ULL << CAP_KILL))) {
+            int ok = (current->ruid == target->uid)  ||
+                     (current->ruid == target->suid) ||
+                     (current->uid  == target->uid)  ||
+                     (current->uid  == target->suid);
+            if (!ok)
+                return -EPERM;
         }
 
         /* Handle null signal (permission check only) */

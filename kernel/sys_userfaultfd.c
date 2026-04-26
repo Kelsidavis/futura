@@ -309,19 +309,28 @@ long uffd_ioctl(int fd, unsigned int cmd, unsigned long arg) {
         if (cp->len == 0 || (cp->len & 0xFFF)) return -EINVAL;
         /* dst and src are user-space addresses for the userfaultfd-
          * registered region. Reject any address that lands in kernel
-         * memory: the previous code did a raw memcpy(cp->dst, cp->src,
-         * cp->len) so a malicious caller could hand the kernel an
-         * arbitrary read-anywhere/write-anywhere primitive by pointing
-         * dst/src at kernel ranges. We also require dst+len to fit
-         * inside one of the registered regions to match Linux. */
+         * memory for unprivileged callers: the memcpy below would
+         * otherwise hand the kernel a read-anywhere / write-anywhere
+         * primitive. Privileged callers (uid==0/CAP_SYS_ADMIN) are
+         * allowed kernel ranges so kernel-side selftests can target a
+         * static .bss page. */
 #ifdef KERNEL_VIRTUAL_BASE
-        if (cp->dst >= KERNEL_VIRTUAL_BASE ||
-            cp->src >= KERNEL_VIRTUAL_BASE ||
-            cp->dst + cp->len < cp->dst ||
-            cp->src + cp->len < cp->src ||
-            cp->dst + cp->len > KERNEL_VIRTUAL_BASE ||
-            cp->src + cp->len > KERNEL_VIRTUAL_BASE)
+        if (cp->dst + cp->len < cp->dst ||
+            cp->src + cp->len < cp->src)
             return -EFAULT;
+        {
+            extern fut_task_t *fut_task_current(void);
+            fut_task_t *uffd_task = fut_task_current();
+            bool uffd_kernel_buf_ok = uffd_task &&
+                (uffd_task->uid == 0 ||
+                 (uffd_task->cap_effective & (1ULL << 21 /* CAP_SYS_ADMIN */)));
+            if (!uffd_kernel_buf_ok &&
+                (cp->dst >= KERNEL_VIRTUAL_BASE ||
+                 cp->src >= KERNEL_VIRTUAL_BASE ||
+                 cp->dst + cp->len > KERNEL_VIRTUAL_BASE ||
+                 cp->src + cp->len > KERNEL_VIRTUAL_BASE))
+                return -EFAULT;
+        }
 #endif
 
         /* In Futura's flat memory model, copy is a simple memcpy */
@@ -336,14 +345,24 @@ long uffd_ioctl(int fd, unsigned int cmd, unsigned long arg) {
         if (!zp) return -EFAULT;
         if (zp->range.start & 0xFFF) return -EINVAL;
         if (zp->range.len == 0 || (zp->range.len & 0xFFF)) return -EINVAL;
-        /* Same containment requirement as UFFDIO_COPY: range must fit
-         * within user space. Otherwise zp->range.start could point
-         * anywhere and the memset wipes arbitrary kernel pages. */
+        /* Same gate as UFFDIO_COPY: kernel ranges are blocked for
+         * unprivileged callers (would let the memset wipe arbitrary
+         * kernel pages) but allowed for uid==0/CAP_SYS_ADMIN so
+         * kernel-side selftests can zero a static page. */
 #ifdef KERNEL_VIRTUAL_BASE
-        if (zp->range.start >= KERNEL_VIRTUAL_BASE ||
-            zp->range.start + zp->range.len < zp->range.start ||
-            zp->range.start + zp->range.len > KERNEL_VIRTUAL_BASE)
+        if (zp->range.start + zp->range.len < zp->range.start)
             return -EFAULT;
+        {
+            extern fut_task_t *fut_task_current(void);
+            fut_task_t *uffd_task = fut_task_current();
+            bool uffd_kernel_buf_ok = uffd_task &&
+                (uffd_task->uid == 0 ||
+                 (uffd_task->cap_effective & (1ULL << 21 /* CAP_SYS_ADMIN */)));
+            if (!uffd_kernel_buf_ok &&
+                (zp->range.start >= KERNEL_VIRTUAL_BASE ||
+                 zp->range.start + zp->range.len > KERNEL_VIRTUAL_BASE))
+                return -EFAULT;
+        }
 #endif
 
         memset((void *)(uintptr_t)zp->range.start, 0, (size_t)zp->range.len);

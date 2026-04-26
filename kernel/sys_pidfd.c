@@ -163,12 +163,20 @@ long sys_pidfd_open(int pid, unsigned int flags) {
         return fd;
     }
 
+    fut_task_t *cur = fut_task_current();
+
     /* Apply PIDFD_NONBLOCK if requested */
-    if (flags & PIDFD_NONBLOCK) {
-        fut_task_t *cur = fut_task_current();
-        if (cur && cur->fd_table && fd < cur->max_fds && cur->fd_table[fd])
-            cur->fd_table[fd]->flags |= 0x800; /* O_NONBLOCK */
-    }
+    if ((flags & PIDFD_NONBLOCK) && cur && cur->fd_table && fd < cur->max_fds &&
+        cur->fd_table[fd])
+        cur->fd_table[fd]->flags |= 0x800; /* O_NONBLOCK */
+
+    /* Linux pidfd_open(2) always returns the pidfd with FD_CLOEXEC set:
+     * 'The returned file descriptor has the close-on-exec flag set.'
+     * The previous code never set it, so an exec across the pidfd would
+     * leak the process-reference fd into the new program (silent
+     * privilege transfer for any pidfd a setuid wrapper had open). */
+    if (cur && cur->fd_flags && fd < cur->max_fds)
+        cur->fd_flags[fd] |= 1 /* FD_CLOEXEC */;
 
     return fd;
 }

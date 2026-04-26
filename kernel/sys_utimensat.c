@@ -459,6 +459,80 @@ long sys_utimensat(int dirfd, const char *pathname, const fut_timespec_t *times,
 
     /* Phase 2: Implement actual timestamp updates via vnode->ops->setattr */
 
+    /* Permission check: Linux's utimensat() requires either ownership or
+     * CAP_FOWNER to set arbitrary timestamps; setting both times to
+     * UTIME_NOW (or passing times=NULL) is the only path that may also
+     * succeed for a non-owner with write access on the file, and even
+     * then only when both fields use UTIME_NOW. Without ANY check here
+     * a process could rewrite timestamps on any file in the system —
+     * forensic tampering, build-system corruption, mtime-based cache
+     * poisoning, etc.
+     *
+     * Apply the Linux gate:
+     *   - ownership (effective UID matches vnode->uid), OR
+     *   - CAP_FOWNER (or root), OR
+     *   - write access AND both timestamps are UTIME_NOW / NULL
+     * UTIME_OMIT entries impose no permission requirement individually,
+     * but the rule is evaluated against the *non-OMIT* fields — if any
+     * non-OMIT field carries an explicit timestamp the caller must own
+     * the file (or hold CAP_FOWNER). */
+    {
+        uint32_t task_host_uid = userns_ns_to_host_uid(task->user_ns, task->uid);
+        bool is_root = (task_host_uid == 0);
+        bool has_fowner = (task->cap_effective & (1ULL << 3 /* CAP_FOWNER */)) != 0;
+        bool is_owner = (task_host_uid == vnode->uid);
+
+        if (!is_root && !has_fowner && !is_owner) {
+            /* Determine whether any field carries an explicit (non-NOW,
+             * non-OMIT) timestamp — that path always needs ownership. */
+            bool any_explicit = false;
+            bool any_change = false;
+            if (times == NULL) {
+                any_change = true;
+            } else {
+                for (int ti = 0; ti < 2; ti++) {
+                    long ns = time_buf[ti].tv_nsec;
+                    if (ns == UTIME_OMIT) continue;
+                    any_change = true;
+                    if (ns != UTIME_NOW)
+                        any_explicit = true;
+                }
+            }
+
+            if (any_explicit) {
+                fut_vnode_unref(vnode);
+                return -EPERM;
+            }
+
+            if (any_change) {
+                /* UTIME_NOW / NULL path: require write permission. */
+                uint32_t task_host_gid = userns_ns_to_host_gid(task->user_ns, task->gid);
+                bool can_write = false;
+                if (task_host_uid == vnode->uid) {
+                    can_write = (vnode->mode & 0200) != 0;
+                } else if (task_host_gid == vnode->gid) {
+                    can_write = (vnode->mode & 0020) != 0;
+                } else {
+                    int in_group = 0;
+                    for (int gi = 0; gi < task->ngroups; gi++) {
+                        uint32_t gh = userns_ns_to_host_gid(task->user_ns,
+                                                            task->groups[gi]);
+                        if (gh == vnode->gid) { in_group = 1; break; }
+                    }
+                    if (in_group)
+                        can_write = (vnode->mode & 0020) != 0;
+                    else
+                        can_write = (vnode->mode & 0002) != 0;
+                }
+                if (!can_write) {
+                    fut_vnode_unref(vnode);
+                    return -EACCES;
+                }
+            }
+            /* All fields UTIME_OMIT → no-op for any caller. */
+        }
+    }
+
     /* Check if filesystem supports setattr operation */
     if (!vnode->ops || !vnode->ops->setattr) {
         fut_printf("[UTIMENSAT] utimensat(dirfd=%d [%s], path='%s' [%s, %s, len=%zu], "

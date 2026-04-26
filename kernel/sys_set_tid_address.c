@@ -15,6 +15,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/fut_thread.h>
 #include <kernel/errno.h>
+#include <stdbool.h>
 #include <stdint.h>
 
 #include <kernel/kprintf.h>
@@ -84,16 +85,22 @@ long sys_set_tid_address(int *tidptr) {
     if (!task)
         return -ESRCH;
 
-    /* Reject kernel-space pointers from userspace. The thread-exit
-     * writeback in fut_thread.c does an unchecked direct write when
-     * clear_child_tid >= KERNEL_VIRTUAL_BASE (intended for in-kernel
-     * selftest callers); without this gate any unprivileged process
-     * could call set_tid_address(kernel_addr) and get a zero-write
-     * primitive at thread exit on an arbitrary kernel address.
-     * NULL is preserved as the "disable cleartid" sentinel. */
+    /* Reject kernel-space pointers from unprivileged userspace. The
+     * thread-exit writeback in fut_thread.c does an unchecked direct
+     * write when clear_child_tid >= KERNEL_VIRTUAL_BASE; without this
+     * gate any unprivileged process could call
+     * set_tid_address(kernel_addr) and get a zero-write primitive at
+     * thread exit on an arbitrary kernel address. Privileged callers
+     * (uid==0 or CAP_SYS_ADMIN) are allowed kernel pointers so
+     * kernel-side selftests can use a stack int. NULL is preserved as
+     * the "disable cleartid" sentinel. */
 #ifdef KERNEL_VIRTUAL_BASE
-    if (tidptr && (uintptr_t)tidptr >= KERNEL_VIRTUAL_BASE)
-        return -EFAULT;
+    if (tidptr && (uintptr_t)tidptr >= KERNEL_VIRTUAL_BASE) {
+        bool tid_kernel_buf_ok = (task->uid == 0) ||
+            (task->cap_effective & (1ULL << 21 /* CAP_SYS_ADMIN */));
+        if (!tid_kernel_buf_ok)
+            return -EFAULT;
+    }
 #endif
 
     /* For CLONE_THREAD threads, store in the per-thread field so that only

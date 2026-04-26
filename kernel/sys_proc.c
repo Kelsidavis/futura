@@ -539,22 +539,18 @@ long sys_setrlimit(int resource, const struct rlimit *rlim) {
         return -EINVAL;
     }
 
-    /* Phase 2: Resource-specific validation */
-    if (resource == RLIMIT_NOFILE && new_limit.rlim_cur == 0) {
-        /* Cannot set NOFILE to 0 - process needs at least stdin/stdout/stderr */
-        fut_printf("[PROC] setrlimit(resource=%s [%s]) -> EINVAL (cannot set to 0, need stdin/stdout/stderr)\n",
-                   resource_name, resource_desc);
-        return -EINVAL;
-    }
-
-    if (resource == RLIMIT_STACK &&
-        new_limit.rlim_cur != RLIM_INFINITY &&
-        new_limit.rlim_cur < 4096) {
-        /* Stack too small to be useful */
-        fut_printf("[PROC] setrlimit(resource=%s [%s]) -> EINVAL (soft=%llu too small, minimum 4096 bytes)\n",
-                   resource_name, resource_desc, new_limit.rlim_cur);
-        return -EINVAL;
-    }
+    /* Linux does not impose a minimum value for RLIMIT_NOFILE: setting
+     * it to 0 is a documented sandboxing pattern that forbids further
+     * open() / accept() / dup() while leaving existing fds (including
+     * stdin/stdout/stderr) usable. The previous EINVAL gate broke that
+     * pattern; new fd allocation is already gated by the fd-table
+     * lookup which honors rlim_cur, so a 0 limit is enforced where
+     * Linux enforces it (at allocation time) without rejecting the
+     * setrlimit call itself.
+     *
+     * Likewise, RLIMIT_STACK < 4096 is a valid Linux setting (the
+     * application is then responsible for living with a tiny stack).
+     * Don't second-guess that. */
 
     /* Phase 4: Store limits in task->rlimits so getrlimit can retrieve them */
     fut_task_t *task = fut_task_current();

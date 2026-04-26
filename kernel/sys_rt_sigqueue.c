@@ -69,17 +69,25 @@ long sys_rt_sigqueueinfo(int tgid, int sig, const void *uinfo) {
     if (rtq_copy_from_user(&info, uinfo, sizeof(siginfo_t)) != 0)
         return -EFAULT;
 
-    /* Linux origin-impersonation gate: when delivering to a *different*
-     * process, the caller may only set si_code to a negative value other
-     * than SI_TKILL. The previous 'si_code > 0' check let an unprivileged
-     * caller pass si_code = 0 (SI_USER) or SI_TKILL = -6 in the queued
-     * info, which forges the signal's apparent origin — a setuid program
-     * that trusts si_pid/si_uid from a SI_USER siginfo could be tricked
-     * into believing the signal came from a different sender, or that it
-     * was delivered via tkill(2) when it was not. */
     fut_task_t *caller = fut_task_current();
+
+    /* Kernel-reserved si_code: any positive value is reserved for the
+     * kernel (hardware faults, timer expiry, etc.) and must not be
+     * forged by an unprivileged caller — applies to self-delivery too,
+     * because handlers in the same process may switch on si_code. */
+    if (info.si_code > 0) {
+        if (!caller || !(caller->cap_effective & (1ULL << 5 /* CAP_KILL */)))
+            return -EPERM;
+    }
+
+    /* Linux origin-impersonation gate: when delivering to a *different*
+     * process, also forbid si_code == 0 (SI_USER, kill(2)) and
+     * si_code == SI_TKILL. Both forge the signal's apparent origin — a
+     * setuid program that trusts si_pid/si_uid from a SI_USER siginfo
+     * could be tricked into believing the signal came from a different
+     * sender, or that it was delivered via tkill(2) when it was not. */
     if (caller && caller->pid != (uint64_t)tgid) {
-        if (info.si_code >= 0 || info.si_code == SI_TKILL)
+        if (info.si_code == 0 /* SI_USER */ || info.si_code == SI_TKILL)
             return -EPERM;
     }
 
@@ -127,11 +135,19 @@ long sys_rt_tgsigqueueinfo(int tgid, int tid, int sig, const void *uinfo) {
     if (rtq_copy_from_user(&info, uinfo, sizeof(siginfo_t)) != 0)
         return -EFAULT;
 
-    /* Linux origin-impersonation gate (see rt_sigqueueinfo): forbid
-     * forged SI_USER (code 0) and SI_TKILL (-6) on cross-process delivery. */
     fut_task_t *caller = fut_task_current();
+
+    /* Kernel-reserved si_code: any positive value requires CAP_KILL. */
+    if (info.si_code > 0) {
+        if (!caller || !(caller->cap_effective & (1ULL << 5 /* CAP_KILL */)))
+            return -EPERM;
+    }
+
+    /* Cross-process origin-impersonation gate: forbid forged SI_USER (0)
+     * and SI_TKILL (-6) when delivering via rt_tgsigqueueinfo to another
+     * process. Same-process delivery is unrestricted. */
     if (caller && caller->pid != (uint64_t)tgid) {
-        if (info.si_code >= 0 || info.si_code == SI_TKILL)
+        if (info.si_code == 0 /* SI_USER */ || info.si_code == SI_TKILL)
             return -EPERM;
     }
 

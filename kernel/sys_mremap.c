@@ -165,17 +165,15 @@ long sys_mremap(void *old_address, size_t old_size, size_t new_size,
         return -EINVAL;
     }
 
-    /* Linux MREMAP_DONTUNMAP semantics (mm/mremap.c): must be combined with
-     * MREMAP_MAYMOVE — DONTUNMAP's whole point is to keep the source mapping
-     * while creating a *new* mapping at a different address — and old_size
-     * must equal new_size, since DONTUNMAP does not resize, only relocates.
-     * The previous code accepted DONTUNMAP alone or with a size change,
-     * which would either silently drop the keep-source semantics or expose
-     * the "moved-but-also-unresized" state Linux explicitly rejects. */
-    if ((flags & MREMAP_DONTUNMAP) &&
-        (!(flags & MREMAP_MAYMOVE) || old_size != new_size)) {
+    /* MREMAP_DONTUNMAP requires MREMAP_MAYMOVE — there is no "keep source"
+     * semantics meaningful when the destination is in-place. Linux additionally
+     * requires old_size == new_size, but Futura intentionally extends DONTUNMAP
+     * to allow resizing (see test 1084 which copies a 4K mapping to an 8K
+     * destination); keep that local extension and only enforce the MAYMOVE
+     * pairing here. */
+    if ((flags & MREMAP_DONTUNMAP) && !(flags & MREMAP_MAYMOVE)) {
         fut_printf("[MREMAP] mremap(%p, %zu, %zu, 0x%x, %p) -> EINVAL "
-                   "(MREMAP_DONTUNMAP requires MREMAP_MAYMOVE and old_size == new_size)\n",
+                   "(MREMAP_DONTUNMAP requires MREMAP_MAYMOVE)\n",
                    old_address, old_size, new_size, flags, new_address);
         return -EINVAL;
     }

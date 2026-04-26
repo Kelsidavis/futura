@@ -148,19 +148,28 @@ long sys_unshare(unsigned long flags) {
      * requires CAP_SYS_ADMIN, matching Linux. CLONE_NEWUSER is the
      * one explicit exception — its whole purpose is to let an
      * unprivileged caller obtain a fresh uid mapping it controls.
-     * Without this gate any contained process could bypass its
-     * mount/network/PID isolation by simply unshare()ing into a
-     * fresh namespace. */
+     *
+     * Linux additionally allows CAP_SYS_ADMIN-gated namespaces to be
+     * unshared in the *same call* as CLONE_NEWUSER even by an
+     * unprivileged caller: the new user namespace is created first
+     * and the caller becomes root within it, which then satisfies the
+     * cap check for the other namespaces in the same syscall. This is
+     * how rootless containers (rootless Docker, podman, bubblewrap)
+     * obtain their own mount/PID/network namespaces without any host
+     * capabilities. The previous code rejected this combination, so
+     * those tools could not run on Futura. */
     {
         const unsigned long PRIVILEGED_NS_FLAGS =
             CLONE_NEWNS | CLONE_NEWUTS | CLONE_NEWIPC |
             CLONE_NEWPID | CLONE_NEWNET | CLONE_NEWCGROUP |
             CLONE_NEWTIME;  /* Match sys_clone3 — time namespace also needs CAP_SYS_ADMIN */
         if ((flags & PRIVILEGED_NS_FLAGS) &&
+            !(flags & CLONE_NEWUSER) &&
             task->uid != 0 &&
             !(task->cap_effective & (1ULL << 21 /* CAP_SYS_ADMIN */))) {
             fut_printf("[UNSHARE] unshare(flags=0x%lx, pid=%d) -> EPERM "
-                       "(namespace creation requires CAP_SYS_ADMIN)\n",
+                       "(namespace creation requires CAP_SYS_ADMIN unless "
+                       "combined with CLONE_NEWUSER)\n",
                        flags, task->pid);
             return -EPERM;
         }

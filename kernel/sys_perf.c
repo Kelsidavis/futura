@@ -378,7 +378,13 @@ long sys_perf_event_open(const void *attr, int pid, int cpu,
     if (fd < 0) { ev->active = false; return fd; }
     ev->fd = fd;
 
-    if ((flags & PERF_FLAG_FD_CLOEXEC) && task && fd < task->max_fds)
+    /* O_CLOEXEC: guard against tasks without an allocated fd_flags
+     * (early init / kernel threads). pipe2, socketpair, dup3, and
+     * pidfd_open all check fd_flags non-NULL before indexing it; the
+     * previous code here did not, so any caller perf_event_open'd from
+     * a task without fd_flags would NULL-deref the kernel. */
+    if ((flags & PERF_FLAG_FD_CLOEXEC) && task && task->fd_flags &&
+        fd < task->max_fds)
         task->fd_flags[fd] |= 1;
 
     return fd;

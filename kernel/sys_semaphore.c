@@ -394,14 +394,20 @@ long sys_semctl(int semid, int semnum, int cmd, unsigned long arg) {
         if (sem_copy_from_user(vals, (const void *)(uintptr_t)arg,
                                (size_t)s->nsems * sizeof(unsigned short)) != 0)
             return -EFAULT;
-        fut_spinlock_acquire(&s->lock);
+        /* Validate the whole array BEFORE writing any element. Linux
+         * applies SEM_SETALL atomically — either every value is
+         * accepted, or the set is left untouched. The previous loop
+         * interleaved validation and apply, so a vals[N] > SEMVMX
+         * would return -ERANGE only after vals[0..N-1] had already
+         * been written, leaving the semaphore set in an inconsistent
+         * mid-update state visible to other waiters. */
         for (int i = 0; i < s->nsems; i++) {
-            if (vals[i] > SEMVMX) {
-                fut_spinlock_release(&s->lock);
+            if (vals[i] > SEMVMX)
                 return -ERANGE;
-            }
-            s->sems[i].semval = (int)vals[i];
         }
+        fut_spinlock_acquire(&s->lock);
+        for (int i = 0; i < s->nsems; i++)
+            s->sems[i].semval = (int)vals[i];
         fut_waitq_wake_all(&s->waitq);
         fut_spinlock_release(&s->lock);
         return 0;

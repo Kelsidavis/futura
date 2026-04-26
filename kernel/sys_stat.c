@@ -165,7 +165,14 @@ long sys_stat(const char *path, struct fut_stat *statbuf) {
      * concurrent thread modifies statbuf between probe and the real
      * copy_to_user, the probe's write-back clobbers their value with
      * the stale pre-modification byte. fut_access_ok inspects page
-     * permissions without touching the buffer contents. */
+     * permissions without touching the buffer contents.
+     *
+     * Skip the check for kernel-half pointers so in-kernel selftest
+     * callers passing a kernel-stack statbuf aren't rejected with
+     * EFAULT — same fix as sys_read / sys_getcwd. */
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)local_statbuf < KERNEL_VIRTUAL_BASE)
+#endif
     if (fut_access_ok(local_statbuf, sizeof(struct fut_stat), 1) != 0) {
         fut_printf("[STAT] stat(path='%s' [%s, len=%lu], statbuf=%p) -> EFAULT "
                    "(buffer not accessible)\n",

@@ -507,15 +507,21 @@ long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
             return -EINVAL;
         }
 
-        /* Shift data from [offset+len, size) down to [offset, size-len) */
+        /* Shift data from [offset+len, size) down to [offset, size-len).
+         * Heap-allocate the bounce buffer — putting 4 KB on the kernel
+         * stack alongside vnode->ops->read/write call depth is half the
+         * typical 8 KB stack budget. */
         uint64_t src = offset + len;
         uint64_t dst = offset;
         uint64_t tail_bytes = vnode->size - src;
-        uint8_t chunk_buf[4096];
+        const size_t CHUNK = 4096;
+        extern void *fut_malloc(uint64_t size);
+        extern void  fut_free(void *p);
+        uint8_t *chunk_buf = fut_malloc(CHUNK);
+        if (!chunk_buf) return -ENOMEM;
 
         while (tail_bytes > 0) {
-            size_t chunk = (tail_bytes > sizeof(chunk_buf))
-                           ? sizeof(chunk_buf) : (size_t)tail_bytes;
+            size_t chunk = (tail_bytes > CHUNK) ? CHUNK : (size_t)tail_bytes;
             ssize_t rd = vnode->ops->read(vnode, chunk_buf, chunk, src);
             if (rd <= 0) break;
             ssize_t wr = vnode->ops->write(vnode, chunk_buf, (size_t)rd, dst);
@@ -524,6 +530,7 @@ long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
             dst += (uint64_t)wr;
             tail_bytes -= (uint64_t)wr;
         }
+        fut_free(chunk_buf);
 
         /* Shrink the file by len bytes */
         if (vnode->ops->truncate) {
@@ -567,14 +574,18 @@ long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
         }
 
         /* Shift data from [offset, old_end) up to [offset+len, new_end).
-         * Work backwards to avoid overwriting data we haven't read yet. */
+         * Work backwards to avoid overwriting data we haven't read yet.
+         * Heap-allocate to keep the 4 KB bounce buffer off the stack. */
         uint64_t old_end = new_size - len;  /* original file size */
         uint64_t tail_bytes = old_end - offset;
-        uint8_t chunk_buf[4096];
+        const size_t CHUNK = 4096;
+        extern void *fut_malloc(uint64_t size);
+        extern void  fut_free(void *p);
+        uint8_t *chunk_buf = fut_malloc(CHUNK);
+        if (!chunk_buf) return -ENOMEM;
 
         while (tail_bytes > 0) {
-            size_t chunk = (tail_bytes > sizeof(chunk_buf))
-                           ? sizeof(chunk_buf) : (size_t)tail_bytes;
+            size_t chunk = (tail_bytes > CHUNK) ? CHUNK : (size_t)tail_bytes;
             uint64_t src_off = offset + tail_bytes - chunk;
             uint64_t dst_off = src_off + len;
             ssize_t rd = vnode->ops->read(vnode, chunk_buf, chunk, src_off);
@@ -582,6 +593,7 @@ long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
             vnode->ops->write(vnode, chunk_buf, (size_t)rd, dst_off);
             tail_bytes -= chunk;
         }
+        fut_free(chunk_buf);
 
         /* Zero the inserted gap */
         static const uint8_t zero_page[4096];

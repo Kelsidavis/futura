@@ -954,6 +954,13 @@ long sys_io_uring_setup(unsigned int entries, void *params) {
         if (p->cq_entries == 0) return -EINVAL;
         cq_entries = uring_roundup_pow2(p->cq_entries);
         if (cq_entries > MAX_URING_ENTRIES * 2) cq_entries = MAX_URING_ENTRIES * 2;
+        /* Linux requires cq_entries >= sq_entries (io_allocate_scq_urings):
+         * the SQ can submit up to sq_entries operations in one batch, and a
+         * CQ smaller than the SQ would either overflow on the first batch or
+         * silently drop completions. The previous code accepted any user
+         * cq_entries down to 1, which let a caller submit 8 SQEs into a
+         * 1-entry CQ and lose 7 completions (CQE delivery becomes lossy). */
+        if (cq_entries < sq_entries) return -EINVAL;
     }
 
     /* Find free slot */

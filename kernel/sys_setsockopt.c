@@ -683,7 +683,23 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                     return -EPERM;
                 return 0;
 
-            case 12: /* SO_PRIORITY — socket priority for QoS */
+            case 12: { /* SO_PRIORITY — socket priority for QoS.
+                        * Linux requires CAP_NET_ADMIN for priority > 6 so an
+                        * unprivileged caller can't push their packets to the
+                        * head of the kernel's QoS queues. Even though Futura
+                        * currently no-ops the option, gate it now so we
+                        * don't silently grant escalation if/when QoS routing
+                        * is wired up. */
+                int prio = 0;
+                if (optlen >= sizeof(int)) {
+                    if (sso_copy_from_user(&prio, optval, sizeof(int)) != 0)
+                        return -EFAULT;
+                }
+                if (prio > 6 && task->uid != 0 &&
+                    !(task->cap_effective & (1ULL << 12 /* CAP_NET_ADMIN */)))
+                    return -EPERM;
+                return 0;
+            }
             case 34: /* SO_PASSSEC — SELinux label passing */
             case 37: /* SO_TIMESTAMPING — hardware timestamping */
             case 41: /* SO_WIFI_STATUS — WiFi status */

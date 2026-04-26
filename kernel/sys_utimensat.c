@@ -16,6 +16,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
+#include <kernel/userns.h>
 #include <shared/fut_timespec.h>
 #include <stdint.h>
 #include <stdbool.h>

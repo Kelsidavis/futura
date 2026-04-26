@@ -1170,6 +1170,14 @@ long sys_io_uring_register(unsigned int fd, unsigned int opcode,
     switch (opcode) {
     case IORING_REGISTER_FILES: {
         if (!arg || nr_args == 0 || nr_args > MAX_URING_FILES) return -EINVAL;
+        /* Linux's io_register_files returns -EBUSY when files are already
+         * registered: callers must IORING_UNREGISTER_FILES first. The
+         * previous code overwrote the existing array silently, so a
+         * second register call leaked any reference accounting tied to
+         * the old set and broke programs that rely on the EBUSY signal
+         * for register-once semantics. */
+        if (ctx->nr_reg_files != 0)
+            return -EBUSY;
         /* Stage the entire fds array through copy_from_user so a bad
          * user pointer returns -EFAULT and a kernel-pointer caller
          * can't read kernel memory into reg_files[]. */
@@ -1194,6 +1202,14 @@ long sys_io_uring_register(unsigned int fd, unsigned int opcode,
 
     case IORING_REGISTER_EVENTFD: {
         if (!arg || nr_args != 1) return -EINVAL;
+        /* Linux returns -EBUSY when an eventfd is already registered:
+         * callers must IORING_UNREGISTER_EVENTFD first. The previous
+         * code silently overwrote ctx->eventfd, so completion
+         * notifications would start firing into the *new* eventfd
+         * while the old one stayed installed for any in-flight
+         * notifier path that captured the prior value. */
+        if (ctx->eventfd >= 0)
+            return -EBUSY;
         int local_efd;
 #ifdef KERNEL_VIRTUAL_BASE
         if ((uintptr_t)arg >= KERNEL_VIRTUAL_BASE) {

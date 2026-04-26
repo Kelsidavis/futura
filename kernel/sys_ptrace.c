@@ -342,7 +342,17 @@ long sys_ptrace(int request, int pid, void *addr, void *data) {
         return 0;
     }
 
-    /* ── PTRACE_SEIZE: attach without stopping ── */
+    /* ── PTRACE_SEIZE: attach without stopping ──
+     *
+     * SEIZE confers the same tracer powers as ATTACH (peek/poke arbitrary
+     * memory, redirect registers, intercept syscalls). It is in fact
+     * *stealthier* — no SIGSTOP is delivered to the tracee — so the
+     * access-control bar must be at least as high as ATTACH. The previous
+     * code only checked uid match, skipping user-namespace and
+     * pid-namespace isolation, no_new_privs, and dumpable. That let an
+     * unprivileged caller SEIZE a target it could not ATTACH to (for
+     * instance, a setuid binary that has dropped dumpable, or a process
+     * in a sibling user namespace). Apply the same gate as ATTACH. */
     case PTRACE_SEIZE: {
         fut_task_t *tracee = fut_task_by_pid((uint64_t)pid);
         if (!tracee)
@@ -351,7 +361,18 @@ long sys_ptrace(int request, int pid, void *addr, void *data) {
             return -EPERM;
         if (tracee->ptrace_tracer != 0)
             return -EPERM;
-        if (current->uid != 0 && current->uid != tracee->uid)
+
+        if (current->uid != 0) {
+            if (current->uid != tracee->uid)
+                return -EPERM;
+            if (current->user_ns != tracee->user_ns)
+                return -EPERM;
+            if (current->pid_ns != tracee->pid_ns)
+                return -EPERM;
+        }
+        if (tracee->no_new_privs && current->uid != 0)
+            return -EPERM;
+        if (tracee->dumpable == 0 && current->uid != 0)
             return -EPERM;
 
         tracee->ptrace_tracer = current->pid;

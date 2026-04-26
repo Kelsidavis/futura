@@ -28,6 +28,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/fut_thread.h>
 #include <kernel/errno.h>
+#include <stdbool.h>
 #include <kernel/uaccess.h>
 #include <stdint.h>
 #include <stddef.h>
@@ -135,12 +136,23 @@ long sys_clone3(const struct fut_clone_args *uargs, size_t size) {
      * process can request the kernel to write the child TID (or 0
      * at exit) to an arbitrary kernel address — same write-anywhere
      * class as the set_tid_address fix. NULL is permitted as the
-     * 'no address' sentinel. */
+     * 'no address' sentinel. Privileged callers (uid==0/CAP_SYS_ADMIN)
+     * skip this gate so kernel-side selftests using stack tid
+     * pointers aren't rejected — same pattern as the set_tid_address
+     * and process_vm fixes. */
 #ifdef KERNEL_VIRTUAL_BASE
-    if ((args.parent_tid && args.parent_tid >= KERNEL_VIRTUAL_BASE) ||
-        (args.child_tid  && args.child_tid  >= KERNEL_VIRTUAL_BASE) ||
-        (args.pidfd      && args.pidfd      >= KERNEL_VIRTUAL_BASE))
-        return -EFAULT;
+    {
+        extern fut_task_t *fut_task_current(void);
+        fut_task_t *clone3_self = fut_task_current();
+        bool clone3_kernel_ok = clone3_self &&
+            (clone3_self->uid == 0 ||
+             (clone3_self->cap_effective & (1ULL << 21 /* CAP_SYS_ADMIN */)));
+        if (!clone3_kernel_ok &&
+            ((args.parent_tid && args.parent_tid >= KERNEL_VIRTUAL_BASE) ||
+             (args.child_tid  && args.child_tid  >= KERNEL_VIRTUAL_BASE) ||
+             (args.pidfd      && args.pidfd      >= KERNEL_VIRTUAL_BASE)))
+            return -EFAULT;
+    }
 #endif
 
     /* Namespace flags: apply namespace isolation to the child process.

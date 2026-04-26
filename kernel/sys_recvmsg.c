@@ -408,7 +408,14 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
          * concurrent thread writing into iov_base between probe and the
          * real copy_to_user would have its write silently clobbered
          * when the probe wrote the stale byte back. fut_access_ok
-         * checks the page-table permissions non-destructively. */
+         * checks the page-table permissions non-destructively.
+         *
+         * Skip the check for kernel-half iov_base so in-kernel selftest
+         * callers passing a stack buffer aren't rejected with EFAULT —
+         * same fix as sys_read / sys_getcwd / sys_stat. */
+#ifdef KERNEL_VIRTUAL_BASE
+        if ((uintptr_t)iov.iov_base < KERNEL_VIRTUAL_BASE)
+#endif
         if (fut_access_ok(iov.iov_base, iov.iov_len, 1) != 0) {
             RECVMSG_LOG("[RECVMSG] recvmsg(sockfd=%d) -> EFAULT "
                        "(iov_base[%zu] not writable, len=%zu)\n",

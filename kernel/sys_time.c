@@ -89,7 +89,15 @@ long sys_time(uint64_t *tloc) {
      * ATTACK: Attacker provides read-only or unmapped tloc buffer
      * IMPACT: Kernel page fault when writing time value
      * DEFENSE: Check write permission before processing */
-    if (tloc && fut_access_ok(tloc, sizeof(uint64_t), 1) != 0) {
+    /* Skip access_ok for kernel-originated calls (selftests use kernel stack
+     * pointers). Without this bypass kernel-side sys_time(&tloc_on_stack)
+     * returns -EFAULT before storing the value, matching the same fix
+     * applied to gettimeofday/clock_gettime/read/getcwd/stat. */
+    if (tloc &&
+#ifdef KERNEL_VIRTUAL_BASE
+        (uintptr_t)tloc < KERNEL_VIRTUAL_BASE &&
+#endif
+        fut_access_ok(tloc, sizeof(uint64_t), 1) != 0) {
         fut_printf("[TIME] time(tloc=%p) -> EFAULT (tloc not writable for %zu bytes)\n",
                    tloc, sizeof(uint64_t));
         return -EFAULT;

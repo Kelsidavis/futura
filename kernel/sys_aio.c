@@ -446,6 +446,14 @@ long sys_io_pgetevents(unsigned long ctx_id, long min_nr, long nr,
         if (fut_copy_from_user(&sig, usig, sizeof(sig)) != 0)
             return -EFAULT;
 
+        /* Linux validates sigsetsize == sizeof(sigset_t) (8 on 64-bit)
+         * and returns -EINVAL otherwise — keeps the wire ABI rigid so a
+         * future widening of sigset_t can be detected without ambiguity.
+         * The previous code read sig.ssz only to discard it, accepting
+         * any size and silently ignoring mismatched layouts. */
+        if (sig.ss && sig.ssz != sizeof(uint64_t))
+            return -EINVAL;
+
         if (sig.ss) {
             uint64_t newmask = 0;
 #ifdef KERNEL_VIRTUAL_BASE

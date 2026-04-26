@@ -755,7 +755,25 @@ long sys_ptrace(int request, int pid, void *addr, void *data) {
                 memset(pt_regs, 0, sizeof(pt_regs));
                 if (ptrace_copy_from_user(pt_regs, iov.base, copy_len) != 0)
                     return -EFAULT;
-                ctx->x0 = pt_regs[0]; ctx->x1 = pt_regs[1];
+                /* Write back all caller-saved + callee-saved GPRs that
+                 * GETREGSET exposes. The previous code skipped x2 through
+                 * x18, which silently dropped any tracer-driven change to
+                 * syscall args (x0-x7), the syscall number (x8), the
+                 * indirect-result reg (x8), or the platform/IP scratch
+                 * regs (x16-x18) — breaking gdb/strace's set-and-resume
+                 * pattern. PSTATE is intentionally not written: letting a
+                 * tracer flip the EL or interrupt-mask bits would be a
+                 * privilege escalation vector. */
+                ctx->x0  = pt_regs[0];  ctx->x1  = pt_regs[1];
+                ctx->x2  = pt_regs[2];  ctx->x3  = pt_regs[3];
+                ctx->x4  = pt_regs[4];  ctx->x5  = pt_regs[5];
+                ctx->x6  = pt_regs[6];  ctx->x7  = pt_regs[7];
+                ctx->x8  = pt_regs[8];  ctx->x9  = pt_regs[9];
+                ctx->x10 = pt_regs[10]; ctx->x11 = pt_regs[11];
+                ctx->x12 = pt_regs[12]; ctx->x13 = pt_regs[13];
+                ctx->x14 = pt_regs[14]; ctx->x15 = pt_regs[15];
+                ctx->x16 = pt_regs[16]; ctx->x17 = pt_regs[17];
+                ctx->x18 = pt_regs[18];
                 ctx->x19 = pt_regs[19]; ctx->x20 = pt_regs[20];
                 ctx->x21 = pt_regs[21]; ctx->x22 = pt_regs[22];
                 ctx->x23 = pt_regs[23]; ctx->x24 = pt_regs[24];

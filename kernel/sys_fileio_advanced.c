@@ -86,6 +86,19 @@ long sys_chroot(const char *path) {
         return -ENOENT;
     }
 
+    /* Check CAP_SYS_CHROOT capability BEFORE resolving the path. Linux
+     * gates this on the capability first so unprivileged callers can't
+     * probe directory existence (ENOENT vs EPERM) by speculatively
+     * chroot()ing into paths they shouldn't even know about. */
+    #define CAP_SYS_CHROOT 18
+    bool has_cap = (task->cap_effective & (1ULL << CAP_SYS_CHROOT)) != 0;
+    bool is_root = (task->uid == 0);
+    if (!has_cap && !is_root) {
+        fut_printf("[CHROOT] chroot('%s') -> EPERM (need CAP_SYS_CHROOT, pid=%d)\n",
+                   path_buf, task->pid);
+        return -EPERM;
+    }
+
     /* Resolve path to vnode and verify it's a directory */
     struct fut_vnode *vnode = NULL;
     int ret = fut_vfs_lookup(path_buf, &vnode);
@@ -96,17 +109,6 @@ long sys_chroot(const char *path) {
     if (vnode->type != VN_DIR) {
         fut_vnode_unref(vnode);
         return -ENOTDIR;
-    }
-
-    /* Check CAP_SYS_CHROOT capability - only privileged processes may chroot */
-    #define CAP_SYS_CHROOT 18
-    bool has_cap = (task->cap_effective & (1ULL << CAP_SYS_CHROOT)) != 0;
-    bool is_root = (task->uid == 0);
-    if (!has_cap && !is_root) {
-        fut_vnode_unref(vnode);
-        fut_printf("[CHROOT] chroot('%s') -> EPERM (need CAP_SYS_CHROOT, pid=%d)\n",
-                   path_buf, task->pid);
-        return -EPERM;
     }
 
     /* Release old chroot vnode if already set */

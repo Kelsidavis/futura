@@ -20,8 +20,23 @@ int fw_framebuffer_create(uint32_t width, uint32_t height, struct fw_framebuffer
 
     memset(fb_out, 0, sizeof(*fb_out));
 
-    size_t stride = (size_t)width * 4u;
-    size_t total = stride * (size_t)height;
+    /* Overflow-safe pixel buffer sizing. Without these checks,
+     * width >= 2^30 wraps stride to 0 and the eventual calloc(1, 0)
+     * gives a near-empty allocation — subsequent indexing using the
+     * un-wrapped width/height (e.g. in fw_framebuffer_clear) walks
+     * past the heap allocation. We additionally cap to a 16K x 16K
+     * sanity limit which is well past any real display. */
+    if (width > 16384u || height > 16384u) {
+        return -EINVAL;
+    }
+    size_t stride;
+    if (__builtin_mul_overflow((size_t)width, (size_t)4u, &stride)) {
+        return -EOVERFLOW;
+    }
+    size_t total;
+    if (__builtin_mul_overflow(stride, (size_t)height, &total)) {
+        return -EOVERFLOW;
+    }
     uint8_t *pixels = (uint8_t *)calloc(1, total);
     if (!pixels) {
         return -ENOMEM;

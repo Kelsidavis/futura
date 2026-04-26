@@ -25435,9 +25435,14 @@ static void test_arch_prctl_extended(void) {
     long r;
     uint64_t val;
 
-    /* Test 422: ARCH_SET_FS + ARCH_GET_FS round-trip */
+    /* Test 422: ARCH_SET_FS + ARCH_GET_FS round-trip
+     * Sentinel must lie in the user half (< TASK_SIZE_MAX = 1<<47): the
+     * kernel rejects non-canonical FS bases with -EPERM (matching
+     * Linux's TASK_SIZE_MAX check) so a kernel-half value silently
+     * fails the SET. Pick a recognisable bit pattern under the
+     * threshold. */
     fut_printf("[MISC-TEST] Test 422: arch_prctl ARCH_SET_FS/ARCH_GET_FS round-trip\n");
-    uint64_t sentinel = 0xDEADBEEF12345678ULL;
+    uint64_t sentinel = 0x00007EAD12345678ULL;
     r = sys_arch_prctl(ARCH_SET_FS_VAL, (unsigned long)sentinel);
     val = 0;
     long r2 = sys_arch_prctl(ARCH_GET_FS_VAL, (unsigned long)&val);

@@ -412,13 +412,25 @@ long sys_chmod(const char *pathname, uint32_t mode) {
     }
 
     /* Phase 2: Store old mode for before/after comparison */
-    /* Permission check: only owner, root, or CAP_FOWNER can chmod */
+    /* Permission check: only owner, root, or CAP_FOWNER can chmod.
+     *
+     * Linux's inode_owner_or_capable() compares the *effective* UID
+     * (current_fsuid, derived from euid) against the file's owner —
+     * not the real UID. The previous check used task->ruid, which
+     * meant a setuid binary running as a non-root user could not
+     * chmod files it owned via its effective identity (e.g. a
+     * setuid 'mailman' helper acting as the mail spool's owner). It
+     * also diverged from sys_fchown / sys_chown which already use
+     * task->uid (effective), creating an asymmetric model where
+     * chown succeeds but the matching chmod fails. Switch to the
+     * effective UID so the gate matches Linux and the rest of
+     * Futura's credential checks. */
     {
         fut_task_t *task = fut_task_current();
-        uint32_t task_host_ruid = task ? userns_ns_to_host_uid(task->user_ns, task->ruid) : 0;
-        if (task && task_host_ruid != 0 &&
+        uint32_t task_host_uid = task ? userns_ns_to_host_uid(task->user_ns, task->uid) : 0;
+        if (task && task_host_uid != 0 &&
             !(task->cap_effective & (1ULL << 3 /* CAP_FOWNER */)) &&
-            task_host_ruid != vnode->uid) {
+            task_host_uid != vnode->uid) {
             fut_vnode_unref(vnode);
             return -EPERM;
         }

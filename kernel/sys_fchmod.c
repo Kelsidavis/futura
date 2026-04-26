@@ -171,11 +171,14 @@ long sys_fchmod(int fd, uint32_t mode) {
         return -ESRCH;
     }
 
-    /* Permission check: only owner, root, or CAP_FOWNER can fchmod */
-    uint32_t task_host_ruid = userns_ns_to_host_uid(task->user_ns, task->ruid);
-    if (task_host_ruid != 0 &&
+    /* Permission check: only owner, root, or CAP_FOWNER can fchmod.
+     * Linux uses the effective UID (current_fsuid()) — see the matching
+     * comment in sys_chmod. The previous task->ruid check broke setuid
+     * binaries chmod'ing files they owned via their effective identity. */
+    uint32_t task_host_uid = userns_ns_to_host_uid(task->user_ns, task->uid);
+    if (task_host_uid != 0 &&
         !(task->cap_effective & (1ULL << 3 /* CAP_FOWNER */)) &&
-        task_host_ruid != vnode->uid) {
+        task_host_uid != vnode->uid) {
         return -EPERM;
     }
 

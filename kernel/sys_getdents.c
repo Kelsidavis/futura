@@ -183,10 +183,16 @@ static int swap_copy_path(char *dst, const char *src, size_t n) {
 long sys_swapon(const char *path, int swapflags) {
     if (!path) return -EINVAL;
 
-    /* Permission check */
+    /* Permission check: Linux gates swapon on CAP_SYS_ADMIN, not just
+     * effective-uid 0. The previous check rejected non-root callers
+     * holding CAP_SYS_ADMIN — the standard way to delegate swap
+     * administration without granting full root — and forced operators
+     * to run swapon binaries as raw root. Match Linux: allow either
+     * uid==0 or CAP_SYS_ADMIN. */
     extern fut_task_t *fut_task_current(void);
     fut_task_t *task = fut_task_current();
-    if (task && task->uid != 0)
+    if (task && task->uid != 0 &&
+        !(task->cap_effective & (1ULL << 21 /* CAP_SYS_ADMIN */)))
         return -EPERM;
 
     /* Stage the path into a kernel buffer before any further use. */
@@ -230,9 +236,11 @@ long sys_swapon(const char *path, int swapflags) {
 long sys_swapoff(const char *path) {
     if (!path) return -EINVAL;
 
+    /* Same CAP_SYS_ADMIN gate as swapon (see comment there). */
     extern fut_task_t *fut_task_current(void);
     fut_task_t *task = fut_task_current();
-    if (task && task->uid != 0)
+    if (task && task->uid != 0 &&
+        !(task->cap_effective & (1ULL << 21 /* CAP_SYS_ADMIN */)))
         return -EPERM;
 
     char kpath[128];

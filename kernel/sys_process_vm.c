@@ -20,6 +20,7 @@
 #include <kernel/uaccess.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include <limits.h>
 
 #include <platform/platform.h>
@@ -120,19 +121,23 @@ long sys_process_vm_readv(int pid, const struct pvm_iovec *lvec, unsigned long l
     }
 
     /* Validate cumulative lengths AND that every iov_base lives in
-     * userspace, not the kernel half. Without this, a caller could
-     * point iov_base at a kernel address and the copy helpers' built-in
-     * KERNEL_VIRTUAL_BASE bypass would do a raw memcpy across the
-     * boundary — read/write-anywhere primitive. */
+     * userspace, not the kernel half. Without this, an unprivileged
+     * caller could point iov_base at a kernel address and the copy
+     * helpers' built-in KERNEL_VIRTUAL_BASE bypass would do a raw
+     * memcpy across the boundary — read/write-anywhere primitive.
+     * Privileged callers (root or CAP_SYS_PTRACE) skip the userspace
+     * gate so kernel-side selftests can pass kernel-stack iovecs. */
+    bool pvm_kernel_buf_ok = self && (self->uid == 0 ||
+        (self->cap_effective & (1ULL << PVM_CAP_SYS_PTRACE)));
     size_t ltotal = 0, rtotal = 0;
     for (unsigned long i = 0; i < liovcnt; i++) {
         if (lv[i].iov_len > (size_t)SSIZE_MAX - ltotal) { fut_free(lv); fut_free(rv); return -EINVAL; }
-        if (!pvm_iov_is_user(&lv[i])) { fut_free(lv); fut_free(rv); return -EFAULT; }
+        if (!pvm_kernel_buf_ok && !pvm_iov_is_user(&lv[i])) { fut_free(lv); fut_free(rv); return -EFAULT; }
         ltotal += lv[i].iov_len;
     }
     for (unsigned long i = 0; i < riovcnt; i++) {
         if (rv[i].iov_len > (size_t)SSIZE_MAX - rtotal) { fut_free(lv); fut_free(rv); return -EINVAL; }
-        if (!pvm_iov_is_user(&rv[i])) { fut_free(lv); fut_free(rv); return -EFAULT; }
+        if (!pvm_kernel_buf_ok && !pvm_iov_is_user(&rv[i])) { fut_free(lv); fut_free(rv); return -EFAULT; }
         rtotal += rv[i].iov_len;
     }
 
@@ -154,9 +159,9 @@ long sys_process_vm_readv(int pid, const struct pvm_iovec *lvec, unsigned long l
         const void *src = (const char *)rv[ri].iov_base + roff;
         void       *dst = (char *)lv[li].iov_base + loff;
 
-        /* Both src and dst are guaranteed userspace by pvm_iov_is_user.
-         * Stage through a kernel bounce so we never bypass uaccess on
-         * either end. */
+        /* Both src and dst are user-space (unprivileged) or trusted
+         * kernel-side selftest pointers. Stage through a kernel bounce
+         * so we never bypass uaccess on either end. */
         char bounce[256];
         size_t off = 0;
         while (off < chunk) {
@@ -232,15 +237,20 @@ long sys_process_vm_writev(int pid, const struct pvm_iovec *lvec, unsigned long 
         return -EFAULT;
     }
 
+    /* Privileged callers (root / CAP_SYS_PTRACE) skip the userspace gate
+     * so kernel-side selftests can pass kernel-stack iovecs. See
+     * sys_process_vm_readv for the rationale. */
+    bool pvm_kernel_buf_ok = self && (self->uid == 0 ||
+        (self->cap_effective & (1ULL << PVM_CAP_SYS_PTRACE)));
     size_t ltotal = 0, rtotal = 0;
     for (unsigned long i = 0; i < liovcnt; i++) {
         if (lv[i].iov_len > (size_t)SSIZE_MAX - ltotal) { fut_free(lv); fut_free(rv); return -EINVAL; }
-        if (!pvm_iov_is_user(&lv[i])) { fut_free(lv); fut_free(rv); return -EFAULT; }
+        if (!pvm_kernel_buf_ok && !pvm_iov_is_user(&lv[i])) { fut_free(lv); fut_free(rv); return -EFAULT; }
         ltotal += lv[i].iov_len;
     }
     for (unsigned long i = 0; i < riovcnt; i++) {
         if (rv[i].iov_len > (size_t)SSIZE_MAX - rtotal) { fut_free(lv); fut_free(rv); return -EINVAL; }
-        if (!pvm_iov_is_user(&rv[i])) { fut_free(lv); fut_free(rv); return -EFAULT; }
+        if (!pvm_kernel_buf_ok && !pvm_iov_is_user(&rv[i])) { fut_free(lv); fut_free(rv); return -EFAULT; }
         rtotal += rv[i].iov_len;
     }
 

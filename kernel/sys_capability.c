@@ -371,18 +371,31 @@ long sys_capset(struct __user_cap_header_struct *hdrp,
         return -EPERM;
     }
 
-    /* Validate: new_inheritable ⊆ (old_inheritable ∪ old_permitted ∪ cap_bset).
-     * Matches Linux's cap_capset(): inheritable can be promoted from any
-     * cap currently in permitted (so a setuid program can pass on caps it
-     * actually holds), in addition to whatever was already inheritable or
-     * remains in the bounding set. The previous check omitted permitted
-     * and broke standard cap management patterns. */
-    uint64_t allowed_inh = target_task->cap_inheritable |
-                           target_task->cap_permitted   |
-                           target_task->cap_bset;
-    if (new_inheritable & ~allowed_inh) {
-        fut_printf("[CAPABILITY] capset -> EPERM (inheritable exceeds inheritable∪permitted∪bset)\n");
+    /* Bounding-set constraint: new_inheritable ⊆ (old_inheritable ∪ cap_bset).
+     * The bounding set is an absolute upper bound on what may ever appear in
+     * inheritable, regardless of what is currently held in permitted. The
+     * previous union-with-permitted check let an attacker reintroduce a cap
+     * into inheritable that the administrator had explicitly removed from
+     * the bounding set, defeating the bset's purpose. */
+    uint64_t bset_allowed = target_task->cap_inheritable | target_task->cap_bset;
+    if (new_inheritable & ~bset_allowed) {
+        fut_printf("[CAPABILITY] capset -> EPERM (inheritable exceeds inheritable∪bset)\n");
         return -EPERM;
+    }
+
+    /* Permitted-set constraint: without CAP_SETPCAP, callers can only raise
+     * inheritable using caps currently in their permitted set. Linux's
+     * cap_capset() applies this rule via cap_inh_is_capped(): a process that
+     * holds CAP_SETPCAP may add any in-bset cap to inheritable, while every
+     * other process is capped to old_inheritable ∪ old_permitted. */
+    int has_setpcap = (target_task->cap_effective & (1ULL << CAP_SETPCAP)) != 0;
+    if (!has_setpcap) {
+        uint64_t inh_allowed = target_task->cap_inheritable |
+                               target_task->cap_permitted;
+        if (new_inheritable & ~inh_allowed) {
+            fut_printf("[CAPABILITY] capset -> EPERM (inheritable exceeds inheritable∪permitted, no CAP_SETPCAP)\n");
+            return -EPERM;
+        }
     }
 
     /* Store old effective for logging */

@@ -159,13 +159,21 @@ static long seccomp_validate_bpf(const struct sock_filter *insns, uint32_t n_ins
         switch (cls) {
         case SECCOMP_BPF_JMP: {
             if (BPF_OP(f->code) == SECCOMP_BPF_JA) {
-                /* Unconditional jump: pc += k, then pc++ in loop */
-                uint32_t target = i + 1 + f->k;
-                if (target >= n_insns)
+                /* Unconditional jump: pc += k, then pc++ in loop.
+                 * f->k is a 32-bit unsigned value; computing
+                 * `i + 1 + f->k` in 32-bit arithmetic wraps around for
+                 * any k >= UINT32_MAX - i, producing a small "target"
+                 * that passes the n_insns bound check while actually
+                 * pointing backward (or at the jump itself). That lets
+                 * a malformed program slip a self-loop past the
+                 * verifier and spin the interpreter on every syscall.
+                 * Compute the target in 64-bit arithmetic so the
+                 * bound check is meaningful for every k. */
+                uint64_t target = (uint64_t)i + 1ULL + (uint64_t)f->k;
+                if (target >= (uint64_t)n_insns)
                     return -EINVAL;
-                /* No backward jumps (k is unsigned, so i+1+k > i always holds) */
             } else {
-                /* Conditional jump: jt/jf offsets */
+                /* Conditional jump: jt/jf offsets (each 8-bit, no overflow risk) */
                 uint32_t target_t = i + 1 + f->jt;
                 uint32_t target_f = i + 1 + f->jf;
                 if (target_t >= n_insns || target_f >= n_insns)

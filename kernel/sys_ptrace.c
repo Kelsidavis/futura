@@ -13,6 +13,7 @@
 #include <kernel/fut_mm.h>
 #include <kernel/errno.h>
 #include <kernel/kprintf.h>
+#include <kernel/signal.h>      /* _NSIG: full Linux signal-number range for ptrace forwarding */
 #include <kernel/uaccess.h>
 #include <platform/platform.h>
 #include <stdint.h>
@@ -398,7 +399,9 @@ long sys_ptrace(int request, int pid, void *addr, void *data) {
             tracee->state = FUT_TASK_RUNNING;
             /* Deliver signal if one was specified */
             int sig = (int)(uintptr_t)data;
-            if (sig > 0 && sig < 32) {
+            /* Allow the full Linux signal range (1..64); RT signals were
+             * silently dropped by the prior 'sig < 32' bound. */
+            if (sig > 0 && sig < _NSIG) {
                 extern int fut_signal_send(fut_task_t *, int);
                 fut_signal_send(tracee, sig);
             }
@@ -556,7 +559,12 @@ long sys_ptrace(int request, int pid, void *addr, void *data) {
 
         /* Deliver signal if specified */
         int sig = (int)(uintptr_t)data;
-        if (sig > 0 && sig < 32) {
+        /* Linux signals run 1..64 (1..31 standard, 32..64 real-time).
+         * The kernel's fut_signal_send accepts the full range; the prior
+         * 'sig < 32' bound silently dropped RT-signal forwarding via
+         * ptrace, which gdb/strace use when an inferior is interrupted
+         * by a real-time signal. */
+        if (sig > 0 && sig < _NSIG) {
             fut_signal_send(tracee, sig);
         }
 
@@ -576,7 +584,12 @@ long sys_ptrace(int request, int pid, void *addr, void *data) {
         }
 
         int sig = (int)(uintptr_t)data;
-        if (sig > 0 && sig < 32) {
+        /* Linux signals run 1..64 (1..31 standard, 32..64 real-time).
+         * The kernel's fut_signal_send accepts the full range; the prior
+         * 'sig < 32' bound silently dropped RT-signal forwarding via
+         * ptrace, which gdb/strace use when an inferior is interrupted
+         * by a real-time signal. */
+        if (sig > 0 && sig < _NSIG) {
             fut_signal_send(tracee, sig);
         }
 
@@ -597,7 +610,12 @@ long sys_ptrace(int request, int pid, void *addr, void *data) {
         }
 
         int sig = (int)(uintptr_t)data;
-        if (sig > 0 && sig < 32) {
+        /* Linux signals run 1..64 (1..31 standard, 32..64 real-time).
+         * The kernel's fut_signal_send accepts the full range; the prior
+         * 'sig < 32' bound silently dropped RT-signal forwarding via
+         * ptrace, which gdb/strace use when an inferior is interrupted
+         * by a real-time signal. */
+        if (sig > 0 && sig < _NSIG) {
             fut_signal_send(tracee, sig);
         }
 

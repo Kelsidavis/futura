@@ -172,7 +172,17 @@ long sys_clone3(const struct fut_clone_args *uargs, size_t size) {
                                              (uint64_t)CLONE_NEWNET |
                                              (uint64_t)CLONE_NEWCGROUP |
                                              (uint64_t)CLONE_NEWTIME;
-        if (ns_flags & PRIVILEGED_NS_FLAGS) {
+        /* Linux allows the CAP_SYS_ADMIN-gated namespace flags to be
+         * combined with CLONE_NEWUSER in a single clone3() call from an
+         * unprivileged caller: the new user namespace is created first
+         * and the child is root within it, satisfying the cap check for
+         * the other namespaces. This is how rootless container runtimes
+         * (rootless docker, podman, bubblewrap) spawn an isolated child
+         * without any host capabilities. The previous gate rejected the
+         * combination, so those tools could not run on Futura. Mirrors
+         * the matching unshare(2) fix. */
+        if ((ns_flags & PRIVILEGED_NS_FLAGS) &&
+            !(ns_flags & CLONE_NEWUSER)) {
             fut_task_t *cur = fut_task_current();
             if (cur && cur->uid != 0 &&
                 !(cur->cap_effective & (1ULL << 21 /* CAP_SYS_ADMIN */)))

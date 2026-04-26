@@ -17,6 +17,7 @@
 #include <kernel/fut_thread.h>
 #include <kernel/fut_vfs.h>
 #include <kernel/uaccess.h>
+#include <kernel/userns.h>
 
 #include <kernel/kprintf.h>
 
@@ -322,6 +323,51 @@ long sys_chdir(const char *pathname) {
                    kpath, path_type, vnode->ino, vnode_type_desc, vnode_type_desc);
         fut_vnode_unref(vnode);
         return -ENOTDIR;
+    }
+
+    /* Linux requires execute (search) permission on the target directory.
+     * Without this check the function comment promised the gate
+     * ('Requires execute permission on target directory') but the check
+     * was never implemented — any user could chdir into any directory
+     * regardless of mode, bypassing access controls that gate readdir
+     * and lookups inside the directory.
+     *
+     * Standard Unix DAC: +x for owner if uid matches, +x for group if
+     * gid or supplementary group matches, +x for other otherwise.
+     * Root (uid 0) and CAP_DAC_OVERRIDE / CAP_DAC_READ_SEARCH bypass. */
+    {
+        uint32_t task_uid = userns_ns_to_host_uid(task->user_ns, task->uid);
+        bool has_search;
+        if (task_uid == 0 ||
+            (task->cap_effective & ((1ULL << 1 /* CAP_DAC_OVERRIDE */) |
+                                    (1ULL << 2 /* CAP_DAC_READ_SEARCH */)))) {
+            has_search = true;
+        } else if (task_uid == vnode->uid) {
+            has_search = (vnode->mode & 0100) != 0;
+        } else {
+            uint32_t task_gid = userns_ns_to_host_gid(task->user_ns, task->gid);
+            int in_group = (task_gid == vnode->gid);
+            if (!in_group) {
+                for (int gi = 0; gi < task->ngroups; gi++) {
+                    uint32_t gh = userns_ns_to_host_gid(task->user_ns,
+                                                        task->groups[gi]);
+                    if (gh == vnode->gid) { in_group = 1; break; }
+                }
+            }
+            if (in_group)
+                has_search = (vnode->mode & 0010) != 0;
+            else
+                has_search = (vnode->mode & 0001) != 0;
+        }
+        if (!has_search) {
+            fut_printf("[CHDIR] chdir(path='%s', vnode_ino=%lu, mode=0%o, "
+                       "task_uid=%u, vnode_uid=%u) -> EACCES "
+                       "(no search permission on target directory)\n",
+                       kpath, vnode->ino, vnode->mode,
+                       task_uid, vnode->uid);
+            fut_vnode_unref(vnode);
+            return -EACCES;
+        }
     }
 
     /* Update the task's current working directory */

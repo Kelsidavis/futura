@@ -298,7 +298,11 @@ long sys_chown(const char *pathname, uint32_t uid, uint32_t gid) {
     struct user_namespace *ns = task ? task->user_ns : NULL;
     if (local_uid != CHOWN_UNCHANGED) host_uid = userns_ns_to_host_uid(ns, local_uid);
     if (local_gid != CHOWN_UNCHANGED) host_gid = userns_ns_to_host_gid(ns, local_gid);
-    uint32_t task_host_ruid = task ? userns_ns_to_host_uid(ns, task->ruid) : 0;
+    /* Use the effective UID (current_fsuid in Linux) for the
+     * permission gate, matching sys_fchown and sys_chmod. The previous
+     * task->ruid check broke setuid binaries chown'ing files via their
+     * effective identity and produced a chown/fchown asymmetry. */
+    uint32_t task_host_ruid = task ? userns_ns_to_host_uid(ns, task->uid) : 0;
     uint32_t task_host_gid = task ? userns_ns_to_host_gid(ns, task->gid) : 0;
 
     if (task && task_host_ruid != 0 && !(task->cap_effective & (1ULL << CAP_CHOWN))) {

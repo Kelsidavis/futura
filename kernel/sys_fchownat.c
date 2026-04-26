@@ -382,7 +382,9 @@ long sys_fchownat(int dirfd, const char *pathname, uint32_t uid, uint32_t gid, i
     struct user_namespace *ns = task ? task->user_ns : NULL;
     if (uid != (uint32_t)-1) host_uid = userns_ns_to_host_uid(ns, uid);
     if (gid != (uint32_t)-1) host_gid = userns_ns_to_host_gid(ns, gid);
-    uint32_t task_host_ruid = task ? userns_ns_to_host_uid(ns, task->ruid) : 0;
+    /* Effective UID for the permission gate (matches sys_chown / sys_fchown
+     * after the loop fix; Linux uses current_fsuid()). */
+    uint32_t task_host_ruid = task ? userns_ns_to_host_uid(ns, task->uid) : 0;
     uint32_t task_host_gid = task ? userns_ns_to_host_gid(ns, task->gid) : 0;
     if (task && task_host_ruid != 0 && !(task->cap_effective & (1ULL << 0 /* CAP_CHOWN */))) {
         if (uid != (uint32_t)-1 && host_uid != vnode->uid) {

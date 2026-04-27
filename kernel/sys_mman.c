@@ -412,9 +412,16 @@ long sys_mlockall(int flags) {
         return -ESRCH;
     }
 
-    /* Validate flags */
+    /* Validate flags. Linux's mlockall(2) (do_mlockall) requires at
+     * least one of MCL_CURRENT or MCL_FUTURE; flags == 0 and
+     * flags == MCL_ONFAULT alone are EINVAL. The previous code accepted
+     * both, leaving the kernel in a state where the caller asked for
+     * 'lock everything' but no actual lock semantics were applied. */
     int valid_flags = MCL_CURRENT | MCL_FUTURE | MCL_ONFAULT;
     if (local_flags & ~valid_flags) {
+        return -EINVAL;
+    }
+    if (local_flags == 0 || local_flags == MCL_ONFAULT) {
         return -EINVAL;
     }
 

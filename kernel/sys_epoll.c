@@ -1533,12 +1533,14 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
      * timeouts to MAX_EPOLL_TIMEOUT_MS (86400000 ms = 24 h) to prevent
      * processes from blocking indefinitely via unreasonably large timeouts. */
     #define MAX_EPOLL_TIMEOUT_MS 86400000  /* 24 hours */
-    if (timeout < -1) {
-        fut_printf("[EPOLL_WAIT] epoll_wait(epfd=%d, timeout=%d) -> EINVAL "
-                   "(invalid negative timeout; use -1 for infinite)\n", epfd, timeout);
-        return -EINVAL;
-    }
-    if (timeout > MAX_EPOLL_TIMEOUT_MS) {
+    /* Linux: any negative timeout means 'block indefinitely' (the same
+     * convention poll(2) uses). The previous EINVAL gate on timeout < -1
+     * rejected legitimate libc wrappers that pass -2/INT_MIN as the
+     * 'infinite' marker. Normalise to -1 so the rest of the function
+     * treats it uniformly. */
+    if (timeout < 0) {
+        timeout = -1;
+    } else if (timeout > MAX_EPOLL_TIMEOUT_MS) {
         timeout = MAX_EPOLL_TIMEOUT_MS;
     }
 

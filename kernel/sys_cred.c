@@ -400,7 +400,15 @@ long sys_seteuid(uint32_t euid) {
         cred_adjust_caps_uid(task, task->ruid, old_euid, task->suid);
         return 0;
     } else {
-        if (euid == task->ruid || euid == task->suid) {
+        /* POSIX/Linux __sys_setresuid: an unprivileged caller may set the
+         * effective UID to any of {real, current effective, saved}. The
+         * previous check omitted current effective, so a no-op
+         * seteuid(geteuid()) returned EPERM whenever the task had a
+         * three-way split (e.g. ruid=A, euid=B, suid=C) — a legitimate
+         * pattern after a partial setresuid drop. Mirror cred_uid_valid()
+         * (the helper used by sys_setreuid/sys_setresuid). */
+        if (euid == task->ruid || euid == task->uid /* current effective */ ||
+            euid == task->suid) {
             task->uid = euid;
             if (euid != old_euid) task->dumpable = 0;
             cred_adjust_caps_uid(task, task->ruid, old_euid, task->suid);
@@ -541,7 +549,12 @@ long sys_setegid(uint32_t egid) {
         if (egid != old_egid) task->dumpable = 0;
         return 0;
     } else {
-        if (egid == task->rgid || egid == task->sgid) {
+        /* See sys_seteuid: unprivileged callers may set the effective GID
+         * to any of {real, current effective, saved}. Without 'current
+         * effective' a no-op setegid(getegid()) returned EPERM in the
+         * three-way-split case. Mirror cred_gid_valid(). */
+        if (egid == task->rgid || egid == task->gid /* current effective */ ||
+            egid == task->sgid) {
             task->gid = egid;
             if (egid != old_egid) task->dumpable = 0;
             return 0;

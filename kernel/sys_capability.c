@@ -208,7 +208,15 @@ long sys_capget(struct __user_cap_header_struct *hdrp,
         return -EINVAL;
     }
 
-    /* Resolve target task by pid (0 = current, >0 = lookup by pid). */
+    /* Resolve target task by pid (0 = current, >0 = lookup by pid).
+     * Linux's capget rejects negative pid up front with EINVAL — without
+     * this guard a negative pid_t silently widens to a huge unsigned and
+     * we fall through to fut_task_by_pid(), which then returns ESRCH and
+     * masks the real ABI error from libc/glibc capset wrappers. */
+    if (hdr.pid < 0) {
+        fut_printf("[CAPABILITY] capget: pid=%d -> EINVAL (negative pid)\n", hdr.pid);
+        return -EINVAL;
+    }
     fut_task_t *target = task;
     if (hdr.pid != 0) {
         target = fut_task_by_pid((uint64_t)(unsigned int)hdr.pid);

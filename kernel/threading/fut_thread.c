@@ -520,12 +520,19 @@ fut_thread_t *fut_thread_current(void) {
         return NULL;
     }
     fut_percpu_t *percpu = fut_percpu_get();
-    if (!percpu || (uintptr_t)percpu < 0xFFFFFFFF80000000ULL) {
-        return NULL;  /* GS_BASE corrupted — percpu is not a kernel address */
+    /* Sanity-check the percpu pointer is in the kernel half of the
+     * address space. The previous hard-coded x86_64 base
+     * (0xFFFFFFFF80000000) flagged every legitimate ARM64 percpu pointer
+     * (which lives in 0xFFFFFF80…) as 'corrupt' and returned NULL, so
+     * fut_thread_current() never produced a thread on ARM64 — every
+     * caller (signals, scheduler, fd allocation, etc.) silently saw a
+     * missing current thread. Use the architecture-correct base. */
+    if (!percpu || (uintptr_t)percpu < KERNEL_VIRTUAL_BASE) {
+        return NULL;
     }
     fut_thread_t *thread = percpu->current_thread;
-    if (thread && (uintptr_t)thread < 0xFFFFFFFF80000000ULL) {
-        return NULL;  /* current_thread is not a kernel address */
+    if (thread && (uintptr_t)thread < KERNEL_VIRTUAL_BASE) {
+        return NULL;
     }
     return thread;
 }

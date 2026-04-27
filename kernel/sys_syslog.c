@@ -236,10 +236,21 @@ long sys_syslog(int type, char *buf, int len) {
         return 0;
 
     case SYSLOG_ACTION_READ: {
-        /* Read and consume from log (advances read cursor) */
-        if (!buf || len <= 0) {
+        /* Read and consume from log (advances read cursor).
+         *
+         * Linux's do_syslog only rejects negative len (or NULL buf with
+         * len > 0); a len == 0 request is a defined no-op that returns
+         * 0. The previous 'len <= 0' gate diverged from Linux: callers
+         * polling the consume cursor with len=0 (which musl does in a
+         * 'is there anything new?' loop) saw EINVAL on Futura but 0 on
+         * Linux, so the polling loop spun on what it interpreted as a
+         * fatal error. */
+        if (len < 0)
             return -EINVAL;
-        }
+        if (len == 0)
+            return 0;
+        if (!buf)
+            return -EINVAL;
 
         size_t unread = klog_unread();
         if (unread == 0) {
@@ -274,10 +285,24 @@ long sys_syslog(int type, char *buf, int len) {
     case SYSLOG_ACTION_READ_CLEAR: {
         /* Read entire buffer contents (oldest to newest).
          * READ_ALL (3): non-destructive, does not advance any cursor.
-         * READ_CLEAR (4): reads everything then clears the buffer. */
-        if (!buf || len <= 0) {
+         * READ_CLEAR (4): reads everything then clears the buffer.
+         *
+         * Same Linux len-handling as SYSLOG_ACTION_READ above:
+         * len<0 is EINVAL, len==0 is a defined no-op returning 0
+         * (with READ_CLEAR still clearing the buffer — Linux drops
+         * the buffer regardless of how much was actually returned). */
+        if (len < 0)
             return -EINVAL;
+        if (len == 0) {
+            if (type == SYSLOG_ACTION_READ_CLEAR) {
+                klog_count = 0;
+                klog_head = klog_tail;
+                klog_read_pos = klog_tail;
+            }
+            return 0;
         }
+        if (!buf)
+            return -EINVAL;
 
         size_t to_read = ((size_t)len < klog_count) ? (size_t)len : klog_count;
         /* Start from oldest data (klog_head) */

@@ -289,7 +289,15 @@ long sys_seccomp(unsigned int operation, unsigned int flags, const void *uargs) 
     }
 
     case SECCOMP_GET_ACTION_AVAIL: {
-        if (!uargs) return -EFAULT;
+        /* Linux: `if (flags != 0 || uargs == NULL) return -EINVAL;`
+         * before any copy_from_user, so a NULL pointer is a parameter
+         * error (EINVAL), not a fault (EFAULT) — and any non-zero
+         * flag bit is rejected outright. The previous code accepted
+         * arbitrary flag bits and returned EFAULT on NULL, which lets
+         * libseccomp feature-probes that walk through flag values
+         * silently believe future flags are supported. */
+        if (flags != 0) return -EINVAL;
+        if (!uargs) return -EINVAL;
         uint32_t action = 0;
         if (sec_copy_from_user(&action, uargs, sizeof(action)) != 0)
             return -EFAULT;
@@ -313,7 +321,10 @@ long sys_seccomp(unsigned int operation, unsigned int flags, const void *uargs) 
          * notification buffers for SECCOMP_RET_USER_NOTIF handling.
          *
          * struct seccomp_notif_sizes { u16 notif, notif_resp, data; } */
-        if (!uargs) return -EFAULT;
+        /* Same Linux pre-check as SECCOMP_GET_ACTION_AVAIL: flags
+         * must be zero and uargs must be non-NULL, otherwise EINVAL. */
+        if (flags != 0) return -EINVAL;
+        if (!uargs) return -EINVAL;
         struct { uint16_t notif; uint16_t notif_resp; uint16_t data; } sizes;
         sizes.notif = 80;       /* sizeof(struct seccomp_notif) on Linux */
         sizes.notif_resp = 24;  /* sizeof(struct seccomp_notif_resp) */

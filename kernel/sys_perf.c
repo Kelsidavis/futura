@@ -303,6 +303,17 @@ long sys_perf_event_open(const void *attr, int pid, int cpu,
 
     if (!attr) return -EINVAL;
 
+    /* Linux rejects any unknown bit in flags: PERF_FLAG_FD_NO_GROUP |
+     * PERF_FLAG_FD_OUTPUT | PERF_FLAG_PID_CGROUP | PERF_FLAG_FD_CLOEXEC
+     * (mask 0xF). Without this gate a caller could stash arbitrary bits
+     * that future kernel versions may interpret, and silently pass
+     * validation in current builds. */
+    if (flags & ~(unsigned long)(PERF_FLAG_FD_NO_GROUP |
+                                 PERF_FLAG_FD_OUTPUT |
+                                 PERF_FLAG_PID_CGROUP |
+                                 PERF_FLAG_FD_CLOEXEC))
+        return -EINVAL;
+
     /* Copy perf_event_attr from user before reading any fields. The
      * previous code cast attr directly and dereferenced a->type /
      * a->config / a->flags, which let any caller pass a kernel

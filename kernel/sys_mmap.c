@@ -103,10 +103,14 @@ long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset) 
     }
 
     /* W^X enforcement: deny simultaneous write+execute unless task has
-     * explicit capability. Prevents code injection via writable+executable pages. */
+     * explicit capability. Prevents code injection via writable+executable
+     * pages. CAP_SYS_RAWIO is bit 17 (per Futura's include/sys/capability.h
+     * and Linux); the previous bit-23 check accidentally targeted
+     * CAP_SYS_NICE instead — same shape as the matching mprotect fix
+     * (d69f06d9). Use the right bit so the gate matches its label. */
     if ((prot & PROT_WRITE) && (prot & PROT_EXEC)) {
         fut_task_t *wxchk = fut_task_current();
-        if (!wxchk || !(wxchk->cap_effective & (1ULL << 23 /* CAP_SYS_RAWIO */))) {
+        if (!wxchk || !(wxchk->cap_effective & (1ULL << 17 /* CAP_SYS_RAWIO */))) {
             prot &= ~PROT_EXEC;  /* Strip EXEC from RWX — downgrade to RW */
         }
     }

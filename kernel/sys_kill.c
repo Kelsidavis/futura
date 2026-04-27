@@ -299,8 +299,15 @@ long sys_kill(int pid, int sig) {
         return psd.error ? psd.error : 0;
 
     } else if (pid < -1) {
-        /* Send to process group |pid| */
-        uint64_t target_pgid = (uint64_t)(-pid);
+        /* Send to process group |pid|.
+         *
+         * Compute the absolute value via int64_t first: '-pid' done in
+         * 'int' arithmetic is undefined behavior when pid == INT_MIN
+         * (2's complement -INT_MIN doesn't fit in int). Linux's
+         * kill(2) accepts pid == INT_MIN as 'process group |INT_MIN|'
+         * via unsigned arithmetic; mirror that by widening before
+         * negating. */
+        uint64_t target_pgid = (uint64_t)(-(int64_t)pid);
         struct pgrp_signal_data psd = {
             .sig = sig, .count = 0, .error = 0,
             .sender_ruid = current->ruid, .sender_uid = current->uid,

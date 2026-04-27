@@ -154,25 +154,15 @@ long sys_chown(const char *pathname, uint32_t uid, uint32_t gid) {
         return -EFAULT;
     }
 
-    /* Validate uid/gid are within valid ranges
-     * Allow -1 (0xFFFFFFFF) as special "unchanged" value
-     * Reject other extremely large values that could indicate corruption
-     * Standard systems limit uid/gid to 60000 or less */
-    const uint32_t MAX_VALID_ID = 65535;  /* Standard POSIX uid_t/gid_t max */
-
-    if (local_uid != CHOWN_UNCHANGED && local_uid > MAX_VALID_ID) {
-        fut_printf("[CHOWN] chown(pathname=?, uid=%u, gid=%u) -> EINVAL "
-                   "(uid %u exceeds maximum valid ID %u)\n",
-                   local_uid, local_gid, local_uid, MAX_VALID_ID);
-        return -EINVAL;
-    }
-
-    if (local_gid != CHOWN_UNCHANGED && local_gid > MAX_VALID_ID) {
-        fut_printf("[CHOWN] chown(pathname=?, uid=%u, gid=%u) -> EINVAL "
-                   "(gid %u exceeds maximum valid ID %u)\n",
-                   local_uid, local_gid, local_gid, MAX_VALID_ID);
-        return -EINVAL;
-    }
+    /* Linux's chown uses a 32-bit uid_t/gid_t and accepts any value
+     * except (uid_t)-1 (the documented 'unchanged' sentinel). The
+     * previous MAX_VALID_ID = 65535 cap was 16-bit-uid era, predating
+     * Linux 2.6's switch to 32-bit ids — and broke every modern
+     * container / user-namespace workload that maps host uids in the
+     * 100000+ range (systemd-nspawn defaults to 1879048192 +
+     * subordinate offsets). The sister fchown/fchownat already accept
+     * the full 32-bit range; chown was the inconsistent gate. The
+     * sentinel value is still passed through unchanged. */
 
     /* Phase 2: Categorize uid change type */
     const char *uid_desc;

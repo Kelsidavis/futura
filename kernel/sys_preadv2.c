@@ -45,6 +45,14 @@ ssize_t sys_preadv2(int fd, const struct iovec *iov, int iovcnt,
     if (flags & ~RWF_VALID)
         return -EINVAL;
 
+    /* Linux's kiocb_set_rw_flags rejects RWF_APPEND on the read path
+     * with -EINVAL ("if (rw_type != WRITE) return -EINVAL").  RWF_APPEND
+     * is meaningless for reads — the previous code silently accepted
+     * it, masking a misuse pattern from libc preadv2 wrappers that
+     * branch on EINVAL to fall back to plain preadv. */
+    if (flags & RWF_APPEND)
+        return -EINVAL;
+
     /* Linux's preadv2 treats offset == -1 as 'use current file position'
      * and rejects offset < -1 with -EINVAL (fs/read_write.c). The
      * previous Futura code passed any negative offset > -1 (e.g. -2)

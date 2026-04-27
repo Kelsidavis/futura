@@ -347,11 +347,12 @@ long sys_mount(const char *source, const char *target, const char *filesystemtyp
         return -ENAMETOOLONG;
     }
 
-    /* Phase 2: Validate target is not empty */
+    /* Empty target is ENOENT per Linux mount(2) (getname returns -ENOENT
+     * for an empty pathname before the syscall body sees it). */
     if (target_buf[0] == '\0') {
-        fut_printf("[MOUNT] mount(source=%p, target=\"\" [empty], fstype=%p, flags=0x%lx, pid=%d) -> EINVAL\n",
+        fut_printf("[MOUNT] mount(source=%p, target=\"\" [empty], fstype=%p, flags=0x%lx, pid=%d) -> ENOENT\n",
                    source, filesystemtype, mountflags, task->pid);
-        return -EINVAL;
+        return -ENOENT;
     }
 
     /* Copy and validate filesystemtype with truncation detection

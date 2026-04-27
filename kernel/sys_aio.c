@@ -937,7 +937,7 @@ static void uring_process_sqe(struct io_uring_ctx *ctx, const struct io_uring_sq
  */
 long sys_io_uring_setup(unsigned int entries, void *params) {
     if (!params) return -EFAULT;
-    if (entries == 0 || entries > MAX_URING_ENTRIES) return -EINVAL;
+    if (entries == 0) return -EINVAL;
 
     /* Stage params through copy_*_user. The previous code cast 'params'
      * directly to a kernel pointer and then read flags/cq_entries and
@@ -981,7 +981,18 @@ long sys_io_uring_setup(unsigned int entries, void *params) {
 
     /* Round entries to power of 2 */
     uint32_t sq_entries = uring_roundup_pow2(entries);
-    if (sq_entries > MAX_URING_ENTRIES) sq_entries = MAX_URING_ENTRIES;
+    /* Linux: oversized 'entries' is EINVAL by default but is silently
+     * clamped to MAX_URING_ENTRIES when IORING_SETUP_CLAMP is set
+     * (the flag was added precisely so callers can ask for a large
+     * ring without portability worries about the kernel's per-version
+     * cap). The previous code clamped unconditionally, so a caller that
+     * didn't pass CLAMP and asked for too many entries got a smaller
+     * ring than requested without any error. */
+    if (sq_entries > MAX_URING_ENTRIES) {
+        if (!(p->flags & IORING_SETUP_CLAMP))
+            return -EINVAL;
+        sq_entries = MAX_URING_ENTRIES;
+    }
     uint32_t cq_entries = sq_entries * 2; /* CQ is 2x SQ by default */
 
     if (p->flags & IORING_SETUP_CQSIZE) {

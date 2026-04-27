@@ -82,9 +82,23 @@ static int g_next_ruleset_fd = 1000;  /* Fake fd range for rulesets */
  */
 long sys_landlock_create_ruleset(const void *attr, size_t size,
                                  uint32_t flags) {
-    /* LANDLOCK_CREATE_RULESET_VERSION flag: return ABI version */
-    if (flags == (1U << 0)) {
-        return LANDLOCK_ABI_VERSION;
+    /* Linux's security/landlock/syscalls.c handles flags strictly:
+     *   if (flags) {
+     *     if ((flags == LANDLOCK_CREATE_RULESET_VERSION) && !attr && !size)
+     *         return LANDLOCK_ABI_VERSION;
+     *     return -EINVAL;
+     *   }
+     * The previous Futura code only special-cased flags == VERSION but
+     * silently fell through for any other non-zero flags value, which
+     * meant flags=2 (or any future flag bit) could still create a real
+     * ruleset whenever attr/size were valid — defeating the kernel-too-
+     * old probe userspace uses to detect missing flag support. Mirror
+     * Linux's strict gate. */
+    if (flags) {
+        if (flags == (1U << 0) /* LANDLOCK_CREATE_RULESET_VERSION */ &&
+            !attr && size == 0)
+            return LANDLOCK_ABI_VERSION;
+        return -EINVAL;
     }
 
     if (!attr || size < sizeof(struct landlock_ruleset_attr))

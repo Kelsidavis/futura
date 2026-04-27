@@ -970,22 +970,18 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
     }
 
     case F_SETOWN: {
-        /* Phase 3: Set owner process for async I/O signals (SIGIO/SIGURG) */
+        /* Phase 3: Set owner process for async I/O signals (SIGIO/SIGURG).
+         * Per fcntl(2): 'Setting the F_SETOWN value to 0 disables this
+         * signal delivery.' Treat 0 as a clear, not as an error — the
+         * previous EINVAL diverged from Linux and broke libraries that
+         * disable F_SETOWN by setting it to 0 (e.g. on tear-down). */
         int owner_pid = (int)local_arg;
 
-        /* Validate owner PID (can be positive or negative for process groups) */
-        if (owner_pid == 0) {
-            fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s], owner_pid=%d) -> EINVAL "
-                       "(zero PID invalid, Phase 3)\n",
-                       local_fd, fd_category, cmd_name, cmd_category, owner_pid);
-            return -EINVAL;
-        }
-
-        /* Store owner PID in file structure for async signal delivery.
-         * F_SETOWN with positive arg sets F_OWNER_PID; negative sets F_OWNER_PGRP
-         * with the negated value as the group ID. */
         if (file) {
-            if (owner_pid > 0) {
+            if (owner_pid == 0) {
+                file->owner_pid = 0;
+                file->owner_type = 0;
+            } else if (owner_pid > 0) {
                 file->owner_pid = owner_pid;
                 file->owner_type = 1; /* F_OWNER_PID */
             } else {

@@ -45,8 +45,14 @@ static inline int rcvmm_copy_from_user(void *dst, const void *src, size_t n) {
 
 long sys_recvmmsg(int sockfd, void *msgvec, unsigned int vlen,
                   unsigned int flags, const struct timespec *timeout) {
-    if (!msgvec || vlen == 0)
-        return -EINVAL;
+    /* Linux: vlen == 0 is not an error; the loop runs zero times and
+     * the syscall returns 0. Only a NULL msgvec is rejected (EFAULT).
+     * The previous EINVAL gate broke Linux ABI parity and any libc
+     * recvmmsg() that forwards user vlen unchanged. */
+    if (!msgvec)
+        return -EFAULT;
+    if (vlen == 0)
+        return 0;
     if (vlen > 1024)
         vlen = 1024;
 

@@ -41,8 +41,15 @@ static inline int sndmm_copy_to_user(void *dst, const void *src, size_t n) {
 #define MMSGHDR_MSGLEN_OFFSET   sizeof(struct msghdr)
 
 long sys_sendmmsg(int sockfd, void *msgvec, unsigned int vlen, unsigned int flags) {
-    if (!msgvec || vlen == 0)
-        return -EINVAL;
+    /* Linux: vlen == 0 is not an error; the loop simply runs zero times
+     * and the syscall returns 0 (no datagrams sent). Only NULL msgvec
+     * is rejected. The previous EINVAL gate diverged from Linux's
+     * sendmmsg(2) ABI and broke libc wrappers that pass user-supplied
+     * vlen through verbatim. */
+    if (!msgvec)
+        return -EFAULT;
+    if (vlen == 0)
+        return 0;
     if (vlen > 1024)
         vlen = 1024;
 

@@ -218,12 +218,14 @@ long sys_msync(void *addr, size_t length, int flags) {
         return -EINVAL;
     }
 
-    /* Must specify either MS_ASYNC or MS_SYNC */
-    if (!(local_flags & (MS_ASYNC | MS_SYNC))) {
-        fut_printf("[MSYNC] msync(%p, %zu, 0x%x) -> EINVAL (neither MS_ASYNC nor MS_SYNC)\n",
-                   local_addr, local_length, local_flags);
-        return -EINVAL;
-    }
+    /* Linux's msync(2) does not require either MS_ASYNC or MS_SYNC to
+     * be set: from the kernel source (mm/msync.c), the only EINVAL
+     * paths are 'unknown bits in flags' and 'MS_ASYNC && MS_SYNC'.
+     * Calling msync(addr, len, 0) or msync(addr, len, MS_INVALIDATE)
+     * is a defined no-op-ish form (treated like MS_ASYNC) on Linux.
+     * The previous gate broke libc/glibc msync wrappers and tools
+     * that pass MS_INVALIDATE alone to drop cached pages without
+     * forcing a writeback. */
 
     /* Validate length + PAGE_SIZE won't overflow before alignment
      * Prevent integer overflow in alignment calculation */

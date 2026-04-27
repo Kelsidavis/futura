@@ -2069,8 +2069,13 @@ long sys_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
     /* ── Validate basic parameters (mirrors sys_epoll_wait checks) ── */
     if (maxevents <= 0)
         return -EINVAL;
+    /* NULL events is a pointer fault (EFAULT), not a parameter-domain
+     * error. sys_epoll_wait already returns EFAULT for the same case;
+     * sys_epoll_pwait2 was the inconsistent entry point — same EINVAL
+     * → EFAULT split as the recent rt_sigtimedwait / rt_sigqueueinfo
+     * / sched_param / setxattr / io_submit / timerfd_settime fixes. */
     if (!events)
-        return -EINVAL;
+        return -EFAULT;
 
     /* Verify events array is writable (skip for kernel buffers) */
 #ifdef KERNEL_VIRTUAL_BASE

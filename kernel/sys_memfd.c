@@ -260,20 +260,37 @@ long sys_memfd_create(const char *uname, unsigned int flags) {
         fut_free(mf);
         return -EFAULT;
     }
+    /* Linux's strndup_user rejects names whose actual length exceeds
+     * MFD_NAME_MAX_LEN (249) with -EINVAL. Futura previously silently
+     * truncated long names to MEMFD_NAME_MAX, which lets a caller
+     * believe their long-but-distinct name went through and then
+     * collide with another memfd that shared the same 249-byte
+     * prefix. Detect overflow and surface EINVAL instead. */
 #ifdef KERNEL_VIRTUAL_BASE
     /* For kernel self-tests: direct copy */
     if ((uintptr_t)uname >= KERNEL_VIRTUAL_BASE) {
         size_t len = strlen(uname);
-        if (len > MEMFD_NAME_MAX) len = MEMFD_NAME_MAX;
+        if (len > MEMFD_NAME_MAX) {
+            fut_free(mf);
+            return -EINVAL;
+        }
         memcpy(mf->name, uname, len);
         mf->name[len] = '\0';
     } else
 #endif
     {
-        if (fut_copy_from_user(mf->name, uname, MEMFD_NAME_MAX) != 0) {
+        /* Copy 250 bytes (MEMFD_NAME_MAX + 1) so we can detect the
+         * 'no NUL terminator within MEMFD_NAME_MAX' case as overflow. */
+        char probe[MEMFD_NAME_MAX + 1];
+        if (fut_copy_from_user(probe, uname, sizeof(probe)) != 0) {
             fut_free(mf);
             return -EFAULT;
         }
+        if (memchr(probe, '\0', sizeof(probe)) == NULL) {
+            fut_free(mf);
+            return -EINVAL;
+        }
+        memcpy(mf->name, probe, MEMFD_NAME_MAX);
         mf->name[MEMFD_NAME_MAX] = '\0';
     }
 

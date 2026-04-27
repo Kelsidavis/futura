@@ -125,7 +125,9 @@ long sys_openat(int dirfd, const char *pathname, int flags, int mode) {
     int local_dirfd = dirfd;
     const char *local_pathname = pathname;
     int local_flags = flags;
-    int local_mode = mode;
+    /* Mask creation mode to S_IALLUGO (07777) per Linux do_filp_open —
+     * same fix as sys_open. */
+    int local_mode = mode & 07777;
 
     fut_task_t *task = fut_task_current();
     if (!task) {

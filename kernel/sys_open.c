@@ -123,7 +123,16 @@ long sys_open(const char *pathname, int flags, int mode) {
      * register-passed parameters upon resumption. */
     const char *local_pathname = pathname;
     int local_flags = flags;
-    int local_mode = mode;
+    /* Linux's do_filp_open masks creation mode to S_IALLUGO (07777) so
+     * stray S_IFMT type bits (commonly carried over by callers using
+     * stat::st_mode as the mode argument) don't end up in the new
+     * file's permission word. The previous Futura code passed mode
+     * straight through to fut_vfs_open's umask application, leaving
+     * the high bits intact in the stored vnode->mode — observable
+     * later via fstat() and breaking stat-mode round-trips. Mask
+     * here before any further processing. Same Linux-parity fix as
+     * the recent chmod/fchmod and mkdir/mkdirat silent-mask fixes. */
+    int local_mode = mode & 07777;
 
     fut_task_t *task = fut_task_current();
     if (!task) {

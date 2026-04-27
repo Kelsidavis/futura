@@ -185,11 +185,11 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
         return -ESRCH;
     }
 
-    /* Phase 2: Validate pathname */
+    /* NULL pathname is a pointer fault (EFAULT) per Linux execve(2). */
     if (!local_pathname) {
         char msg[128];
         int pos = 0;
-        const char *text = "[EXECVE] execve(path=NULL) -> EINVAL (NULL pathname, pid=";
+        const char *text = "[EXECVE] execve(path=NULL) -> EFAULT (pid=";
         while (*text) { msg[pos++] = *text++; }
 
         char num[16]; int num_pos = 0; unsigned int val = task->pid;
@@ -204,7 +204,7 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
         while (*text) { msg[pos++] = *text++; }
         msg[pos] = '\0';
         fut_printf("%s", msg);
-        return -EINVAL;
+        return -EFAULT;
     }
 
     /* Validate that pathname is a valid userspace pointer (readable) */

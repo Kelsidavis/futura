@@ -596,11 +596,6 @@ long sys_setitimer(int which, const struct itimerval *value, struct itimerval *o
         return -ESRCH;
     }
 
-    if (!local_value) {
-        fut_printf("[SETITIMER] setitimer(which=%d) -> EFAULT (value is NULL)\n", local_which);
-        return -EFAULT;
-    }
-
     const char *timer_name;
 
     switch (local_which) {
@@ -620,9 +615,19 @@ long sys_setitimer(int which, const struct itimerval *value, struct itimerval *o
             return -EINVAL;
     }
 
-    /* Copy timer value from user */
+    /* Linux's setitimer(2) accepts a NULL 'value' as 'disarm the
+     * timer': the wrapper zero-initialises a local itimerval and
+     * passes it to do_setitimer. Futura previously rejected NULL
+     * with EFAULT, breaking glibc's getitimer-then-setitimer round-
+     * trip used to query without changing — when ovalue captures the
+     * current state and value=NULL, Linux returns the old state
+     * after disarming, but Futura would error out before writing
+     * ovalue. */
     struct itimerval new_timer;
-    if (clock_copy_from_user(&new_timer, local_value, sizeof(struct itimerval)) != 0) {
+    if (!local_value) {
+        memset(&new_timer, 0, sizeof(new_timer));
+    } else if (clock_copy_from_user(&new_timer, local_value,
+                                    sizeof(struct itimerval)) != 0) {
         fut_printf("[SETITIMER] setitimer(which=%s) -> EFAULT (copy_from_user failed)\n",
                    timer_name);
         return -EFAULT;

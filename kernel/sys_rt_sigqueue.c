@@ -59,8 +59,11 @@ long sys_rt_sigqueueinfo(int tgid, int sig, const void *uinfo) {
     if (sig < 0 || sig >= _NSIG)
         return -EINVAL;
 
+    /* Linux's rt_sigqueueinfo surfaces a NULL/bad uinfo pointer through
+     * __copy_siginfo_from_user → copy_from_user as -EFAULT. The previous
+     * gate collapsed pointer faults into parameter-domain errors. */
     if (uinfo == NULL)
-        return -EINVAL;
+        return -EFAULT;
 
     if (rtq_access_ok_read(uinfo, sizeof(siginfo_t)) != 0)
         return -EFAULT;
@@ -135,8 +138,10 @@ long sys_rt_tgsigqueueinfo(int tgid, int tid, int sig, const void *uinfo) {
     if (sig < 0 || sig >= _NSIG)
         return -EINVAL;
 
+    /* NULL uinfo is a pointer fault (EFAULT), matching the
+     * rt_sigqueueinfo branch above and Linux's copy_from_user contract. */
     if (uinfo == NULL)
-        return -EINVAL;
+        return -EFAULT;
 
     if (rtq_access_ok_read(uinfo, sizeof(siginfo_t)) != 0)
         return -EFAULT;

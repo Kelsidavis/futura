@@ -356,11 +356,12 @@ long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
     if (file->flags & O_PATH)
         return -EBADF;
 
-    /* fallocate requires write access */
-    if ((file->flags & O_ACCMODE) == O_RDONLY)
-        return -EBADF;
-
-    /* Validate mode flags (values must match Linux uapi/linux/falloc.h) */
+    /* Validate mode flags (values must match Linux uapi/linux/falloc.h).
+     * Linux's vfs_fallocate validates offset/len and mode FIRST, then
+     * checks writable (FMODE_WRITE) — so a read-only fd with bad mode
+     * sees EINVAL, not EBADF.  The previous order returned EBADF for
+     * any read-only fd before mode validation, masking parameter-domain
+     * errors from libc fallocate wrappers. */
     const int FALLOC_FL_KEEP_SIZE = 0x01;
     const int FALLOC_FL_PUNCH_HOLE = 0x02;
     const int FALLOC_FL_COLLAPSE_RANGE = 0x08;
@@ -384,6 +385,12 @@ long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
                    fd, mode, task->pid);
         return -EINVAL;
     }
+
+    /* fallocate requires write access — checked AFTER mode validation
+     * so libc wrappers see the same EINVAL-vs-EBADF separation Linux
+     * gives them. */
+    if ((file->flags & O_ACCMODE) == O_RDONLY)
+        return -EBADF;
 
     /* Validate offset and length. Linux's fallocate(2) returns EINVAL for
      * offset < 0 OR len <= 0 (mm/fallocate.c:do_fallocate); the previous

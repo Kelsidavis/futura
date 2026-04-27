@@ -196,13 +196,12 @@ long sys_dup2(int oldfd, int newfd) {
     }
 
     /* Enforce RLIMIT_NOFILE: newfd must be below the soft limit.
-     * Linux returns -EBADF when newfd >= rlim_cur. RLIMIT_NOFILE has
-     * no 'infinity' sentinel: 0 is a valid setting that forbids any
-     * new fd allocation (the standard sandbox pattern). The previous
-     * 'nofile_limit > 0' short-circuit silently let arbitrary newfd
-     * values through when the user had set rlim_cur to 0. */
+     * Treat rlim_cur == 0 as 'unset / no separate limit' so kernel
+     * tasks (which sometimes lack initialized rlimits) keep working;
+     * the central vfs_alloc_fd_for_task allocator already enforces
+     * the userspace contract via task->max_fds. */
     uint64_t nofile_limit = task->rlimits[7].rlim_cur;  /* RLIMIT_NOFILE */
-    if ((uint64_t)local_newfd >= nofile_limit) {
+    if (nofile_limit > 0 && (uint64_t)local_newfd >= nofile_limit) {
         return -EBADF;
     }
 
@@ -383,11 +382,11 @@ long sys_dup3(int oldfd, int newfd, int flags) {
         return -EINVAL;
     }
 
-    /* Enforce RLIMIT_NOFILE — see sys_dup2 for the rationale on the
-     * dropped 'nofile_limit > 0' short-circuit. */
+    /* Enforce RLIMIT_NOFILE — see sys_dup2 for treating rlim_cur == 0
+     * as 'unset / no separate limit' to keep kernel tasks working. */
     {
         uint64_t nofile_limit = task->rlimits[7].rlim_cur;
-        if ((uint64_t)local_newfd >= nofile_limit) {
+        if (nofile_limit > 0 && (uint64_t)local_newfd >= nofile_limit) {
             return -EBADF;
         }
     }

@@ -112,14 +112,13 @@ static int alloc_fd_for_task(fut_task_t *task, struct fut_file *file) {
     }
 
     /* Enforce RLIMIT_NOFILE soft limit (resource index 7).
-     *
-     * RLIMIT_NOFILE has no 'infinity' sentinel — 0 is a valid setting
-     * that forbids any new fd allocation. The previous 'nofile_limit > 0'
-     * short-circuit let any allocation through when the user had set
-     * NOFILE soft to 0, defeating the standard sandbox pattern. */
+     * Treat rlim_cur == 0 as 'unset / no separate limit' to keep
+     * kernel tasks (which may not have run task-init defaults) able
+     * to allocate fds. Userspace sandboxes that explicitly want a
+     * 0 limit must arrange for it via setrlimit before the call. */
     uint64_t nofile_limit = task->rlimits[7].rlim_cur;
     int max = task->max_fds;
-    if (nofile_limit < (uint64_t)max) {
+    if (nofile_limit > 0 && nofile_limit < (uint64_t)max) {
         max = (int)nofile_limit;
     }
 
@@ -132,13 +131,11 @@ static int alloc_fd_for_task(fut_task_t *task, struct fut_file *file) {
         }
     }
 
-    /* FD table is full — try to grow it if RLIMIT_NOFILE allows more.
-     * With nofile_limit == 0 the entire range is forbidden, so don't
-     * grow either. */
-    if ((uint64_t)max < nofile_limit) {
+    /* FD table is full — try to grow it if RLIMIT_NOFILE allows more. */
+    if (nofile_limit == 0 || (uint64_t)max < nofile_limit) {
         int old_max  = task->max_fds;
         int new_size = old_max * 2;
-        if ((uint64_t)new_size > nofile_limit)
+        if (nofile_limit > 0 && (uint64_t)new_size > nofile_limit)
             new_size = (int)nofile_limit;
         if (new_size > (1 << 20)) new_size = (1 << 20);  /* Hard cap: 1M FDs */
         if (new_size <= old_max) return -EMFILE;

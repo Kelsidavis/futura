@@ -105,19 +105,24 @@ long sys_unlinkat(int dirfd, const char *pathname, int flags) {
         return -ESRCH;
     }
 
-    /* Validate flags - only AT_REMOVEDIR and AT_SYMLINK_NOFOLLOW are valid */
-    const int VALID_FLAGS = AT_REMOVEDIR | AT_SYMLINK_NOFOLLOW;
+    /* Validate flags - Linux accepts ONLY AT_REMOVEDIR for unlinkat;
+     * AT_SYMLINK_NOFOLLOW is not valid here (it's an unlink-time decision
+     * for unlinkat, not a path-resolution flag). The previous code
+     * accepted AT_SYMLINK_NOFOLLOW silently, diverging from Linux's
+     * AT_REMOVEDIR-only contract. */
+    const int VALID_FLAGS = AT_REMOVEDIR;
     if (local_flags & ~VALID_FLAGS) {
         fut_printf("[UNLINKAT] unlinkat(dirfd=%d, flags=0x%x) -> EINVAL (invalid flags)\n",
                    local_dirfd, local_flags);
         return -EINVAL;
     }
 
-    /* Validate pathname pointer */
+    /* Validate pathname pointer — NULL is a faulting pointer (EFAULT)
+     * per Linux, not a parameter-domain error (EINVAL). */
     if (!local_pathname) {
-        fut_printf("[UNLINKAT] unlinkat(dirfd=%d, pathname=NULL) -> EINVAL (NULL pathname)\n",
+        fut_printf("[UNLINKAT] unlinkat(dirfd=%d, pathname=NULL) -> EFAULT\n",
                    local_dirfd);
-        return -EINVAL;
+        return -EFAULT;
     }
 
     /* Copy pathname from userspace */

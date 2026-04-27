@@ -336,9 +336,12 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
      * - All pointer accesses MUST use safe copy functions
      * - Phase 3 PI futexes have additional security requirements
      */
-    /* Validate userspace address */
+    /* Validate userspace address — NULL is a pointer fault (EFAULT) per
+     * Linux futex(2); Linux's get_user/put_user surface EFAULT directly,
+     * so a leading EINVAL gate would mask the real error class for
+     * libc wrappers that distinguish the two. */
     if (!uaddr) {
-        return -EINVAL;
+        return -EFAULT;
     }
 
     /* Phase 2: Validate userspace pointer with write access (futexes modify memory) */

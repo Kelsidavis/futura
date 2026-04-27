@@ -62,8 +62,14 @@ long sys_socketpair(int domain, int type, int protocol, int *sv) {
     if (type_flags & ~(SOCK_NONBLOCK | SOCK_CLOEXEC))
         return -EINVAL;
 
-    if (protocol != 0)
-        return -EINVAL;
+    /* Protocol-domain mismatch on AF_UNIX is -EPROTONOSUPPORT per Linux's
+     * net/unix/af_unix.c:unix_create (and its shared use under
+     * sys_socketpair). EINVAL is reserved for malformed parameters; the
+     * dedicated EPROTONOSUPPORT errno lets libc distinguish 'fix the
+     * protocol arg' from 'fix the call shape'. Accept PF_UNIX (==1) as
+     * an alias for 0 the same way sys_socket does. */
+    if (protocol != 0 && protocol != AF_UNIX /* PF_UNIX */)
+        return -EPROTONOSUPPORT;
 
     /* Create two sockets */
     fut_socket_t *s0 = fut_socket_create(AF_UNIX, base_type);

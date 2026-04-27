@@ -1281,6 +1281,15 @@ long sys_io_uring_register(unsigned int fd, unsigned int opcode,
     }
 
     case IORING_UNREGISTER_FILES:
+        /* Linux's io_sqe_files_unregister returns -ENXIO when no files
+         * are currently registered ("if (!nr) return -ENXIO;").  The
+         * previous code silently returned 0, so libc/liburing callers
+         * that probe whether a register has happened couldn't tell
+         * "nothing to unregister" from "successfully unregistered". */
+        if (ctx->nr_reg_files == 0)
+            return -ENXIO;
+        if (arg || nr_args)
+            return -EINVAL;
         ctx->nr_reg_files = 0;
         memset(ctx->reg_files, 0, sizeof(ctx->reg_files));
         return 0;
@@ -1308,6 +1317,14 @@ long sys_io_uring_register(unsigned int fd, unsigned int opcode,
     }
 
     case IORING_UNREGISTER_EVENTFD:
+        /* Linux's io_eventfd_unregister returns -ENXIO when no eventfd
+         * is registered, and the dispatch wrapper returns -EINVAL when
+         * arg or nr_args are non-zero ("if (arg || nr_args) break;
+         * ret = io_eventfd_unregister"). */
+        if (arg || nr_args)
+            return -EINVAL;
+        if (ctx->eventfd < 0)
+            return -ENXIO;
         ctx->eventfd = -1;
         return 0;
 

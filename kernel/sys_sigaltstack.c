@@ -169,10 +169,17 @@ long sys_sigaltstack(const struct sigaltstack *ss, struct sigaltstack *old_ss) {
 
         /* Validate size if not disabled */
         if (!(new_stack.ss_flags & SS_DISABLE)) {
+            /* Linux's kernel/signal.c:do_sigaltstack returns -ENOMEM
+             * for ss_size < MINSIGSTKSZ ('ret = -ENOMEM; if (ss_size <
+             * min_sigstacksz) goto out'). The previous EINVAL diverged
+             * from the documented sigaltstack(2) contract — applications
+             * that detect 'too-small alt stack' via ENOMEM and grow the
+             * buffer (glibc, pthreads sometimes do this) saw EINVAL
+             * instead and aborted. */
             if (new_stack.ss_size < MINSIGSTKSZ) {
-                fut_printf("[SIGALTSTACK] sigaltstack(size=%zu) -> EINVAL (size < MINSIGSTKSZ=%u)\n",
+                fut_printf("[SIGALTSTACK] sigaltstack(size=%zu) -> ENOMEM (size < MINSIGSTKSZ=%u)\n",
                           new_stack.ss_size, MINSIGSTKSZ);
-                return -EINVAL;
+                return -ENOMEM;
             }
 
             /* Validate pointer is not NULL */

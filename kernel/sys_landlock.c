@@ -179,6 +179,25 @@ long sys_landlock_restrict_self(int ruleset_fd, uint32_t flags) {
     if (slot < 0 || slot >= LANDLOCK_MAX_RULESETS || !g_rulesets[slot].active)
         return -EBADF;
 
+    /* Linux's security/landlock/syscalls.c requires either
+     * task_no_new_privs(current) or CAP_SYS_ADMIN before installing a
+     * ruleset. Without that gate, an unprivileged caller could apply a
+     * Landlock filter and then execve a setuid binary that wouldn't
+     * expect its filesystem accesses to be restricted — a privilege-
+     * escalation-via-confusion vector that NO_NEW_PRIVS exists
+     * specifically to prevent. seccomp's filter path already enforces
+     * the same gate (see kernel/sys_seccomp.c:235); landlock was the
+     * straggler. */
+    extern fut_task_t *fut_task_current(void);
+    fut_task_t *cur = fut_task_current();
+    if (cur && !cur->no_new_privs && cur->uid != 0 &&
+        !(cur->cap_effective & (1ULL << 21 /* CAP_SYS_ADMIN */))) {
+        fut_printf("[LANDLOCK] restrict_self(fd=%d) -> EPERM "
+                   "(no_new_privs not set and no CAP_SYS_ADMIN)\n",
+                   ruleset_fd);
+        return -EPERM;
+    }
+
     fut_printf("[LANDLOCK] Ruleset fd=%d applied to self (%d rules)\n",
                ruleset_fd, g_rulesets[slot].rule_count);
     return 0;

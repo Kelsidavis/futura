@@ -240,11 +240,19 @@ long uffd_ioctl(int fd, unsigned int cmd, unsigned long arg) {
         if (api->api != UFFD_API) return -EINVAL;
         if (ctx->api_handshake_done) return -EINVAL;
 
-        /* Negotiate features — we support a baseline set */
+        /* Linux's userfaultfd_api rejects any feature bit the kernel
+         * doesn't recognise (`if (features & ~UFFD_API_FEATURES) ret =
+         * -EINVAL`). Silently masking unsupported bits — as we used to —
+         * lets userspace believe a feature was negotiated and then fail
+         * mysteriously when its events never carry the expected payload
+         * (e.g. THREAD_ID set but no thread id in messages). Reject
+         * unknown bits up front so libc feature-detection code-paths
+         * see EINVAL the same way they do on Linux. */
         uint64_t supported = UFFD_FEATURE_THREAD_ID |
                              UFFD_FEATURE_EXACT_ADDRESS |
                              UFFD_FEATURE_PAGEFAULT_FLAG_WP;
-        api->features &= supported;
+        if (api->features & ~supported)
+            return -EINVAL;
         ctx->features = api->features;
 
         /* Report supported ioctls */

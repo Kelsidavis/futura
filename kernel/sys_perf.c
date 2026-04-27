@@ -340,6 +340,15 @@ long sys_perf_event_open(const void *attr, int pid, int cpu,
     if (a->type == PERF_TYPE_BREAKPOINT) return -EINVAL;
     if (a->type == PERF_TYPE_RAW) return -EINVAL;
 
+    /* Linux's perf_event_open validates 'cpu': -1 means "any CPU"
+     * (system-wide), 0..nr_cpu_ids-1 selects a specific CPU, and
+     * any other negative value is rejected with -EINVAL. The
+     * previous code accepted any signed int and stored it as
+     * ev->target_cpu, so a libc/perf wrapper passing -2 from a
+     * cpu-affinity probe got a working event back instead of the
+     * documented EINVAL. */
+    if (cpu < -1) return -EINVAL;
+
     fut_task_t *task = fut_task_current();
     if (!task) return -ESRCH;
 

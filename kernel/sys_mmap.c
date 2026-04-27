@@ -66,8 +66,17 @@ long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset) 
     /* mmap_min_addr: reject MAP_FIXED mappings at low addresses to prevent
      * NULL-pointer dereference exploits. Default matches Linux (65536).
      * Without this, an attacker could MAP_FIXED at address 0 then trigger
-     * a NULL-pointer dereference in the kernel to execute mapped code. */
-    if ((flags & MAP_FIXED) && addr != NULL) {
+     * a NULL-pointer dereference in the kernel to execute mapped code.
+     *
+     * NOTE: The previous '&& addr != NULL' qualifier defeated the entire
+     * gate for the worst-case input — MAP_FIXED + addr=NULL would request
+     * a mapping at address 0 and skip the mmap_min_addr check entirely.
+     * Linux's security_mmap_addr(0) returns -EACCES regardless of MAP_FIXED
+     * for any addr below mmap_min_addr; mirror that here. (MAP_FIXED_NOREPLACE
+     * with addr=NULL is a separate documented case — it asks the kernel to
+     * choose, and the conversion to MAP_FIXED happens later, so test 247
+     * stays green.) */
+    if (flags & MAP_FIXED) {
         const uintptr_t MMAP_MIN_ADDR = 65536;
         if ((uintptr_t)addr < MMAP_MIN_ADDR) {
             fut_printf("[MMAP] mmap(addr=%p, flags=MAP_FIXED) -> EPERM "

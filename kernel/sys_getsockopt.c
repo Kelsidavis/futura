@@ -757,19 +757,33 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
                 return 0;
 
             case 38: /* SO_PROTOCOL - protocol number */
-                /* Derive protocol from address family + socket type:
-                 * AF_UNIX: 0, AF_INET/6 STREAM: IPPROTO_TCP(6),
-                 * AF_INET/6 DGRAM: IPPROTO_UDP(17) */
-                if ((socket->address_family == 2 /* AF_INET */ ||
-                     socket->address_family == 10 /* AF_INET6 */) &&
-                    socket->socket_type == 1 /* SOCK_STREAM */)
+                /* Linux's SO_PROTOCOL returns the protocol number that was
+                 * passed to socket(2) at creation time (sk->sk_protocol),
+                 * not a value derived from family/type. The previous
+                 * Futura code re-derived from family+type and lost the
+                 * caller's specific choice — e.g. socket(AF_INET, SOCK_RAW,
+                 * IPPROTO_ICMP) reported protocol 0 instead of 1, breaking
+                 * libpcap's getsockopt(SO_PROTOCOL) probe used to confirm
+                 * a raw socket is bound to the expected protocol.
+                 *
+                 * Fall back to the family-derived heuristic only when the
+                 * caller passed protocol=0 (the documented 'pick default')
+                 * so SOCK_STREAM still reports IPPROTO_TCP and SOCK_DGRAM
+                 * still reports IPPROTO_UDP for AF_INET/6 callers that
+                 * relied on the auto-selected default. */
+                if (socket->protocol != 0) {
+                    int_value = socket->protocol;
+                } else if ((socket->address_family == 2 /* AF_INET */ ||
+                            socket->address_family == 10 /* AF_INET6 */) &&
+                           socket->socket_type == 1 /* SOCK_STREAM */) {
                     int_value = 6;   /* IPPROTO_TCP */
-                else if ((socket->address_family == 2 ||
-                          socket->address_family == 10) &&
-                         socket->socket_type == 2 /* SOCK_DGRAM */)
+                } else if ((socket->address_family == 2 ||
+                            socket->address_family == 10) &&
+                           socket->socket_type == 2 /* SOCK_DGRAM */) {
                     int_value = 17;  /* IPPROTO_UDP */
-                else
+                } else {
                     int_value = 0;
+                }
                 value_len = sizeof(int);
                 copy_len = (len < value_len) ? len : value_len;
                 if (gso_copy_to_user(optval, &int_value, copy_len) != 0) return -EFAULT;

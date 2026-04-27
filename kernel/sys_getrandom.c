@@ -364,6 +364,16 @@ long sys_getrandom(void *buf, size_t buflen, unsigned int flags) {
         return -EINVAL;
     }
 
+    /* Linux's drivers/char/random.c rejects GRND_INSECURE combined with
+     * GRND_RANDOM as EINVAL — the two are conceptually opposite (one
+     * requests fast best-effort output, the other requests blocking on
+     * the entropy pool). The previous code silently accepted both bits
+     * and let GRND_INSECURE win, masking a likely-malformed flag mask
+     * from userspace and producing a result the caller didn't ask for. */
+    if ((flags & GRND_INSECURE) && (flags & GRND_RANDOM)) {
+        return -EINVAL;
+    }
+
     /* Validate buffer */
     if (!buf) {
         return -EFAULT;

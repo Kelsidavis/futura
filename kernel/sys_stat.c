@@ -128,11 +128,16 @@ long sys_stat(const char *path, struct fut_stat *statbuf) {
         return -ENAMETOOLONG;
     }
 
-    /* Phase 2: Validate path is not empty */
+    /* Empty pathname is ENOENT per Linux stat(2): getname() returns
+     * -ENOENT for an empty string. The previous EINVAL was a Futura
+     * deviation and inconsistent with the sister sys_lstat (line 125)
+     * and the long list of *at-syscalls (sys_unlinkat, sys_fchmodat,
+     * sys_mkdirat, sys_mknodat, sys_truncate, …) that already settled
+     * on -ENOENT for the same condition. Bring sys_stat into line. */
     if (path_buf[0] == '\0') {
-        fut_printf("[STAT] stat(path=\"\" [empty], statbuf=%p) -> EINVAL (empty path)\n",
+        fut_printf("[STAT] stat(path=\"\" [empty], statbuf=%p) -> ENOENT\n",
                    (void *)local_statbuf);
-        return -EINVAL;
+        return -ENOENT;
     }
 
     /* Phase 2: Categorize path type */

@@ -59,6 +59,18 @@ long sys_sched_getaffinity(int pid, unsigned int len, void *user_mask) {
         return -EINVAL;
     }
 
+    /* Linux's sys_sched_getaffinity additionally requires len to be a
+     * multiple of sizeof(unsigned long): 'if (len & (sizeof(unsigned
+     * long)-1)) return -EINVAL'. The cpumask is exposed as a long-array
+     * to userspace; an unaligned len means the trailing bytes
+     * straddle a long boundary that the kernel never writes,
+     * leaving them with stale stack/heap content. Futura accepted
+     * any len >= 8, which violated the user-space contract that
+     * affinity buffers be unsigned-long-aligned. */
+    if (len & (sizeof(unsigned long) - 1)) {
+        return -EINVAL;
+    }
+
     /* Find target thread */
     fut_thread_t *thread = fut_thread_current();
     if (pid != 0) {
@@ -112,6 +124,14 @@ long sys_sched_setaffinity(int pid, unsigned int len, const void *user_mask) {
     }
 
     if (len < sizeof(uint64_t)) {
+        return -EINVAL;
+    }
+
+    /* Same alignment requirement Linux enforces on the matching
+     * sched_setaffinity entry — the kernel walks the cpumask as
+     * unsigned-long-sized chunks, so non-aligned lengths produce
+     * undefined high bits. */
+    if (len & (sizeof(unsigned long) - 1)) {
         return -EINVAL;
     }
 

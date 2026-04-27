@@ -911,6 +911,13 @@ long sys_open_tree(int dirfd, const char *pathname, unsigned int flags) {
         0x100u  /* AT_SYMLINK_NOFOLLOW */;
     if (flags & ~OPEN_TREE_VALID)
         return -EINVAL;
+    /* Linux: AT_RECURSIVE is valid only when combined with OPEN_TREE_CLONE
+     * (fs/namespace.c:do_open_tree). Without OPEN_TREE_CLONE, AT_RECURSIVE
+     * is meaningless because the kernel returns the existing mount fd
+     * directly rather than creating a detached clone, so there's no
+     * 'submount tree' to apply the flag to. Linux returns -EINVAL. */
+    if ((flags & 0x8000u /* AT_RECURSIVE */) && !(flags & OPEN_TREE_CLONE))
+        return -EINVAL;
     if (!pathname) return -EFAULT;
 
     /* Stage pathname into a kernel buffer rather than walking the user

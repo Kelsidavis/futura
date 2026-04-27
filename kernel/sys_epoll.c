@@ -1922,9 +1922,14 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
  * Phase 2 (Completed): Wrapper that delegates to epoll_create1(0)
  */
 long sys_epoll_create(int size) {
-    /* Linux ignores size since 2.6.8, but historically required size > 0.
-     * Accept size >= 0 for compatibility — many libc wrappers pass 0. */
-    if (size < 0) {
+    /* Linux's fs/eventpoll.c:do_epoll_create rejects size <= 0 with
+     * -EINVAL. The kernel ignores the value beyond that gate (since
+     * 2.6.8), but the size>0 contract is part of the documented ABI
+     * and glibc/musl wrappers pass at minimum 1. The previous Futura
+     * code accepted size==0 (commenting that 'many libc wrappers pass
+     * 0'), which is not actually true and broke parity for programs
+     * that test the EINVAL-on-zero contract. */
+    if (size <= 0) {
         return -EINVAL;
     }
 

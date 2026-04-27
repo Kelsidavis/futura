@@ -546,9 +546,14 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
             return -EINVAL;
         }
 
-        /* Linux: F_DUPFD with arg >= RLIMIT_NOFILE returns -EINVAL */
+        /* Linux: F_DUPFD with arg >= RLIMIT_NOFILE returns -EINVAL.
+         * Treat rlim_cur == 0 as 'unset / no separate limit' so kernel
+         * boot tasks (with zero-initialised rlimits) can use F_DUPFD;
+         * the task->max_fds gate above already enforces the userspace
+         * contract via the FD table size. Same shape as the dup/dup2
+         * RLIMIT_NOFILE workaround (commit 9f8bada3). */
         uint64_t nofile_rlim = task->rlimits[RLIMIT_NOFILE].rlim_cur;
-        if ((uint64_t)minfd >= nofile_rlim) {
+        if (nofile_rlim > 0 && (uint64_t)minfd >= nofile_rlim) {
             fut_printf("[FCNTL] fcntl(fd=%d, cmd=%s, minfd=%d) -> EINVAL "
                        "(minfd >= RLIMIT_NOFILE %llu)\n",
                        local_fd, cmd_name, minfd, nofile_rlim);
@@ -575,27 +580,37 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
          */
         uint64_t nofile_limit = task->rlimits[RLIMIT_NOFILE].rlim_cur;
 
-        /* Count currently open FDs
-         * Only scan up to min(max_fds, nofile_limit+1) to avoid unnecessary work */
-        uint32_t open_fd_count = 0;
-        int scan_limit = task->max_fds;
-        if ((uint64_t)scan_limit > nofile_limit + 1) {
-            scan_limit = (int)(nofile_limit + 1);
-        }
-        for (int i = 0; i < scan_limit; i++) {
-            struct fut_file *existing = vfs_get_file_from_task(task, i);
-            if (existing) {
-                open_fd_count++;
+        /* Skip the per-call FD-count gate when RLIMIT_NOFILE is unset
+         * (rlim_cur == 0). With the leading EINVAL gate gone, an
+         * uninitialized 0 here would otherwise short-circuit every
+         * F_DUPFD with EMFILE on kernel boot tasks. The fd-table
+         * allocator already enforces task->max_fds, so DoS prevention
+         * is preserved. Userspace tasks get proper rlimits via
+         * fut_task_create defaults (1024) and continue to be gated. */
+        if (nofile_limit > 0) {
+            /* Count currently open FDs
+             * Only scan up to min(max_fds, nofile_limit+1) to avoid
+             * unnecessary work. */
+            uint32_t open_fd_count = 0;
+            int scan_limit = task->max_fds;
+            if ((uint64_t)scan_limit > nofile_limit + 1) {
+                scan_limit = (int)(nofile_limit + 1);
             }
-        }
+            for (int i = 0; i < scan_limit; i++) {
+                struct fut_file *existing = vfs_get_file_from_task(task, i);
+                if (existing) {
+                    open_fd_count++;
+                }
+            }
 
-        /* Check if at or above RLIMIT_NOFILE limit */
-        if (open_fd_count >= nofile_limit) {
-            fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s], minfd=%d) -> EMFILE "
-                       "(FD count %u >= RLIMIT_NOFILE %llu, Resource limit enforcement)\n",
-                       local_fd, fd_category, cmd_name, cmd_category, minfd,
-                       open_fd_count, nofile_limit);
-            return -EMFILE;
+            /* Check if at or above RLIMIT_NOFILE limit */
+            if (open_fd_count >= nofile_limit) {
+                fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s], minfd=%d) -> EMFILE "
+                           "(FD count %u >= RLIMIT_NOFILE %llu, Resource limit enforcement)\n",
+                           local_fd, fd_category, cmd_name, cmd_category, minfd,
+                           open_fd_count, nofile_limit);
+                return -EMFILE;
+            }
         }
 
         /* F_DUPFD Rate Limiting

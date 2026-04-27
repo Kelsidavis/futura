@@ -313,11 +313,14 @@ long sys_pidfd_getfd(int pidfd, int targetfd, unsigned int flags) {
     if (!file)
         return -EBADF;
 
-    /* Find a free FD slot in the current task, respecting RLIMIT_NOFILE */
+    /* Find a free FD slot in the current task, respecting RLIMIT_NOFILE.
+     * 0 is a valid (sandbox) limit; no 'infinity' sentinel exists for
+     * RLIMIT_NOFILE, so the previous 'lim > 0' short-circuit let
+     * pidfd_getfd succeed past a 0-limit fence. */
     int max = cur->max_fds;
     {
         uint64_t lim = cur->rlimits[7].rlim_cur; /* RLIMIT_NOFILE */
-        if (lim > 0 && lim < (uint64_t)max)
+        if (lim < (uint64_t)max)
             max = (int)lim;
     }
     int newfd = -1;

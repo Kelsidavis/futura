@@ -206,10 +206,15 @@ long sys_dup(int oldfd) {
         return -EBADF;
     }
 
-    /* Phase 2: Find the lowest available FD, respecting RLIMIT_NOFILE */
+    /* Phase 2: Find the lowest available FD, respecting RLIMIT_NOFILE.
+     * RLIMIT_NOFILE has no 'infinity' sentinel — 0 is a valid setting
+     * that forbids all new fd allocation. The previous 'nofile_limit > 0'
+     * short-circuit silently bypassed the limit when the user had set
+     * NOFILE soft to 0, so dup() still succeeded after a sandbox-style
+     * setrlimit(RLIMIT_NOFILE, {0,0}). */
     int max = task->max_fds;
     uint64_t nofile_limit = task->rlimits[7].rlim_cur;  /* RLIMIT_NOFILE */
-    if (nofile_limit > 0 && nofile_limit < (uint64_t)max) {
+    if (nofile_limit < (uint64_t)max) {
         max = (int)nofile_limit;
     }
     int newfd = -1;

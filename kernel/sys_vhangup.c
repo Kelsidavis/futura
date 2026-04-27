@@ -177,6 +177,23 @@ long sys_vhangup(void) {
         return -ESRCH;
     }
 
+    /* Linux's vhangup gates the syscall on CAP_SYS_TTY_CONFIG (cap 26):
+     *   if (capable(CAP_SYS_TTY_CONFIG)) { ...; return 0; }
+     *   return -EPERM;
+     * The previous Futura code accepted any caller, so an unprivileged
+     * process could simulate a tty hangup — which on a future TTY-aware
+     * implementation would be a real DoS-on-other-sessions primitive.
+     * Even with the current no-op implementation, the privilege contract
+     * needs to surface correctly for libc/login wrappers that probe via
+     * vhangup(2) for "kernel allows this for the current task". Root
+     * (uid==0) bypasses, matching the rest of the credential surface. */
+    if (task->uid != 0 &&
+        !(task->cap_effective & (1ULL << 26 /* CAP_SYS_TTY_CONFIG */))) {
+        fut_printf("[VHANGUP] vhangup(pid=%d) -> EPERM "
+                   "(CAP_SYS_TTY_CONFIG required)\n", task->pid);
+        return -EPERM;
+    }
+
     /* Phase 2: Accept call and return success */
     fut_printf("[VHANGUP] vhangup(pid=%d) -> 0 "
                "(Phase 3: Full TTY subsystem integration with SIGHUP/SIGCONT)\n",

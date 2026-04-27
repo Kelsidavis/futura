@@ -756,8 +756,15 @@ long sys_settimeofday(const fut_timeval_t *tv, const void *tz) {
         return -EFAULT;
     }
 
-    /* Validate timeval */
-    if (time.tv_usec < 0 || time.tv_usec >= 1000000) {
+    /* Validate timeval. Linux's settimeofday rejects tv_sec < 0 too —
+     * timeval_to_timespec64_invalid() in include/linux/time.h treats a
+     * pre-epoch wall clock as invalid for settod (POSIX 1003.1: 'time
+     * since the Epoch'). Futura was only checking tv_usec range, so a
+     * caller could rewind the wall clock to an arbitrary pre-1970
+     * value, leaving g_realtime_offset_sec deeply negative and breaking
+     * subsequent CLOCK_REALTIME reads (which add the offset to
+     * monotonic time). Mirror Linux: tv_sec >= 0 is required. */
+    if (time.tv_sec < 0 || time.tv_usec < 0 || time.tv_usec >= 1000000) {
         fut_printf("[SETTIMEOFDAY] settimeofday(sec=%lld, usec=%lld) -> EINVAL (invalid timeval)\n",
                    time.tv_sec, time.tv_usec);
         return -EINVAL;

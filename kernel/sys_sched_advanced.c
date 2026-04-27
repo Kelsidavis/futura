@@ -291,9 +291,18 @@ long sys_sched_setscheduler(int pid, int policy, const struct sched_param *param
         return -EINVAL;
     }
 
-    if (policy == SCHED_OTHER && kparam.sched_priority != 0) {
+    /* Linux's __sched_setscheduler rejects non-zero priority for ALL
+     * non-RT policies (SCHED_OTHER, SCHED_BATCH, SCHED_IDLE). The
+     * previous gate only covered SCHED_OTHER, letting SCHED_BATCH and
+     * SCHED_IDLE silently accept any priority value — divergent ABI
+     * and a libc-detection trap (callers probing setscheduler(SCHED_IDLE,
+     * priority=42) saw success on Futura, EINVAL on Linux). SCHED_DEADLINE
+     * is a special case (uses sched_attr fields, not sched_priority);
+     * priority is ignored for it. */
+    if ((policy == SCHED_OTHER || policy == SCHED_BATCH || policy == SCHED_IDLE) &&
+        kparam.sched_priority != 0) {
         fut_printf("[SCHED] sched_setscheduler(pid=%d, policy=%s, priority=%d) -> EINVAL "
-                   "(SCHED_OTHER priority must be 0)\n",
+                   "(non-RT policies require priority 0)\n",
                    pid, policy_name, kparam.sched_priority);
         return -EINVAL;
     }

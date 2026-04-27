@@ -308,8 +308,15 @@ long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
         if (cap < 0 || cap > 63) {
             return -EINVAL;
         }
-        /* Requires CAP_SETPCAP */
-        if (!(task->cap_effective & (1ULL << 8 /* CAP_SETPCAP */))) {
+        /* Linux gates this on ns_capable(CAP_SETPCAP), where root
+         * (uid==0) is treated as holding every capability regardless
+         * of cap_effective state. The previous Futura check was
+         * cap-only, so a uid=0 process whose cap_effective had been
+         * cleared (e.g. early boot before exec_init populates the
+         * full mask) saw EPERM despite Linux allowing it through the
+         * root-bypass — same gap fixed earlier in setgroups. */
+        if (task->uid != 0 &&
+            !(task->cap_effective & (1ULL << 8 /* CAP_SETPCAP */))) {
             return -EPERM;
         }
         task->cap_bset &= ~(1ULL << (unsigned)cap);

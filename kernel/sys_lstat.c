@@ -90,9 +90,10 @@ long sys_lstat(const char *path, struct fut_stat *statbuf) {
     const char *local_path = path;
     struct fut_stat *local_statbuf = statbuf;
 
+    /* NULL pointers are pointer faults (EFAULT) per Linux lstat(2). */
     if (!local_path || !local_statbuf) {
-        fut_printf("[LSTAT] lstat(%p, %p) -> EINVAL (NULL pointer)\n", local_path, local_statbuf);
-        return -EINVAL;
+        fut_printf("[LSTAT] lstat(%p, %p) -> EFAULT (NULL pointer)\n", local_path, local_statbuf);
+        return -EFAULT;
     }
 
     /* Validate statbuf write permission early (kernel writes stat structure)

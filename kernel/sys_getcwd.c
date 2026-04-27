@@ -150,11 +150,12 @@ long sys_getcwd(char *buf, size_t size) {
         return -ESRCH;
     }
 
-    /* Phase 2: Validate buffer pointer */
+    /* NULL buffer is a pointer fault (EFAULT) per Linux getcwd(2) — the
+     * kernel must write the cwd string through this pointer. */
     if (!local_buf) {
-        fut_printf("[GETCWD] getcwd(buf=NULL, size=%zu) -> EINVAL (null buffer)\n",
+        fut_printf("[GETCWD] getcwd(buf=NULL, size=%zu) -> EFAULT\n",
                    local_size);
-        return -EINVAL;
+        return -EFAULT;
     }
 
     /* Validate buffer write permission BEFORE any operations

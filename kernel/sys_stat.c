@@ -101,17 +101,17 @@ long sys_stat(const char *path, struct fut_stat *statbuf) {
     const char *local_path = path;
     struct fut_stat *local_statbuf = statbuf;
 
-    /* Phase 2: Validate input pointers */
+    /* NULL pointers are pointer faults (EFAULT) per Linux stat(2). */
     if (!local_path) {
-        fut_printf("[STAT] stat(path=NULL, statbuf=%p) -> EINVAL (NULL path)\n",
+        fut_printf("[STAT] stat(path=NULL, statbuf=%p) -> EFAULT\n",
                    (void *)local_statbuf);
-        return -EINVAL;
+        return -EFAULT;
     }
 
     if (!local_statbuf) {
-        fut_printf("[STAT] stat(path=%p, statbuf=NULL) -> EINVAL (NULL statbuf)\n",
+        fut_printf("[STAT] stat(path=%p, statbuf=NULL) -> EFAULT\n",
                    (const void *)local_path);
-        return -EINVAL;
+        return -EFAULT;
     }
 
     /* Copy path from userspace to kernel space */

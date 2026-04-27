@@ -142,11 +142,12 @@ long sys_fstatat(int dirfd, const char *pathname, void *statbuf, int flags) {
         return -EINVAL;
     }
 
-    /* Validate statbuf pointer */
+    /* NULL statbuf is a pointer fault (EFAULT) per Linux fstatat(2) — the
+     * kernel must write stat results through this pointer. */
     if (!local_statbuf) {
-        fut_printf("[FSTATAT] fstatat(dirfd=%d, statbuf=NULL) -> EINVAL (NULL statbuf)\n",
+        fut_printf("[FSTATAT] fstatat(dirfd=%d, statbuf=NULL) -> EFAULT\n",
                    local_dirfd);
-        return -EINVAL;
+        return -EFAULT;
     }
 
     /* Validate statbuf write permission early (kernel writes stat structure)
@@ -160,11 +161,11 @@ long sys_fstatat(int dirfd, const char *pathname, void *statbuf, int flags) {
         return -EFAULT;
     }
 
-    /* Validate pathname pointer */
+    /* NULL pathname is a pointer fault (EFAULT) per Linux fstatat(2). */
     if (!local_pathname) {
-        fut_printf("[FSTATAT] fstatat(dirfd=%d, pathname=NULL) -> EINVAL (NULL pathname)\n",
+        fut_printf("[FSTATAT] fstatat(dirfd=%d, pathname=NULL) -> EFAULT\n",
                    local_dirfd);
-        return -EINVAL;
+        return -EFAULT;
     }
 
     /* Copy pathname from userspace */

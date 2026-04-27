@@ -181,7 +181,9 @@ static int swap_copy_path(char *dst, const char *src, size_t n) {
 }
 
 long sys_swapon(const char *path, int swapflags) {
-    if (!path) return -EINVAL;
+    /* NULL path is a pointer fault per Linux swapon(2) — the kernel
+     * dereferences path to copy the device/file string. */
+    if (!path) return -EFAULT;
 
     /* Permission check: Linux gates swapon on CAP_SYS_ADMIN, not just
      * effective-uid 0. The previous check rejected non-root callers
@@ -234,7 +236,8 @@ long sys_swapon(const char *path, int swapflags) {
  * sys_swapoff() - Disable a swap device/file.
  */
 long sys_swapoff(const char *path) {
-    if (!path) return -EINVAL;
+    /* NULL path is a pointer fault per Linux swapoff(2). */
+    if (!path) return -EFAULT;
 
     /* Same CAP_SYS_ADMIN gate as swapon (see comment there). */
     extern fut_task_t *fut_task_current(void);

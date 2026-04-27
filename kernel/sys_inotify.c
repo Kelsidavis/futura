@@ -575,22 +575,38 @@ long sys_inotify_add_watch(int fd, const char *pathname, uint32_t mask) {
      * when a watch already exists — matching the local test 930 contract
      * and the existing application semantics. */
 
-    /* IN_ONLYDIR: fail with ENOTDIR if the path is not a directory */
-    if (mask & IN_ONLYDIR) {
+    /* Linux's inotify_add_watch unconditionally resolves the path
+     * via user_path_at() before installing a watch — a nonexistent
+     * path returns -ENOENT, a search-permission failure returns
+     * -EACCES, and so on. Futura previously only resolved the path
+     * for IN_ONLYDIR (and even then 'silently let the normal watch
+     * path handle it' on lookup failure), so any caller could install
+     * a watch on a nonexistent path and never see the missing-target
+     * error. Programs that rely on the watch-then-stat pattern
+     * silently registered phantom watches and waited forever for
+     * events that could never fire.
+     *
+     * Always resolve, propagate the lookup errno, and (if IN_ONLYDIR
+     * is set) reject non-directory targets with ENOTDIR. */
+    {
         struct fut_vnode *vn = NULL;
         int lk_err = (mask & IN_DONT_FOLLOW)
                      ? fut_vfs_lookup_nofollow(path_buf, &vn)
                      : fut_vfs_lookup(path_buf, &vn);
-        if (lk_err == 0 && vn) {
-            enum fut_vnode_type vtype = vn->type;
-            fut_vnode_unref(vn);
-            if (vtype != VN_DIR) {
-                fut_printf("[INOTIFY] inotify_add_watch(fd=%d, path='%s', mask=0x%x) "
-                           "-> ENOTDIR (IN_ONLYDIR: not a directory)\n", fd, path_buf, mask);
-                return -ENOTDIR;
-            }
-        } else {
-            /* Path not found or error — let the normal watch path handle it */
+        if (lk_err < 0) {
+            fut_printf("[INOTIFY] inotify_add_watch(fd=%d, path='%s', mask=0x%x) "
+                       "-> %d (path lookup failed)\n", fd, path_buf, mask, lk_err);
+            return lk_err;
+        }
+        if (!vn) {
+            return -ENOENT;
+        }
+        enum fut_vnode_type vtype = vn->type;
+        fut_vnode_unref(vn);
+        if ((mask & IN_ONLYDIR) && vtype != VN_DIR) {
+            fut_printf("[INOTIFY] inotify_add_watch(fd=%d, path='%s', mask=0x%x) "
+                       "-> ENOTDIR (IN_ONLYDIR: not a directory)\n", fd, path_buf, mask);
+            return -ENOTDIR;
         }
     }
 

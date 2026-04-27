@@ -246,23 +246,43 @@ void *slab_malloc(size_t size) {
 
     slab_cache_t *cache = &slab_caches[idx];
 
-    /* Try to find free object in existing slabs */
+    /* Try to find free object in existing slabs.
+     *
+     * If a slab in the chain fails magic-validation, its 'next' pointer
+     * is also untrusted (it lives inside the same corrupted memory) so
+     * we cannot keep walking through it. The previous code wrote
+     * slab->free_list = NULL / slab->free_count = 0 into the corrupt
+     * memory, then continued walking via slab->next — which both
+     * (a) clobbered whatever real allocation actually owned that
+     * memory, and (b) often dereferenced a garbage 'next', producing a
+     * cascade of validation failures and (worst case) a kernel fault.
+     *
+     * Treat the first invalid entry as a list terminator: unlink it
+     * (and everything after it) by walking the prev-link back to the
+     * last known-good predecessor and NULL-terminating that. New
+     * allocations then fall through to slab_create which adds a fresh
+     * slab to the cache. The corrupted memory is leaked, but that is
+     * vastly preferable to keeping it on the live free path. */
     unsigned int slab_walk_count = 0;
-    for (slab_t *slab = cache->slabs; slab; slab = slab->next) {
-        /* Detect corrupted circular slab list to prevent infinite loop */
+    slab_t *prev_good = NULL;
+    for (slab_t *slab = cache->slabs; slab; ) {
         if (++slab_walk_count > 4096) {
             fut_printf("[SLAB-MALLOC] ERROR: slab list cycle detected (>4096 slabs for size %zu)\n",
                        cache->obj_size);
             return NULL;
         }
-        /* CRITICAL: Validate slab integrity before accessing it */
         if (!slab_is_valid(slab)) {
-            fut_printf("[SLAB-MALLOC] WARNING: Skipping corrupted slab %p\n", (void*)slab);
-            /* Mark as empty to prevent further use */
-            slab->free_list = NULL;
-            slab->free_count = 0;
-            continue;
+            fut_printf("[SLAB-MALLOC] WARNING: truncating slab list at corrupt entry %p (cache_size=%zu)\n",
+                       (void*)slab, cache->obj_size);
+            if (prev_good) {
+                prev_good->next = NULL;
+            } else {
+                cache->slabs = NULL;
+            }
+            break;
         }
+        prev_good = slab;
+        slab_t *next_slab = slab->next;
 
         if (slab->free_list) {
             /* Found free object */
@@ -276,6 +296,7 @@ void *slab_malloc(size_t size) {
                 slab->free_list = NULL;
                 slab->free_count = 0;
                 /* Continue to next slab */
+                slab = next_slab;
                 continue;
             }
 
@@ -288,6 +309,7 @@ void *slab_malloc(size_t size) {
                 /* Mark this slab's free list as corrupted */
                 slab->free_list = NULL;
                 slab->free_count = 0;
+                slab = next_slab;
                 continue;
             }
 
@@ -317,6 +339,8 @@ void *slab_malloc(size_t size) {
 
             return result;
         }
+        /* No object available in this slab — try the next one */
+        slab = next_slab;
     }
 
     /* No free objects in existing slabs, create new slab */
@@ -381,33 +405,44 @@ void slab_free(void *ptr) {
     for (size_t i = 0; i < NUM_SLAB_SIZES; i++) {
         slab_cache_t *cache = &slab_caches[i];
 
-        /* Safely iterate through slabs with bounds checking */
+        /* Safely iterate through slabs. As in slab_malloc, treat the
+         * first invalid entry as a list terminator — its 'next' pointer
+         * is also untrusted. Unlink the broken tail so subsequent
+         * frees don't keep tripping the same corruption noise. */
         unsigned int free_walk_count = 0;
-        for (slab_t *slab = cache->slabs; slab; slab = slab->next) {
-            /* Detect corrupted circular slab list */
+        slab_t *free_prev_good = NULL;
+        for (slab_t *slab = cache->slabs; slab; ) {
             if (++free_walk_count > 4096) {
                 fut_printf("[SLAB-FREE] ERROR: slab list cycle detected (>4096 slabs for size %zu)\n",
                            SLAB_SIZES[i]);
                 goto check_buddy;
             }
-            /* CRITICAL: Validate slab pointer before dereferencing using actual heap bounds */
             if ((uintptr_t)slab < heap_base || (uintptr_t)slab >= heap_limit) {
-                fut_printf("[SLAB-FREE] WARNING: Corrupted slab pointer %p (outside heap [%p-%p]), skipping\n",
-                           (void*)slab, (void*)heap_base, (void*)heap_limit);
+                fut_printf("[SLAB-FREE] WARNING: Truncating slab list at out-of-heap entry %p (cache_size=%zu)\n",
+                           (void*)slab, SLAB_SIZES[i]);
+                if (free_prev_good)
+                    free_prev_good->next = NULL;
+                else
+                    cache->slabs = NULL;
                 goto check_buddy;
             }
-
-            /* CRITICAL: Validate slab integrity */
             if (!slab_is_valid(slab)) {
-                fut_printf("[SLAB-FREE] WARNING: Slab %p (cache_size=%zu) failed integrity check (ptr=%p obj=%p), skipping\n",
-                           (void*)slab, SLAB_SIZES[i], ptr, (void*)obj);
-                continue;
+                fut_printf("[SLAB-FREE] WARNING: Truncating slab list at corrupt entry %p (cache_size=%zu)\n",
+                           (void*)slab, SLAB_SIZES[i]);
+                if (free_prev_good)
+                    free_prev_good->next = NULL;
+                else
+                    cache->slabs = NULL;
+                break;  /* fall through to next cache */
             }
+            free_prev_good = slab;
+            slab_t *next_slab = slab->next;
 
             /* Validate slab->data pointer before dereferencing */
             /* Generic check: pointer should be non-null, 8-byte aligned, and above null page */
             if (!slab->data || ((uintptr_t)slab->data & 0x7) != 0 || (uintptr_t)slab->data < 0x1000) {
                 fut_printf("[SLAB-FREE] WARNING: Invalid slab->data pointer %p, skipping slab\n", (void*)slab->data);
+                slab = next_slab;
                 continue;
             }
 
@@ -435,6 +470,7 @@ void slab_free(void *ptr) {
                 cache->total_freed++;
                 return;
             }
+            slab = next_slab;
         }
     }
 

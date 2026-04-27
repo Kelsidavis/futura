@@ -998,7 +998,15 @@ long sys_io_uring_setup(unsigned int entries, void *params) {
     if (p->flags & IORING_SETUP_CQSIZE) {
         if (p->cq_entries == 0) return -EINVAL;
         cq_entries = uring_roundup_pow2(p->cq_entries);
-        if (cq_entries > MAX_URING_ENTRIES * 2) cq_entries = MAX_URING_ENTRIES * 2;
+        /* Linux: oversize cq_entries follows the same CLAMP rule as
+         * sq_entries — EINVAL by default, silently clamped only when
+         * IORING_SETUP_CLAMP is set. The previous unconditional clamp
+         * silently shrank the CQ below what the caller asked for. */
+        if (cq_entries > MAX_URING_ENTRIES * 2) {
+            if (!(p->flags & IORING_SETUP_CLAMP))
+                return -EINVAL;
+            cq_entries = MAX_URING_ENTRIES * 2;
+        }
         /* Linux requires cq_entries >= sq_entries (io_allocate_scq_urings):
          * the SQ can submit up to sq_entries operations in one batch, and a
          * CQ smaller than the SQ would either overflow on the first batch or

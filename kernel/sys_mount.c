@@ -962,8 +962,33 @@ long sys_move_mount(int from_dirfd, const char *from_pathname,
      * use it to mount at to_pathname */
     struct fs_context *ctx = fsctx_find_fd(from_dirfd);
     if (ctx && ctx->created) {
-        const char *target = to_pathname;
-        if (!target || !target[0]) return -EINVAL;
+        if (!to_pathname) return -EFAULT;
+
+        /* Stage to_pathname through copy_from_user before passing it
+         * down to fut_vfs_mount. The previous code did
+         *     if (!target || !target[0]) return -EINVAL;
+         *     fut_vfs_mount(..., target, ...);
+         * which dereferenced the raw user pointer twice (the !target[0]
+         * check and the mount itself) — same uaccess hazard already
+         * fixed in fsopen / fsconfig / fspick / open_tree. */
+        char target_buf[256];
+        {
+            size_t i = 0;
+            for (; i + 1 < sizeof(target_buf); i++) {
+                char c;
+#ifdef KERNEL_VIRTUAL_BASE
+                if ((uintptr_t)(to_pathname + i) >= KERNEL_VIRTUAL_BASE) {
+                    c = to_pathname[i];
+                } else
+#endif
+                if (fut_copy_from_user(&c, to_pathname + i, 1) != 0)
+                    return -EFAULT;
+                target_buf[i] = c;
+                if (c == '\0') break;
+            }
+            target_buf[sizeof(target_buf) - 1] = '\0';
+        }
+        if (target_buf[0] == '\0') return -EINVAL;
 
         /* If this is an open_tree fd, it's already mounted — accept as no-op */
         if (ctx->target[0]) return 0;
@@ -972,13 +997,13 @@ long sys_move_mount(int from_dirfd, const char *from_pathname,
         extern int fut_vfs_mount(const char *, const char *, const char *,
                                   int, void *, uint64_t);
         int rc = fut_vfs_mount(ctx->source[0] ? ctx->source : NULL,
-                                target, ctx->fstype, (int)ctx->mount_flags,
+                                target_buf, ctx->fstype, (int)ctx->mount_flags,
                                 ctx->options[0] ? ctx->options : NULL, 0);
         return rc;
     }
 
     /* Fall back: from_pathname → to_pathname mount move */
-    if (!from_pathname || !to_pathname) return -EINVAL;
+    if (!from_pathname || !to_pathname) return -EFAULT;
     (void)from_dirfd; (void)to_dirfd;
 
     /* Simple implementation: treat as mount --move */

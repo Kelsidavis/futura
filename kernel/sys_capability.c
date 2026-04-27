@@ -355,7 +355,14 @@ long sys_capset(struct __user_cap_header_struct *hdrp,
     }
 
     /* Resolve target task (0 = current, >0 = other process).
-     * Linux only allows setting own capabilities (EPERM for other PIDs). */
+     * Linux only allows setting own capabilities (EPERM for other PIDs).
+     * Linux's capset rejects pid < 0 with EINVAL (matching capget); without
+     * this guard a negative pid_t silently widened via (unsigned int) and
+     * fell through to the EPERM path, masking the real ABI errno. */
+    if (hdr.pid < 0) {
+        fut_printf("[CAPABILITY] capset: pid=%d -> EINVAL (negative pid)\n", hdr.pid);
+        return -EINVAL;
+    }
     fut_task_t *target_task = task;
     if (hdr.pid != 0) {
         if ((uint64_t)(unsigned int)hdr.pid != task->pid) {

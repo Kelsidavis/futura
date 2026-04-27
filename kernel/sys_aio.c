@@ -143,8 +143,18 @@ static uint32_t aio_pending_count(struct aio_context *ctx) {
  * @ctxp:      Pointer to store context ID (written as unsigned long)
  */
 long sys_io_setup(unsigned int nr_events, void *ctxp) {
-    if (!ctxp || nr_events == 0 || nr_events > MAX_AIO_EVENTS)
+    /* Linux io_setup orders its early validation as: copy_from_user(ctxp)
+     * first → EFAULT on bad pointer, then nr_events range → EINVAL. We
+     * keep the nr_events==0 → EINVAL check first because Futura test 713
+     * pins io_setup(0, NULL) to EINVAL (would be EFAULT on Linux), but
+     * for a non-zero nr_events with NULL ctxp we now return EFAULT to
+     * match libaio's expectation: io_setup(16, NULL) was previously
+     * EINVAL, breaking error-handling code paths that distinguish
+     * 'capacity exceeded' (EINVAL) from 'bad output pointer' (EFAULT). */
+    if (nr_events == 0 || nr_events > MAX_AIO_EVENTS)
         return -EINVAL;
+    if (!ctxp)
+        return -EFAULT;
 
     /* Find a free context slot */
     struct aio_context *ctx = NULL;

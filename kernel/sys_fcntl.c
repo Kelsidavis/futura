@@ -1079,11 +1079,24 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
             return -EFAULT;
         if (owner.type < 0 || owner.type > 2) /* F_OWNER_TID..F_OWNER_PGRP */
             return -EINVAL;
-        if (owner.pid <= 0)
+        /* Linux's f_setown_ex passes owner.pid through find_vpid() and
+         * accepts pid==0 as 'clear ownership' (f_modown is called with
+         * pid=NULL, matching the F_SETOWN(0) sentinel handled at line
+         * 996 above). The previous '<=0' EINVAL gate broke libraries
+         * that disable async-signal delivery via F_SETOWN_EX({type, 0})
+         * — F_SETOWN already handled pid=0 correctly, so F_SETOWN_EX
+         * was the inconsistent entry point. Negative pid stays an
+         * error since find_vpid would never resolve it. */
+        if (owner.pid < 0)
             return -EINVAL;
         if (file) {
-            file->owner_pid = owner.pid;
-            file->owner_type = owner.type;
+            if (owner.pid == 0) {
+                file->owner_pid = 0;
+                file->owner_type = 0;
+            } else {
+                file->owner_pid = owner.pid;
+                file->owner_type = owner.type;
+            }
         }
         return 0;
     }

@@ -403,6 +403,21 @@ long sys_clock_nanosleep(int clock_id, int flags,
             return -EINVAL;
     }
 
+    /* Linux's clock_nanosleep gates the alarm-class clocks on
+     * CAP_WAKE_ALARM (cap 35) — same gate as timerfd_create.
+     * CLOCK_REALTIME_ALARM and CLOCK_BOOTTIME_ALARM are intended to
+     * wake the system from suspend, and unprivileged callers shouldn't
+     * be able to schedule wakeups. Futura has no real alarm hardware,
+     * so the wakeup is a no-op — but the privilege contract should
+     * still surface correctly for libc / chrony / NTP wrappers that
+     * probe via clock_nanosleep(CLOCK_REALTIME_ALARM) and expect
+     * EPERM on unprivileged process. */
+    if ((local_clock_id == CLOCK_REALTIME_ALARM ||
+         local_clock_id == CLOCK_BOOTTIME_ALARM) &&
+        task->uid != 0 &&
+        !(task->cap_effective & (1ULL << 35 /* CAP_WAKE_ALARM */)))
+        return -EPERM;
+
     #define TIMER_ABSTIME 1
     const char *mode = (local_flags & TIMER_ABSTIME) ? "absolute" : "relative";
 

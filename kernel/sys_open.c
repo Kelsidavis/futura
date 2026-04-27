@@ -341,6 +341,18 @@ long sys_open(const char *pathname, int flags, int mode) {
         path_type = "relative";
     }
 
+    /* O_TMPFILE: delegate to sys_openat so the openat_tmpfile() helper
+     * creates and unlinks an anonymous file inside the target directory.
+     * fut_vfs_open() doesn't recognise O_TMPFILE; combined with the bit
+     * pattern (O_TMPFILE includes O_DIRECTORY) it would just open the
+     * directory as a regular fd and lose the anonymous-file semantic.
+     * sys_openat already handles this path correctly — route through it
+     * with AT_FDCWD so open(2) and openat(2) behave identically here. */
+    if ((local_flags & O_TMPFILE) == O_TMPFILE) {
+        extern long sys_openat(int dirfd, const char *pathname, int flags, int mode);
+        return sys_openat(AT_FDCWD, local_pathname, local_flags, local_mode);
+    }
+
     /* Open via VFS */
     int result = fut_vfs_open(kpath, local_flags, local_mode);
 

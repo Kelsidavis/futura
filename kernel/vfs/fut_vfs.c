@@ -2273,6 +2273,24 @@ int fut_vfs_open(const char *path, int flags, int mode) {
                 return -EACCES;
             }
         }
+
+        /* O_NOATIME: Linux requires the caller to own the file or hold
+         * CAP_FOWNER. Suppressing atime updates on a file you don't own
+         * is a privilege you can't have without one of those — otherwise
+         * an unprivileged user could systematically deny atime tracking
+         * on other users' files (or root's), defeating audit/timeline
+         * use of atime. Root (uid 0) bypasses, matching Linux. */
+        if (flags & O_NOATIME) {
+            fut_task_t *na_task = fut_task_current();
+            if (na_task && na_task->uid != 0 &&
+                na_task->uid != vnode->uid &&
+                !(na_task->cap_effective & (1ULL << 4 /* CAP_FOWNER */))) {
+                VFSDBG("[vfs-open] O_NOATIME EPERM (uid=%u != owner=%u)\n",
+                       na_task->uid, vnode->uid);
+                release_lookup_ref(vnode);
+                return -EPERM;
+            }
+        }
     }
 
     /* Call vnode open operation */

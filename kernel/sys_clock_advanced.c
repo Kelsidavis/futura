@@ -299,10 +299,11 @@ long sys_clock_nanosleep(int clock_id, int flags,
         return -ESRCH;
     }
 
+    /* NULL req is a pointer fault (EFAULT) per Linux clock_nanosleep(2). */
     if (!local_req) {
-        clock_nanosleep_printf("[CLOCK_NANOSLEEP] clock_nanosleep(clock_id=%d) -> EINVAL (req is NULL)\n",
+        clock_nanosleep_printf("[CLOCK_NANOSLEEP] clock_nanosleep(clock_id=%d) -> EFAULT (req is NULL)\n",
                    local_clock_id);
-        return -EINVAL;
+        return -EFAULT;
     }
 
     /* Copy request from user */

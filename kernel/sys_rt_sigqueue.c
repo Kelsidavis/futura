@@ -122,6 +122,16 @@ long sys_rt_sigqueueinfo(int tgid, int sig, const void *uinfo) {
  *  rt_tgsigqueueinfo — send signal + siginfo_t to a specific thread  *
  * ------------------------------------------------------------------ */
 long sys_rt_tgsigqueueinfo(int tgid, int tid, int sig, const void *uinfo) {
+    /* Linux's kernel/signal.c:do_rt_tgsigqueueinfo gates pid/tgid up
+     * front: 'if (pid <= 0 || tgid <= 0) return -EINVAL'. The previous
+     * Futura code skipped that check, so negative or zero ids fell
+     * through to fut_task_by_pid() (or the thread walk) and returned
+     * ESRCH instead. ESRCH suggests 'process exists but is gone',
+     * which causes libc rt_tgsigqueueinfo wrappers to retry; EINVAL
+     * is the documented 'bad argument' error and lets the caller
+     * abort fast. */
+    if (tgid <= 0 || tid <= 0)
+        return -EINVAL;
     if (sig < 0 || sig >= _NSIG)
         return -EINVAL;
 

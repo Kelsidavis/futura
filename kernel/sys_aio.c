@@ -1400,8 +1400,24 @@ long sys_io_uring_register(unsigned int fd, unsigned int opcode,
     }
 
     case IORING_REGISTER_BUFFERS:
+        /* Linux's io_sqe_buffers_register validates nr_args first:
+         *   if (!nr_args || nr_args > UIO_MAXIOV) return -EINVAL;
+         * Futura accepted any nr_args silently, so liburing wrappers
+         * probing the buffer-register ABI got success for a 0-arg or
+         * 2000-arg request that real kernels rejected.  We still don't
+         * pin pages, but the gate now matches Linux. */
+        if (!arg || nr_args == 0 || nr_args > 1024 /* UIO_MAXIOV */)
+            return -EINVAL;
+        return 0;
+
     case IORING_UNREGISTER_BUFFERS:
-        /* Buffer registration is accepted but we don't use pinned pages */
+        /* Linux's io_sqe_buffers_unregister rejects non-zero arg/nr_args
+         * via the dispatch wrapper ('if (arg || nr_args) break; ret =
+         * io_sqe_buffers_unregister') and returns -ENXIO when nothing
+         * was registered.  Since Futura doesn't track buffers we can't
+         * meaningfully ENXIO, but the dispatch-arg gate is cheap. */
+        if (arg || nr_args)
+            return -EINVAL;
         return 0;
 
     default:

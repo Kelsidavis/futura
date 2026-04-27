@@ -101,7 +101,15 @@ long sys_landlock_create_ruleset(const void *attr, size_t size,
         return -EINVAL;
     }
 
-    if (!attr || size < sizeof(struct landlock_ruleset_attr))
+    /* NULL attr is a pointer fault (EFAULT) per Linux's
+     * landlock_create_ruleset (security/landlock/syscalls.c uses
+     * copy_from_user which surfaces NULL as EFAULT). EINVAL stays for
+     * the bad-size case (parameter-domain error). Same EFAULT/EINVAL
+     * split as the rt_sigtimedwait / rt_sigqueueinfo / sched_param /
+     * setxattr / io_submit / timerfd_settime / epoll_pwait2 fixes. */
+    if (!attr)
+        return -EFAULT;
+    if (size < sizeof(struct landlock_ruleset_attr))
         return -EINVAL;
 
     /* Find free ruleset slot */

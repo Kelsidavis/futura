@@ -534,8 +534,12 @@ long sys_sched_getattr(int pid, struct sched_attr *uattr, unsigned int usize,
                        unsigned int flags) {
     if (flags != 0)
         return -EINVAL;
+    /* Linux's sched_getattr surfaces a NULL uattr through copy_to_user
+     * as -EFAULT — pointer faults are EFAULT, parameter-domain errors
+     * (bad usize, unknown flags) are EINVAL. Keep the two distinct so
+     * libc wrappers can branch on the real error class. */
     if (!uattr)
-        return -EINVAL;
+        return -EFAULT;
     if (usize < SCHED_ATTR_SIZE_VER0)
         return -EINVAL;
 
@@ -586,8 +590,10 @@ long sys_sched_getattr(int pid, struct sched_attr *uattr, unsigned int usize,
 long sys_sched_setattr(int pid, const struct sched_attr *uattr, unsigned int flags) {
     if (flags != 0)
         return -EINVAL;
+    /* NULL uattr is a pointer fault (EFAULT), matching the
+     * sched_getattr branch above and Linux's copy_from_user contract. */
     if (!uattr)
-        return -EINVAL;
+        return -EFAULT;
 
     struct sched_attr attr;
     __builtin_memset(&attr, 0, sizeof(attr));

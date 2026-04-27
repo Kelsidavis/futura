@@ -128,7 +128,14 @@ long sys_landlock_create_ruleset(const void *attr, size_t size,
  */
 long sys_landlock_add_rule(int ruleset_fd, unsigned int rule_type,
                            const void *rule_attr, uint32_t flags) {
-    (void)flags;
+    /* Linux's security/landlock/syscalls.c rejects non-zero flags up
+     * front: 'if (flags) return -EINVAL'. The flags argument is
+     * reserved for future use, and the kernel must signal kernel-old
+     * to userspace probes that pass a future bit so the caller can
+     * detect missing support. Futura silently ignored flags, masking
+     * that ABI signal. */
+    if (flags != 0)
+        return -EINVAL;
     if (rule_type != LANDLOCK_RULE_PATH_BENEATH &&
         rule_type != LANDLOCK_RULE_NET_PORT)
         return -EINVAL;

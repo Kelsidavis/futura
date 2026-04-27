@@ -236,11 +236,10 @@ long sys_access(const char *pathname, int mode) {
         return -ENAMETOOLONG;
     }
 
-    /* Phase 2: Validate pathname is not empty */
+    /* Empty pathname is ENOENT per Linux access(2). */
     if (path_buf[0] == '\0') {
-        fut_printf("[ACCESS] access(pathname=\"\" [empty], mode=%s) -> EINVAL "
-                   "(empty pathname)\n", mode_desc);
-        return -EINVAL;
+        fut_printf("[ACCESS] access(pathname=\"\" [empty], mode=%s) -> ENOENT\n", mode_desc);
+        return -ENOENT;
     }
 
     /* Phase 2: Categorize path type */

@@ -130,18 +130,16 @@ long sys_symlink(const char *target, const char *linkpath) {
         return -ENAMETOOLONG;
     }
 
-    /* Validate target is not empty */
+    /* Empty target is ENOENT per Linux symlink(2). */
     if (target_buf[0] == '\0') {
-        fut_printf("[SYMLINK] symlink(target=\"\" [empty], linkpath='%s') -> EINVAL (empty target)\n",
-                   linkpath_buf);
-        return -EINVAL;
+        fut_printf("[SYMLINK] symlink(target=\"\" [empty], linkpath='%s') -> ENOENT\n", linkpath_buf);
+        return -ENOENT;
     }
 
-    /* Validate linkpath is not empty */
+    /* Empty linkpath is ENOENT per Linux symlink(2). */
     if (linkpath_buf[0] == '\0') {
-        fut_printf("[SYMLINK] symlink(target='%s', linkpath=\"\" [empty]) -> EINVAL (empty linkpath)\n",
-                   target_buf);
-        return -EINVAL;
+        fut_printf("[SYMLINK] symlink(target='%s', linkpath=\"\" [empty]) -> ENOENT\n", target_buf);
+        return -ENOENT;
     }
 
     /* Old truncation detection removed (lines 139-159)

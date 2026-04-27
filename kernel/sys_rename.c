@@ -183,16 +183,14 @@ long sys_rename(const char *oldpath, const char *newpath) {
         return -ENAMETOOLONG;
     }
 
-    /* Phase 2: Validate paths are not empty */
+    /* Empty pathname is ENOENT per Linux rename(2). */
     if (old_buf[0] == '\0') {
-        fut_printf("[RENAME] rename(oldpath=\"\" [empty], newpath='%s') -> EINVAL (empty oldpath)\n",
-                   new_buf);
-        return -EINVAL;
+        fut_printf("[RENAME] rename(oldpath=\"\" [empty], newpath='%s') -> ENOENT\n", new_buf);
+        return -ENOENT;
     }
     if (new_buf[0] == '\0') {
-        fut_printf("[RENAME] rename(oldpath='%s', newpath=\"\" [empty]) -> EINVAL (empty newpath)\n",
-                   old_buf);
-        return -EINVAL;
+        fut_printf("[RENAME] rename(oldpath='%s', newpath=\"\" [empty]) -> ENOENT\n", old_buf);
+        return -ENOENT;
     }
 
     /* Phase 2: Categorize old path type */

@@ -243,18 +243,16 @@ long sys_link(const char *oldpath, const char *newpath) {
         return -ENAMETOOLONG;
     }
 
-    /* Phase 2: Validate oldpath is not empty */
+    /* Empty pathname is ENOENT per Linux link(2). */
     if (old_buf[0] == '\0') {
-        fut_printf("[LINK] link(oldpath=\"\" [empty], newpath='%s') -> EINVAL "
-                   "(empty oldpath, Phase 2)\n", new_buf);
-        return -EINVAL;
+        fut_printf("[LINK] link(oldpath=\"\" [empty], newpath='%s') -> ENOENT\n", new_buf);
+        return -ENOENT;
     }
 
-    /* Phase 2: Validate newpath is not empty */
+    /* Empty newpath is ENOENT per Linux link(2). */
     if (new_buf[0] == '\0') {
-        fut_printf("[LINK] link(oldpath='%s', newpath=\"\" [empty]) -> EINVAL "
-                   "(empty newpath, Phase 2)\n", old_buf);
-        return -EINVAL;
+        fut_printf("[LINK] link(oldpath='%s', newpath=\"\" [empty]) -> ENOENT\n", old_buf);
+        return -ENOENT;
     }
 
     /* Validate oldpath and newpath are not identical

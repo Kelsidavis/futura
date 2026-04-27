@@ -988,7 +988,34 @@ long sys_move_mount(int from_dirfd, const char *from_pathname,
  * Returns: fd for the filesystem context.
  */
 long sys_fsopen(const char *fsname, unsigned int flags) {
-    if (!fsname) return -EINVAL;
+    if (!fsname) return -EFAULT;
+
+    /* Stage the user-supplied fstype through copy_from_user before
+     * walking it byte-by-byte. The previous code did
+     *     while (fsname[i] && i < MAX_FS_NAME - 1) ctx->fstype[i] = fsname[i];
+     * which dereferenced the user pointer directly: a kernel-half
+     * address turned the loop into a kernel-memory read primitive
+     * (info disclosure observable via /proc/self/mountinfo when the
+     * context is later mounted), and a bad user pointer page-faulted
+     * the kernel. Same staging pattern applied recently to keyctl
+     * JOIN_SESSION_KEYRING. */
+    char k_fstype[MAX_FS_NAME];
+    {
+        size_t i = 0;
+        for (; i + 1 < MAX_FS_NAME; i++) {
+            char c;
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)(fsname + i) >= KERNEL_VIRTUAL_BASE) {
+                c = fsname[i];
+            } else
+#endif
+            if (fut_copy_from_user(&c, fsname + i, 1) != 0)
+                return -EFAULT;
+            k_fstype[i] = c;
+            if (c == '\0') break;
+        }
+        k_fstype[MAX_FS_NAME - 1] = '\0';
+    }
 
     struct fs_context *ctx = NULL;
     for (int i = 0; i < MAX_FS_CONTEXTS; i++) {
@@ -1000,7 +1027,7 @@ long sys_fsopen(const char *fsname, unsigned int flags) {
     ctx->active = true;
     {
         int i = 0;
-        while (fsname[i] && i < MAX_FS_NAME - 1) { ctx->fstype[i] = fsname[i]; i++; }
+        while (k_fstype[i] && i < MAX_FS_NAME - 1) { ctx->fstype[i] = k_fstype[i]; i++; }
         ctx->fstype[i] = '\0';
     }
 

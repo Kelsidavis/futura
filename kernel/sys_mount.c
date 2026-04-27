@@ -938,8 +938,12 @@ long sys_open_tree(int dirfd, const char *pathname, unsigned int flags) {
     ctx->fd = fd;
 
     if (flags & OPEN_TREE_CLOEXEC) {
+        /* Guard fd_flags non-NULL: lazily allocated, may be NULL for
+         * early-init / kernel-thread callers (same NULL-guard fix
+         * already applied to socketpair / accept / userfaultfd /
+         * pidfd_open / perf_event_open / fanotify_init / fsopen). */
         fut_task_t *task = fut_task_current();
-        if (task && fd < task->max_fds)
+        if (task && task->fd_flags && fd < task->max_fds)
             task->fd_flags[fd] |= 1; /* FD_CLOEXEC */
     }
 
@@ -1206,8 +1210,9 @@ long sys_fsmount(int fs_fd, unsigned int flags, unsigned int attr_flags) {
     mnt_ctx->fd = mfd;
 
     if (flags & FSMOUNT_CLOEXEC) {
+        /* Same NULL-guard fix as open_tree above. */
         fut_task_t *task = fut_task_current();
-        if (task && mfd < task->max_fds)
+        if (task && task->fd_flags && mfd < task->max_fds)
             task->fd_flags[mfd] |= 1;
     }
 
@@ -1223,7 +1228,29 @@ long sys_fsmount(int fs_fd, unsigned int flags, unsigned int attr_flags) {
  */
 long sys_fspick(int dirfd, const char *pathname, unsigned int flags) {
     (void)dirfd;
-    if (!pathname) return -EINVAL;
+    if (!pathname) return -EFAULT;
+
+    /* Stage user-supplied pathname through copy_from_user — same fix
+     * applied to open_tree / fsopen. The previous loop dereferenced
+     * pathname[i] directly into ctx->target, leaking kernel memory
+     * for kernel-half pointers and faulting on bad user pointers. */
+    char target_buf[256];
+    {
+        size_t i = 0;
+        for (; i + 1 < sizeof(target_buf); i++) {
+            char c;
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)(pathname + i) >= KERNEL_VIRTUAL_BASE) {
+                c = pathname[i];
+            } else
+#endif
+            if (fut_copy_from_user(&c, pathname + i, 1) != 0)
+                return -EFAULT;
+            target_buf[i] = c;
+            if (c == '\0') break;
+        }
+        target_buf[sizeof(target_buf) - 1] = '\0';
+    }
 
     struct fs_context *ctx = NULL;
     for (int i = 0; i < MAX_FS_CONTEXTS; i++) {
@@ -1237,7 +1264,7 @@ long sys_fspick(int dirfd, const char *pathname, unsigned int flags) {
     ctx->created = true;
     {
         int i = 0;
-        while (pathname[i] && i < 255) { ctx->target[i] = pathname[i]; i++; }
+        while (target_buf[i] && i < 255) { ctx->target[i] = target_buf[i]; i++; }
         ctx->target[i] = '\0';
     }
 
@@ -1246,8 +1273,9 @@ long sys_fspick(int dirfd, const char *pathname, unsigned int flags) {
     ctx->fd = fd;
 
     if (flags & FSPICK_CLOEXEC) {
+        /* Same NULL-guard fix as open_tree / fsmount. */
         fut_task_t *task = fut_task_current();
-        if (task && fd < task->max_fds)
+        if (task && task->fd_flags && fd < task->max_fds)
             task->fd_flags[fd] |= 1;
     }
 

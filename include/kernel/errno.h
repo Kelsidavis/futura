@@ -122,6 +122,10 @@
 #define EPIPE       32
 #endif
 
+#ifndef EDOM
+#define EDOM        33  /* Math arg out of domain (Linux setsockopt SO_*TIMEO) */
+#endif
+
 #ifndef ERANGE
 #define ERANGE      34
 #endif

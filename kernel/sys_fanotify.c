@@ -334,6 +334,29 @@ long sys_fanotify_mark(int fanotify_fd, unsigned int flags,
     if (op != FAN_MARK_ADD && op != FAN_MARK_REMOVE && op != FAN_MARK_FLUSH)
         return -EINVAL;
 
+    /* Linux fanotify_mark validates the event mask against the union of
+     * documented bits and returns -EINVAL on any unknown bit (with a
+     * specific exception for FAN_FLUSH, which ignores mask). The
+     * previous code silently accepted any mask bits, so a caller could
+     * register events the kernel had no way to deliver and only learn
+     * about it at notification time. Match Linux's strict gate.
+     *
+     * Whitelist: all event types (FAN_ACCESS .. FAN_OPEN_EXEC), the
+     * Q_OVERFLOW pseudo-event, the *_PERM permission events, plus
+     * FAN_EVENT_ON_CHILD and FAN_ONDIR modifiers. */
+    const unsigned long FANOTIFY_MASK_VALID =
+        FAN_ACCESS | FAN_MODIFY | FAN_ATTRIB |
+        FAN_CLOSE_WRITE | FAN_CLOSE_NOWRITE |
+        FAN_OPEN | FAN_MOVED_FROM | FAN_MOVED_TO |
+        FAN_CREATE | FAN_DELETE |
+        FAN_DELETE_SELF | FAN_MOVE_SELF |
+        FAN_OPEN_EXEC | FAN_Q_OVERFLOW |
+        FAN_OPEN_PERM | FAN_ACCESS_PERM | FAN_OPEN_EXEC_PERM |
+        FAN_EVENT_ON_CHILD | FAN_ONDIR;
+    /* FLUSH ignores mask entirely, so skip the gate for it. */
+    if (op != FAN_MARK_FLUSH && (mask & ~FANOTIFY_MASK_VALID))
+        return -EINVAL;
+
     /* Stage the user-supplied path into a kernel buffer up front so we
      * never strcmp/index a user pointer directly. */
     char kpath[256];

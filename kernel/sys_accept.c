@@ -797,9 +797,15 @@ long sys_accept4(int sockfd, void *addr, socklen_t *addrlen, int flags) {
         fut_task_t *atask = fut_task_current();
         if (atask && newfd < atask->max_fds) {
             if (local_flags & SOCK_NONBLOCK) {
-                struct fut_file *afile = atask->fd_table[newfd];
-                if (afile)
-                    afile->flags |= O_NONBLOCK;
+                /* Guard fd_table non-NULL — same NULL-deref hazard fixed
+                 * in sys_socket recently. atask->fd_table[newfd] without
+                 * the guard is a kernel NULL-deref for any caller without
+                 * a populated fd_table (early-init / kernel threads). */
+                if (atask->fd_table) {
+                    struct fut_file *afile = atask->fd_table[newfd];
+                    if (afile)
+                        afile->flags |= O_NONBLOCK;
+                }
                 /* Also propagate to socket struct so socket_nonblock()
                  * returns true in fut_socket_recv/send. */
                 fut_socket_t *asock = get_socket_from_fd((int)newfd);

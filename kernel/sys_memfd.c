@@ -252,26 +252,29 @@ long sys_memfd_create(const char *uname, unsigned int flags) {
     memset(mf, 0, sizeof(*mf));
     mf->flags = flags;
 
-    /* Copy name (best-effort, kernel pointer or user pointer) */
-    if (uname) {
+    /* Copy name. Linux's memfd_create routes through strndup_user() which
+     * returns -EFAULT for a NULL or unreadable pointer; the previous
+     * Futura code silently substituted "memfd" as a default in either
+     * case, hiding genuine pointer faults from callers. */
+    if (!uname) {
+        fut_free(mf);
+        return -EFAULT;
+    }
 #ifdef KERNEL_VIRTUAL_BASE
-        /* For kernel self-tests: direct copy */
-        if ((uintptr_t)uname >= KERNEL_VIRTUAL_BASE) {
-            size_t len = strlen(uname);
-            if (len > MEMFD_NAME_MAX) len = MEMFD_NAME_MAX;
-            memcpy(mf->name, uname, len);
-            mf->name[len] = '\0';
-        } else
+    /* For kernel self-tests: direct copy */
+    if ((uintptr_t)uname >= KERNEL_VIRTUAL_BASE) {
+        size_t len = strlen(uname);
+        if (len > MEMFD_NAME_MAX) len = MEMFD_NAME_MAX;
+        memcpy(mf->name, uname, len);
+        mf->name[len] = '\0';
+    } else
 #endif
-        {
-            if (fut_copy_from_user(mf->name, uname, MEMFD_NAME_MAX) != 0) {
-                /* Name copy failed - use default */
-                memcpy(mf->name, "memfd", 6);
-            }
-            mf->name[MEMFD_NAME_MAX] = '\0';
+    {
+        if (fut_copy_from_user(mf->name, uname, MEMFD_NAME_MAX) != 0) {
+            fut_free(mf);
+            return -EFAULT;
         }
-    } else {
-        memcpy(mf->name, "memfd", 6);
+        mf->name[MEMFD_NAME_MAX] = '\0';
     }
 
     /* Allocate fd */

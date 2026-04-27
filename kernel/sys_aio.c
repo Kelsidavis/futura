@@ -156,6 +156,28 @@ long sys_io_setup(unsigned int nr_events, void *ctxp) {
     if (!ctxp)
         return -EFAULT;
 
+    /* Linux's io_setup requires *ctxp == 0 before the call:
+     *   if (unlikely(ctx || nr_events == 0)) return -EINVAL;
+     * (kernel/aio.c:SYSCALL_DEFINE2). The caller is supposed to pass an
+     * output pointer initialized to 0; a non-zero value indicates the
+     * caller is reusing an existing context slot or passed an
+     * uninitialized variable. The previous Futura code skipped this
+     * check, so a caller could leave *ctxp populated with a stale
+     * context ID and io_setup would silently overwrite it, leaking the
+     * old context slot. Match Linux's strict gate. */
+    {
+        unsigned long existing_ctx = 0;
+#ifdef KERNEL_VIRTUAL_BASE
+        if ((uintptr_t)ctxp >= KERNEL_VIRTUAL_BASE) {
+            __builtin_memcpy(&existing_ctx, ctxp, sizeof(existing_ctx));
+        } else
+#endif
+        if (fut_copy_from_user(&existing_ctx, ctxp, sizeof(existing_ctx)) != 0)
+            return -EFAULT;
+        if (existing_ctx != 0)
+            return -EINVAL;
+    }
+
     /* Find a free context slot */
     struct aio_context *ctx = NULL;
     unsigned long ctx_id = 0;

@@ -247,6 +247,18 @@ long sys_clock_getres(int clock_id, fut_timespec_t *res) {
         case CLOCK_THREAD_CPUTIME_ID:
             clock_name = "CLOCK_THREAD_CPUTIME_ID";
             break;
+        case CLOCK_TAI:                /* 11: same resolution as REALTIME (no leap-sec tracking) */
+        case CLOCK_REALTIME_ALARM:     /* 8: no alarm hw, alias of REALTIME */
+        case CLOCK_BOOTTIME_ALARM:     /* 9: no alarm hw, alias of BOOTTIME == MONOTONIC */
+            /* sys_clock_gettime / sys_clock_settime already accept these
+             * extended Linux clocks; clock_getres was the inconsistent
+             * entry point — chrony probes resolution before stamping
+             * a clock and was getting -EINVAL where the sister syscalls
+             * succeeded. All of these clocks share the single periodic
+             * tick driving Futura's time source, so they report the
+             * same resolution as REALTIME / MONOTONIC below. */
+            clock_name = "CLOCK_TAI/ALARM";
+            break;
         default:
             fut_printf("[CLOCK_GETRES] clock_getres(clock_id=%d) -> EINVAL (unknown clock_id)\n",
                        local_clock_id);

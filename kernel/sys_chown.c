@@ -224,11 +224,11 @@ long sys_chown(const char *pathname, uint32_t uid, uint32_t gid) {
         return -ENAMETOOLONG;
     }
 
-    /* Phase 2: Validate pathname is not empty */
+    /* Empty pathname is ENOENT per Linux chown(2). */
     if (path_buf[0] == '\0') {
-        fut_printf("[CHOWN] chown(pathname=\"\" [empty], uid=%s, gid=%s, op=%s) -> EINVAL "
-                   "(empty pathname)\n", uid_desc, gid_desc, operation_type);
-        return -EINVAL;
+        fut_printf("[CHOWN] chown(pathname=\"\" [empty], uid=%s, gid=%s, op=%s) -> ENOENT\n",
+                   uid_desc, gid_desc, operation_type);
+        return -ENOENT;
     }
 
     /* Phase 2: Categorize path type */

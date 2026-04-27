@@ -253,11 +253,11 @@ long sys_chmod(const char *pathname, uint32_t mode) {
         return -ENAMETOOLONG;
     }
 
-    /* Phase 2: Validate pathname is not empty */
+    /* Empty pathname is ENOENT per Linux chmod(2). */
     if (path_buf[0] == '\0') {
-        fut_printf("[CHMOD] chmod(pathname=\"\" [empty], mode=%s, special=%s) -> EINVAL "
-                   "(empty pathname)\n", mode_desc, special_bits_desc);
-        return -EINVAL;
+        fut_printf("[CHMOD] chmod(pathname=\"\" [empty], mode=%s, special=%s) -> ENOENT\n",
+                   mode_desc, special_bits_desc);
+        return -ENOENT;
     }
 
     /* Phase 2: Categorize path type */

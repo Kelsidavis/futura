@@ -166,11 +166,10 @@ long sys_mkdir(const char *path, uint32_t mode) {
         return -ENAMETOOLONG;
     }
 
-    /* Validate path is not empty */
+    /* Empty pathname is ENOENT per Linux mkdir(2). */
     if (path_buf[0] == '\0') {
-        fut_printf("[MKDIR] mkdir(path=\"\" [empty], mode=%s) -> EINVAL (empty path)\n",
-                   mode_desc);
-        return -EINVAL;
+        fut_printf("[MKDIR] mkdir(path=\"\" [empty], mode=%s) -> ENOENT\n", mode_desc);
+        return -ENOENT;
     }
 
     size_t actual_path_len = strlen(path_buf);

@@ -114,11 +114,13 @@ long sys_truncate(const char *path, uint64_t length) {
         return -ENAMETOOLONG;
     }
 
-    /* Phase 2: Validate path is not empty */
+    /* Empty pathname is ENOENT per Linux truncate(2) (getname() returns
+     * -ENOENT for an empty string). The previous EINVAL diverged from
+     * Linux and from the just-fixed sys_readlink behaviour. */
     if (path_buf[0] == '\0') {
-        fut_printf("[TRUNCATE] truncate(path=\"\" [empty], length=%llu) -> EINVAL (empty path)\n",
+        fut_printf("[TRUNCATE] truncate(path=\"\" [empty], length=%llu) -> ENOENT\n",
                    (unsigned long long)local_length);
-        return -EINVAL;
+        return -ENOENT;
     }
 
     /* Phase 2: Categorize path type */

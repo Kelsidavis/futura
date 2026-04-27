@@ -153,10 +153,10 @@ long sys_rmdir(const char *path) {
         return -ENAMETOOLONG;
     }
 
-    /* Phase 2: Validate path is not empty */
+    /* Empty pathname is ENOENT per Linux rmdir(2). */
     if (path_buf[0] == '\0') {
-        fut_printf("[RMDIR] rmdir(path=\"\" [empty]) -> EINVAL (empty path)\n");
-        return -EINVAL;
+        fut_printf("[RMDIR] rmdir(path=\"\" [empty]) -> ENOENT\n");
+        return -ENOENT;
     }
 
     /* Phase 2: Categorize path type */

@@ -203,8 +203,13 @@ long sys_mprotect(void *addr, size_t len, int prot) {
      *   mmap(PROT_READ|PROT_WRITE)
      *   mprotect(PROT_READ|PROT_WRITE|PROT_EXEC)
      * and re-introduce a writable+executable page, defeating W^X. */
+    /* CAP_SYS_RAWIO is capability number 17, not 23 — the previous bit
+     * shift was checking CAP_SYS_NICE (23), which let any process with
+     * the (much weaker) nice-priority capability bypass the W^X strip
+     * and introduce writable+executable pages. Worse, real CAP_SYS_RAWIO
+     * holders couldn't bypass. Use the correct bit. */
     if ((prot & PROT_WRITE) && (prot & PROT_EXEC) &&
-        !(task->cap_effective & (1ULL << 23 /* CAP_SYS_RAWIO */))) {
+        !(task->cap_effective & (1ULL << 17 /* CAP_SYS_RAWIO */))) {
         prot &= ~PROT_EXEC;
     }
 

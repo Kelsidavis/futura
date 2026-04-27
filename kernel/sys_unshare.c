@@ -100,11 +100,19 @@ long sys_unshare(unsigned long flags) {
         return -ESRCH;
     }
 
+    /* CLONE_NEWTIME (Linux 5.6+) is included so unshare() can create a new
+     * time namespace — the privileged-flag list below already gates it
+     * behind CAP_SYS_ADMIN/CLONE_NEWUSER. The previous SUPPORTED list
+     * omitted CLONE_NEWTIME, so any caller passing it landed in the
+     * 'flags & ~SUPPORTED' EINVAL gate before the privileged-flag check
+     * could fire. That hid the time-namespace path entirely from
+     * userspace; sys_clone3 already accepts CLONE_NEWTIME, so unshare()
+     * was the inconsistent entry point. */
     const unsigned long SUPPORTED_UNSHARE_FLAGS =
         CLONE_FILES | CLONE_FS | CLONE_SYSVSEM |
         CLONE_NEWNS | CLONE_NEWCGROUP | CLONE_NEWUTS |
         CLONE_NEWIPC | CLONE_NEWUSER | CLONE_NEWPID |
-        CLONE_NEWNET;
+        CLONE_NEWNET | CLONE_NEWTIME;
 
     /* unshare(0) is a defined no-op and should succeed. */
     if (flags == 0) {

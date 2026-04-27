@@ -1009,8 +1009,14 @@ long sys_fsopen(const char *fsname, unsigned int flags) {
     ctx->fd = fd;
 
     if (flags & FSOPEN_CLOEXEC) {
+        /* fd_flags is lazily allocated and may still be NULL for early-init
+         * or kernel-thread callers. The previous code dereferenced
+         * task->fd_flags[fd] unconditionally, NULL-faulting in those
+         * contexts. Match the same NULL-guard already applied to pipe2,
+         * socketpair, dup3, pidfd_open, perf_event_open, fanotify_init,
+         * userfaultfd. */
         fut_task_t *task = fut_task_current();
-        if (task && fd < task->max_fds)
+        if (task && task->fd_flags && fd < task->max_fds)
             task->fd_flags[fd] |= 1; /* FD_CLOEXEC */
     }
 

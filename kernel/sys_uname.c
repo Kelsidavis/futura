@@ -247,13 +247,19 @@ long sys_sethostname(const char *name, size_t len) {
         return -EPERM;
     }
 
-    if (len == 0 || len > (HOSTNAME_MAX - 1)) {
+    /* Linux's sethostname only rejects len > __NEW_UTS_LEN (64); a zero
+     * length is a valid clear operation that empties uts->nodename. The
+     * previous code rejected len=0 with EINVAL, breaking
+     * `hostnamectl --transient=""` and any program that wants to revert
+     * the hostname to a blank state without first sethostname()'ing a
+     * one-byte placeholder. */
+    if (len > (HOSTNAME_MAX - 1)) {
         fut_printf("[SETHOSTNAME] sethostname(len=%zu, pid=%d) -> EINVAL\n", len, task->pid);
         return -EINVAL;
     }
 
     char buf[HOSTNAME_MAX];
-    if (uname_copy_from_user(buf, name, len) != 0) {
+    if (len > 0 && uname_copy_from_user(buf, name, len) != 0) {
         fut_printf("[SETHOSTNAME] sethostname(len=%zu, pid=%d) -> EFAULT\n", len, task->pid);
         return -EFAULT;
     }

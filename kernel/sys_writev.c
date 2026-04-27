@@ -565,6 +565,29 @@ ssize_t sys_writev(int fd, const struct iovec *iov, int iovcnt) {
     total_written = fut_vfs_write(fd, flat_buf, total_size);
     fut_free(flat_buf);
 
+    /* POSIX setuid/setgid clear after successful write to a regular file.
+     * Same gate already applied to sys_write / sys_pwrite64 / sys_ftruncate
+     * (commit 02f5a1b7 et al.). Linux's vfs_writev runs through the same
+     * file_remove_privs() that vfs_write uses, so writev must clear too —
+     * otherwise an attacker could retain S_ISUID by routing modifications
+     * through writev() instead of write(). */
+    if (total_written > 0) {
+        struct fut_file *wv_file = vfs_get_file_from_task(task, fd);
+        if (wv_file && wv_file->vnode && wv_file->vnode->type == VN_REG) {
+            uint32_t mode = wv_file->vnode->mode;
+            int needs_clear = 0;
+            if (mode & 04000) needs_clear = 1; /* S_ISUID */
+            if ((mode & 02000) && (mode & 00010)) needs_clear = 1; /* S_ISGID|S_IXGRP */
+            if (needs_clear &&
+                !(task->cap_effective & (1ULL << 4 /* CAP_FSETID */))) {
+                if (mode & 04000)
+                    wv_file->vnode->mode &= ~(uint32_t)04000;
+                if ((mode & 02000) && (mode & 00010))
+                    wv_file->vnode->mode &= ~(uint32_t)02000;
+            }
+        }
+    }
+
     /* I/O accounting for /proc/<pid>/io */
     if (total_written > 0) {
         task->io_wchar += (uint64_t)total_written;

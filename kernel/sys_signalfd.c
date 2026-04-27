@@ -298,8 +298,11 @@ long sys_signalfd4(int ufd, const void *mask, size_t sizemask, int flags) {
     int valid_flags = SFD_CLOEXEC | SFD_NONBLOCK;
     if (flags & ~valid_flags) return -EINVAL;
 
-    /* Validate and copy signal mask from userspace */
-    if (!mask || sizemask < 4) return -EINVAL;
+    /* Linux splits these two failure modes: EINVAL for bad sigsetsize,
+     * EFAULT for a bad pointer. The previous combined NULL+EINVAL gate
+     * collapsed pointer faults into parameter-domain errors. */
+    if (sizemask < 4) return -EINVAL;
+    if (!mask) return -EFAULT;
     uint64_t sigmask = 0;
     size_t copy_bytes = (sizemask >= 8) ? 8 : 4;
     if (sfd_copy_from_user(&sigmask, mask, copy_bytes) != 0) return -EFAULT;

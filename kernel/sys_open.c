@@ -220,11 +220,15 @@ long sys_open(const char *pathname, int flags, int mode) {
             break;
     }
 
-    /* Phase 3: Validate O_APPEND flag - incompatible with O_RDONLY */
-    if ((local_flags & O_APPEND) && access_mode == O_RDONLY) {
-        open_printf("[OPEN] open(pathname=?, flags=O_APPEND with O_RDONLY) -> EINVAL (O_APPEND requires write access)\n");
-        return -EINVAL;
-    }
+    /* Linux's build_open_flags() silently accepts O_APPEND with O_RDONLY:
+     * the flag is documented as 'not effective for read-only opens, but
+     * it is allowed' (open(2) man page). The previous EINVAL gate broke
+     * libc wrappers and shells that use 'exec >> file' (which reopens
+     * stdout O_APPEND) under odd inheritance scenarios where the new fd
+     * ends up O_RDONLY|O_APPEND. The sister sys_openat() never had this
+     * check, so the open(2) and openat(2) entry points were also
+     * inconsistent — opening the same path the same way returned 0
+     * through openat and -EINVAL through open. Drop the gate. */
 
     /* Phase 2: Identify creation flags */
     const char *creation_flags_desc;

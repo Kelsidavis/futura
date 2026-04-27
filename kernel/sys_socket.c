@@ -223,21 +223,28 @@ long sys_socket(int domain, int type, int protocol) {
         return -EAFNOSUPPORT;
     }
 
-    /* Validate socket type */
+    /* Validate socket type. Linux's per-family create() handlers
+     * (net/unix/af_unix.c, net/ipv4/af_inet.c, net/netlink/af_netlink.c)
+     * return -ESOCKTNOSUPPORT for an unsupported sock->type within a
+     * known address family — not -EOPNOTSUPP (a.k.a. ENOTSUP). The
+     * distinction matters: libc's socket() probes (e.g. glibc's
+     * sock_type-fallback path) branch on ESOCKTNOSUPPORT to retry with
+     * a different SOCK_* number, but treat EOPNOTSUPP as a fatal
+     * runtime error and abort. */
     if (local_domain == AF_UNIX) {
         /* AF_UNIX supports SOCK_STREAM, SOCK_DGRAM, and SOCK_SEQPACKET */
         if (base_type != SOCK_STREAM && base_type != SOCK_DGRAM && base_type != SOCK_SEQPACKET) {
-            return -ENOTSUP;
+            return -ESOCKTNOSUPPORT;
         }
     } else if (local_domain == AF_NETLINK) {
         /* AF_NETLINK uses SOCK_RAW or SOCK_DGRAM */
         if (base_type != SOCK_RAW && base_type != SOCK_DGRAM) {
-            return -ENOTSUP;
+            return -ESOCKTNOSUPPORT;
         }
     } else {
         /* AF_INET/AF_INET6 support SOCK_STREAM, SOCK_DGRAM, and SOCK_RAW */
         if (base_type != SOCK_STREAM && base_type != SOCK_DGRAM && base_type != SOCK_RAW) {
-            return -ENOTSUP;
+            return -ESOCKTNOSUPPORT;
         }
     }
 

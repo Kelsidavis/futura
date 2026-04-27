@@ -215,6 +215,10 @@
 #define EPROTONOSUPPORT 93 /* Protocol not supported */
 #endif
 
+#ifndef ESOCKTNOSUPPORT
+#define ESOCKTNOSUPPORT 94 /* Socket type not supported */
+#endif
+
 #ifndef EADDRINUSE
 #define EADDRINUSE  98
 #endif

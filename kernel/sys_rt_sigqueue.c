@@ -55,6 +55,15 @@ static inline int rtq_access_ok_read(const void *ptr, size_t n) {
  *  rt_sigqueueinfo — send signal + siginfo_t to a process (by PID)   *
  * ------------------------------------------------------------------ */
 long sys_rt_sigqueueinfo(int tgid, int sig, const void *uinfo) {
+    /* Linux's do_rt_sigqueueinfo gates the pid up front:
+     *   if (pid <= 0 || info->si_pid != 0 || ...) return -EINVAL;
+     * Mirror sys_rt_tgsigqueueinfo's existing pid<=0 gate so callers
+     * that probe with pid==0 / negative get the documented -EINVAL
+     * instead of falling through to fut_task_by_pid() and getting
+     * -ESRCH (which libc wrappers retry on rather than abort). */
+    if (tgid <= 0)
+        return -EINVAL;
+
     /* sig == 0: permission check only, no signal delivered */
     if (sig < 0 || sig >= _NSIG)
         return -EINVAL;

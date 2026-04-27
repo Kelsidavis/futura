@@ -170,11 +170,21 @@ long sys_landlock_add_rule(int ruleset_fd, unsigned int rule_type,
     if (g_rulesets[slot].rule_count >= LANDLOCK_MAX_RULES)
         return -E2BIG;
 
+    /* Linux's landlock_add_rule rejects a NULL rule_attr with -EFAULT
+     * (copy_from_user-style pointer fault) before any further work.
+     * Silently treating NULL as 'rule with allowed_access=0' (as the
+     * old code did) created phantom rules that match nothing — and a
+     * later landlock_restrict_self would install a ruleset that looks
+     * armed but actually permits everything, weakening the security
+     * boundary the caller thought they were applying. */
+    if (!rule_attr)
+        return -EFAULT;
+
     /* Accept the rule (details in rule_attr are acknowledged) */
     struct landlock_rule *r = &g_rulesets[slot].rules[g_rulesets[slot].rule_count];
     r->allowed_access = 0;
     r->parent_fd = -1;
-    if (rule_attr) {
+    {
         /* First 8 bytes are allowed_access, next 4 bytes are parent_fd.
          * Copy through the standard helper: a kernel-pointer rule_attr
          * is allowed (self-tests), but a user-pointer copy failure must

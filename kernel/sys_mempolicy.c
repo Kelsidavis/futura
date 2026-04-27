@@ -91,6 +91,21 @@ long sys_get_mempolicy(int *mode_out, unsigned long *nodemask_out,
                        unsigned int flags) {
     (void)addr;
 
+    /* Linux's do_get_mempolicy rejects unknown flag bits with -EINVAL
+     * before doing any work, and forbids combining MPOL_F_MEMS_ALLOWED
+     * with MPOL_F_NODE or MPOL_F_ADDR. The previous code silently
+     * accepted any flag bits, so a caller passing garbage flags got
+     * back a "MPOL_DEFAULT" answer that masked the malformed request —
+     * libc / numactl test harnesses that probe for MPOL_F_* support
+     * via expected -EINVAL replies treated Futura as supporting
+     * arbitrary future bits. */
+    if (flags & ~(unsigned int)(MPOL_F_NODE | MPOL_F_ADDR |
+                                MPOL_F_MEMS_ALLOWED))
+        return -EINVAL;
+    if ((flags & MPOL_F_MEMS_ALLOWED) &&
+        (flags & (MPOL_F_NODE | MPOL_F_ADDR)))
+        return -EINVAL;
+
     /* MPOL_F_NODE: report node number for addr (always 0 here). Otherwise
      * report the policy mode (always MPOL_DEFAULT). Either way the value
      * lives in mode_out. */

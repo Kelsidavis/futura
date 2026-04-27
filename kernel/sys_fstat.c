@@ -154,10 +154,15 @@ long sys_fstat(int fd, struct fut_stat *statbuf) {
         return -EBADF;
     }
 
-    /* Phase 2: Validate statbuf pointer */
+    /* NULL statbuf is a pointer fault (EFAULT) per Linux fstat(2) — the
+     * kernel must dereference it to write the stat structure. The
+     * sister sys_stat() and sys_fstatat() entry points already return
+     * EFAULT here; sys_fstat returning EINVAL was an inconsistency that
+     * caused the same logical failure to surface as different errnos
+     * depending on which entry point a libc happened to use. */
     if (!local_statbuf) {
-        fut_printf("[FSTAT] fstat(fd=%d, statbuf=NULL) -> EINVAL (NULL buffer)\n", local_fd);
-        return -EINVAL;
+        fut_printf("[FSTAT] fstat(fd=%d, statbuf=NULL) -> EFAULT\n", local_fd);
+        return -EFAULT;
     }
 
     /* Validate statbuf write permission early (kernel writes stat structure)

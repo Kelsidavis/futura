@@ -691,12 +691,16 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                         * head of the kernel's QoS queues. Even though Futura
                         * currently no-ops the option, gate it now so we
                         * don't silently grant escalation if/when QoS routing
-                        * is wired up. */
+                        * is wired up. Linux additionally validates that
+                        * priority lies in [0, 15] — anything outside is
+                        * EINVAL. The previous code silently accepted negative
+                        * or oversized values, masking caller bugs. */
+                if (optlen < sizeof(int)) return -EINVAL;
                 int prio = 0;
-                if (optlen >= sizeof(int)) {
-                    if (sso_copy_from_user(&prio, optval, sizeof(int)) != 0)
-                        return -EFAULT;
-                }
+                if (sso_copy_from_user(&prio, optval, sizeof(int)) != 0)
+                    return -EFAULT;
+                if (prio < 0 || prio > 15)
+                    return -EINVAL;
                 if (prio > 6 && task->uid != 0 &&
                     !(task->cap_effective & (1ULL << 12 /* CAP_NET_ADMIN */)))
                     return -EPERM;

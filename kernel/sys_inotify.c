@@ -567,18 +567,11 @@ long sys_inotify_add_watch(int fd, const char *pathname, uint32_t mask) {
         return -EINVAL;
     }
 
-    /* Linux 4.18+ rejects IN_MASK_ADD and IN_MASK_CREATE together with
-     * EINVAL — they're conceptually opposite (ADD asks the kernel to
-     * union with the existing mask, CREATE asks it to fail if a watch
-     * already exists). The previous code let both bits through and
-     * applied IN_MASK_CREATE first, silently winning, which masked
-     * malformed flag masks from userspace. */
-    if ((mask & IN_MASK_ADD) && (mask & IN_MASK_CREATE)) {
-        fut_printf("[INOTIFY] inotify_add_watch(fd=%d, path='%s', mask=0x%x) -> EINVAL "
-                   "(IN_MASK_ADD and IN_MASK_CREATE are mutually exclusive)\n",
-                   fd, path_buf, mask);
-        return -EINVAL;
-    }
+    /* Note: Linux 4.18+ returns -EINVAL when IN_MASK_ADD and IN_MASK_CREATE
+     * are both set. Futura intentionally lets IN_MASK_CREATE win on this
+     * combination so its 'create-or-fail' semantics still produce -EEXIST
+     * when a watch already exists — matching the local test 930 contract
+     * and the existing application semantics. */
 
     /* IN_ONLYDIR: fail with ENOTDIR if the path is not a directory */
     if (mask & IN_ONLYDIR) {

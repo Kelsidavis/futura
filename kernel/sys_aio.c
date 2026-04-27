@@ -232,10 +232,18 @@ long sys_io_destroy(unsigned long ctx_id) {
  * Returns: number of iocbs submitted, or negative error
  */
 long sys_io_submit(unsigned long ctx_id, long nr, void **iocbpp) {
-    if (nr < 0 || !iocbpp)
+    /* Linux io_submit ordering: nr < 0 → EINVAL; nr == 0 → returns 0
+     * before any pointer dereference; iocbpp NULL surfaces through
+     * copy_from_user as -EFAULT. The previous combined gate
+     * (nr<0 || !iocbpp → EINVAL) collapsed pointer faults into
+     * parameter-domain errors. Test 716 uses nr=0 so the short-circuit
+     * preserves its 'EINVAL or 0' contract. */
+    if (nr < 0)
         return -EINVAL;
     if (nr == 0)
         return 0;
+    if (!iocbpp)
+        return -EFAULT;
 
     long err = 0;
     struct aio_context *ctx = aio_ctx_for_caller(ctx_id, &err);

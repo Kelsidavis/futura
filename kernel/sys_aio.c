@@ -956,7 +956,20 @@ long sys_io_uring_setup(unsigned int entries, void *params) {
         return -EFAULT;
     struct io_uring_params *p = &local_p;
 
-    /* We don't support SQPOLL or IOPOLL in this implementation */
+    /* Linux rejects unknown io_uring_setup flag bits with -EINVAL — let a
+     * caller distinguish 'kernel doesn't support flag X' from 'flag X
+     * silently ignored' instead of running with old behaviour. Mirror
+     * the gate already on io_uring_enter and explicitly mark
+     * SQPOLL/IOPOLL as unsupported in this implementation (returned as
+     * EINVAL via the unknown-bit path below). */
+    const uint32_t KNOWN_SETUP_FLAGS =
+        IORING_SETUP_IOPOLL  |  /* unsupported on Futura */
+        IORING_SETUP_SQPOLL  |  /* unsupported on Futura */
+        IORING_SETUP_SQ_AFF  |
+        IORING_SETUP_CQSIZE  |
+        IORING_SETUP_CLAMP   |
+        IORING_SETUP_ATTACH_WQ;
+    if (p->flags & ~KNOWN_SETUP_FLAGS) return -EINVAL;
     uint32_t unsupported = IORING_SETUP_SQPOLL | IORING_SETUP_IOPOLL;
     if (p->flags & unsupported) return -EINVAL;
 

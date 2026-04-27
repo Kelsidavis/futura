@@ -377,11 +377,17 @@ static inline long xattr_validate_setxattr_flags(int flags, size_t size,
     fut_task_t *task = fut_task_current();
     int64_t pid = task ? (int64_t)task->pid : -1;
 
-    /* Validate: value must be non-NULL if size > 0 */
+    /* Linux's vfs_setxattr surfaces a NULL value with size>0 through
+     * copy_from_user as -EFAULT (pointer fault), reserving -EINVAL for
+     * parameter-domain errors (unknown flags, oversized value). The
+     * previous gate collapsed pointer faults into parameter-domain
+     * errors, breaking libc setxattr wrappers (glibc, attr utility)
+     * that distinguish 'bad pointer, retry after page fault' from
+     * 'rejected unconditionally'. */
     if (!value && size > 0) {
-        fut_printf("[XATTR] %s(...) -> EINVAL (NULL value with size > 0, pid=%d)\n",
+        fut_printf("[XATTR] %s(...) -> EFAULT (NULL value with size > 0, pid=%d)\n",
                    syscall, pid);
-        return -EINVAL;
+        return -EFAULT;
     }
 
     /* Validate flags */

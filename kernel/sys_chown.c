@@ -147,11 +147,11 @@ long sys_chown(const char *pathname, uint32_t uid, uint32_t gid) {
     uint32_t local_uid = uid;
     uint32_t local_gid = gid;
 
-    /* Phase 2: Validate pathname pointer */
+    /* NULL pathname is a pointer fault (EFAULT) per Linux chown(2). */
     if (!local_pathname) {
-        fut_printf("[CHOWN] chown(pathname=NULL, uid=%u, gid=%u) -> EINVAL (NULL pathname)\n",
+        fut_printf("[CHOWN] chown(pathname=NULL, uid=%u, gid=%u) -> EFAULT\n",
                    local_uid, local_gid);
-        return -EINVAL;
+        return -EFAULT;
     }
 
     /* Validate uid/gid are within valid ranges

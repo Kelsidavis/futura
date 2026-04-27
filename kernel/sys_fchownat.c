@@ -100,11 +100,11 @@ static inline int fchownat_copy_from_user(void *dst, const void *src, size_t n) 
  * Phase 4 (Completed): Performance optimization with dirfd caching
  */
 long sys_fchownat(int dirfd, const char *pathname, uint32_t uid, uint32_t gid, int flags) {
-    /* Phase 1: Validate pathname pointer */
+    /* NULL pathname is a pointer fault (EFAULT) per Linux fchownat(2). */
     if (!pathname) {
         fut_printf("[FCHOWNAT] fchownat(dirfd=%d, pathname=NULL, uid=%u, gid=%u, flags=0x%x) "
-                   "-> EINVAL (NULL pathname)\n", dirfd, uid, gid, flags);
-        return -EINVAL;
+                   "-> EFAULT\n", dirfd, uid, gid, flags);
+        return -EFAULT;
     }
 
     /* Phase 1: Validate flags */

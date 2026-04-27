@@ -127,11 +127,11 @@ long sys_fchmodat(int dirfd, const char *pathname, uint32_t mode, int flags) {
         return -EINVAL;
     }
 
-    /* Validate pathname pointer */
+    /* NULL pathname is a pointer fault (EFAULT) per Linux fchmodat(2). */
     if (!local_pathname) {
-        fut_printf("[FCHMODAT] fchmodat(dirfd=%d, pathname=NULL) -> EINVAL (NULL pathname)\n",
+        fut_printf("[FCHMODAT] fchmodat(dirfd=%d, pathname=NULL) -> EFAULT\n",
                    local_dirfd);
-        return -EINVAL;
+        return -EFAULT;
     }
 
     /* Copy pathname from userspace */

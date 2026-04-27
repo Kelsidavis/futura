@@ -168,10 +168,10 @@ long sys_chmod(const char *pathname, uint32_t mode) {
     const char *local_pathname = pathname;
     uint32_t local_mode = mode;
 
-    /* Phase 2: Validate pathname pointer */
+    /* NULL pathname is a pointer fault (EFAULT) per Linux chmod(2). */
     if (!local_pathname) {
-        fut_printf("[CHMOD] chmod(pathname=NULL, mode=0%o) -> EINVAL (NULL pathname)\n", local_mode);
-        return -EINVAL;
+        fut_printf("[CHMOD] chmod(pathname=NULL, mode=0%o) -> EFAULT\n", local_mode);
+        return -EFAULT;
     }
 
     /* Phase 3: Detect if mode is symbolic permissions (string) or octal (numeric)

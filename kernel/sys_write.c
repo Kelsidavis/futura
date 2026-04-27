@@ -235,6 +235,17 @@ ssize_t sys_write(int fd, const void *buf, size_t count) {
         return -EFAULT;
     }
 
+    /* Resolve the file early so we can clear setuid/setgid bits after a
+     * successful write per POSIX (and Linux's vfs_write -> file_remove_privs):
+     *   "A successful call to write() shall clear the S_ISUID and S_ISGID
+     *    bits of the file unless the calling process has the appropriate
+     *    privileges." — POSIX.1
+     * Linux gates the S_ISGID clear on S_IXGRP being set (group-executable),
+     * and CAP_FSETID bypasses both. Without this, write()-then-stat() shows
+     * S_ISUID still set on a regular file modified by a non-CAP user — a
+     * silent privilege-retention vector. */
+    struct fut_file *write_file = vfs_get_file_from_task(task, local_fd);
+
     /* Write to VFS */
     ssize_t ret = fut_vfs_write(local_fd, kbuf, local_count);
 
@@ -271,6 +282,25 @@ ssize_t sys_write(int fd, const void *buf, size_t count) {
     }
 
     fut_free(kbuf);
+
+    /* POSIX setuid/setgid clear after successful write to a regular file.
+     * Only effective if we wrote data (ret > 0) and the caller doesn't
+     * hold CAP_FSETID. Match the same condition as O_TRUNC clearing in
+     * fut_vfs_open and as setuid-on-truncate already does. */
+    if (ret > 0 && write_file && write_file->vnode &&
+        write_file->vnode->type == VN_REG) {
+        uint32_t mode = write_file->vnode->mode;
+        int needs_clear = 0;
+        if (mode & 04000) needs_clear = 1; /* S_ISUID */
+        if ((mode & 02000) && (mode & 00010)) needs_clear = 1; /* S_ISGID|S_IXGRP */
+        if (needs_clear &&
+            !(task->cap_effective & (1ULL << 4 /* CAP_FSETID */))) {
+            if (mode & 04000)
+                write_file->vnode->mode &= ~(uint32_t)04000;
+            if ((mode & 02000) && (mode & 00010))
+                write_file->vnode->mode &= ~(uint32_t)02000;
+        }
+    }
 
     /* Phase 2: Categorize write completion status */
     const char *completion_status;

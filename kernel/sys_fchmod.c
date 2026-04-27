@@ -78,12 +78,9 @@ long sys_fchmod(int fd, uint32_t mode) {
         return -EBADF;
     }
 
-    /* Phase 2: Validate mode parameter has only valid permission bits */
-    if (local_mode & ~07777) {
-        fut_printf("[FCHMOD] fchmod(fd=%d, mode=0%o) -> EINVAL (invalid mode bits 0x%x)\n",
-                   local_fd, local_mode, local_mode & ~07777);
-        return -EINVAL;
-    }
+    /* Linux chmod_common masks mode to S_IALLUGO (07777) silently rather
+     * than rejecting high bits — see sys_chmod for the same fix. */
+    local_mode &= 07777;
 
     /* Phase 2: Categorize FD type - use shared helper */
     const char *fd_category = fut_fd_category(local_fd);

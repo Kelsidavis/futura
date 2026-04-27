@@ -179,12 +179,13 @@ long sys_chmod(const char *pathname, uint32_t mode) {
      * This is simplified: in real implementation, fchmodat() with AT_SYMLINK_NOFOLLOW flag exists
      */
 
-    /* Phase 3: Validate mode - reject bits outside valid range (07777: special bits + permissions) */
-    if (local_mode & ~07777) {
-        fut_printf("[CHMOD] chmod(pathname=?, mode=0%o) -> EINVAL (invalid mode bits outside 07777)\n",
-                   local_mode);
-        return -EINVAL;
-    }
+    /* Linux chmod_common masks mode to S_IALLUGO (07777) silently rather
+     * than rejecting high bits with EINVAL — programs routinely pass
+     * stat::st_mode values that include S_IFREG/S_IFDIR (017xxxx) and
+     * the kernel just strips the type bits. The previous EINVAL gate
+     * broke any caller that copied a mode word out of stat() and back
+     * into chmod() without manually masking. */
+    local_mode &= 07777;
 
     /* Phase 2: Categorize permission mode */
     const char *mode_desc;

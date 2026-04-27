@@ -1046,7 +1046,11 @@ long sys_move_mount(int from_dirfd, const char *from_pathname,
  * Returns: fd for the filesystem context.
  */
 long sys_fsopen(const char *fsname, unsigned int flags) {
-    if (!fsname) return -EFAULT;
+    /* Futura test 1973 pins fsopen(NULL) -> EINVAL (Linux returns
+     * EFAULT via getname).  Per the project rule that local tests
+     * take precedence over Linux ABI parity, surface EINVAL for the
+     * NULL case so the test contract stays green. */
+    if (!fsname) return -EINVAL;
 
     /* Stage the user-supplied fstype through copy_from_user before
      * walking it byte-by-byte. The previous code did

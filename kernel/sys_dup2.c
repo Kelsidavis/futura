@@ -195,11 +195,14 @@ long sys_dup2(int oldfd, int newfd) {
         return -EINVAL;
     }
 
-    /* Enforce RLIMIT_NOFILE: newfd must be below the soft limit
-     * POSIX: dup2 shall fail with EBADF if newfd >= OPEN_MAX, but Linux
-     * returns EBADF for RLIMIT_NOFILE violations (matching Linux behavior). */
+    /* Enforce RLIMIT_NOFILE: newfd must be below the soft limit.
+     * Linux returns -EBADF when newfd >= rlim_cur. RLIMIT_NOFILE has
+     * no 'infinity' sentinel: 0 is a valid setting that forbids any
+     * new fd allocation (the standard sandbox pattern). The previous
+     * 'nofile_limit > 0' short-circuit silently let arbitrary newfd
+     * values through when the user had set rlim_cur to 0. */
     uint64_t nofile_limit = task->rlimits[7].rlim_cur;  /* RLIMIT_NOFILE */
-    if (nofile_limit > 0 && (uint64_t)local_newfd >= nofile_limit) {
+    if ((uint64_t)local_newfd >= nofile_limit) {
         return -EBADF;
     }
 
@@ -380,10 +383,11 @@ long sys_dup3(int oldfd, int newfd, int flags) {
         return -EINVAL;
     }
 
-    /* Enforce RLIMIT_NOFILE */
+    /* Enforce RLIMIT_NOFILE — see sys_dup2 for the rationale on the
+     * dropped 'nofile_limit > 0' short-circuit. */
     {
         uint64_t nofile_limit = task->rlimits[7].rlim_cur;
-        if (nofile_limit > 0 && (uint64_t)local_newfd >= nofile_limit) {
+        if ((uint64_t)local_newfd >= nofile_limit) {
             return -EBADF;
         }
     }

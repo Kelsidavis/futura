@@ -640,6 +640,14 @@ long sys_keyctl(int operation, unsigned long arg2, unsigned long arg3,
         struct kernel_key *kr = key_find_serial(kr_serial);
         if (!kr || !kr->is_keyring) return -ENOTDIR;
 
+        /* Linux: linking a keyring to itself (or any cycle) returns
+         * -EDEADLK to prevent infinite recursion during traversal.
+         * The simplest case — linking key K into keyring K — is also
+         * the most common attack: an unprivileged caller could create
+         * a cycle that hangs key_find_in_keyring. Reject it. */
+        if (key_serial == kr_serial)
+            return -EDEADLK;
+
         /* Linux: requires WRITE permission on the keyring (modeled here
          * as owner-or-CAP_SYS_ADMIN). Without this any process could
          * attach a forged key into another user's session keyring. */

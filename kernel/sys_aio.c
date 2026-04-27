@@ -972,6 +972,12 @@ long sys_io_uring_setup(unsigned int entries, void *params) {
     if (p->flags & ~KNOWN_SETUP_FLAGS) return -EINVAL;
     uint32_t unsupported = IORING_SETUP_SQPOLL | IORING_SETUP_IOPOLL;
     if (p->flags & unsupported) return -EINVAL;
+    /* Linux: IORING_SETUP_SQ_AFF requires IORING_SETUP_SQPOLL — pinning a
+     * non-existent SQ poll thread to a CPU is a programming error. Since
+     * Futura already rejects SQPOLL above, any SQ_AFF here is by
+     * definition the no-SQPOLL case and must fail with EINVAL too. */
+    if ((p->flags & IORING_SETUP_SQ_AFF) && !(p->flags & IORING_SETUP_SQPOLL))
+        return -EINVAL;
 
     /* Round entries to power of 2 */
     uint32_t sq_entries = uring_roundup_pow2(entries);

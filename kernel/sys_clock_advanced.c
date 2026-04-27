@@ -154,18 +154,6 @@ long sys_clock_settime(int clock_id, const fut_timespec_t *tp) {
             clock_name = "CLOCK_TAI";
             is_settable = 1;
             break;
-        case CLOCK_REALTIME_ALARM:
-            /* CLOCK_REALTIME_ALARM is settable on Linux (subject to
-             * CAP_WAKE_ALARM, but Futura has no alarm hardware so it's
-             * just an alias for CLOCK_REALTIME). sys_clock_gettime and
-             * sys_clock_getres both already accept this clock; clock_settime
-             * was the inconsistent entry point — chrony's setrtc helper
-             * stamps the alarm clock to keep wakealarm / RTC layers in
-             * sync, and was getting EINVAL where the sister syscalls
-             * succeeded. */
-            clock_name = "CLOCK_REALTIME_ALARM";
-            is_settable = 1;
-            break;
         case CLOCK_MONOTONIC:
             clock_name = "CLOCK_MONOTONIC";
             break;

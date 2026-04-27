@@ -110,13 +110,18 @@ long sys_pivot_root(const char *new_root, const char *put_old) {
     const char *new_root_abs = pivot_resolve_abs(new_root_buf, nr_abs, sizeof(nr_abs));
     if (!new_root_abs) return -ENAMETOOLONG;
 
-    /* Lookup new_root vnode */
+    /* Lookup new_root vnode. Linux's pivot_root propagates the
+     * underlying user_path_at() errno (typically ENOENT for missing
+     * paths). Collapsing every lookup failure to EINVAL — as we used
+     * to — masked nonexistent-path errors as "not a mountpoint" which
+     * misleads container init code paths that branch on ENOENT. */
     extern int fut_vfs_lookup(const char *, struct fut_vnode **);
     struct fut_vnode *nrv = NULL;
     int lr = fut_vfs_lookup(new_root_abs, &nrv);
     if (lr < 0 || !nrv) {
-        fut_printf("[PIVOT_ROOT] '%s' not found pid=%llu\n", new_root_abs, (unsigned long long)task->pid);
-        return -EINVAL;
+        fut_printf("[PIVOT_ROOT] '%s' not found (lr=%d) pid=%llu\n",
+                   new_root_abs, lr, (unsigned long long)task->pid);
+        return (lr < 0) ? lr : -ENOENT;
     }
     if (nrv->type != VN_DIR) {
         fut_vnode_unref(nrv);

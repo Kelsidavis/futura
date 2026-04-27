@@ -891,6 +891,26 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
         int nonblock = (local_cmd == F_SETLK || local_cmd == F_OFD_SETLK) ? 1 : 0;
         int ret;
 
+        /* Linux's fs/locks.c rejects F_RDLCK on a non-readable fd and
+         * F_WRLCK on a non-writable fd with -EBADF (POSIX requires the
+         * fd to allow the corresponding access for the lock type). The
+         * previous Futura code skipped this gate, so a process could
+         * acquire a write lock through an O_RDONLY fd and block other
+         * writers — defeating advisory locking's mutual-exclusion
+         * guarantee. F_UNLCK is exempt: releasing your own lock is
+         * always allowed regardless of access mode. */
+        int accmode = file ? (file->flags & O_ACCMODE) : 0;
+        if (lk.l_type == F_RDLCK && accmode == O_WRONLY) {
+            fut_printf("[FCNTL] fcntl(fd=%d, cmd=%s, F_RDLCK) -> EBADF "
+                       "(fd opened O_WRONLY)\n", local_fd, cmd_name);
+            return -EBADF;
+        }
+        if (lk.l_type == F_WRLCK && accmode == O_RDONLY) {
+            fut_printf("[FCNTL] fcntl(fd=%d, cmd=%s, F_WRLCK) -> EBADF "
+                       "(fd opened O_RDONLY)\n", local_fd, cmd_name);
+            return -EBADF;
+        }
+
         switch (lk.l_type) {
         case F_RDLCK:
             ret = fut_vnode_lock_shared(vnode, (uint32_t)task->pid, nonblock);

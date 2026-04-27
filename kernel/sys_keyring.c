@@ -287,7 +287,9 @@ static int32_t resolve_keyring(int keyring_id) {
  */
 long sys_add_key(const char *type, const char *description,
                  const void *payload, size_t plen, int keyring) {
-    if (!type || !description) return -EINVAL;
+    /* NULL type/description are pointer faults per Linux add_key(2);
+     * the kernel must dereference them to copy the strings. */
+    if (!type || !description) return -EFAULT;
     if (plen > MAX_KEY_PAYLOAD) return -EDQUOT;
 
     /* Copy strings from user space (SMAP-safe) */
@@ -366,7 +368,8 @@ long sys_add_key(const char *type, const char *description,
 long sys_request_key(const char *type, const char *description,
                      const char *callout_info, int dest_keyring) {
     (void)callout_info;
-    if (!type || !description) return -EINVAL;
+    /* NULL type/description are pointer faults per Linux request_key(2). */
+    if (!type || !description) return -EFAULT;
 
     /* Copy strings from user space (SMAP-safe) */
     char k_type[MAX_KEY_TYPE];

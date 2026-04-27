@@ -400,6 +400,13 @@ long sys_seteuid(uint32_t euid) {
         return -ESRCH;
     }
 
+    /* Linux: INVALID_UID (-1) is rejected by uid_valid() in __sys_setresuid's
+     * shared validator — same gate applies to seteuid via the same
+     * make_kuid path. Match sys_setuid. */
+    if (euid == (uint32_t)-1) {
+        return -EINVAL;
+    }
+
     const char *euid_category = categorize_id(euid);
     const char *old_euid_category = categorize_id(task->uid);
     const char *ruid_category = categorize_id(task->ruid);
@@ -478,6 +485,12 @@ long sys_setgid(uint32_t gid) {
         return -ESRCH;
     }
 
+    /* Linux: INVALID_GID (-1) is rejected by gid_valid() — symmetric to
+     * the setuid INVALID_UID gate. */
+    if (gid == (uint32_t)-1) {
+        return -EINVAL;
+    }
+
     const char *gid_category = categorize_id(gid);
     const char *old_egid_category = categorize_id(task->gid);
     const char *old_rgid_category = categorize_id(task->rgid);
@@ -548,6 +561,12 @@ long sys_setegid(uint32_t egid) {
     if (!task) {
         fut_printf("[CRED] setegid(egid=%u) -> ESRCH (no task context)\n", egid);
         return -ESRCH;
+    }
+
+    /* Linux: INVALID_GID (-1) is rejected via gid_valid() — same gate
+     * the matching setgid path now applies. */
+    if (egid == (uint32_t)-1) {
+        return -EINVAL;
     }
 
     const char *egid_category = categorize_id(egid);

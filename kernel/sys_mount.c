@@ -1064,30 +1064,82 @@ long sys_fsconfig(int fs_fd, unsigned int cmd, const char *key,
     if (!ctx) return -EBADF;
     if (ctx->created && cmd != FSCONFIG_CMD_RECONFIGURE) return -EBUSY;
 
+    /* Stage user-supplied key/value strings into kernel buffers up front
+     * so the strcmp / fsctx_append_opt helpers (and the special-case
+     * 'source' loop) walk kernel-side data instead of dereferencing the
+     * raw user pointer. The previous code did
+     *     if (strcmp(key, "ro") == 0) ...
+     *     while (s[i] && ...) ctx->source[i] = s[i];
+     * straight on user pointers — a kernel-half address turned each loop
+     * into a kernel-memory read primitive observable via mountinfo, and
+     * a bad user pointer page-faulted the kernel. Same staging pattern
+     * already applied to fsopen / keyctl JOIN_SESSION_KEYRING. */
+    char k_key[MAX_FS_NAME];
+    const char *kkey = NULL;
+    if (key) {
+        size_t i = 0;
+        for (; i + 1 < sizeof(k_key); i++) {
+            char c;
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)(key + i) >= KERNEL_VIRTUAL_BASE) {
+                c = key[i];
+            } else
+#endif
+            if (fut_copy_from_user(&c, key + i, 1) != 0)
+                return -EFAULT;
+            k_key[i] = c;
+            if (c == '\0') break;
+        }
+        k_key[sizeof(k_key) - 1] = '\0';
+        kkey = k_key;
+    }
+
+    char k_value[MAX_FS_SOURCE];
+    const char *kvalue = NULL;
+    if (value &&
+        (cmd == FSCONFIG_SET_STRING || cmd == FSCONFIG_SET_PATH ||
+         cmd == FSCONFIG_SET_PATH_EMPTY)) {
+        const char *uv = (const char *)value;
+        size_t i = 0;
+        for (; i + 1 < sizeof(k_value); i++) {
+            char c;
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)(uv + i) >= KERNEL_VIRTUAL_BASE) {
+                c = uv[i];
+            } else
+#endif
+            if (fut_copy_from_user(&c, uv + i, 1) != 0)
+                return -EFAULT;
+            k_value[i] = c;
+            if (c == '\0') break;
+        }
+        k_value[sizeof(k_value) - 1] = '\0';
+        kvalue = k_value;
+    }
+
     switch (cmd) {
     case FSCONFIG_SET_FLAG:
         /* Flag-only option (e.g., "ro", "nosuid") */
-        if (!key) return -EINVAL;
-        if (strcmp(key, "ro") == 0) ctx->mount_flags |= MS_RDONLY;
-        else if (strcmp(key, "nosuid") == 0) ctx->mount_flags |= MS_NOSUID;
-        else if (strcmp(key, "nodev") == 0) ctx->mount_flags |= MS_NODEV;
-        else if (strcmp(key, "noexec") == 0) ctx->mount_flags |= MS_NOEXEC;
-        else if (strcmp(key, "noatime") == 0) ctx->mount_flags |= MS_NOATIME;
-        else if (strcmp(key, "relatime") == 0) ctx->mount_flags |= MS_RELATIME;
-        else return fsctx_append_opt(ctx, key, NULL);
+        if (!kkey) return -EINVAL;
+        if (strcmp(kkey, "ro") == 0) ctx->mount_flags |= MS_RDONLY;
+        else if (strcmp(kkey, "nosuid") == 0) ctx->mount_flags |= MS_NOSUID;
+        else if (strcmp(kkey, "nodev") == 0) ctx->mount_flags |= MS_NODEV;
+        else if (strcmp(kkey, "noexec") == 0) ctx->mount_flags |= MS_NOEXEC;
+        else if (strcmp(kkey, "noatime") == 0) ctx->mount_flags |= MS_NOATIME;
+        else if (strcmp(kkey, "relatime") == 0) ctx->mount_flags |= MS_RELATIME;
+        else return fsctx_append_opt(ctx, kkey, NULL);
         return 0;
 
     case FSCONFIG_SET_STRING:
-        if (!key) return -EINVAL;
+        if (!kkey) return -EINVAL;
         /* Special handling for "source" */
-        if (strcmp(key, "source") == 0 && value) {
-            const char *s = (const char *)value;
+        if (strcmp(kkey, "source") == 0 && kvalue) {
             int i = 0;
-            while (s[i] && i < MAX_FS_SOURCE - 1) { ctx->source[i] = s[i]; i++; }
+            while (kvalue[i] && i < MAX_FS_SOURCE - 1) { ctx->source[i] = kvalue[i]; i++; }
             ctx->source[i] = '\0';
             return 0;
         }
-        return fsctx_append_opt(ctx, key, value ? (const char *)value : "");
+        return fsctx_append_opt(ctx, kkey, kvalue ? kvalue : "");
 
     case FSCONFIG_SET_BINARY:
         /* Binary option — store as hex or ignore */
@@ -1096,8 +1148,8 @@ long sys_fsconfig(int fs_fd, unsigned int cmd, const char *key,
     case FSCONFIG_SET_PATH:
     case FSCONFIG_SET_PATH_EMPTY:
         /* Path option (e.g., lowerdir, upperdir for overlayfs) */
-        if (!key) return -EINVAL;
-        return fsctx_append_opt(ctx, key, value ? (const char *)value : "");
+        if (!kkey) return -EINVAL;
+        return fsctx_append_opt(ctx, kkey, kvalue ? kvalue : "");
 
     case FSCONFIG_SET_FD:
         /* FD option */

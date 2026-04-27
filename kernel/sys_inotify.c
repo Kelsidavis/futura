@@ -556,9 +556,11 @@ long sys_inotify_add_watch(int fd, const char *pathname, uint32_t mask) {
         fut_printf("[INOTIFY] inotify_add_watch(fd=%d) -> ENAMETOOLONG\n", fd);
         return -ENAMETOOLONG;
     }
+    /* Empty pathname is ENOENT per Linux inotify_add_watch(2) — getname()
+     * returns -ENOENT for an empty string. */
     if (path_buf[0] == '\0') {
-        fut_printf("[INOTIFY] inotify_add_watch(fd=%d, path=\"\") -> EINVAL\n", fd);
-        return -EINVAL;
+        fut_printf("[INOTIFY] inotify_add_watch(fd=%d, path=\"\") -> ENOENT\n", fd);
+        return -ENOENT;
     }
 
     if ((mask & IN_ALL_EVENTS) == 0) {

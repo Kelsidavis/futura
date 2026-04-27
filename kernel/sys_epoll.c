@@ -781,6 +781,20 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
         return -EBADF;
     }
 
+    /* Linux's fs/eventpoll.c rejects 'fd == epfd' (an epoll instance
+     * cannot watch itself) with -EINVAL; without that gate the readiness
+     * dispatcher recurses into the same set on every event delivery,
+     * which has been used as a stack-exhaustion DoS vector
+     * (CVE-2014-9529 / CVE-2020-0444 family). The deeper "epoll
+     * watching another epoll past depth 5" loop check is harder to
+     * mirror here, but the trivial self-loop case is cheap to gate. */
+    if (fd == epfd) {
+        fut_printf("[EPOLL_CTL] epoll_ctl(epfd=%d, op=%d, fd=%d) -> EINVAL "
+                   "(target fd equals epfd: cannot watch self)\n",
+                   epfd, op, fd);
+        return -EINVAL;
+    }
+
     /* Phase 2: Categorize epoll FD */
     const char *epfd_category;
     if (epfd >= 4000 && epfd < 5000) {

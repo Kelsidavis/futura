@@ -819,6 +819,13 @@ long sys_listxattr(const char *path, char *list, size_t size) {
         return -EFAULT;
     }
 
+    /* See sys_getxattr fix: NULL list with size>0 is EFAULT, not silent
+     * data loss. The previous 'list && copy_to_user' guard skipped the
+     * copy and returned 'got' as if the bytes had been written. */
+    if (size > 0 && !list) {
+        return -EFAULT;
+    }
+
     char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
     long ret = xattr_copy_path(path, path_buf, "listxattr");
     if (ret < 0) {
@@ -859,6 +866,11 @@ long sys_llistxattr(const char *path, char *list, size_t size) {
         return -EFAULT;
     }
 
+    /* See sys_listxattr: NULL list with size>0 is EFAULT. */
+    if (size > 0 && !list) {
+        return -EFAULT;
+    }
+
     char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
     long ret = xattr_copy_path(path, path_buf, "llistxattr");
     if (ret < 0) {
@@ -894,6 +906,11 @@ long sys_flistxattr(int fd, char *list, size_t size) {
 
     if (fd < 0) {
         return -EBADF;
+    }
+
+    /* See sys_listxattr: NULL list with size>0 is EFAULT. */
+    if (size > 0 && !list) {
+        return -EFAULT;
     }
 
     struct fut_vnode *vnode = vnode_from_fd(task, fd);

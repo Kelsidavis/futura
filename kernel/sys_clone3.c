@@ -240,6 +240,29 @@ long sys_clone3(const struct fut_clone_args *uargs, size_t size) {
                    (unsigned long long)args.exit_signal);
         return -EINVAL;
     }
+
+    /* Linux's clone3_args_valid also requires the *_tid/pidfd output
+     * pointers to be non-NULL when the corresponding flag is set:
+     *   CLONE_PARENT_SETTID  -> parent_tid != 0
+     *   CLONE_CHILD_SETTID   -> child_tid  != 0
+     *   CLONE_CHILD_CLEARTID -> child_tid  != 0
+     *   CLONE_PIDFD          -> pidfd      != 0
+     * Without these checks Futura silently no-op'd the write at exit
+     * time when the user requested it but forgot the address — masking
+     * a programming error and breaking apps that rely on the exit
+     * notification (e.g. modern pthreads cleanup). */
+    if ((flags & CLONE_PARENT_SETTID) && !args.parent_tid) {
+        fut_printf("[CLONE3] clone3(CLONE_PARENT_SETTID, parent_tid=NULL) -> EINVAL\n");
+        return -EINVAL;
+    }
+    if ((flags & (CLONE_CHILD_SETTID | CLONE_CHILD_CLEARTID)) && !args.child_tid) {
+        fut_printf("[CLONE3] clone3(CLONE_CHILD_*TID, child_tid=NULL) -> EINVAL\n");
+        return -EINVAL;
+    }
+    if ((flags & CLONE_PIDFD) && !args.pidfd) {
+        fut_printf("[CLONE3] clone3(CLONE_PIDFD, pidfd=NULL) -> EINVAL\n");
+        return -EINVAL;
+    }
     if ((flags & CLONE_SIGHAND) && !(flags & CLONE_VM)) {
         fut_printf("[CLONE3] clone3(flags=0x%llx) -> EINVAL "
                    "(CLONE_SIGHAND requires CLONE_VM)\n",

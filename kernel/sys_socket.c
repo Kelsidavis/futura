@@ -223,6 +223,19 @@ long sys_socket(int domain, int type, int protocol) {
         return -EAFNOSUPPORT;
     }
 
+    /* Linux's __sock_create rejects negative protocol numbers with
+     * -EINVAL ('if (protocol < 0 || protocol >= IPPROTO_MAX) return
+     * -EINVAL'). Futura previously accepted any int as protocol, so
+     * a typo like socket(AF_INET, SOCK_STREAM, -1) silently created a
+     * socket with protocol=-1 that the lower layer would later treat
+     * as wildcard. Reject up front to match Linux's gate. */
+    if (local_protocol < 0) {
+        socket_printf("[SOCKET] socket(domain=%d, type=%d, protocol=%d) -> EINVAL "
+                      "(negative protocol)\n",
+                      local_domain, local_type, local_protocol);
+        return -EINVAL;
+    }
+
     /* Validate socket type. Linux's per-family create() handlers
      * (net/unix/af_unix.c, net/ipv4/af_inet.c, net/netlink/af_netlink.c)
      * return -ESOCKTNOSUPPORT for an unsupported sock->type within a

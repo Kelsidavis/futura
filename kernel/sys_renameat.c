@@ -358,9 +358,14 @@ long sys_renameat2(int olddirfd, const char *oldpath,
             return -ESRCH;
         }
 
+        /* Linux's getname(uname) surfaces a NULL path pointer as -EFAULT
+         * (pointer fault), not -EINVAL. The previous gate collapsed the
+         * two error classes; libc rename-pair wrappers branch on EFAULT
+         * to retry after a demand-fault, so the conflated errno breaks
+         * that retry. */
         if (!oldpath || !newpath) {
-            fut_printf("[RENAMEAT2] renameat2(RENAME_EXCHANGE) -> EINVAL (NULL path)\n");
-            return -EINVAL;
+            fut_printf("[RENAMEAT2] renameat2(RENAME_EXCHANGE) -> EFAULT (NULL path)\n");
+            return -EFAULT;
         }
 
         char oldpath_buf[FUT_VFS_PATH_BUFFER_SIZE];

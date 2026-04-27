@@ -86,19 +86,14 @@ long sys_setgroups(int size, const uint32_t *list) {
     if (!task)
         return -ESRCH;
 
-    /* CAP_SETGID required to modify supplementary groups, but root
-     * (uid==0) bypasses the explicit cap-bit check — matching Linux's
-     * ns_capable() which treats root-in-the-namespace as holding every
-     * capability regardless of cap_effective state. The previous
-     * cap-only check would deny setgroups to a uid=0 process whose
-     * cap_effective had been cleared (e.g. during early boot before
-     * exec_init populates the full cap mask, or after a manual capset
-     * that didn't include CAP_SETGID), diverging from every other
-     * privileged-op gate in the kernel which uses the
-     *   uid != 0 && !cap   pattern. */
+    /* Futura test 1604 pins setgroups() without CAP_SETGID -> EPERM
+     * even when called as uid==0 (the test deliberately drops the
+     * cap bit on a root task and expects the gate to still fire).
+     * Per the project rule that local tests take precedence over
+     * Linux ABI parity, enforce the cap unconditionally — a uid==0
+     * caller still needs CAP_SETGID in cap_effective. */
 #define CAP_SETGID_BIT 6
-    if (task->uid != 0 &&
-        !(task->cap_effective & (1ULL << CAP_SETGID_BIT))) {
+    if (!(task->cap_effective & (1ULL << CAP_SETGID_BIT))) {
         return -EPERM;
     }
 

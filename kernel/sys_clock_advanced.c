@@ -306,6 +306,20 @@ long sys_clock_nanosleep(int clock_id, int flags,
         return -EFAULT;
     }
 
+    /* Linux's kernel/time/posix-timers.c:sys_clock_nanosleep rejects any
+     * flag bit outside TIMER_ABSTIME up front: 'if (flags & ~TIMER_ABSTIME)
+     * return -EINVAL'. Without that gate, unknown high bits silently fall
+     * through to the per-clock implementation — and a future Linux flag
+     * (e.g. a hypothetical TIMER_RELATIVE_HARD_AFFINITY) would be ignored
+     * instead of erroring out, masking compatibility breaks for callers
+     * that probe via flag-set-with-immediate-timeout. */
+    if (local_flags & ~1 /* TIMER_ABSTIME */) {
+        clock_nanosleep_printf("[CLOCK_NANOSLEEP] clock_nanosleep(clock_id=%d, flags=0x%x) -> EINVAL "
+                   "(unknown flag bits; only TIMER_ABSTIME is defined)\n",
+                   local_clock_id, local_flags);
+        return -EINVAL;
+    }
+
     /* Copy request from user */
     fut_timespec_t request;
     if (clock_copy_from_user(&request, local_req, sizeof(fut_timespec_t)) != 0) {

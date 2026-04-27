@@ -340,8 +340,18 @@ long sys_renameat2(int olddirfd, const char *oldpath,
         return -EINVAL;
     }
 
-    if ((flags & RENAME_EXCHANGE) && (flags & RENAME_NOREPLACE)) {
-        fut_printf("[RENAMEAT2] renameat2(flags=0x%x) -> EINVAL (RENAME_EXCHANGE with RENAME_NOREPLACE)\n",
+    /* Linux's do_renameat2 rejects RENAME_EXCHANGE combined with EITHER
+     * RENAME_NOREPLACE or RENAME_WHITEOUT — both combinations are
+     * meaningless: EXCHANGE always replaces, so NOREPLACE is a
+     * contradiction; WHITEOUT consumes the source slot, leaving nothing
+     * to swap back into. The kernel returns EINVAL for both. Futura
+     * previously caught only the NOREPLACE case; EXCHANGE|WHITEOUT
+     * fell through to the WHITEOUT-only ENOSYS arm, which is the
+     * wrong errno class for a malformed-flag-combination probe. */
+    if ((flags & RENAME_EXCHANGE) &&
+        (flags & (RENAME_NOREPLACE | RENAME_WHITEOUT))) {
+        fut_printf("[RENAMEAT2] renameat2(flags=0x%x) -> EINVAL "
+                   "(RENAME_EXCHANGE forbids NOREPLACE/WHITEOUT)\n",
                    flags);
         return -EINVAL;
     }

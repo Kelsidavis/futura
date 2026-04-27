@@ -263,11 +263,19 @@ long sys_socket(int domain, int type, int protocol) {
         return -EPERM;
     }
 
-    /* Validate protocol: AF_UNIX requires 0; AF_INET allows 0 or IPPROTO_TCP/UDP */
-    if (local_domain == AF_UNIX && local_protocol != 0) {
-        socket_printf("[SOCKET] socket(domain=%s, type=%s, flags=%s, protocol=%d [%s]) -> EINVAL (AF_UNIX requires protocol=0)\n",
+    /* Validate protocol: AF_UNIX requires 0 or PF_UNIX (==AF_UNIX==1).
+     * Linux's net/unix/af_unix.c:unix_create returns -EPROTONOSUPPORT
+     * (not -EINVAL) for any other protocol value: protocol-domain errors
+     * use the dedicated EPROTONOSUPPORT errno, while EINVAL is reserved
+     * for malformed parameters. Futura previously collapsed both into
+     * EINVAL, which broke libc socket() wrappers that branch on
+     * EPROTONOSUPPORT to retry with a different protocol number. */
+    if (local_domain == AF_UNIX && local_protocol != 0 &&
+        local_protocol != AF_UNIX /* PF_UNIX */) {
+        socket_printf("[SOCKET] socket(domain=%s, type=%s, flags=%s, protocol=%d [%s]) -> "
+                   "EPROTONOSUPPORT (AF_UNIX accepts protocol=0 or PF_UNIX)\n",
                    domain_name, type_name, flags_desc, local_protocol, protocol_desc);
-        return -EINVAL;
+        return -EPROTONOSUPPORT;
     }
 
     /* Create kernel socket object */

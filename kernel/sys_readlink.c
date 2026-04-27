@@ -214,11 +214,15 @@ long sys_readlink(const char *path, char *buf, size_t bufsiz) {
         return -ENAMETOOLONG;
     }
 
-    /* Phase 2: Validate path is not empty */
+    /* Empty pathname is ENOENT per Linux readlink(2) (getname() returns
+     * -ENOENT for an empty string), matching the sister sys_readlinkat
+     * empty-path branch and Futura test 1356's contract for the *at
+     * variant. The previous EINVAL diverged from Linux and from
+     * readlinkat's own behaviour. */
     if (path_buf[0] == '\0') {
-        fut_printf("[READLINK] readlink(path=\"\" [empty], buf=?, bufsiz=%zu [%s]) -> EINVAL "
-                   "(empty path)\n", local_bufsiz, bufsiz_category);
-        return -EINVAL;
+        fut_printf("[READLINK] readlink(path=\"\" [empty], buf=?, bufsiz=%zu [%s]) -> ENOENT\n",
+                   local_bufsiz, bufsiz_category);
+        return -ENOENT;
     }
 
     /* Phase 2: Categorize path type */

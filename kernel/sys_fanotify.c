@@ -357,6 +357,17 @@ long sys_fanotify_mark(int fanotify_fd, unsigned int flags,
     if (op != FAN_MARK_FLUSH && (mask & ~FANOTIFY_MASK_VALID))
         return -EINVAL;
 
+    /* Linux fanotify_mark requires the mark-type flags (INODE / MOUNT /
+     * FILESYSTEM) to be mutually exclusive: exactly one (or none meaning
+     * INODE) is allowed, never two. The previous code silently accepted
+     * MOUNT|FILESYSTEM combinations, which would later confuse the
+     * notification dispatcher about which scope the mark applies to. */
+    {
+        unsigned int mtype = flags & (FAN_MARK_MOUNT | FAN_MARK_FILESYSTEM);
+        if (mtype == (FAN_MARK_MOUNT | FAN_MARK_FILESYSTEM))
+            return -EINVAL;
+    }
+
     /* Linux fanotify_mark gates the *_PERM events on the group's class:
      * permission events (FAN_OPEN_PERM, FAN_ACCESS_PERM, FAN_OPEN_EXEC_PERM)
      * are only meaningful on FAN_CLASS_CONTENT or FAN_CLASS_PRE_CONTENT

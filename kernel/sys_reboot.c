@@ -46,6 +46,19 @@ long sys_reboot(unsigned int magic1, unsigned int magic2,
                 unsigned int cmd, void *arg) {
     (void)arg;
 
+    /* Linux's sys_reboot validates the capability FIRST, before the
+     * magic numbers — 'if (!capable(CAP_SYS_BOOT)) return -EPERM' runs
+     * before the magic1/magic2 checks. Without that ordering an
+     * unprivileged caller probing the syscall sees EINVAL (bad
+     * magic) instead of EPERM (insufficient privilege), which leaks
+     * the magic-number protocol to userspace and inverts the libc
+     * 'is the kernel willing to reboot?' probe pattern. Match Linux. */
+    fut_task_t *task = fut_task_current();
+    if (task && task->uid != 0 &&
+        !(task->cap_effective & (1ULL << CAP_SYS_BOOT))) {
+        return -EPERM;
+    }
+
     /* Validate magic numbers */
     if (magic1 != LINUX_REBOOT_MAGIC1) {
         return -EINVAL;
@@ -55,12 +68,6 @@ long sys_reboot(unsigned int magic1, unsigned int magic2,
         magic2 != LINUX_REBOOT_MAGIC2B &&
         magic2 != LINUX_REBOOT_MAGIC2C) {
         return -EINVAL;
-    }
-
-    /* Check CAP_SYS_BOOT capability */
-    fut_task_t *task = fut_task_current();
-    if (task && !(task->cap_effective & (1ULL << CAP_SYS_BOOT))) {
-        return -EPERM;
     }
 
     /* Sync all filesystems before shutdown/reboot */

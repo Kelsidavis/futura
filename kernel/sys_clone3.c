@@ -197,7 +197,14 @@ long sys_clone3(const struct fut_clone_args *uargs, size_t size) {
 
     /* CLONE_INTO_CGROUP: place child in target cgroup.
      * The cgroup fd is a file descriptor opened to a cgroupfs directory.
-     * After fork, we add the child's PID to the target cgroup's procs. */
+     * After fork, we add the child's PID to the target cgroup's procs.
+     *
+     * Linux's kernel/fork.c rejects CLONE_INTO_CGROUP with args.cgroup == 0
+     * as -EINVAL: a caller that explicitly opted into the flag but didn't
+     * supply a target fd has a programming error and Linux surfaces it.
+     * The previous Futura code silently ignored the flag, masking the bug. */
+    if ((flags & CLONE_INTO_CGROUP) && args.cgroup == 0)
+        return -EINVAL;
     int want_cgroup = (flags & CLONE_INTO_CGROUP) && args.cgroup;
     uint64_t cgroup_fd = args.cgroup;
     flags &= ~CLONE_INTO_CGROUP;

@@ -235,15 +235,23 @@ long sys_mprotect(void *addr, size_t len, int prot) {
         return -EINVAL;
     }
 
-    /* Validate end address is within userspace limits
-     * Prevent modifying kernel memory protection
-     * USER_SPACE_END is defined in platform paging headers */
+    /* Validate end address is within userspace limits.
+     * Prevent modifying kernel memory protection; USER_SPACE_END is
+     * defined in platform paging headers.
+     *
+     * Linux's mm/mprotect.c returns -ENOMEM when the range overruns
+     * TASK_SIZE: 'if ((end > TASK_SIZE) || (start > TASK_SIZE))
+     * goto out; ... error = -ENOMEM'. Futura previously surfaced
+     * this as EINVAL, collapsing 'address-not-mapped' into 'bad-
+     * parameter' and breaking libc mprotect wrappers that retry on
+     * ENOMEM (after re-mmap'ing) but treat EINVAL as a fatal usage
+     * error. Same Linux-parity fix as sys_msync. */
     uintptr_t end = start + aligned_len;
     if (end > USER_SPACE_END) {
-        fut_printf("[MPROTECT] mprotect(%p, %zu) -> EINVAL "
+        fut_printf("[MPROTECT] mprotect(%p, %zu) -> ENOMEM "
                    "(end address 0x%lx exceeds userspace limit 0x%lx)\n",
                    addr, aligned_len, end, USER_SPACE_END);
-        return -EINVAL;
+        return -ENOMEM;
     }
     /* Phase 3: Update VMA protection metadata for the requested range.
      * Split VMAs at range boundaries so only [start, end) gets new prot. */

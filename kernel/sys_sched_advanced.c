@@ -370,7 +370,15 @@ long sys_sched_get_priority_max(int policy) {
         case SCHED_OTHER:
         case SCHED_BATCH:
         case SCHED_IDLE:
-            max_priority = 0;  /* Non-RT policies only support priority 0 */
+        case SCHED_DEADLINE:
+            /* SCHED_DEADLINE doesn't use the static-priority field; Linux
+             * reports 0 for it the same way it does for the non-RT
+             * policies. The previous switch dropped to default-EINVAL,
+             * which broke programs that probe sched_get_priority_max
+             * before sched_setattr(SCHED_DEADLINE) — sys_sched_setscheduler
+             * already accepts SCHED_DEADLINE so the get_priority_max
+             * gate was the inconsistent entry point. */
+            max_priority = 0;
             break;
 
         case SCHED_FIFO:
@@ -406,6 +414,7 @@ long sys_sched_get_priority_min(int policy) {
         case SCHED_OTHER:
         case SCHED_BATCH:
         case SCHED_IDLE:
+        case SCHED_DEADLINE:  /* see sched_get_priority_max comment */
             min_priority = 0;
             break;
 

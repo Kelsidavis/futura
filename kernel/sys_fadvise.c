@@ -154,15 +154,15 @@ static void fadvise_dontneed(struct fut_vnode *vnode, uint64_t start, uint64_t e
  *   - -ESPIPE if fd refers to a pipe or socket
  */
 long sys_fadvise64(int fd, int64_t offset, int64_t len, int advice) {
-    /* Validate advice parameter */
-    if (advice < POSIX_FADV_NORMAL || advice > POSIX_FADV_NOREUSE) {
-        return -EINVAL;
-    }
-
-    /* Validate offset and length */
-    if (offset < 0 || len < 0) {
-        return -EINVAL;
-    }
+    /* Linux's fdget()-then-generic_fadvise() pipeline validates errors
+     * in this order: invalid fd -> EBADF, then S_ISFIFO -> ESPIPE,
+     * then advice switch -> EINVAL, then range -> EINVAL. The previous
+     * Futura ordering (advice -> range -> fd) returned EINVAL for
+     * fadvise64(invalid_fd, 0, 0, 99) where Linux returns EBADF.
+     * libc fadvise wrappers branch on EBADF to drop the hint silently
+     * but treat EINVAL as a programming error and abort, so the
+     * conflated errno breaks programs that probe an fd before using
+     * it. Match Linux's order. */
 
     /* Validate fd */
     if (fd < 0) {
@@ -181,6 +181,16 @@ long sys_fadvise64(int fd, int64_t offset, int64_t len, int advice) {
     /* Pipes and sockets are not seekable — fadvise doesn't apply */
     if (file->vnode && (file->vnode->type == VN_FIFO || file->vnode->type == VN_SOCK)) {
         return -ESPIPE;
+    }
+
+    /* Validate advice parameter */
+    if (advice < POSIX_FADV_NORMAL || advice > POSIX_FADV_NOREUSE) {
+        return -EINVAL;
+    }
+
+    /* Validate offset and length */
+    if (offset < 0 || len < 0) {
+        return -EINVAL;
     }
 
     struct fut_vnode *vnode = file->vnode;

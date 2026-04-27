@@ -503,11 +503,11 @@ long sys_getitimer(int which, struct itimerval *value) {
         return -ESRCH;
     }
 
-    if (!local_value) {
-        fut_printf("[GETITIMER] getitimer(which=%d) -> EFAULT (value is NULL)\n", local_which);
-        return -EFAULT;
-    }
-
+    /* Linux's sys_getitimer validates 'which' inside do_getitimer
+     * before put_old_itimerval ever touches the user pointer, so an
+     * invalid 'which' wins over a bad/NULL value pointer (EINVAL
+     * beats EFAULT).  The previous order returned EFAULT for
+     * getitimer(99, NULL), masking the real parameter-domain error. */
     const char *timer_name;
     switch (local_which) {
         case ITIMER_REAL:
@@ -522,6 +522,11 @@ long sys_getitimer(int which, struct itimerval *value) {
         default:
             fut_printf("[GETITIMER] getitimer(which=%d) -> EINVAL (invalid timer type)\n", local_which);
             return -EINVAL;
+    }
+
+    if (!local_value) {
+        fut_printf("[GETITIMER] getitimer(which=%s) -> EFAULT (value is NULL)\n", timer_name);
+        return -EFAULT;
     }
 
     struct itimerval timer;

@@ -135,13 +135,14 @@ long sys_sigaltstack(const struct sigaltstack *ss, struct sigaltstack *old_ss) {
         return -EINVAL;
     }
 
-    /* Copy old stack to user if requested */
-    if (old_ss) {
-        if (sigaltstack_copy_to_user(old_ss, &current->sig_altstack, sizeof(struct sigaltstack)) != 0) {
-            fut_printf("[SIGALTSTACK] sigaltstack -> EFAULT (invalid old_ss pointer)\n");
-            return -EFAULT;
-        }
-    }
+    /* Snapshot the current alt stack BEFORE we touch anything new.
+     * Linux's sigaltstack writes uoss only on success — i.e. after
+     * the new ss has been validated and installed. The previous code
+     * wrote old_ss first, so a subsequent ss-validation failure
+     * (EINVAL/EFAULT/ENOMEM) still left the userspace buffer
+     * clobbered with the pre-call value, which the documented ABI
+     * does not guarantee. */
+    struct sigaltstack saved_old = current->sig_altstack;
 
     /* If new stack specified, validate and install it */
     if (ss) {
@@ -226,6 +227,16 @@ long sys_sigaltstack(const struct sigaltstack *ss, struct sigaltstack *old_ss) {
     } else {
         fut_printf("[SIGALTSTACK] sigaltstack(NULL, old_ss=%p) -> 0 (query, pid=%u)\n",
                   old_ss, current->pid);
+    }
+
+    /* Now that ss validation/install has succeeded (or wasn't requested),
+     * publish the snapshotted old altstack to userspace. */
+    if (old_ss) {
+        if (sigaltstack_copy_to_user(old_ss, &saved_old,
+                                     sizeof(struct sigaltstack)) != 0) {
+            fut_printf("[SIGALTSTACK] sigaltstack -> EFAULT (invalid old_ss pointer)\n");
+            return -EFAULT;
+        }
     }
 
     return 0;

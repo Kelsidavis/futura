@@ -766,14 +766,13 @@ long sys_settimeofday(const fut_timeval_t *tv, const void *tz) {
         return -EFAULT;
     }
 
-    /* Phase 3: CAP_SYS_TIME required */
-    if (task->uid != 0 && !(task->cap_effective & (1ULL << CAP_SYS_TIME))) {
-        fut_printf("[SETTIMEOFDAY] settimeofday(pid=%llu) -> EPERM (CAP_SYS_TIME required)\n",
-                   (unsigned long long)task->pid);
-        return -EPERM;
-    }
-
-    /* Copy time from user */
+    /* Copy time from user. Linux validates the timeval (tv_usec range
+     * via SYSCALL_DEFINE2 + tv_sec >= 0 via timespec64_valid_settod)
+     * BEFORE security_settime64 runs the CAP_SYS_TIME gate, so a
+     * caller passing a malformed timeval gets -EINVAL regardless of
+     * privilege. The previous order ran the cap check first, turning
+     * unprivileged + bad-timeval into -EPERM and hiding the real
+     * domain error from libc/glibc settimeofday wrappers. */
     fut_timeval_t time;
     if (clock_copy_from_user(&time, local_tv, sizeof(fut_timeval_t)) != 0) {
         fut_printf("[SETTIMEOFDAY] settimeofday -> EFAULT (copy_from_user failed)\n");
@@ -792,6 +791,13 @@ long sys_settimeofday(const fut_timeval_t *tv, const void *tz) {
         fut_printf("[SETTIMEOFDAY] settimeofday(sec=%lld, usec=%lld) -> EINVAL (invalid timeval)\n",
                    time.tv_sec, time.tv_usec);
         return -EINVAL;
+    }
+
+    /* Phase 3: CAP_SYS_TIME required (security_settime64 in Linux) */
+    if (task->uid != 0 && !(task->cap_effective & (1ULL << CAP_SYS_TIME))) {
+        fut_printf("[SETTIMEOFDAY] settimeofday(pid=%llu) -> EPERM (CAP_SYS_TIME required)\n",
+                   (unsigned long long)task->pid);
+        return -EPERM;
     }
 
     /* Store wall clock offset (seconds precision).

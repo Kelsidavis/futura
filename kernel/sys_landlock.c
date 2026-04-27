@@ -452,11 +452,40 @@ long sys_cachestat(unsigned int fd, const void *cachestat_range,
 
 /**
  * sys_fchmodat2() - Change file permissions (Linux 6.6+, with flag support).
- * Delegates to sys_fchmodat; the main addition is AT_SYMLINK_NOFOLLOW which
- * already returns ENOTSUP from fchmodat (symlinks have no permissions).
+ *
+ * The whole reason Linux 6.6 introduced fchmodat2(2) is that the original
+ * fchmodat(2) couldn't accept AT_EMPTY_PATH — fchmodat2 adds support for
+ * AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW. With AT_EMPTY_PATH and an empty
+ * pathname, the call operates on dirfd itself (as fchmod). Without that
+ * special handling we'd just delegate to sys_fchmodat which rejects
+ * AT_EMPTY_PATH outright with EINVAL — defeating the new syscall.
  */
 long sys_fchmodat2(int dirfd, const char *pathname, unsigned int mode,
                    unsigned int flags) {
+    /* AT_EMPTY_PATH (0x1000): if pathname is empty, operate on dirfd. */
+    if (flags & 0x1000 /* AT_EMPTY_PATH */) {
+        bool is_empty = false;
+        if (!pathname) {
+            is_empty = true;
+        } else {
+            char first;
+#ifdef KERNEL_VIRTUAL_BASE
+            if ((uintptr_t)pathname >= KERNEL_VIRTUAL_BASE) {
+                first = pathname[0];
+            } else
+#endif
+            if (fut_copy_from_user(&first, pathname, 1) != 0)
+                return -EFAULT;
+            is_empty = (first == '\0');
+        }
+        if (is_empty) {
+            extern long sys_fchmod(int fd, uint32_t mode);
+            return sys_fchmod(dirfd, (uint32_t)mode);
+        }
+        /* Non-empty pathname with AT_EMPTY_PATH: fall through to fchmodat
+         * but strip the bit fchmodat doesn't recognize. */
+        flags &= ~0x1000u;
+    }
     extern long sys_fchmodat(int dirfd, const char *pathname, uint32_t mode, int flags);
     return sys_fchmodat(dirfd, pathname, (uint32_t)mode, (int)flags);
 }

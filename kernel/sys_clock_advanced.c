@@ -314,11 +314,23 @@ long sys_clock_nanosleep(int clock_id, int flags,
         return -EFAULT;
     }
 
-    /* Validate timespec */
-    if (request.tv_sec < 0 || request.tv_nsec < 0 || request.tv_nsec >= 1000000000LL) {
+    /* Validate timespec. tv_nsec must always be in [0, 1e9). tv_sec
+     * must be non-negative for the relative mode (a negative duration
+     * makes no sense), but Linux accepts any tv_sec for the absolute
+     * (TIMER_ABSTIME) mode — a past target just returns immediately
+     * with 0 (or ETIMEDOUT). The previous unconditional tv_sec < 0
+     * gate rejected legitimate absolute-time callers that pass a
+     * historical timestamp (e.g. as a 'fire now' marker). */
+    if (request.tv_nsec < 0 || request.tv_nsec >= 1000000000LL) {
         clock_nanosleep_printf("[CLOCK_NANOSLEEP] clock_nanosleep(clock_id=%d, sec=%lld, nsec=%lld) -> EINVAL "
-                   "(invalid timespec)\n",
+                   "(invalid tv_nsec)\n",
                    local_clock_id, request.tv_sec, request.tv_nsec);
+        return -EINVAL;
+    }
+    if (!(local_flags & 1 /* TIMER_ABSTIME */) && request.tv_sec < 0) {
+        clock_nanosleep_printf("[CLOCK_NANOSLEEP] clock_nanosleep(clock_id=%d, sec=%lld) -> EINVAL "
+                   "(relative mode rejects negative tv_sec)\n",
+                   local_clock_id, request.tv_sec);
         return -EINVAL;
     }
 

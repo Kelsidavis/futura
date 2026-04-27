@@ -68,8 +68,14 @@ long sys_rt_sigtimedwait(const uint64_t *uthese, void *uinfo,
     if (sigsetsize != sizeof(uint64_t))
         return -EINVAL;
 
+    /* Linux's do_sigtimedwait surfaces a bad uthese pointer through
+     * get_user/copy_from_user as -EFAULT, not -EINVAL: pointer faults
+     * are EFAULT, parameter-domain errors (sigsetsize wrong, empty
+     * mask) are EINVAL. The previous combined gate collapsed the two,
+     * masking the real error class for libc wrappers (glibc, musl)
+     * that branch on EFAULT to retry the syscall after page-fault. */
     if (!uthese)
-        return -EINVAL;
+        return -EFAULT;
 
     /* Copy signal set from user */
     uint64_t these = 0;

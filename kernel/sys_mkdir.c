@@ -126,12 +126,14 @@ long sys_mkdir(const char *path, uint32_t mode) {
         return -EFAULT;
     }
 
-    /* Phase 3: Validate mode bits - reject any bits outside permission mask (07777) */
-    if (local_mode & ~07777) {
-        fut_printf("[MKDIR] mkdir(path=?, mode=0%o) -> EINVAL (invalid mode bits 0%o outside 07777)\n",
-                   local_mode, local_mode & ~07777);
-        return -EINVAL;
-    }
+    /* Linux's mkdir masks mode to S_IALLUGO (07777) silently and applies
+     * umask, rather than rejecting high bits with EINVAL — programs
+     * routinely round-trip stat::st_mode (which includes S_IFDIR type
+     * bits, 040000) through mkdir() and rely on the kernel masking them
+     * away. The previous EINVAL gate broke 'mkdir(p, st.st_mode)' idioms
+     * — same fix as the recent chmod/fchmod silent-mask change
+     * (commit 657421d0). */
+    local_mode &= 07777;
 
     /* Phase 2: Categorize permission mode */
     const char *mode_desc;

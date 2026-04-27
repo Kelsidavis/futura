@@ -100,6 +100,10 @@ long sys_mkdirat(int dirfd, const char *pathname, unsigned int mode) {
     const char *local_pathname = pathname;
     unsigned int local_mode = mode;
 
+    /* Linux's mkdirat masks mode to S_IALLUGO (07777) silently —
+     * matches the just-applied mkdir / chmod / fchmod fix. */
+    local_mode &= 07777;
+
     fut_task_t *task = fut_task_current();
     if (!task) {
         fut_printf("[MKDIRAT] mkdirat(dirfd=%d, mode=0%o) -> ESRCH (no current task)\n",

@@ -889,7 +889,29 @@ static int fsctx_append_opt(struct fs_context *ctx, const char *key,
  */
 long sys_open_tree(int dirfd, const char *pathname, unsigned int flags) {
     (void)dirfd;
-    if (!pathname) return -EINVAL;
+    /* Linux open_tree(2) returns -EINVAL on any unknown bit in flags
+     * (security/keys/keyctl.c-style strict gate, plus the flag set
+     * documented in fs/namespace.c:open_tree). The previous code
+     * silently ignored unknown flag bits — a caller probing for future
+     * flag support couldn't tell new vs old kernel apart, defeating
+     * libmount's feature-detection path.
+     *
+     *   OPEN_TREE_CLONE       = 1
+     *   OPEN_TREE_CLOEXEC     = O_CLOEXEC (0x80000)
+     *   AT_EMPTY_PATH         = 0x1000
+     *   AT_NO_AUTOMOUNT       = 0x800
+     *   AT_RECURSIVE          = 0x8000
+     *   AT_SYMLINK_NOFOLLOW   = 0x100
+     */
+    const unsigned int OPEN_TREE_VALID =
+        OPEN_TREE_CLONE | OPEN_TREE_CLOEXEC |
+        0x1000u /* AT_EMPTY_PATH */ |
+        0x800u  /* AT_NO_AUTOMOUNT */ |
+        0x8000u /* AT_RECURSIVE */ |
+        0x100u  /* AT_SYMLINK_NOFOLLOW */;
+    if (flags & ~OPEN_TREE_VALID)
+        return -EINVAL;
+    if (!pathname) return -EFAULT;
 
     /* Stage pathname into a kernel buffer rather than walking the user
      * pointer directly. The previous loop did 'pathname[i]' for up to

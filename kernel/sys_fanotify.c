@@ -223,13 +223,30 @@ static void fan_enqueue_event(struct fanotify_group *grp, uint64_t mask,
  * Returns: file descriptor for the fanotify group, or negative errno.
  */
 long sys_fanotify_init(unsigned int flags, unsigned int event_f_flags) {
-    /* Permission check: content/pre-content classes need CAP_SYS_ADMIN */
+    /* Permission gates aligned with Linux fanotify_init(2):
+     *   - FAN_CLASS_CONTENT / FAN_CLASS_PRE_CONTENT need CAP_SYS_ADMIN
+     *   - FAN_UNLIMITED_QUEUE needs CAP_SYS_ADMIN (raises 16k ev cap)
+     *   - FAN_UNLIMITED_MARKS needs CAP_SYS_ADMIN (raises 8k mark cap)
+     *   - FAN_ENABLE_AUDIT    needs CAP_AUDIT_WRITE (cap 29)
+     * Without these checks an unprivileged caller could request the
+     * "unlimited" tiers (a memory-pressure DoS) or attach audit hooks
+     * to filesystem events. */
+    fut_task_t *task = fut_task_current();
+    bool sysadmin = !task || (task->uid == 0) ||
+        (task->cap_effective & (1ULL << 21 /* CAP_SYS_ADMIN */));
+    bool audit_write = !task || (task->uid == 0) ||
+        (task->cap_effective & (1ULL << 29 /* CAP_AUDIT_WRITE */));
+
     uint32_t fan_class = flags & 0x0C;
-    if (fan_class == FAN_CLASS_CONTENT || fan_class == FAN_CLASS_PRE_CONTENT) {
-        fut_task_t *task = fut_task_current();
-        if (task && !(task->cap_effective & (1ULL << 21))) /* CAP_SYS_ADMIN */
-            return -EPERM;
-    }
+    if ((fan_class == FAN_CLASS_CONTENT || fan_class == FAN_CLASS_PRE_CONTENT) &&
+        !sysadmin)
+        return -EPERM;
+    if ((flags & FAN_UNLIMITED_QUEUE) && !sysadmin)
+        return -EPERM;
+    if ((flags & FAN_UNLIMITED_MARKS) && !sysadmin)
+        return -EPERM;
+    if ((flags & FAN_ENABLE_AUDIT) && !audit_write)
+        return -EPERM;
 
     /* Find free slot */
     struct fanotify_group *grp = NULL;
@@ -243,7 +260,6 @@ long sys_fanotify_init(unsigned int flags, unsigned int event_f_flags) {
     grp->init_flags = flags;
     grp->event_f_flags = event_f_flags;
 
-    fut_task_t *task = fut_task_current();
     grp->owner_pid = task ? task->pid : 0;
 
     int fd = chrdev_alloc_fd(&fanotify_fops, NULL, grp);

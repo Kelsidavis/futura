@@ -225,11 +225,11 @@ long sys_acct(const char *filename) {
         return -ENAMETOOLONG;
     }
 
-    /* Phase 2: Validate filename is not empty */
+    /* Empty filename is ENOENT per Linux acct(2). */
     if (path_buf[0] == '\0') {
-        fut_printf("[ACCT] acct(filename=\"\", pid=%llu) -> EINVAL (empty filename)\n",
+        fut_printf("[ACCT] acct(filename=\"\", pid=%llu) -> ENOENT\n",
                    (unsigned long long)task->pid);
-        return -EINVAL;
+        return -ENOENT;
     }
 
     /* Phase 4: Validate or create the accounting file.

@@ -55,8 +55,14 @@ long sys_socketpair(int domain, int type, int protocol, int *sv) {
     int base_type = type & 0xFF;
     int type_flags = type & ~0xFF;
 
+    /* Linux's net/unix/af_unix.c:unix_create returns -ESOCKTNOSUPPORT
+     * for unsupported sock->type within a known family — same as the
+     * just-fixed sys_socket path. The distinction matters: glibc's
+     * socket()/socketpair() probes branch on ESOCKTNOSUPPORT to retry
+     * with another SOCK_* number, but treat EINVAL as a fatal call-
+     * shape error and abort. */
     if (base_type != SOCK_STREAM && base_type != SOCK_DGRAM && base_type != SOCK_SEQPACKET)
-        return -EINVAL;
+        return -ESOCKTNOSUPPORT;
 
     /* Reject unknown type flags (only SOCK_NONBLOCK and SOCK_CLOEXEC are valid) */
     if (type_flags & ~(SOCK_NONBLOCK | SOCK_CLOEXEC))

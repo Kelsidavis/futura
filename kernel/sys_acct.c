@@ -250,6 +250,26 @@ long sys_acct(const char *filename) {
                    path_buf, (unsigned long long)task->pid, fd);
         return fd;
     }
+    /* Linux's acct(2) rejects non-regular files with -EACCES after the
+     * open succeeds: 'if (!S_ISREG(file_inode(file)->i_mode)) goto
+     * out_putf' (kernel/acct.c:acct_on). Without this check Futura
+     * would happily install a FIFO, character/block device, or socket
+     * as the accounting "file" and silently dump per-process exit
+     * records into it on every task exit — depending on the target,
+     * that's either a write-anywhere primitive (device) or a system-
+     * wide DoS hang (FIFO with no reader). */
+    {
+        struct fut_file *acct_file = fut_vfs_get_file(fd);
+        if (acct_file && acct_file->vnode &&
+            acct_file->vnode->type != VN_REG) {
+            fut_vfs_close(fd);
+            fut_printf("[ACCT] acct(filename='%s', pid=%llu) -> EACCES "
+                       "(not a regular file: type=%d)\n",
+                       path_buf, (unsigned long long)task->pid,
+                       acct_file->vnode->type);
+            return -EACCES;
+        }
+    }
     fut_vfs_close(fd);
 
     /* Enable accounting and store the path */

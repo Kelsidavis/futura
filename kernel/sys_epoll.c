@@ -897,12 +897,14 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
         num[num_pos] = '\0';
         for (int i = 0; num[i]; i++) { msg[pos++] = num[i]; }
 
-        text = ") -> EINVAL (NULL event pointer for ADD/MOD)\n";
+        text = ") -> EFAULT (NULL event pointer for ADD/MOD)\n";
         while (*text) { msg[pos++] = *text++; }
         msg[pos] = '\0';
         fut_printf("%s", msg);
 
-        return -EINVAL;
+        /* NULL event is a pointer fault (EFAULT) per Linux epoll_ctl(2);
+         * the kernel must dereference event to copy the descriptor in. */
+        return -EFAULT;
     }
 
     /* Detect kernel-space event pointer (kernel-internal callers, e.g. tests) */
@@ -1477,12 +1479,14 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
         num[num_pos] = '\0';
         for (int i = 0; num[i]; i++) { msg[pos++] = num[i]; }
 
-        text = ") -> EINVAL (NULL events array)\n";
+        text = ") -> EFAULT (NULL events array)\n";
         while (*text) { msg[pos++] = *text++; }
         msg[pos] = '\0';
         fut_printf("%s", msg);
 
-        return -EINVAL;
+        /* NULL events is a pointer fault (EFAULT) per Linux epoll_wait(2);
+         * the kernel must dereference events to write delivered records. */
+        return -EFAULT;
     }
 
     /* Verify events array is writable (skip for kernel buffers) */

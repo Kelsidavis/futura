@@ -129,18 +129,19 @@ long sys_linkat(int olddirfd, const char *oldpath, int newdirfd, const char *new
         return -EINVAL;
     }
 
-    /* Validate oldpath pointer */
+    /* Validate oldpath/newpath pointers — NULL is a pointer fault per
+     * Linux's linkat(2), not a parameter-domain error. The previous EINVAL
+     * masked NULL-pointer mistakes as bad-arg errors. */
     if (!local_oldpath) {
-        fut_printf("[LINKAT] linkat(olddirfd=%d, oldpath=NULL) -> EINVAL (NULL oldpath)\n",
+        fut_printf("[LINKAT] linkat(olddirfd=%d, oldpath=NULL) -> EFAULT\n",
                    local_olddirfd);
-        return -EINVAL;
+        return -EFAULT;
     }
 
-    /* Validate newpath pointer */
     if (!local_newpath) {
-        fut_printf("[LINKAT] linkat(newdirfd=%d, newpath=NULL) -> EINVAL (NULL newpath)\n",
+        fut_printf("[LINKAT] linkat(newdirfd=%d, newpath=NULL) -> EFAULT\n",
                    local_newdirfd);
-        return -EINVAL;
+        return -EFAULT;
     }
 
     /* Copy oldpath from userspace */

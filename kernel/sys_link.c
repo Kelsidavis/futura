@@ -180,18 +180,15 @@ long sys_link(const char *oldpath, const char *newpath) {
     const char *local_oldpath = oldpath;
     const char *local_newpath = newpath;
 
-    /* Phase 2: Validate oldpath pointer */
+    /* NULL paths are pointer faults (EFAULT) per Linux link(2). */
     if (!local_oldpath) {
-        fut_printf("[LINK] link(oldpath=NULL, newpath=?) -> EINVAL "
-                   "(NULL oldpath, Phase 2)\n");
-        return -EINVAL;
+        fut_printf("[LINK] link(oldpath=NULL, newpath=?) -> EFAULT\n");
+        return -EFAULT;
     }
 
-    /* Phase 2: Validate newpath pointer */
     if (!local_newpath) {
-        fut_printf("[LINK] link(oldpath=?, newpath=NULL) -> EINVAL "
-                   "(NULL newpath, Phase 2)\n");
-        return -EINVAL;
+        fut_printf("[LINK] link(oldpath=?, newpath=NULL) -> EFAULT\n");
+        return -EFAULT;
     }
 
     /* Copy oldpath with truncation detection

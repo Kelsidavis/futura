@@ -796,13 +796,19 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
 
     case 1032: /* F_GETPIPE_SZ */
         /* Return actual pipe buffer capacity via pipe_get_buffer_size().
-         * Only valid for pipe file descriptors (chr_ops, no vnode). */
+         * Only valid for pipe file descriptors (chr_ops, no vnode).
+         *
+         * Linux's pipe_fcntl returns -EBADF when the fd isn't a pipe
+         * ('if (!pipe) return -EBADF'), not -EINVAL. The previous
+         * EINVAL diverged from the documented errno class — libc
+         * pipe-size probes branch on EBADF to mean "not a pipe, skip"
+         * but treat EINVAL as a programming error. */
         if (file->chr_ops && !file->vnode) {
             extern size_t pipe_get_buffer_size(void *priv);
             size_t sz = pipe_get_buffer_size(file->chr_private);
             return sz ? (long)sz : 4096;
         }
-        return -EINVAL;
+        return -EBADF;
 
     case F_GET_SEALS:
         /* Only sealing-capable fds (memfd MFD_ALLOW_SEALING) return seals.

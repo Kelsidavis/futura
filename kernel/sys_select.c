@@ -1258,11 +1258,12 @@ long sys_ppoll(void *fds, unsigned int nfds, void *tmo_p, const void *sigmask,
     void *local_tmo_p = tmo_p;
     const void *local_sigmask = sigmask;
 
-    /* Validate parameters */
+    /* NULL fds with non-zero nfds is a pointer fault (EFAULT) per Linux
+     * ppoll(2) — matches the sister sys_poll() check above. */
     if (!local_fds && local_nfds > 0) {
-        fut_printf("[PPOLL] ppoll(fds=NULL, nfds=%u) -> EINVAL (NULL fds with non-zero nfds)\n",
+        fut_printf("[PPOLL] ppoll(fds=NULL, nfds=%u) -> EFAULT\n",
                    local_nfds);
-        return -EINVAL;
+        return -EFAULT;
     }
 
     /* Validate nfds against reasonable limit to prevent DoS

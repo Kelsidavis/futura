@@ -2385,8 +2385,25 @@ int fut_vfs_open(const char *path, int flags, int mode) {
         }
     }
 
-    /* O_TRUNC: truncate existing regular files to zero length (no-op with O_PATH) */
+    /* O_TRUNC: truncate existing regular files to zero length (no-op with O_PATH).
+     *
+     * Linux requires WRITE permission on the file to honor O_TRUNC, even when
+     * the open's access mode is O_RDONLY — otherwise a caller with read-only
+     * access could clear any file simply by adding O_TRUNC. The earlier
+     * write-access-mode branch above only catches O_WRONLY / O_RDWR opens, so
+     * for the O_RDONLY | O_TRUNC path we re-check explicitly here. */
     if ((flags & O_TRUNC) && !(flags & O_PATH) && !created && vnode->type == VN_REG) {
+        if (!(flags & (O_WRONLY | O_RDWR))) {
+            int perm_ret = check_file_permission(vnode, NULL, true);
+            if (perm_ret < 0) {
+                fut_printf("[VFS-OPEN] O_TRUNC denied: caller lacks write permission "
+                           "on '%s' (mode=0%o)\n", path, vnode->mode);
+                if (file->path) { fut_free(file->path); }
+                fut_free(file);
+                release_lookup_ref(vnode);
+                return perm_ret;
+            }
+        }
         if (vnode->ops && vnode->ops->truncate) {
             int trunc_ret = vnode->ops->truncate(vnode, 0);
             if (trunc_ret < 0) {

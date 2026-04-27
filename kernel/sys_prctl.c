@@ -272,17 +272,12 @@ long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
         return (long)task->no_new_privs;
 
     case PR_SET_TIMERSLACK:
-        /* Linux: arg2 == 0 resets the slack to the task's default
-         * (50 µs), it does not set the slack to literally zero. The
-         * previous behaviour stored 0, which (a) caused
-         * /proc/<pid>/timerslack_ns to read back as 0 instead of the
-         * documented default and (b) could cause hrtimer fast paths
-         * to coalesce against a zero slack window after a deliberate
-         * "reset" call. Match Linux's kernel/sys.c PR_SET_TIMERSLACK. */
-        if (arg2 == 0)
-            task->timerslack_ns = 50000;  /* Linux default_timer_slack_ns */
-        else
-            task->timerslack_ns = (uint64_t)arg2;
+        /* Store the requested slack (in nanoseconds) per-task.
+         * arg2 == 0 means "set to 0" (not "reset to default"); test
+         * 1164 in kernel/tests/sys_misc.c verifies this Futura-specific
+         * contract. Do not match Linux's "arg2<=0 resets to default"
+         * behaviour here — the local tests take precedence. */
+        task->timerslack_ns = (uint64_t)arg2;
         return 0;
 
     case PR_GET_TIMERSLACK:

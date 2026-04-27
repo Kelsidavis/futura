@@ -144,6 +144,16 @@ long sys_clock_settime(int clock_id, const fut_timespec_t *tp) {
             clock_name = "CLOCK_REALTIME";
             is_settable = 1;
             break;
+        case CLOCK_TAI:
+            /* Linux 3.10+: CLOCK_TAI is settable through clock_settime;
+             * sys_clock_gettime already aliases it to CLOCK_REALTIME (no
+             * leap-second offset tracked here), so accept it on the
+             * settime path too. The previous default arm rejected
+             * CLOCK_TAI with EINVAL, breaking chrony / ptp tools that
+             * stamp the wall clock via CLOCK_TAI. */
+            clock_name = "CLOCK_TAI";
+            is_settable = 1;
+            break;
         case CLOCK_MONOTONIC:
             clock_name = "CLOCK_MONOTONIC";
             break;

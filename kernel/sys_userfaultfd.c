@@ -267,6 +267,16 @@ long uffd_ioctl(int fd, unsigned int cmd, unsigned long arg) {
         if (!reg) return -EFAULT;
         if (reg->range.start & 0xFFF) return -EINVAL; /* Must be page-aligned */
         if (reg->range.len == 0 || (reg->range.len & 0xFFF)) return -EINVAL;
+        /* Linux userfaultfd_register validates mode against the known
+         * MISSING/WP/MINOR bits and returns -EINVAL on any unknown bit.
+         * Without this check a caller could stash a 64-bit cookie in the
+         * upper bits of mode, then read it back via /proc fd inspection
+         * or future kernel features that interpret those bits. Mode==0
+         * (no event flavor selected) is equally invalid. */
+        if (reg->mode & ~(UFFDIO_REGISTER_MODE_MISSING |
+                          UFFDIO_REGISTER_MODE_WP |
+                          UFFDIO_REGISTER_MODE_MINOR))
+            return -EINVAL;
         if (reg->mode == 0) return -EINVAL;
 
         /* Find free region slot */
@@ -307,6 +317,8 @@ long uffd_ioctl(int fd, unsigned int cmd, unsigned long arg) {
         if (!cp) return -EFAULT;
         if (cp->dst & 0xFFF) return -EINVAL;
         if (cp->len == 0 || (cp->len & 0xFFF)) return -EINVAL;
+        if (cp->mode & ~(UFFDIO_COPY_MODE_DONTWAKE | UFFDIO_COPY_MODE_WP))
+            return -EINVAL;
         /* dst and src are user-space addresses for the userfaultfd-
          * registered region. Reject any address that lands in kernel
          * memory for unprivileged callers: the memcpy below would
@@ -345,6 +357,8 @@ long uffd_ioctl(int fd, unsigned int cmd, unsigned long arg) {
         if (!zp) return -EFAULT;
         if (zp->range.start & 0xFFF) return -EINVAL;
         if (zp->range.len == 0 || (zp->range.len & 0xFFF)) return -EINVAL;
+        if (zp->mode & ~UFFDIO_ZEROPAGE_MODE_DONTWAKE)
+            return -EINVAL;
         /* Same gate as UFFDIO_COPY: kernel ranges are blocked for
          * unprivileged callers (would let the memset wipe arbitrary
          * kernel pages) but allowed for uid==0/CAP_SYS_ADMIN so
@@ -377,6 +391,11 @@ long uffd_ioctl(int fd, unsigned int cmd, unsigned long arg) {
     case UFFDIO_WRITEPROTECT: {
         struct uffdio_writeprotect *wp = (struct uffdio_writeprotect *)(uintptr_t)arg;
         if (!wp) return -EFAULT;
+        if (wp->range.start & 0xFFF) return -EINVAL;
+        if (wp->range.len == 0 || (wp->range.len & 0xFFF)) return -EINVAL;
+        if (wp->mode & ~(UFFDIO_WRITEPROTECT_MODE_WP |
+                         UFFDIO_WRITEPROTECT_MODE_DONTWAKE))
+            return -EINVAL;
         /* Accept the call; actual write protection would require page table manipulation */
         return 0;
     }

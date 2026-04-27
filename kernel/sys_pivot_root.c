@@ -81,8 +81,9 @@ long sys_pivot_root(const char *new_root, const char *put_old) {
         return -EFAULT;
     if (memchr(new_root_buf, '\0', sizeof(new_root_buf)) == NULL)
         return -ENAMETOOLONG;
+    /* Empty pathname is ENOENT per Linux pivot_root(2). */
     if (new_root_buf[0] == '\0')
-        return -EINVAL;
+        return -ENOENT;
 
     /* Copy and validate put_old from userspace */
     if (!put_old) {
@@ -95,7 +96,7 @@ long sys_pivot_root(const char *new_root, const char *put_old) {
     if (memchr(put_old_buf, '\0', sizeof(put_old_buf)) == NULL)
         return -ENAMETOOLONG;
     if (put_old_buf[0] == '\0')
-        return -EINVAL;
+        return -ENOENT;
 
     /* Permission check: require CAP_SYS_ADMIN or root */
     bool has_cap = (task->cap_effective & (1ULL << CAP_SYS_ADMIN)) != 0;

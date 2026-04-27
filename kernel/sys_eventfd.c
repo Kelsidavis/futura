@@ -992,13 +992,11 @@ long sys_eventfd2(unsigned int initval, int flags) {
         eventfd_fops_inited = 1;
     }
 
-    /* Phase 3: Validate initval doesn't exceed counter capacity */
-    /* eventfd counter is uint64_t, reject overly large initial values */
-    if (initval > 0xFFFFFFFE) {
-        fut_printf("[EVENTFD2] sys_eventfd2(initval=%u, flags=0x%x) -> EINVAL (initval exceeds counter capacity)\n",
-                   initval, flags);
-        return -EINVAL;
-    }
+    /* No initval upper bound: Linux accepts any unsigned-int initval and
+     * stores it directly into a uint64_t counter (UINT_MAX is well below
+     * the EFD_MAX_COUNT = ULLONG_MAX-1 ceiling that matters during read).
+     * The previous 0xFFFFFFFE guard rejected only initval == UINT_MAX,
+     * which is valid under Linux's eventfd2(2) ABI. */
 
     /* Phase 4: Validate flags contains only supported bits (prevent invalid flag combinations) */
     int valid_flags = EFD_CLOEXEC | EFD_NONBLOCK | EFD_SEMAPHORE;

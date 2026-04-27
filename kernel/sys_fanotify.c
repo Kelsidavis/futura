@@ -357,6 +357,25 @@ long sys_fanotify_mark(int fanotify_fd, unsigned int flags,
     if (op != FAN_MARK_FLUSH && (mask & ~FANOTIFY_MASK_VALID))
         return -EINVAL;
 
+    /* Linux fanotify_mark gates the *_PERM events on the group's class:
+     * permission events (FAN_OPEN_PERM, FAN_ACCESS_PERM, FAN_OPEN_EXEC_PERM)
+     * are only meaningful on FAN_CLASS_CONTENT or FAN_CLASS_PRE_CONTENT
+     * groups, since NOTIF-class groups have no way to receive a
+     * permission-decision response. Linux returns -EINVAL otherwise:
+     *   if (mask & FANOTIFY_PERM_EVENTS &&
+     *       group->priority == FSNOTIFY_PRIO_NORMAL)
+     *       return -EINVAL;
+     * Futura silently accepted PERM events on NOTIF groups, leaving
+     * them to never fire — masking a configuration bug from libfanotify
+     * users. */
+    {
+        unsigned long perm_events = FAN_OPEN_PERM | FAN_ACCESS_PERM |
+                                    FAN_OPEN_EXEC_PERM;
+        uint32_t cls = grp->init_flags & 0x0C;  /* FAN_CLASS_* mask */
+        if ((mask & perm_events) && cls == FAN_CLASS_NOTIF)
+            return -EINVAL;
+    }
+
     /* Stage the user-supplied path into a kernel buffer up front so we
      * never strcmp/index a user pointer directly. */
     char kpath[256];

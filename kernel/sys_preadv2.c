@@ -45,6 +45,15 @@ ssize_t sys_preadv2(int fd, const struct iovec *iov, int iovcnt,
     if (flags & ~RWF_VALID)
         return -EINVAL;
 
+    /* Linux's preadv2 treats offset == -1 as 'use current file position'
+     * and rejects offset < -1 with -EINVAL (fs/read_write.c). The
+     * previous Futura code passed any negative offset > -1 (e.g. -2)
+     * straight through to sys_preadv, which only knew to reject offset
+     * < 0 generally — collapsing the 'use current position' sentinel
+     * with bogus negatives. Be explicit. */
+    if (offset < -1)
+        return -EINVAL;
+
     if (offset == -1) {
         /* Use current file position (same as readv) */
         extern ssize_t sys_readv(int fd, const struct iovec *iov, int iovcnt);
@@ -70,6 +79,11 @@ ssize_t sys_preadv2(int fd, const struct iovec *iov, int iovcnt,
 ssize_t sys_pwritev2(int fd, const struct iovec *iov, int iovcnt,
                      int64_t offset, int flags) {
     if (flags & ~RWF_VALID)
+        return -EINVAL;
+
+    /* Same Linux contract as preadv2: offset == -1 means 'current pos',
+     * offset < -1 is -EINVAL. */
+    if (offset < -1)
         return -EINVAL;
 
     if (offset == -1) {

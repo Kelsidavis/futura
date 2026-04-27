@@ -509,11 +509,20 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
             case SO_SNDBUF:
             case SO_RCVBUF: {
                 /* Linux doubles the requested value; minimum is 2048 bytes.
-                 * Cap at sysctl_rmem_max/sysctl_wmem_max (default 212992). */
+                 * Cap at sysctl_rmem_max/sysctl_wmem_max (default 212992).
+                 *
+                 * Linux's sock_setsockopt silently clamps a negative
+                 * value to the SOCK_MIN_*BUF floor — it does not
+                 * return -EINVAL. The previous Futura gate diverged:
+                 * a libc that passes through application-supplied
+                 * sizes (some apps compute a target as 'available_mem
+                 * - reserved' and accidentally produce a negative on
+                 * tight machines) saw EINVAL on Futura but a clamped
+                 * minimum on Linux. */
                 if (optlen < (socklen_t)sizeof(int)) return -EINVAL;
                 int req = 0;
                 if (sso_copy_from_user(&req, optval, sizeof(int)) != 0) return -EFAULT;
-                if (req < 0) return -EINVAL;
+                if (req < 0) req = 0;
                 /* Double the requested value in unsigned arithmetic; the
                  * old 'req * 2' on a signed int triggered UB once req
                  * reached INT_MAX/2. Saturate at UINT32_MAX/2 before the

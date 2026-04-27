@@ -228,6 +228,18 @@ long sys_clone3(const struct fut_clone_args *uargs, size_t size) {
                    (unsigned long long)flags);
         return -EINVAL;
     }
+    /* Linux's clone3_args_valid: 'if (CLONE_THREAD && exit_signal)
+     * return false'. New threads share their parent's signal_struct,
+     * so there's no separate process-exit moment to deliver
+     * exit_signal at — passing one is meaningless and Linux rejects
+     * it as a malformed args struct. */
+    if ((flags & CLONE_THREAD) && args.exit_signal) {
+        fut_printf("[CLONE3] clone3(flags=0x%llx, exit_signal=%llu) -> EINVAL "
+                   "(CLONE_THREAD forbids exit_signal)\n",
+                   (unsigned long long)flags,
+                   (unsigned long long)args.exit_signal);
+        return -EINVAL;
+    }
     if ((flags & CLONE_SIGHAND) && !(flags & CLONE_VM)) {
         fut_printf("[CLONE3] clone3(flags=0x%llx) -> EINVAL "
                    "(CLONE_SIGHAND requires CLONE_VM)\n",

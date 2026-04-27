@@ -807,7 +807,18 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
         if (sso_copy_from_user(&val, optval, sizeof(int)) != 0) return -EFAULT;
         switch (optname) {
             case 1:  socket->tcp_nodelay     = (uint8_t)(val != 0); return 0; /* TCP_NODELAY */
-            case 2:  if (val > 0) socket->tcp_maxseg = (uint32_t)val; return 0; /* TCP_MAXSEG */
+            case 2: /* TCP_MAXSEG */
+                /* Linux's do_tcp_setsockopt rejects val outside
+                 * [TCP_MIN_MSS=88, MAX_TCP_WINDOW=32767] with -EINVAL:
+                 *   if (val && (val < TCP_MIN_MSS || val > MAX_TCP_WINDOW))
+                 *       return -EINVAL;
+                 * val == 0 leaves the existing user_mss unchanged.
+                 * The previous gate accepted any val > 0 — including 1
+                 * or 87 — which a strict TCP stack would later trip on
+                 * during option negotiation. */
+                if (val != 0 && (val < 88 || val > 32767)) return -EINVAL;
+                if (val > 0) socket->tcp_maxseg = (uint32_t)val;
+                return 0;
             case 3: { /* TCP_CORK — delay sending until uncorked or buffer full */
                 uint8_t was_corked = socket->tcp_cork;
                 socket->tcp_cork = (uint8_t)(val != 0);

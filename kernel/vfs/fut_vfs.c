@@ -2282,9 +2282,14 @@ int fut_vfs_open(const char *path, int flags, int mode) {
          * use of atime. Root (uid 0) bypasses, matching Linux. */
         if (flags & O_NOATIME) {
             fut_task_t *na_task = fut_task_current();
+            /* CAP_FOWNER is bit 3, not 4 (4 is CAP_FSETID). The earlier
+             * O_NOATIME ownership commit (93708c8d) used the wrong bit,
+             * which (a) let any caller with CAP_FSETID bypass the
+             * ownership check, and (b) blocked legitimate CAP_FOWNER
+             * holders. Use the correct bit. */
             if (na_task && na_task->uid != 0 &&
                 na_task->uid != vnode->uid &&
-                !(na_task->cap_effective & (1ULL << 4 /* CAP_FOWNER */))) {
+                !(na_task->cap_effective & (1ULL << 3 /* CAP_FOWNER */))) {
                 VFSDBG("[vfs-open] O_NOATIME EPERM (uid=%u != owner=%u)\n",
                        na_task->uid, vnode->uid);
                 release_lookup_ref(vnode);

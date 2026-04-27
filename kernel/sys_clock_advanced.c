@@ -659,7 +659,16 @@ long sys_setitimer(int which, const struct itimerval *value, struct itimerval *o
                         ((uint64_t)new_timer.it_interval.tv_usec + 999) / 1000;
 
     if (local_which == ITIMER_REAL) {
-        /* Convert ms to ticks for storage */
+        /* Convert ms to ticks for storage. Linux's setitimer stores the
+         * caller-supplied interval regardless of whether the value
+         * arms or disarms the timer (kernel/time/itimer.c stores both
+         * 'incr' and 'expires' under the lock unconditionally) — the
+         * interval simply waits idle until a future setitimer arms a
+         * value. The previous code zeroed the interval whenever
+         * value_ms==0, so a caller staging up a periodic timer with
+         * setitimer({0,0}, {1s,0}) followed by setitimer({1s,0},
+         * unchanged) found the interval gone and the timer became
+         * one-shot. Mirror Linux: store interval unconditionally. */
         uint64_t intv_ticks = intv_ms / 10;
         if (intv_ms % 10 != 0) intv_ticks++;
         task->itimer_real_interval_ms = intv_ticks;
@@ -669,8 +678,8 @@ long sys_setitimer(int which, const struct itimerval *value, struct itimerval *o
             if (value_ticks == 0) value_ticks = 1;
             task->alarm_expires_ms = now_ticks + value_ticks;
         } else {
-            task->alarm_expires_ms     = 0;
-            task->itimer_real_interval_ms = 0;
+            /* Disarm only — keep the interval the caller supplied. */
+            task->alarm_expires_ms = 0;
         }
     } else if (local_which == ITIMER_VIRTUAL) {
         task->itimer_virt_value_ms    = value_ms;

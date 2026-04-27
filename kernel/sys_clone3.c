@@ -189,6 +189,22 @@ long sys_clone3(const struct fut_clone_args *uargs, size_t size) {
                 return -EPERM;
         }
     }
+    /* Linux's kernel/fork.c:copy_fs() rejects 'CLONE_FS combined with
+     * CLONE_NEWUSER or CLONE_NEWNS' with -EINVAL: a child sharing the
+     * parent's struct fs but living in a fresh user/mount namespace
+     * could chroot/chdir the parent through that shared fs_struct
+     * — a documented privilege-escalation pattern that namespacing
+     * exists to prevent. Futura silently accepted the combination,
+     * so a rootless-container-style caller passing CLONE_FS|CLONE_NEWUSER
+     * could break out of the new user-NS. Match Linux. */
+    if ((flags & CLONE_FS) &&
+        (ns_flags & (CLONE_NEWUSER | CLONE_NEWNS))) {
+        fut_printf("[CLONE3] clone3(flags=0x%llx) -> EINVAL "
+                   "(CLONE_FS conflicts with CLONE_NEWUSER/CLONE_NEWNS)\n",
+                   (unsigned long long)flags);
+        return -EINVAL;
+    }
+
     flags &= ~CLONE_NAMESPACE_FLAGS;  /* Remove namespace flags before passing to fork */
 
     /* CLONE_CLEAR_SIGHAND and CLONE_SIGHAND are mutually exclusive (Linux 5.5) */

@@ -195,6 +195,19 @@ long sys_clone3(const struct fut_clone_args *uargs, size_t size) {
     if ((flags & CLONE_CLEAR_SIGHAND) && (flags & CLONE_SIGHAND))
         return -EINVAL;
 
+    /* Linux's copy_clone_args_from_user enforces 'exit_signal & ~CSIGNAL'
+     * (CSIGNAL == 0xff) being zero — the field only has 8 bits of meaningful
+     * signal number. Without this check a caller could pass a large
+     * exit_signal value that survives the (int) cast and is later fed to
+     * fut_signal_send_thread() at exit, where signum > _NSIG silently
+     * does nothing (best case) or indexes a per-signal array OOB. */
+    if (args.exit_signal & ~0xffULL) {
+        fut_printf("[CLONE3] clone3(exit_signal=0x%llx) -> EINVAL "
+                   "(only low 8 bits are valid signal bits)\n",
+                   (unsigned long long)args.exit_signal);
+        return -EINVAL;
+    }
+
     /* CLONE_INTO_CGROUP: place child in target cgroup.
      * The cgroup fd is a file descriptor opened to a cgroupfs directory.
      * After fork, we add the child's PID to the target cgroup's procs.

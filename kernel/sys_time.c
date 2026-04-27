@@ -137,9 +137,16 @@ long sys_gettimeofday(fut_timeval_t *tv, void *tz) {
         return -EFAULT;
     }
 
+    /* Linux's gettimeofday(2) accepts a non-NULL tz argument and fills
+     * it with the global sys_tz (which is zero-initialized on modern
+     * Linux: tz_minuteswest=0, tz_dsttime=0). The previous EINVAL gate
+     * broke libc wrappers (glibc, musl) that historically pass a
+     * timezone struct, even though the man page deprecates it.
+     * Same Linux-parity fix as the recent settimeofday(tz) acceptance. */
     if (tz != NULL) {
-        fut_printf("[TIME] gettimeofday: timezone parameter not supported\n");
-        return -EINVAL;
+        struct { int tz_minuteswest; int tz_dsttime; } zero_tz = {0, 0};
+        if (time_copy_to_user(tz, &zero_tz, sizeof(zero_tz)) != 0)
+            return -EFAULT;
     }
 
     /* Get current time: convert ticks (100 Hz) to real time.

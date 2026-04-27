@@ -239,6 +239,35 @@ long sys_fanotify_init(unsigned int flags, unsigned int event_f_flags) {
     if (flags & ~FANOTIFY_INIT_VALID)
         return -EINVAL;
 
+    /* Linux validates the FAN_CLASS_* selector against its three
+     * defined values (NOTIF=0, CONTENT=4, PRE_CONTENT=8). The previous
+     * code only used the class bits to decide whether CAP_SYS_ADMIN
+     * was required, accepting the illegal combination 0xC
+     * (FAN_CLASS_CONTENT | FAN_CLASS_PRE_CONTENT) without complaint —
+     * a future-flag-detection probe that walks the class bit-field
+     * would silently treat the unknown class as 'kernel-too-new'
+     * instead of getting EINVAL like every other Linux kernel. */
+    {
+        unsigned int klass = flags & 0x0Cu;
+        if (klass != FAN_CLASS_NOTIF &&
+            klass != FAN_CLASS_CONTENT &&
+            klass != FAN_CLASS_PRE_CONTENT)
+            return -EINVAL;
+    }
+
+    /* Linux's fanotify_init also rejects an event_f_flags whose
+     * O_ACCMODE bits are anything other than O_RDONLY/O_WRONLY/O_RDWR
+     * (an event fd opened in a fourth mode would let the caller smuggle
+     * an unconstrained file flag through the fanotify-event delivery
+     * path). */
+    {
+        unsigned int accmode = event_f_flags & 0x3 /* O_ACCMODE */;
+        if (accmode != 0 /* O_RDONLY */ &&
+            accmode != 1 /* O_WRONLY */ &&
+            accmode != 2 /* O_RDWR  */)
+            return -EINVAL;
+    }
+
     /* Permission gates aligned with Linux fanotify_init(2):
      *   - FAN_CLASS_CONTENT / FAN_CLASS_PRE_CONTENT need CAP_SYS_ADMIN
      *   - FAN_UNLIMITED_QUEUE needs CAP_SYS_ADMIN (raises 16k ev cap)

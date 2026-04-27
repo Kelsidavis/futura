@@ -651,6 +651,16 @@ long sys_getxattr(const char *path, const char *name, void *value, size_t size) 
         return -EFAULT;
     }
 
+    /* Linux's vfs_getxattr surfaces a NULL output buffer with size>0 as
+     * -EFAULT (copy_to_user fault). The previous code skipped the copy
+     * silently when value==NULL, returning the attribute size as if it
+     * had been written — silent data loss for callers that misroute the
+     * output pointer. size==0 is the legitimate "query size" form and
+     * still returns attr_size. */
+    if (size > 0 && !value) {
+        return -EFAULT;
+    }
+
     char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
     char name_buf[XATTR_NAME_MAX + 1];
     long ret = xattr_copy_path_and_name(path, name, path_buf, name_buf, "getxattr");
@@ -693,6 +703,12 @@ long sys_lgetxattr(const char *path, const char *name, void *value, size_t size)
         return -EFAULT;
     }
 
+    /* See sys_getxattr: NULL value with size>0 is EFAULT, not silent
+     * data loss. */
+    if (size > 0 && !value) {
+        return -EFAULT;
+    }
+
     char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
     char name_buf[XATTR_NAME_MAX + 1];
     long ret = xattr_copy_path_and_name(path, name, path_buf, name_buf, "lgetxattr");
@@ -732,6 +748,12 @@ long sys_fgetxattr(int fd, const char *name, void *value, size_t size) {
     }
 
     if (!name) {
+        return -EFAULT;
+    }
+
+    /* See sys_getxattr: NULL value with size>0 is EFAULT, not silent
+     * data loss. */
+    if (size > 0 && !value) {
         return -EFAULT;
     }
 

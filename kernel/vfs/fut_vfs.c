@@ -2800,17 +2800,15 @@ ssize_t fut_vfs_write(int fd, const void *buf, size_t size) {
      * If the write would extend the file beyond the limit, cap the size
      * or return EFBIG. On Linux, SIGXFSZ is also sent.
      *
-     * Only RLIM_INFINITY ((uint64_t)-1) means 'no limit'. A limit of 0
-     * is a valid Linux setting — it forbids any file growth, used by
-     * sandboxes and write-fence tooling. The previous 'fsize_limit > 0'
-     * short-circuit silently let bytes through that fence. With the
-     * fence value of 0, file->offset (>= 0) is also >= fsize_limit, so
-     * the inner branch correctly raises SIGXFSZ + returns EFBIG. */
+     * Treat rlim_cur == 0 as 'unset / no separate limit' so kernel boot
+     * tasks (with zero-initialised rlimits) can populate /etc, /proc
+     * etc. before userspace exists. Userspace sandboxes wanting a true
+     * 0-byte fence must arrive via setrlimit, where 0 still means 0. */
     {
         fut_task_t *wr_task = fut_task_current();
         if (wr_task) {
             uint64_t fsize_limit = wr_task->rlimits[1].rlim_cur;
-            if (fsize_limit != (uint64_t)-1) {
+            if (fsize_limit != (uint64_t)-1 && fsize_limit > 0) {
                 uint64_t write_end = file->offset + size;
                 if (write_end > fsize_limit) {
                     if (file->offset >= fsize_limit) {

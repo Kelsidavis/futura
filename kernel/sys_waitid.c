@@ -152,6 +152,15 @@ long sys_waitid(int idtype, int id, siginfo_t *infop, int options,
             wait_pid = id;
             break;
         case P_PGID:
+            /* Linux's kernel_waitid rejects P_PGID with a negative id
+             * (the previous code silently re-mapped it to 0 == 'caller's
+             * pgroup', so e.g. waitid(P_PGID, -1, ...) returned children
+             * from the wrong group instead of EINVAL). id == 0 is the
+             * documented 'caller's process group' shortcut. */
+            if (id < 0) {
+                fut_printf("[WAITID] waitid(P_PGID, id=%d) -> EINVAL (negative id)\n", id);
+                return -EINVAL;
+            }
             wait_pid = (id > 0) ? -id : 0;
             break;
         default:

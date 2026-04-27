@@ -211,10 +211,24 @@ long sys_openat(int dirfd, const char *pathname, int flags, int mode) {
         return -EINVAL;
     }
 
-    /* O_TMPFILE: create anonymous file in the specified directory */
+    /* O_TMPFILE: create anonymous file in the specified directory.
+     * Linux requires O_TMPFILE to be combined with write access — see
+     * fs/namei.c:do_tmpfile, where 'if (acc_mode & MAY_WRITE)' is the
+     * mandatory gate. An O_TMPFILE | O_RDONLY open is rejected with
+     * EINVAL because an anonymous file with no way to write to it is
+     * meaningless (it can never be linkat'd into the namespace either,
+     * since the link still needs a writable fd). The previous code
+     * silently created an unwritable anonymous file. */
     fut_task_t *open_task = fut_task_current();
-    if ((local_flags & O_TMPFILE) == O_TMPFILE)
+    if ((local_flags & O_TMPFILE) == O_TMPFILE) {
+        int acc = local_flags & O_ACCMODE;
+        if (acc != O_WRONLY && acc != O_RDWR) {
+            fut_printf("[OPENAT] openat(O_TMPFILE) requires O_WRONLY or O_RDWR "
+                       "(acc=0x%x) -> EINVAL\n", acc);
+            return -EINVAL;
+        }
         return openat_tmpfile(open_task, local_dirfd, kpath, local_flags, local_mode);
+    }
 
     /* Open via VFS, using fut_vfs_open_at to handle dirfd-relative paths */
     int result = fut_vfs_open_at(open_task, local_dirfd, kpath, local_flags, local_mode);

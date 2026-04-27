@@ -291,6 +291,21 @@ long sys_setuid(uint32_t uid) {
         return -ESRCH;
     }
 
+    /* Linux's __sys_setuid runs make_kuid(ns, uid) and rejects the
+     * result with -EINVAL when uid_valid() fails. INVALID_UID is the
+     * (uid_t)-1 sentinel — the same value glibc and friends use as
+     * 'no change' in setreuid/setresuid. Accepting it here would let
+     * a caller install 0xFFFFFFFF as their effective/real/saved UID,
+     * breaking later credential checks that compare against UID_MAX
+     * sentinels and silently disagreeing with Linux's setuid(2)
+     * semantics. */
+    if (uid == (uint32_t)-1) {
+        fut_printf("[CRED] setuid(uid=-1, pid=%u) -> EINVAL "
+                   "(INVALID_UID is reserved as 'no change' sentinel)\n",
+                   task->pid);
+        return -EINVAL;
+    }
+
     const char *uid_category = categorize_id(uid);
     const char *old_euid_category = categorize_id(task->uid);
     const char *old_ruid_category = categorize_id(task->ruid);

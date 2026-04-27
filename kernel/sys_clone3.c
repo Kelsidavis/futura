@@ -211,6 +211,30 @@ long sys_clone3(const struct fut_clone_args *uargs, size_t size) {
     if ((flags & CLONE_CLEAR_SIGHAND) && (flags & CLONE_SIGHAND))
         return -EINVAL;
 
+    /* Linux's copy_process gates the dependency chain:
+     *   CLONE_THREAD requires CLONE_SIGHAND (kernel/fork.c)
+     *   CLONE_SIGHAND requires CLONE_VM
+     * A new thread that doesn't share sighand can't safely deliver
+     * signals (the kernel's signal-delivery walks the thread group's
+     * shared signal_struct), and a process sharing sighand without
+     * sharing the VM would have signal handlers pointing into someone
+     * else's address space. Futura's sys_unshare already gates these
+     * (where they're dead code because the flags aren't in SUPPORTED);
+     * sys_clone3 is the actual path that lets these flags through, so
+     * the gate must live here too. */
+    if ((flags & CLONE_THREAD) && !(flags & CLONE_SIGHAND)) {
+        fut_printf("[CLONE3] clone3(flags=0x%llx) -> EINVAL "
+                   "(CLONE_THREAD requires CLONE_SIGHAND)\n",
+                   (unsigned long long)flags);
+        return -EINVAL;
+    }
+    if ((flags & CLONE_SIGHAND) && !(flags & CLONE_VM)) {
+        fut_printf("[CLONE3] clone3(flags=0x%llx) -> EINVAL "
+                   "(CLONE_SIGHAND requires CLONE_VM)\n",
+                   (unsigned long long)flags);
+        return -EINVAL;
+    }
+
     /* Linux's copy_clone_args_from_user enforces 'exit_signal & ~CSIGNAL'
      * (CSIGNAL == 0xff) being zero — the field only has 8 bits of meaningful
      * signal number. Without this check a caller could pass a large

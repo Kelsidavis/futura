@@ -173,8 +173,28 @@ long sys_linkat(int olddirfd, const char *oldpath, int newdirfd, const char *new
     }
 
     /* AT_EMPTY_PATH: olddirfd is the file fd, oldpath must be "".
-     * Creates a named hard link to an open (possibly anonymous) file. */
+     * Creates a named hard link to an open (possibly anonymous) file.
+     *
+     * Linux's do_linkat gates AT_EMPTY_PATH on CAP_DAC_READ_SEARCH:
+     *   if (flags & AT_EMPTY_PATH) {
+     *       if (!capable(CAP_DAC_READ_SEARCH))
+     *           return -ENOENT;
+     *   }
+     * The errno is deliberately ENOENT (not EPERM) so the privilege
+     * gap is indistinguishable from a missing file — preventing an
+     * unprivileged caller from probing for the existence of an
+     * anonymous file referenced by an arbitrary fd. Futura's previous
+     * code skipped the check entirely, allowing any task with a
+     * readable fd to materialise a named hard-link to that inode and
+     * defeat the unlink-while-open privacy expectation. */
     if ((local_flags & AT_EMPTY_PATH) && oldpath_buf[0] == '\0') {
+        if (task->uid != 0 &&
+            !(task->cap_effective & (1ULL << 2 /* CAP_DAC_READ_SEARCH */))) {
+            fut_printf("[LINKAT] AT_EMPTY_PATH without CAP_DAC_READ_SEARCH "
+                       "(uid=%u, pid=%llu) -> ENOENT\n",
+                       (unsigned)task->uid, (unsigned long long)task->pid);
+            return -ENOENT;
+        }
         /* Resolve newpath */
         char resolved_newpath[256];
         int rret = fut_vfs_resolve_at(task, local_newdirfd, newpath_buf,

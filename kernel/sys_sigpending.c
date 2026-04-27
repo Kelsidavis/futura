@@ -108,9 +108,14 @@ long sys_sigpending(sigset_t *set) {
         return -EINVAL;
     }
 
+    /* Linux's do_sigpending surfaces a NULL set through copy_to_user as
+     * -EFAULT (pointer fault). EINVAL is reserved for parameter-domain
+     * errors. Same EFAULT/EINVAL split as the recent rt_sigtimedwait /
+     * rt_sigqueueinfo / sched_param / setxattr / io_submit /
+     * timerfd_settime / epoll_pwait2 / landlock_create_ruleset fixes. */
     if (!set) {
-        fut_printf("[SIGPENDING] sigpending(set=NULL) -> EINVAL (invalid pointer)\n");
-        return -EINVAL;
+        fut_printf("[SIGPENDING] sigpending(set=NULL) -> EFAULT (NULL pointer)\n");
+        return -EFAULT;
     }
 
     /* Validate set write permission early (kernel writes signal mask)

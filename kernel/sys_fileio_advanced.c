@@ -99,11 +99,17 @@ long sys_chroot(const char *path) {
         return -EPERM;
     }
 
-    /* Resolve path to vnode and verify it's a directory */
+    /* Resolve path to vnode and verify it's a directory.
+     * Linux's chroot returns the actual user_path_at errno (ENOENT,
+     * ELOOP, EACCES, ENAMETOOLONG, EFAULT, ENOMEM); the previous
+     * blanket return -ENOENT collapsed all of those into 'not found',
+     * masking permission denials and symlink loops from libc wrappers
+     * that branch on the specific error class. Return the lookup error
+     * unmodified — non-existent paths already surface as -ENOENT. */
     struct fut_vnode *vnode = NULL;
     int ret = fut_vfs_lookup(path_buf, &vnode);
     if (ret < 0) {
-        return -ENOENT;
+        return ret;
     }
 
     if (vnode->type != VN_DIR) {

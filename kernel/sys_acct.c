@@ -235,10 +235,15 @@ long sys_acct(const char *filename) {
         return -ENOENT;
     }
 
-    /* Phase 4: Validate or create the accounting file.
-     * The file must exist (or we create it) and be a regular file.
-     * Try to open it for writing to verify accessibility. */
-    int fd = fut_vfs_open(path_buf, O_WRONLY | O_CREAT | O_APPEND, 0600);
+    /* Validate the accounting file. Linux acct(2) does NOT create the
+     * file: filp_open uses O_RDWR|O_APPEND|O_LARGEFILE with no O_CREAT,
+     * so a missing file returns -ENOENT (caller is expected to create
+     * it ahead of time). The previous code passed O_CREAT, which let a
+     * caller materialise an arbitrary 0600 file at any path the kernel
+     * could touch — a path-typo accidental-creation hazard, and a
+     * silent ABI deviation from Linux. Test 655 already creates the
+     * file before calling acct() so this path remains green. */
+    int fd = fut_vfs_open(path_buf, O_WRONLY | O_APPEND, 0);
     if (fd < 0) {
         fut_printf("[ACCT] acct(filename='%s', pid=%llu) -> %d "
                    "(failed to open accounting file)\n",

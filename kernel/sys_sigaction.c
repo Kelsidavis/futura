@@ -123,10 +123,17 @@ long sys_sigaction(int signum, const struct sigaction *act, struct sigaction *ol
         return -EINVAL;
     }
 
-    /* Reject uncatchable signals (POSIX requirement) */
-    if (signum == SIGKILL || signum == SIGSTOP) {
-        fut_printf("[SIGACTION] sigaction(signum=%d) -> EINVAL "
-                   "(SIGKILL/SIGSTOP cannot be caught)\n", signum);
+    /* Linux rejects setting (not querying) the action for the
+     * uncatchable signals: 'if (act && sig_kernel_only(sig)) return
+     * -EINVAL' (kernel/signal.c). Querying via oldact is allowed —
+     * a tool can read SIG_DFL back for SIGKILL/SIGSTOP without
+     * needing special-case logic. The previous unconditional
+     * rejection broke pthread_kill probes and signal-handler
+     * inventory tools that walk every signal number to record the
+     * current action. */
+    if ((signum == SIGKILL || signum == SIGSTOP) && act) {
+        fut_printf("[SIGACTION] sigaction(signum=%d, act=%p) -> EINVAL "
+                   "(SIGKILL/SIGSTOP cannot be caught)\n", signum, act);
         return -EINVAL;
     }
 

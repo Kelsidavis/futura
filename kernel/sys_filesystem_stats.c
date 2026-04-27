@@ -385,7 +385,18 @@ long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
         return -EINVAL;
     }
 
-    /* Validate offset and length */
+    /* Validate offset and length. Linux's fallocate(2) returns EINVAL for
+     * offset < 0 OR len <= 0 (mm/fallocate.c:do_fallocate); the previous
+     * check only caught signed overflow (interpretation of bit 63), so
+     * fallocate(fd, 0, 100, 0) silently succeeded as a no-op while Linux
+     * rejects it. Add the explicit zero-len gate before the overflow
+     * checks. */
+    if (len == 0) {
+        fut_printf("[FALLOCATE] fallocate(fd=%d, offset=%lu, len=0, pid=%d) -> EINVAL "
+                   "(zero length)\n",
+                   fd, offset, task->pid);
+        return -EINVAL;
+    }
     if (offset > INT64_MAX || len > INT64_MAX || (offset + len) > INT64_MAX) {
         fut_printf("[FALLOCATE] fallocate(fd=%d, offset=%lu, len=%lu, pid=%d) -> EINVAL "
                    "(offset/len overflow)\n",

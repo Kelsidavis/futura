@@ -211,6 +211,10 @@
 #define EAFNOSUPPORT 97
 #endif
 
+#ifndef EPROTONOSUPPORT
+#define EPROTONOSUPPORT 93 /* Protocol not supported */
+#endif
+
 #ifndef EADDRINUSE
 #define EADDRINUSE  98
 #endif

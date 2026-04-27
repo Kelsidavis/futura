@@ -47,8 +47,14 @@ long sys_kcmp(int pid1, int pid2, int type,
               unsigned long idx1, unsigned long idx2) {
     if (type < 0 || type >= KCMP_TYPES)
         return -EINVAL;
+    /* Linux's kcmp doesn't pre-validate pid range — it just calls
+     * find_task_by_vpid() and returns ESRCH if the lookup fails.
+     * Returning EINVAL for pid<=0, as we used to, hid 'process not
+     * found' under a parameter-error errno and confused CRIU's
+     * existence probes (which expect ESRCH from kcmp the same way
+     * they get it from kill(pid, 0)). */
     if (pid1 <= 0 || pid2 <= 0)
-        return -EINVAL;
+        return -ESRCH;
 
     fut_task_t *task1 = fut_task_by_pid((uint64_t)pid1);
     fut_task_t *task2 = fut_task_by_pid((uint64_t)pid2);

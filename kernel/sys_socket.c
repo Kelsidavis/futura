@@ -328,15 +328,26 @@ long sys_socket(int domain, int type, int protocol) {
         fut_task_t *stask = fut_task_current();
         if (stask && sockfd < stask->max_fds) {
             if (type_flags & SOCK_NONBLOCK) {
-                struct fut_file *sfile = stask->fd_table[sockfd];
-                if (sfile)
-                    sfile->flags |= O_NONBLOCK;
+                /* Guard fd_table non-NULL: in symmetry with the back-pointer
+                 * write above (line 319) which already gates on it. The
+                 * previous bare index would NULL-deref the kernel for any
+                 * caller without a populated fd_table. */
+                if (stask->fd_table) {
+                    struct fut_file *sfile = stask->fd_table[sockfd];
+                    if (sfile)
+                        sfile->flags |= O_NONBLOCK;
+                }
                 /* Also set on the socket struct so socket_nonblock()
                  * returns true in fut_socket_recv/send. */
                 socket->flags |= O_NONBLOCK;
             }
             if (type_flags & SOCK_CLOEXEC) {
-                stask->fd_flags[sockfd] |= FD_CLOEXEC;
+                /* Guard fd_flags non-NULL: lazily allocated, may be NULL
+                 * for early-init / kernel-thread callers (same NULL-guard
+                 * fix already applied to socketpair / accept / userfaultfd
+                 * / pidfd_open / perf_event_open / fanotify_init). */
+                if (stask->fd_flags)
+                    stask->fd_flags[sockfd] |= FD_CLOEXEC;
             }
         }
     }

@@ -90,10 +90,15 @@ long sys_sched_setparam(int pid, const struct sched_param *param) {
         return -ESRCH;
     }
 
-    /* Validate param pointer */
+    /* Linux's sched_setparam surfaces a NULL param through copy_from_user
+     * as -EFAULT (pointer fault), reserving -EINVAL for parameter-domain
+     * errors (priority out of range, etc.). The previous EINVAL gate
+     * collapsed the two error classes; same EFAULT/EINVAL split as the
+     * recent rt_sigtimedwait / rt_sigqueueinfo / sched_getattr / setxattr
+     * fixes. */
     if (!param) {
-        fut_printf("[SCHED] sched_setparam(pid=%d) -> EINVAL (null param)\n", pid);
-        return -EINVAL;
+        fut_printf("[SCHED] sched_setparam(pid=%d) -> EFAULT (null param)\n", pid);
+        return -EFAULT;
     }
 
     /* Copy sched_param from userspace before accessing fields */
@@ -186,10 +191,10 @@ long sys_sched_getparam(int pid, struct sched_param *param) {
         return -ESRCH;
     }
 
-    /* Validate param pointer */
+    /* NULL param is a pointer fault (EFAULT) — see sched_setparam. */
     if (!param) {
-        fut_printf("[SCHED] sched_getparam(pid=%d) -> EINVAL (null param)\n", pid);
-        return -EINVAL;
+        fut_printf("[SCHED] sched_getparam(pid=%d) -> EFAULT (null param)\n", pid);
+        return -EFAULT;
     }
 
     /* Find target thread: pid=0 means self, otherwise look up by PID */
@@ -247,11 +252,11 @@ long sys_sched_setscheduler(int pid, int policy, const struct sched_param *param
         return -ESRCH;
     }
 
-    /* Validate param pointer */
+    /* NULL param is a pointer fault (EFAULT) — see sched_setparam. */
     if (!param) {
-        fut_printf("[SCHED] sched_setscheduler(pid=%d, policy=%d) -> EINVAL (null param)\n",
+        fut_printf("[SCHED] sched_setscheduler(pid=%d, policy=%d) -> EFAULT (null param)\n",
                    pid, policy);
-        return -EINVAL;
+        return -EFAULT;
     }
 
     /* Copy sched_param from userspace before accessing fields */

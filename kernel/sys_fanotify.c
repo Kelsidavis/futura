@@ -223,6 +223,22 @@ static void fan_enqueue_event(struct fanotify_group *grp, uint64_t mask,
  * Returns: file descriptor for the fanotify group, or negative errno.
  */
 long sys_fanotify_init(unsigned int flags, unsigned int event_f_flags) {
+    /* Linux fanotify_init validates flags against the documented set and
+     * returns -EINVAL on any unknown bit (fs/notify/fanotify/fanotify_user.c
+     * checks 'if (flags & ~FANOTIFY_INIT_FLAGS) return -EINVAL'). The
+     * previous Futura code silently ignored unknown bits, breaking
+     * libfanotify feature-detection that branches on EINVAL to detect
+     * 'kernel too old for this feature' vs 'kernel supports it'. */
+    const unsigned int FANOTIFY_INIT_VALID =
+        FAN_CLOEXEC | FAN_NONBLOCK |
+        FAN_CLASS_CONTENT | FAN_CLASS_PRE_CONTENT |
+        FAN_UNLIMITED_QUEUE | FAN_UNLIMITED_MARKS |
+        FAN_ENABLE_AUDIT |
+        FAN_REPORT_TID | FAN_REPORT_FID |
+        FAN_REPORT_DIR_FID | FAN_REPORT_NAME;
+    if (flags & ~FANOTIFY_INIT_VALID)
+        return -EINVAL;
+
     /* Permission gates aligned with Linux fanotify_init(2):
      *   - FAN_CLASS_CONTENT / FAN_CLASS_PRE_CONTENT need CAP_SYS_ADMIN
      *   - FAN_UNLIMITED_QUEUE needs CAP_SYS_ADMIN (raises 16k ev cap)

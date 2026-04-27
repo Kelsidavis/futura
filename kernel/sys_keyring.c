@@ -842,9 +842,35 @@ long sys_keyctl(int operation, unsigned long arg2, unsigned long arg3,
     }
 
     case KEYCTL_JOIN_SESSION_KEYRING: {
-        /* arg2 = name (NULL = join anonymous session) */
-        int32_t serial = ensure_special_keyring(&session_keyring_serial,
-                                                 arg2 ? (const char *)(uintptr_t)arg2 : "_ses");
+        /* arg2 = name (NULL = join anonymous session). The previous code
+         * passed the user-supplied pointer straight through to
+         * ensure_special_keyring, which loops reading bytes via name[i].
+         * That let an unprivileged caller pass a kernel address as arg2
+         * and have the kernel read kernel memory into the keyring's
+         * description field (info disclosure), or fault on a bad user
+         * pointer. Stage the name through copy_from_user into a kernel
+         * buffer first. */
+        char k_name[MAX_KEY_DESC];
+        const char *name_ptr = "_ses";
+        if (arg2) {
+            const char *uname = (const char *)(uintptr_t)arg2;
+            size_t i = 0;
+            for (; i < sizeof(k_name) - 1; i++) {
+                char c;
+#ifdef KERNEL_VIRTUAL_BASE
+                if ((uintptr_t)uname >= KERNEL_VIRTUAL_BASE) {
+                    c = uname[i];
+                } else
+#endif
+                if (fut_copy_from_user(&c, uname + i, 1) != 0)
+                    return -EFAULT;
+                k_name[i] = c;
+                if (c == '\0') break;
+            }
+            k_name[sizeof(k_name) - 1] = '\0';
+            name_ptr = k_name;
+        }
+        int32_t serial = ensure_special_keyring(&session_keyring_serial, name_ptr);
         return (long)serial;
     }
 

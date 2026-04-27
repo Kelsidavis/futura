@@ -308,6 +308,19 @@ long sys_fanotify_mark(int fanotify_fd, unsigned int flags,
     struct fanotify_group *grp = fan_find_fd(fanotify_fd);
     if (!grp) return -EBADF;
 
+    /* Linux fanotify_mark validates flags against FAN_MARK_VALID_FLAGS in
+     * fs/notify/fanotify/fanotify_user.c and returns -EINVAL on any
+     * unknown bit. Futura was silently ignoring unknown bits — same
+     * libfanotify-feature-detection trap as the recent fanotify_init
+     * fix (commit bc7207e9). */
+    const unsigned int FANOTIFY_MARK_VALID =
+        FAN_MARK_ADD | FAN_MARK_REMOVE | FAN_MARK_FLUSH |
+        FAN_MARK_DONT_FOLLOW | FAN_MARK_ONLYDIR |
+        FAN_MARK_MOUNT | FAN_MARK_FILESYSTEM |
+        FAN_MARK_IGNORED_MASK | FAN_MARK_IGNORED_SURV_MODIFY;
+    if (flags & ~FANOTIFY_MARK_VALID)
+        return -EINVAL;
+
     /* Linux fanotify_mark requires EXACTLY one of ADD/REMOVE/FLUSH:
      *   switch (flags & (FAN_MARK_ADD|FAN_MARK_REMOVE|FAN_MARK_FLUSH)) {
      *   case FAN_MARK_ADD: case FAN_MARK_REMOVE: case FAN_MARK_FLUSH: break;

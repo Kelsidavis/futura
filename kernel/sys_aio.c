@@ -776,9 +776,16 @@ static void uring_process_sqe(struct io_uring_ctx *ctx, const struct io_uring_sq
     int32_t res = 0;
     int fd = sqe->fd;
 
-    /* If IOSQE_FIXED_FILE, look up in registered files */
-    if ((sqe->flags & IOSQE_FIXED_FILE) && ctx->nr_reg_files > 0) {
-        if ((uint32_t)fd >= ctx->nr_reg_files) {
+    /* If IOSQE_FIXED_FILE, look up in registered files. Linux returns
+     * -EBADF if the caller asserted IOSQE_FIXED_FILE but no fixed-file
+     * table is registered, OR if the index is out of range. The
+     * previous 'ctx->nr_reg_files > 0' short-circuit silently fell
+     * through to use sqe->fd as a raw fd in the caller's main fd
+     * table — defeating the whole point of the IOSQE_FIXED_FILE flag
+     * (the caller asserted a registered-file index, not a path-style
+     * fd). */
+    if (sqe->flags & IOSQE_FIXED_FILE) {
+        if (ctx->nr_reg_files == 0 || (uint32_t)fd >= ctx->nr_reg_files) {
             uring_post_cqe(ctx, sqe->user_data, -EBADF, 0);
             return;
         }

@@ -456,12 +456,12 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
         return -EINVAL;
     }
 
-    /* Validate buf */
+    /* NULL buffer is a pointer fault (EFAULT) per Linux sendto(2) — the
+     * kernel must dereference buf to copy bytes from userspace. */
     if (!local_buf) {
-        fut_printf("[SENDTO] sendto(sockfd=%d [%s], buf=NULL, len=%zu, pid=%u) -> EINVAL "
-                   "(NULL buffer)\n",
+        fut_printf("[SENDTO] sendto(sockfd=%d [%s], buf=NULL, len=%zu, pid=%u) -> EFAULT\n",
                    local_sockfd, fd_category, local_len, task->pid);
-        return -EINVAL;
+        return -EFAULT;
     }
 
     /* Phase 4: Check per-process I/O byte budget before allocation

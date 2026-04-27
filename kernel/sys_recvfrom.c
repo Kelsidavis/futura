@@ -467,12 +467,12 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
         return -EFAULT;
     }
 
-    /* Validate buf */
+    /* NULL buffer is a pointer fault (EFAULT) per Linux recvfrom(2) — the
+     * kernel must write through buf to deliver received bytes. */
     if (!local_buf) {
-        fut_printf("[RECVFROM] recvfrom(sockfd=%d [%s], buf=NULL, len=%zu, pid=%u) -> EINVAL "
-                   "(NULL buffer)\n",
+        fut_printf("[RECVFROM] recvfrom(sockfd=%d [%s], buf=NULL, len=%zu, pid=%u) -> EFAULT\n",
                    local_sockfd, fd_category, local_len, task->pid);
-        return -EINVAL;
+        return -EFAULT;
     }
 
     /* Allocate kernel buffer */

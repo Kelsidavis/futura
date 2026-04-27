@@ -73,17 +73,14 @@ long sys_times(struct tms *buf) {
         return -ESRCH;
     }
 
-    if (!buf) {
-        fut_printf("[TIMES] times(buf=%p) -> EFAULT (buf is NULL)\n", buf);
-        return -EFAULT;
-    }
-
-    /* Validate buf write permission early (kernel writes process times)
-     * VULNERABILITY: Invalid Output Buffer Pointer
-     * ATTACK: Attacker provides unmapped or read-only buffer
-     * IMPACT: Kernel page fault when writing time statistics
-     * DEFENSE: Check write permission before processing */
-    if (times_access_ok_write(buf, sizeof(struct tms)) != 0) {
+    /* Linux's sys_times accepts buf == NULL — when no struct is
+     * supplied the syscall still returns the elapsed clock ticks.
+     * The previous EFAULT gate broke that documented contract
+     * (times(2) man page: 'tms is NULL ... just returns the
+     * elapsed time'). Skip the access_ok / copy_to_user steps
+     * entirely when buf is NULL, but still compute and return
+     * the elapsed-tick value below. */
+    if (buf && times_access_ok_write(buf, sizeof(struct tms)) != 0) {
         fut_printf("[TIMES] times(buf=%p) -> EFAULT (buffer not writable for %zu bytes)\n",
                    buf, sizeof(struct tms));
         return -EFAULT;
@@ -107,8 +104,8 @@ long sys_times(struct tms *buf) {
     times.tms_utime  = (clock_t)total_cpu_ticks;
     times.tms_cutime = (clock_t)task->child_cpu_ticks;
 
-    /* Copy to userspace */
-    if (times_copy_to_user(buf, &times, sizeof(struct tms)) != 0) {
+    /* Copy to userspace (only when caller provided a struct). */
+    if (buf && times_copy_to_user(buf, &times, sizeof(struct tms)) != 0) {
         fut_printf("[TIMES] times(buf=%p) -> EFAULT (copy_to_user failed)\n", buf);
         return -EFAULT;
     }

@@ -1313,6 +1313,18 @@ long sys_timerfd_create(int clockid, int flags) {
             return -EINVAL;
     }
 
+    /* Linux's timerfd_create gates the alarm-class clocks on
+     * CAP_WAKE_ALARM (cap 35) — those clocks are designed to wake the
+     * system from suspend, and unprivileged callers shouldn't be able
+     * to schedule wakeups. Without this gate any user could create
+     * RTC-alarm-style timerfds. Futura has no real alarm hardware, so
+     * the wakeup is a no-op — but the privilege contract should still
+     * surface correctly for libc feature detection. */
+    if ((clockid == CLOCK_REALTIME_ALARM || clockid == CLOCK_BOOTTIME_ALARM) &&
+        task->uid != 0 &&
+        !(task->cap_effective & (1ULL << 35 /* CAP_WAKE_ALARM */)))
+        return -EPERM;
+
     /* Validate flags */
     int valid_flags = TFD_CLOEXEC | TFD_NONBLOCK;
     if (flags & ~valid_flags) {

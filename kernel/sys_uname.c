@@ -304,14 +304,16 @@ long sys_setdomainname(const char *name, size_t len) {
         return -EINVAL;
     }
 
-    if (len == 0) {
-        memcpy(g_domainname, "(none)", 7);
-        fut_printf("[SETDOMAINNAME] setdomainname(\"\", pid=%d) -> 0 (cleared)\n", task->pid);
-        return 0;
-    }
-
+    /* Linux's setdomainname stores the user-supplied bytes verbatim
+     * (zero-padding the rest of utsname.domainname). A len=0 call
+     * therefore leaves an empty domainname — not the literal string
+     * "(none)". The previous code substituted "(none)" so any later
+     * uname() reported a fake domainname that no Linux kernel would
+     * produce, and a subsequent gethostname-style probe would think
+     * the system had a configured NIS domain when it did not. Mirror
+     * sys_sethostname's clear-on-empty behaviour. */
     char buf[DOMAINNAME_MAX];
-    if (uname_copy_from_user(buf, name, len) != 0) {
+    if (len > 0 && uname_copy_from_user(buf, name, len) != 0) {
         fut_printf("[SETDOMAINNAME] setdomainname(len=%zu, pid=%d) -> EFAULT\n", len, task->pid);
         return -EFAULT;
     }

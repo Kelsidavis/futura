@@ -127,11 +127,11 @@ long sys_mkdirat(int dirfd, const char *pathname, unsigned int mode) {
         return -ENAMETOOLONG;
     }
 
-    /* Validate pathname is not empty */
+    /* Empty pathname is ENOENT per Linux mkdirat(2). */
     if (path_buf[0] == '\0') {
-        fut_printf("[MKDIRAT] mkdirat(dirfd=%d, pathname=\"\" [empty], mode=0%o) -> EINVAL (empty pathname)\n",
+        fut_printf("[MKDIRAT] mkdirat(dirfd=%d, pathname=\"\" [empty], mode=0%o) -> ENOENT\n",
                    local_dirfd, local_mode);
-        return -EINVAL;
+        return -ENOENT;
     }
 
     /* Categorize pathname */

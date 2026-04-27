@@ -149,18 +149,17 @@ long sys_symlinkat(const char *target, int newdirfd, const char *linkpath) {
         return -ENAMETOOLONG;
     }
 
-    /* Validate target is not empty */
+    /* Empty target/linkpath is ENOENT per Linux symlinkat(2). */
     if (target_buf[0] == '\0') {
-        fut_printf("[SYMLINKAT] symlinkat(target=\"\" [empty], newdirfd=%d) -> EINVAL (empty target)\n",
+        fut_printf("[SYMLINKAT] symlinkat(target=\"\" [empty], newdirfd=%d) -> ENOENT\n",
                    local_newdirfd);
-        return -EINVAL;
+        return -ENOENT;
     }
 
-    /* Validate linkpath is not empty */
     if (linkpath_buf[0] == '\0') {
-        fut_printf("[SYMLINKAT] symlinkat(newdirfd=%d, linkpath=\"\" [empty]) -> EINVAL (empty linkpath)\n",
+        fut_printf("[SYMLINKAT] symlinkat(newdirfd=%d, linkpath=\"\" [empty]) -> ENOENT\n",
                    local_newdirfd);
-        return -EINVAL;
+        return -ENOENT;
     }
 
     /* Categorize linkpath */

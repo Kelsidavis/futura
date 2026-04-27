@@ -211,18 +211,18 @@ long sys_linkat(int olddirfd, const char *oldpath, int newdirfd, const char *new
         return ret;
     }
 
-    /* Validate oldpath is not empty (non-AT_EMPTY_PATH case) */
+    /* Empty pathname is ENOENT per Linux linkat(2). The AT_EMPTY_PATH
+     * case is handled above; this is the non-AT_EMPTY_PATH branch. */
     if (oldpath_buf[0] == '\0') {
-        fut_printf("[LINKAT] linkat(olddirfd=%d, oldpath=\"\" [empty]) -> EINVAL (empty oldpath)\n",
+        fut_printf("[LINKAT] linkat(olddirfd=%d, oldpath=\"\" [empty]) -> ENOENT\n",
                    local_olddirfd);
-        return -EINVAL;
+        return -ENOENT;
     }
 
-    /* Validate newpath is not empty */
     if (newpath_buf[0] == '\0') {
-        fut_printf("[LINKAT] linkat(newdirfd=%d, newpath=\"\" [empty]) -> EINVAL (empty newpath)\n",
+        fut_printf("[LINKAT] linkat(newdirfd=%d, newpath=\"\" [empty]) -> ENOENT\n",
                    local_newdirfd);
-        return -EINVAL;
+        return -ENOENT;
     }
 
     /* Categorize oldpath */

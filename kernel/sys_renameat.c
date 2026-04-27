@@ -195,18 +195,17 @@ long sys_renameat(int olddirfd, const char *oldpath, int newdirfd, const char *n
         return -ENAMETOOLONG;
     }
 
-    /* Validate oldpath is not empty */
+    /* Empty pathname is ENOENT per Linux renameat(2). */
     if (oldpath_buf[0] == '\0') {
-        fut_printf("[RENAMEAT] renameat(olddirfd=%d, oldpath=\"\" [empty]) -> EINVAL (empty oldpath)\n",
+        fut_printf("[RENAMEAT] renameat(olddirfd=%d, oldpath=\"\" [empty]) -> ENOENT\n",
                    local_olddirfd);
-        return -EINVAL;
+        return -ENOENT;
     }
 
-    /* Validate newpath is not empty */
     if (newpath_buf[0] == '\0') {
-        fut_printf("[RENAMEAT] renameat(newdirfd=%d, newpath=\"\" [empty]) -> EINVAL (empty newpath)\n",
+        fut_printf("[RENAMEAT] renameat(newdirfd=%d, newpath=\"\" [empty]) -> ENOENT\n",
                    local_newdirfd);
-        return -EINVAL;
+        return -ENOENT;
     }
 
     /* Categorize oldpath */
@@ -377,8 +376,8 @@ long sys_renameat2(int olddirfd, const char *oldpath,
             return -ENAMETOOLONG;
         }
         if (oldpath_buf[0] == '\0' || newpath_buf[0] == '\0') {
-            fut_printf("[RENAMEAT2] renameat2(RENAME_EXCHANGE) -> EINVAL (empty path)\n");
-            return -EINVAL;
+            fut_printf("[RENAMEAT2] renameat2(RENAME_EXCHANGE) -> ENOENT (empty path)\n");
+            return -ENOENT;
         }
 
         char resolved_oldpath[FUT_VFS_PATH_BUFFER_SIZE];

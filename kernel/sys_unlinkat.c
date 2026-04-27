@@ -138,11 +138,11 @@ long sys_unlinkat(int dirfd, const char *pathname, int flags) {
         return -ENAMETOOLONG;
     }
 
-    /* Validate pathname is not empty */
+    /* Empty pathname is ENOENT per Linux unlinkat(2). */
     if (path_buf[0] == '\0') {
-        fut_printf("[UNLINKAT] unlinkat(dirfd=%d, pathname=\"\" [empty]) -> EINVAL (empty pathname)\n",
+        fut_printf("[UNLINKAT] unlinkat(dirfd=%d, pathname=\"\" [empty]) -> ENOENT\n",
                    local_dirfd);
-        return -EINVAL;
+        return -ENOENT;
     }
 
     /* Categorize operation */

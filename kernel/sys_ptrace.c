@@ -316,9 +316,14 @@ long sys_ptrace(int request, int pid, void *addr, void *data) {
         if (tracee->ptrace_tracer != 0)
             return -EPERM;  /* Already being traced */
 
-        /* Permission check: Linux ptrace access mode (PTRACE_MODE_ATTACH) */
-        if (current->uid != 0) {
-            /* Non-root: must match UID AND be in same user namespace */
+        /* Permission check: Linux ptrace_may_access (PTRACE_MODE_ATTACH).
+         * Non-root needs matching UID OR CAP_SYS_PTRACE. The previous
+         * gate only allowed UID match, so a process with CAP_SYS_PTRACE
+         * granted via setcap (the standard non-root debugger-pattern,
+         * used by perf, strace -p, gdb on a CAP_SYS_PTRACE-capable
+         * binary) was rejected with EPERM despite Linux allowing it. */
+        bool ptr_has_cap = (current->cap_effective & (1ULL << 19 /* CAP_SYS_PTRACE */)) != 0;
+        if (current->uid != 0 && !ptr_has_cap) {
             if (current->uid != tracee->uid)
                 return -EPERM;
             /* Namespace isolation: reject cross-namespace ptrace */
@@ -328,10 +333,12 @@ long sys_ptrace(int request, int pid, void *addr, void *data) {
                 return -EPERM;
         }
 
-        /* Check no_new_privs and dumpable */
-        if (tracee->no_new_privs && current->uid != 0)
+        /* Check no_new_privs and dumpable. CAP_SYS_PTRACE bypasses
+         * dumpable but not no_new_privs (Linux's PTRACE_MODE_NOAUDIT
+         * still respects NNP for setuid-binary attach). */
+        if (tracee->no_new_privs && current->uid != 0 && !ptr_has_cap)
             return -EPERM;
-        if (tracee->dumpable == 0 && current->uid != 0)
+        if (tracee->dumpable == 0 && current->uid != 0 && !ptr_has_cap)
             return -EPERM;
 
         tracee->ptrace_tracer = current->pid;
@@ -363,7 +370,8 @@ long sys_ptrace(int request, int pid, void *addr, void *data) {
         if (tracee->ptrace_tracer != 0)
             return -EPERM;
 
-        if (current->uid != 0) {
+        bool seize_has_cap = (current->cap_effective & (1ULL << 19 /* CAP_SYS_PTRACE */)) != 0;
+        if (current->uid != 0 && !seize_has_cap) {
             if (current->uid != tracee->uid)
                 return -EPERM;
             if (current->user_ns != tracee->user_ns)
@@ -371,9 +379,9 @@ long sys_ptrace(int request, int pid, void *addr, void *data) {
             if (current->pid_ns != tracee->pid_ns)
                 return -EPERM;
         }
-        if (tracee->no_new_privs && current->uid != 0)
+        if (tracee->no_new_privs && current->uid != 0 && !seize_has_cap)
             return -EPERM;
-        if (tracee->dumpable == 0 && current->uid != 0)
+        if (tracee->dumpable == 0 && current->uid != 0 && !seize_has_cap)
             return -EPERM;
 
         tracee->ptrace_tracer = current->pid;

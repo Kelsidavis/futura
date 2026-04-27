@@ -447,17 +447,19 @@ long sys_mincore(void *addr, size_t length, unsigned char *vec) {
         return -EFAULT;
     }
 
-    /* Priority 1: Add length bounds validation (0 < length <= 1GB)
+    /* Length bounds validation (length <= 1GB)
      * VULNERABILITY: Unbounded Length Parameter
      * ATTACK: Attacker passes very large length (e.g., SIZE_MAX)
      * IMPACT: Integer overflow in num_pages calculation, excessive CPU/memory use
      * DEFENSE: Limit length to 1GB (prevents overflow and DoS) */
     #define MINCORE_MAX_LENGTH (1UL << 30)  /* 1 GB */
-    if (local_length == 0) {
-        fut_printf("[MINCORE] mincore(%p, %zu, %p) -> EINVAL (length is zero)\n",
-                   local_addr, local_length, local_vec);
-        return -EINVAL;
-    }
+    /* Linux's mincore treats length == 0 as a silent no-op (pages = 0,
+     * the residency loop runs zero times, returns 0). The previous
+     * EINVAL gate diverged from that ABI and broke libc wrappers that
+     * pass user-supplied len through verbatim and rely on the kernel's
+     * "zero-length is fine" guarantee. */
+    if (local_length == 0)
+        return 0;
     if (local_length > MINCORE_MAX_LENGTH) {
         fut_printf("[MINCORE] mincore(%p, %zu, %p) -> ENOMEM (length %zu exceeds max %lu)\n",
                    local_addr, local_length, local_vec, local_length, MINCORE_MAX_LENGTH);

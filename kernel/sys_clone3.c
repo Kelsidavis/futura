@@ -283,6 +283,30 @@ long sys_clone3(const struct fut_clone_args *uargs, size_t size) {
         return -EINVAL;
     }
 
+    /* Linux's copy_clone_args_from_user enforces set_tid <-> set_tid_size
+     * pairing (kernel/fork.c:copy_clone_args_from_user):
+     *   if (kargs->set_tid && kargs->set_tid_size > MAX_PID_NS_LEVEL)
+     *       return -EINVAL;
+     *   if (!kargs->set_tid && kargs->set_tid_size > 0)
+     *       return -EINVAL;
+     *   if (kargs->set_tid && !kargs->set_tid_size)
+     *       return -EINVAL;
+     * The previous Futura code silently ignored both fields, so a caller
+     * probing for PID-namespace TID-stamping support couldn't distinguish
+     * 'kernel doesn't support it' (EINVAL) from 'kernel accepts the
+     * request but does nothing'. Match the strict gate for ABI parity;
+     * Futura doesn't actually consume set_tid (no PID-NS level stamping
+     * yet), but the contract should still surface invalid pairings. */
+    {
+        const uint64_t MAX_PID_NS_LEVEL = 32;
+        if (args.set_tid && args.set_tid_size > MAX_PID_NS_LEVEL)
+            return -EINVAL;
+        if (!args.set_tid && args.set_tid_size > 0)
+            return -EINVAL;
+        if (args.set_tid && args.set_tid_size == 0)
+            return -EINVAL;
+    }
+
     /* CLONE_INTO_CGROUP: place child in target cgroup.
      * The cgroup fd is a file descriptor opened to a cgroupfs directory.
      * After fork, we add the child's PID to the target cgroup's procs.

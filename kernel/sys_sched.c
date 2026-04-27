@@ -235,12 +235,12 @@ long sys_setpriority(int which, int who, int prio) {
     /* Linux does NOT reject negative who — search finds no match → ESRCH.
      * Only 'which' is validated for EINVAL. */
 
-    /* Validate priority range */
-    if (prio < PRIO_MIN || prio > PRIO_MAX) {
-        fut_printf("[SCHED] setpriority(which=%s, who=%d, prio=%d) -> EINVAL (prio out of range [%d, %d])\n",
-                   which_desc, who, prio, PRIO_MIN, PRIO_MAX);
-        return -EINVAL;
-    }
+    /* Linux silently clamps prio to [PRIO_MIN, PRIO_MAX] rather than
+     * returning EINVAL. The previous code returned EINVAL for any
+     * out-of-range value, which broke libc wrappers (glibc, musl) that
+     * pass through user input verbatim and rely on the kernel clamp. */
+    if (prio < PRIO_MIN) prio = PRIO_MIN;
+    if (prio > PRIO_MAX) prio = PRIO_MAX;
 
     extern fut_task_t *fut_task_list;
     int matched = 0;

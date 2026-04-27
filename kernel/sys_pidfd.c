@@ -329,10 +329,14 @@ long sys_pidfd_getfd(int pidfd, int targetfd, unsigned int flags) {
     if (newfd < 0)
         return -EMFILE;
 
-    /* Install a reference to the file in the current task */
+    /* Install a reference to the file in the current task. Linux's
+     * pidfd_getfd(2) returns the fd with FD_CLOEXEC set ('the file
+     * descriptor returned ... has the close-on-exec flag set'); without
+     * it, an exec across the duplicated fd would silently leak it into
+     * the new program. Mirror sys_pidfd_open's CLOEXEC default. */
     vfs_file_ref(file);
     cur->fd_table[newfd] = file;
-    if (cur->fd_flags) cur->fd_flags[newfd] = 0;
+    if (cur->fd_flags) cur->fd_flags[newfd] = 1 /* FD_CLOEXEC */;
 
     return newfd;
 }

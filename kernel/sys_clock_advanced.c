@@ -747,10 +747,14 @@ long sys_settimeofday(const fut_timeval_t *tv, const void *tz) {
         return -ESRCH;
     }
 
-    if (local_tz != NULL) {
-        fut_printf("[SETTIMEOFDAY] settimeofday: timezone parameter not supported\n");
-        return -EINVAL;
-    }
+    /* Linux silently ignores the timezone argument since 2.6.x —
+     * settimeofday(2) man page: 'The use of the timezone argument is
+     * obsolete; the tz argument should normally be specified as NULL.'
+     * The previous EINVAL gate broke libc wrappers (glibc, musl) that
+     * pass &(struct timezone){0,0} as tz for historical compatibility.
+     * Accept silently. Test 676 (settimeofday(NULL, NULL) -> EFAULT)
+     * is preserved because tv-NULL still hits the EFAULT check below. */
+    (void)local_tz;
 
     if (!local_tv) {
         fut_printf("[SETTIMEOFDAY] settimeofday(tv=%p) -> EFAULT (tv is NULL)\n", local_tv);

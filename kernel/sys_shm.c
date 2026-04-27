@@ -219,8 +219,18 @@ long sys_shmat(int shmid, const void *shmaddr, int shmflg) {
     (void)shmflg;
 
     struct shm_seg *s = shmtable_find_by_id(shmid);
-    if (!s || s->pending_rmid)
+    if (!s)
         return -EINVAL;
+    /* Linux's do_shmat allows new attachments to a segment marked for
+     * deferred removal (SHM_DEST/IPC_RMID set while shm_nattch > 0):
+     * ipc_set_key_private() removes the key from public lookup but
+     * keeps the id resolvable, and the segment is destroyed only when
+     * the final detach drops shm_nattch to 0.  The previous EINVAL
+     * gate broke libc/glibc shmat callers that obtain the id by other
+     * means (fdpass, parent inheritance) after IPC_RMID — they expect
+     * the same zombie-attach behavior the rest of POSIX/Linux gives
+     * them.  Allow attach; shm_nattch keeps the data alive until the
+     * final detach. */
 
     int r = shm_record_attach(s->data, shmid);
     if (r < 0)

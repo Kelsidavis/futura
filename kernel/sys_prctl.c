@@ -247,9 +247,18 @@ long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
 
     case PR_SET_DUMPABLE: {
         /* Control whether core dumps are produced.
-         * Valid values: 0=SUID_DUMP_DISABLE, 1=SUID_DUMP_USER, 2=SUID_DUMP_ROOT */
+         * Valid values from userspace: 0=SUID_DUMP_DISABLE, 1=SUID_DUMP_USER.
+         * SUID_DUMP_ROOT (2) is reserved for the kernel itself (set by
+         * commit_creds when transitioning from a setuid binary back to
+         * uid 0 mid-exec). Linux's prctl rejects userspace requests for
+         * value 2 with -EINVAL:
+         *   if (arg2 != SUID_DUMP_DISABLE && arg2 != SUID_DUMP_USER)
+         *       return -EINVAL;
+         * Futura accepted 2, letting userspace mark itself with
+         * SUID_DUMP_ROOT and bypass core-dump-disabled-by-default
+         * semantics for setuid binaries. */
         int val = (int)arg2;
-        if (val < 0 || val > 2) {
+        if (val != 0 && val != 1) {
             return -EINVAL;
         }
         task->dumpable = val;

@@ -377,16 +377,22 @@ long sys_setsid(void) {
  * Phase 4 (Completed): Read stored per-task limits; fall back to defaults if unset
  */
 long sys_getrlimit(int resource, struct rlimit *rlim) {
-    if (!rlim) {
-        fut_printf("[PROC] getrlimit(resource=%d, rlim=%p) -> EFAULT (rlim is NULL)\n", resource, rlim);
-        return -EFAULT;
-    }
-
-    /* Validate resource index */
+    /* Linux's sys_getrlimit dispatches through do_prlimit which
+     * validates 'resource >= RLIM_NLIMITS' up front and returns
+     * -EINVAL; only after a successful do_prlimit does copy_to_user
+     * surface a NULL/bad rlim as -EFAULT.  The previous order
+     * returned EFAULT for getrlimit(99, NULL), masking the real
+     * parameter-domain error.  Same EINVAL-before-EFAULT reorder
+     * that just landed for sys_getitimer. */
     if (resource < 0 || resource >= RLIMIT_NLIMITS) {
         fut_printf("[PROC] getrlimit(resource=%d, rlim=%p) -> EINVAL (unknown resource)\n",
                    resource, rlim);
         return -EINVAL;
+    }
+
+    if (!rlim) {
+        fut_printf("[PROC] getrlimit(resource=%d, rlim=%p) -> EFAULT (rlim is NULL)\n", resource, rlim);
+        return -EFAULT;
     }
 
     /* Read limits from per-task rlimits array (authoritative source).

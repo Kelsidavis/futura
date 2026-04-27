@@ -489,6 +489,18 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                 if (optlen < sizeof(int)) return -EINVAL;
                 int val = 0;
                 if (sso_copy_from_user(&val, optval, sizeof(int)) != 0) return -EFAULT;
+                /* Linux's sock_setsockopt gates ENABLING SO_DEBUG behind
+                 * CAP_NET_ADMIN ("if (val && !ns_capable(... CAP_NET_ADMIN))
+                 * ret = -EACCES").  Disabling (val == 0) is always allowed.
+                 * Without this gate any unprivileged process could turn on
+                 * the kernel's per-socket debug logging, which on Linux is
+                 * a recognized log-spam DoS primitive. */
+                if (optname == SO_DEBUG && val) {
+                    fut_task_t *cur_task = fut_task_current();
+                    if (cur_task && cur_task->uid != 0 &&
+                        !(cur_task->cap_effective & (1ULL << 12 /* CAP_NET_ADMIN */)))
+                        return -EACCES;
+                }
                 uint32_t bit = 0;
                 switch (optname) {
                     case SO_REUSEADDR:  bit = FUT_SO_F_REUSEADDR; break;

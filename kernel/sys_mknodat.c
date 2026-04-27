@@ -313,7 +313,7 @@ long sys_mknodat(int dirfd, const char *pathname, uint32_t mode, uint32_t dev) {
         /* Also create the file in the VFS so stat() finds it.
          * Use the ramfs create_file to make the node visible in directory listings. */
         extern int fut_vfs_create_file(const char *path, uint32_t mode);
-        int vret = fut_vfs_create_file(resolved_path_dev, (uint32_t)(local_mode & 0777));
+        int vret = fut_vfs_create_file(resolved_path_dev, (uint32_t)(local_mode & 07777));
         (void)vret;  /* OK if it already exists (devfs handles open) */
 
         fut_printf("[MKNODAT] mknodat('%s', S_IFCHR, %u:%u) -> 0 (device node created)\n",
@@ -369,32 +369,32 @@ long sys_mknodat(int dirfd, const char *pathname, uint32_t mode, uint32_t dev) {
 
     /* Regular file (S_IFREG or type 0): create directly via VFS without fd allocation */
     if (file_type == S_IFREG || file_type == 0) {
-        int ret = fut_vfs_create_file(use_path, local_mode & 0777);
+        int ret = fut_vfs_create_file(use_path, local_mode & 07777);
         if (ret < 0) {
             fut_printf("[MKNODAT] mknodat(dirfd=%s, pathname='%s', type=%s, mode=0%o, pid=%d) -> %d "
                        "(VFS create failed)\n",
-                       dirfd_desc, path_buf, type_desc, local_mode & 0777, task->pid, ret);
+                       dirfd_desc, path_buf, type_desc, local_mode & 07777, task->pid, ret);
             return (long)ret;
         }
         fut_printf("[MKNODAT] mknodat(dirfd=%s, pathname='%s', type=%s, mode=0%o, pid=%d) -> 0 "
                    "(regular file created)\n",
-                   dirfd_desc, path_buf, type_desc, local_mode & 0777, task->pid);
+                   dirfd_desc, path_buf, type_desc, local_mode & 07777, task->pid);
         return 0;
     }
 
     /* FIFO and socket nodes: create via VFS mknod with full type bits */
     if (file_type == S_IFIFO || file_type == S_IFSOCK) {
-        uint32_t full_mode = file_type | (local_mode & 0777);
+        uint32_t full_mode = file_type | (local_mode & 07777);
         ret = fut_vfs_mknod(use_path, full_mode);
         if (ret < 0) {
             fut_printf("[MKNODAT] mknodat(dirfd=%s, pathname='%s', type=%s, mode=0%o, pid=%d) -> %d "
                        "(VFS mknod failed)\n",
-                       dirfd_desc, path_buf, type_desc, local_mode & 0777, task->pid, ret);
+                       dirfd_desc, path_buf, type_desc, local_mode & 07777, task->pid, ret);
             return (long)ret;
         }
         fut_printf("[MKNODAT] mknodat(dirfd=%s, pathname='%s', type=%s, mode=0%o, pid=%d) -> 0 "
                    "(special file created)\n",
-                   dirfd_desc, path_buf, type_desc, local_mode & 0777, task->pid);
+                   dirfd_desc, path_buf, type_desc, local_mode & 07777, task->pid);
         return 0;
     }
 

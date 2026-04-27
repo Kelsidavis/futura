@@ -264,12 +264,13 @@ long sys_fchownat(int dirfd, const char *pathname, uint32_t uid, uint32_t gid, i
         return 0;
     }
 
-    /* Validate pathname is not empty (unless AT_EMPTY_PATH) */
+    /* Empty pathname (without AT_EMPTY_PATH, which is handled above) is
+     * ENOENT per Linux fchownat(2). */
     if (path_buf[0] == '\0') {
         fut_printf("[FCHOWNAT] fchownat(dirfd=%d [%s], pathname=\"\" [empty], uid=%s, gid=%s, "
-                   "op=%s, flags=%s) -> EINVAL (empty pathname without AT_EMPTY_PATH)\n",
+                   "op=%s, flags=%s) -> ENOENT\n",
                    dirfd, dirfd_desc, uid_desc, gid_desc, operation_type, flags_desc);
-        return -EINVAL;
+        return -ENOENT;
     }
 
     /* Categorize path type */

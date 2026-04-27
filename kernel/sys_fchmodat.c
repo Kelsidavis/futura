@@ -147,11 +147,11 @@ long sys_fchmodat(int dirfd, const char *pathname, uint32_t mode, int flags) {
         return -ENAMETOOLONG;
     }
 
-    /* Validate pathname is not empty */
+    /* Empty pathname is ENOENT per Linux fchmodat(2). */
     if (path_buf[0] == '\0') {
-        fut_printf("[FCHMODAT] fchmodat(dirfd=%d, pathname=\"\" [empty]) -> EINVAL (empty pathname)\n",
+        fut_printf("[FCHMODAT] fchmodat(dirfd=%d, pathname=\"\" [empty]) -> ENOENT\n",
                    local_dirfd);
-        return -EINVAL;
+        return -ENOENT;
     }
 
     /* Categorize pathname */

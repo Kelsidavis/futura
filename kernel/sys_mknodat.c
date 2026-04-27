@@ -205,11 +205,11 @@ long sys_mknodat(int dirfd, const char *pathname, uint32_t mode, uint32_t dev) {
         return -ENAMETOOLONG;
     }
 
-    /* Phase 2: Validate pathname is not empty */
+    /* Empty pathname is ENOENT per Linux mknodat(2). */
     if (path_buf[0] == '\0') {
-        fut_printf("[MKNODAT] mknodat(dirfd=%d, pathname=\"\" [empty], mode=0%o, dev=0x%x, pid=%d) -> EINVAL\n",
+        fut_printf("[MKNODAT] mknodat(dirfd=%d, pathname=\"\" [empty], mode=0%o, dev=0x%x, pid=%d) -> ENOENT\n",
                    local_dirfd, local_mode, local_dev, task->pid);
-        return -EINVAL;
+        return -ENOENT;
     }
 
     /* Phase 2: Validate dirfd */

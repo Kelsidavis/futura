@@ -227,9 +227,10 @@ long sys_fstatat(int dirfd, const char *pathname, void *statbuf, int flags) {
                        local_dirfd, ret);
             return ret;
         } else {
-            fut_printf("[FSTATAT] fstatat(dirfd=%d, pathname=\"\" [empty]) -> EINVAL (empty pathname without AT_EMPTY_PATH)\n",
+            /* Empty pathname without AT_EMPTY_PATH is ENOENT per Linux. */
+            fut_printf("[FSTATAT] fstatat(dirfd=%d, pathname=\"\" [empty]) -> ENOENT\n",
                        local_dirfd);
-            return -EINVAL;
+            return -ENOENT;
         }
     }
 

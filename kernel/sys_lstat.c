@@ -121,10 +121,10 @@ long sys_lstat(const char *path, struct fut_stat *statbuf) {
         return -ENAMETOOLONG;
     }
 
-    /* Validate path is not empty */
+    /* Empty pathname is ENOENT per Linux lstat(2). */
     if (path_buf[0] == '\0') {
-        fut_printf("[LSTAT] lstat(\"\") -> EINVAL (empty path)\n");
-        return -EINVAL;
+        fut_printf("[LSTAT] lstat(\"\") -> ENOENT\n");
+        return -ENOENT;
     }
 
     /* Phase 3: Call fut_vfs_lstat() which doesn't follow the final symlink

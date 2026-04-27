@@ -180,12 +180,19 @@ long sys_futimens(int fd, const fut_timespec_t *times) {
         operation_type = "set specific times";
     }
 
-    /* Validate nanosecond fields when specific times are provided */
+    /* Validate nanosecond fields when specific times are provided.
+     * Linux's utimes_common (fs/utimes.c) rejects negative tv_nsec
+     * too: 'if (nsec < 0 || nsec >= NSEC_PER_SEC) return -EINVAL'.
+     * Futura previously only caught the upper bound, so a caller
+     * passing tv_nsec=-1 (a common sentinel-by-mistake) silently
+     * recorded an invalid timestamp instead of getting EINVAL like
+     * Linux. */
     if (local_times) {
         for (int i = 0; i < 2; i++) {
             if (time_buf[i].tv_nsec != UTIME_NOW &&
                 time_buf[i].tv_nsec != UTIME_OMIT &&
-                time_buf[i].tv_nsec >= 1000000000L) {
+                (time_buf[i].tv_nsec < 0 ||
+                 time_buf[i].tv_nsec >= 1000000000L)) {
                 fut_printf("[FUTIMENS] futimens(fd=%d [%s], times=%p) -> EINVAL "
                            "(times[%d].tv_nsec=%ld out of range [0, 999999999])\n",
                            local_fd, fd_desc, local_times, i, time_buf[i].tv_nsec);

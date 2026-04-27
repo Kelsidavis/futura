@@ -630,15 +630,21 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
 
                 return 0;
 
+            case SO_DEBUG:
             case SO_REUSEADDR:
             case SO_REUSEPORT:
             case SO_KEEPALIVE:
             case SO_BROADCAST:
             case SO_OOBINLINE:
             case SO_DONTROUTE: {
-                /* Boolean options — return stored so_flags value */
+                /* Boolean options — return stored so_flags value.
+                 * SO_DEBUG was missing from this group, so a setsockopt
+                 * → getsockopt round-trip on the debug bit returned
+                 * ENOPROTOOPT instead of the stored 0/1, breaking libc
+                 * feature-detection via the boolean-roundtrip pattern. */
                 uint32_t bit = 0;
                 switch (optname) {
+                    case SO_DEBUG:     bit = FUT_SO_F_DEBUG;     break;
                     case SO_REUSEADDR: bit = FUT_SO_F_REUSEADDR; break;
                     case SO_REUSEPORT: bit = FUT_SO_F_REUSEPORT; break;
                     case SO_KEEPALIVE: bit = FUT_SO_F_KEEPALIVE; break;

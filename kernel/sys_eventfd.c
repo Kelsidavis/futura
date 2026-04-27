@@ -1378,7 +1378,13 @@ long sys_timerfd_settime(int ufd, int flags,
     fut_task_t *task = fut_task_current();
     if (!task) return -ESRCH;
 
-    if (!new_value) return -EINVAL;
+    /* Linux's timerfd_settime surfaces a NULL new_value through
+     * copy_from_user as -EFAULT (pointer fault), reserving -EINVAL for
+     * parameter-domain errors (bad flags, negative tv_sec, etc.). The
+     * previous gate collapsed the two — same EFAULT/EINVAL split as the
+     * recent rt_sigtimedwait / rt_sigqueueinfo / sched_param /
+     * setxattr / io_submit fixes. */
+    if (!new_value) return -EFAULT;
     if (ufd < 0) return -EBADF;
     if (flags & ~(TFD_TIMER_ABSTIME | TFD_TIMER_CANCEL_ON_SET)) return -EINVAL;
 

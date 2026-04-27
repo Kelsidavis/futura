@@ -492,11 +492,20 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
         return 0;
     }
 
-    /* Phase 2: Only AF_UNIX supported currently (Phase 3 adds AF_INET/AF_INET6 stubs) */
+    /* Phase 2: Only AF_UNIX supported on this fall-through path (the
+     * AF_INET / AF_INET6 / AF_NETLINK / AF_PACKET branches above
+     * already returned).  Linux's per-family inet_bind / unix_bind
+     * routines reject a sockaddr whose family doesn't match the
+     * socket — and Linux's socket() returns EAFNOSUPPORT for unknown
+     * families, so the canonical errno class for bind on an
+     * unsupported address family is EAFNOSUPPORT (97), not the
+     * generic ENOTSUP (95).  The previous ENOTSUP confused
+     * libc/glibc bind callers that branch on EAFNOSUPPORT to fall
+     * back to a different family. */
     if (sa_family != AF_UNIX) {
-        bind_printf("[BIND] bind(sockfd=%d, family=%u [%s, %s], addrlen=%u) -> ENOTSUP (unsupported address family)\n",
+        bind_printf("[BIND] bind(sockfd=%d, family=%u [%s, %s], addrlen=%u) -> EAFNOSUPPORT (unsupported address family)\n",
                    local_sockfd, sa_family, family_name, family_desc, local_addrlen);
-        return -ENOTSUP;
+        return -EAFNOSUPPORT;
     }
 
     /* Phase 2: Validate addrlen for Unix domain socket (2 bytes family + path) */

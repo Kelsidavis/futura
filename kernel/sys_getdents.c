@@ -301,10 +301,14 @@ int swap_gen_proc_swaps(char *buf, int cap) {
 
 /**
  * sys_iopl() - Change I/O privilege level (x86 only).
- * Returns -EPERM: I/O port access policy not implemented.
+ * Linux validates level <= 3 first (EINVAL), then checks CAP_SYS_RAWIO
+ * (EPERM). Futura collapsed both into a blanket EPERM, masking the
+ * range error class — userspace iopl(99) wrappers couldn't distinguish
+ * "bad parameter" from "insufficient privilege".
  */
 long sys_iopl(unsigned int level) {
-    (void)level;
+    if (level > 3)
+        return -EINVAL;
     return -EPERM;
 }
 

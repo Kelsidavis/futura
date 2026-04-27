@@ -256,10 +256,16 @@ long sys_semop(int semid, void *sops, unsigned int nsops) {
     if (!s)
         return -EINVAL;
 
-    /* Validate semaphore indices */
+    /* Validate semaphore indices. Linux's semop(2) returns -EFBIG for
+     * an out-of-range sem_num: 'For some operation the value of sem_num
+     * is less than 0 or greater than or equal to the number of
+     * semaphores in the set.' E2BIG is reserved for nsops exceeding
+     * SEMOPM (the per-call op cap, already enforced above). The previous
+     * EFBIG/E2BIG conflation broke libc semop wrappers that branch on
+     * EFBIG to recover via SEMGET expansion. */
     for (unsigned int i = 0; i < copy_n; i++) {
         if (ops[i].sem_num >= (unsigned short)s->nsems)
-            return -E2BIG;
+            return -EFBIG;
     }
 
     extern fut_task_t *fut_task_current(void);
@@ -506,10 +512,16 @@ long sys_semtimedop(int semid, void *sops, unsigned int nsops,
     if (!s)
         return -EINVAL;
 
-    /* Validate semaphore indices */
+    /* Validate semaphore indices. Linux's semop(2) returns -EFBIG for
+     * an out-of-range sem_num: 'For some operation the value of sem_num
+     * is less than 0 or greater than or equal to the number of
+     * semaphores in the set.' E2BIG is reserved for nsops exceeding
+     * SEMOPM (the per-call op cap, already enforced above). The previous
+     * EFBIG/E2BIG conflation broke libc semop wrappers that branch on
+     * EFBIG to recover via SEMGET expansion. */
     for (unsigned int i = 0; i < copy_n; i++) {
         if (ops[i].sem_num >= (unsigned short)s->nsems)
-            return -E2BIG;
+            return -EFBIG;
     }
 
     extern fut_task_t *fut_task_current(void);

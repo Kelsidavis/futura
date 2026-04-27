@@ -228,6 +228,17 @@ long sys_chdir(const char *pathname) {
         return -ENAMETOOLONG;
     }
 
+    /* Empty pathname is ENOENT per Linux chdir(2) (getname() returns
+     * -ENOENT for an empty string). Without this explicit check the
+     * VFS lookup of "" would either succeed unexpectedly or surface a
+     * non-Linux errno class — the matching truncate / readlink /
+     * unlinkat / linkat / rmdir / fchownat fixes already added this
+     * gate to their entry points. */
+    if (kpath[0] == '\0') {
+        fut_printf("[CHDIR] chdir(pathname=\"\" [empty]) -> ENOENT\n");
+        return -ENOENT;
+    }
+
     /* Phase 2: Categorize path type (using kernel buffer now) */
     const char *path_type;
     if (kpath[0] == '/') {

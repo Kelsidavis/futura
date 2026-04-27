@@ -301,12 +301,16 @@ long sys_signalfd4(int ufd, const void *mask, size_t sizemask, int flags) {
     /* Linux splits these two failure modes: EINVAL for bad sigsetsize,
      * EFAULT for a bad pointer. The previous combined NULL+EINVAL gate
      * collapsed pointer faults into parameter-domain errors. */
-    if (sizemask < 4) return -EINVAL;
+    /* Linux's fs/signalfd.c:signalfd4 requires sizemask == sizeof(sigset_t)
+     * (8 bytes for the 64-bit syscall ABI), not >= 4. The previous laxer
+     * check accepted 4-byte masks and silently zero-extended to 64 bits;
+     * that breaks ABI parity for libc wrappers that probe for "kernel
+     * supports the modern 8-byte sigset" and treat any non-EINVAL as a
+     * yes. Match Linux's strict equality gate. */
+    if (sizemask != sizeof(uint64_t)) return -EINVAL;
     if (!mask) return -EFAULT;
     uint64_t sigmask = 0;
-    size_t copy_bytes = (sizemask >= 8) ? 8 : 4;
-    if (sfd_copy_from_user(&sigmask, mask, copy_bytes) != 0) return -EFAULT;
-    if (copy_bytes == 4) sigmask &= 0xFFFFFFFFULL;
+    if (sfd_copy_from_user(&sigmask, mask, sizeof(sigmask)) != 0) return -EFAULT;
 
     /* SIGKILL and SIGSTOP cannot be caught via signalfd (POSIX) */
     sigmask &= ~((1ULL << (9  - 1)) |   /* SIGKILL */

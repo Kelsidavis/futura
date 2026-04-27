@@ -249,15 +249,23 @@ long sys_msync(void *addr, size_t length, int flags) {
         return -EINVAL;
     }
 
-    /* Validate end address is within userspace limits
-     * Prevent syncing kernel memory regions
-     * USER_SPACE_END is defined in platform paging headers */
+    /* Validate end address is within userspace limits.
+     * Prevent syncing kernel memory regions; USER_SPACE_END is defined
+     * in platform paging headers.
+     *
+     * Linux's mm/msync.c returns -ENOMEM when the address range is not
+     * part of the process address space (the find_vma walk returns no
+     * VMA, and 'error = -ENOMEM' is the documented errno for that path).
+     * Futura previously surfaced this as EINVAL, which collapsed
+     * 'address-not-mapped' into 'bad-parameter' and broke libc msync
+     * wrappers that retry on ENOMEM (after re-mmap'ing) but treat
+     * EINVAL as a fatal usage error. */
     uintptr_t end = start + aligned_len;
     if (end > USER_SPACE_END) {
-        fut_printf("[MSYNC] msync(%p, %zu) -> EINVAL "
+        fut_printf("[MSYNC] msync(%p, %zu) -> ENOMEM "
                    "(end address 0x%lx exceeds userspace limit 0x%lx)\n",
                    local_addr, aligned_len, end, USER_SPACE_END);
-        return -EINVAL;
+        return -ENOMEM;
     }
 
     size_t num_pages = aligned_len / PAGE_SIZE;

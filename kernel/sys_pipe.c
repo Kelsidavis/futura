@@ -580,10 +580,13 @@ long sys_pipe(int pipefd[2]) {
     /* Initialize pipe file operations on first use */
     init_pipe_fops();
 
-    /* Phase 2: Validate user pointer */
+    /* Validate user pointer — NULL is a faulting pointer (EFAULT) per
+     * Linux's pipe(2), not a parameter-domain error. The previous EINVAL
+     * masked NULL-pointer bugs as bad-arg errors and diverged from the
+     * pipe(2) man-page contract. */
     if (!pipefd) {
-        fut_printf("[PIPE] pipe(pipefd=NULL) -> EINVAL (NULL pipefd array)\n");
-        return -EINVAL;
+        fut_printf("[PIPE] pipe(pipefd=NULL) -> EFAULT\n");
+        return -EFAULT;
     }
 
     /* Validate that pipefd is a valid userspace pointer (writable)
@@ -718,11 +721,12 @@ long sys_pipe2(int pipefd[2], int flags) {
         return -EINVAL;
     }
 
-    /* Validate user pointer */
+    /* Validate user pointer — NULL is EFAULT (pointer fault), not EINVAL
+     * (parameter-domain error). Matches Linux's pipe2(2) ABI and the
+     * sister fix in sys_pipe(). */
     if (!pipefd) {
-        fut_printf("[PIPE2] pipe2(pipefd=NULL, flags=0x%x) -> EINVAL (NULL pipefd array)\n",
-                   flags);
-        return -EINVAL;
+        fut_printf("[PIPE2] pipe2(pipefd=NULL, flags=0x%x) -> EFAULT\n", flags);
+        return -EFAULT;
     }
 
     /* Validate that pipefd is a valid userspace pointer (writable)

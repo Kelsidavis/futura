@@ -233,11 +233,12 @@ long sys_umount2(const char *target, int flags) {
         return -ENAMETOOLONG;
     }
 
-    /* Validate target is not empty */
+    /* Empty target is ENOENT per Linux umount2(2) (getname returns
+     * -ENOENT for an empty pathname). */
     if (target_buf[0] == '\0') {
-        fut_printf("[UMOUNT2] umount2(target=\"\", flags=0x%x, pid=%d) -> EINVAL\n",
+        fut_printf("[UMOUNT2] umount2(target=\"\", flags=0x%x, pid=%d) -> ENOENT\n",
                    flags, task->pid);
-        return -EINVAL;
+        return -ENOENT;
     }
 
     /* Categorize unmount type */

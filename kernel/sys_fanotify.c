@@ -292,6 +292,19 @@ long sys_fanotify_mark(int fanotify_fd, unsigned int flags,
     struct fanotify_group *grp = fan_find_fd(fanotify_fd);
     if (!grp) return -EBADF;
 
+    /* Linux fanotify_mark requires EXACTLY one of ADD/REMOVE/FLUSH:
+     *   switch (flags & (FAN_MARK_ADD|FAN_MARK_REMOVE|FAN_MARK_FLUSH)) {
+     *   case FAN_MARK_ADD: case FAN_MARK_REMOVE: case FAN_MARK_FLUSH: break;
+     *   default: return -EINVAL;
+     *   }
+     * Futura's previous if-else cascade silently treated combinations
+     * (e.g. FLUSH|ADD) as 'whichever bit it sees first', diverging from
+     * the strict-or-EINVAL contract that libfanotify wrappers depend on
+     * for feature detection. */
+    unsigned int op = flags & (FAN_MARK_ADD | FAN_MARK_REMOVE | FAN_MARK_FLUSH);
+    if (op != FAN_MARK_ADD && op != FAN_MARK_REMOVE && op != FAN_MARK_FLUSH)
+        return -EINVAL;
+
     /* Stage the user-supplied path into a kernel buffer up front so we
      * never strcmp/index a user pointer directly. */
     char kpath[256];

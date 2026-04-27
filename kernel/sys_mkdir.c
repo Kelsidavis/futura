@@ -120,10 +120,10 @@ long sys_mkdir(const char *path, uint32_t mode) {
     const char *local_path = path;
     uint32_t local_mode = mode;
 
-    /* Phase 2: Validate path pointer */
+    /* NULL path is a pointer fault (EFAULT) per Linux mkdir(2). */
     if (!local_path) {
-        fut_printf("[MKDIR] mkdir(path=NULL, mode=0%o) -> EINVAL (NULL path)\n", local_mode);
-        return -EINVAL;
+        fut_printf("[MKDIR] mkdir(path=NULL, mode=0%o) -> EFAULT\n", local_mode);
+        return -EFAULT;
     }
 
     /* Phase 3: Validate mode bits - reject any bits outside permission mask (07777) */

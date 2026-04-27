@@ -71,11 +71,11 @@ long sys_truncate(const char *path, uint64_t length) {
         return -EINVAL;
     }
 
-    /* Phase 2: Validate path pointer */
+    /* NULL path is a pointer fault (EFAULT) per Linux truncate(2). */
     if (!local_path) {
-        fut_printf("[TRUNCATE] truncate(path=NULL, length=%llu) -> EINVAL (NULL path)\n",
+        fut_printf("[TRUNCATE] truncate(path=NULL, length=%llu) -> EFAULT\n",
                    (unsigned long long)local_length);
-        return -EINVAL;
+        return -EFAULT;
     }
 
     /* Copy path from userspace with truncation detection

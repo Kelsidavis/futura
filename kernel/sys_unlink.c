@@ -87,10 +87,10 @@ long sys_unlink(const char *path) {
      * corrupt register-passed parameters upon resumption. */
     const char *local_path = path;
 
-    /* Phase 2: Validate path pointer */
+    /* NULL path is a pointer fault (EFAULT) per Linux unlink(2). */
     if (!local_path) {
-        fut_printf("[UNLINK] unlink(path=NULL) -> EINVAL (NULL path)\n");
-        return -EINVAL;
+        fut_printf("[UNLINK] unlink(path=NULL) -> EFAULT\n");
+        return -EFAULT;
     }
 
     /* Copy path from userspace to kernel space */

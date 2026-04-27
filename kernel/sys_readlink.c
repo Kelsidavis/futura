@@ -160,11 +160,11 @@ long sys_readlink(const char *path, char *buf, size_t bufsiz) {
     char *local_buf = buf;
     size_t local_bufsiz = bufsiz;
 
-    /* Phase 2: Validate path pointer */
+    /* NULL path is a pointer fault (EFAULT) per Linux readlink(2). */
     if (!local_path) {
-        fut_printf("[READLINK] readlink(path=NULL, buf=?, bufsiz=%zu) -> EINVAL (NULL path)\n",
+        fut_printf("[READLINK] readlink(path=NULL, buf=?, bufsiz=%zu) -> EFAULT\n",
                    local_bufsiz);
-        return -EINVAL;
+        return -EFAULT;
     }
 
     /* Phase 2: Validate buffer pointer */

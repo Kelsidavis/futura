@@ -134,10 +134,10 @@ long sys_rmdir(const char *path) {
      * corrupt register-passed parameters upon resumption. */
     const char *local_path = path;
 
-    /* Phase 2: Validate path pointer */
+    /* NULL path is a pointer fault (EFAULT) per Linux rmdir(2). */
     if (!local_path) {
-        fut_printf("[RMDIR] rmdir(path=NULL) -> EINVAL (NULL path)\n");
-        return -EINVAL;
+        fut_printf("[RMDIR] rmdir(path=NULL) -> EFAULT\n");
+        return -EFAULT;
     }
 
     /* Copy path from userspace to kernel space */

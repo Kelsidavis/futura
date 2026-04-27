@@ -108,18 +108,17 @@ long sys_symlinkat(const char *target, int newdirfd, const char *linkpath) {
         return -ESRCH;
     }
 
-    /* Validate target pointer */
+    /* NULL pointers are EFAULT per Linux symlinkat(2). */
     if (!local_target) {
-        fut_printf("[SYMLINKAT] symlinkat(target=NULL, newdirfd=%d) -> EINVAL (NULL target)\n",
+        fut_printf("[SYMLINKAT] symlinkat(target=NULL, newdirfd=%d) -> EFAULT\n",
                    local_newdirfd);
-        return -EINVAL;
+        return -EFAULT;
     }
 
-    /* Validate linkpath pointer */
     if (!local_linkpath) {
-        fut_printf("[SYMLINKAT] symlinkat(newdirfd=%d, linkpath=NULL) -> EINVAL (NULL linkpath)\n",
+        fut_printf("[SYMLINKAT] symlinkat(newdirfd=%d, linkpath=NULL) -> EFAULT\n",
                    local_newdirfd);
-        return -EINVAL;
+        return -EFAULT;
     }
 
     /* Copy target from userspace */

@@ -141,10 +141,10 @@ long sys_access(const char *pathname, int mode) {
     const char *local_pathname = pathname;
     int local_mode = mode;
 
-    /* Phase 2: Validate pathname pointer */
+    /* NULL pathname is a pointer fault (EFAULT) per Linux access(2). */
     if (!local_pathname) {
-        fut_printf("[ACCESS] access(pathname=NULL, mode=%d) -> EINVAL (NULL pathname)\n", local_mode);
-        return -EINVAL;
+        fut_printf("[ACCESS] access(pathname=NULL, mode=%d) -> EFAULT\n", local_mode);
+        return -EFAULT;
     }
 
     /* Phase 2: Categorize mode bits */

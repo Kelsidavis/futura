@@ -155,11 +155,11 @@ long sys_faccessat(int dirfd, const char *pathname, int mode, int flags) {
         return -EINVAL;
     }
 
-    /* Validate pathname pointer */
+    /* NULL pathname is a pointer fault (EFAULT) per Linux faccessat(2). */
     if (!local_pathname) {
-        fut_printf("[FACCESSAT] faccessat(dirfd=%d, pathname=NULL) -> EINVAL (NULL pathname)\n",
+        fut_printf("[FACCESSAT] faccessat(dirfd=%d, pathname=NULL) -> EFAULT\n",
                    local_dirfd);
-        return -EINVAL;
+        return -EFAULT;
     }
 
     /* Copy pathname from userspace */

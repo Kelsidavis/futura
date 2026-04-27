@@ -156,18 +156,17 @@ long sys_renameat(int olddirfd, const char *oldpath, int newdirfd, const char *n
         return -ESRCH;
     }
 
-    /* Validate oldpath pointer */
+    /* NULL paths are pointer faults (EFAULT) per Linux renameat(2). */
     if (!local_oldpath) {
-        fut_printf("[RENAMEAT] renameat(olddirfd=%d, oldpath=NULL) -> EINVAL (NULL oldpath)\n",
+        fut_printf("[RENAMEAT] renameat(olddirfd=%d, oldpath=NULL) -> EFAULT\n",
                    local_olddirfd);
-        return -EINVAL;
+        return -EFAULT;
     }
 
-    /* Validate newpath pointer */
     if (!local_newpath) {
-        fut_printf("[RENAMEAT] renameat(newdirfd=%d, newpath=NULL) -> EINVAL (NULL newpath)\n",
+        fut_printf("[RENAMEAT] renameat(newdirfd=%d, newpath=NULL) -> EFAULT\n",
                    local_newdirfd);
-        return -EINVAL;
+        return -EFAULT;
     }
 
     /* Copy oldpath from userspace */

@@ -65,15 +65,15 @@ long sys_symlink(const char *target, const char *linkpath) {
     const char *local_linkpath = linkpath;
 
     /* Validate target pointer */
+    /* NULL pointers are EFAULT (pointer fault), not EINVAL. */
     if (!local_target) {
-        fut_printf("[SYMLINK] symlink(target=NULL, linkpath=?) -> EINVAL (NULL target)\n");
-        return -EINVAL;
+        fut_printf("[SYMLINK] symlink(target=NULL, linkpath=?) -> EFAULT\n");
+        return -EFAULT;
     }
 
-    /* Validate linkpath pointer */
     if (!local_linkpath) {
-        fut_printf("[SYMLINK] symlink(target=?, linkpath=NULL) -> EINVAL (NULL linkpath)\n");
-        return -EINVAL;
+        fut_printf("[SYMLINK] symlink(target=?, linkpath=NULL) -> EFAULT\n");
+        return -EFAULT;
     }
 
     /* Copy target from userspace with truncation detection

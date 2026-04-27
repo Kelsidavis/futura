@@ -107,11 +107,11 @@ long sys_mkdirat(int dirfd, const char *pathname, unsigned int mode) {
         return -ESRCH;
     }
 
-    /* Validate pathname pointer */
+    /* NULL pathname is a pointer fault (EFAULT) per Linux mkdirat(2). */
     if (!local_pathname) {
-        fut_printf("[MKDIRAT] mkdirat(dirfd=%d, pathname=NULL, mode=0%o) -> EINVAL (NULL pathname)\n",
+        fut_printf("[MKDIRAT] mkdirat(dirfd=%d, pathname=NULL, mode=0%o) -> EFAULT\n",
                    local_dirfd, local_mode);
-        return -EINVAL;
+        return -EFAULT;
     }
 
     /* Copy pathname from userspace */

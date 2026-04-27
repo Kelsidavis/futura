@@ -117,11 +117,11 @@ long sys_readlinkat(int dirfd, const char *pathname, char *buf, size_t bufsiz) {
         return -ESRCH;
     }
 
-    /* Validate pathname pointer */
+    /* NULL pathname is a pointer fault (EFAULT) per Linux readlinkat(2). */
     if (!local_pathname) {
-        fut_printf("[READLINKAT] readlinkat(dirfd=%d, pathname=NULL) -> EINVAL (NULL pathname)\n",
+        fut_printf("[READLINKAT] readlinkat(dirfd=%d, pathname=NULL) -> EFAULT\n",
                    local_dirfd);
-        return -EINVAL;
+        return -EFAULT;
     }
 
     /* Validate buf pointer */

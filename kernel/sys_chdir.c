@@ -147,10 +147,10 @@ long sys_chdir(const char *pathname) {
      * corrupt register-passed parameters upon resumption. */
     const char *local_pathname = pathname;
 
-    /* Phase 2: Validate pathname pointer */
+    /* NULL pathname is a pointer fault (EFAULT) per Linux chdir(2). */
     if (!local_pathname) {
-        fut_printf("[CHDIR] chdir(pathname=NULL) -> EINVAL (NULL pathname)\n");
-        return -EINVAL;
+        fut_printf("[CHDIR] chdir(pathname=NULL) -> EFAULT\n");
+        return -EFAULT;
     }
 
     /* Get the current task */

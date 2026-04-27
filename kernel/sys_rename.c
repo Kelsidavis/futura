@@ -150,14 +150,14 @@ long sys_rename(const char *oldpath, const char *newpath) {
     const char *local_oldpath = oldpath;
     const char *local_newpath = newpath;
 
-    /* Phase 2: Validate path pointers */
+    /* NULL paths are pointer faults (EFAULT) per Linux rename(2). */
     if (!local_oldpath) {
-        fut_printf("[RENAME] rename(oldpath=NULL, newpath=?) -> EINVAL (NULL oldpath)\n");
-        return -EINVAL;
+        fut_printf("[RENAME] rename(oldpath=NULL, newpath=?) -> EFAULT\n");
+        return -EFAULT;
     }
     if (!local_newpath) {
-        fut_printf("[RENAME] rename(oldpath=?, newpath=NULL) -> EINVAL (NULL newpath)\n");
-        return -EINVAL;
+        fut_printf("[RENAME] rename(oldpath=?, newpath=NULL) -> EFAULT\n");
+        return -EFAULT;
     }
 
     /* Copy paths from userspace to kernel space */

@@ -69,6 +69,17 @@ static inline int sched_copy_to_user(void *dst, const void *src, size_t n) {
  *   - -EPERM if insufficient privileges
  */
 long sys_sched_setparam(int pid, const struct sched_param *param) {
+    /* Linux's sys_sched_setparam validates 'pid < 0 -> EINVAL' up
+     * front (kernel/sched/syscalls.c). Without that gate, a negative
+     * pid silently widened to a huge unsigned and dropped into
+     * fut_task_by_pid() which returned ESRCH, masking the ABI error.
+     * sched_getscheduler / sched_getparam / sched_setscheduler share
+     * the same pattern — fix them in lockstep below. */
+    if (pid < 0) {
+        fut_printf("[SCHED] sched_setparam(pid=%d) -> EINVAL (negative pid)\n", pid);
+        return -EINVAL;
+    }
+
     /* Capture current thread once at entry; derive task from it.
      * Calling fut_thread_current() twice (once for task, once for thread)
      * risks a context switch between the two calls that stores rt_priority
@@ -162,6 +173,12 @@ long sys_sched_setparam(int pid, const struct sched_param *param) {
  *   - -ESRCH if pid not found
  */
 long sys_sched_getparam(int pid, struct sched_param *param) {
+    /* See sched_setparam: Linux gates pid<0 -> EINVAL up front. */
+    if (pid < 0) {
+        fut_printf("[SCHED] sched_getparam(pid=%d) -> EINVAL (negative pid)\n", pid);
+        return -EINVAL;
+    }
+
     /* Capture current thread once at entry; derive task from it. */
     fut_thread_t *thread = fut_thread_current();
     fut_task_t *task = thread ? thread->task : NULL;
@@ -218,6 +235,12 @@ long sys_sched_getparam(int pid, struct sched_param *param) {
  *   - -EPERM if insufficient privileges for RT policies
  */
 long sys_sched_setscheduler(int pid, int policy, const struct sched_param *param) {
+    /* See sched_setparam: Linux rejects pid<0 with EINVAL up front. */
+    if (pid < 0) {
+        fut_printf("[SCHED] sched_setscheduler(pid=%d) -> EINVAL (negative pid)\n", pid);
+        return -EINVAL;
+    }
+
     fut_thread_t *thread = fut_thread_current();
     fut_task_t *task = thread ? thread->task : NULL;
     if (!task) {
@@ -330,6 +353,12 @@ long sys_sched_setscheduler(int pid, int policy, const struct sched_param *param
  *   - -ESRCH if pid not found
  */
 long sys_sched_getscheduler(int pid) {
+    /* See sched_setparam: Linux rejects pid<0 with EINVAL up front. */
+    if (pid < 0) {
+        fut_printf("[SCHED] sched_getscheduler(pid=%d) -> EINVAL (negative pid)\n", pid);
+        return -EINVAL;
+    }
+
     fut_thread_t *thread = fut_thread_current();
     fut_task_t *task = thread ? thread->task : NULL;
     if (!task) {

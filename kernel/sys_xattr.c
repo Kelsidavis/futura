@@ -483,9 +483,9 @@ long sys_setxattr(const char *path, const char *name, const void *value,
     }
 
     if (!path || !name) {
-        fut_printf("[XATTR] setxattr(path=%p, name=%p, pid=%d) -> EINVAL (NULL pointer)\n",
+        fut_printf("[XATTR] setxattr(path=%p, name=%p, pid=%d) -> EFAULT\n",
                    path, name, task->pid);
-        return -EINVAL;
+        return -EFAULT;
     }
 
     /* Validate flags and size using helper */
@@ -532,7 +532,7 @@ long sys_lsetxattr(const char *path, const char *name, const void *value,
     }
 
     if (!path || !name) {
-        return -EINVAL;
+        return -EFAULT;
     }
 
     long ret = xattr_validate_setxattr_flags(flags, size, value, "lsetxattr");
@@ -581,7 +581,7 @@ long sys_fsetxattr(int fd, const char *name, const void *value,
     }
 
     if (!name) {
-        return -EINVAL;
+        return -EFAULT;
     }
 
     long ret = xattr_validate_setxattr_flags(flags, size, value, "fsetxattr");
@@ -642,7 +642,7 @@ long sys_getxattr(const char *path, const char *name, void *value, size_t size) 
     }
 
     if (!path || !name) {
-        return -EINVAL;
+        return -EFAULT;
     }
 
     char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
@@ -684,7 +684,7 @@ long sys_lgetxattr(const char *path, const char *name, void *value, size_t size)
     }
 
     if (!path || !name) {
-        return -EINVAL;
+        return -EFAULT;
     }
 
     char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
@@ -726,7 +726,7 @@ long sys_fgetxattr(int fd, const char *name, void *value, size_t size) {
     }
 
     if (!name) {
-        return -EINVAL;
+        return -EFAULT;
     }
 
     char name_buf[XATTR_NAME_MAX + 1];
@@ -788,7 +788,7 @@ long sys_listxattr(const char *path, char *list, size_t size) {
     }
 
     if (!path) {
-        return -EINVAL;
+        return -EFAULT;
     }
 
     char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
@@ -828,7 +828,7 @@ long sys_llistxattr(const char *path, char *list, size_t size) {
     }
 
     if (!path) {
-        return -EINVAL;
+        return -EFAULT;
     }
 
     char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
@@ -918,7 +918,7 @@ long sys_removexattr(const char *path, const char *name) {
     }
 
     if (!path || !name) {
-        return -EINVAL;
+        return -EFAULT;
     }
 
     char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
@@ -941,7 +941,7 @@ long sys_lremovexattr(const char *path, const char *name) {
     }
 
     if (!path || !name) {
-        return -EINVAL;
+        return -EFAULT;
     }
 
     char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
@@ -969,7 +969,7 @@ long sys_fremovexattr(int fd, const char *name) {
     }
 
     if (!name) {
-        return -EINVAL;
+        return -EFAULT;
     }
 
     char name_buf[XATTR_NAME_MAX + 1];

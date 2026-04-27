@@ -155,10 +155,18 @@ long sys_listen(int sockfd, int backlog) {
             break;
     }
 
-    /* SOCK_DGRAM does not support listen — Linux returns EOPNOTSUPP */
-    if (socket->socket_type == SOCK_DGRAM) {
-        listen_printf("[LISTEN] listen(sockfd=%d, backlog=%d) -> EOPNOTSUPP (SOCK_DGRAM cannot listen)\n",
-                   local_sockfd, local_backlog);
+    /* listen() is only valid on connection-oriented socket types. Linux's
+     * inet_listen / unix_listen accept SOCK_STREAM (and SOCK_SEQPACKET on
+     * AF_UNIX); everything else (SOCK_DGRAM, SOCK_RAW, SOCK_RDM) returns
+     * -EOPNOTSUPP. The previous check only rejected SOCK_DGRAM, so a
+     * SOCK_RAW socket could enter the listening state and queue
+     * connection-state metadata on a connectionless socket — observable
+     * via /proc/<pid>/fdinfo and a confusing accept() shape. */
+    if (socket->socket_type != SOCK_STREAM &&
+        socket->socket_type != SOCK_SEQPACKET) {
+        listen_printf("[LISTEN] listen(sockfd=%d, backlog=%d, type=%d) -> EOPNOTSUPP "
+                   "(only SOCK_STREAM/SOCK_SEQPACKET support listen)\n",
+                   local_sockfd, local_backlog, socket->socket_type);
         return -EOPNOTSUPP;
     }
 

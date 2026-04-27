@@ -185,14 +185,17 @@ long sys_acct(const char *filename) {
         return -ESRCH;
     }
 
-    /* Linux: acct(2) requires CAP_SYS_PACCT (bit 32). The function
-     * comment claimed this gate existed but the check was never
-     * written, so any process could enable accounting — letting an
-     * unprivileged user direct kernel writes into a file of their
-     * choosing on every process exit. The disable path also needs the
-     * cap so an attacker can't silently turn off audit logging. */
+    /* Linux: acct(2) requires CAP_SYS_PACCT, which is capability number
+     * 20 (per linux/capability.h and Futura's own include/sys/capability.h).
+     * The previous code shifted by 32 — that's not even a valid Linux
+     * capability bit, so a properly-privileged caller (root or
+     * CAP_SYS_PACCT) was correctly allowed via the uid==0 fast path,
+     * but a non-root caller granted CAP_SYS_PACCT via setcap was
+     * incorrectly rejected because we were checking the wrong bit. The
+     * disable path also needs the cap so an attacker can't silently
+     * turn off audit logging. */
     if (task->uid != 0 &&
-        !(task->cap_effective & (1ULL << 32 /* CAP_SYS_PACCT */))) {
+        !(task->cap_effective & (1ULL << 20 /* CAP_SYS_PACCT */))) {
         fut_printf("[ACCT] acct() -> EPERM (CAP_SYS_PACCT required)\n");
         return -EPERM;
     }

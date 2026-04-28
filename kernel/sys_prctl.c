@@ -691,7 +691,40 @@ long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
     case PR_PAC_RESET_KEYS:
         /* ARM64 pointer-authentication key reset (Linux 5.0+).
          * arg2 is a bitmask of keys to reset (PR_PAC_AP{DA,DB,GA,IA,IB}KEY).
-         * Futura has no PAC hardware; accept as no-op so PAC-aware programs start. */
+         * Futura has no PAC hardware; accept as no-op so PAC-aware programs start.
+         *
+         * Linux kernel/sys.c gates this on the unused tail args being zero
+         * AND on arg2 containing only known key-mask bits:
+         *
+         *   case PR_PAC_RESET_KEYS:
+         *       if (arg3 || arg4 || arg5) return -EINVAL;
+         *       return pac_reset_keys(me, arg2);
+         *
+         *   int pac_reset_keys(struct task_struct *tsk, unsigned long arg)
+         *   {
+         *       unsigned long key_mask = PR_PAC_APIAKEY | PR_PAC_APIBKEY |
+         *                                PR_PAC_APDAKEY | PR_PAC_APDBKEY |
+         *                                PR_PAC_APGAKEY;
+         *       if (arg & ~key_mask) return -EINVAL;
+         *       ...
+         *   }
+         *
+         * Futura previously returned 0 unconditionally, so generic prctl
+         * rigidity probes (which pass garbage in arg3/arg4/arg5 or
+         * undefined high bits in arg2 to detect kernel-too-old) saw
+         * 'success' on Futura where Linux returns EINVAL.  The arg2-bit
+         * check additionally prevents future PAC key-mask extensions from
+         * silently going through. */
+        if (arg3 || arg4 || arg5)
+            return -EINVAL;
+        {
+            const unsigned long PAC_KEY_MASK =
+                PR_PAC_APIAKEY | PR_PAC_APIBKEY |
+                PR_PAC_APDAKEY | PR_PAC_APDBKEY |
+                PR_PAC_APGAKEY;
+            if (arg2 & ~PAC_KEY_MASK)
+                return -EINVAL;
+        }
         return 0;
 
     case PR_SET_TAGGED_ADDR_CTRL:

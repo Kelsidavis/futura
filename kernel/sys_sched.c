@@ -269,7 +269,20 @@ long sys_setpriority(int which, int who, int prio) {
                        which_desc, who, prio);
             return -ESRCH;
         }
-        if (task->uid != 0 && !HAS_CAP_SYS_NICE(task) && task->uid != target_task->uid) {
+        /* Linux's set_one_prio_perm accepts the call when the caller's
+         * effective uid matches the TARGET'S real uid OR the target's
+         * effective uid:
+         *   if (uid_eq(pcred->uid,  cred->euid) ||
+         *       uid_eq(pcred->euid, cred->euid))
+         *       return 1;
+         * Compare against both target->ruid and target->uid (effective)
+         * — the previous effective-vs-effective gate rejected a setuid
+         * helper whose euid had been dropped back to its ruid (matching
+         * Linux's set_priority semantics; same fix pattern as the
+         * sched_setaffinity check_same_owner update). */
+        if (task->uid != 0 && !HAS_CAP_SYS_NICE(task) &&
+            task->uid != target_task->uid &&
+            task->uid != target_task->ruid) {
             fut_printf("[SCHED] setpriority(%s, who=%d, prio=%d) -> EPERM (uid mismatch)\n",
                        which_desc, who, prio);
             return -EPERM;
@@ -286,8 +299,10 @@ long sys_setpriority(int which, int who, int prio) {
         for (fut_task_t *t = fut_task_list; t; t = t->next) {
             if (t->pid != target_pid || t->state == FUT_TASK_ZOMBIE)
                 continue;
-            /* Permission check: only root or same-UID can change another's priority */
-            if (task->uid != 0 && !HAS_CAP_SYS_NICE(task) && task->uid != t->uid) {
+            /* Permission check: Linux set_one_prio_perm — caller euid
+             * must match target's real OR effective uid. */
+            if (task->uid != 0 && !HAS_CAP_SYS_NICE(task) &&
+                task->uid != t->uid && task->uid != t->ruid) {
                 fut_printf("[SCHED] setpriority(%s, who=%d, prio=%d) -> EPERM (uid mismatch)\n",
                            which_desc, who, prio);
                 return -EPERM;
@@ -306,7 +321,10 @@ long sys_setpriority(int which, int who, int prio) {
         for (fut_task_t *t = fut_task_list; t; t = t->next) {
             if (t->pgid != target_pgid || t->state == FUT_TASK_ZOMBIE)
                 continue;
-            if (task->uid != 0 && !HAS_CAP_SYS_NICE(task) && task->uid != t->uid) {
+            /* Permission check: Linux set_one_prio_perm — caller euid
+             * must match target's real OR effective uid. */
+            if (task->uid != 0 && !HAS_CAP_SYS_NICE(task) &&
+                task->uid != t->uid && task->uid != t->ruid) {
                 saw_uid_mismatch = 1;
                 continue; /* skip tasks we don't own in group */
             }

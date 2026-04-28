@@ -202,8 +202,14 @@ long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset) 
         return -EINVAL;
     }
 
-    /* File-backed mappings require page-aligned offset */
-    if (!(flags & MAP_ANONYMOUS) && (offset % PAGE_SIZE != 0)) {
+    /* Linux's SYSCALL_DEFINE6(mmap) rejects 'offset_in_page(off)' for
+     * EVERY mapping, MAP_ANONYMOUS or not — the page-alignment gate
+     * runs before the kernel cares whether the mapping is file-backed.
+     * The previous Futura code skipped the check for anon mappings, so
+     * mmap(_, _, _, MAP_ANONYMOUS, _, 0xfff) silently mapped pages with
+     * the bad offset accepted (and then ignored).  Match Linux: any
+     * non-page-aligned offset is EINVAL regardless of MAP_ANONYMOUS. */
+    if (offset % PAGE_SIZE != 0) {
         fut_printf("[MMAP] mmap(offset=%ld) -> EINVAL (offset not page-aligned)\n", offset);
         return -EINVAL;
     }

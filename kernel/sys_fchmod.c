@@ -183,8 +183,16 @@ long sys_fchmod(int fd, uint32_t mode) {
      * when the caller is not in the file's group. S_ISUID and sticky
      * bit are allowed for file owners. The "in group" check must
      * include supplementary groups (in_group_p), otherwise users in
-     * the file's group only via supplementary gids lose S_ISGID. */
-    {
+     * the file's group only via supplementary gids lose S_ISGID.
+     *
+     * The strip applies to non-directory inodes only — for directories
+     * S_ISGID has different semantics (it marks files created in the
+     * directory to inherit the group), so Linux preserves it across
+     * chmod regardless of CAP_FSETID or group membership.  Skipping
+     * the strip on directories matches the matching sys_chmod fix
+     * and keeps shared-project directories from losing their setgid
+     * marker every time anyone re-chmods them. */
+    if (vnode->type != VN_DIR) {
         int has_cap_fsetid = (task->cap_effective & (1ULL << 4 /* CAP_FSETID */));
         if ((local_mode & 02000) && !has_cap_fsetid) {
             int in_group = 0;

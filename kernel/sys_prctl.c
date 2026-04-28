@@ -633,12 +633,31 @@ long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
 
     case PR_SET_THP_DISABLE:
         /* Linux 3.15+: disable transparent hugepages for this task.
-         * Futura has no THP; accept the hint silently. */
+         * Futura has no THP; accept the hint silently.
+         *
+         * Linux's kernel/sys.c gates the unused args rigidly:
+         *   case PR_SET_THP_DISABLE:
+         *       if (arg3 || arg4 || arg5) return -EINVAL;
+         * The previous Futura code silently ignored arg3/arg4/arg5, so
+         * a userspace probe walking through the unused-arg space (to
+         * detect future flag extensions) saw success on every value
+         * — same unused-arg rigidity gap the recent PR_SET_CHILD_SUBREAPER
+         * / PR_PAC_RESET_KEYS / PR_TAGGED_ADDR_CTRL fixes already closed. */
+        if (arg3 != 0 || arg4 != 0 || arg5 != 0)
+            return -EINVAL;
         return 0;
 
     case PR_GET_THP_DISABLE:
         /* Linux 3.15+: query THP disabled state.
-         * Return 0: THP is not active (Futura has no THP). */
+         * Return 0: THP is not active (Futura has no THP).
+         *
+         * Linux requires arg2..arg5 to all be zero:
+         *   case PR_GET_THP_DISABLE:
+         *       if (arg2 || arg3 || arg4 || arg5) return -EINVAL;
+         * The previous Futura code accepted any arg values, masking the
+         * malformed-call detection that future-feature probes rely on. */
+        if (arg2 != 0 || arg3 != 0 || arg4 != 0 || arg5 != 0)
+            return -EINVAL;
         return 0;
 
     case PR_GET_TIMING:

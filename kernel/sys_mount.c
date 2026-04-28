@@ -1601,8 +1601,15 @@ long sys_statmount(const void *req, void *buf, size_t bufsize, unsigned int flag
     (void)flags;
     if (!req || !buf || bufsize < sizeof(struct statmount_result)) return -EINVAL;
 
-    const struct statmount_req *r = (const struct statmount_req *)req;
-    uint64_t target_id = r->mnt_id;
+    /* Copy the request from user before any field deref — the previous
+     * code did `r = (const struct statmount_req *)req` and dereferenced
+     * `r->mnt_id` / `r->mask` straight from the user pointer, so a bad
+     * pointer faulted the kernel and a kernel pointer let the caller
+     * read kernel memory through the request fields. */
+    struct statmount_req kreq;
+    if (mount_copy_from_user(&kreq, req, sizeof(kreq)) != 0)
+        return -EFAULT;
+    uint64_t target_id = kreq.mnt_id;
 
     /* Find mount by ID (st_dev) */
     struct fut_mount *m = fut_vfs_first_mount();
@@ -1618,20 +1625,31 @@ long sys_statmount(const void *req, void *buf, size_t bufsize, unsigned int flag
     }
     if (!found) return -ENOENT;
 
-    struct statmount_result *res = (struct statmount_result *)buf;
-    memset(res, 0, bufsize);
+    /* Build the response in a kernel staging buffer, then commit to
+     * userspace via copy_to_user.  The previous code wrote directly to
+     * 'buf' (a user pointer), so a bad user pointer faulted the kernel
+     * and a kernel address turned this into a write-anywhere primitive.
+     * Cap bufsize to a sane upper bound (4 KB matches Linux's
+     * STATMOUNT_BUFSIZE_MAX practical ceiling for the in-kernel pass;
+     * the caller can always page larger results). */
+    enum { STATMOUNT_KBUF_MAX = 4096 };
+    if (bufsize > STATMOUNT_KBUF_MAX) bufsize = STATMOUNT_KBUF_MAX;
+
+    char kbuf[STATMOUNT_KBUF_MAX];
+    memset(kbuf, 0, bufsize);
+    struct statmount_result *res = (struct statmount_result *)kbuf;
 
     /* Populate fields based on requested mask */
-    res->mask = r->mask;
+    res->mask = kreq.mask;
     res->mnt_id = found->st_dev;
     res->mnt_id_old = (uint32_t)found->st_dev;
 
     /* String section starts after the fixed struct */
     uint32_t str_off = 0;
     size_t str_space = bufsize - sizeof(struct statmount_result);
-    char *str_base = (char *)buf + sizeof(struct statmount_result);
+    char *str_base = kbuf + sizeof(struct statmount_result);
 
-    if (r->mask & STATMOUNT_MNT_ROOT) {
+    if (kreq.mask & STATMOUNT_MNT_ROOT) {
         res->mnt_root = str_off;
         const char *root = "/";
         size_t rlen = 2;
@@ -1641,7 +1659,7 @@ long sys_statmount(const void *req, void *buf, size_t bufsize, unsigned int flag
         }
     }
 
-    if (r->mask & STATMOUNT_MNT_POINT) {
+    if (kreq.mask & STATMOUNT_MNT_POINT) {
         res->mnt_point = str_off;
         const char *mp = found->mountpoint ? found->mountpoint : "/";
         size_t mplen = 0;
@@ -1653,7 +1671,7 @@ long sys_statmount(const void *req, void *buf, size_t bufsize, unsigned int flag
         }
     }
 
-    if (r->mask & STATMOUNT_FS_TYPE) {
+    if (kreq.mask & STATMOUNT_FS_TYPE) {
         res->fs_type = str_off;
         const char *fs = found->fstype_display ? found->fstype_display :
                          (found->fs ? found->fs->name : "unknown");
@@ -1666,13 +1684,18 @@ long sys_statmount(const void *req, void *buf, size_t bufsize, unsigned int flag
         }
     }
 
-    if (r->mask & STATMOUNT_SB_BASIC) {
+    if (kreq.mask & STATMOUNT_SB_BASIC) {
         res->sb_dev_major = (uint32_t)(found->st_dev >> 8);
         res->sb_dev_minor = (uint32_t)(found->st_dev & 0xFF);
         res->sb_flags = (uint32_t)found->flags;
     }
 
     res->size = (uint32_t)(sizeof(struct statmount_result) + str_off);
+
+    /* Commit the staged response */
+    if (mount_copy_to_user(buf, kbuf, bufsize) != 0)
+        return -EFAULT;
+
     return 0;
 }
 

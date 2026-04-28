@@ -199,13 +199,27 @@ long sys_clock_settime(int clock_id, const fut_timespec_t *tp) {
         return -EINVAL;
     }
 
-    /* Phase 3: CAP_SYS_TIME required to set the realtime clock.
-     * Non-root processes without this capability get EPERM. */
-    if (task->uid != 0 && !(task->cap_effective & (1ULL << CAP_SYS_TIME))) {
-        fut_printf("[CLOCK_SETTIME] clock_settime(clock_id=%s, pid=%llu) -> EPERM "
-                   "(CAP_SYS_TIME required)\n",
-                   clock_name, (unsigned long long)task->pid);
-        return -EPERM;
+    /* Phase 3: capability gate.  Linux gates CLOCK_REALTIME / CLOCK_TAI
+     * via posix_clock_realtime_set on CAP_SYS_TIME (capability 25), but
+     * CLOCK_REALTIME_ALARM goes through alarm_clock_set which gates on
+     * CAP_WAKE_ALARM (capability 35) instead.  The previous code applied
+     * CAP_SYS_TIME to every settable clock, so a process holding
+     * CAP_WAKE_ALARM but not CAP_SYS_TIME — the exact configuration
+     * systemd-timesyncd's "wake-from-suspend stamp" path runs under —
+     * got EPERM on Futura but succeeded on Linux. */
+    {
+        int cap_bit = (local_clock_id == CLOCK_REALTIME_ALARM)
+                      ? 35 /* CAP_WAKE_ALARM */
+                      : CAP_SYS_TIME;
+        const char *cap_name = (local_clock_id == CLOCK_REALTIME_ALARM)
+                               ? "CAP_WAKE_ALARM"
+                               : "CAP_SYS_TIME";
+        if (task->uid != 0 && !(task->cap_effective & (1ULL << cap_bit))) {
+            fut_printf("[CLOCK_SETTIME] clock_settime(clock_id=%s, pid=%llu) -> EPERM "
+                       "(%s required)\n",
+                       clock_name, (unsigned long long)task->pid, cap_name);
+            return -EPERM;
+        }
     }
 
     /*

@@ -75,16 +75,29 @@ static inline long mempol_validate_mode(int mode) {
     return 0;
 }
 
+/* Linux's get_nodes (mm/mempolicy.c) rejects an absurd maxnode up
+ * front:
+ *   if (maxnode > PAGE_SIZE * BITS_PER_BYTE)
+ *       return -EINVAL;
+ * The cap is 32768 on 4 KB-page architectures.  Without this check
+ * an unprivileged caller can request a multi-megabyte nodemask
+ * decode pass that Linux refuses outright; userspace probes that
+ * detect 'kernel rejects huge maxnode' to discover the cap also
+ * couldn't run on Futura.  Apply the same bound here. */
+#define MEMPOL_MAXNODE_LIMIT (4096UL * 8UL)
+
 long sys_mbind(unsigned long addr, unsigned long len, int mode,
                const unsigned long *nodemask, unsigned long maxnode,
                unsigned int flags) {
-    (void)addr; (void)len; (void)nodemask; (void)maxnode; (void)flags;
+    (void)addr; (void)len; (void)nodemask; (void)flags;
     /* Linux's kernel_mbind strips MPOL_MODE_FLAGS (MPOL_F_STATIC_NODES
      * | MPOL_F_RELATIVE_NODES, mask 0xC000) from mode before validating
      * against MPOL_MAX, and rejects the two mode_flags being set
      * together.  The previous code rejected any value with the high
      * bits set, so MPOL_DEFAULT|MPOL_F_STATIC_NODES (a documented
      * combination) returned EINVAL where Linux accepts it. */
+    if (maxnode > MEMPOL_MAXNODE_LIMIT)
+        return -EINVAL;
     return mempol_validate_mode(mode);
 }
 
@@ -96,9 +109,12 @@ long sys_mbind(unsigned long addr, unsigned long len, int mode,
  */
 long sys_set_mempolicy(int mode, const unsigned long *nodemask,
                        unsigned long maxnode) {
-    (void)nodemask; (void)maxnode;
+    (void)nodemask;
     /* Mirror sys_mbind: strip MPOL_MODE_FLAGS before validating mode
-     * against MPOL_MAX, matching Linux's kernel_set_mempolicy. */
+     * against MPOL_MAX, matching Linux's kernel_set_mempolicy.  Same
+     * MEMPOL_MAXNODE_LIMIT cap as mbind/get_mempolicy applies. */
+    if (maxnode > MEMPOL_MAXNODE_LIMIT)
+        return -EINVAL;
     return mempol_validate_mode(mode);
 }
 

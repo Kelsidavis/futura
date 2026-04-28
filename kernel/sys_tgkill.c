@@ -67,18 +67,21 @@ long sys_tgkill(int tgid, int tid, int sig) {
         return -ESRCH;
     }
 
-    /* Permission check: Linux's kill_ok_by_cred uid-pair test (mirrors
-     * sys_kill). Match caller.{euid,ruid} against target.{uid,suid};
-     * the previous check only compared against target.ruid, so a
-     * thread whose owning task had dropped its effective UID to a
-     * regular user could not be tgkill'd by that user even though
-     * Linux allows it. */
+    /* Permission check: Linux's kill_ok_by_cred uid-pair test —
+     * caller.{euid,ruid} × target.{ruid,suid}.  The previous Futura
+     * check compared against target->uid (effective) where Linux
+     * compares against target->ruid (real), making Futura more
+     * permissive: a setuid-down target was killable by callers
+     * matching the dropped effective uid, but Linux strictly
+     * requires the saved or real uid match.  Same setuid-down-
+     * daemon kill vector the matching sys_kill / sys_pidfd_send_signal
+     * fixes just closed. */
     if (thread->task != current &&
         current->ruid != 0 &&
         !(current->cap_effective & (1ULL << 5 /* CAP_KILL */))) {
-        int ok = (current->ruid == thread->task->uid)  ||
+        int ok = (current->ruid == thread->task->ruid) ||
                  (current->ruid == thread->task->suid) ||
-                 (current->uid  == thread->task->uid)  ||
+                 (current->uid  == thread->task->ruid) ||
                  (current->uid  == thread->task->suid);
         if (!ok)
             return -EPERM;
@@ -132,13 +135,15 @@ long sys_tkill(int tid, int sig) {
     if (!thread || !thread->task)
         return -ESRCH;
 
-    /* Permission check: Linux uid-pair test, see sys_tgkill. */
+    /* Permission check: Linux uid-pair test, see sys_tgkill above.
+     * Same target.ruid (not target.uid effective) match as the
+     * tgkill / kill / pidfd_send_signal fixes. */
     if (thread->task != current &&
         current->ruid != 0 &&
         !(current->cap_effective & (1ULL << 5 /* CAP_KILL */))) {
-        int ok = (current->ruid == thread->task->uid)  ||
+        int ok = (current->ruid == thread->task->ruid) ||
                  (current->ruid == thread->task->suid) ||
-                 (current->uid  == thread->task->uid)  ||
+                 (current->uid  == thread->task->ruid) ||
                  (current->uid  == thread->task->suid);
         if (!ok)
             return -EPERM;

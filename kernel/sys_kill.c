@@ -355,24 +355,26 @@ long sys_kill(int pid, int sig) {
         /* Permission check: Linux's kill_ok_by_cred allows the signal
          * when ANY of these caller-uid × target-uid pairs match:
          *
-         *   caller.euid ↔ target.uid       (effective)
          *   caller.euid ↔ target.suid      (saved)
-         *   caller.ruid ↔ target.uid
+         *   caller.euid ↔ target.ruid      (real — tcred->uid in Linux)
          *   caller.ruid ↔ target.suid
+         *   caller.ruid ↔ target.ruid
          *
-         * Plus root (uid==0) and CAP_KILL bypass. The previous check
-         * only compared the caller's real / effective UIDs against the
-         * target's *real* UID, missing the target.uid (effective) and
-         * target.suid (saved) sides — so a privileged target that
-         * dropped its effective UID to a regular user (the standard
-         * setuid pattern) was un-killable by that user, even though
-         * Linux explicitly permits this case. */
+         * Plus root (ruid==0) and CAP_KILL bypass.  The previous check
+         * compared against target.uid (effective), which made Futura
+         * MORE permissive than Linux: a setuid-down target (target.uid
+         * dropped to 1000 while target.ruid==0 and target.suid==0)
+         * was killable by an unprivileged caller (caller.ruid==1000)
+         * matching the dropped effective uid, but Linux strictly
+         * requires the match against target's saved or real uid.
+         * Same setuid-down-daemon kill vector the recent
+         * pidfd_send_signal fix closed. */
         if (target != current &&
             current->ruid != 0 &&
             !(current->cap_effective & (1ULL << CAP_KILL))) {
-            int ok = (current->ruid == target->uid)  ||
+            int ok = (current->ruid == target->ruid) ||
                      (current->ruid == target->suid) ||
-                     (current->uid  == target->uid)  ||
+                     (current->uid  == target->ruid) ||
                      (current->uid  == target->suid);
             if (!ok)
                 return -EPERM;

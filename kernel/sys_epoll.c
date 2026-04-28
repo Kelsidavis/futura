@@ -2048,8 +2048,12 @@ long sys_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
     /* If timeout_ts is NULL: block forever (has_timeout=false, is_poll=false) */
 
     /* ── Validate basic parameters (mirrors sys_epoll_wait checks) ── */
-    if (maxevents <= 0)
-        return -EINVAL;
+    {
+        const int EP_MAX_EVENTS = (int)(2147483647 /* INT_MAX */ /
+                                        (int)sizeof(struct epoll_event));
+        if (maxevents <= 0 || maxevents > EP_MAX_EVENTS)
+            return -EINVAL;
+    }
     /* NULL events is a pointer fault (EFAULT), not a parameter-domain
      * error. sys_epoll_wait already returns EFAULT for the same case;
      * sys_epoll_pwait2 was the inconsistent entry point — same EINVAL

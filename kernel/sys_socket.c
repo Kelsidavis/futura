@@ -229,9 +229,9 @@ long sys_socket(int domain, int type, int protocol) {
      * a typo like socket(AF_INET, SOCK_STREAM, -1) silently created a
      * socket with protocol=-1 that the lower layer would later treat
      * as wildcard. Reject up front to match Linux's gate. */
-    if (local_protocol < 0) {
+    if (local_protocol < 0 || local_protocol >= 256 /* IPPROTO_MAX */) {
         socket_printf("[SOCKET] socket(domain=%d, type=%d, protocol=%d) -> EINVAL "
-                      "(negative protocol)\n",
+                      "(protocol out of range, expected [0, IPPROTO_MAX=256))\n",
                       local_domain, local_type, local_protocol);
         return -EINVAL;
     }

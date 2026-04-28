@@ -310,6 +310,27 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
         return -EBADF;
     }
 
+    /* Linux's __sys_getsockopt runs sockfd_lookup_light FIRST — EBADF and
+     * ENOTSOCK surface before any inspection of optval/optlen.  Futura's
+     * previous order rejected NULL optval / optlen up front with EFAULT,
+     * so a libc 'is this fd a socket?' probe (open a regular file,
+     * getsockopt with NULL pointers) saw EFAULT instead of the documented
+     * ENOTSOCK.  Move the socket lookup ahead of the pointer checks —
+     * same fix as the matching setsockopt / bind / connect / getsockname
+     * / getpeername / shutdown / accept reorder. */
+    {
+        extern fut_socket_t *get_socket_from_fd(int fd);
+        fut_socket_t *gso_sock = get_socket_from_fd(sockfd);
+        if (!gso_sock) {
+            if (sockfd < task->max_fds && task->fd_table && task->fd_table[sockfd]) {
+                fut_printf("[GETSOCKOPT] getsockopt(sockfd=%d) -> ENOTSOCK (not a socket)\n", sockfd);
+                return -ENOTSOCK;
+            }
+            fut_printf("[GETSOCKOPT] getsockopt(sockfd=%d) -> EBADF (not a socket)\n", sockfd);
+            return -EBADF;
+        }
+    }
+
     /* Validate optval pointer */
     if (!optval) {
         fut_printf("[GETSOCKOPT] getsockopt(sockfd=%d, level=%d, optname=%d) -> EFAULT (optval is NULL)\n",

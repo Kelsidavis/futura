@@ -227,6 +227,32 @@ long sys_seccomp(unsigned int operation, unsigned int flags, const void *uargs) 
                                SECCOMP_FILTER_FLAG_TSYNC_ESRCH |
                                SECCOMP_FILTER_FLAG_WAIT_KILLABLE_RECV;
         if (flags & ~known_flags) return -EINVAL;
+
+        /* Linux's seccomp_set_mode_filter rejects mutually-exclusive
+         * flag combinations before any user-pointer access:
+         *   TSYNC | NEW_LISTENER     → EINVAL (cannot synchronise threads
+         *                              to a filter that also returns a
+         *                              listener fd)
+         *   TSYNC_ESRCH without TSYNC → EINVAL (the ESRCH variant is a
+         *                                refinement of TSYNC behaviour)
+         *   WAIT_KILLABLE_RECV without NEW_LISTENER → EINVAL (the killable
+         *                                receive applies to listener fds)
+         *
+         * The previous code accepted any combination of known flag bits,
+         * so libseccomp's flag-probe path (which intentionally requests
+         * conflicting combinations to discover which the kernel rejects)
+         * couldn't tell Futura apart from a future kernel that legalised
+         * the combination. */
+        if ((flags & SECCOMP_FILTER_FLAG_TSYNC) &&
+            (flags & SECCOMP_FILTER_FLAG_NEW_LISTENER))
+            return -EINVAL;
+        if ((flags & SECCOMP_FILTER_FLAG_TSYNC_ESRCH) &&
+            !(flags & SECCOMP_FILTER_FLAG_TSYNC))
+            return -EINVAL;
+        if ((flags & SECCOMP_FILTER_FLAG_WAIT_KILLABLE_RECV) &&
+            !(flags & SECCOMP_FILTER_FLAG_NEW_LISTENER))
+            return -EINVAL;
+
         if (!uargs) return -EFAULT;
 
         /* Require NO_NEW_PRIVS or CAP_SYS_ADMIN */

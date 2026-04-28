@@ -108,6 +108,24 @@ long sys_mprotect(void *addr, size_t len, int prot) {
         return -ESRCH;
     }
 
+    /* Linux's sys_mprotect validates page alignment FIRST, then len:
+     *
+     *   if (offset_in_page(start)) return -EINVAL;
+     *   if (!len) return 0;
+     *   end = start + len;
+     *   if (end <= start) return -ENOMEM;
+     *
+     * Putting the len==0 short-circuit ahead of the alignment check
+     * masked misaligned-addr probes that pass len=0 to detect
+     * 'is this address page-aligned?' — Linux returns EINVAL there,
+     * Futura was returning 0.  Validate alignment first so the
+     * parameter-domain error class is preserved at every length. */
+    if ((uintptr_t)addr % PAGE_SIZE != 0) {
+        fut_printf("[MPROTECT] mprotect(%p, %zu, 0x%x) -> EINVAL (addr not page-aligned)\n",
+                   addr, len, prot);
+        return -EINVAL;
+    }
+
     /* len=0 is a no-op on Linux */
     if (len == 0)
         return 0;
@@ -175,13 +193,6 @@ long sys_mprotect(void *addr, size_t len, int prot) {
         fut_printf("[MPROTECT] mprotect(%p, %zu, 0x%x) -> EINVAL "
                    "(length exceeds maximum %zu, DoS prevention)\n",
                    addr, len, prot, MAX_MPROTECT_LEN);
-        return -EINVAL;
-    }
-
-    /* Validate address alignment (must be page-aligned) */
-    if ((uintptr_t)addr % PAGE_SIZE != 0) {
-        fut_printf("[MPROTECT] mprotect(%p, %zu, 0x%x) -> EINVAL (addr not page-aligned)\n",
-                   addr, len, prot);
         return -EINVAL;
     }
 

@@ -440,18 +440,30 @@ long uffd_ioctl(int fd, unsigned int cmd, unsigned long arg) {
     }
 
     case UFFDIO_ZEROPAGE: {
-        struct uffdio_zeropage *zp = (struct uffdio_zeropage *)(uintptr_t)arg;
-        if (!zp) return -EFAULT;
-        if (zp->range.start & 0xFFF) return -EINVAL;
-        if (zp->range.len == 0 || (zp->range.len & 0xFFF)) return -EINVAL;
-        if (zp->mode & ~UFFDIO_ZEROPAGE_MODE_DONTWAKE)
+        if (!arg) return -EFAULT;
+        /* Stage through copy_from_user — same hazard pattern as
+         * UFFDIO_API/REGISTER/COPY: the previous code dereferenced the
+         * raw user pointer to read range/mode AND wrote 'zeropage' back
+         * directly, exposing a kernel write-anywhere primitive. */
+        struct uffdio_zeropage kzp;
+#ifdef KERNEL_VIRTUAL_BASE
+        if (arg >= KERNEL_VIRTUAL_BASE) {
+            __builtin_memcpy(&kzp, (const void *)(uintptr_t)arg, sizeof(kzp));
+        } else
+#endif
+        if (fut_copy_from_user(&kzp, (const void *)(uintptr_t)arg,
+                               sizeof(kzp)) != 0)
+            return -EFAULT;
+        if (kzp.range.start & 0xFFF) return -EINVAL;
+        if (kzp.range.len == 0 || (kzp.range.len & 0xFFF)) return -EINVAL;
+        if (kzp.mode & ~UFFDIO_ZEROPAGE_MODE_DONTWAKE)
             return -EINVAL;
         /* Same gate as UFFDIO_COPY: kernel ranges are blocked for
          * unprivileged callers (would let the memset wipe arbitrary
          * kernel pages) but allowed for uid==0/CAP_SYS_ADMIN so
          * kernel-side selftests can zero a static page. */
 #ifdef KERNEL_VIRTUAL_BASE
-        if (zp->range.start + zp->range.len < zp->range.start)
+        if (kzp.range.start + kzp.range.len < kzp.range.start)
             return -EFAULT;
         {
             extern fut_task_t *fut_task_current(void);
@@ -460,14 +472,21 @@ long uffd_ioctl(int fd, unsigned int cmd, unsigned long arg) {
                 (uffd_task->uid == 0 ||
                  (uffd_task->cap_effective & (1ULL << 21 /* CAP_SYS_ADMIN */)));
             if (!uffd_kernel_buf_ok &&
-                (zp->range.start >= KERNEL_VIRTUAL_BASE ||
-                 zp->range.start + zp->range.len > KERNEL_VIRTUAL_BASE))
+                (kzp.range.start >= KERNEL_VIRTUAL_BASE ||
+                 kzp.range.start + kzp.range.len > KERNEL_VIRTUAL_BASE))
                 return -EFAULT;
         }
 #endif
 
-        memset((void *)(uintptr_t)zp->range.start, 0, (size_t)zp->range.len);
-        zp->zeropage = (int64_t)zp->range.len;
+        memset((void *)(uintptr_t)kzp.range.start, 0, (size_t)kzp.range.len);
+        kzp.zeropage = (int64_t)kzp.range.len;
+#ifdef KERNEL_VIRTUAL_BASE
+        if (arg >= KERNEL_VIRTUAL_BASE) {
+            __builtin_memcpy((void *)(uintptr_t)arg, &kzp, sizeof(kzp));
+        } else
+#endif
+        if (fut_copy_to_user((void *)(uintptr_t)arg, &kzp, sizeof(kzp)) != 0)
+            return -EFAULT;
         return 0;
     }
 
@@ -476,11 +495,20 @@ long uffd_ioctl(int fd, unsigned int cmd, unsigned long arg) {
         return 0;
 
     case UFFDIO_WRITEPROTECT: {
-        struct uffdio_writeprotect *wp = (struct uffdio_writeprotect *)(uintptr_t)arg;
-        if (!wp) return -EFAULT;
-        if (wp->range.start & 0xFFF) return -EINVAL;
-        if (wp->range.len == 0 || (wp->range.len & 0xFFF)) return -EINVAL;
-        if (wp->mode & ~(UFFDIO_WRITEPROTECT_MODE_WP |
+        if (!arg) return -EFAULT;
+        /* Stage through copy_from_user — same hazard pattern. */
+        struct uffdio_writeprotect kwp;
+#ifdef KERNEL_VIRTUAL_BASE
+        if (arg >= KERNEL_VIRTUAL_BASE) {
+            __builtin_memcpy(&kwp, (const void *)(uintptr_t)arg, sizeof(kwp));
+        } else
+#endif
+        if (fut_copy_from_user(&kwp, (const void *)(uintptr_t)arg,
+                               sizeof(kwp)) != 0)
+            return -EFAULT;
+        if (kwp.range.start & 0xFFF) return -EINVAL;
+        if (kwp.range.len == 0 || (kwp.range.len & 0xFFF)) return -EINVAL;
+        if (kwp.mode & ~(UFFDIO_WRITEPROTECT_MODE_WP |
                          UFFDIO_WRITEPROTECT_MODE_DONTWAKE))
             return -EINVAL;
         /* Accept the call; actual write protection would require page table manipulation */

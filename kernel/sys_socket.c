@@ -217,6 +217,29 @@ long sys_socket(int domain, int type, int protocol) {
         protocol_desc = "custom";
     }
 
+    /* Linux's net/socket.c:__sys_socket extracts SOCK flags FIRST and
+     * rejects unknown bits BEFORE calling sock_create:
+     *
+     *   flags = type & ~SOCK_TYPE_MASK;
+     *   if (flags & ~(SOCK_CLOEXEC | SOCK_NONBLOCK))
+     *       return -EINVAL;
+     *   type &= SOCK_TYPE_MASK;
+     *   retval = sock_create(family, type, protocol, &sock);
+     *
+     * That ordering matters for callers probing the SOCK_* flag space
+     * with a deliberately bad family — Linux returns EINVAL (flags),
+     * Futura previously returned EAFNOSUPPORT (family) because the
+     * family check ran first.  Hoist the flag gate so the errno class
+     * matches Linux for libc feature-detection probes.  Test 68
+     * (socket(AF_PACKET=17, SOCK_STREAM, 0)) passes valid flags and
+     * still returns EAFNOSUPPORT under the new order. */
+    const int VALID_FLAGS = SOCK_NONBLOCK | SOCK_CLOEXEC;
+    if (type_flags & ~VALID_FLAGS) {
+        socket_printf("[SOCKET] socket(domain=%s, type=%s, flags=%s [0x%x], protocol=%d [%s]) -> EINVAL (invalid flags, only SOCK_NONBLOCK|SOCK_CLOEXEC supported)\n",
+                   domain_name, type_name, flags_desc, type_flags, local_protocol, protocol_desc);
+        return -EINVAL;
+    }
+
     /* Validate address family: AF_UNIX (full), AF_INET/AF_INET6 (stub), AF_NETLINK (stub) */
     if (local_domain != AF_UNIX && local_domain != AF_INET &&
         local_domain != AF_INET6 && local_domain != AF_NETLINK) {
@@ -259,14 +282,6 @@ long sys_socket(int domain, int type, int protocol) {
         if (base_type != SOCK_STREAM && base_type != SOCK_DGRAM && base_type != SOCK_RAW) {
             return -ESOCKTNOSUPPORT;
         }
-    }
-
-    /* Phase 4: Validate flags - only SOCK_NONBLOCK and SOCK_CLOEXEC supported */
-    const int VALID_FLAGS = SOCK_NONBLOCK | SOCK_CLOEXEC;
-    if (type_flags & ~VALID_FLAGS) {
-        socket_printf("[SOCKET] socket(domain=%s, type=%s, flags=%s [0x%x], protocol=%d [%s]) -> EINVAL (invalid flags, only SOCK_NONBLOCK|SOCK_CLOEXEC supported)\n",
-                   domain_name, type_name, flags_desc, type_flags, local_protocol, protocol_desc);
-        return -EINVAL;
     }
 
     /* SOCK_RAW on AF_INET/AF_INET6 lets a process see/inject raw IP

@@ -819,10 +819,44 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
 
             case 64: /* SO_DETACH_REUSEPORT_BPF */
             case 67: /* SO_NETNS_COOKIE */
-            case 68: /* SO_BUF_LOCK */
-            case 70: /* SO_TXREHASH */
                 /* Accept silently — no enforcement for these options */
                 return 0;
+
+            case 68: /* SO_BUF_LOCK — Linux: val must only have SNDBUF_LOCK|RCVBUF_LOCK bits */
+                /* Linux's sock_setsockopt (net/core/sock.c):
+                 *   case SO_BUF_LOCK:
+                 *       if (val & ~SOCK_BUF_LOCK_MASK) ret = -EINVAL;
+                 * SOCK_BUF_LOCK_MASK = SOCK_SNDBUF_LOCK | SOCK_RCVBUF_LOCK = 0x6.
+                 * Other bits are reserved.  The previous Futura code silently
+                 * accepted any value, masking malformed-call detection used
+                 * by libc to probe for future BUF_LOCK extension bits. */
+                {
+                    if (optlen < sizeof(int)) return -EINVAL;
+                    int val = 0;
+                    if (sso_copy_from_user(&val, optval, sizeof(int)) != 0)
+                        return -EFAULT;
+                    if (val & ~0x6 /* SOCK_SNDBUF_LOCK | SOCK_RCVBUF_LOCK */)
+                        return -EINVAL;
+                    return 0;
+                }
+
+            case 70: /* SO_TXREHASH — Linux 5.16+: val must be in {-1, 0, 1} */
+                /* Linux's sock_setsockopt:
+                 *   case SO_TXREHASH:
+                 *       if (val < -1 || val > 1) ret = -EINVAL;
+                 *       ...
+                 * Three valid values: SOCK_TXREHASH_DEFAULT(-1), DISABLED(0),
+                 * ENABLED(1).  The previous Futura code silently accepted any
+                 * int, masking the malformed-call detection. */
+                {
+                    if (optlen < sizeof(int)) return -EINVAL;
+                    int val = 0;
+                    if (sso_copy_from_user(&val, optval, sizeof(int)) != 0)
+                        return -EFAULT;
+                    if (val < -1 || val > 1)
+                        return -EINVAL;
+                    return 0;
+                }
 
             case 65: /* SO_PREFER_BUSY_POLL — Linux 5.11+ */
                 /* Linux's sock_setsockopt:

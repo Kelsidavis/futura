@@ -28,14 +28,20 @@
 
 /* Per Linux setpriority(2): unprivileged callers may lower the nice
  * value of a target down to (20 - RLIMIT_NICE.rlim_cur). With the
- * default RLIMIT_NICE=0 this means no lowering at all. */
+ * default RLIMIT_NICE=0 this means no lowering at all.  RLIM_INFINITY
+ * means unlimited — caller may set nice all the way down to -20. */
 #define PRIO_RLIMIT_NICE_INDEX 13
 static inline int sched_min_nice_for_target(fut_task_t *t) {
     if (!t) return PRIO_DEFAULT;
-    int64_t lim = (int64_t)t->rlimits[PRIO_RLIMIT_NICE_INDEX].rlim_cur;
-    if (lim < 0) lim = 0;
-    if (lim > 40) lim = 40;
-    return 20 - (int)lim;
+    uint64_t lim_u = t->rlimits[PRIO_RLIMIT_NICE_INDEX].rlim_cur;
+    /* Same RLIM_INFINITY-as-unlimited fix as sched_setattr's nice
+     * floor.  The previous int64_t cast turned UINT64_MAX into -1,
+     * the 'lim < 0 -> 0' clamp pushed it to 0, and min_nice became
+     * 20 (max nice) — blocking any reduction even with unlimited. */
+    if (lim_u == (uint64_t)-1 /* RLIM_INFINITY */)
+        return -20;
+    int lim = (lim_u > 40) ? 40 : (int)lim_u;
+    return 20 - lim;
 }
 
 /**

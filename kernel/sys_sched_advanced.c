@@ -293,7 +293,20 @@ long sys_sched_setscheduler(int pid, int policy, const struct sched_param *param
         case SCHED_RR:      policy_name = "SCHED_RR"; break;
         case SCHED_BATCH:   policy_name = "SCHED_BATCH"; break;
         case SCHED_IDLE:    policy_name = "SCHED_IDLE"; break;
-        case SCHED_DEADLINE: policy_name = "SCHED_DEADLINE"; break;
+        case SCHED_DEADLINE:
+            /* Linux's __sched_setscheduler explicitly rejects SCHED_DEADLINE
+             * through sched_setscheduler() — DEADLINE is configured via
+             * sched_setattr() because it requires the runtime/deadline/period
+             * triple from sched_attr, not just the integer priority that
+             * sched_param carries.  kernel/sched/syscalls.c:
+             *   if (dl_policy(policy)) return -EINVAL;
+             * The previous Futura code accepted SCHED_DEADLINE here and
+             * stored it without the deadline parameters, leaving the task
+             * in a half-configured state that the scheduler couldn't
+             * actually honour. */
+            fut_printf("[SCHED] sched_setscheduler(pid=%d, SCHED_DEADLINE) -> EINVAL "
+                       "(use sched_setattr for SCHED_DEADLINE)\n", pid);
+            return -EINVAL;
         default:
             fut_printf("[SCHED] sched_setscheduler(pid=%d, policy=%d) -> EINVAL "
                        "(invalid policy)\n", pid, policy);

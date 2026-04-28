@@ -210,6 +210,27 @@ long sys_openat2(int dirfd, const char *path, const struct open_how *how,
             return -EINVAL;
     }
 
+    /* Linux's build_open_flags() restricts O_PATH to a small whitelist:
+     *
+     *   #define O_PATH_FLAGS (O_DIRECTORY | O_NOFOLLOW | O_PATH | O_CLOEXEC)
+     *   if (flags & O_PATH) {
+     *       if (flags & ~O_PATH_FLAGS) return -EINVAL;
+     *       acc_mode = 0;
+     *   }
+     *
+     * O_PATH | O_CREAT, O_PATH | O_TRUNC, O_PATH | O_APPEND, etc. are all
+     * meaningless and Linux returns -EINVAL.  Same fix as the matching
+     * sys_open / sys_openat whitelist — sys_openat2 was the third path
+     * that lacked it.  Keep open(2) / openat(2) / openat2(2) consistent
+     * so the path-only fd security guarantee holds at every entry point. */
+    if (kow.flags & (uint64_t)O_PATH) {
+        const uint64_t O_PATH_VALID =
+            (uint64_t)O_DIRECTORY | (uint64_t)O_NOFOLLOW |
+            (uint64_t)O_PATH | (uint64_t)O_CLOEXEC;
+        if (kow.flags & ~O_PATH_VALID)
+            return -EINVAL;
+    }
+
     /* RESOLVE_NO_XDEV, RESOLVE_NO_MAGICLINKS, RESOLVE_CACHED: naturally satisfied
      * by Futura's in-memory VFS (no mount points or magic links).
      * RESOLVE_NO_SYMLINKS: enforced via per-task flag in VFS path resolution.

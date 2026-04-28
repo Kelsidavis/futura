@@ -123,14 +123,23 @@ long sys_waitid(int idtype, int id, siginfo_t *infop, int options,
         return -EINVAL;
     }
 
-    /* Validate infop pointer (required, not optional) */
-    if (!infop) {
-        fut_printf("[WAITID] waitid(infop=NULL) -> EFAULT\n");
-        return -EFAULT;
-    }
-
-    /* Validate infop is writable */
-    if (waitid_access_ok(infop, sizeof(siginfo_t)) != 0) {
+    /* Linux's kernel/exit.c:SYSCALL_DEFINE5(waitid) treats infop == NULL
+     * as a documented 'don't write the siginfo back' form (the syscall
+     * still reaps and returns the same status, just skips the
+     * unsafe_put_user block):
+     *
+     *   if (!infop) return err;
+     *   user_access_begin();
+     *   unsafe_put_user(signo, &infop->si_signo, Efault);
+     *   ...
+     *
+     * This is how libc waitid wrappers compiled with !__USE_GNU pass
+     * NULL when the caller only wants the side effect of reaping the
+     * child. The previous Futura EFAULT diverged from that contract
+     * and broke probes that check 'kernel honours the NULL form'. Keep
+     * EFAULT for non-NULL but unmapped pointers so genuine fault classes
+     * still surface; just allow NULL to pass through to the wait. */
+    if (infop && waitid_access_ok(infop, sizeof(siginfo_t)) != 0) {
         fut_printf("[WAITID] waitid(infop=%p) -> EFAULT (not writable)\n", (void *)infop);
         return -EFAULT;
     }
@@ -187,11 +196,14 @@ long sys_waitid(int idtype, int id, siginfo_t *infop, int options,
     }
 
     if (child_pid == 0) {
-        /* WNOHANG and no child ready: fill infop with zeros (si_pid=0 signals no event) */
-        siginfo_t info_zero;
-        memset(&info_zero, 0, sizeof(info_zero));
-        if (waitid_copy_to_user(infop, &info_zero, sizeof(siginfo_t)) != 0) {
-            return -EFAULT;
+        /* WNOHANG and no child ready: fill infop with zeros (si_pid=0 signals no event).
+         * Skip the writeback when infop is NULL (Linux 'don't write' form). */
+        if (infop) {
+            siginfo_t info_zero;
+            memset(&info_zero, 0, sizeof(info_zero));
+            if (waitid_copy_to_user(infop, &info_zero, sizeof(siginfo_t)) != 0) {
+                return -EFAULT;
+            }
         }
         fut_printf("[WAITID] waitid(%s, id=%d, WNOHANG) -> 0 (no child ready)\n",
                    idtype_desc, id);
@@ -223,7 +235,7 @@ long sys_waitid(int idtype, int id, siginfo_t *infop, int options,
     info.si_pid = (int64_t)child_pid;
     info.si_uid = (int64_t)child_uid;  /* real UID of child at exit time */
 
-    if (waitid_copy_to_user(infop, &info, sizeof(siginfo_t)) != 0) {
+    if (infop && waitid_copy_to_user(infop, &info, sizeof(siginfo_t)) != 0) {
         return -EFAULT;
     }
 

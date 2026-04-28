@@ -1441,41 +1441,22 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
         epfd_category = "invalid range (<4000)";
     }
 
-    /* Validate maxevents */
-    if (maxevents <= 0) {
-        char msg[256];
-        int pos = 0;
-        const char *text = "[EPOLL_WAIT] epoll_wait(epfd=";
-        while (*text) { msg[pos++] = *text++; }
-
-        char num[16]; int num_pos = 0; int val = epfd;
-        if (val == 0) { num[num_pos++] = '0'; }
-        else { char temp[16]; int temp_pos = 0;
-            while (val > 0) { temp[temp_pos++] = '0' + (val % 10); val /= 10; }
-            while (temp_pos > 0) { num[num_pos++] = temp[--temp_pos]; } }
-        num[num_pos] = '\0';
-        for (int i = 0; num[i]; i++) { msg[pos++] = num[i]; }
-
-        text = ", maxevents=";
-        while (*text) { msg[pos++] = *text++; }
-
-        num_pos = 0; val = maxevents;
-        if (val == 0) { num[num_pos++] = '0'; }
-        else { char temp[16]; int temp_pos = 0;
-            int is_neg = 0;
-            if (val < 0) { is_neg = 1; val = -val; }
-            while (val > 0) { temp[temp_pos++] = '0' + (val % 10); val /= 10; }
-            if (is_neg) num[num_pos++] = '-';
-            while (temp_pos > 0) { num[num_pos++] = temp[--temp_pos]; } }
-        num[num_pos] = '\0';
-        for (int i = 0; num[i]; i++) { msg[pos++] = num[i]; }
-
-        text = ") -> EINVAL (maxevents must be > 0)\n";
-        while (*text) { msg[pos++] = *text++; }
-        msg[pos] = '\0';
-        fut_printf("%s", msg);
-
-        return -EINVAL;
+    /* Validate maxevents.  Linux's do_epoll_wait enforces both bounds:
+     *   if (maxevents <= 0 || maxevents > EP_MAX_EVENTS) return -EINVAL;
+     * where EP_MAX_EVENTS == INT_MAX / sizeof(struct epoll_event)
+     * (~178M on 64-bit).  The previous Futura code only checked the
+     * lower bound, so a caller passing a huge maxevents could ask the
+     * kernel to allocate a multi-gigabyte staging array — easy DoS.
+     * Mirror Linux's upper cap. */
+    {
+        const int EP_MAX_EVENTS = (int)(2147483647 /* INT_MAX */ /
+                                        (int)sizeof(struct epoll_event));
+        if (maxevents <= 0 || maxevents > EP_MAX_EVENTS) {
+            fut_printf("[EPOLL_WAIT] epoll_wait(epfd=%d, maxevents=%d) -> EINVAL "
+                       "(maxevents out of range [1, %d])\n",
+                       epfd, maxevents, EP_MAX_EVENTS);
+            return -EINVAL;
+        }
     }
 
     /* Validate events pointer */

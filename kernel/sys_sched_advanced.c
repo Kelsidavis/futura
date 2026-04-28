@@ -262,11 +262,19 @@ long sys_sched_setscheduler(int pid, int policy, const struct sched_param *param
         return -ESRCH;
     }
 
-    /* NULL param is a pointer fault (EFAULT) — see sched_setparam. */
+    /* Linux's do_sched_setscheduler combines the !param and pid<0 gates
+     * into a single EINVAL up front:
+     *   if (!param || pid < 0) return -EINVAL;
+     * This deliberately differs from sched_setparam (which surfaces
+     * NULL through copy_from_user as EFAULT) — same EINVAL-vs-EFAULT
+     * convention as sched_getparam.  The previous Futura code returned
+     * EFAULT for NULL param with a 'see sched_setparam' comment, but
+     * setscheduler shares the getparam-style combined EINVAL gate, not
+     * the setparam copy-fault EFAULT. */
     if (!param) {
-        fut_printf("[SCHED] sched_setscheduler(pid=%d, policy=%d) -> EFAULT (null param)\n",
+        fut_printf("[SCHED] sched_setscheduler(pid=%d, policy=%d) -> EINVAL (null param)\n",
                    pid, policy);
-        return -EFAULT;
+        return -EINVAL;
     }
 
     /* Copy sched_param from userspace before accessing fields */

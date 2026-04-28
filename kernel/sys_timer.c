@@ -333,14 +333,26 @@ long sys_timer_gettime(timer_t timerid, struct itimerspec *curr_value) {
     if (!task)
         return -ESRCH;
 
-    if (!local_curr_value)
-        return -EINVAL;
-
+    /* Linux's timer_gettime ordering (kernel/time/posix-timers.c):
+     *   ret = do_timer_gettime(timer_id, &cur_setting);  // lock_timer
+     *   if (!ret) {
+     *       if (put_itimerspec64(&cur_setting, setting))
+     *           ret = -EFAULT;
+     *   }
+     *
+     * lock_timer (timer_id lookup) runs FIRST -> EINVAL for unknown id.
+     * The user pointer is only touched at put_itimerspec64, where
+     * NULL/bad surfaces as -EFAULT via copy_to_user.  The previous
+     * Futura order rejected NULL curr_value with -EINVAL up front,
+     * masking the EFAULT errno class libc timer_gettime wrappers
+     * expect on a bad output pointer.  Same fix shape as the matching
+     * timerfd_gettime EFAULT reorder. */
     fut_posix_timer_t *pt = get_timer(task, local_timerid);
     if (!pt)
         return -EINVAL;
 
-    if (timer_access_ok_write(local_curr_value, sizeof(struct itimerspec)) != 0)
+    if (local_curr_value &&
+        timer_access_ok_write(local_curr_value, sizeof(struct itimerspec)) != 0)
         return -EFAULT;
 
     struct itimerspec result;

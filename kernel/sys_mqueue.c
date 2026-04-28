@@ -141,8 +141,17 @@ static int mq_validate_name(const char *name, char *out, size_t outsz) {
     if (name[0] != '/')
         return -EINVAL;
     size_t len = __builtin_strlen(name);
-    if (len < 2 || len > MQ_NAME_MAX)
+    /* "/" alone (length 1) is invalid — name must be non-empty after the slash */
+    if (len < 2)
         return -EINVAL;
+    /* Linux's mqueue uses NAME_MAX (255) for the post-slash component;
+     * a too-long name returns -ENAMETOOLONG (not -EINVAL).  The previous
+     * Futura code collapsed both into EINVAL, masking 'name too long'
+     * as 'malformed name' for libc mq_open wrappers (glibc, musl) that
+     * branch on ENAMETOOLONG to suggest shortening vs. EINVAL which
+     * suggests a fundamental call-shape error. */
+    if (len > MQ_NAME_MAX)
+        return -ENAMETOOLONG;
     /* No embedded '/' after the leading one */
     for (size_t i = 1; i < len; i++) {
         if (name[i] == '/')

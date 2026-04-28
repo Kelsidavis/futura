@@ -57,13 +57,35 @@ static inline int mempol_copy_to_user(void *dst, const void *src, size_t n) {
  * MPOL_DEFAULT always succeeds.  Strict migrations (MPOL_MF_MOVE_ALL) on a
  * single node are a no-op.  Returns -EINVAL for unknown policy modes.
  */
+/* Linux's MPOL_MODE_FLAGS occupy the high bits of the mode argument
+ * and are stripped before MPOL_MAX validation in kernel_mbind /
+ * kernel_set_mempolicy. */
+#define MPOL_F_STATIC_NODES    0x8000
+#define MPOL_F_RELATIVE_NODES  0x4000
+#define MPOL_MODE_FLAGS        (MPOL_F_STATIC_NODES | MPOL_F_RELATIVE_NODES)
+
+static inline long mempol_validate_mode(int mode) {
+    int mode_flags = mode & MPOL_MODE_FLAGS;
+    int lmode = mode & ~MPOL_MODE_FLAGS;
+    if (lmode < 0 || lmode >= MPOL_MAX)
+        return -EINVAL;
+    if ((mode_flags & MPOL_F_STATIC_NODES) &&
+        (mode_flags & MPOL_F_RELATIVE_NODES))
+        return -EINVAL;
+    return 0;
+}
+
 long sys_mbind(unsigned long addr, unsigned long len, int mode,
                const unsigned long *nodemask, unsigned long maxnode,
                unsigned int flags) {
     (void)addr; (void)len; (void)nodemask; (void)maxnode; (void)flags;
-    if (mode < 0 || mode >= MPOL_MAX)
-        return -EINVAL;
-    return 0;
+    /* Linux's kernel_mbind strips MPOL_MODE_FLAGS (MPOL_F_STATIC_NODES
+     * | MPOL_F_RELATIVE_NODES, mask 0xC000) from mode before validating
+     * against MPOL_MAX, and rejects the two mode_flags being set
+     * together.  The previous code rejected any value with the high
+     * bits set, so MPOL_DEFAULT|MPOL_F_STATIC_NODES (a documented
+     * combination) returned EINVAL where Linux accepts it. */
+    return mempol_validate_mode(mode);
 }
 
 /**
@@ -75,9 +97,9 @@ long sys_mbind(unsigned long addr, unsigned long len, int mode,
 long sys_set_mempolicy(int mode, const unsigned long *nodemask,
                        unsigned long maxnode) {
     (void)nodemask; (void)maxnode;
-    if (mode < 0 || mode >= MPOL_MAX)
-        return -EINVAL;
-    return 0;
+    /* Mirror sys_mbind: strip MPOL_MODE_FLAGS before validating mode
+     * against MPOL_MAX, matching Linux's kernel_set_mempolicy. */
+    return mempol_validate_mode(mode);
 }
 
 /**

@@ -334,13 +334,29 @@ long sys_pidfd_getfd(int pidfd, int targetfd, unsigned int flags) {
     if (!target)
         return -ESRCH;
 
-    /* PTRACE_MODE_ATTACH equivalent: same uid OR CAP_SYS_PTRACE.
-     * Without this check, any unprivileged caller could pidfd_open a
-     * root daemon and duplicate its open fds (e.g. /dev/mem, an
-     * authenticated socket, a raw block device) into its own fd table. */
-    if (cur->uid != 0 &&
+    /* PTRACE_MODE_ATTACH_REALCREDS equivalent: Linux's pidfd_getfd
+     * goes through ptrace_may_access(PTRACE_MODE_ATTACH_REALCREDS),
+     * which compares the caller's REAL uid (cred->uid) against ALL
+     * THREE of the target's uids (real, effective, saved):
+     *
+     *   caller_uid = cred->uid;                  // REALCREDS
+     *   if (uid_eq(caller_uid, tcred->euid) &&
+     *       uid_eq(caller_uid, tcred->suid) &&
+     *       uid_eq(caller_uid, tcred->uid))
+     *       goto ok;
+     *
+     * Without this strict check, any unprivileged caller could
+     * pidfd_open a root daemon (or a dropped-setuid victim still
+     * holding suid==0) and duplicate its open fds (e.g. /dev/mem, an
+     * authenticated socket, a raw block device) into its own fd
+     * table — a direct privilege-escalation primitive.  Same
+     * triple-match pattern as the recent ptrace / process_vm / kcmp
+     * fixes. */
+    if (cur->ruid != 0 &&
         !(cur->cap_effective & (1ULL << 19 /* CAP_SYS_PTRACE */)) &&
-        cur->uid != target->uid)
+        (cur->ruid != target->uid  ||
+         cur->ruid != target->ruid ||
+         cur->ruid != target->suid))
         return -EPERM;
 
     /* Look up targetfd in the target task */

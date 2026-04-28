@@ -1632,10 +1632,28 @@ long sys_get_robust_list(int pid, struct robust_list_head **head_ptr,
         if (!target_task) {
             return -ESRCH;
         }
-        /* Permission check: only root, CAP_SYS_PTRACE, or same-UID may query another task */
-        if (task->uid != 0 &&
+        /* Permission check: Linux's get_robust_list uses
+         * ptrace_may_access(PTRACE_MODE_READ_REALCREDS), which compares
+         * the caller's REAL uid (cred->uid) against ALL THREE of the
+         * target's uids (real, effective, saved):
+         *
+         *   caller_uid = cred->uid;                  // REALCREDS
+         *   if (uid_eq(caller_uid, tcred->euid) &&
+         *       uid_eq(caller_uid, tcred->suid) &&
+         *       uid_eq(caller_uid, tcred->uid))
+         *       goto ok;
+         *
+         * The previous gate compared effective-vs-effective only,
+         * letting a setuid-up helper (caller euid raised) read other
+         * tasks' robust-list heads even though Linux gates on real
+         * uid, and letting a dropped-setuid victim's robust list
+         * (suid==0) be readable by an unprivileged peer.  Same fix
+         * pattern as the recent ptrace / process_vm / kcmp updates. */
+        if (task->ruid != 0 &&
             !(task->cap_effective & (1ULL << 19 /* CAP_SYS_PTRACE */)) &&
-            task->uid != target_task->uid) {
+            (task->ruid != target_task->uid  ||
+             task->ruid != target_task->ruid ||
+             task->ruid != target_task->suid)) {
             return -EPERM;
         }
         thread = target_task->threads;

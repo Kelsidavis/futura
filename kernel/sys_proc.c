@@ -324,7 +324,13 @@ long sys_getsid(uint64_t pid) {
         return -ESRCH;
     }
 
-    return target->sid;
+    /* Same fallback as the pid==0 path: a task with sid==0 (never
+     * setsid'd) is its own session leader per POSIX.  The previous
+     * code returned 0 for such tasks, which userspace tools (like
+     * tmux/screen and modern shells) interpret as 'no session' or as
+     * the kernel idle session — neither matches Linux's behaviour
+     * where every process always reports a non-zero session id. */
+    return target->sid ? (long)target->sid : (long)target->pid;
 }
 
 /**

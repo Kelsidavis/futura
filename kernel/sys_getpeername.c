@@ -269,6 +269,23 @@ long sys_getpeername(int sockfd, void *addr, socklen_t *addrlen) {
         return -EBADF;
     }
 
+    /* Linux's sys_getpeername runs sockfd_lookup_light FIRST, so EBADF
+     * (invalid fd) and ENOTSOCK (open file that isn't a socket) surface
+     * before any inspection of the addr/addrlen pointers.  The previous
+     * Futura order rejected NULL addr/addrlen up front with EFAULT,
+     * masking ENOTSOCK for the common 'is this fd a socket?' probe
+     * pattern.  Move the socket lookup ahead of the pointer checks —
+     * same fix as the matching sys_getsockname reorder. */
+    fut_socket_t *socket = get_socket_from_fd(local_sockfd);
+    if (!socket) {
+        if (task->fd_table && task->fd_table[local_sockfd]) {
+            fut_printf("[GETPEERNAME] getpeername(sockfd=%d) -> ENOTSOCK (not a socket)\n", local_sockfd);
+            return -ENOTSOCK;
+        }
+        fut_printf("[GETPEERNAME] getpeername(sockfd=%d) -> EBADF (not a socket)\n", local_sockfd);
+        return -EBADF;
+    }
+
     /* Validate addr pointer */
     if (!local_addr) {
         fut_printf("[GETPEERNAME] getpeername(sockfd=%d) -> EFAULT (addr is NULL)\n", local_sockfd);
@@ -301,18 +318,6 @@ long sys_getpeername(int sockfd, void *addr, socklen_t *addrlen) {
         fut_printf("[GETPEERNAME] getpeername(sockfd=%d, addrlen=%u) -> EFAULT (addr not writable for %u bytes)\n",
                    local_sockfd, len, len);
         return -EFAULT;
-    }
-
-    /* Get socket from FD */
-    fut_socket_t *socket = get_socket_from_fd(local_sockfd);
-    if (!socket) {
-        /* Distinguish ENOTSOCK (valid fd, not a socket) from EBADF (invalid fd) */
-        if (local_sockfd < task->max_fds && task->fd_table && task->fd_table[local_sockfd]) {
-            fut_printf("[GETPEERNAME] getpeername(sockfd=%d) -> ENOTSOCK (not a socket)\n", local_sockfd);
-            return -ENOTSOCK;
-        }
-        fut_printf("[GETPEERNAME] getpeername(sockfd=%d) -> EBADF (not a socket)\n", local_sockfd);
-        return -EBADF;
     }
 
     /* AF_INET: return peer's sockaddr_in from the connected pair */

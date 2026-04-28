@@ -220,12 +220,28 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
         }
     }
 
-    /* Validate socket FD */
+    /* Validate socket FD.  Linux's sockfd_lookup_light splits the
+     * errno classes:
+     *   - EBADF when fdget(sockfd) fails (fd unallocated)
+     *   - ENOTSOCK when fdget succeeds but f_op != socket_file_ops
+     * The previous Futura code returned EBADF for both, masking
+     * 'wrong fd type' as 'bad descriptor' for libc sendto() probes
+     * that branch on ENOTSOCK.  Same split as the matching bind /
+     * connect / accept / listen / shutdown / setsockopt /
+     * getsockname fixes. */
     struct fut_file *file = vfs_get_file(local_sockfd);
     if (!file) {
         fut_printf("[SENDTO] sendto(sockfd=%d [%s]) -> EBADF (fd not open)\n",
                    local_sockfd, fd_category);
         return -EBADF;
+    }
+    {
+        extern fut_socket_t *get_socket_from_fd(int fd);
+        if (!get_socket_from_fd(local_sockfd)) {
+            fut_printf("[SENDTO] sendto(sockfd=%d [%s]) -> ENOTSOCK (not a socket)\n",
+                       local_sockfd, fd_category);
+            return -ENOTSOCK;
+        }
     }
 
     /* Handle zero-length send */

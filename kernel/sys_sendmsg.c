@@ -111,11 +111,22 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
     }
     (void)flags_desc;  /* Used only in debug logging */
 
-    /* Validate socket FD */
+    /* Validate socket FD.  Linux's sockfd_lookup_light splits the
+     * errno classes: EBADF for fdget failure, ENOTSOCK when the file
+     * is not a socket.  The previous Futura code returned EBADF for
+     * both, masking 'wrong fd type' as 'bad descriptor' for libc
+     * sendmsg() probes that branch on ENOTSOCK.  Same split as the
+     * matching sendto / recvfrom / bind / connect / accept / listen /
+     * shutdown / setsockopt / getsockname fixes. */
     struct fut_file *file = vfs_get_file(local_sockfd);
     if (!file) {
         SENDMSG_LOG("[SENDMSG] ERROR: socket fd %d is not valid\n", local_sockfd);
         return -EBADF;
+    }
+    {
+        extern fut_socket_t *get_socket_from_fd(int fd);
+        if (!get_socket_from_fd(local_sockfd))
+            return -ENOTSOCK;
     }
 
     /* Validate msg pointer */

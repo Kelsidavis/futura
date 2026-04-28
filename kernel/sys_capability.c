@@ -217,10 +217,18 @@ long sys_capget(struct __user_cap_header_struct *hdrp,
         return -EINVAL;
     }
 
-    /* Validate datap write permission (kernel writes capability data) */
-    if (cap_access_ok(datap, sizeof(struct __user_cap_data_struct)) != 0) {
+    /* Validate datap write permission (kernel writes capability data).
+     * For V2/V3 the kernel writes TWO __user_cap_data_struct entries;
+     * the previous check only validated one struct's worth, so a caller
+     * mapping ending exactly at the first-struct boundary slipped past
+     * access_ok and only failed at copy_to_user time.  Use the actual
+     * payload size matching the version. */
+    size_t check_size = two_structs
+        ? 2 * sizeof(struct __user_cap_data_struct)
+        :     sizeof(struct __user_cap_data_struct);
+    if (cap_access_ok(datap, check_size) != 0) {
         fut_printf("[CAPABILITY] capget(hdrp=%p, datap=%p) -> EFAULT (datap not writable for %zu bytes)\n",
-                   hdrp, datap, sizeof(struct __user_cap_data_struct));
+                   hdrp, datap, check_size);
         return -EFAULT;
     }
 

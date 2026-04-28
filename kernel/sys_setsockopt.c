@@ -759,14 +759,40 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
             case 37: /* SO_TIMESTAMPING — hardware timestamping */
             case 41: /* SO_WIFI_STATUS — WiFi status */
             case 42: /* SO_PEEK_OFF — MSG_PEEK offset */
-            case 45: /* SO_BPF_EXTENSIONS */
-            case 46: /* SO_INCOMING_CPU */
+            case 45: /* SO_SELECT_ERR_QUEUE — was mislabeled as SO_BPF_EXTENSIONS;
+                      * the real Linux SO_BPF_EXTENSIONS is 48 */
+            case 47: /* SO_MAX_PACING_RATE */
+            case 48: /* SO_BPF_EXTENSIONS — kernel BPF feature mask query */
+            case 49: /* SO_INCOMING_CPU — was previously colliding with SO_BUSY_POLL=46 */
             case 55: /* SO_CNX_ADVICE */
             case 57: /* SO_MEMINFO */
             case 58: /* SO_INCOMING_NAPI_ID */
             case 59: /* SO_COOKIE */
                 /* Accept silently — no enforcement for these options */
                 return 0;
+
+            case 46: /* SO_BUSY_POLL — Linux 3.11+: kernel poll usec.
+                      * Linux's sock_setsockopt:
+                      *   if (valbool && !sockopt_capable(CAP_NET_ADMIN))
+                      *       ret = -EPERM;
+                      *   else if (val < 0) ret = -EINVAL;
+                      *   else WRITE_ONCE(sk->sk_ll_usec, val);
+                      *
+                      * Futura previously labelled this case as SO_INCOMING_CPU
+                      * (Linux value 49) and silently accepted any value, so
+                      * an unprivileged caller could enable busy-polling that
+                      * Linux would reject with -EPERM. Mirror Linux's gate. */
+            {
+                if (optlen < sizeof(int)) return -EINVAL;
+                int val = 0;
+                if (sso_copy_from_user(&val, optval, sizeof(int)) != 0) return -EFAULT;
+                if (val != 0 && task->uid != 0 &&
+                    !(task->cap_effective & (1ULL << 12 /* CAP_NET_ADMIN */)))
+                    return -EPERM;
+                if (val < 0)
+                    return -EINVAL;
+                return 0;
+            }
 
             case 62: /* SO_RCVTIMEO_NEW — Y2038-safe variant (struct __kernel_sock_timeval) */
             case 63: { /* SO_SNDTIMEO_NEW */

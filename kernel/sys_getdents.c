@@ -164,6 +164,11 @@ static int g_swap_count = 0;
  * the KERNEL_VIRTUAL_BASE bypass for in-kernel test callers. */
 static int swap_copy_path(char *dst, const char *src, size_t n) {
     extern int fut_copy_from_user(void *dst, const void *src, size_t n);
+    /* Returns 0 on success, -EFAULT on bad pointer, -ENAMETOOLONG when
+     * the path exceeds the buffer (no NUL within n bytes).  Silently
+     * truncating would let a caller swapon a different file than the
+     * one they named — Linux's getname() returns ENAMETOOLONG for paths
+     * exceeding PATH_MAX precisely to prevent that confusion. */
 #ifdef KERNEL_VIRTUAL_BASE
     if ((uintptr_t)src >= KERNEL_VIRTUAL_BASE) {
         for (size_t i = 0; i < n; i++) {
@@ -171,12 +176,20 @@ static int swap_copy_path(char *dst, const char *src, size_t n) {
             if (!src[i]) return 0;
         }
         dst[n - 1] = '\0';
-        return 0;
+        return -2 /* ENAMETOOLONG sentinel */;
     }
 #endif
     if (fut_copy_from_user(dst, src, n) != 0)
         return -1;
+    /* Detect truncation: if no NUL terminator within n bytes, the path
+     * exceeded the buffer. */
+    bool found_nul = false;
+    for (size_t i = 0; i < n; i++) {
+        if (dst[i] == '\0') { found_nul = true; break; }
+    }
     dst[n - 1] = '\0';
+    if (!found_nul)
+        return -2 /* ENAMETOOLONG sentinel */;
     return 0;
 }
 
@@ -217,8 +230,11 @@ long sys_swapon(const char *path, int swapflags) {
 
     /* Stage the path into a kernel buffer before any further use. */
     char kpath[128];
-    if (swap_copy_path(kpath, path, sizeof(kpath)) != 0)
-        return -EFAULT;
+    {
+        int cpr = swap_copy_path(kpath, path, sizeof(kpath));
+        if (cpr == -1) return -EFAULT;
+        if (cpr == -2) return -ENAMETOOLONG;
+    }
 
     /* Empty pathname is ENOENT per Linux's swapon(2) — getname()
      * returns -ENOENT for an empty string and the call never reaches
@@ -273,8 +289,11 @@ long sys_swapoff(const char *path) {
         return -EPERM;
 
     char kpath[128];
-    if (swap_copy_path(kpath, path, sizeof(kpath)) != 0)
-        return -EFAULT;
+    {
+        int cpr = swap_copy_path(kpath, path, sizeof(kpath));
+        if (cpr == -1) return -EFAULT;
+        if (cpr == -2) return -ENAMETOOLONG;
+    }
 
     /* Empty pathname is ENOENT per Linux's swapoff(2) — matches the
      * sister sys_swapon empty-path check.  Without this gate the

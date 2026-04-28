@@ -102,16 +102,32 @@ long sys_process_vm_readv(int pid, const struct pvm_iovec *lvec, unsigned long l
     if (!lvec || !rvec)
         return -EFAULT;
 
-    /* Permission: PTRACE_MODE_ATTACH_REALCREDS — same uid or CAP_SYS_PTRACE.
-     * Without this, any process could read another process's memory by
-     * invoking the syscall (Futura's single-AS implementation otherwise
-     * trusts iov_base pointers without translating through a target mm). */
+    /* Permission: PTRACE_MODE_ATTACH_REALCREDS — Linux's
+     * __ptrace_may_access compares the caller's REAL uid (not euid;
+     * REALCREDS uses cred->uid) against ALL THREE of the target's
+     * uids (real, effective, saved):
+     *
+     *   caller_uid = cred->uid;                  // REALCREDS
+     *   if (uid_eq(caller_uid, tcred->euid) &&
+     *       uid_eq(caller_uid, tcred->suid) &&
+     *       uid_eq(caller_uid, tcred->uid))
+     *       goto ok;
+     *
+     * The previous Futura check used self->uid (effective) and only
+     * compared target->uid (effective).  That wrongly granted access
+     * when the caller's real uid differed from its euid (a setuid-up
+     * helper) and silently bypassed the saved-uid check on the target
+     * (a dropped-setuid victim still holding suid==0 was readable —
+     * same exposure the matching ptrace fix just closed). */
     fut_task_t *self = fut_task_current();
     if (self && pid != 0 && (uint64_t)pid != self->pid) {
         fut_task_t *target = fut_task_by_pid((uint64_t)pid);
         if (!target) return -ESRCH;
-        if (self->uid != 0 && self->uid != target->uid &&
-            !(self->cap_effective & (1ULL << PVM_CAP_SYS_PTRACE)))
+        if (self->ruid != 0 &&
+            !(self->cap_effective & (1ULL << PVM_CAP_SYS_PTRACE)) &&
+            (self->ruid != target->uid  ||
+             self->ruid != target->ruid ||
+             self->ruid != target->suid))
             return -EPERM;
     }
 
@@ -225,13 +241,16 @@ long sys_process_vm_writev(int pid, const struct pvm_iovec *lvec, unsigned long 
     if (!lvec || !rvec)
         return -EFAULT;
 
-    /* Same permission check as readv. */
+    /* Same PTRACE_MODE_ATTACH_REALCREDS triple-uid match as readv. */
     fut_task_t *self = fut_task_current();
     if (self && pid != 0 && (uint64_t)pid != self->pid) {
         fut_task_t *target = fut_task_by_pid((uint64_t)pid);
         if (!target) return -ESRCH;
-        if (self->uid != 0 && self->uid != target->uid &&
-            !(self->cap_effective & (1ULL << PVM_CAP_SYS_PTRACE)))
+        if (self->ruid != 0 &&
+            !(self->cap_effective & (1ULL << PVM_CAP_SYS_PTRACE)) &&
+            (self->ruid != target->uid  ||
+             self->ruid != target->ruid ||
+             self->ruid != target->suid))
             return -EPERM;
     }
 

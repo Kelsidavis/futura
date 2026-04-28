@@ -1291,7 +1291,23 @@ long sys_io_uring_enter(unsigned int fd, unsigned int to_submit,
 long sys_io_uring_register(unsigned int fd, unsigned int opcode,
                            void *arg, unsigned int nr_args) {
     struct io_uring_ctx *ctx = uring_get_ctx(fd);
-    if (!ctx) return -EBADF;
+    if (!ctx) {
+        /* Linux's io_uring/register.c:io_uring_register splits these
+         * errno classes:
+         *   - EBADF when fdget(fd) fails (fd out of range or
+         *     unallocated)
+         *   - EOPNOTSUPP when the fd is a valid file but not an
+         *     io_uring (f->f_op != &io_uring_fops)
+         * Futura previously collapsed both into EBADF, masking 'wrong
+         * fd type' as 'bad descriptor' for liburing's feature
+         * detection (which probes register on a known-non-uring fd
+         * to discover what the kernel supports).  Same split pattern
+         * as the matching signalfd / inotify / timerfd / epoll /
+         * fanotify fixes. */
+        extern struct fut_file *fut_vfs_get_file(int fd);
+        struct fut_file *file = fut_vfs_get_file((int)fd);
+        return file ? -EOPNOTSUPP : -EBADF;
+    }
 
     fut_task_t *task = fut_task_current();
     if (task && ctx->owner_pid != task->pid) return -EBADF;

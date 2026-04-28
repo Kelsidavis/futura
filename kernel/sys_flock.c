@@ -16,6 +16,7 @@
 #include <kernel/fut_vfs.h>
 #include <kernel/fut_lock.h>
 #include <kernel/fut_fd_util.h>
+#include <fcntl.h>
 #include <stdint.h>
 
 #include <kernel/kprintf.h>
@@ -204,6 +205,15 @@ long sys_flock(int fd, int operation) {
 
         return -EBADF;
     }
+
+    /* O_PATH fds have file->f_op set to empty_fops in Linux, which
+     * lack flock support; flock(2) on such an fd returns -EBADF
+     * because locks_lock_file_wait can't run.  Match the early gate
+     * other I/O syscalls already use (read, write, ioctl, fchmod,
+     * ftruncate, fadvise, fallocate, vmsplice) so the contract is
+     * uniform across the syscall layer. */
+    if (file->flags & O_PATH)
+        return -EBADF;
 
     /* Phase 2: Categorize operation */
     int op = local_operation & ~LOCK_NB;

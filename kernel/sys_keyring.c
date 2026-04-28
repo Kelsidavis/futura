@@ -404,14 +404,20 @@ long sys_request_key(const char *type, const char *description,
         if (search_order[i] == 0) continue;
         struct kernel_key *found = key_find_in_keyring(search_order[i], k_type, k_desc);
         if (found) {
-            /* Optionally link into dest_keyring */
+            /* Optionally link into dest_keyring.  Linux's
+             * security/keys/request_key.c surfaces a non-keyring
+             * dest_keyring via lookup_user_key followed by a type
+             * check that returns -ENOTDIR.  The previous Futura code
+             * silently skipped non-keyring destinations, masking
+             * caller bugs as 'lookup succeeded, link silently failed'.
+             * Same gate as the matching keyctl_search fix. */
             if (dest_keyring != 0) {
                 int32_t dst = resolve_keyring(dest_keyring);
-                if (dst > 0) {
-                    struct kernel_key *dkr = key_find_serial(dst);
-                    if (dkr && dkr->is_keyring)
-                        keyring_link(dkr, found->serial);
-                }
+                if (dst < 0) return dst;
+                struct kernel_key *dkr = key_find_serial(dst);
+                if (!dkr) return -ENOKEY;
+                if (!dkr->is_keyring) return -ENOTDIR;
+                keyring_link(dkr, found->serial);
             }
             return found->serial;
         }

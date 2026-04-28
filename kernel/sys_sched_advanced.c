@@ -654,11 +654,21 @@ long sys_sched_setattr(int pid, const struct sched_attr *uattr, unsigned int fla
         return -EINVAL;
 
     /* Cross-task permission gate: only the target's owner, root, or
-     * CAP_SYS_NICE may modify another task's scheduler. Mirrors the
-     * gate already in sys_sched_setparam / sys_sched_setscheduler so
-     * sched_setattr can't be used as a cross-task escape hatch. */
+     * CAP_SYS_NICE may modify another task's scheduler.  Linux's
+     * check_same_owner accepts the call when the caller's effective
+     * uid matches EITHER the target's effective uid OR real uid:
+     *
+     *   match = uid_eq(cred->euid, pcred->euid) ||
+     *           uid_eq(cred->euid, pcred->uid);   // pcred->uid == real uid
+     *
+     * The previous Futura gate only compared effective-vs-effective,
+     * so a setuid wrapper that had dropped its effective uid back to
+     * its real uid couldn't sched_setattr a child whose effective uid
+     * was still elevated.  Same fix pattern as the recent
+     * sched_setaffinity / setpriority real-uid fallback updates. */
     if (target != current && current->uid != 0 && !HAS_CAP_SYS_NICE(current) &&
-        current->uid != target->uid)
+        current->uid != target->uid &&
+        current->uid != target->ruid)
         return -EPERM;
 
     /* RLIMIT_RTPRIO gate for unprivileged callers requesting RT. */

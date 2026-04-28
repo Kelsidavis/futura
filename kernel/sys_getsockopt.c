@@ -885,8 +885,16 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
             case 37: /* SO_TIMESTAMPING */
             case 41: /* SO_WIFI_STATUS */
             case 42: /* SO_PEEK_OFF */
-            case 45: /* SO_BPF_EXTENSIONS */
-            case 46: /* SO_INCOMING_CPU */
+            case 45: /* SO_SELECT_ERR_QUEUE — was mislabeled SO_BPF_EXTENSIONS; the
+                      * real Linux SO_BPF_EXTENSIONS is 48 */
+            case 46: /* SO_BUSY_POLL — was mislabeled SO_INCOMING_CPU; the real
+                      * Linux SO_INCOMING_CPU is 49.  Returning 0 means
+                      * "busy polling disabled" which matches Futura's no-op
+                      * setsockopt and the Linux default. */
+            case 47: /* SO_MAX_PACING_RATE */
+            case 48: /* SO_BPF_EXTENSIONS — kernel BPF feature mask */
+            case 49: /* SO_INCOMING_CPU — was previously colliding with the
+                      * mislabeled case 46.  Now lands in the zero-value group. */
             case 52: /* SO_DETACH_BPF */
             case 53: /* SO_ATTACH_REUSEPORT_CBPF */
             case 54: /* SO_ATTACH_REUSEPORT_EBPF */

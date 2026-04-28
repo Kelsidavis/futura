@@ -439,6 +439,10 @@ long sys_process_madvise(int pidfd, const void *iovec_ptr, unsigned long vlen,
  */
 long sys_set_mempolicy_home_node(unsigned long start, unsigned long len,
                                  unsigned long home_node, unsigned long flags) {
+    /* Futura test 478 pins set_mempolicy_home_node -> -ENOSYS.  Per the
+     * project rule 'Futura's local tests take precedence over Linux ABI
+     * parity', keep the ENOSYS contract; Linux would validate parameters
+     * and return EINVAL/0 here, but the test wins. */
     (void)start; (void)len; (void)home_node; (void)flags;
     return -ENOSYS;
 }

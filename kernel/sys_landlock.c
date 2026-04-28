@@ -109,6 +109,18 @@ long sys_landlock_create_ruleset(const void *attr, size_t size,
      * setxattr / io_submit / timerfd_settime / epoll_pwait2 fixes. */
     if (!attr)
         return -EFAULT;
+    /* Linux's landlock_create_ruleset uses copy_struct_from_user which
+     * enforces both bounds — security/landlock/syscalls.c paths through
+     * core's copy_struct_from_user:
+     *   if (usize > PAGE_SIZE) return -E2BIG;
+     *   if (usize < ksize) ... copy and zero-pad.
+     * The previous code only checked the lower bound.  An absurdly
+     * large size lets a caller request an unbounded copy on Linux's
+     * forward-compat path (DoS via giant kernel allocation); add the
+     * E2BIG guard so userspace size-probe protocol can detect kernel-
+     * too-old for future-version structs. */
+    if (size > 4096 /* PAGE_SIZE */)
+        return -E2BIG;
     if (size < sizeof(struct landlock_ruleset_attr))
         return -EINVAL;
 

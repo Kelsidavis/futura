@@ -1326,6 +1326,22 @@ long sys_fsmount(int fs_fd, unsigned int flags, unsigned int attr_flags) {
  */
 long sys_fspick(int dirfd, const char *pathname, unsigned int flags) {
     (void)dirfd;
+    /* Linux's sys_fspick rejects unknown flag bits up front:
+     *   if (flags & ~(FSPICK_CLOEXEC | FSPICK_SYMLINK_NOFOLLOW |
+     *                 FSPICK_NO_AUTOMOUNT | FSPICK_EMPTY_PATH))
+     *       return -EINVAL;
+     * The previous Futura code only branched on FSPICK_CLOEXEC and
+     * silently dropped every other flag, so a caller probing for
+     * FSPICK_SYMLINK_NOFOLLOW / FSPICK_NO_AUTOMOUNT support couldn't
+     * tell 'kernel doesn't honour it' from 'kernel accepted but
+     * ignored'.  Same gate already applied to fsopen / fsmount /
+     * move_mount / open_tree. */
+    const unsigned int VALID_FSPICK_FLAGS =
+        FSPICK_CLOEXEC | FSPICK_SYMLINK_NOFOLLOW |
+        FSPICK_NO_AUTOMOUNT | FSPICK_EMPTY_PATH;
+    if (flags & ~VALID_FSPICK_FLAGS)
+        return -EINVAL;
+
     if (!pathname) return -EFAULT;
 
     /* Stage user-supplied pathname through copy_from_user — same fix

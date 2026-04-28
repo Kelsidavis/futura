@@ -380,17 +380,25 @@ long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
         return 0;
 
     case PR_GET_CHILD_SUBREAPER: {
-        /* Return 1 if we are a subreaper, 0 otherwise */
-        unsigned long is_subreaper = (task->personality >> 31) & 1;
+        /* Return 1 if we are a subreaper, 0 otherwise.
+         *
+         * Linux writes a 4-byte int (kernel/sys.c:
+         *   put_user(me->signal->is_child_subreaper, (int __user *)arg2);
+         * ).  The previous Futura code wrote an 8-byte unsigned long,
+         * clobbering 4 bytes past the caller's int buffer — a stack/heap
+         * corruption hazard for a typical
+         *   int subreaper; prctl(PR_GET_CHILD_SUBREAPER, &subreaper);
+         * call pattern. */
+        int is_subreaper = (int)((task->personality >> 31) & 1);
         if (!arg2)
             return -EFAULT;
 #ifdef KERNEL_VIRTUAL_BASE
         if ((uintptr_t)arg2 >= KERNEL_VIRTUAL_BASE) {
-            *(unsigned long *)arg2 = is_subreaper;
+            *(int *)arg2 = is_subreaper;
             return 0;
         }
 #endif
-        if (fut_copy_to_user((void *)arg2, &is_subreaper, sizeof(unsigned long)) != 0)
+        if (fut_copy_to_user((void *)arg2, &is_subreaper, sizeof(int)) != 0)
             return -EFAULT;
         return 0;
     }

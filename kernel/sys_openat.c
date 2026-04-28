@@ -222,6 +222,28 @@ long sys_openat(int dirfd, const char *pathname, int flags, int mode) {
         return -EINVAL;
     }
 
+    /* Linux's build_open_flags() restricts O_PATH to a small whitelist:
+     *
+     *   #define O_PATH_FLAGS (O_DIRECTORY | O_NOFOLLOW | O_PATH | O_CLOEXEC)
+     *   if (flags & O_PATH) {
+     *       if (flags & ~O_PATH_FLAGS) return -EINVAL;
+     *       acc_mode = 0;
+     *   }
+     *
+     * O_PATH | O_CREAT, O_PATH | O_TRUNC, O_PATH | O_APPEND, etc. are all
+     * meaningless and Linux returns -EINVAL.  Same fix as the matching
+     * sys_open whitelist — sys_openat was the inconsistent path. */
+    if (local_flags & O_PATH) {
+        const int O_PATH_VALID =
+            O_DIRECTORY | O_NOFOLLOW | O_PATH | O_CLOEXEC;
+        if (local_flags & ~O_PATH_VALID) {
+            fut_printf("[OPENAT] openat(dirfd=%d, flags=0x%x) -> EINVAL "
+                       "(O_PATH allows only O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC, got 0x%x)\n",
+                       local_dirfd, local_flags, local_flags & ~O_PATH_VALID);
+            return -EINVAL;
+        }
+    }
+
     /* O_TMPFILE: create anonymous file in the specified directory.
      * Linux requires O_TMPFILE to be combined with write access — see
      * fs/namei.c:do_tmpfile, where 'if (acc_mode & MAY_WRITE)' is the

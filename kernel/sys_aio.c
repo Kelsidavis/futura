@@ -1017,6 +1017,19 @@ long sys_io_uring_setup(unsigned int entries, void *params) {
     if (p->flags & ~KNOWN_SETUP_FLAGS) return -EINVAL;
     uint32_t unsupported = IORING_SETUP_SQPOLL | IORING_SETUP_IOPOLL;
     if (p->flags & unsupported) return -EINVAL;
+
+    /* Linux's io_uring_setup validates the reserved fields (p->resv[0..2])
+     * are zero before doing any work — the kernel walks the array with
+     *   for (i = 0; i < ARRAY_SIZE(p->resv); i++) if (p->resv[i]) return -EINVAL;
+     * Reserved fields are placeholders for future extensions; rejecting
+     * non-zero values lets userspace probe the kernel's known field set
+     * by walking through bits and observing which ones return EINVAL.
+     * The previous Futura code never inspected resv[], so a caller
+     * passing arbitrary bits got success on every value, and callers
+     * couldn't tell 'kernel doesn't recognise this future field' from
+     * 'kernel accepted but ignored it'. */
+    if (p->resv[0] != 0 || p->resv[1] != 0 || p->resv[2] != 0)
+        return -EINVAL;
     /* Linux: IORING_SETUP_SQ_AFF requires IORING_SETUP_SQPOLL — pinning a
      * non-existent SQ poll thread to a CPU is a programming error. Since
      * Futura already rejects SQPOLL above, any SQ_AFF here is by

@@ -196,6 +196,18 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
         return -EINVAL;
     }
 
+    /* Linux's do_preadv runs fdget FIRST and only then dispatches into
+     * vfs_readv where iovcnt=0 returns 0.  preadv(bad_fd, _, 0, off)
+     * returns -EBADF on Linux.  Validate fd up front so the EBADF
+     * errno class is preserved for libc probes — same fix as the
+     * matching readv/writev iovcnt=0 reorder. */
+    if (fd < 0 || fd >= (int)task->max_fds ||
+        !task->fd_table || !task->fd_table[fd]) {
+        fut_printf("[PREADV] preadv(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EBADF\n",
+                   fd, iov, iovcnt, offset);
+        return -EBADF;
+    }
+
     if (iovcnt == 0) {
         fut_printf("[PREADV] preadv(fd=%d, iov=%p, iovcnt=0, offset=%ld) -> 0 (nothing to read)\n",
                    fd, iov, offset);

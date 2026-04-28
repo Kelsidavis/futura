@@ -1579,9 +1579,20 @@ long sys_timerfd_settime(int ufd, int flags,
 long sys_timerfd_gettime(int ufd, struct itimerspec *curr_value) {
     fut_task_t *task = fut_task_current();
     if (!task) return -ESRCH;
-    if (!curr_value) return -EINVAL;
-    if (ufd < 0) return -EBADF;
 
+    /* Linux's timerfd_gettime ordering (fs/timerfd.c):
+     *   ret = do_timerfd_gettime(ufd, &kotmr);  // fdget -> EBADF/EINVAL
+     *   if (ret) return ret;
+     *   return put_itimerspec64(&kotmr, otmr) ? -EFAULT : 0;
+     *
+     * The fd lookup runs FIRST; the user pointer is only touched at the
+     * final put_itimerspec64, where NULL/bad pointer surfaces as -EFAULT
+     * via copy_to_user.  The previous Futura order rejected NULL
+     * curr_value with -EINVAL up front, masking the EFAULT errno class
+     * libc timerfd wrappers expect on a bad output pointer.  Drop the
+     * eager EINVAL gate; the fut_copy_to_user at the tail already
+     * returns EFAULT for NULL via fut_access_ok. */
+    if (ufd < 0) return -EBADF;
     if (!task->fd_table || ufd >= task->max_fds) return -EBADF;
     struct fut_file *file = task->fd_table[ufd];
     if (!file) return -EBADF;

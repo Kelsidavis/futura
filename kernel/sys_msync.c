@@ -238,26 +238,30 @@ long sys_msync(void *addr, size_t length, int flags) {
      * that pass MS_INVALIDATE alone to drop cached pages without
      * forcing a writeback. */
 
-    /* Validate length + PAGE_SIZE won't overflow before alignment
-     * Prevent integer overflow in alignment calculation */
+    /* Linux's mm/msync.c switches the error class to ENOMEM after the
+     * EINVAL gates pass — the page-alignment round-up overflow and the
+     * start+len wraparound both fall under 'address range not in the
+     * process' which is ENOMEM, not EINVAL.  Futura previously surfaced
+     * these as EINVAL, masking 'address-not-mapped' as 'bad-parameter'
+     * and breaking libc msync wrappers that retry on ENOMEM but treat
+     * EINVAL as fatal usage error. */
     if (local_length > SIZE_MAX - PAGE_SIZE + 1) {
-        fut_printf("[MSYNC] msync(%p, %zu) -> EINVAL "
+        fut_printf("[MSYNC] msync(%p, %zu) -> ENOMEM "
                    "(length too large for page alignment, would overflow)\n",
                    local_addr, local_length);
-        return -EINVAL;
+        return -ENOMEM;
     }
 
     /* Round length up to page boundary */
     size_t aligned_len = (local_length + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
 
-    /* Validate addr + aligned_len doesn't wrap around
-     * Prevent address range wraparound attacks */
+    /* Validate addr + aligned_len doesn't wrap around */
     uintptr_t start = (uintptr_t)local_addr;
     if (start > UINTPTR_MAX - aligned_len) {
-        fut_printf("[MSYNC] msync(%p, %zu) -> EINVAL "
+        fut_printf("[MSYNC] msync(%p, %zu) -> ENOMEM "
                    "(address range wraps around)\n",
                    local_addr, aligned_len);
-        return -EINVAL;
+        return -ENOMEM;
     }
 
     /* Validate end address is within userspace limits.

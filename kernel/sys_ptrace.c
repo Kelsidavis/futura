@@ -316,15 +316,29 @@ long sys_ptrace(int request, int pid, void *addr, void *data) {
         if (tracee->ptrace_tracer != 0)
             return -EPERM;  /* Already being traced */
 
-        /* Permission check: Linux ptrace_may_access (PTRACE_MODE_ATTACH).
-         * Non-root needs matching UID OR CAP_SYS_PTRACE. The previous
-         * gate only allowed UID match, so a process with CAP_SYS_PTRACE
-         * granted via setcap (the standard non-root debugger-pattern,
-         * used by perf, strace -p, gdb on a CAP_SYS_PTRACE-capable
-         * binary) was rejected with EPERM despite Linux allowing it. */
+        /* Permission check: Linux __ptrace_may_access (PTRACE_MODE_ATTACH).
+         * Linux requires the caller's effective uid to match ALL THREE
+         * of the target's uids — real, effective, and saved:
+         *
+         *   if (uid_eq(caller_uid, tcred->euid) &&
+         *       uid_eq(caller_uid, tcred->suid) &&
+         *       uid_eq(caller_uid, tcred->uid))
+         *       goto ok;
+         *
+         * The triple-match defends against attaching to a target that
+         * has any historical privilege (e.g. a setuid binary that has
+         * dropped its effective uid back to the user but still holds
+         * the elevated saved uid).  The previous Futura gate only
+         * compared target->uid (effective), so a caller could ptrace a
+         * dropped-setuid process and then issue PTRACE_POKEDATA to
+         * inject code that would re-elevate via setresuid/saved-uid.
+         *
+         * CAP_SYS_PTRACE bypasses this gate as before. */
         bool ptr_has_cap = (current->cap_effective & (1ULL << 19 /* CAP_SYS_PTRACE */)) != 0;
         if (current->uid != 0 && !ptr_has_cap) {
-            if (current->uid != tracee->uid)
+            if (current->uid != tracee->uid  ||
+                current->uid != tracee->ruid ||
+                current->uid != tracee->suid)
                 return -EPERM;
             /* Namespace isolation: reject cross-namespace ptrace */
             if (current->user_ns != tracee->user_ns)
@@ -372,7 +386,12 @@ long sys_ptrace(int request, int pid, void *addr, void *data) {
 
         bool seize_has_cap = (current->cap_effective & (1ULL << 19 /* CAP_SYS_PTRACE */)) != 0;
         if (current->uid != 0 && !seize_has_cap) {
-            if (current->uid != tracee->uid)
+            /* Same triple-uid match as PTRACE_ATTACH (see comment above):
+             * Linux's __ptrace_may_access requires caller's euid to
+             * match ALL THREE of target's real/effective/saved uids. */
+            if (current->uid != tracee->uid  ||
+                current->uid != tracee->ruid ||
+                current->uid != tracee->suid)
                 return -EPERM;
             if (current->user_ns != tracee->user_ns)
                 return -EPERM;

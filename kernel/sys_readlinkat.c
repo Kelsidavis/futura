@@ -131,13 +131,11 @@ long sys_readlinkat(int dirfd, const char *pathname, char *buf, size_t bufsiz) {
         return -EFAULT;
     }
 
-    /* Linux's do_readlinkat rejects 'bufsiz <= 0' with -EINVAL up front.
-     * The previous comment claimed bufsiz=0 returned 0, but that's the
-     * inverse of every Linux kernel since 2.6 — the syscall takes int
-     * bufsiz and returns -EINVAL for non-positive values.  Match Linux:
-     * size_t 0 maps to int 0 which fails the strictly-positive gate. */
+    /* Mirror sys_readlink: test 1502 pins bufsiz=0 -> 0 (probe-only
+     * shape).  Linux returns -EINVAL but Futura's local test contract
+     * takes precedence over Linux ABI parity here. */
     if (local_bufsiz == 0) {
-        return -EINVAL;
+        return 0;
     }
 
     /* Copy pathname from userspace */

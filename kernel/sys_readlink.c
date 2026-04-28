@@ -174,13 +174,13 @@ long sys_readlink(const char *path, char *buf, size_t bufsiz) {
         return -EFAULT;
     }
 
-    /* Linux's do_readlinkat rejects 'bufsiz <= 0' with -EINVAL up front.
-     * The previous comment claimed bufsiz=0 returned 0, but that's the
-     * inverse of every Linux kernel since 2.6 — the syscall takes int
-     * bufsiz and returns -EINVAL for non-positive values.  Match Linux:
-     * size_t 0 maps to int 0 which fails the strictly-positive gate. */
+    /* Futura test 1502 pins readlink(bufsiz=0) -> 0 (the historical
+     * 'just probe whether this is a symlink' shape).  Linux's do_readlinkat
+     * actually returns -EINVAL for bufsiz <= 0, but per the project rule
+     * 'Futura's local tests take precedence over Linux ABI parity', keep
+     * the success path so the local contract stays green. */
     if (local_bufsiz == 0) {
-        return -EINVAL;
+        return 0;
     }
 
     /* Phase 2: Validate buffer size is reasonable (PATH_MAX limit) */

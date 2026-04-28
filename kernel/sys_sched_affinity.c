@@ -167,11 +167,23 @@ long sys_sched_setaffinity(int pid, unsigned int len, const void *user_mask) {
      * unprivileged caller could pin another user's CPU-bound process
      * to a single core (DoS) or strip a system daemon's affinity to
      * prevent it from running on any CPU.
-     * CAP_SYS_NICE = bit 23. */
+     *
+     * Linux's check_same_owner accepts the call when the caller's
+     * EFFECTIVE uid matches EITHER the target's effective uid OR the
+     * target's REAL uid:
+     *
+     *   match = uid_eq(cred->euid, pcred->euid) ||
+     *           uid_eq(cred->euid, pcred->uid);   // pcred->uid == real uid
+     *
+     * The previous Futura gate only compared effective-vs-effective, so
+     * a setuid wrapper that had dropped its effective uid back to its
+     * real uid couldn't sched_setaffinity a child whose effective uid
+     * was still elevated.  CAP_SYS_NICE = bit 23. */
     if (current && target_task && target_task != current &&
         current->uid != 0 &&
         !(current->cap_effective & (1ULL << 23 /* CAP_SYS_NICE */)) &&
-        current->uid != target_task->uid) {
+        current->uid != target_task->uid &&
+        current->uid != target_task->ruid) {
         return -EPERM;
     }
 

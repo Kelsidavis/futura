@@ -341,10 +341,23 @@ long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
         return 0;
 
     case PR_GET_KEEPCAPS:
+        /* Linux's prctl(PR_GET_KEEPCAPS) rejects any non-zero unused arg:
+         *   if (arg2 || arg3 || arg4 || arg5) return -EINVAL;
+         * The previous code silently ignored the unused slots, so libc
+         * probes that pass garbage in arg2..5 to detect 'kernel rejects
+         * unused-args junk' (a generic prctl ABI rigidity check) saw
+         * 'success' on Futura and EINVAL on Linux. */
+        if (arg2 || arg3 || arg4 || arg5)
+            return -EINVAL;
         return task->keepcaps;
 
     case PR_SET_KEEPCAPS:
-        if (arg2 != 0 && arg2 != 1)
+        /* Linux: 'if (arg2 > 1 || arg3 || arg4 || arg5) return -EINVAL'.
+         * KEEPCAPS controls whether capabilities survive a UID change
+         * to non-root, so the gate must be tight — silently accepting
+         * arg3..5 junk could hide a caller misuse that was meant to be
+         * a different prctl op number entirely. */
+        if (arg2 > 1 || arg3 || arg4 || arg5)
             return -EINVAL;
         task->keepcaps = (int)arg2;
         return 0;

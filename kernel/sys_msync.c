@@ -196,17 +196,28 @@ long sys_msync(void *addr, size_t length, int flags) {
         return -ESRCH;
     }
 
-    /* Validate address alignment (must be page-aligned) */
-    if ((uintptr_t)local_addr % PAGE_SIZE != 0) {
-        fut_printf("[MSYNC] msync(%p, %zu, 0x%x) -> EINVAL (addr not page-aligned)\n",
-                   local_addr, local_length, local_flags);
-        return -EINVAL;
-    }
+    /* Linux's mm/msync.c validates flags FIRST, then alignment, then
+     * MS_ASYNC|MS_SYNC mutual exclusion:
+     *   if (flags & ~(MS_ASYNC | MS_INVALIDATE | MS_SYNC)) goto out;
+     *   if (offset_in_page(start)) goto out;
+     *   if ((flags & MS_ASYNC) && (flags & MS_SYNC)) goto out;
+     * Futura had alignment first, so msync(misaligned, len, 0xff)
+     * surfaced the alignment EINVAL where Linux surfaces the flags
+     * EINVAL — both EINVAL, but the cause libc wrappers see differs
+     * and the flags-detection probe (run with a known-bad addr) was
+     * masked. */
 
     /* Validate flags */
     const int valid_flags = MS_ASYNC | MS_SYNC | MS_INVALIDATE;
     if ((local_flags & ~valid_flags) != 0) {
         fut_printf("[MSYNC] msync(%p, %zu, 0x%x) -> EINVAL (invalid flags)\n",
+                   local_addr, local_length, local_flags);
+        return -EINVAL;
+    }
+
+    /* Validate address alignment (must be page-aligned) */
+    if ((uintptr_t)local_addr % PAGE_SIZE != 0) {
+        fut_printf("[MSYNC] msync(%p, %zu, 0x%x) -> EINVAL (addr not page-aligned)\n",
                    local_addr, local_length, local_flags);
         return -EINVAL;
     }

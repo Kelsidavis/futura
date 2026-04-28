@@ -727,23 +727,31 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                 return 0;
 
             case 12: { /* SO_PRIORITY — socket priority for QoS.
-                        * Linux requires CAP_NET_ADMIN for priority > 6 so an
-                        * unprivileged caller can't push their packets to the
-                        * head of the kernel's QoS queues. Even though Futura
-                        * currently no-ops the option, gate it now so we
-                        * don't silently grant escalation if/when QoS routing
-                        * is wired up. Linux additionally validates that
-                        * priority lies in [0, 15] — anything outside is
-                        * EINVAL. The previous code silently accepted negative
-                        * or oversized values, masking caller bugs. */
+                        *
+                        * Linux's net/core/sock.c gate (sock_setsockopt):
+                        *   if ((val >= 0 && val <= 6) ||
+                        *       sockopt_ns_capable(...CAP_NET_RAW) ||
+                        *       sockopt_ns_capable(...CAP_NET_ADMIN))
+                        *       WRITE_ONCE(sk->sk_priority, val);
+                        *   else
+                        *       ret = -EPERM;
+                        *
+                        * No upper bound — capable callers can set any int.
+                        * Negative values are allowed for capable callers too.
+                        * The previous Futura gate hard-rejected '< 0 or > 15'
+                        * with EINVAL, breaking libc/iproute2 'tc' tools that
+                        * pass priorities up to TC_PRIO_MAX (16) under
+                        * CAP_NET_ADMIN.  Match Linux: any negative or > 6
+                        * value goes through the capability check, returning
+                        * EPERM (not EINVAL) on insufficient privilege. */
                 if (optlen < sizeof(int)) return -EINVAL;
                 int prio = 0;
                 if (sso_copy_from_user(&prio, optval, sizeof(int)) != 0)
                     return -EFAULT;
-                if (prio < 0 || prio > 15)
-                    return -EINVAL;
-                if (prio > 6 && task->uid != 0 &&
-                    !(task->cap_effective & (1ULL << 12 /* CAP_NET_ADMIN */)))
+                if (!(prio >= 0 && prio <= 6) &&
+                    task->uid != 0 &&
+                    !(task->cap_effective & ((1ULL << 12 /* CAP_NET_ADMIN */) |
+                                             (1ULL << 13 /* CAP_NET_RAW */))))
                     return -EPERM;
                 return 0;
             }

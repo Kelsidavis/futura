@@ -151,10 +151,20 @@ ssize_t sys_write(int fd, const void *buf, size_t count) {
         return -EBADF;
     }
 
-    /* Phase 2: Handle empty write — Linux still validates fd is open for count=0 */
+    /* Linux's ksys_write runs fdget FIRST — EBADF surfaces before any
+     * inspection of the buffer pointer.  Futura's previous order let
+     * write(closed_fd_in_range, NULL, 100) return EFAULT (line 162 NULL
+     * buf check ran before the fd-table lookup further down).  Validate
+     * the fd-table slot up front so the EBADF errno class is preserved
+     * for libc probes — same pattern as the matching readv/writev,
+     * preadv/pwritev, pread64/pwrite64, getdents reorders. */
+    if (!task->fd_table || !task->fd_table[local_fd]) {
+        write_printf("[WRITE] write(fd=%d) -> EBADF (fd not open)\n", local_fd);
+        return -EBADF;
+    }
+
+    /* Phase 2: Handle empty write — Linux still returns 0 for count=0 */
     if (local_count == 0) {
-        struct fut_file *f0 = vfs_get_file_from_task(task, local_fd);
-        if (!f0) return -EBADF;
         return 0;
     }
 

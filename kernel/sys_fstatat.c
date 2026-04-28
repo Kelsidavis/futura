@@ -134,8 +134,17 @@ long sys_fstatat(int dirfd, const char *pathname, void *statbuf, int flags) {
         return -ESRCH;
     }
 
-    /* Phase 1: Validate flags - only AT_SYMLINK_NOFOLLOW and AT_EMPTY_PATH are valid */
-    const int VALID_FLAGS = AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH;
+    /* Linux's fs/stat.c:vfs_fstatat accepts AT_SYMLINK_NOFOLLOW |
+     * AT_NO_AUTOMOUNT | AT_EMPTY_PATH | AT_STATX_SYNC_TYPE — the
+     * AT_NO_AUTOMOUNT flag is widely used by libc fstatat wrappers
+     * (and by stat /proc/<pid>/cwd which auto-faults) to suppress
+     * automount triggering on the path lookup.  The previous Futura
+     * mask omitted it, so any caller passing AT_NO_AUTOMOUNT (a
+     * defined Linux ABI bit since 2.6.38) got -EINVAL here.  Futura
+     * has no automount, so AT_NO_AUTOMOUNT is a no-op — accept it
+     * silently to match Linux. */
+    const int VALID_FLAGS = AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH |
+                            0x800 /* AT_NO_AUTOMOUNT */;
     if (local_flags & ~VALID_FLAGS) {
         fut_printf("[FSTATAT] fstatat(dirfd=%d, flags=0x%x) -> EINVAL (invalid flags)\n",
                    local_dirfd, local_flags);

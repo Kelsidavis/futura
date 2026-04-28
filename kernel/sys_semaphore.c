@@ -235,8 +235,16 @@ static int semop_can_proceed(const struct sem_set *s,
  * @return 0 on success, -errno on error
  */
 long sys_semop(int semid, void *sops, unsigned int nsops) {
-    if (!sops)
-        return -EFAULT;
+    /* Linux's ipc/sem.c:ksys_semtimedop validates nsops BEFORE the
+     * user pointer:
+     *   if (nsops < 1 || semid < 0) return -EINVAL;
+     *   if (nsops > SEMOPM)         return -E2BIG;
+     *   if (copy_from_user(sops, tsops, ...)) return -EFAULT;
+     * The previous Futura order rejected NULL sops before nsops,
+     * inverting the errno class for callers that probe with
+     * nsops==0 + NULL sops to detect kernel-supported counts.  Same
+     * EINVAL-before-EFAULT reorder pattern as the matching
+     * sched_getaffinity / sched_setaffinity / clock_gettime fixes. */
     if (nsops == 0)
         return -EINVAL;
     /* The stack ops[] buffer caps how many operations we can actually
@@ -245,6 +253,9 @@ long sys_semop(int semid, void *sops, unsigned int nsops) {
      * atomically applying the full op array. */
     if (nsops > (unsigned int)SEMMSL)
         return -E2BIG;
+
+    if (!sops)
+        return -EFAULT;
 
     /* Copy operations from user before taking lock (avoid holding lock during copy) */
     struct sem_sembuf ops[SEMMSL];

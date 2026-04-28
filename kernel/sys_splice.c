@@ -111,19 +111,28 @@ long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
         return -ESRCH;
     }
 
-    /* Validate fds */
-    if (local_fd_in < 0 || local_fd_out < 0) {
-        fut_printf("[SPLICE] splice(fd_in=%d, fd_out=%d, len=%zu, flags=0x%x, pid=%d) "
-                   "-> EBADF (invalid fd)\n", local_fd_in, local_fd_out, local_len, local_flags, task->pid);
-        return -EBADF;
-    }
-
-    /* Validate flags */
+    /* Linux's fs/splice.c:SYSCALL_DEFINE6(splice) validates flags FIRST
+     * (before any fd lookup):
+     *   if (unlikely(!len)) return 0;
+     *   if (unlikely(flags & ~SPLICE_F_ALL)) return -EINVAL;
+     *   error = -EBADF;
+     *   in = fdget(fd_in);
+     * The previous Futura order rejected negative fds before flags,
+     * inverting the errno class for callers that probe with deliberately
+     * bad fds to detect kernel-supported flag bits.  Match Linux —
+     * same shape as the matching sys_tee fix. */
     const unsigned int VALID_FLAGS = SPLICE_F_MOVE | SPLICE_F_NONBLOCK | SPLICE_F_MORE | SPLICE_F_GIFT;
     if (local_flags & ~VALID_FLAGS) {
         fut_printf("[SPLICE] splice(fd_in=%d, fd_out=%d, len=%zu, flags=0x%x [invalid], pid=%d) "
                    "-> EINVAL\n", local_fd_in, local_fd_out, local_len, local_flags, task->pid);
         return -EINVAL;
+    }
+
+    /* Validate fds */
+    if (local_fd_in < 0 || local_fd_out < 0) {
+        fut_printf("[SPLICE] splice(fd_in=%d, fd_out=%d, len=%zu, flags=0x%x, pid=%d) "
+                   "-> EBADF (invalid fd)\n", local_fd_in, local_fd_out, local_len, local_flags, task->pid);
+        return -EBADF;
     }
 
     /* Linux's fs/splice.c orders the gates so ESPIPE (offset given for a

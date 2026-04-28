@@ -588,6 +588,23 @@ long sys_setrlimit(int resource, const struct rlimit *rlim) {
      * application is then responsible for living with a tiny stack).
      * Don't second-guess that. */
 
+    /* Linux's do_prlimit gates RLIMIT_NOFILE > sysctl_nr_open with -EPERM
+     * (kernel/sys.c).  setrlimit dispatches through the same do_prlimit,
+     * so the gate fires on both entry points; sys_prlimit64 already
+     * matches Linux here.  Without the same gate at sys_setrlimit, a
+     * caller using the legacy entry point could install an absurd hard
+     * limit (e.g. 4 billion fds) that the per-fd allocation path would
+     * later honor — a genuine resource-exhaustion vector that Linux
+     * pre-empts at setrlimit-time.  Same 1M cap as sys_prlimit64. */
+    if (resource == RLIMIT_NOFILE &&
+        new_limit.rlim_max != (uint64_t)RLIM_INFINITY &&
+        new_limit.rlim_max > 1048576) {
+        fut_printf("[PROC] setrlimit(resource=%s) -> EPERM "
+                   "(NOFILE max=%llu exceeds system maximum 1048576)\n",
+                   resource_name, (unsigned long long)new_limit.rlim_max);
+        return -EPERM;
+    }
+
     /* Phase 4: Store limits in task->rlimits so getrlimit can retrieve them */
     fut_task_t *task = fut_task_current();
     if (task) {

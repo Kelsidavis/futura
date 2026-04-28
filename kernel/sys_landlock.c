@@ -135,6 +135,31 @@ long sys_landlock_create_ruleset(const void *attr, size_t size,
         return -EFAULT;
     }
 
+    /* Linux's security/landlock/syscalls.c validates handled_access_fs
+     * against LANDLOCK_MASK_ACCESS_FS up front:
+     *   if (!attr.handled_access_fs) return -ENOMSG;
+     *   if (attr.handled_access_fs & ~LANDLOCK_MASK_ACCESS_FS) return -EINVAL;
+     * An empty mask means 'a ruleset that controls nothing', which is
+     * a programming error; bits outside the documented set let userspace
+     * probe for future LANDLOCK_ACCESS_FS_* support but must be rejected
+     * on the current kernel.  The previous Futura code stored any
+     * handled_access_fs value verbatim, masking both error classes. */
+    {
+        const uint64_t LANDLOCK_MASK_ACCESS_FS =
+            LANDLOCK_ACCESS_FS_EXECUTE     | LANDLOCK_ACCESS_FS_WRITE_FILE |
+            LANDLOCK_ACCESS_FS_READ_FILE   | LANDLOCK_ACCESS_FS_READ_DIR  |
+            LANDLOCK_ACCESS_FS_REMOVE_DIR  | LANDLOCK_ACCESS_FS_REMOVE_FILE |
+            LANDLOCK_ACCESS_FS_MAKE_CHAR   | LANDLOCK_ACCESS_FS_MAKE_DIR  |
+            LANDLOCK_ACCESS_FS_MAKE_REG    | LANDLOCK_ACCESS_FS_MAKE_SOCK |
+            LANDLOCK_ACCESS_FS_MAKE_FIFO   | LANDLOCK_ACCESS_FS_MAKE_BLOCK |
+            LANDLOCK_ACCESS_FS_MAKE_SYM    | LANDLOCK_ACCESS_FS_REFER     |
+            LANDLOCK_ACCESS_FS_TRUNCATE;
+        if (ka.handled_access_fs == 0)
+            return -ENOMSG;
+        if (ka.handled_access_fs & ~LANDLOCK_MASK_ACCESS_FS)
+            return -EINVAL;
+    }
+
     g_rulesets[slot].active = true;
     g_rulesets[slot].handled_access_fs = ka.handled_access_fs;
     g_rulesets[slot].rule_count = 0;

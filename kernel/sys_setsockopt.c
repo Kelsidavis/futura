@@ -986,7 +986,18 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                 if (val < 1 || val > 127) return -EINVAL;
                 socket->tcp_keepcnt = (uint32_t)val;
                 return 0;
-            case 7:  socket->tcp_syncnt      = (uint32_t)(val > 0 ? val : 0); return 0; /* TCP_SYNCNT */
+            case 7: /* TCP_SYNCNT — Linux 2.4+: 1..MAX_TCP_SYNCNT (127).
+                     * Linux's do_tcp_setsockopt enforces 'val < 1 || val >
+                     * MAX_TCP_SYNCNT -> EINVAL'; the previous Futura code
+                     * silently clamped val<=0 to 0 and accepted any positive
+                     * value, so a libc setsockopt probe checking the gate
+                     * (e.g. iputils tracepath, which probes per-socket SYN
+                     * retry counts via TCP_SYNCNT) saw success on values
+                     * that real Linux always rejects, making 'kernel-too-
+                     * old' detection impossible. */
+                if (val < 1 || val > 127) return -EINVAL;
+                socket->tcp_syncnt = (uint32_t)val;
+                return 0;
             case 8:  socket->tcp_linger2     = val; return 0; /* TCP_LINGER2 */
             case 9:  socket->tcp_defer_accept= (uint32_t)(val > 0 ? val : 0); return 0; /* TCP_DEFER_ACCEPT */
             case 10: case 11: return 0; /* TCP_WINDOW_CLAMP, TCP_INFO — accept, no storage */

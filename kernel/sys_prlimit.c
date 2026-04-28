@@ -178,15 +178,16 @@ long sys_prlimit64(int pid, int resource,
             return -EINVAL;
         }
 
-        /* Reject RLIM64_INFINITY for resources requiring bounded limits */
-        if (knl_new.rlim_cur == RLIM64_INFINITY || knl_new.rlim_max == RLIM64_INFINITY) {
-            if (local_resource == RLIMIT_MEMLOCK || local_resource == RLIMIT_NPROC) {
-                fut_printf("[PRLIMIT] prlimit64(pid=%d, resource=%s) -> EINVAL "
-                           "(RLIM64_INFINITY not allowed for %s)\n",
-                           local_pid, resource_name, resource_name);
-                return -EINVAL;
-            }
-        }
+        /* RLIM64_INFINITY is the documented 'unlimited' sentinel and is
+         * accepted on every resource on Linux — allocations still fail at
+         * the per-syscall accounting boundary (mlock against actual RAM,
+         * fork against the global PID space) so the unbounded value is
+         * harmless to store.  The previous Futura gate rejected
+         * RLIM64_INFINITY for RLIMIT_MEMLOCK and RLIMIT_NPROC with EINVAL,
+         * breaking systemd's 'LimitMEMLOCK=infinity' / 'LimitNPROC=infinity'
+         * unit options that explicitly set the unlimited sentinel and
+         * rely on Linux accepting it.  Match Linux's behaviour and let
+         * the per-resource accounting paths enforce the real limit. */
 
         /* Validate against system-imposed maximums per resource */
         uint64_t system_max = RLIM64_INFINITY;

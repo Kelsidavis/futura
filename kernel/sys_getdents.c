@@ -220,6 +220,14 @@ long sys_swapon(const char *path, int swapflags) {
     if (swap_copy_path(kpath, path, sizeof(kpath)) != 0)
         return -EFAULT;
 
+    /* Empty pathname is ENOENT per Linux's swapon(2) — getname()
+     * returns -ENOENT for an empty string and the call never reaches
+     * the device-lookup path.  The previous Futura code silently
+     * accepted "" and proceeded to register an unnamed swap area,
+     * masking the caller's misuse. */
+    if (kpath[0] == '\0')
+        return -ENOENT;
+
     /* Check for duplicate using strcmp semantics (length must match too:
      * the previous loop terminated as soon as either side hit NUL, so
      * 'foo' would match a registered 'foobar' and incorrectly EBUSY). */

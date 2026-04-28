@@ -363,10 +363,43 @@ long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
         return 0;
 
     case PR_MCE_KILL:
-        /* Accept MCE kill policy; we don't enforce it */
+        /* Accept MCE kill policy; we don't enforce it.
+         *
+         * Linux kernel/sys.c gates this rigidly:
+         *   case PR_MCE_KILL:
+         *       if (arg4 | arg5) return -EINVAL;
+         *       switch (arg2) {
+         *       case PR_MCE_KILL_CLEAR:
+         *           if (arg3 != 0) return -EINVAL;
+         *           break;
+         *       case PR_MCE_KILL_SET:
+         *           if (arg3 != PR_MCE_KILL_{LATE,EARLY,DEFAULT})
+         *               return -EINVAL;
+         *           break;
+         *       default: return -EINVAL;
+         *       }
+         * The previous Futura code silently accepted any arg combination,
+         * masking the malformed-call detection libc relies on. */
+        if (arg4 != 0 || arg5 != 0)
+            return -EINVAL;
+        if (arg2 == 0 /* PR_MCE_KILL_CLEAR */) {
+            if (arg3 != 0) return -EINVAL;
+        } else if (arg2 == 1 /* PR_MCE_KILL_SET */) {
+            /* PR_MCE_KILL_LATE=0, PR_MCE_KILL_EARLY=1, PR_MCE_KILL_DEFAULT=2 */
+            if (arg3 > 2) return -EINVAL;
+        } else {
+            return -EINVAL;
+        }
         return 0;
 
     case PR_MCE_KILL_GET:
+        /* Linux gates all unused args:
+         *   case PR_MCE_KILL_GET:
+         *       if (arg2 | arg3 | arg4 | arg5) return -EINVAL;
+         * The previous Futura code accepted any args, masking the
+         * malformed-call detection. */
+        if (arg2 != 0 || arg3 != 0 || arg4 != 0 || arg5 != 0)
+            return -EINVAL;
         return 0;  /* PR_MCE_KILL_DEFAULT */
 
     case PR_SET_CHILD_SUBREAPER:

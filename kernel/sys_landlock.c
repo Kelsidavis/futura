@@ -448,16 +448,22 @@ long sys_set_mempolicy_home_node(unsigned long start, unsigned long len,
  */
 long sys_cachestat(unsigned int fd, const void *cachestat_range,
                    void *cachestat_buf, unsigned int flags) {
-    if (flags != 0) return -EINVAL;
-    if (!cachestat_range || !cachestat_buf) return -EFAULT;
-
     fut_task_t *task = fut_task_current();
     if (!task) return -ESRCH;
 
-    /* Validate fd */
+    /* Linux's cachestat ordering: fdget(fd) first (returns -EBADF for
+     * a missing fd), then flags == 0 check (-EINVAL), then copy_*_user
+     * surfaces NULL pointers as -EFAULT.  The previous order returned
+     * EFAULT for cachestat(bad_fd, NULL, NULL, 0) — masking the real
+     * EBADF — and EINVAL-for-flags fired before the fd check, which
+     * also diverged from Linux's ordering.  Same EBADF-before-EFAULT
+     * pattern as the recent fstatfs reorder. */
     if (fd >= (unsigned int)task->max_fds || !task->fd_table) return -EBADF;
     struct fut_file *file = task->fd_table[fd];
     if (!file) return -EBADF;
+
+    if (flags != 0) return -EINVAL;
+    if (!cachestat_range || !cachestat_buf) return -EFAULT;
 
     /* Copy range from user/kernel space */
     struct { uint64_t off; uint64_t len; } range;

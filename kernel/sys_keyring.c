@@ -678,6 +678,16 @@ long sys_keyctl(int operation, unsigned long arg2, unsigned long arg3,
         if (kr_serial < 0) return kr_serial;
         struct kernel_key *kr = key_find_serial(kr_serial);
         if (!kr) return -ENOKEY;
+        /* Linux's security/keys/keyctl.c:keyctl_keyring_unlink requires
+         * the destination to actually be a keyring:
+         *   ret = -ENOTDIR;
+         *   if (key->type != &key_type_keyring) goto error;
+         * The previous Futura code only verified the keyring existed but
+         * skipped the type check, so KEYCTL_UNLINK against a non-keyring
+         * key id silently fell through to keyring_unlink() which would
+         * either no-op or scribble on the wrong link table.  Mirror the
+         * sister KEYCTL_LINK gate (line 651) and reject with ENOTDIR. */
+        if (!kr->is_keyring) return -ENOTDIR;
         /* Same WRITE-permission gate as LINK so a non-owner can't strip
          * keys out of another user's keyring. */
         {

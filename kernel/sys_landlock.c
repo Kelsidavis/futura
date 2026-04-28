@@ -172,6 +172,24 @@ long sys_landlock_create_ruleset(const void *attr, size_t size,
             return -EINVAL;
     }
 
+    /* Linux's security/landlock/syscalls.c also validates the
+     * handled_access_net field (added in Linux 6.7) against the
+     * LANDLOCK_MASK_ACCESS_NET set:
+     *   if (attr.handled_access_net & ~LANDLOCK_MASK_ACCESS_NET)
+     *       return -EINVAL;
+     * The previous Futura code stored only handled_access_fs and
+     * silently ignored handled_access_net, so a caller probing for
+     * future LANDLOCK_ACCESS_NET_* bits couldn't tell 'kernel
+     * doesn't support net rules' from 'kernel accepted but ignored'.
+     * Apply the same strict mask gate. */
+    {
+        const uint64_t LANDLOCK_MASK_ACCESS_NET =
+            (1ULL << 0) /* LANDLOCK_ACCESS_NET_BIND_TCP */ |
+            (1ULL << 1) /* LANDLOCK_ACCESS_NET_CONNECT_TCP */;
+        if (ka.handled_access_net & ~LANDLOCK_MASK_ACCESS_NET)
+            return -EINVAL;
+    }
+
     g_rulesets[slot].active = true;
     g_rulesets[slot].handled_access_fs = ka.handled_access_fs;
     g_rulesets[slot].rule_count = 0;

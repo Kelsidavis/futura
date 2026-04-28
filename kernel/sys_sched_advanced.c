@@ -147,6 +147,35 @@ long sys_sched_setparam(int pid, const struct sched_param *param) {
         return -EPERM;
     }
 
+    /* Linux's __sched_setscheduler validates priority against the target's
+     * CURRENT policy (sched_setparam keeps the policy unchanged):
+     *   if (rt_policy(p->policy)  &&
+     *       (priority < 1 || priority > MAX_RT_PRIO-1)) return -EINVAL;
+     *   if (!rt_policy(p->policy) && priority != 0)     return -EINVAL;
+     * sys_sched_setscheduler enforces the same rule (lines 317-339),
+     * but sys_sched_setparam was missing it: a caller could
+     * sched_setparam(SCHED_OTHER_thread, priority=42) and silently
+     * stash 42 in rt_priority where Linux returns EINVAL — making the
+     * subsequent sched_getparam round-trip diverge across kernels and
+     * masking caller misuse (likely passed wrong policy expectation).
+     * Mirror sys_sched_setscheduler's policy-vs-priority gate here too. */
+    if (target_thread) {
+        bool tt_is_rt = (target_thread->sched_policy == SCHED_FIFO ||
+                         target_thread->sched_policy == SCHED_RR);
+        if (tt_is_rt && (kparam.sched_priority < 1 || kparam.sched_priority > 99)) {
+            fut_printf("[SCHED] sched_setparam(pid=%d, priority=%d) -> EINVAL "
+                       "(RT policy requires priority 1..99)\n",
+                       pid, kparam.sched_priority);
+            return -EINVAL;
+        }
+        if (!tt_is_rt && kparam.sched_priority != 0) {
+            fut_printf("[SCHED] sched_setparam(pid=%d, priority=%d) -> EINVAL "
+                       "(non-RT policy requires priority 0)\n",
+                       pid, kparam.sched_priority);
+            return -EINVAL;
+        }
+    }
+
     /* Enforce RLIMIT_RTPRIO for RT policies */
     if (task->uid != 0 && !HAS_CAP_SYS_NICE(task) && target_thread &&
         (target_thread->sched_policy == SCHED_FIFO ||

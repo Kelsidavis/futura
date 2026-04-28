@@ -136,6 +136,25 @@ long sys_mremap(void *old_address, size_t old_size, size_t new_size,
         return -ESRCH;
     }
 
+    /* Linux's mm/mremap.c:do_mremap validates flags FIRST (before
+     * alignment and size):
+     *   if (flags & ~(MREMAP_FIXED|MREMAP_MAYMOVE|MREMAP_DONTUNMAP))
+     *       return -EINVAL;
+     *   if (offset_in_page(addr)) return -EINVAL;
+     *   old_len = PAGE_ALIGN(old_len);
+     *   new_len = PAGE_ALIGN(new_len);
+     *   if (!new_len) return -EINVAL;
+     * The previous Futura order rejected misaligned addr or zero size
+     * before flags, inverting the diagnostic class for callers that
+     * probe with deliberately misaligned/zero values to detect
+     * supported flag bits. */
+    const int valid_flags = MREMAP_MAYMOVE | MREMAP_FIXED | MREMAP_DONTUNMAP;
+    if ((flags & ~valid_flags) != 0) {
+        fut_printf("[MREMAP] mremap(%p, %zu, %zu, 0x%x, %p) -> EINVAL (invalid flags)\n",
+                   old_address, old_size, new_size, flags, new_address);
+        return -EINVAL;
+    }
+
     /* Validate old_address alignment */
     if ((uintptr_t)old_address % PAGE_SIZE != 0) {
         fut_printf("[MREMAP] mremap(%p, %zu, %zu, 0x%x, %p) -> EINVAL (old_address not page-aligned)\n",
@@ -146,14 +165,6 @@ long sys_mremap(void *old_address, size_t old_size, size_t new_size,
     /* Validate sizes */
     if (old_size == 0 || new_size == 0) {
         fut_printf("[MREMAP] mremap(%p, %zu, %zu, 0x%x, %p) -> EINVAL (size is zero)\n",
-                   old_address, old_size, new_size, flags, new_address);
-        return -EINVAL;
-    }
-
-    /* Validate flags */
-    const int valid_flags = MREMAP_MAYMOVE | MREMAP_FIXED | MREMAP_DONTUNMAP;
-    if ((flags & ~valid_flags) != 0) {
-        fut_printf("[MREMAP] mremap(%p, %zu, %zu, 0x%x, %p) -> EINVAL (invalid flags)\n",
                    old_address, old_size, new_size, flags, new_address);
         return -EINVAL;
     }

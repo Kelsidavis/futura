@@ -444,6 +444,23 @@ long sys_vmsplice(int fd, const void *iov, size_t nr_segs, unsigned int flags) {
         return -ESRCH;
     }
 
+    /* Linux's fs/splice.c:SYSCALL_DEFINE4(vmsplice) validates flags FIRST
+     * (before any fd lookup or iovec access):
+     *   if (unlikely(flags & ~SPLICE_F_ALL)) return -EINVAL;
+     *   f = fdget(fd);
+     *   error = import_iovec(...);
+     * The previous Futura order rejected negative fds and a NULL iov
+     * pointer before flags, inverting the errno class for callers that
+     * probe with deliberately bad fds/iov to detect kernel-supported
+     * flag bits.  Match Linux — same shape as the matching sys_splice
+     * and sys_tee fixes. */
+    const unsigned int VALID_FLAGS = SPLICE_F_MOVE | SPLICE_F_NONBLOCK | SPLICE_F_MORE | SPLICE_F_GIFT;
+    if (local_flags & ~VALID_FLAGS) {
+        fut_printf("[VMSPLICE] vmsplice(fd=%d, nr_segs=%zu, flags=0x%x [invalid], pid=%d) "
+                   "-> EINVAL\n", local_fd, local_nr_segs, local_flags, task->pid);
+        return -EINVAL;
+    }
+
     /* Validate fd */
     if (local_fd < 0) {
         fut_printf("[VMSPLICE] vmsplice(fd=%d [invalid], nr_segs=%zu, flags=0x%x, pid=%d) "
@@ -469,14 +486,6 @@ long sys_vmsplice(int fd, const void *iov, size_t nr_segs, unsigned int flags) {
     if (local_nr_segs > 1024) {
         fut_printf("[VMSPLICE] vmsplice(fd=%d, nr_segs=%zu [exceeds 1024], pid=%d) "
                    "-> EINVAL\n", local_fd, local_nr_segs, task->pid);
-        return -EINVAL;
-    }
-
-    /* Validate flags */
-    const unsigned int VALID_FLAGS = SPLICE_F_MOVE | SPLICE_F_NONBLOCK | SPLICE_F_MORE | SPLICE_F_GIFT;
-    if (local_flags & ~VALID_FLAGS) {
-        fut_printf("[VMSPLICE] vmsplice(fd=%d, nr_segs=%zu, flags=0x%x [invalid], pid=%d) "
-                   "-> EINVAL\n", local_fd, local_nr_segs, local_flags, task->pid);
         return -EINVAL;
     }
 

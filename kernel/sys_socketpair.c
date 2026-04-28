@@ -49,11 +49,14 @@ long sys_socketpair(int domain, int type, int protocol, int *sv) {
         return -EFAULT;
 
     /* Match the matching socket() gate: Linux rejects negative
-     * protocol numbers with -EINVAL in __sock_create before any
-     * family-specific handler runs. The previous protocol-mismatch
-     * check below would surface negative as EPROTONOSUPPORT; that
-     * conflicted with the Linux errno class libc probes expect. */
-    if (protocol < 0)
+     * protocol numbers AND any protocol >= IPPROTO_MAX (256) with
+     * -EINVAL in __sock_create before any family-specific handler
+     * runs.  The previous protocol-mismatch check below would
+     * surface negative as EPROTONOSUPPORT and accept any
+     * out-of-range positive value; both diverged from the Linux
+     * errno class libc probes expect.  Match the matching sys_socket
+     * upper-bound fix. */
+    if (protocol < 0 || protocol >= 256 /* IPPROTO_MAX */)
         return -EINVAL;
 
     /* Only AF_UNIX is supported for socketpair */

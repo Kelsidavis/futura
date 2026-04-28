@@ -605,6 +605,15 @@ long sys_fsetxattr(int fd, const char *name, const void *value,
         return -EBADF;
     }
 
+    /* Linux's fsetxattr runs fdget FIRST — EBADF surfaces before any
+     * inspection of the name pointer or flags.  Futura's previous order
+     * rejected NULL name up front with EFAULT, so fsetxattr(closed_fd,
+     * NULL, _, _, _) returned EFAULT where Linux returns EBADF —
+     * masking 'fd not open' as a pointer fault for libc probes.  Move
+     * the fd-table check ahead of the name/flags gates. */
+    if (fd >= task->max_fds || !task->fd_table || !task->fd_table[fd])
+        return -EBADF;
+
     if (!name) {
         return -EFAULT;
     }
@@ -765,6 +774,12 @@ long sys_fgetxattr(int fd, const char *name, void *value, size_t size) {
     if (fd < 0) {
         return -EBADF;
     }
+
+    /* Same EBADF-before-EFAULT reorder as sys_fsetxattr — Linux's
+     * fgetxattr fdget runs first, so a closed fd in range with NULL
+     * pointer args returns EBADF, not EFAULT. */
+    if (fd >= task->max_fds || !task->fd_table || !task->fd_table[fd])
+        return -EBADF;
 
     if (!name) {
         return -EFAULT;
@@ -927,6 +942,12 @@ long sys_flistxattr(int fd, char *list, size_t size) {
         return -EBADF;
     }
 
+    /* Same EBADF-before-EFAULT reorder as sys_fsetxattr — Linux's
+     * flistxattr fdget runs first, so a closed fd with NULL list returns
+     * EBADF, not EFAULT. */
+    if (fd >= task->max_fds || !task->fd_table || !task->fd_table[fd])
+        return -EBADF;
+
     /* See sys_listxattr: NULL list with size>0 is EFAULT. */
     if (size > 0 && !list) {
         return -EFAULT;
@@ -1031,6 +1052,12 @@ long sys_fremovexattr(int fd, const char *name) {
     if (fd < 0) {
         return -EBADF;
     }
+
+    /* Same EBADF-before-EFAULT reorder as sys_fsetxattr — Linux's
+     * fremovexattr fdget runs first, so a closed fd with NULL name
+     * returns EBADF, not EFAULT. */
+    if (fd >= task->max_fds || !task->fd_table || !task->fd_table[fd])
+        return -EBADF;
 
     if (!name) {
         return -EFAULT;

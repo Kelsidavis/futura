@@ -377,11 +377,25 @@ long uffd_ioctl(int fd, unsigned int cmd, unsigned long arg) {
     }
 
     case UFFDIO_COPY: {
-        struct uffdio_copy *cp = (struct uffdio_copy *)(uintptr_t)arg;
-        if (!cp) return -EFAULT;
-        if (cp->dst & 0xFFF) return -EINVAL;
-        if (cp->len == 0 || (cp->len & 0xFFF)) return -EINVAL;
-        if (cp->mode & ~(UFFDIO_COPY_MODE_DONTWAKE | UFFDIO_COPY_MODE_WP))
+        if (!arg) return -EFAULT;
+        /* Stage the request through copy_from_user — same hazard as
+         * UFFDIO_API/REGISTER.  The previous code dereferenced the raw
+         * user pointer to read dst/src/len/mode AND wrote 'copy' back
+         * directly, exposing the same write-anywhere primitive on the
+         * 'copy' field for unprivileged callers passing kernel-half
+         * addresses. */
+        struct uffdio_copy kcp;
+#ifdef KERNEL_VIRTUAL_BASE
+        if (arg >= KERNEL_VIRTUAL_BASE) {
+            __builtin_memcpy(&kcp, (const void *)(uintptr_t)arg, sizeof(kcp));
+        } else
+#endif
+        if (fut_copy_from_user(&kcp, (const void *)(uintptr_t)arg,
+                               sizeof(kcp)) != 0)
+            return -EFAULT;
+        if (kcp.dst & 0xFFF) return -EINVAL;
+        if (kcp.len == 0 || (kcp.len & 0xFFF)) return -EINVAL;
+        if (kcp.mode & ~(UFFDIO_COPY_MODE_DONTWAKE | UFFDIO_COPY_MODE_WP))
             return -EINVAL;
         /* dst and src are user-space addresses for the userfaultfd-
          * registered region. Reject any address that lands in kernel
@@ -391,8 +405,8 @@ long uffd_ioctl(int fd, unsigned int cmd, unsigned long arg) {
          * allowed kernel ranges so kernel-side selftests can target a
          * static .bss page. */
 #ifdef KERNEL_VIRTUAL_BASE
-        if (cp->dst + cp->len < cp->dst ||
-            cp->src + cp->len < cp->src)
+        if (kcp.dst + kcp.len < kcp.dst ||
+            kcp.src + kcp.len < kcp.src)
             return -EFAULT;
         {
             extern fut_task_t *fut_task_current(void);
@@ -401,18 +415,27 @@ long uffd_ioctl(int fd, unsigned int cmd, unsigned long arg) {
                 (uffd_task->uid == 0 ||
                  (uffd_task->cap_effective & (1ULL << 21 /* CAP_SYS_ADMIN */)));
             if (!uffd_kernel_buf_ok &&
-                (cp->dst >= KERNEL_VIRTUAL_BASE ||
-                 cp->src >= KERNEL_VIRTUAL_BASE ||
-                 cp->dst + cp->len > KERNEL_VIRTUAL_BASE ||
-                 cp->src + cp->len > KERNEL_VIRTUAL_BASE))
+                (kcp.dst >= KERNEL_VIRTUAL_BASE ||
+                 kcp.src >= KERNEL_VIRTUAL_BASE ||
+                 kcp.dst + kcp.len > KERNEL_VIRTUAL_BASE ||
+                 kcp.src + kcp.len > KERNEL_VIRTUAL_BASE))
                 return -EFAULT;
         }
 #endif
 
         /* In Futura's flat memory model, copy is a simple memcpy */
-        memcpy((void *)(uintptr_t)cp->dst, (const void *)(uintptr_t)cp->src,
-               (size_t)cp->len);
-        cp->copy = (int64_t)cp->len;
+        memcpy((void *)(uintptr_t)kcp.dst, (const void *)(uintptr_t)kcp.src,
+               (size_t)kcp.len);
+        kcp.copy = (int64_t)kcp.len;
+
+        /* Commit the response — never write the 'copy' field directly. */
+#ifdef KERNEL_VIRTUAL_BASE
+        if (arg >= KERNEL_VIRTUAL_BASE) {
+            __builtin_memcpy((void *)(uintptr_t)arg, &kcp, sizeof(kcp));
+        } else
+#endif
+        if (fut_copy_to_user((void *)(uintptr_t)arg, &kcp, sizeof(kcp)) != 0)
+            return -EFAULT;
         return 0;
     }
 

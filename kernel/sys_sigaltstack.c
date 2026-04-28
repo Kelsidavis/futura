@@ -161,11 +161,33 @@ long sys_sigaltstack(const struct sigaltstack *ss, struct sigaltstack *old_ss) {
             return -EPERM;
         }
 
-        /* Validate flags — SS_AUTODISARM (Linux 4.7+) auto-disarms altstack on delivery */
+        /* Validate flags — SS_AUTODISARM (Linux 4.7+) auto-disarms altstack on delivery.
+         *
+         * Linux's do_sigaltstack strips SS_FLAG_BITS (= SS_AUTODISARM)
+         * first, then requires the remaining ss_mode to be EXACTLY one
+         * of SS_DISABLE, SS_ONSTACK, or 0:
+         *
+         *   ss_mode = ss_flags & ~SS_FLAG_BITS;
+         *   if (ss_mode != SS_DISABLE && ss_mode != SS_ONSTACK && ss_mode != 0)
+         *       return -EINVAL;
+         *
+         * SS_DISABLE|SS_ONSTACK is therefore rejected — disabling the
+         * altstack while claiming we're currently on it is contradictory.
+         * The previous check only filtered unknown bits, so the
+         * mutually-exclusive combination silently installed both flags. */
         if (new_stack.ss_flags & ~(SS_DISABLE | SS_ONSTACK | SS_AUTODISARM)) {
             fut_printf("[SIGALTSTACK] sigaltstack(flags=0x%x) -> EINVAL (invalid flags)\n",
                       new_stack.ss_flags);
             return -EINVAL;
+        }
+        {
+            int ss_mode = new_stack.ss_flags & ~SS_AUTODISARM;
+            if (ss_mode != 0 && ss_mode != SS_DISABLE && ss_mode != SS_ONSTACK) {
+                fut_printf("[SIGALTSTACK] sigaltstack(flags=0x%x) -> EINVAL "
+                          "(SS_DISABLE and SS_ONSTACK are mutually exclusive)\n",
+                          new_stack.ss_flags);
+                return -EINVAL;
+            }
         }
 
         /* Validate size if not disabled */

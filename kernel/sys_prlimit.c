@@ -120,15 +120,34 @@ long sys_prlimit64(int pid, int resource,
             return -ESRCH;
         }
 
-        /* Permission gate for cross-task prlimit: Linux requires the
-         * caller's credentials to match the target's, or CAP_SYS_RESOURCE.
-         * Without this gate any unprivileged caller can both READ and
-         * WRITE another (e.g. root daemon) process's rlimits — only the
-         * 'raising hard limit' path was checked. */
+        /* Permission gate for cross-task prlimit: Linux's
+         * check_prlimit_permission compares the caller's REAL uid
+         * (not effective) against ALL THREE of the target's uids
+         * (real, effective, saved):
+         *
+         *   id_match = uid_eq(cred->uid, tcred->euid) &&
+         *              uid_eq(cred->uid, tcred->suid) &&
+         *              uid_eq(cred->uid, tcred->uid);
+         *   if (!id_match && !ns_capable(..., CAP_SYS_RESOURCE))
+         *       return -EPERM;
+         *
+         * The previous Futura gate compared self->uid (effective)
+         * against target->uid (effective) only, leaving two holes:
+         *   1. A setuid-up helper (caller euid raised) bypassed the
+         *      gate against arbitrary targets — Linux gates on real uid.
+         *   2. A dropped-setuid victim (suid==0) was readable/writable
+         *      by an unprivileged peer sharing only the effective uid.
+         *
+         * Same triple-uid match against caller's real uid as the
+         * recent ptrace / process_vm / kcmp / pidfd_getfd /
+         * get_robust_list / process_madvise sweep. */
         if (target != task) {
             bool has_cap = (task->cap_effective & (1ULL << CAP_SYS_RESOURCE)) != 0;
-            bool is_root = (task->uid == 0);
-            if (!has_cap && !is_root && task->uid != target->uid) {
+            bool is_root = (task->ruid == 0);
+            if (!has_cap && !is_root &&
+                (task->ruid != target->uid  ||
+                 task->ruid != target->ruid ||
+                 task->ruid != target->suid)) {
                 fut_printf("[PRLIMIT] prlimit64(pid=%d, resource=%s) -> EPERM "
                            "(uid mismatch and no CAP_SYS_RESOURCE)\n",
                            local_pid, resource_name);

@@ -335,7 +335,21 @@ long sys_fanotify_mark(int fanotify_fd, unsigned int flags,
     (void)dirfd;
 
     struct fanotify_group *grp = fan_find_fd(fanotify_fd);
-    if (!grp) return -EBADF;
+    if (!grp) {
+        /* Linux's fs/notify/fanotify/fanotify_user.c:do_fanotify_mark
+         * splits these errno classes:
+         *   - EBADF when fdget(fanotify_fd) fails (fd out of range or
+         *     unallocated)
+         *   - EINVAL when the fd refers to a non-fanotify file (wrong
+         *     f_op via FMODE_NONOTIFY check)
+         * Futura previously collapsed both into EBADF.  Distinguish by
+         * consulting the task's fd_table directly — same EBADF/EINVAL
+         * split as the matching signalfd / inotify / timerfd / epoll
+         * fixes. */
+        extern struct fut_file *fut_vfs_get_file(int fd);
+        struct fut_file *file = fut_vfs_get_file(fanotify_fd);
+        return file ? -EINVAL : -EBADF;
+    }
 
     /* Linux fanotify_mark validates flags against FAN_MARK_VALID_FLAGS in
      * fs/notify/fanotify/fanotify_user.c and returns -EINVAL on any

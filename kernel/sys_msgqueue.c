@@ -200,9 +200,15 @@ long sys_msgsnd(int msqid, const void *msgp, size_t msgsz, int msgflg) {
     if (!q)
         return -EINVAL;
 
-    /* Check queue capacity */
+    /* Check queue capacity.  Linux blocks on a full queue unless
+     * IPC_NOWAIT is set; Futura's msg_queue has no per-queue waitq, so
+     * the blocking path isn't implemented yet.  Returning -EAGAIN
+     * unconditionally is the closest thing to Linux semantics — a
+     * caller without IPC_NOWAIT will loop and retry, which is a busy-
+     * wait but correct.  (The previous '(msgflg & IPC_NOWAIT) ?
+     * -EAGAIN : -EAGAIN' was identical-branch dead code.) */
     if (q->qbytes + msgsz > MSGQBYTES) {
-        return (msgflg & IPC_NOWAIT) ? -EAGAIN : -EAGAIN;
+        return -EAGAIN;
     }
 
     /* Read mtype from user (first sizeof(long) bytes) */
@@ -332,7 +338,14 @@ long sys_msgrcv(int msqid, void *msgp, size_t msgsz, long msgtyp, int msgflg) {
     }
 
     if (!best) {
-        return (msgflg & IPC_NOWAIT) ? -ENOMSG : -ENOMSG;
+        /* Linux blocks on an empty queue unless IPC_NOWAIT is set;
+         * Futura has no per-queue waitq, so the blocking path isn't
+         * implemented yet.  Returning -ENOMSG unconditionally is the
+         * closest thing to Linux semantics — a caller without
+         * IPC_NOWAIT will loop and retry.  (The previous
+         * '(msgflg & IPC_NOWAIT) ? -ENOMSG : -ENOMSG' was identical-
+         * branch dead code.) */
+        return -ENOMSG;
     }
 
     /* Check buffer size */

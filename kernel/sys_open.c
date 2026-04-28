@@ -338,6 +338,19 @@ long sys_open(const char *pathname, int flags, int mode) {
         return rc;
     }
 
+    /* Empty pathname is ENOENT per Linux open(2) (getname() returns
+     * -ENOENT for an empty string).  The previous Futura code passed
+     * "" through to fut_vfs_open which depending on the VFS layer
+     * could return ENOENT, EINVAL, or even succeed on the cwd vnode.
+     * Match Linux's deterministic ENOENT explicitly so libc / shells
+     * branching on the open(2) errno class get the documented value.
+     * Same empty-path-ENOENT pattern as sys_chdir / sys_truncate /
+     * sys_chmod / sys_unlink / sys_rmdir / sys_mkdirat / etc. */
+    if (kpath[0] == '\0') {
+        open_printf("[OPEN] open(pathname=\"\" [empty]) -> ENOENT\n");
+        return -ENOENT;
+    }
+
     /* Phase 2: Categorize path type */
     const char *path_type;
     if (kpath[0] == '/') {

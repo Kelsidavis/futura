@@ -191,6 +191,7 @@ long sys_msgget(long key, int msgflg) {
  * @return 0 on success, -errno on error
  */
 long sys_msgsnd(int msqid, const void *msgp, size_t msgsz, int msgflg) {
+    (void)msgflg;  /* IPC_NOWAIT branch is folded — see EAGAIN comment below */
     if (!msgp)
         return -EFAULT;
     if (msgsz > MSGMAX)

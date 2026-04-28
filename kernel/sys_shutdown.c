@@ -125,6 +125,26 @@ long sys_shutdown(int sockfd, int how) {
         return -EBADF;
     }
 
+    /* Linux's __sys_shutdown runs sockfd_lookup_light FIRST and only
+     * surfaces -EINVAL for an out-of-range 'how' inside ops->shutdown
+     * (which never runs if the fd lookup failed).  Futura's previous
+     * order rejected an invalid 'how' BEFORE the socket lookup, so
+     * shutdown(non_socket_fd, 99) returned EINVAL where Linux returns
+     * ENOTSOCK — masking 'fd is not a socket' as 'how out of range' for
+     * libc probes.  Move the socket lookup ahead of the 'how' switch. */
+    fut_socket_t *socket = get_socket_from_fd(local_sockfd);
+    if (!socket) {
+        /* Distinguish ENOTSOCK (valid fd, not a socket) from EBADF (invalid fd) */
+        if (local_sockfd < task->max_fds && task->fd_table && task->fd_table[local_sockfd]) {
+            fut_printf("[SHUTDOWN] shutdown(sockfd=%d, how=%d) -> ENOTSOCK (not a socket)\n",
+                       local_sockfd, local_how);
+            return -ENOTSOCK;
+        }
+        fut_printf("[SHUTDOWN] shutdown(sockfd=%d, how=%d) -> EBADF (not a socket)\n",
+                   local_sockfd, local_how);
+        return -EBADF;
+    }
+
     /* Phase 2: Categorize and validate how parameter */
     const char *how_desc;
     switch (local_how) {
@@ -141,20 +161,6 @@ long sys_shutdown(int sockfd, int how) {
             fut_printf("[SHUTDOWN] shutdown(sockfd=%d, how=%d) -> EINVAL (invalid how, must be 0/1/2)\n",
                        local_sockfd, local_how);
             return -EINVAL;
-    }
-
-    /* Get socket from FD */
-    fut_socket_t *socket = get_socket_from_fd(local_sockfd);
-    if (!socket) {
-        /* Distinguish ENOTSOCK (valid fd, not a socket) from EBADF (invalid fd) */
-        if (local_sockfd < task->max_fds && task->fd_table && task->fd_table[local_sockfd]) {
-            fut_printf("[SHUTDOWN] shutdown(sockfd=%d, how=%s) -> ENOTSOCK (not a socket)\n",
-                       local_sockfd, how_desc);
-            return -ENOTSOCK;
-        }
-        fut_printf("[SHUTDOWN] shutdown(sockfd=%d, how=%s) -> EBADF (not a socket)\n",
-                   local_sockfd, how_desc);
-        return -EBADF;
     }
 
     /* Phase 2: Identify socket state */

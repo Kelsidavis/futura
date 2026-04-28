@@ -870,14 +870,53 @@ long sys_adjtimex(struct timex *txc) {
     /* adjtimex mode bits (Linux-compatible subset) */
     #define ADJ_OFFSET      0x0001   /* time offset */
     #define ADJ_FREQUENCY   0x0002   /* frequency offset */
+    #define ADJ_MAXERROR    0x0004   /* maximum time error */
+    #define ADJ_ESTERROR    0x0008   /* estimated time error */
     #define ADJ_STATUS      0x0010   /* clock status */
-    #define ADJ_TICK        0x4000   /* tick value */
+    #define ADJ_TIMECONST   0x0020   /* PLL time constant */
+    #define ADJ_TAI         0x0080   /* TAI offset */
     #define ADJ_SETOFFSET   0x0100   /* add 'time' to current time */
+    #define ADJ_MICRO       0x1000   /* select microsecond resolution */
+    #define ADJ_NANO        0x2000   /* select nanosecond resolution */
+    #define ADJ_TICK        0x4000   /* tick value */
     #define ADJ_OFFSET_SINGLESHOT 0x8001 /* old-style adjtime */
+    #define ADJ_OFFSET_SS_READ    0xa001 /* read-only singleshot */
+    #define ADJ_ADJTIME           0x8000 /* singleshot mode bit */
     #define TIME_OK         0        /* clock synchronized */
     #define TIME_ERROR      5        /* clock not synchronized */
 
     unsigned int modes = tx.modes;
+
+    /* Linux's validate_timex rejects unknown mode bits up front and
+     * enforces the singleshot constraint: ADJ_ADJTIME (0x8000) means
+     * 'old-style adjtime', and that bit must be paired only with
+     * ADJ_OFFSET_SINGLESHOT (and optionally ADJ_OFFSET_SS_READ for
+     * read-only) — combining it with regular write modes is rejected
+     * with EINVAL.  The previous code accepted any mode bits silently,
+     * so an NTP daemon probing for ADJ_TAI / ADJ_NANO support saw
+     * 'success' on Futura even though the bits were ignored, and a
+     * caller passing ADJ_ADJTIME together with ADJ_FREQUENCY got
+     * its frequency adjustment applied without the singleshot
+     * semantics any real kernel would reject. */
+    {
+        const unsigned int VALID_MODES = (ADJ_OFFSET | ADJ_FREQUENCY |
+                                          ADJ_MAXERROR | ADJ_ESTERROR |
+                                          ADJ_STATUS | ADJ_TIMECONST |
+                                          ADJ_TAI | ADJ_SETOFFSET |
+                                          ADJ_MICRO | ADJ_NANO |
+                                          ADJ_TICK | ADJ_ADJTIME |
+                                          0x0001 /* SS implicit bit */);
+        if (modes & ~VALID_MODES)
+            return -EINVAL;
+        if (modes & ADJ_ADJTIME) {
+            /* Singleshot mode: must be ADJ_OFFSET_SINGLESHOT alone, or
+             * ADJ_OFFSET_SS_READ alone.  Any other bit combined with
+             * ADJ_ADJTIME is invalid. */
+            if (modes != ADJ_OFFSET_SINGLESHOT &&
+                modes != ADJ_OFFSET_SS_READ)
+                return -EINVAL;
+        }
+    }
 
     /* Linux: any modes != 0 (i.e., a write to the clock state) requires
      * CAP_SYS_TIME. Read-only adjtimex (modes == 0) returns the current

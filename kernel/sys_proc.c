@@ -445,11 +445,14 @@ long sys_getrlimit(int resource, struct rlimit *rlim) {
  * Phase 4 (Completed): Store limits in task->rlimits; getrlimit reads them back
  */
 long sys_setrlimit(int resource, const struct rlimit *rlim) {
-    if (!rlim) {
-        fut_printf("[PROC] setrlimit(resource=%d, rlim=%p) -> EFAULT (rlim is NULL)\n",
-                   resource, rlim);
-        return -EFAULT;
-    }
+    /* Linux's do_prlimit validates the resource ID FIRST and returns
+     * -EINVAL for unknown resources before any user-pointer access:
+     *   if (resource >= RLIM_NLIMITS) return -EINVAL;
+     *   ret = copy_from_user(&new, rlim, sizeof(new));
+     * The previous Futura ordering (!rlim -> EFAULT first) surfaced a
+     * NULL rlim with a bogus resource as EFAULT where Linux returns
+     * EINVAL — same EINVAL-before-EFAULT reorder as the recent
+     * sys_getrlimit / sys_getitimer / sys_clock_gettime fixes. */
 
     /* Phase 2: Identify resource type for logging */
     const char *resource_name = "UNKNOWN";

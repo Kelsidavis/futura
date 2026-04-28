@@ -372,7 +372,18 @@ long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
     case PR_SET_CHILD_SUBREAPER:
         /* Mark this task as a subreaper for orphaned children.
          * Store in task->personality field bit 31 as a subreaper flag.
-         * For now, accept without enforcement. */
+         * For now, accept without enforcement.
+         *
+         * Linux kernel/sys.c rejects non-zero arg3/arg4/arg5 with -EINVAL:
+         *   case PR_SET_CHILD_SUBREAPER:
+         *       if (arg3 || arg4 || arg5) return -EINVAL;
+         *       me->signal->is_child_subreaper = !!arg2;
+         * The previous Futura code silently ignored the unused slots, so
+         * generic prctl-ABI rigidity probes (which pass garbage in the
+         * unused args to detect kernel-too-old vs kernel-accepting-junk)
+         * saw 'success' on Futura where Linux returns EINVAL. */
+        if (arg3 || arg4 || arg5)
+            return -EINVAL;
         if (arg2)
             task->personality |= (1UL << 31);
         else
@@ -388,7 +399,12 @@ long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
          * clobbering 4 bytes past the caller's int buffer — a stack/heap
          * corruption hazard for a typical
          *   int subreaper; prctl(PR_GET_CHILD_SUBREAPER, &subreaper);
-         * call pattern. */
+         * call pattern.
+         *
+         * Linux also rejects non-zero arg3/arg4/arg5 with -EINVAL via the
+         * same gate that PR_SET_CHILD_SUBREAPER uses. */
+        if (arg3 || arg4 || arg5)
+            return -EINVAL;
         int is_subreaper = (int)((task->personality >> 31) & 1);
         if (!arg2)
             return -EFAULT;

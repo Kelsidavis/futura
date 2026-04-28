@@ -246,6 +246,17 @@ static struct poll_scan_stats poll_scan_fds(struct pollfd *kfds, unsigned long n
  * Integrate with epoll for efficient event notification
  */
 long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
+    /* Linux's do_sys_poll rejects 'nfds > rlimit(RLIMIT_NOFILE)' BEFORE
+     * any user-pointer inspection.  Futura previously ran the
+     * '!fds && nfds > 0 -> EFAULT' gate and the access_ok check ahead
+     * of the nfds-bound test, so poll(NULL, huge_nfds, _) and
+     * poll(unmapped_ptr, huge_nfds, _) returned EFAULT instead of the
+     * EINVAL libc probes use to detect 'shrink your pollfd array'. */
+    if (nfds > 1024) {
+        poll_printf("[POLL] poll(fds, %lu, %d) -> EINVAL (nfds exceeds limit of 1024)\n", nfds, timeout);
+        return -EINVAL;
+    }
+
     /* Phase 2: Enhanced validation */
     if (!fds && nfds > 0) {
         poll_printf("[POLL] poll(NULL, %lu, %d) -> EFAULT (fds is NULL)\n", nfds, timeout);
@@ -299,11 +310,9 @@ long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
         return -EFAULT;
     }
 
-    /* Reasonable limit on number of file descriptors */
-    if (nfds > 1024) {
-        poll_printf("[POLL] poll(fds, %lu, %d) -> EINVAL (nfds exceeds limit of 1024)\n", nfds, timeout);
-        return -EINVAL;
-    }
+    /* nfds upper-bound check moved earlier (above the !fds and access_ok
+     * gates) so poll(huge_nfds, ...) returns EINVAL ahead of EFAULT —
+     * matches Linux's do_sys_poll ordering. */
 
     /* Validate nfds BEFORE multiplication to prevent overflow
      * VULNERABILITY: Integer Overflow and Resource Exhaustion

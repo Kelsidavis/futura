@@ -514,7 +514,19 @@ long sys_fchmodat2(int dirfd, const char *pathname, unsigned int mode,
  * and ignores ENOSYS, but returning 0 is more accurate from the caller's view.
  */
 long sys_mseal(void *addr, size_t len, unsigned long flags) {
-    (void)addr; (void)len; (void)flags;
+    /* Linux 6.10+: mseal currently defines no flag bits — every value
+     * other than 0 is reserved for future use and rejected with -EINVAL.
+     * The previous Futura code silently returned 0 for any input, so
+     * userspace probing for future mseal flags couldn't tell 'kernel
+     * doesn't honour it' from 'kernel accepted but ignored'.
+     *
+     * Note: Futura test 481 calls mseal(NULL, 0, 0) and pins success;
+     * Linux additionally rejects len==0 and misaligned addr with EINVAL,
+     * but the local test contract takes precedence.  Only enforce the
+     * unknown-flag-bit gate, which doesn't conflict. */
+    if (flags != 0)
+        return -EINVAL;
+    (void)addr; (void)len;
     return 0;
 }
 

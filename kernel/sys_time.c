@@ -199,6 +199,29 @@ long sys_gettimeofday(fut_timeval_t *tv, void *tz) {
  * Phase 4: Add PROCESS_CPUTIME_ID and THREAD_CPUTIME_ID for CPU time tracking
  */
 long sys_clock_gettime(int clock_id, fut_timespec_t *tp) {
+    /* Linux's sys_clock_gettime validates the clock_id (clockid_to_kclock)
+     * up front and returns -EINVAL for unknown clocks; only after that
+     * does put_timespec64 surface a NULL/bad tp pointer as -EFAULT.  The
+     * previous order returned EFAULT for clock_gettime(99, NULL),
+     * masking the real parameter-domain error.  Same EINVAL-before-EFAULT
+     * reorder applied recently to sys_getitimer / sys_getrlimit. */
+    switch (clock_id) {
+        case CLOCK_REALTIME:         /* 0 */
+        case CLOCK_MONOTONIC:        /* 1 */
+        case CLOCK_PROCESS_CPUTIME_ID: /* 2 */
+        case CLOCK_THREAD_CPUTIME_ID:  /* 3 */
+        case CLOCK_MONOTONIC_RAW:    /* 4 */
+        case CLOCK_REALTIME_COARSE:  /* 5 */
+        case CLOCK_MONOTONIC_COARSE: /* 6 */
+        case CLOCK_BOOTTIME:         /* 7 */
+        case CLOCK_REALTIME_ALARM:   /* 8: no alarm hw, same value as CLOCK_REALTIME */
+        case CLOCK_BOOTTIME_ALARM:   /* 9: no alarm hw, same value as CLOCK_BOOTTIME */
+        case CLOCK_TAI:              /* 11: no TAI offset in Futura, same as CLOCK_REALTIME */
+            break;
+        default:
+            return -EINVAL;
+    }
+
     if (!tp) {
         fut_printf("[TIME] clock_gettime(clock_id=%d, tp=%p) -> EFAULT (tp is NULL)\n",
                    clock_id, tp);
@@ -216,24 +239,6 @@ long sys_clock_gettime(int clock_id, fut_timespec_t *tp) {
 #endif
     if (fut_access_ok(tp, sizeof(fut_timespec_t), 1) != 0) {
         return -EFAULT;
-    }
-
-    /* Validate clock_id — accept all Linux clocks that clock_getres accepts */
-    switch (clock_id) {
-        case CLOCK_REALTIME:         /* 0 */
-        case CLOCK_MONOTONIC:        /* 1 */
-        case CLOCK_PROCESS_CPUTIME_ID: /* 2 */
-        case CLOCK_THREAD_CPUTIME_ID:  /* 3 */
-        case CLOCK_MONOTONIC_RAW:    /* 4 */
-        case CLOCK_REALTIME_COARSE:  /* 5 */
-        case CLOCK_MONOTONIC_COARSE: /* 6 */
-        case CLOCK_BOOTTIME:         /* 7 */
-        case CLOCK_REALTIME_ALARM:   /* 8: no alarm hw, same value as CLOCK_REALTIME */
-        case CLOCK_BOOTTIME_ALARM:   /* 9: no alarm hw, same value as CLOCK_BOOTTIME */
-        case CLOCK_TAI:              /* 11: no TAI offset in Futura, same as CLOCK_REALTIME */
-            break;
-        default:
-            return -EINVAL;
     }
 
     fut_timespec_t kernel_tp;

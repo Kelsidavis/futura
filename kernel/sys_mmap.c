@@ -335,7 +335,22 @@ long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset) 
 }
 
 long sys_munmap(void *addr, size_t len) {
-    if (!addr || len == 0) {
+    /* Linux's mmap_munmap validates len first, then alignment, then
+     * range:
+     *
+     *   if (len == 0) return -EINVAL;
+     *   if (offset_in_page(start) || start > TASK_SIZE ||
+     *       len > TASK_SIZE-start) return -EINVAL;
+     *
+     * NULL addr (== 0) is NOT specifically rejected — 0 is page-aligned,
+     * and a munmap(NULL, page_aligned_len) walks VMAs starting at 0.
+     * Most processes have no mapping at address 0, so the call returns
+     * 0 (no-op) on Linux.  The previous '!addr' gate diverged: a libc
+     * cleanup path that loops munmap'ing a list of addresses (some of
+     * which may legitimately be NULL after free()) would see -EINVAL on
+     * Futura where Linux silently returns 0.  Drop the NULL gate; the
+     * alignment check below catches misaligned non-zero values. */
+    if (len == 0) {
         return -EINVAL;
     }
 

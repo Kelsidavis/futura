@@ -762,6 +762,20 @@ long sys_keyctl(int operation, unsigned long arg2, unsigned long arg3,
     case KEYCTL_SETPERM: {
         int32_t serial = (int32_t)(long)arg2;
         uint32_t perm = (uint32_t)arg3;
+        /* Linux's security/keys/keyctl.c:keyctl_setperm_key validates the
+         * perm mask FIRST — only the documented Possessor/User/Group/Other
+         * permission bits (0x3F per byte) are allowed; any reserved bit
+         * is rejected with -EINVAL before the key is even looked up:
+         *   if (perm & ~(KEY_POS_ALL | KEY_USR_ALL | KEY_GRP_ALL | KEY_OTH_ALL))
+         *       return -EINVAL;
+         * The previous Futura code stored perm verbatim, so a caller could
+         * set arbitrary high-bit garbage in the perm word and have it
+         * persist on the key — observable via keyctl_describe and
+         * potentially confusing future Linux-defined permission bits. */
+        const uint32_t KEY_PERM_VALID =
+            KEY_POS_ALL | KEY_USR_ALL | KEY_GRP_ALL | KEY_OTH_ALL;
+        if (perm & ~KEY_PERM_VALID)
+            return -EINVAL;
         struct kernel_key *k = key_find_serial(serial);
         if (!k) return -ENOKEY;
         /* Linux: only the key owner or CAP_SYS_ADMIN may change perm.

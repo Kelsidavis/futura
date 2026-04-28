@@ -114,13 +114,30 @@ long sys_ioprio_set(int which, int who, int ioprio) {
         return -EINVAL;
     }
 
+    /* Linux's ioprio_check_cap rejects IOPRIO_CLASS_NONE when data != 0
+     * (the data field for NONE is reserved/unused so any non-zero value
+     * is malformed). Without this gate userspace probes that branch on
+     * EINVAL-vs-success to detect ioprio support saw success on Futura
+     * for any data value, indistinguishable from a kernel that ignored
+     * the class entirely. */
+    if (class == IOPRIO_CLASS_NONE && data != 0) {
+        fut_printf("[IOPRIO] ioprio_set(class=NONE, data=%d) -> EINVAL "
+                   "(NONE class requires data=0)\n", data);
+        return -EINVAL;
+    }
+
     /* IOPRIO_CLASS_RT can starve all other disk I/O; Linux requires
-     * CAP_SYS_ADMIN to enter that class. Without this gate any user
-     * could grab realtime I/O priority and DoS shared storage. */
+     * EITHER CAP_SYS_NICE OR CAP_SYS_ADMIN (capable(CAP_SYS_NICE) ||
+     * capable(CAP_SYS_ADMIN) per kernel/block/ioprio.c). The previous
+     * gate only honoured CAP_SYS_ADMIN, so a process explicitly granted
+     * CAP_SYS_NICE for I/O priority management got EPERM where Linux
+     * accepts the call. */
     if (class == IOPRIO_CLASS_RT &&
         task->uid != 0 &&
-        !(task->cap_effective & (1ULL << 21 /* CAP_SYS_ADMIN */))) {
-        fut_printf("[IOPRIO] ioprio_set(class=RT) -> EPERM (CAP_SYS_ADMIN required)\n");
+        !(task->cap_effective & ((1ULL << 23 /* CAP_SYS_NICE */) |
+                                 (1ULL << 21 /* CAP_SYS_ADMIN */)))) {
+        fut_printf("[IOPRIO] ioprio_set(class=RT) -> EPERM "
+                   "(CAP_SYS_NICE or CAP_SYS_ADMIN required)\n");
         return -EPERM;
     }
 

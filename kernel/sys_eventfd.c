@@ -1193,8 +1193,18 @@ static void timerfd_timer_cb(void *arg) {
 static ssize_t timerfd_read_op(void *inode, void *priv, void *u_buf, size_t len, off_t *pos) {
     (void)inode;
     (void)pos;
-    if (!priv || !u_buf || len < sizeof(uint64_t)) {
+    /* Same EFAULT-vs-EINVAL split as eventfd_read above: Linux's
+     * timerfd_read returns EINVAL for too-small count, EFAULT for
+     * NULL/bad u_buf via copy_to_user.  The previous combined gate
+     * collapsed the two error classes. */
+    if (!priv) {
         return -EINVAL;
+    }
+    if (len < sizeof(uint64_t)) {
+        return -EINVAL;
+    }
+    if (!u_buf) {
+        return -EFAULT;
     }
 
     struct timerfd_file *tfile = (struct timerfd_file *)priv;

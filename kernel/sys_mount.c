@@ -1310,6 +1310,20 @@ long sys_fsconfig(int fs_fd, unsigned int cmd, const char *key,
  * Returns: fd representing the new mount (pass to move_mount).
  */
 long sys_fsmount(int fs_fd, unsigned int flags, unsigned int attr_flags) {
+    /* Linux's sys_fsmount gates the entire syscall on CAP_SYS_ADMIN
+     * (via may_mount()) before any other validation:
+     *   if (!may_mount()) return -EPERM;
+     * The previous Futura code skipped this gate entirely, so any
+     * unprivileged caller could turn an fs_context fd into a mount
+     * fd — completing the privilege bypass that the matching fsopen /
+     * open_tree / move_mount fixes already partially closed. */
+    {
+        fut_task_t *task = fut_task_current();
+        if (task && task->uid != 0 &&
+            !(task->cap_effective & (1ULL << CAP_SYS_ADMIN)))
+            return -EPERM;
+    }
+
     /* Linux's sys_fsmount validates both flag arguments up front:
      *   if (flags & ~FSMOUNT_CLOEXEC) return -EINVAL;
      *   if (attr_flags & ~MOUNT_ATTR__MASK) return -EINVAL;

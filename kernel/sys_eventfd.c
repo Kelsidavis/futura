@@ -643,8 +643,22 @@ int eventfd_fionread(struct fut_file *file) {
 static ssize_t eventfd_read(void *inode, void *priv, void *u_buf, size_t len, off_t *pos) {
     (void)inode;
     (void)pos;
-    if (!priv || !u_buf || len < sizeof(uint64_t)) {
+    /* Linux's eventfd_read separates the parameter-domain check from
+     * the pointer-fault check:
+     *   if (count < sizeof(ucnt)) return -EINVAL;
+     *   ...
+     *   if (put_user(ucnt, (__u64 __user *)buf)) return -EFAULT;
+     * The previous combined gate collapsed NULL u_buf into the EINVAL
+     * class — same EFAULT-vs-EINVAL split pattern as the recent
+     * io_pgetevents / setxattr / sched_param fixes. */
+    if (!priv) {
         return -EINVAL;
+    }
+    if (len < sizeof(uint64_t)) {
+        return -EINVAL;
+    }
+    if (!u_buf) {
+        return -EFAULT;
     }
 
     struct eventfd_file *efile = (struct eventfd_file *)priv;
@@ -776,8 +790,18 @@ static ssize_t eventfd_read(void *inode, void *priv, void *u_buf, size_t len, of
 static ssize_t eventfd_write(void *inode, void *priv, const void *u_buf, size_t len, off_t *pos) {
     (void)inode;
     (void)pos;
-    if (!priv || !u_buf || len < sizeof(uint64_t)) {
+    /* Same EFAULT-vs-EINVAL split as eventfd_read above: Linux's
+     * eventfd_write returns EINVAL for too-small count, EFAULT for
+     * NULL/bad u_buf via copy_from_user.  The previous combined gate
+     * collapsed the two error classes. */
+    if (!priv) {
         return -EINVAL;
+    }
+    if (len < sizeof(uint64_t)) {
+        return -EINVAL;
+    }
+    if (!u_buf) {
+        return -EFAULT;
     }
 
     struct eventfd_file *efile = (struct eventfd_file *)priv;

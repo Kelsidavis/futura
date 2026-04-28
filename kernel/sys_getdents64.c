@@ -17,6 +17,7 @@
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
 #include <kernel/fut_fd_util.h>
+#include <fcntl.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -402,6 +403,20 @@ long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
     if (!file) {
         fut_printf("[GETDENTS64] getdents64(fd=%u [%s], count=%u [%s]) -> EBADF "
                    "(fd not open, pid=%d)\n", fd, fd_category, count, count_category, task->pid);
+        return -EBADF;
+    }
+
+    /* Linux's iterate_dir surfaces an O_PATH fd as -EBADF (FMODE_PATH
+     * has no f_op->iterate_shared).  Without this gate, an O_PATH fd
+     * opened on a directory would fall through to fut_vfs_readdir and
+     * succeed where Linux returns EBADF — confusing libc opendir
+     * implementations that probe via getdents64 to detect O_PATH-only
+     * descriptors.  Same pattern as the recent sys_flock and
+     * sys_fcntl O_PATH gates. */
+    if (file->flags & O_PATH) {
+        fut_printf("[GETDENTS64] getdents64(fd=%u [%s]) -> EBADF "
+                   "(O_PATH fd cannot be used for directory iteration)\n",
+                   fd, fd_category);
         return -EBADF;
     }
 

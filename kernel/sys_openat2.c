@@ -141,6 +141,13 @@ long sys_openat2(int dirfd, const char *path, const struct open_how *how,
     if (usize < OPEN_HOW_SIZE_VER0)
         return -EINVAL;
 
+    /* Linux's openat2 caps usize at PAGE_SIZE and rejects larger
+     * values with -E2BIG before any pointer access.  Without this
+     * gate a caller passing a huge usize would walk the trailing-
+     * zero check below across an arbitrary-length user range. */
+    if (usize > 4096)
+        return -E2BIG;
+
     if (!how)
         return -EFAULT;
 
@@ -148,6 +155,31 @@ long sys_openat2(int dirfd, const char *path, const struct open_how *how,
     struct open_how kow = {0};
     if (openat2_copy_from_user(&kow, how, sizeof(kow)) != 0)
         return -EFAULT;
+
+    /* Linux's copy_struct_from_user enforces that any trailing bytes
+     * beyond sizeof(struct open_how) must be zero — that is how the
+     * kernel handles forward-compatible struct extension: an older
+     * kernel sees a larger usize and refuses to silently drop fields
+     * a newer userspace might be using.  The previous Futura code
+     * only copied the version-0 struct and ignored the rest, so
+     * userspace passing a future open_how with non-zero new fields
+     * got a stale/version-0 interpretation as 'success' instead of
+     * the documented -E2BIG. */
+    if (usize > OPEN_HOW_SIZE_VER0) {
+        size_t extra = usize - OPEN_HOW_SIZE_VER0;
+        const uint8_t *tail = (const uint8_t *)how + OPEN_HOW_SIZE_VER0;
+        uint8_t buf[64];
+        while (extra > 0) {
+            size_t chunk = extra < sizeof(buf) ? extra : sizeof(buf);
+            if (openat2_copy_from_user(buf, tail, chunk) != 0)
+                return -EFAULT;
+            for (size_t i = 0; i < chunk; i++)
+                if (buf[i] != 0)
+                    return -E2BIG;
+            tail  += chunk;
+            extra -= chunk;
+        }
+    }
 
     /* Validate resolve flags — unknown bits rejected */
     if (kow.resolve & ~RESOLVE_VALID)

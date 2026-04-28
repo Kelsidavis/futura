@@ -763,6 +763,20 @@ long sys_keyctl(int operation, unsigned long arg2, unsigned long arg3,
         int32_t kr_serial = resolve_keyring(kr_id);
         if (kr_serial < 0) return kr_serial;
 
+        /* Linux's security/keys/keyctl.c:keyctl_keyring_search requires
+         * the search-target to actually be a keyring:
+         *   ret = -ENOTDIR;
+         *   if (key_ref_to_ptr(keyring_ref)->type != &key_type_keyring)
+         *       goto error;
+         * The previous Futura code skipped this check, so KEYCTL_SEARCH
+         * against a non-keyring key id silently surfaced ENOKEY (search
+         * found nothing) where Linux returns ENOTDIR (the call shape is
+         * malformed). Mirror the matching KEYCTL_LINK / KEYCTL_UNLINK
+         * gates. */
+        struct kernel_key *kr = key_find_serial(kr_serial);
+        if (!kr) return -ENOKEY;
+        if (!kr->is_keyring) return -ENOTDIR;
+
         struct kernel_key *found = key_find_in_keyring(kr_serial, k_type, k_desc);
         if (!found) return -ENOKEY;
 

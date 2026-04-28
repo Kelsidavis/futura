@@ -146,9 +146,14 @@ long sys_getpgid(uint64_t pid) {
         return -ESRCH;
     }
 
-    /* If pid is 0, use calling process */
+    /* If pid is 0, use calling process.  POSIX/Linux: every process is
+     * the leader of its own process group by default, so a task whose
+     * pgid was never explicitly set (== 0) reports its own pid here.
+     * The previous code returned 0 for such tasks, which userspace
+     * shells/tmux interpret as 'no group' rather than 'I am my own
+     * group leader' — same fallback as the matching getsid fix. */
     if (pid == 0) {
-        return current->pgid;
+        return current->pgid ? (long)current->pgid : (long)current->pid;
     }
 
     /* Look up the target task */
@@ -158,7 +163,7 @@ long sys_getpgid(uint64_t pid) {
         return -ESRCH;
     }
 
-    return target->pgid;
+    return target->pgid ? (long)target->pgid : (long)target->pid;
 }
 
 /**

@@ -342,9 +342,28 @@ long sys_setpriority(int which, int who, int prio) {
             matched = 1;
         }
     } else { /* PRIO_USER */
-        uint32_t target_uid = (who == 0) ? task->uid : (uint32_t)who;
-        /* Non-root can only modify own user's tasks */
-        if (task->uid != 0 && !HAS_CAP_SYS_NICE(task) && task->uid != target_uid) {
+        /* Linux's setpriority(PRIO_USER, 0, ...) operates on tasks owned
+         * by the caller's REAL uid (cred->uid), not the effective uid:
+         *
+         *   case PRIO_USER:
+         *       uid = make_kuid(cred->user_ns, who);
+         *       ...
+         *       if (!who) uid = cred->uid;  // cred->uid == real uid
+         *
+         * The previous Futura code used task->uid (effective), which
+         * matters for setuid binaries: a 'mailman' helper that has
+         * dropped its effective uid back to a regular user but kept its
+         * setuid-marked saved uid would, with the old gate, only be
+         * able to nice tasks owned by its DROPPED effective uid rather
+         * than its own real uid (the user that invoked the helper).
+         * Use the real uid so the gate matches Linux. */
+        uint32_t target_uid = (who == 0) ? task->ruid : (uint32_t)who;
+        /* Non-root can only modify own user's tasks (same real-uid
+         * fallback as the matching sched_setaffinity / setresuid /
+         * sched_setattr 'check_same_owner' fixes — accept either
+         * effective OR real uid match). */
+        if (task->uid != 0 && !HAS_CAP_SYS_NICE(task) &&
+            task->uid != target_uid && task->ruid != target_uid) {
             fut_printf("[SCHED] setpriority(%s, who=%d, prio=%d) -> EPERM (uid mismatch)\n",
                        which_desc, who, prio);
             return -EPERM;

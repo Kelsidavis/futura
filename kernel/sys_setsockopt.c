@@ -818,12 +818,35 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
             }
 
             case 64: /* SO_DETACH_REUSEPORT_BPF */
-            case 65: /* SO_PREFER_BUSY_POLL */
             case 67: /* SO_NETNS_COOKIE */
             case 68: /* SO_BUF_LOCK */
             case 70: /* SO_TXREHASH */
                 /* Accept silently — no enforcement for these options */
                 return 0;
+
+            case 65: /* SO_PREFER_BUSY_POLL — Linux 5.11+ */
+                /* Linux's sock_setsockopt:
+                 *   case SO_PREFER_BUSY_POLL:
+                 *       if (valbool && !sockopt_capable(CAP_NET_ADMIN))
+                 *           ret = -EPERM;
+                 *       else
+                 *           WRITE_ONCE(sk->sk_prefer_busy_poll, valbool);
+                 *
+                 * Enabling busy-poll preference is privileged because it
+                 * lets the socket spin-wait on incoming packets instead
+                 * of yielding the CPU.  Disabling (val == 0) is always
+                 * allowed.  Match Linux's gate so libc/sandbox probes see
+                 * the documented EPERM when CAP_NET_ADMIN is missing. */
+                {
+                    if (optlen < sizeof(int)) return -EINVAL;
+                    int val = 0;
+                    if (sso_copy_from_user(&val, optval, sizeof(int)) != 0)
+                        return -EFAULT;
+                    if (val != 0 && task->uid != 0 &&
+                        !(task->cap_effective & (1ULL << 12 /* CAP_NET_ADMIN */)))
+                        return -EPERM;
+                    return 0;
+                }
 
             case 66: /* SO_BUSY_POLL_BUDGET — Linux 5.16+: CAP_NET_ADMIN-gated */
             case 69: /* SO_RESERVE_MEM — Linux 5.16+: CAP_NET_ADMIN-gated when raising */

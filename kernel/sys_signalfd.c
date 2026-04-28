@@ -213,8 +213,21 @@ static ssize_t signalfd_read_op(void *inode, void *priv,
              * waitq lock; if a signal landed in the gap, drop the lock
              * and re-enter the outer loop to consume it. */
             fut_spinlock_acquire(&task->signal_waitq.lock);
+            /* Include thread_pending_signals in the lost-wakeup recheck
+             * for the same reason the main pending check does: a tgkill
+             * arriving in the gap between the outer check and queueing
+             * here would otherwise leave us sleeping forever despite a
+             * signal already being deliverable through this signalfd. */
             uint64_t recheck = __atomic_load_n(&task->pending_signals, __ATOMIC_ACQUIRE)
                                & ctx->sigmask;
+            if (!recheck) {
+                fut_thread_t *recheck_thr = fut_thread_current();
+                if (recheck_thr) {
+                    uint64_t tp_recheck = __atomic_load_n(
+                        &recheck_thr->thread_pending_signals, __ATOMIC_ACQUIRE);
+                    recheck = tp_recheck & ctx->sigmask;
+                }
+            }
             if (recheck) {
                 fut_spinlock_release(&task->signal_waitq.lock);
                 continue;

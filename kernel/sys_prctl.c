@@ -731,13 +731,33 @@ long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
         /* ARM64 MTE (Memory Tagging Extension) tagged-address ABI control (Linux 5.10+).
          * arg2 is a flags word: PR_TAGGED_ADDR_ENABLE + MTE TCF mode + tag mask.
          * Futura has no MTE hardware; only accept arg2=0 (no tagging); reject non-zero
-         * so callers correctly detect that MTE is unavailable. */
+         * so callers correctly detect that MTE is unavailable.
+         *
+         * Linux kernel/sys.c gates the unused tail args:
+         *   case PR_SET_TAGGED_ADDR_CTRL:
+         *       if (arg3 || arg4 || arg5) return -EINVAL;
+         *       error = SET_TAGGED_ADDR_CTRL(arg2);
+         *
+         * Without this check generic prctl rigidity probes that pass
+         * garbage in arg3/arg4/arg5 to detect kernel-too-old saw
+         * 'success' on Futura where Linux returns EINVAL. */
+        if (arg3 || arg4 || arg5)
+            return -EINVAL;
         if (arg2 != 0)
             return -EINVAL;
         return 0;
 
     case PR_GET_TAGGED_ADDR_CTRL:
-        /* Return tagged-address control word: 0 = no tagged addresses (MTE not enabled). */
+        /* Return tagged-address control word: 0 = no tagged addresses (MTE not enabled).
+         *
+         * Linux gates ALL four unused args here (note arg2 is also unused
+         * because the value is the syscall return, not a pointer):
+         *   case PR_GET_TAGGED_ADDR_CTRL:
+         *       if (arg2 || arg3 || arg4 || arg5) return -EINVAL;
+         *       error = GET_TAGGED_ADDR_CTRL();
+         */
+        if (arg2 || arg3 || arg4 || arg5)
+            return -EINVAL;
         return 0;
 
     case PR_GET_AUXV: {

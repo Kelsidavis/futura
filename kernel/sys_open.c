@@ -204,8 +204,16 @@ long sys_open(const char *pathname, int flags, int mode) {
     /* Validate access mode is one of the three valid values
      * O_RDONLY (0), O_WRONLY (1), or O_RDWR (2)
      * Value 3 (O_ACCMODE) is explicitly invalid - accessing with both O_WRONLY
-     * and O_RDWR bits set is undefined behavior in POSIX */
-    if (access_mode != O_RDONLY && access_mode != O_WRONLY && access_mode != O_RDWR) {
+     * and O_RDWR bits set is undefined behavior in POSIX.
+     *
+     * Exception: when O_PATH is set, Linux's build_open_flags() masks the
+     * access-mode bits to zero ('acc_mode = 0') because path-only fds
+     * never perform I/O.  An open with O_PATH | O_ACCMODE (=3) is
+     * therefore valid on Linux, and rejecting it here breaks libc
+     * /proc/self/fd/N reopen helpers that pass through whatever bits
+     * the original open had set. */
+    if (!(local_flags & O_PATH) &&
+        access_mode != O_RDONLY && access_mode != O_WRONLY && access_mode != O_RDWR) {
         open_printf("[OPEN] open(pathname=?, flags=0x%x, mode=0%o) -> EINVAL "
                    "(invalid access mode %d, must be O_RDONLY/O_WRONLY/O_RDWR)\n",
                    local_flags, local_mode, access_mode);

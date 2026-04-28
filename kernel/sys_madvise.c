@@ -111,24 +111,55 @@
  * Phase 4: KSM support, MADV_FREE implementation
  */
 long sys_madvise(void *addr, size_t length, int advice) {
-    /* Zero-length is a POSIX-defined no-op (checked before addr) */
-    if (length == 0) {
-        return 0;
-    }
-
-    if (addr == NULL) {
-        return -EINVAL;
-    }
-
     /* Linux's do_madvise rejects misaligned addr up front:
      *   if (start & ~PAGE_MASK) return -EINVAL;
      * The previous Futura code silently rounded down via PAGE_ALIGN_DOWN,
      * masking caller bugs (e.g. madvise(buf+1, len, ...) on a buffer
      * returned from malloc rather than mmap).  An unaligned addr is a
      * documented EINVAL on every Linux kernel; libc wrappers branch
-     * on EINVAL to detect and surface the programming error. */
+     * on EINVAL to detect and surface the programming error.
+     *
+     * NULL is page-aligned (0 & PAGE_MASK == 0), so Linux does NOT
+     * specifically reject NULL.  The previous '(addr == NULL) -> EINVAL'
+     * gate diverged: madvise(NULL, 0, MADV_NORMAL) returns 0 on Linux
+     * (zero-length is a POSIX-defined no-op once alignment passes), but
+     * Futura returned EINVAL.  Drop the redundant NULL check; the
+     * alignment gate covers all unaligned cases including unaligned
+     * non-NULL pointers. */
     if ((uintptr_t)addr & (PAGE_SIZE - 1)) {
         return -EINVAL;
+    }
+
+    /* Zero-length is a POSIX-defined no-op, but Linux validates BOTH
+     * alignment AND the advice code before short-circuiting on
+     * end==start.  Match Linux's:
+     *
+     *   if (!madvise_behavior_valid(behavior)) return -EINVAL;
+     *   if (!PAGE_ALIGNED(start))              return -EINVAL;
+     *   ...
+     *   if (end == start) return 0;
+     *
+     * The previous very-early return masked both 'misaligned' and
+     * 'bad advice' errors when length happened to be zero.  Validate
+     * the advice against the full Linux known-set first; if it's
+     * unknown reject with EINVAL even for zero-length, otherwise
+     * return 0 without touching any VMA flags. */
+    if (length == 0) {
+        switch (advice) {
+        case MADV_NORMAL: case MADV_RANDOM: case MADV_SEQUENTIAL:
+        case MADV_WILLNEED: case MADV_DONTNEED: case MADV_FREE:
+        case MADV_REMOVE: case MADV_DONTFORK: case MADV_DOFORK:
+        case MADV_MERGEABLE: case MADV_UNMERGEABLE:
+        case MADV_HUGEPAGE: case MADV_NOHUGEPAGE:
+        case MADV_DONTDUMP: case MADV_DODUMP:
+        case 18: /* MADV_WIPEONFORK */ case 19: /* MADV_KEEPONFORK */
+        case 20: /* MADV_COLD */ case 21: /* MADV_PAGEOUT */
+        case 22: /* MADV_POPULATE_READ */ case 23: /* MADV_POPULATE_WRITE */
+        case 24: /* MADV_DONTNEED_LOCKED */ case 25: /* MADV_COLLAPSE */
+            return 0;
+        default:
+            return -EINVAL;
+        }
     }
 
     /* Overflow-safe alignment: compute aligned range */

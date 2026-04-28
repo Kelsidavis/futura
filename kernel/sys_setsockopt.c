@@ -759,6 +759,8 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
             case 37: /* SO_TIMESTAMPING — hardware timestamping */
             case 41: /* SO_WIFI_STATUS — WiFi status */
             case 42: /* SO_PEEK_OFF — MSG_PEEK offset */
+            case 43: /* SO_NOFCS — disable Frame Check Sequence on raw Ethernet sockets */
+            case 44: /* SO_LOCK_FILTER — once set, BPF filter cannot be replaced */
             case 45: /* SO_SELECT_ERR_QUEUE — was mislabeled as SO_BPF_EXTENSIONS;
                       * the real Linux SO_BPF_EXTENSIONS is 48 */
             case 47: /* SO_MAX_PACING_RATE */
@@ -768,7 +770,11 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
             case 57: /* SO_MEMINFO */
             case 58: /* SO_INCOMING_NAPI_ID */
             case 59: /* SO_COOKIE */
-                /* Accept silently — no enforcement for these options */
+                /* Accept silently — no enforcement for these options.
+                 * Linux accepts these via sock_valbool_flag without
+                 * privilege checks, so silently returning 0 keeps
+                 * userspace probes that branch on success vs ENOPROTOOPT
+                 * matching the documented Linux behaviour. */
                 return 0;
 
             case 46: /* SO_BUSY_POLL — Linux 3.11+: kernel poll usec.

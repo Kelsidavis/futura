@@ -134,8 +134,26 @@ static int memfd_ioctl(void *inode, void *priv, unsigned long req, unsigned long
         return -EINVAL;
 
     if (req == MEMFD_IOC_GETSIZE) {
-        /* Returns current size in arg (as size_t*) */
-        if (arg) *(size_t *)arg = mf->size;
+        /* Returns current size via copy_to_user.  The previous code did
+         * '*(size_t *)arg = mf->size' directly, which let any caller
+         * pass a kernel-half address as arg and have the size value
+         * (a small integer) written to arbitrary kernel memory — the
+         * same write-anywhere primitive class fixed in the userfaultfd
+         * UFFDIO_* ioctls and the lsm_get_self_attr / lsm_list_modules
+         * helpers.  Stage via copy_to_user with the standard
+         * KERNEL_VIRTUAL_BASE bypass for in-kernel callers (selftests
+         * and fut_memfd_get_size pass arg=0 anyway). */
+        if (arg) {
+            size_t kbuf = mf->size;
+#ifdef KERNEL_VIRTUAL_BASE
+            if (arg >= KERNEL_VIRTUAL_BASE) {
+                __builtin_memcpy((void *)(uintptr_t)arg, &kbuf, sizeof(kbuf));
+            } else
+#endif
+            if (fut_copy_to_user((void *)(uintptr_t)arg, &kbuf,
+                                 sizeof(kbuf)) != 0)
+                return -EFAULT;
+        }
         return (int)mf->size;
     }
 

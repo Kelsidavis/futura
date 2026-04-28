@@ -1605,7 +1605,10 @@ long sys_get_robust_list(int pid, struct robust_list_head **head_ptr,
     fut_printf("[GET_ROBUST_LIST] pid=%d head_ptr=%p len_ptr=%p\n",
                pid, head_ptr, len_ptr);
 
-    /* Validate output pointers */
+    /* Validate output pointers.  (Linux returns EFAULT here via put_user;
+     * Futura test 530 pins the NULL case at -EINVAL, and per the project
+     * rule 'Futura's local tests take precedence over Linux ABI parity'
+     * the EINVAL contract wins over the put_user-style EFAULT.) */
     if (!head_ptr || !len_ptr) {
         return -EINVAL;
     }
@@ -1729,6 +1732,20 @@ long sys_futex_waitv(const void *waiters_ptr, unsigned int nr_futexes,
 
         /* FUTEX2_NUMA not supported */
         if (waiters[i].flags & FUTEX2_NUMA) return -EINVAL;
+
+        /* Linux's futex_validate_input enforces two domain checks the
+         * previous code missed:
+         *   (a) uaddr must be aligned to the futex size (4 bytes for U32)
+         *       — kernel/futex/core.c rejects misaligned uaddr with EINVAL.
+         *       Without this check Futura would either fault on a
+         *       misaligned read or silently access bytes that straddle
+         *       the page boundary and tear the comparison.
+         *   (b) val must fit in the configured futex size.  For U32 the
+         *       upper 32 bits of waiters[i].val must be zero; otherwise
+         *       Linux returns EINVAL because the comparison can never
+         *       match a 32-bit memory location. */
+        if (waiters[i].uaddr & 0x3ULL) return -EINVAL;
+        if (waiters[i].val >> 32) return -EINVAL;
 
         /* Validate address */
         uint32_t *addr = (uint32_t *)(uintptr_t)waiters[i].uaddr;

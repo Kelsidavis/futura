@@ -176,7 +176,13 @@ long sys_getpriority(int which, int who) {
             }
         }
     } else { /* PRIO_USER */
-        uint32_t target_uid = (who == 0) ? task->uid : (uint32_t)who;
+        /* Linux's getpriority(PRIO_USER, 0) maps who=0 to the caller's
+         * REAL uid (cred->uid), not the effective uid — same fallback
+         * the matching sys_setpriority fix applies.  Without this, a
+         * setuid binary that has dropped its effective uid back to a
+         * regular user reports the priority of the wrong user's
+         * tasks. */
+        uint32_t target_uid = (who == 0) ? task->ruid : (uint32_t)who;
         for (fut_task_t *t = fut_task_list; t; t = t->next) {
             if (t->uid == target_uid && t->state != FUT_TASK_ZOMBIE) {
                 if (t->nice < best_nice) best_nice = t->nice;

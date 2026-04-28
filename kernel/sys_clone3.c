@@ -128,16 +128,23 @@ long sys_clone3(const struct fut_clone_args *uargs, size_t size) {
 
     uint64_t flags = args.flags;
 
-    /* Linux's clone3_args_valid rejects flags overlapping CSIGNAL (0xff).
+    /* Linux's clone3_args_valid rejects flags overlapping CSIGNAL — but
+     * with a specific carve-out for CLONE_NEWTIME (0x80) which sits in
+     * the low 8 bits:
+     *
+     *   if (kargs->flags & (CLONE_DETACHED | (CSIGNAL & ~CLONE_NEWTIME)))
+     *       return false;
+     *
      * CSIGNAL is the legacy clone() encoding of the exit_signal in the
      * low 8 bits of the combined flags+sig argument; clone3 separates
-     * exit_signal into its own struct field, so the low 8 bits of
-     * flags are reserved for future flag bits and must be zero today.
-     * The previous Futura code accepted any flags value, so a libc
-     * that mistakenly passed clone()-style 'flags | sig' to clone3
-     * silently got CLONE_VM-implying behaviour from a stray bit and
-     * couldn't tell its packing was wrong. */
-    if (flags & 0xffULL /* CSIGNAL */)
+     * exit_signal into its own struct field, so the OTHER 7 low bits
+     * (0x7f) are reserved.  CLONE_NEWTIME is the documented exception
+     * — it's a real namespace-creation flag bit.
+     *
+     * The previous Futura check rejected ALL 8 low bits, breaking
+     * test 2416's CLONE_NEWTIME-via-clone3 contract.  Mask the
+     * CSIGNAL-without-CLONE_NEWTIME bits exactly. */
+    if (flags & (0xffULL & ~(uint64_t)CLONE_NEWTIME))
         return -EINVAL;
 
     /* Reject kernel-half pointers from userspace for the tid/pidfd

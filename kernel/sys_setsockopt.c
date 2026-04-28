@@ -793,13 +793,36 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
 
             case 64: /* SO_DETACH_REUSEPORT_BPF */
             case 65: /* SO_PREFER_BUSY_POLL */
-            case 66: /* SO_BUSY_POLL_BUDGET */
             case 67: /* SO_NETNS_COOKIE */
             case 68: /* SO_BUF_LOCK */
-            case 69: /* SO_RESERVE_MEM */
             case 70: /* SO_TXREHASH */
-            case 71: /* SO_RCVMARK */
                 /* Accept silently — no enforcement for these options */
+                return 0;
+
+            case 66: /* SO_BUSY_POLL_BUDGET — Linux 5.16+: CAP_NET_ADMIN-gated */
+            case 69: /* SO_RESERVE_MEM — Linux 5.16+: CAP_NET_ADMIN-gated when raising */
+                /* Linux's sock_setsockopt gates these on CAP_NET_ADMIN
+                 * (sockopt_capable check). Without the gate an unprivileged
+                 * caller could bump the busy-poll budget or reserved-memory
+                 * watermark, both of which Linux treats as privileged
+                 * resource-grant operations. We don't enforce the actual
+                 * semantics, but match the permission ABI so libc/sandbox
+                 * probes see the documented EPERM. */
+                if (task->uid != 0 &&
+                    !(task->cap_effective & (1ULL << 12 /* CAP_NET_ADMIN */)))
+                    return -EPERM;
+                return 0;
+
+            case 71: /* SO_RCVMARK — Linux 5.20+: tag incoming packets with sk_mark */
+                /* Linux's sock_setsockopt SO_RCVMARK requires CAP_NET_RAW
+                 * OR CAP_NET_ADMIN — the option exposes the sk_mark
+                 * (originally settable via privileged SO_MARK) on inbound
+                 * packets, which an unprivileged caller could otherwise
+                 * use to read marks set by a privileged peer. */
+                if (task->uid != 0 &&
+                    !(task->cap_effective & ((1ULL << 13 /* CAP_NET_RAW */) |
+                                             (1ULL << 12 /* CAP_NET_ADMIN */))))
+                    return -EPERM;
                 return 0;
 
             case SO_PASSCRED: {

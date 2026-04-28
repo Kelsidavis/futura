@@ -140,6 +140,19 @@ int64_t sys_lseek(int fd, int64_t offset, int whence) {
         return -EBADF;
     }
 
+    /* Linux's sys_lseek runs fdget_pos FIRST and only surfaces -EINVAL
+     * for an out-of-range whence inside vfs_llseek (which never runs if
+     * the fd lookup failed).  Futura's previous order rejected an
+     * invalid whence before checking whether the fd was actually open,
+     * so lseek(closed_fd_in_range, 0, 99) returned EINVAL where Linux
+     * returns EBADF — masking 'fd not open' as 'whence out of range'
+     * for libc probes.  Validate the fd-table slot ahead of the whence
+     * switch so the EBADF errno class is preserved. */
+    if (!task->fd_table || !task->fd_table[fd]) {
+        fut_printf("[LSEEK] lseek(fd=%d) -> EBADF (fd not open)\n", fd);
+        return -EBADF;
+    }
+
     /* Phase 2: Categorize whence parameter */
     const char *whence_desc;
     const char *whence_meaning;

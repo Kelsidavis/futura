@@ -226,6 +226,23 @@ long sys_landlock_add_rule(int ruleset_fd, unsigned int rule_type,
         if (fut_copy_from_user(&ra, rule_attr, sizeof(ra)) != 0) {
             return -EFAULT;
         }
+        /* Linux's add_rule_path_beneath validates the rule's access mask
+         * against the ruleset's handled_access_fs:
+         *   if (!attr.allowed_access)               return -ENOMSG;
+         *   if (attr.allowed_access & ~handled_fs)  return -EINVAL;
+         * An empty mask is a no-op rule that the caller almost certainly
+         * didn't mean; bits outside the ruleset's handled set make no
+         * sense because the ruleset isn't enforcing those bits in the
+         * first place.  Both checks let userspace probe support without
+         * silently building a bogus ruleset.  Skip for net rules — the
+         * net-port rule has its own handled-access validation that we
+         * don't model yet. */
+        if (rule_type == LANDLOCK_RULE_PATH_BENEATH) {
+            if (ra.allowed == 0)
+                return -ENOMSG;
+            if (ra.allowed & ~g_rulesets[slot].handled_access_fs)
+                return -EINVAL;
+        }
         r->allowed_access = ra.allowed;
         r->parent_fd = ra.parent;
     }

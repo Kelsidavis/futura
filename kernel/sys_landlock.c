@@ -557,6 +557,25 @@ long sys_cachestat(unsigned int fd, const void *cachestat_range,
  */
 long sys_fchmodat2(int dirfd, const char *pathname, unsigned int mode,
                    unsigned int flags) {
+    /* Linux's fchmodat2 validates flags up front and rejects unknown
+     * bits before any further work — fs/open.c:
+     *   if (flags & ~(AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH))
+     *       return -EINVAL;
+     * The previous Futura code silently routed unknown bits through
+     * to sys_fchmodat (which rejects them as expected for non-empty
+     * paths) but the AT_EMPTY_PATH branch above stripped the bit and
+     * called sys_fchmod() with the remaining flags ignored — a
+     * caller who passed AT_EMPTY_PATH | <future-bit> on an empty
+     * path got success on Futura where Linux returns EINVAL.  Apply
+     * the strict gate up front so userspace sees the same errno
+     * regardless of which branch fires. */
+    if (flags & ~(unsigned int)(0x100 /* AT_SYMLINK_NOFOLLOW */ |
+                                0x1000 /* AT_EMPTY_PATH */)) {
+        fut_printf("[FCHMODAT2] fchmodat2(flags=0x%x) -> EINVAL (unknown flags)\n",
+                   flags);
+        return -EINVAL;
+    }
+
     /* AT_EMPTY_PATH (0x1000): if pathname is empty, operate on dirfd. */
     if (flags & 0x1000 /* AT_EMPTY_PATH */) {
         bool is_empty = false;

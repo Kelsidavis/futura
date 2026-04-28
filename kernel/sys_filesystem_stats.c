@@ -386,6 +386,43 @@ long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
         return -EINVAL;
     }
 
+    /* Linux's vfs_fallocate enforces three more mutual-exclusion rules
+     * the previous Futura code missed:
+     *
+     *   (a) PUNCH_HOLE | ZERO_RANGE -> EOPNOTSUPP
+     *       Both modes deallocate-or-zero the range; combining them is
+     *       documented as unsupported in mm/fallocate.c.
+     *
+     *   (b) COLLAPSE_RANGE must be alone — no other flag bits set.
+     *       Collapsing shrinks the file by removing the range, so
+     *       KEEP_SIZE / PUNCH_HOLE / ZERO_RANGE all contradict it.
+     *
+     *   (c) INSERT_RANGE must be alone — no other flag bits set.
+     *       Inserting grows the file at the offset, so KEEP_SIZE /
+     *       PUNCH_HOLE / etc. all contradict it.
+     *
+     * Without these gates a caller probing the modern fallocate flags
+     * for support saw 'success' on combinations that real Linux always
+     * rejects, masking misuse. */
+    if ((mode & FALLOC_FL_PUNCH_HOLE) && (mode & FALLOC_FL_ZERO_RANGE)) {
+        fut_printf("[FALLOCATE] fallocate(fd=%d, mode=0x%x, pid=%d) -> EOPNOTSUPP "
+                   "(PUNCH_HOLE | ZERO_RANGE)\n",
+                   fd, mode, task->pid);
+        return -EOPNOTSUPP;
+    }
+    if ((mode & FALLOC_FL_COLLAPSE_RANGE) && (mode & ~FALLOC_FL_COLLAPSE_RANGE)) {
+        fut_printf("[FALLOCATE] fallocate(fd=%d, mode=0x%x, pid=%d) -> EINVAL "
+                   "(COLLAPSE_RANGE must be exclusive)\n",
+                   fd, mode, task->pid);
+        return -EINVAL;
+    }
+    if ((mode & FALLOC_FL_INSERT_RANGE) && (mode & ~FALLOC_FL_INSERT_RANGE)) {
+        fut_printf("[FALLOCATE] fallocate(fd=%d, mode=0x%x, pid=%d) -> EINVAL "
+                   "(INSERT_RANGE must be exclusive)\n",
+                   fd, mode, task->pid);
+        return -EINVAL;
+    }
+
     /* fallocate requires write access — checked AFTER mode validation
      * so libc wrappers see the same EINVAL-vs-EBADF separation Linux
      * gives them. */

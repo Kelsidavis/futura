@@ -59,32 +59,19 @@ long sys_recvmmsg(int sockfd, void *msgvec, unsigned int vlen,
             return -ENOTSOCK;
     }
 
-    /* Linux: vlen == 0 is not an error; the loop runs zero times and
-     * the syscall returns 0. Only a NULL msgvec is rejected (EFAULT).
-     * The previous EINVAL gate broke Linux ABI parity and any libc
-     * recvmmsg() that forwards user vlen unchanged. */
-    if (!msgvec)
-        return -EFAULT;
-    if (vlen == 0)
-        return 0;
-    if (vlen > 1024)
-        vlen = 1024;
-
-    extern ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags);
-
-    /*
+    /* Linux's SYSCALL_DEFINE5(recvmmsg) reads and validates the timeout
+     * BEFORE entering __sys_recvmmsg, so a bad timeout pointer surfaces
+     * as -EFAULT regardless of vlen / msgvec.  Futura's previous order
+     * short-circuited vlen=0 to 0 before touching timeout, so
+     * recvmmsg(valid_fd, msg, 0, _, bad_timeout_ptr) returned 0 where
+     * Linux returns EFAULT — same EFAULT-before-vlen=0 ordering as the
+     * sockfd_lookup_light reorder this function already does.
+     *
      * If a zero timeout is specified (tv_sec==0, tv_nsec==0), apply
      * MSG_DONTWAIT to every message after the first.
-     * For non-NULL timeouts with actual wait time, we could implement
-     * deadline tracking; for now we apply MSG_DONTWAIT after the first
-     * message regardless (avoids blocking on a partially filled vlen).
      */
     int nonblock_subsequent = 0;
     if (timeout) {
-        /* struct timespec: { time_t tv_sec; long tv_nsec; }.
-         * Propagate copy_from_user failures as -EFAULT instead of
-         * silently treating an unmapped timeout pointer as a zero
-         * timeout (which would force MSG_DONTWAIT on every recv). */
         long tv_sec = 0, tv_nsec = 0;
         if (rcvmm_copy_from_user(&tv_sec, timeout, sizeof(long)) != 0)
             return -EFAULT;
@@ -97,6 +84,19 @@ long sys_recvmmsg(int sockfd, void *msgvec, unsigned int vlen,
         if (tv_sec == 0 && tv_nsec == 0)
             nonblock_subsequent = 1;
     }
+
+    /* Linux: vlen == 0 is not an error; the loop runs zero times and
+     * the syscall returns 0. Only a NULL msgvec is rejected (EFAULT).
+     * The previous EINVAL gate broke Linux ABI parity and any libc
+     * recvmmsg() that forwards user vlen unchanged. */
+    if (!msgvec)
+        return -EFAULT;
+    if (vlen == 0)
+        return 0;
+    if (vlen > 1024)
+        vlen = 1024;
+
+    extern ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags);
 
     int count = 0;
     for (unsigned int i = 0; i < vlen; i++) {

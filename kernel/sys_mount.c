@@ -205,6 +205,28 @@ long sys_mount(const char *source, const char *target, const char *filesystemtyp
         return -ESRCH;
     }
 
+    /* Linux's fs/namespace.c gates mount() on CAP_SYS_ADMIN (via
+     * may_mount()) BEFORE any of the user-pointer paths are walked:
+     *   if (!may_mount()) return -EPERM;
+     *   ret = copy_mount_string(type, &kernel_type);
+     *   ...
+     * The previous Futura order processed the entire 4 KB data buffer,
+     * then the target path, then the fstype string, all before the
+     * CAP check at line ~400.  That gave an unprivileged caller a
+     * 4 KB-scan DoS primitive (touching pages they can't influence
+     * the result of) and a ENOENT-vs-EPERM directory-existence probe
+     * via the target path.  Same priv-first ordering as the matching
+     * fsopen / fsmount / open_tree / move_mount / fspick / chroot /
+     * pivot_root / umount2 fixes. */
+    {
+        bool has_cap = (task->cap_effective & (1ULL << CAP_SYS_ADMIN)) != 0;
+        if (!has_cap && task->uid != 0) {
+            fut_printf("[MOUNT] mount(pid=%d) -> EPERM (CAP_SYS_ADMIN required)\n",
+                       task->pid);
+            return -EPERM;
+        }
+    }
+
     /* Validate data parameter with DoS protection
      * VULNERABILITY: Unbounded Byte-by-Byte Scanning Leading to CPU Exhaustion
      *

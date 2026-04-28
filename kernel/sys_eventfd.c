@@ -1456,15 +1456,19 @@ long sys_timerfd_settime(int ufd, int flags,
         return -EINVAL;
     }
 
-    /* Look up the fd and get the timerfd context */
+    /* Look up the fd and get the timerfd context.  Linux's fs/timerfd.c
+     * splits the errno classes: EBADF only for fdget() failure (fd out
+     * of range or unallocated), EINVAL when the fd refers to a non-
+     * timerfd file (wrong f_op).  Same EBADF/EINVAL split as the
+     * matching signalfd / inotify fixes. */
     if (!task->fd_table || ufd >= task->max_fds) return -EBADF;
     struct fut_file *file = task->fd_table[ufd];
-    if (!file || file->chr_ops != &timerfd_fops || !file->chr_private) {
-        return -EBADF;
-    }
+    if (!file) return -EBADF;
+    if (file->chr_ops != &timerfd_fops || !file->chr_private)
+        return -EINVAL;
     struct timerfd_file *tfile = (struct timerfd_file *)file->chr_private;
     struct timerfd_ctx *ctx = tfile->ctx;
-    if (!ctx) return -EBADF;
+    if (!ctx) return -EINVAL;
 
     /* Cancel any existing timer */
     if (ctx->armed) {
@@ -1570,12 +1574,12 @@ long sys_timerfd_gettime(int ufd, struct itimerspec *curr_value) {
 
     if (!task->fd_table || ufd >= task->max_fds) return -EBADF;
     struct fut_file *file = task->fd_table[ufd];
-    if (!file || file->chr_ops != &timerfd_fops || !file->chr_private) {
-        return -EBADF;
-    }
+    if (!file) return -EBADF;
+    if (file->chr_ops != &timerfd_fops || !file->chr_private)
+        return -EINVAL;
     struct timerfd_file *tfile = (struct timerfd_file *)file->chr_private;
     struct timerfd_ctx *ctx = tfile->ctx;
-    if (!ctx) return -EBADF;
+    if (!ctx) return -EINVAL;
 
     struct itimerspec kits = {0};
     unsigned long tfd_gf = _evfd_irq_save();

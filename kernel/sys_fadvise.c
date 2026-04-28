@@ -195,11 +195,32 @@ long sys_fadvise64(int fd, int64_t offset, int64_t len, int advice) {
 
     struct fut_vnode *vnode = file->vnode;
 
-    /* Compute page-aligned range.  len == 0 means "to end of file". */
+    /* Compute page-aligned range.  len == 0 means "to end of file".
+     *
+     * Linux's generic_fadvise (mm/fadvise.c) detects offset+len overflow
+     * and clamps endbyte to "infinite" (-1) rather than producing a
+     * wrapped, ridiculously-small range:
+     *   endbyte = (u64)offset + (u64)len;
+     *   if (!len || endbyte < len) endbyte = -1;
+     *   else endbyte--;
+     * The previous Futura computation '(offset + len + PAGE_SIZE - 1) &
+     * ~(PAGE_SIZE - 1)' wrapped silently for huge values, producing an
+     * end < start range that fadvise_willneed/dontneed then iterated as
+     * a no-op or, worse, in the wrong direction.  Match Linux: treat
+     * the wraparound as "to end of file" by reusing the len==0 branch. */
     uint64_t start = (uint64_t)offset & ~((uint64_t)PAGE_SIZE - 1);
     uint64_t end;
-    if (len == 0 && vnode) {
+    int to_eof = (len == 0);
+    if (!to_eof) {
+        uint64_t off_u = (uint64_t)offset;
+        uint64_t len_u = (uint64_t)len;
+        if (len_u > UINT64_MAX - off_u)
+            to_eof = 1;  /* overflow -> match Linux's endbyte = -1 */
+    }
+    if (to_eof && vnode) {
         end = (vnode->size + PAGE_SIZE - 1) & ~((uint64_t)PAGE_SIZE - 1);
+    } else if (to_eof) {
+        end = start;  /* No vnode and no len: nothing to advise */
     } else {
         end = ((uint64_t)offset + (uint64_t)len + PAGE_SIZE - 1) & ~((uint64_t)PAGE_SIZE - 1);
     }

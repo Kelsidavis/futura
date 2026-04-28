@@ -264,15 +264,29 @@ long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
         return task->dumpable;
 
     case PR_SET_NO_NEW_PRIVS: {
-        /* Sticky flag: once set, cannot be unset (prevents execve setuid escalation) */
-        if (arg2 != 1) {
-            return -EINVAL;  /* Can only set to 1 */
+        /* Sticky flag: once set, cannot be unset (prevents execve setuid escalation).
+         *
+         * Linux's prctl(PR_SET_NO_NEW_PRIVS) requires arg2 == 1 AND
+         * arg3, arg4, arg5 all be zero — kernel/sys.c:
+         *   if (arg2 != 1 || arg3 || arg4 || arg5)
+         *       return -EINVAL;
+         *
+         * The previous Futura code silently ignored arg3/arg4/arg5, so a
+         * caller passing junk in the unused slots got the sticky NNP bit
+         * set anyway.  Reject the call exactly as Linux does — userspace
+         * probes that walk through the unused args to discover the
+         * kernel's accepted set now see Linux-identical EINVAL. */
+        if (arg2 != 1 || arg3 || arg4 || arg5) {
+            return -EINVAL;
         }
         task->no_new_privs = 1;
         return 0;
     }
 
     case PR_GET_NO_NEW_PRIVS:
+        /* Linux requires all unused args to be zero. */
+        if (arg2 || arg3 || arg4 || arg5)
+            return -EINVAL;
         return (long)task->no_new_privs;
 
     case PR_SET_TIMERSLACK:

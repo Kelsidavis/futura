@@ -45,8 +45,12 @@ extern int fut_vfs_close(int fd);
  * Returns 0 on success, negative errno on failure.
  */
 long sys_socketpair(int domain, int type, int protocol, int *sv) {
-    if (!sv)
-        return -EFAULT;
+    /* Linux's sys_socketpair runs sock_create (family/type/protocol
+     * validation) first; the EFAULT from copy_to_user(usockvec) only
+     * surfaces at the very end.  The previous '!sv -> EFAULT' upfront
+     * gate turned socketpair(AF_INET, ..., NULL) into EFAULT instead
+     * of the EAFNOSUPPORT a libc probe expects to distinguish 'family
+     * not supported by socketpair' from 'fix the output pointer'. */
 
     /* Match the matching socket() gate: Linux rejects negative
      * protocol numbers AND any protocol >= IPPROTO_MAX (256) with

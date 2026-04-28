@@ -314,12 +314,18 @@ long sys_utimensat(int dirfd, const char *pathname, const fut_timespec_t *times,
         return -ENAMETOOLONG;
     }
 
-    /* Validate pathname is not empty */
+    /* Empty pathname is ENOENT per Linux utimensat(2) — getname()
+     * returns -ENOENT for an empty string.  utimensat does not accept
+     * AT_EMPTY_PATH; the empty-path case here is unambiguously the
+     * 'getname failed' error class.  The previous Futura code returned
+     * -EINVAL, breaking the libc *at() helper convention shared with
+     * sys_open / sys_openat / sys_chdir / sys_chmod / sys_unlink etc.
+     * (NULL pathname is handled separately above with futimens
+     * fallback semantics.) */
     if (path_buf[0] == '\0') {
-        fut_printf("[UTIMENSAT] utimensat(dirfd=%d [%s], pathname=\"\" [empty], times=%s, "
-                   "flags=%s, pid=%d) -> EINVAL (empty pathname)\n",
-                   dirfd, dirfd_desc, time_spec_desc, flags_desc, task->pid);
-        return -EINVAL;
+        fut_printf("[UTIMENSAT] utimensat(dirfd=%d [%s], pathname=\"\" [empty]) -> ENOENT\n",
+                   dirfd, dirfd_desc);
+        return -ENOENT;
     }
 
     /* Categorize path type */

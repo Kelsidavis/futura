@@ -374,13 +374,20 @@ long sys_getrandom(void *buf, size_t buflen, unsigned int flags) {
         return -EINVAL;
     }
 
-    /* Validate buffer */
-    if (!buf) {
-        return -EFAULT;
-    }
-
+    /* Linux's get_random_bytes_user short-circuits on len == 0 before
+     * touching the user pointer:
+     *   if (unlikely(!iov_iter_count(iter))) return 0;
+     * That means getrandom(NULL, 0, 0) returns 0 on Linux, not EFAULT.
+     * The previous Futura order rejected NULL up front, diverging from
+     * the no-bytes-no-fault contract that libc bootstrap probes rely
+     * on.  Reorder: zero-length first, then NULL → EFAULT, then upper
+     * bound. */
     if (buflen == 0) {
         return 0;
+    }
+
+    if (!buf) {
+        return -EFAULT;
     }
 
     if (buflen > GETRANDOM_MAX) {

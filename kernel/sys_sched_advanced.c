@@ -557,7 +557,13 @@ long sys_sched_getattr(int pid, struct sched_attr *uattr, unsigned int usize,
      * libc wrappers can branch on the real error class. */
     if (!uattr)
         return -EFAULT;
-    if (usize < SCHED_ATTR_SIZE_VER0)
+    /* Linux's sched_getattr enforces both size bounds — kernel/sched/syscalls.c:
+     *   if (usize < SCHED_ATTR_SIZE_VER0 || usize > PAGE_SIZE)
+     *       return -EINVAL;
+     * The previous code only validated the lower bound, so a caller
+     * passing an absurdly large usize would attempt an unbounded
+     * copy_to_user.  PAGE_SIZE is 4096; matches Linux exactly. */
+    if (usize < SCHED_ATTR_SIZE_VER0 || usize > 4096 /* PAGE_SIZE */)
         return -EINVAL;
 
     fut_task_t *current = fut_task_current();

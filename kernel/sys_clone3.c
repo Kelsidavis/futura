@@ -128,6 +128,18 @@ long sys_clone3(const struct fut_clone_args *uargs, size_t size) {
 
     uint64_t flags = args.flags;
 
+    /* Linux's clone3_args_valid rejects flags overlapping CSIGNAL (0xff).
+     * CSIGNAL is the legacy clone() encoding of the exit_signal in the
+     * low 8 bits of the combined flags+sig argument; clone3 separates
+     * exit_signal into its own struct field, so the low 8 bits of
+     * flags are reserved for future flag bits and must be zero today.
+     * The previous Futura code accepted any flags value, so a libc
+     * that mistakenly passed clone()-style 'flags | sig' to clone3
+     * silently got CLONE_VM-implying behaviour from a stray bit and
+     * couldn't tell its packing was wrong. */
+    if (flags & 0xffULL /* CSIGNAL */)
+        return -EINVAL;
+
     /* Reject kernel-half pointers from userspace for the tid/pidfd
      * fields. The fork/clone path does direct unchecked stores to
      * these addresses for CLONE_PARENT_SETTID / CLONE_CHILD_SETTID,

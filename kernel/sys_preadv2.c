@@ -94,23 +94,30 @@ ssize_t sys_pwritev2(int fd, const struct iovec *iov, int iovcnt,
     if (offset < -1)
         return -EINVAL;
 
-    if (offset == -1) {
-        if (flags & RWF_APPEND) {
-            /* RWF_APPEND: atomically write at EOF under vnode lock
-             * to prevent race with concurrent writers. */
-            extern struct fut_file *fut_vfs_get_file(int fd);
-            struct fut_file *rwf_file = fut_vfs_get_file(fd);
-            if (!rwf_file || !rwf_file->vnode)
-                return -EBADF;
+    /* Linux's kiocb_set_rw_flags translates RWF_APPEND to IOCB_APPEND,
+     * and the write path then OVERRIDES the user-supplied offset with
+     * i_size — atomically appending regardless of whether the caller
+     * passed offset=-1 or an explicit offset.  Futura's previous code
+     * only honoured RWF_APPEND on the offset==-1 path, so
+     * pwritev2(fd, iov, cnt, EXPLICIT, RWF_APPEND) wrote at the
+     * caller-specified offset where Linux writes at EOF — silently
+     * losing the atomic-append guarantee. */
+    if (flags & RWF_APPEND) {
+        extern struct fut_file *fut_vfs_get_file(int fd);
+        struct fut_file *rwf_file = fut_vfs_get_file(fd);
+        if (!rwf_file || !rwf_file->vnode)
+            return -EBADF;
 
-            fut_spinlock_acquire(&rwf_file->vnode->write_lock);
-            offset = (int64_t)rwf_file->vnode->size;
-            extern ssize_t sys_pwritev(int fd, const struct iovec *iov,
-                                       int iovcnt, int64_t offset);
-            ssize_t result = sys_pwritev(fd, iov, iovcnt, offset);
-            fut_spinlock_release(&rwf_file->vnode->write_lock);
-            return result;
-        }
+        fut_spinlock_acquire(&rwf_file->vnode->write_lock);
+        int64_t append_off = (int64_t)rwf_file->vnode->size;
+        extern ssize_t sys_pwritev(int fd, const struct iovec *iov,
+                                   int iovcnt, int64_t offset);
+        ssize_t result = sys_pwritev(fd, iov, iovcnt, append_off);
+        fut_spinlock_release(&rwf_file->vnode->write_lock);
+        return result;
+    }
+
+    if (offset == -1) {
         /* Use current file position (same as writev) */
         extern ssize_t sys_writev(int fd, const struct iovec *iov, int iovcnt);
         return sys_writev(fd, iov, iovcnt);

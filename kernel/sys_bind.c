@@ -338,6 +338,25 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
         return -EBADF;
     }
 
+    /* Linux's sys_bind runs sockfd_lookup_light FIRST, so EBADF (invalid
+     * fd) and ENOTSOCK (open file that isn't a socket) surface before
+     * any inspection of the addr pointer or addrlen.  Futura's previous
+     * order returned EFAULT for bind(non_socket_fd, NULL, _), masking
+     * ENOTSOCK for libc 'is this fd a socket?' probes.  Move the socket
+     * lookup ahead of the pointer/length checks — same fix as the
+     * matching getsockname / getpeername reorder. */
+    {
+        fut_socket_t *bind_sock = get_socket_from_fd(local_sockfd);
+        if (!bind_sock) {
+            if (task->fd_table && task->fd_table[local_sockfd]) {
+                bind_printf("[BIND] bind(sockfd=%d) -> ENOTSOCK (not a socket)\n",
+                           local_sockfd);
+                return -ENOTSOCK;
+            }
+            return -EBADF;
+        }
+    }
+
     /* Phase 2: Validate addr pointer */
     if (!local_addr) {
         bind_printf("[BIND] bind(sockfd=%d, addr=NULL, addrlen=%u) -> EFAULT (NULL addr)\n",

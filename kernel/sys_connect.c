@@ -304,7 +304,26 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
                    local_sockfd, task->max_fds);
         return -EBADF;
     }
-    connect_printf("[CONNECT-DBG] sockfd OK, checking addr\n");
+    connect_printf("[CONNECT-DBG] sockfd OK, checking socket type\n");
+
+    /* Linux's sys_connect runs sockfd_lookup_light FIRST, so EBADF and
+     * ENOTSOCK surface before any inspection of addr/addrlen.  Futura's
+     * previous order rejected NULL addr up front with EFAULT, masking
+     * ENOTSOCK for libc 'is this fd a socket?' probes.  Move the socket
+     * lookup ahead of the pointer/length checks — same fix as the
+     * matching getsockname / getpeername / bind reorder. */
+    {
+        extern fut_socket_t *get_socket_from_fd(int fd);
+        fut_socket_t *conn_sock = get_socket_from_fd(local_sockfd);
+        if (!conn_sock) {
+            if (task->fd_table && task->fd_table[local_sockfd]) {
+                connect_printf("[CONNECT] connect(sockfd=%d) -> ENOTSOCK (not a socket)\n",
+                           local_sockfd);
+                return -ENOTSOCK;
+            }
+            return -EBADF;
+        }
+    }
 
     /* Phase 2: Validate addr pointer */
     if (!local_addr) {

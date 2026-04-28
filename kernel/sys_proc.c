@@ -260,6 +260,19 @@ long sys_setpgid(uint64_t pid, uint64_t pgid) {
         return -EPERM;
     }
 
+    /* Linux's setpgid additionally requires target's session to match
+     * the caller's session: 'if (task_session(p) != task_session(
+     * group_leader)) goto out'.  The previous Futura code only rejected
+     * the session-leader case and the pgid-in-different-session case,
+     * missing the cross-session child case (a child that has setsid'd
+     * into its own session is still our 'parent==current' child but
+     * should not be setpgid'd by the parent).  Mirror Linux's gate. */
+    if (target != current && target->sid != current->sid) {
+        fut_printf("[PROC] setpgid(pid=%llu, pgid=%llu) -> EPERM "
+                   "(target is in a different session)\n", pid, pgid);
+        return -EPERM;
+    }
+
     /* Target pgid must be in the same session */
     if (pgid != target->pid) {
         /* Check if pgid exists and is in same session */

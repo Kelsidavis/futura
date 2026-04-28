@@ -298,9 +298,25 @@ long sys_pidfd_send_signal(int pidfd, int sig, const void *info, unsigned int fl
     if (target != task &&
         task->ruid != 0 &&
         !(task->cap_effective & (1ULL << 5 /* CAP_KILL */))) {
-        int ok = (task->ruid == target->uid)  ||
+        /* Linux's kill_ok_by_cred compares the caller's effective and
+         * real uids against the target's saved and REAL uids:
+         *
+         *   return uid_eq(cred->euid, tcred->suid) ||
+         *          uid_eq(cred->euid, tcred->uid)  ||  // tcred->uid == real
+         *          uid_eq(cred->uid,  tcred->suid) ||
+         *          uid_eq(cred->uid,  tcred->uid);
+         *
+         * The previous Futura check compared against target->uid
+         * (effective) where Linux compares against target->ruid (real).
+         * That made Futura more permissive than Linux: a setuid-down
+         * target (ruid=0, euid=1000, suid=0) could be killed by an
+         * unprivileged caller (ruid==1000) that matched the dropped
+         * effective uid, even though Linux requires the match against
+         * the saved or real uid.  Closes the same setuid-down kill
+         * vector that the matching kill / tgkill paths already gate. */
+        int ok = (task->ruid == target->ruid) ||
                  (task->ruid == target->suid) ||
-                 (task->uid  == target->uid)  ||
+                 (task->uid  == target->ruid) ||
                  (task->uid  == target->suid);
         if (!ok)
             return -EPERM;

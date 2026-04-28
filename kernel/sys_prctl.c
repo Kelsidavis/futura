@@ -525,12 +525,36 @@ long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
     case PR_CAP_AMBIENT: {
         /* Ambient capability management (Linux 4.3+).
          * arg2 = operation (IS_SET/RAISE/LOWER/CLEAR_ALL), arg3 = capability number.
+         *
+         * Linux's PR_CAP_AMBIENT enforces unused-args == 0 — kernel/sys.c:
+         *   if (arg2 == PR_CAP_AMBIENT_CLEAR_ALL) {
+         *       if (arg3 | arg4 | arg5) return -EINVAL;
+         *       cap_clear(current->cap_ambient);
+         *       return 0;
+         *   }
+         *   if (arg4 | arg5) return -EINVAL;
+         *
+         * IS_SET/RAISE/LOWER use arg3 as the capability number, so arg3
+         * is meaningful there; CLEAR_ALL has no per-cap argument so
+         * arg3 must also be zero.  arg4/arg5 are reserved for all four
+         * subcommands.  Without these gates a caller probing the prctl
+         * ABI by walking through unused-arg values silently succeeded
+         * on Futura where Linux returns EINVAL.
+         *
          * Linux rules:
          *   RAISE: cap must be in permitted AND inheritable; no_new_privs must be 0.
          *   LOWER: always allowed (unconditionally clears the bit).
          *   IS_SET: returns 1 or 0.
          *   CLEAR_ALL: always allowed. */
         int op = (int)arg2;
+        if (op == PR_CAP_AMBIENT_CLEAR_ALL) {
+            if (arg3 || arg4 || arg5)
+                return -EINVAL;
+            task->cap_ambient = 0;
+            return 0;
+        }
+        if (arg4 || arg5)
+            return -EINVAL;
         switch (op) {
         case PR_CAP_AMBIENT_IS_SET: {
             int cap = (int)arg3;
@@ -559,9 +583,6 @@ long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
             task->cap_ambient &= ~(1ULL << (unsigned)cap);
             return 0;
         }
-        case PR_CAP_AMBIENT_CLEAR_ALL:
-            task->cap_ambient = 0;
-            return 0;
         default:
             return -EINVAL;
         }

@@ -267,6 +267,23 @@ long sys_msgrcv(int msqid, void *msgp, size_t msgsz, long msgtyp, int msgflg) {
     if (!msgp)
         return -EFAULT;
 
+    /* Linux's do_msgrcv enforces MSG_COPY constraints up front:
+     *   if (msgflg & MSG_COPY) {
+     *     if ((msgflg & MSG_EXCEPT) || !(msgflg & IPC_NOWAIT))
+     *       return -EINVAL;
+     *     ...
+     *   }
+     * MSG_COPY (3.8+) means "copy the message at index msgtyp without
+     * dequeueing", which only makes sense as a non-blocking probe of a
+     * specific queue position.  The previous Futura code silently
+     * ignored MSG_COPY entirely, so callers passing MSG_COPY without
+     * IPC_NOWAIT got real-receive semantics (dequeueing the matching
+     * message) where Linux would have rejected the call. */
+    if (msgflg & MSG_COPY) {
+        if ((msgflg & MSG_EXCEPT) || !(msgflg & IPC_NOWAIT))
+            return -EINVAL;
+    }
+
     struct msg_queue *q = mqtable_find_by_id(msqid);
     if (!q)
         return -EINVAL;

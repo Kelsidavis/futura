@@ -146,10 +146,25 @@ long sys_pidfd_open(int pid, unsigned int flags) {
     if (flags & ~PIDFD_NONBLOCK)
         return -EINVAL;
 
-    /* Verify process exists */
+    /* Verify process exists.  Linux distinguishes two failure cases:
+     *   - pid does not exist at all                 -> ESRCH
+     *   - pid exists but is a non-leader thread TID -> EINVAL
+     *     (because pidfd_open without PIDFD_THREAD requires a
+     *     thread-group leader; pid_has_task(p, PIDTYPE_TGID)).
+     *
+     * The previous Futura code only consulted fut_task_by_pid (which
+     * finds TGIDs), so a caller passing a non-leader TID got ESRCH —
+     * indistinguishable from "process doesn't exist".  Linux returns
+     * EINVAL there so userspace can detect "you passed me a TID, you
+     * probably wanted PIDFD_THREAD or the process's TGID".  Walk the
+     * thread table to surface the EINVAL case. */
     fut_task_t *task = fut_task_by_pid((uint64_t)pid);
-    if (!task)
+    if (!task) {
+        extern fut_thread_t *fut_thread_find(uint64_t tid);
+        if (fut_thread_find((uint64_t)pid))
+            return -EINVAL;
         return -ESRCH;
+    }
 
     struct pidfd_ctx *ctx = fut_malloc(sizeof(struct pidfd_ctx));
     if (!ctx)

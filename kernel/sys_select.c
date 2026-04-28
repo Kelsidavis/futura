@@ -1258,21 +1258,25 @@ long sys_ppoll(void *fds, unsigned int nfds, void *tmo_p, const void *sigmask,
     void *local_tmo_p = tmo_p;
     const void *local_sigmask = sigmask;
 
+    /* Linux's do_sys_poll rejects 'nfds > rlimit(RLIMIT_NOFILE)' BEFORE
+     * any user-pointer inspection — same fix as the matching sys_poll
+     * reorder.  The previous Futura order ran the '!fds && nfds > 0
+     * -> EFAULT' gate ahead of the nfds-bound test, so ppoll(NULL,
+     * huge_nfds, _, _, _) returned EFAULT instead of the EINVAL libc
+     * probes use to detect 'shrink your pollfd array'. */
+    if (local_nfds > 1024) {
+        fut_printf("[PPOLL] ppoll(fds=%p, nfds=%u) -> EINVAL "
+                   "(nfds exceeds limit of 1024)\n",
+                   local_fds, local_nfds);
+        return -EINVAL;
+    }
+
     /* NULL fds with non-zero nfds is a pointer fault (EFAULT) per Linux
      * ppoll(2) — matches the sister sys_poll() check above. */
     if (!local_fds && local_nfds > 0) {
         fut_printf("[PPOLL] ppoll(fds=NULL, nfds=%u) -> EFAULT\n",
                    local_nfds);
         return -EFAULT;
-    }
-
-    /* Validate nfds against reasonable limit to prevent DoS
-     * Match sys_poll's limit of 1024 for consistency */
-    if (local_nfds > 1024) {
-        fut_printf("[PPOLL] ppoll(fds=%p, nfds=%u) -> EINVAL "
-                   "(nfds exceeds limit of 1024)\n",
-                   local_fds, local_nfds);
-        return -EINVAL;
     }
 
     /*

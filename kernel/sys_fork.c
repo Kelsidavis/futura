@@ -903,14 +903,26 @@ long sys_fork(void) {
     if (parent_task->uid != 0 &&
         !(parent_task->cap_effective & (1ULL << 24 /* CAP_SYS_RESOURCE */))) {
         uint64_t rlim_nproc = parent_task->rlimits[RLIMIT_NPROC].rlim_cur;
-        int current_count = fut_task_count_by_uid(parent_task->uid);
 
-        /* Check if user has reached their process limit */
-        if (current_count >= (int)rlim_nproc) {
-            FORK_LOG("[FORK] fork(parent_pid=%u, uid=%u) -> EAGAIN "
-                       "(RLIMIT_NPROC limit reached: %d >= %llu)\n",
-                       parent_task->pid, parent_task->uid, current_count, rlim_nproc);
-            return -EAGAIN;
+        /* RLIM_INFINITY ((uint64_t)-1) means 'no limit' — Linux's
+         * rlimit() macro treats it as 'never trip the gate'.  The
+         * previous code cast rlim_nproc straight to int which turns
+         * UINT64_MAX into -1, then 'current_count >= -1' was always
+         * true and EVERY fork by an unprivileged caller failed with
+         * EAGAIN.  Skip the check when rlim_cur == RLIM_INFINITY
+         * (and similarly when rlim_cur is wider than INT_MAX, where
+         * the cast would also wrap). */
+        if (rlim_nproc != (uint64_t)-1 /* RLIM_INFINITY */ &&
+            rlim_nproc <= (uint64_t)INT32_MAX) {
+            int current_count = fut_task_count_by_uid(parent_task->uid);
+
+            /* Check if user has reached their process limit */
+            if (current_count >= (int)rlim_nproc) {
+                FORK_LOG("[FORK] fork(parent_pid=%u, uid=%u) -> EAGAIN "
+                           "(RLIMIT_NPROC limit reached: %d >= %llu)\n",
+                           parent_task->pid, parent_task->uid, current_count, rlim_nproc);
+                return -EAGAIN;
+            }
         }
     }
 

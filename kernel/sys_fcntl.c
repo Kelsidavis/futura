@@ -371,6 +371,30 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
         return -EBADF;
     }
 
+    /* O_PATH fds support only the descriptor-management subset of
+     * fcntl: Linux's check_fcntl_cmd whitelists F_DUPFD / F_DUPFD_CLOEXEC
+     * / F_GETFD / F_SETFD / F_GETFL and rejects everything else with
+     * -EBADF (file->f_op is empty_fops on path-only descriptors so
+     * any locking, ownership, or pipe-size command can't run).
+     * Futura's fcntl had no O_PATH gate, so a path-only fd could be
+     * passed to F_SETLK / F_SETOWN / F_SETPIPE_SZ etc. and reach the
+     * dispatch arms that expect a real file. */
+    if (file->flags & O_PATH) {
+        switch (local_cmd) {
+            case F_DUPFD:
+            case F_DUPFD_CLOEXEC:
+            case F_GETFD:
+            case F_SETFD:
+            case F_GETFL:
+                break;
+            default:
+                fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%d, O_PATH) -> EBADF "
+                           "(O_PATH fd permits only F_DUPFD/F_GETFD/F_SETFD/F_GETFL)\n",
+                           local_fd, fd_category, local_cmd);
+                return -EBADF;
+        }
+    }
+
     /* Phase 2: Categorize command */
     const char *cmd_name;
     const char *cmd_category;

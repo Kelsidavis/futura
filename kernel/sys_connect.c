@@ -404,7 +404,20 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
 
         extern fut_socket_t *get_socket_from_fd(int fd);
         fut_socket_t *inet_sock = get_socket_from_fd(local_sockfd);
-        if (!inet_sock) return -EBADF;
+        if (!inet_sock) {
+            /* Distinguish EBADF (fd not allocated) from ENOTSOCK (fd is
+             * valid but not a socket) — same split Linux uses via
+             * sockfd_lookup_light.  The previous unconditional EBADF
+             * masked 'wrong fd type' as 'bad descriptor' on the
+             * AF_INET path, breaking libc connect() probes that
+             * branch on ENOTSOCK. Same shape as the existing AF_UNIX
+             * gate above and the matching bind / accept / listen /
+             * shutdown / setsockopt / getsockname fixes. */
+            if (local_sockfd < task->max_fds && task->fd_table &&
+                task->fd_table[local_sockfd])
+                return -ENOTSOCK;
+            return -EBADF;
+        }
 
         int ret = fut_socket_connect_inet(inet_sock, sin.sin_addr, sin.sin_port);
         connect_printf("[CONNECT] connect(sockfd=%d, family=AF_INET, port=%u) -> %d\n",
@@ -421,7 +434,13 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
 
         extern fut_socket_t *get_socket_from_fd(int fd);
         fut_socket_t *inet6_sock = get_socket_from_fd(local_sockfd);
-        if (!inet6_sock) return -EBADF;
+        if (!inet6_sock) {
+            /* Same EBADF / ENOTSOCK split as the AF_INET path above. */
+            if (local_sockfd < task->max_fds && task->fd_table &&
+                task->fd_table[local_sockfd])
+                return -ENOTSOCK;
+            return -EBADF;
+        }
 
         /* Check for ::1 (loopback) */
         int is_loopback = 1;

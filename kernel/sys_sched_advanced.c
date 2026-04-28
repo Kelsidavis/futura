@@ -136,11 +136,14 @@ long sys_sched_setparam(int pid, const struct sched_param *param) {
 
     /* Cross-task permission: only the target's owner, root, or
      * CAP_SYS_NICE may modify another task's RT scheduling parameters.
-     * Without this gate any user could elevate their RT priority
-     * indirectly by setparam'ing on someone else's task — or DoS
-     * another user by changing their priority. */
+     * Linux's check_same_owner accepts the caller when its effective
+     * uid matches EITHER the target's effective uid OR real uid;
+     * compare against both so a setuid wrapper that has dropped its
+     * effective uid back to its real uid can still sched_setparam
+     * its own tasks.  Same fix pattern as the recent
+     * sched_setaffinity / setpriority / sched_setattr updates. */
     if (target_task != task && task->uid != 0 && !HAS_CAP_SYS_NICE(task) &&
-        task->uid != target_task->uid) {
+        task->uid != target_task->uid && task->uid != target_task->ruid) {
         return -EPERM;
     }
 
@@ -334,11 +337,11 @@ long sys_sched_setscheduler(int pid, int policy, const struct sched_param *param
     }
 
     /* Cross-task permission: only target's owner, root, or CAP_SYS_NICE
-     * may flip another task's scheduling policy. Without this any
-     * unprivileged process could SCHED_IDLE a peer (DoS) or, with a
-     * raised RLIMIT_RTPRIO, push someone else into SCHED_FIFO. */
+     * may flip another task's scheduling policy.  Linux's
+     * check_same_owner accepts caller-euid == target-euid OR
+     * target-real-uid; same real-uid fallback as sched_setparam above. */
     if (target_task != task && task->uid != 0 && !HAS_CAP_SYS_NICE(task) &&
-        task->uid != target_task->uid) {
+        task->uid != target_task->uid && task->uid != target_task->ruid) {
         return -EPERM;
     }
 

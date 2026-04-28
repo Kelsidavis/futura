@@ -301,47 +301,73 @@ long uffd_ioctl(int fd, unsigned int cmd, unsigned long arg) {
 
     case UFFDIO_REGISTER: {
         if (!ctx->api_handshake_done) return -EINVAL;
-        struct uffdio_register *reg = (struct uffdio_register *)(uintptr_t)arg;
-        if (!reg) return -EFAULT;
-        if (reg->range.start & 0xFFF) return -EINVAL; /* Must be page-aligned */
-        if (reg->range.len == 0 || (reg->range.len & 0xFFF)) return -EINVAL;
+        if (!arg) return -EFAULT;
+        /* Stage the request through copy_from_user — see UFFDIO_API for
+         * the same uaccess hazard pattern.  The previous code dereferenced
+         * the raw user pointer for read AND write, exposing a kernel
+         * write-anywhere primitive via the ioctls output field. */
+        struct uffdio_register kreg;
+#ifdef KERNEL_VIRTUAL_BASE
+        if (arg >= KERNEL_VIRTUAL_BASE) {
+            __builtin_memcpy(&kreg, (const void *)(uintptr_t)arg, sizeof(kreg));
+        } else
+#endif
+        if (fut_copy_from_user(&kreg, (const void *)(uintptr_t)arg,
+                               sizeof(kreg)) != 0)
+            return -EFAULT;
+        if (kreg.range.start & 0xFFF) return -EINVAL; /* Must be page-aligned */
+        if (kreg.range.len == 0 || (kreg.range.len & 0xFFF)) return -EINVAL;
         /* Linux userfaultfd_register validates mode against the known
-         * MISSING/WP/MINOR bits and returns -EINVAL on any unknown bit.
-         * Without this check a caller could stash a 64-bit cookie in the
-         * upper bits of mode, then read it back via /proc fd inspection
-         * or future kernel features that interpret those bits. Mode==0
-         * (no event flavor selected) is equally invalid. */
-        if (reg->mode & ~(UFFDIO_REGISTER_MODE_MISSING |
+         * MISSING/WP/MINOR bits and returns -EINVAL on any unknown bit. */
+        if (kreg.mode & ~(UFFDIO_REGISTER_MODE_MISSING |
                           UFFDIO_REGISTER_MODE_WP |
                           UFFDIO_REGISTER_MODE_MINOR))
             return -EINVAL;
-        if (reg->mode == 0) return -EINVAL;
+        if (kreg.mode == 0) return -EINVAL;
 
         /* Find free region slot */
         if (ctx->nr_regions >= MAX_UFFD_REGIONS) return -ENOMEM;
         for (int i = 0; i < MAX_UFFD_REGIONS; i++) {
             if (ctx->regions[i].active) continue;
             ctx->regions[i].active = true;
-            ctx->regions[i].start = reg->range.start;
-            ctx->regions[i].len = reg->range.len;
-            ctx->regions[i].mode = reg->mode;
+            ctx->regions[i].start = kreg.range.start;
+            ctx->regions[i].len = kreg.range.len;
+            ctx->regions[i].mode = kreg.mode;
             ctx->nr_regions++;
 
-            /* Report available per-region ioctls */
-            reg->ioctls = (1ULL << 3) | (1ULL << 4) | (1ULL << 6);
+            /* Report available per-region ioctls.  Commit through
+             * copy_to_user — never write the response field directly. */
+            kreg.ioctls = (1ULL << 3) | (1ULL << 4) | (1ULL << 6);
+#ifdef KERNEL_VIRTUAL_BASE
+            if (arg >= KERNEL_VIRTUAL_BASE) {
+                __builtin_memcpy((void *)(uintptr_t)arg, &kreg, sizeof(kreg));
+            } else
+#endif
+            if (fut_copy_to_user((void *)(uintptr_t)arg, &kreg,
+                                 sizeof(kreg)) != 0)
+                return -EFAULT;
             return 0;
         }
         return -ENOMEM;
     }
 
     case UFFDIO_UNREGISTER: {
-        struct uffdio_range *range = (struct uffdio_range *)(uintptr_t)arg;
-        if (!range) return -EFAULT;
+        if (!arg) return -EFAULT;
+        /* Stage the request through copy_from_user — same hazard. */
+        struct uffdio_range krange;
+#ifdef KERNEL_VIRTUAL_BASE
+        if (arg >= KERNEL_VIRTUAL_BASE) {
+            __builtin_memcpy(&krange, (const void *)(uintptr_t)arg, sizeof(krange));
+        } else
+#endif
+        if (fut_copy_from_user(&krange, (const void *)(uintptr_t)arg,
+                               sizeof(krange)) != 0)
+            return -EFAULT;
 
         for (int i = 0; i < MAX_UFFD_REGIONS; i++) {
             if (!ctx->regions[i].active) continue;
-            if (ctx->regions[i].start == range->start &&
-                ctx->regions[i].len == range->len) {
+            if (ctx->regions[i].start == krange.start &&
+                ctx->regions[i].len == krange.len) {
                 ctx->regions[i].active = false;
                 ctx->nr_regions--;
                 return 0;

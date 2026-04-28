@@ -295,6 +295,28 @@ long sys_clone3(const struct fut_clone_args *uargs, size_t size) {
         return -EINVAL;
     }
 
+    /* Linux's clone3_stack_valid enforces stack <-> stack_size pairing:
+     *   if (kargs->stack == 0 && kargs->stack_size > 0) return false;
+     *   if (kargs->stack != 0 && kargs->stack_size == 0) return false;
+     * Both fields must either be zero (caller didn't request a custom
+     * stack) or both non-zero (caller passes base + size).  A mismatch
+     * means the caller has a half-formed stack request that the kernel
+     * cannot translate into a usable child stack.  Without this gate
+     * Futura would accept the misconfigured pair and fall into either
+     * the 'stack_size > 0' overflow-add path with stack=0 (computing
+     * stack_top = stack_size, which lands the new thread at a low-half
+     * address that may not be mapped) or the 'stack_size == 0' path
+     * with a real stack pointer (treating the base as a pre-computed
+     * top, masking the caller's misuse). */
+    if ((args.stack == 0 && args.stack_size > 0) ||
+        (args.stack != 0 && args.stack_size == 0)) {
+        fut_printf("[CLONE3] clone3(stack=0x%llx, stack_size=%llu) -> EINVAL "
+                   "(stack and stack_size must both be zero or both non-zero)\n",
+                   (unsigned long long)args.stack,
+                   (unsigned long long)args.stack_size);
+        return -EINVAL;
+    }
+
     /* Linux's copy_clone_args_from_user enforces set_tid <-> set_tid_size
      * pairing (kernel/fork.c:copy_clone_args_from_user):
      *   if (kargs->set_tid && kargs->set_tid_size > MAX_PID_NS_LEVEL)

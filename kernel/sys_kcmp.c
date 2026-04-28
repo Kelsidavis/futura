@@ -60,17 +60,33 @@ long sys_kcmp(int pid1, int pid2, int type,
         return -ESRCH;
 
     /* PTRACE_MODE_READ_REALCREDS on both targets, matching Linux.
-     * Without this gate any unprivileged caller could probe whether
+     * REALCREDS uses the caller's REAL uid (cred->uid), and the
+     * target check requires that real uid to match ALL THREE of the
+     * target's uids (real, effective, saved):
+     *
+     *   caller_uid = cred->uid;                  // REALCREDS
+     *   if (uid_eq(caller_uid, tcred->euid) &&
+     *       uid_eq(caller_uid, tcred->suid) &&
+     *       uid_eq(caller_uid, tcred->uid))
+     *       goto ok;
+     *
+     * The previous gate compared effective-vs-effective only, so a
+     * dropped-setuid target (suid==0) was probable by an unprivileged
+     * peer — same recon vector the matching ptrace / process_vm fixes
+     * just closed.  Without this gate any caller could probe whether
      * two arbitrary processes share fd tables, file objects, or
-     * VM/IO/sighand objects — useful sandbox-escape recon (e.g.
-     * detecting that a privileged daemon shares a file with the
-     * caller's helper). */
+     * VM/IO/sighand objects — useful sandbox-escape recon. */
     fut_task_t *self = fut_task_current();
     if (self) {
-        bool privileged = (self->uid == 0) ||
+        bool privileged = (self->ruid == 0) ||
             (self->cap_effective & (1ULL << 19 /* CAP_SYS_PTRACE */));
         if (!privileged) {
-            if (self->uid != task1->uid || self->uid != task2->uid)
+            if (self->ruid != task1->uid  ||
+                self->ruid != task1->ruid ||
+                self->ruid != task1->suid ||
+                self->ruid != task2->uid  ||
+                self->ruid != task2->ruid ||
+                self->ruid != task2->suid)
                 return -EPERM;
         }
     }

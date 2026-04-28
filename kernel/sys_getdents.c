@@ -314,9 +314,22 @@ long sys_iopl(unsigned int level) {
 
 /**
  * sys_ioperm() - Set I/O port permissions.
- * Returns -EPERM: I/O port access policy not implemented.
+ * Linux's ioperm validates the [from, from+num) range against
+ * IO_BITMAP_BITS (65536) before checking CAP_SYS_RAWIO:
+ *   if ((from + num <= from) || (from + num > IO_BITMAP_BITS))
+ *       return -EINVAL;
+ *   if (turn_on && !capable(CAP_SYS_RAWIO))
+ *       return -EPERM;
+ * The previous Futura code blanket-returned -EPERM, masking the
+ * range error class — userspace ioperm wrappers couldn't tell
+ * 'bad parameters' (EINVAL) from 'insufficient privilege' (EPERM).
+ * Same EINVAL-before-EPERM ordering as the matching sys_iopl fix.
  */
 long sys_ioperm(unsigned long from, unsigned long num, int turn_on) {
-    (void)from; (void)num; (void)turn_on;
+    (void)turn_on;
+    if (from + num <= from)
+        return -EINVAL;
+    if (from + num > 65536 /* IO_BITMAP_BITS */)
+        return -EINVAL;
     return -EPERM;
 }

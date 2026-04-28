@@ -35,6 +35,15 @@ static inline int mount_copy_from_user(void *dst, const void *src, size_t n) {
     return fut_copy_from_user(dst, src, n);
 }
 
+/* Kernel-pointer bypass helper for copy_to_user */
+static inline int mount_copy_to_user(void *dst, const void *src, size_t n) {
+#ifdef KERNEL_VIRTUAL_BASE
+    if ((uintptr_t)dst >= KERNEL_VIRTUAL_BASE) { __builtin_memcpy(dst, src, n); return 0; }
+#endif
+    extern int fut_copy_to_user(void *dst, const void *src, size_t n);
+    return fut_copy_to_user(dst, src, n);
+}
+
 #define CAP_SYS_ADMIN  21
 
 /* Mount flags */
@@ -1676,12 +1685,28 @@ long sys_listmount(const void *req, uint64_t *mnt_ids, size_t nr_mnt_ids,
     (void)req; (void)flags;
     if (!mnt_ids || nr_mnt_ids == 0) return -EINVAL;
 
+    /* Stage results in a kernel buffer and emit via copy_to_user.  The
+     * previous code wrote 'mnt_ids[count] = m->st_dev' directly, so a
+     * caller passing a bad user pointer faulted the kernel and a
+     * caller passing a kernel address turned the syscall into a write-
+     * anywhere primitive (mount IDs are caller-controlled but the
+     * destination of those writes wasn't gated). Cap the staging
+     * buffer to the listmount-typical 256 entries; larger requests
+     * are processed in a single in-kernel pass and copied out at
+     * once. */
+    enum { LISTMOUNT_BATCH = 256 };
+    uint64_t kbuf[LISTMOUNT_BATCH];
     struct fut_mount *m = fut_vfs_first_mount();
     size_t count = 0;
-    while (m && count < nr_mnt_ids) {
-        mnt_ids[count] = m->st_dev;
+    size_t cap = nr_mnt_ids < LISTMOUNT_BATCH ? nr_mnt_ids : LISTMOUNT_BATCH;
+    while (m && count < cap) {
+        kbuf[count] = m->st_dev;
         count++;
         m = m->next;
+    }
+    if (count > 0) {
+        if (mount_copy_to_user(mnt_ids, kbuf, count * sizeof(uint64_t)) != 0)
+            return -EFAULT;
     }
     return (long)count;
 }

@@ -231,12 +231,24 @@ long sys_prlimit64(int pid, int resource,
         }
 
         if (knl_new.rlim_max != RLIM64_INFINITY && knl_new.rlim_max > system_max) {
-            fut_printf("[PRLIMIT] prlimit64(pid=%d, resource=%s) -> EINVAL "
+            /* Linux's do_prlimit gates RLIMIT_NOFILE > sysctl_nr_open with
+             * -EPERM, not -EINVAL: 'if (resource == RLIMIT_NOFILE &&
+             * new_rlim->rlim_max > sysctl_nr_open) return -EPERM;'
+             * (kernel/sys.c).  The errno class matters for libc setrlimit
+             * wrappers that branch on EPERM ('try with CAP_SYS_RESOURCE')
+             * vs EINVAL ('parameter domain error, do not retry').  Other
+             * resources (NICE/RTPRIO/MEMLOCK/NPROC) keep the EINVAL class
+             * since Linux has no equivalent system_max gate for them at
+             * setrlimit-time and Futura's defensive ceiling is a Futura-
+             * local addition. */
+            long err = (local_resource == RLIMIT_NOFILE) ? -EPERM : -EINVAL;
+            fut_printf("[PRLIMIT] prlimit64(pid=%d, resource=%s) -> %s "
                        "(max=%llu exceeds system maximum %llu)\n",
                        local_pid, resource_name,
+                       err == -EPERM ? "EPERM" : "EINVAL",
                        (unsigned long long)knl_new.rlim_max,
                        (unsigned long long)system_max);
-            return -EINVAL;
+            return err;
         }
 
         /* Capability check: raising hard limit requires CAP_SYS_RESOURCE or root */

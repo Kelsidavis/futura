@@ -264,9 +264,6 @@ long sys_msgsnd(int msqid, const void *msgp, size_t msgsz, int msgflg) {
  * @return number of bytes in message body on success, -errno on error
  */
 long sys_msgrcv(int msqid, void *msgp, size_t msgsz, long msgtyp, int msgflg) {
-    if (!msgp)
-        return -EFAULT;
-
     /* Linux's do_msgrcv enforces MSG_COPY constraints up front:
      *   if (msgflg & MSG_COPY) {
      *     if ((msgflg & MSG_EXCEPT) || !(msgflg & IPC_NOWAIT))
@@ -284,9 +281,19 @@ long sys_msgrcv(int msqid, void *msgp, size_t msgsz, long msgtyp, int msgflg) {
             return -EINVAL;
     }
 
+    /* Linux's do_msgrcv validates msqid (sem_obtain_object_check)
+     * before any user-pointer access; the NULL msgp pointer surfaces
+     * later through copy_to_user as -EFAULT.  The previous Futura
+     * order rejected NULL msgp first, inverting the errno class for
+     * callers that probe with NULL buf to detect 'is this msqid
+     * valid?'.  Same EINVAL-before-EFAULT reorder pattern as the
+     * matching semop / sched_getaffinity / clock_gettime fixes. */
     struct msg_queue *q = mqtable_find_by_id(msqid);
     if (!q)
         return -EINVAL;
+
+    if (!msgp)
+        return -EFAULT;
 
     /* Find matching message */
     struct msg_item *prev = NULL;

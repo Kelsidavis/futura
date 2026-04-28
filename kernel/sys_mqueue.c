@@ -366,6 +366,18 @@ long sys_mq_open(const char *name, int oflag, unsigned int mode,
         mq_put(mq); /* drop the fd-side reference taken above */
         return fd;
     }
+
+    /* Linux's mq_open(2) ALWAYS returns the descriptor with FD_CLOEXEC
+     * set ('get_unused_fd_flags(O_CLOEXEC)' in ipc/mqueue.c regardless
+     * of whether the caller passed O_CLOEXEC).  Without this any exec
+     * across an mq fd silently leaks the queue handle into the new
+     * program — the documented behavior of every Linux mq_open since
+     * its introduction. */
+    {
+        fut_task_t *cur_task = fut_task_current();
+        if (cur_task && cur_task->fd_flags && fd < (int)cur_task->max_fds)
+            cur_task->fd_flags[fd] |= 1 /* FD_CLOEXEC */;
+    }
     return fd;
 }
 

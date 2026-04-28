@@ -311,6 +311,18 @@ long sys_fanotify_init(unsigned int flags, unsigned int event_f_flags) {
     if (fd < 0) { grp->active = false; return fd; }
     grp->group_fd = fd;
 
+    /* Apply FAN_NONBLOCK to the fanotify group fd.  Linux's
+     * fanotify_init folds FAN_NONBLOCK into the f_flags that
+     * anon_inode_getfd installs, so subsequent read()/poll() observe
+     * non-blocking semantics.  Futura's previous code validated the
+     * flag bit and stored it on the group struct via init_flags but
+     * never propagated it to the fut_file, so blocking reads still
+     * blocked even when the caller requested FAN_NONBLOCK — same
+     * class as the matching userfaultfd O_NONBLOCK fix. */
+    if ((flags & FAN_NONBLOCK) && task && task->fd_table &&
+        fd < task->max_fds && task->fd_table[fd])
+        task->fd_table[fd]->flags |= 0x800 /* O_NONBLOCK */;
+
     /* Apply FAN_CLOEXEC. Guard against tasks that haven't allocated
      * fd_flags (early init / kernel threads); pipe2, socketpair, dup3,
      * pidfd_open, and perf_event_open all check fd_flags non-NULL — the

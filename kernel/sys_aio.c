@@ -402,8 +402,18 @@ long sys_io_submit(unsigned long ctx_id, long nr, void **iocbpp) {
  */
 long sys_io_getevents(unsigned long ctx_id, long min_nr, long nr,
                       void *events, const void *timeout) {
-    if (min_nr < 0 || nr < 0 || min_nr > nr || !events)
+    /* Linux's io_getevents accepts nr == 0 as a no-op short-circuit
+     * — it returns 0 without ever touching the events pointer.  The
+     * previous combined gate ('!events' alongside the EINVAL checks)
+     * conflated NULL-with-nr=0 (legitimate no-op) into the EINVAL
+     * class, breaking libc/aio probes that pass NULL+0 to detect
+     * the syscall.  Validate the parameter-domain conditions first;
+     * defer the events pointer check to the loop where it actually
+     * matters (and where copy_to_user surfaces NULL as EFAULT). */
+    if (min_nr < 0 || nr < 0 || min_nr > nr)
         return -EINVAL;
+    if (nr > 0 && !events)
+        return -EFAULT;
 
     long err = 0;
     struct aio_context *ctx = aio_ctx_for_caller(ctx_id, &err);

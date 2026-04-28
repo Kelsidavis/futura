@@ -988,8 +988,27 @@ long sys_keyctl(int operation, unsigned long arg2, unsigned long arg3,
     }
 
     case KEYCTL_GET_PERSISTENT: {
-        /* arg2 = uid, arg3 = dest keyring */
-        (void)arg2;
+        /* arg2 = uid, arg3 = dest keyring.
+         *
+         * Linux's security/keys/persistent.c:keyctl_get_persistent gates
+         * cross-uid lookups behind CAP_SETUID:
+         *   if (_uid != (uid_t)-1 && _uid != current_uid()) {
+         *       if (!ns_capable(current_user_ns(), CAP_SETUID))
+         *           return -EPERM;
+         *   }
+         * (uid_t)-1 means 'caller's own uid'. The previous Futura code
+         * silently ignored arg2 entirely, so any unprivileged caller
+         * could probe / obtain a handle to another user's persistent
+         * keyring just by passing their uid — defeating the
+         * persistent-keyring-per-uid isolation model. Match Linux. */
+        uint32_t requested_uid = (uint32_t)arg2;
+        fut_task_t *cur = fut_task_current();
+        if (requested_uid != (uint32_t)-1 &&
+            cur && requested_uid != cur->uid) {
+            if (cur->uid != 0 &&
+                !(cur->cap_effective & (1ULL << 7 /* CAP_SETUID */)))
+                return -EPERM;
+        }
         int32_t dest = resolve_keyring((int)(long)arg3);
         if (dest < 0) return dest;
         return dest;

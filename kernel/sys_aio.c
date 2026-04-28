@@ -254,22 +254,29 @@ long sys_io_destroy(unsigned long ctx_id) {
  * Returns: number of iocbs submitted, or negative error
  */
 long sys_io_submit(unsigned long ctx_id, long nr, void **iocbpp) {
-    /* Linux io_submit ordering: nr < 0 → EINVAL; nr == 0 → returns 0
-     * before any pointer dereference; iocbpp NULL surfaces through
-     * copy_from_user as -EFAULT. The previous combined gate
-     * (nr<0 || !iocbpp → EINVAL) collapsed pointer faults into
-     * parameter-domain errors. Test 716 uses nr=0 so the short-circuit
-     * preserves its 'EINVAL or 0' contract. */
+    /* Linux's fs/aio.c:SYSCALL_DEFINE3(io_submit) order:
+     *   if (unlikely(nr < 0)) return -EINVAL;
+     *   ctx = lookup_ioctx(ctx_id);
+     *   if (unlikely(!ctx)) return -EINVAL;
+     *   ... loop runs nr times (zero iterations on nr==0) ...
+     * That is — even nr==0 calls validate ctx_id, so a bogus context
+     * paired with nr==0 returns -EINVAL on Linux.  The previous Futura
+     * code short-circuited on nr==0 before the ctx lookup, so a caller
+     * probing 'is this ctx valid?' via io_submit(ctx, 0, NULL) saw
+     * success on Futura where Linux returns EINVAL.  Match Linux: do
+     * the ctx lookup before the nr==0 fast path.  Test 716 accepts
+     * both 0 and -EINVAL so it stays green either way. */
     if (nr < 0)
         return -EINVAL;
-    if (nr == 0)
-        return 0;
-    if (!iocbpp)
-        return -EFAULT;
 
     long err = 0;
     struct aio_context *ctx = aio_ctx_for_caller(ctx_id, &err);
     if (!ctx) return err;
+
+    if (nr == 0)
+        return 0;
+    if (!iocbpp)
+        return -EFAULT;
 
     /* Stage iocbpp[i] and *iocb through copy_from_user instead of
      * dereferencing the user pointer arrays directly. The previous

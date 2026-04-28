@@ -177,6 +177,20 @@ long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
     if (!out_is_pipe && (file_out->flags & O_ACCMODE) == O_RDONLY)
         return -EBADF;
 
+    /* Linux's fs/splice.c:do_splice rejects directory-source splice
+     * with -EISDIR (S_ISDIR check inside splice_direct_to_actor /
+     * generic_file_splice_read).  The previous Futura code would
+     * fall through to the chunked read loop, where vnode reads on
+     * a directory typically return EISDIR but with no guarantee —
+     * an in-memory ramfs directory could return a different errno.
+     * Surface EISDIR explicitly so libc splice() probes branch
+     * correctly.  Same EISDIR/EINVAL split as the matching
+     * sendfile / copy_file_range fixes. */
+    if (!in_is_pipe && file_in->vnode && file_in->vnode->type == VN_DIR)
+        return -EISDIR;
+    if (!out_is_pipe && file_out->vnode && file_out->vnode->type == VN_DIR)
+        return -EISDIR;
+
     /* ESPIPE: offset not allowed for pipes (must precede EFAULT on
      * offset pointer to match Linux's fs/splice.c gate order). */
     if (local_off_in  && in_is_pipe)  return -ESPIPE;

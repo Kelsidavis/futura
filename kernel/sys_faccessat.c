@@ -175,12 +175,17 @@ long sys_faccessat(int dirfd, const char *pathname, int mode, int flags) {
         return -ENAMETOOLONG;
     }
 
-    /* AT_EMPTY_PATH: empty pathname means operate on dirfd itself */
+    /* AT_EMPTY_PATH: empty pathname means operate on dirfd itself.
+     * Without AT_EMPTY_PATH, Linux's getname() returns -ENOENT for an
+     * empty pathname (matching open(2), unlinkat(2), etc.).  The
+     * previous Futura code returned -EINVAL, breaking the libc *at()
+     * helper convention that branches on ENOENT to distinguish 'path
+     * not found' from 'bad call shape'. */
     if (path_buf[0] == '\0') {
         if (!(local_flags & AT_EMPTY_PATH)) {
-            fut_printf("[FACCESSAT] faccessat(dirfd=%d, pathname=\"\" [empty]) -> EINVAL (empty pathname)\n",
+            fut_printf("[FACCESSAT] faccessat(dirfd=%d, pathname=\"\" [empty]) -> ENOENT\n",
                        local_dirfd);
-            return -EINVAL;
+            return -ENOENT;
         }
 
         /* Get the vnode for dirfd (or cwd when dirfd == AT_FDCWD) */

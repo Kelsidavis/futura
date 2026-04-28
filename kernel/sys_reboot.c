@@ -23,8 +23,12 @@
 /* Linux reboot commands */
 #define LINUX_REBOOT_CMD_RESTART    0x01234567
 #define LINUX_REBOOT_CMD_HALT       0xCDEF0123
+#define LINUX_REBOOT_CMD_CAD_ON     0x89ABCDEF
+#define LINUX_REBOOT_CMD_CAD_OFF    0x00000000
 #define LINUX_REBOOT_CMD_POWER_OFF  0x4321FEDC
 #define LINUX_REBOOT_CMD_RESTART2   0xA1B2C3D4
+#define LINUX_REBOOT_CMD_SW_SUSPEND 0xD000FCE2
+#define LINUX_REBOOT_CMD_KEXEC      0x45584543
 
 /* CAP_SYS_BOOT = 22 */
 #define CAP_SYS_BOOT 22
@@ -136,6 +140,29 @@ long sys_reboot(unsigned int magic1, unsigned int magic2,
                 __asm__ volatile("wfi");
 #endif
             }
+
+        case LINUX_REBOOT_CMD_CAD_ON:
+        case LINUX_REBOOT_CMD_CAD_OFF:
+            /* Linux's sys_reboot accepts these to enable/disable
+             * Ctrl-Alt-Del-as-reboot:
+             *   case LINUX_REBOOT_CMD_CAD_ON:  C_A_D = 1; break;
+             *   case LINUX_REBOOT_CMD_CAD_OFF: C_A_D = 0; break;
+             * The previous Futura code returned EINVAL for these,
+             * so init systems / sysctl wrappers that toggle the
+             * Ctrl-Alt-Del policy at boot got a fatal error where
+             * Linux just stores the bit.  Futura has no kbd-driven
+             * reboot path, so accepting the call as a no-op preserves
+             * the documented ABI without any behavioural change. */
+            return 0;
+
+        case LINUX_REBOOT_CMD_SW_SUSPEND:
+        case LINUX_REBOOT_CMD_KEXEC:
+            /* Linux returns ENOSYS when the corresponding feature
+             * (CONFIG_HIBERNATION / CONFIG_KEXEC) isn't built.
+             * Futura supports neither suspend/resume nor kexec, so
+             * report ENOSYS rather than EINVAL — userspace probes
+             * use the distinction to choose a fallback path. */
+            return -ENOSYS;
 
         default:
             return -EINVAL;

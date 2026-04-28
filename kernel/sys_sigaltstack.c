@@ -148,17 +148,22 @@ long sys_sigaltstack(const struct sigaltstack *ss, struct sigaltstack *old_ss) {
     if (ss) {
         struct sigaltstack new_stack;
 
+        /* Linux's do_sigaltstack checks 'are we currently on the altstack?'
+         * BEFORE copy_from_user(uss).  The previous Futura order copied
+         * the user struct first, so sigaltstack(bad_ptr, _) while on the
+         * alt stack returned EFAULT instead of the documented EPERM —
+         * the EFAULT class let a handler probe the user pointer state
+         * via the call, which Linux's order intentionally hides. */
+        if (current->sig_altstack.ss_flags & SS_ONSTACK) {
+            fut_printf("[SIGALTSTACK] sigaltstack(ss=%p) -> EPERM (currently executing on alt stack)\n",
+                      ss);
+            return -EPERM;
+        }
+
         /* Copy new stack from userspace */
         if (sigaltstack_copy_from_user(&new_stack, ss, sizeof(struct sigaltstack)) != 0) {
             fut_printf("[SIGALTSTACK] sigaltstack(ss=%p) -> EFAULT (invalid ss pointer)\n", ss);
             return -EFAULT;
-        }
-
-        /* POSIX: Cannot change alternate stack while currently executing on it */
-        if (current->sig_altstack.ss_flags & SS_ONSTACK) {
-            fut_printf("[SIGALTSTACK] sigaltstack(ss=%p) -> EPERM (currently executing on alt stack)\n",
-                      new_stack.ss_sp);
-            return -EPERM;
         }
 
         /* Validate flags — SS_AUTODISARM (Linux 4.7+) auto-disarms altstack on delivery.

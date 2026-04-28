@@ -452,6 +452,35 @@ long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
         return -EINVAL;
     }
 
+    /* Linux's vfs_fallocate enforces RLIMIT_FSIZE for any mode that
+     * could extend the file beyond the soft limit:
+     *   if (offset + len > inode->i_sb->s_maxbytes) return -EFBIG;
+     *   ... and the rlim_cur check inside the per-fs handler ...
+     * Modes that shrink (COLLAPSE_RANGE) or stay within current size
+     * (PUNCH_HOLE, ZERO_RANGE without extension) don't need the gate;
+     * the extending modes (default-mode allocate, INSERT_RANGE, and
+     * KEEP_SIZE allocations that still grow the file's allocated
+     * space) do.  The previous Futura code skipped this gate, so
+     * fallocate could exceed RLIMIT_FSIZE and write/truncate paths
+     * would later block while their gate fired — masking the
+     * limit-exceeded error class until much later in the I/O pipeline. */
+    {
+        bool extending = !(mode & FALLOC_FL_COLLAPSE_RANGE) &&
+                         !(mode & FALLOC_FL_PUNCH_HOLE);
+        if (extending) {
+            uint64_t fsize_limit = task->rlimits[1 /* RLIMIT_FSIZE */].rlim_cur;
+            if (fsize_limit > 0 && fsize_limit != (uint64_t)-1 /* RLIM_INFINITY */ &&
+                (offset + len) > fsize_limit) {
+                fut_printf("[FALLOCATE] fallocate(fd=%d, offset=%lu, len=%lu, pid=%d) "
+                           "-> EFBIG (offset+len=%lu exceeds RLIMIT_FSIZE=%llu)\n",
+                           fd, offset, len, task->pid,
+                           (unsigned long)(offset + len),
+                           (unsigned long long)fsize_limit);
+                return -EFBIG;
+            }
+        }
+    }
+
     /* Determine operation type */
     const char *op_type;
     if (mode & FALLOC_FL_PUNCH_HOLE) {

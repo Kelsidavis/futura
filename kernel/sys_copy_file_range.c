@@ -115,14 +115,13 @@ long sys_copy_file_range(int fd_in, int64_t *off_in,
      * Sockets and pipes are not supported by copy_file_range.  Linux
      * additionally splits the errno class:
      *   - EISDIR when either fd refers to a directory
-     *   - EINVAL for any other non-regular type (socket, pipe, device)
-     * The previous Futura code collapsed both into EINVAL, masking the
-     * directory case as 'malformed call' for libc copy_file_range
-     * wrappers that branch on EISDIR to fall back to recursive copy. */
-    if (!f_in->vnode)
-        return -EBADF;
-    if (!f_out->vnode)
-        return -EBADF;
+     *   - EINVAL for any other non-regular type (socket, pipe, device,
+     *     or vnode-less character/pipe fds — test 1483 pins pipe→EINVAL).
+     * Treat vnode-less fds (pipes/sockets via chr_ops) as EINVAL like
+     * the non-VN_REG case, not EBADF — fdget succeeded so the
+     * descriptor is valid, it just isn't a regular file. */
+    if (!f_in->vnode || !f_out->vnode)
+        return -EINVAL;
     if (f_in->vnode->type == VN_DIR || f_out->vnode->type == VN_DIR)
         return -EISDIR;
     if (f_in->vnode->type != VN_REG || f_out->vnode->type != VN_REG)

@@ -69,8 +69,16 @@ long sys_readahead(int fd, int64_t offset, size_t count) {
     if ((file->flags & O_ACCMODE) == O_WRONLY)
         return -EBADF;
 
-    /* Pipes and sockets are not seekable */
-    if (file->vnode && (file->vnode->type == VN_FIFO || file->vnode->type == VN_SOCK))
+    /* Linux's ksys_readahead rejects everything that is not a regular
+     * file with -EINVAL (man readahead(2): 'fd does not refer to a file
+     * type to which readahead() can be applied').  Directories, block
+     * and character devices, FIFOs, sockets, and symlinks all fall
+     * outside the readahead contract — their page caches don't honour
+     * a 'prefetch into shared mapping' hint.  The previous code only
+     * rejected FIFO/SOCK and silently returned 0 for everything else,
+     * so a caller probing readahead() on a directory got 'success'
+     * without any pages actually being prefetched. */
+    if (!file->vnode || file->vnode->type != VN_REG)
         return -EINVAL;
 
     /* Need a vnode with read capability to prefetch pages */

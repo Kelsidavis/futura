@@ -243,6 +243,19 @@ long sys_sendfile(int out_fd, int in_fd, int64_t *offset, size_t count) {
         start_offset = in_file->offset;
     }
 
+    /* Reject directory source — Linux's fs/read_write.c:do_sendfile
+     * gates this explicitly:
+     *   if (S_ISDIR(in_inode->i_mode)) return -EISDIR;
+     * The previous Futura code fell through to the vnode read path,
+     * which would either return whatever the vnode-specific read op
+     * decides for a directory (often EISDIR but not guaranteed) or
+     * some other class entirely.  Explicitly surface EISDIR here so
+     * libc sendfile() wrappers can branch on it like they do on
+     * Linux. */
+    if (in_file->vnode && in_file->vnode->type == VN_DIR) {
+        return -EISDIR;
+    }
+
     /* Validate in_file supports reading */
     if (!in_file->vnode || !in_file->vnode->ops || !in_file->vnode->ops->read) {
         /* Check chr_ops path too */

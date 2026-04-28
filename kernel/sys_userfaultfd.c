@@ -21,6 +21,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/fut_vfs.h>
 #include <kernel/chrdev.h>
+#include <kernel/uaccess.h>
 #include <fcntl.h>
 #include <stdint.h>
 #include <stddef.h>
@@ -236,9 +237,28 @@ long uffd_ioctl(int fd, unsigned int cmd, unsigned long arg) {
 
     switch (cmd) {
     case UFFDIO_API: {
-        struct uffdio_api *api = (struct uffdio_api *)(uintptr_t)arg;
-        if (!api) return -EFAULT;
-        if (api->api != UFFD_API) return -EINVAL;
+        /* Stage the request through copy_from_user instead of dereferencing
+         * the raw user pointer.  The previous code did
+         *     api = (struct uffdio_api *)arg;
+         *     if (api->api != UFFD_API) ...
+         *     api->ioctls = ...;
+         * which faulted the kernel for a bad user pointer and let any
+         * caller pass a kernel-half address as 'arg' to read/write kernel
+         * memory through the api/features/ioctls fields.  Stage a kernel
+         * copy and emit via copy_to_user with the standard
+         * KERNEL_VIRTUAL_BASE bypass so in-kernel selftests still work. */
+        if (!arg) return -EFAULT;
+        struct uffdio_api kapi;
+#ifdef KERNEL_VIRTUAL_BASE
+        if (arg >= KERNEL_VIRTUAL_BASE) {
+            __builtin_memcpy(&kapi, (const void *)(uintptr_t)arg, sizeof(kapi));
+        } else
+#endif
+        if (fut_copy_from_user(&kapi, (const void *)(uintptr_t)arg,
+                               sizeof(kapi)) != 0)
+            return -EFAULT;
+
+        if (kapi.api != UFFD_API) return -EINVAL;
         if (ctx->api_handshake_done) return -EINVAL;
 
         /* Linux's userfaultfd_api rejects any feature bit the kernel
@@ -252,9 +272,9 @@ long uffd_ioctl(int fd, unsigned int cmd, unsigned long arg) {
         uint64_t supported = UFFD_FEATURE_THREAD_ID |
                              UFFD_FEATURE_EXACT_ADDRESS |
                              UFFD_FEATURE_PAGEFAULT_FLAG_WP;
-        if (api->features & ~supported)
+        if (kapi.features & ~supported)
             return -EINVAL;
-        ctx->features = api->features;
+        ctx->features = kapi.features;
 
         /* Report supported ioctls */
         uint64_t supported_ioctls =
@@ -264,9 +284,18 @@ long uffd_ioctl(int fd, unsigned int cmd, unsigned long arg) {
             (1ULL << 3) |  /* UFFDIO_COPY */
             (1ULL << 4) |  /* UFFDIO_ZEROPAGE */
             (1ULL << 6);   /* UFFDIO_WRITEPROTECT */
-        api->ioctls = supported_ioctls;
+        kapi.ioctls = supported_ioctls;
         ctx->ioctls = supported_ioctls;
         ctx->api_handshake_done = true;
+
+        /* Commit the response back to userspace. */
+#ifdef KERNEL_VIRTUAL_BASE
+        if (arg >= KERNEL_VIRTUAL_BASE) {
+            __builtin_memcpy((void *)(uintptr_t)arg, &kapi, sizeof(kapi));
+        } else
+#endif
+        if (fut_copy_to_user((void *)(uintptr_t)arg, &kapi, sizeof(kapi)) != 0)
+            return -EFAULT;
         return 0;
     }
 

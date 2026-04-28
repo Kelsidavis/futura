@@ -291,7 +291,17 @@ long sys_add_key(const char *type, const char *description,
      * Linux returns EFAULT here, but the existing test contract takes
      * precedence for CI. */
     if (!type || !description) return -EINVAL;
-    if (plen > MAX_KEY_PAYLOAD) return -EDQUOT;
+    /* Linux's security/keys/keyctl.c:add_key returns -EINVAL when the
+     * payload length exceeds the absolute maximum (1 MB - 1):
+     *   if (plen > 1024 * 1024 - 1) goto error;  // ret = -EINVAL
+     * EDQUOT is reserved for the per-user keyring quota check inside
+     * key_alloc(), not for the plen domain check.  The previous Futura
+     * code conflated the two, so libc keyutils probes that branch on
+     * EINVAL ('payload too large for ABI') vs EDQUOT ('user has too
+     * many keys, retry after release') treated them the same and
+     * couldn't distinguish a fatal call-shape error from a transient
+     * quota condition. */
+    if (plen > MAX_KEY_PAYLOAD) return -EINVAL;
 
     /* Copy strings from user space (SMAP-safe) */
     char k_type[MAX_KEY_TYPE];

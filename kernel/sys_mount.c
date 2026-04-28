@@ -985,6 +985,19 @@ long sys_open_tree(int dirfd, const char *pathname, unsigned int flags) {
 long sys_move_mount(int from_dirfd, const char *from_pathname,
                     int to_dirfd, const char *to_pathname,
                     unsigned int flags) {
+    /* Linux's sys_move_mount validates flags against MOVE_MOUNT_MASK
+     * up front and returns -EINVAL for any bit outside the documented
+     * set.  The previous (void)flags silently dropped every flag bit,
+     * so a caller passing a future MOVE_MOUNT_* (e.g. SET_GROUP,
+     * BENEATH) got a 'success' that didn't actually honour the
+     * requested semantics — and a probe that picks an unused bit to
+     * detect kernel-old saw the wrong errno class. */
+    const unsigned int VALID_MOVE_MOUNT_FLAGS =
+        MOVE_MOUNT_F_SYMLINKS    | MOVE_MOUNT_F_AUTOMOUNTS |
+        MOVE_MOUNT_F_EMPTY_PATH  | MOVE_MOUNT_T_SYMLINKS   |
+        MOVE_MOUNT_T_AUTOMOUNTS  | MOVE_MOUNT_T_EMPTY_PATH;
+    if (flags & ~VALID_MOVE_MOUNT_FLAGS)
+        return -EINVAL;
     (void)flags;
 
     /* If from_dirfd is an fs_context fd (from fsmount/open_tree),
@@ -1046,6 +1059,15 @@ long sys_move_mount(int from_dirfd, const char *from_pathname,
  * Returns: fd for the filesystem context.
  */
 long sys_fsopen(const char *fsname, unsigned int flags) {
+    /* Linux's sys_fsopen rejects unknown flag bits up front:
+     *   if (flags & ~FSOPEN_CLOEXEC) return -EINVAL
+     * The previous code only honoured FSOPEN_CLOEXEC and silently
+     * dropped every other bit, so a caller probing for a future
+     * FSOPEN_* flag couldn't tell 'kernel doesn't support it' from
+     * 'kernel accepted but ignored'. */
+    if (flags & ~(unsigned int)FSOPEN_CLOEXEC)
+        return -EINVAL;
+
     /* Futura test 1973 pins fsopen(NULL) -> EINVAL (Linux returns
      * EFAULT via getname).  Per the project rule that local tests
      * take precedence over Linux ABI parity, surface EINVAL for the

@@ -70,6 +70,7 @@ struct landlock_rule {
 struct landlock_ruleset {
     bool     active;
     uint64_t handled_access_fs;
+    uint64_t handled_access_net;
     struct landlock_rule rules[LANDLOCK_MAX_RULES];
     int      rule_count;
 };
@@ -192,6 +193,7 @@ long sys_landlock_create_ruleset(const void *attr, size_t size,
 
     g_rulesets[slot].active = true;
     g_rulesets[slot].handled_access_fs = ka.handled_access_fs;
+    g_rulesets[slot].handled_access_net = ka.handled_access_net;
     g_rulesets[slot].rule_count = 0;
 
     int fd = g_next_ruleset_fd++;
@@ -271,6 +273,21 @@ long sys_landlock_add_rule(int ruleset_fd, unsigned int rule_type,
             if (ra.allowed == 0)
                 return -ENOMSG;
             if (ra.allowed & ~g_rulesets[slot].handled_access_fs)
+                return -EINVAL;
+        } else if (rule_type == LANDLOCK_RULE_NET_PORT) {
+            /* Linux's add_rule_net_port validates the rule's
+             * allowed_access against the ruleset's handled_access_net:
+             *   if (!attr.allowed_access) return -ENOMSG;
+             *   if (attr.allowed_access & ~ruleset_access_net)
+             *       return -EINVAL;
+             * The previous Futura code only validated the FS rule's
+             * mask and silently accepted any net-port allowed_access
+             * value — including bits the ruleset wasn't enforcing —
+             * which masks 'kernel-too-old' and 'misconfigured rule'
+             * from libnet/landlock probes. */
+            if (ra.allowed == 0)
+                return -ENOMSG;
+            if (ra.allowed & ~g_rulesets[slot].handled_access_net)
                 return -EINVAL;
         }
         r->allowed_access = ra.allowed;

@@ -106,17 +106,24 @@ long sys_kcmp(int pid1, int pid2, int type,
         return (uintptr_t)task1->mm < (uintptr_t)task2->mm ? 1 : 2;
 
     case KCMP_FILES:
-        /* Compare fd tables: same pointer if shared (fork-without-CLONE_FILES gives separate) */
+        /* Linux's kcmp returns 0 when the two objects are the same and
+         * 1/2 based on pointer ordering for the 'different' case (via
+         * kptr_obfuscate).  CRIU dumps fd tables in the order kcmp
+         * reports, so a blanket '1' for the different case caused
+         * non-deterministic fd-table dumps that could mismatch on
+         * restore.  Mirror the matching KCMP_FILE / KCMP_VM ordering. */
         if (task1->fd_table == task2->fd_table) return 0;
-        return 1;
+        return (uintptr_t)task1->fd_table < (uintptr_t)task2->fd_table ? 1 : 2;
 
     case KCMP_FS:
     case KCMP_SIGHAND:
     case KCMP_IO:
     case KCMP_SYSVSEM:
-        /* These kernel objects are per-task and not shared in Futura */
+        /* These kernel objects are per-task in Futura.  Same task =>
+         * shared; different tasks => use task-pointer ordering so
+         * userspace gets deterministic 1-vs-2 like Linux. */
         if (task1 == task2) return 0;
-        return 1;
+        return (uintptr_t)task1 < (uintptr_t)task2 ? 1 : 2;
 
     default:
         return -EINVAL;

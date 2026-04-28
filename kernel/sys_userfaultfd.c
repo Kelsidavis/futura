@@ -464,6 +464,16 @@ long sys_userfaultfd(int flags) {
     if (fd < 0) { ctx->active = false; return fd; }
     ctx->fd = fd;
 
+    /* Apply O_NONBLOCK to the file struct so subsequent read()/poll()
+     * see the non-blocking semantics the caller asked for.  Linux's
+     * userfaultfd_create installs the flag via anon_inode_getfile;
+     * Futura previously validated the flag bit and stored it on ctx
+     * but never propagated it to the fut_file, so blocking reads still
+     * blocked even after the caller requested O_NONBLOCK. */
+    if ((flags & 0x800 /* O_NONBLOCK */) && task && task->fd_table &&
+        fd < task->max_fds && task->fd_table[fd])
+        task->fd_table[fd]->flags |= 0x800 /* O_NONBLOCK */;
+
     /* Apply FD_CLOEXEC. Guard task->fd_flags non-NULL: the field is lazily
      * allocated and may still be NULL for early-init / kernel-thread
      * callers. The previous unconditional task->fd_flags[fd] |= 1 was a

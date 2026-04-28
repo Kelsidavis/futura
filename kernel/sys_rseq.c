@@ -70,8 +70,16 @@ long sys_rseq(void *rseq, uint32_t rseq_len, int flags, uint32_t sig) {
     if (flags & ~RSEQ_FLAG_UNREGISTER)
         return -EINVAL;
 
-    /* Validate struct size */
-    if (rseq_len < RSEQ_STRUCT_SIZE_V1)
+    /* Linux's kernel/rseq.c gates rseq_len on BOTH ends — kernel/rseq.c:
+     *   if (rseq_len < ORIG_RSEQ_SIZE || rseq_len > sizeof(*rseq))
+     *       return -EINVAL;
+     * Currently ORIG_RSEQ_SIZE == sizeof(struct rseq) == 32, so the
+     * effective check is rseq_len != 32.  The previous Futura code only
+     * validated the lower bound, so a caller passing rseq_len > 32
+     * (probing for future struct extensions) got success on Futura where
+     * Linux returns EINVAL — masking the kernel-version-detection
+     * protocol that libc's rseq feature probe relies on. */
+    if (rseq_len < RSEQ_STRUCT_SIZE_V1 || rseq_len > RSEQ_STRUCT_SIZE_V1)
         return -EINVAL;
 
     if (flags & RSEQ_FLAG_UNREGISTER) {

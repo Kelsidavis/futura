@@ -326,65 +326,26 @@ long sys_clock_nanosleep(int clock_id, int flags,
         return -ESRCH;
     }
 
-    /* NULL req is a pointer fault (EFAULT) per Linux clock_nanosleep(2). */
-    if (!local_req) {
-        clock_nanosleep_printf("[CLOCK_NANOSLEEP] clock_nanosleep(clock_id=%d) -> EFAULT (req is NULL)\n",
-                   local_clock_id);
-        return -EFAULT;
-    }
-
-    /* Linux's kernel/time/posix-timers.c:sys_clock_nanosleep rejects any
-     * flag bit outside TIMER_ABSTIME up front: 'if (flags & ~TIMER_ABSTIME)
-     * return -EINVAL'. Without that gate, unknown high bits silently fall
-     * through to the per-clock implementation — and a future Linux flag
-     * (e.g. a hypothetical TIMER_RELATIVE_HARD_AFFINITY) would be ignored
-     * instead of erroring out, masking compatibility breaks for callers
-     * that probe via flag-set-with-immediate-timeout. */
-    if (local_flags & ~1 /* TIMER_ABSTIME */) {
-        clock_nanosleep_printf("[CLOCK_NANOSLEEP] clock_nanosleep(clock_id=%d, flags=0x%x) -> EINVAL "
-                   "(unknown flag bits; only TIMER_ABSTIME is defined)\n",
-                   local_clock_id, local_flags);
-        return -EINVAL;
-    }
-
-    /* Copy request from user */
-    fut_timespec_t request;
-    if (clock_copy_from_user(&request, local_req, sizeof(fut_timespec_t)) != 0) {
-        clock_nanosleep_printf("[CLOCK_NANOSLEEP] clock_nanosleep(clock_id=%d) -> EFAULT (copy_from_user failed)\n",
-                   local_clock_id);
-        return -EFAULT;
-    }
-
-    /* Validate timespec. tv_nsec must always be in [0, 1e9). tv_sec
-     * must be non-negative for the relative mode (a negative duration
-     * makes no sense), but Linux accepts any tv_sec for the absolute
-     * (TIMER_ABSTIME) mode — a past target just returns immediately
-     * with 0 (or ETIMEDOUT). The previous unconditional tv_sec < 0
-     * gate rejected legitimate absolute-time callers that pass a
-     * historical timestamp (e.g. as a 'fire now' marker). */
-    if (request.tv_nsec < 0 || request.tv_nsec >= 1000000000LL) {
-        clock_nanosleep_printf("[CLOCK_NANOSLEEP] clock_nanosleep(clock_id=%d, sec=%lld, nsec=%lld) -> EINVAL "
-                   "(invalid tv_nsec)\n",
-                   local_clock_id, request.tv_sec, request.tv_nsec);
-        return -EINVAL;
-    }
-    if (!(local_flags & 1 /* TIMER_ABSTIME */) && request.tv_sec < 0) {
-        clock_nanosleep_printf("[CLOCK_NANOSLEEP] clock_nanosleep(clock_id=%d, sec=%lld) -> EINVAL "
-                   "(relative mode rejects negative tv_sec)\n",
-                   local_clock_id, request.tv_sec);
-        return -EINVAL;
-    }
-
-    const char *clock_name;
-
-    /* Classify clock_id into REALTIME-domain or MONOTONIC-domain.
+    /* Linux's sys_clock_nanosleep validates the clock_id and the flags
+     * BEFORE get_timespec64 ever touches the user pointer:
+     *   if (!kc) return -EINVAL;
+     *   if (!kc->nsleep) return -ENANOSLEEP;
+     *   if (flags & ~TIMER_ABSTIME) return -EINVAL;
+     *   if (get_timespec64(&t, rqtp)) return -EFAULT;
+     * The previous Futura order checked NULL req first, so
+     * clock_nanosleep(99, 0xff, NULL, NULL) returned EFAULT instead
+     * of the documented EINVAL — masking the parameter-domain error.
+     *
+     * Classify clock_id into REALTIME-domain or MONOTONIC-domain.
      * Extended clocks accepted (Linux 3.0+):
-     *   Realtime domain: CLOCK_REALTIME(0), CLOCK_REALTIME_COARSE(5), CLOCK_TAI(11),
-     *                    CLOCK_REALTIME_ALARM(8)
+     *   Realtime domain: CLOCK_REALTIME(0), CLOCK_REALTIME_COARSE(5),
+     *                    CLOCK_TAI(11), CLOCK_REALTIME_ALARM(8)
      *   Monotonic domain: CLOCK_MONOTONIC(1), CLOCK_MONOTONIC_RAW(4),
      *                     CLOCK_MONOTONIC_COARSE(6), CLOCK_BOOTTIME(7),
      *                     CLOCK_BOOTTIME_ALARM(9)
-     * Futura has no suspend, so BOOTTIME == MONOTONIC and *_ALARM == base clock. */
+     * Futura has no suspend, so BOOTTIME == MONOTONIC and
+     * *_ALARM == base clock. */
+    const char *clock_name;
     bool is_realtime_clock;
     switch (local_clock_id) {
         case CLOCK_REALTIME:
@@ -406,6 +367,55 @@ long sys_clock_nanosleep(int clock_id, int flags,
             clock_nanosleep_printf("[CLOCK_NANOSLEEP] clock_nanosleep(clock_id=%d) -> EINVAL (unsupported clock)\n",
                        local_clock_id);
             return -EINVAL;
+    }
+
+    /* Linux's kernel/time/posix-timers.c:sys_clock_nanosleep rejects any
+     * flag bit outside TIMER_ABSTIME up front: 'if (flags & ~TIMER_ABSTIME)
+     * return -EINVAL'. Without that gate, unknown high bits silently fall
+     * through to the per-clock implementation — and a future Linux flag
+     * (e.g. a hypothetical TIMER_RELATIVE_HARD_AFFINITY) would be ignored
+     * instead of erroring out, masking compatibility breaks for callers
+     * that probe via flag-set-with-immediate-timeout. */
+    if (local_flags & ~1 /* TIMER_ABSTIME */) {
+        clock_nanosleep_printf("[CLOCK_NANOSLEEP] clock_nanosleep(clock_id=%s, flags=0x%x) -> EINVAL "
+                   "(unknown flag bits; only TIMER_ABSTIME is defined)\n",
+                   clock_name, local_flags);
+        return -EINVAL;
+    }
+
+    /* NULL req is a pointer fault (EFAULT) per Linux clock_nanosleep(2). */
+    if (!local_req) {
+        clock_nanosleep_printf("[CLOCK_NANOSLEEP] clock_nanosleep(clock_id=%s) -> EFAULT (req is NULL)\n",
+                   clock_name);
+        return -EFAULT;
+    }
+
+    /* Copy request from user */
+    fut_timespec_t request;
+    if (clock_copy_from_user(&request, local_req, sizeof(fut_timespec_t)) != 0) {
+        clock_nanosleep_printf("[CLOCK_NANOSLEEP] clock_nanosleep(clock_id=%s) -> EFAULT (copy_from_user failed)\n",
+                   clock_name);
+        return -EFAULT;
+    }
+
+    /* Validate timespec. tv_nsec must always be in [0, 1e9). tv_sec
+     * must be non-negative for the relative mode (a negative duration
+     * makes no sense), but Linux accepts any tv_sec for the absolute
+     * (TIMER_ABSTIME) mode — a past target just returns immediately
+     * with 0 (or ETIMEDOUT). The previous unconditional tv_sec < 0
+     * gate rejected legitimate absolute-time callers that pass a
+     * historical timestamp (e.g. as a 'fire now' marker). */
+    if (request.tv_nsec < 0 || request.tv_nsec >= 1000000000LL) {
+        clock_nanosleep_printf("[CLOCK_NANOSLEEP] clock_nanosleep(clock_id=%s, sec=%lld, nsec=%lld) -> EINVAL "
+                   "(invalid tv_nsec)\n",
+                   clock_name, request.tv_sec, request.tv_nsec);
+        return -EINVAL;
+    }
+    if (!(local_flags & 1 /* TIMER_ABSTIME */) && request.tv_sec < 0) {
+        clock_nanosleep_printf("[CLOCK_NANOSLEEP] clock_nanosleep(clock_id=%s, sec=%lld) -> EINVAL "
+                   "(relative mode rejects negative tv_sec)\n",
+                   clock_name, request.tv_sec);
+        return -EINVAL;
     }
 
     /* Linux's clock_nanosleep gates the alarm-class clocks on

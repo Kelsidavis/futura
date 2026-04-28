@@ -499,10 +499,14 @@ long sys_renameat2(int olddirfd, const char *oldpath,
 
     /* RENAME_NOREPLACE: check that newpath does not already exist */
 
-    /* Copy newpath from userspace to resolve it */
+    /* Copy newpath from userspace to resolve it.
+     * NULL is a pointer fault (EFAULT) per Linux's getname(); empty is
+     * ENOENT.  Match the sister sys_renameat / sys_rename errno
+     * classes — the previous EINVAL-for-both gate diverged from
+     * Linux's getname() contract and from the sister syscalls. */
     if (!newpath) {
-        fut_printf("[RENAMEAT2] renameat2(newpath=NULL) -> EINVAL\n");
-        return -EINVAL;
+        fut_printf("[RENAMEAT2] renameat2(newpath=NULL) -> EFAULT\n");
+        return -EFAULT;
     }
 
     char newpath_buf[FUT_VFS_PATH_BUFFER_SIZE];
@@ -515,8 +519,8 @@ long sys_renameat2(int olddirfd, const char *oldpath,
         return -ENAMETOOLONG;
     }
     if (newpath_buf[0] == '\0') {
-        fut_printf("[RENAMEAT2] renameat2(newdirfd=%d) -> EINVAL (empty newpath)\n", newdirfd);
-        return -EINVAL;
+        fut_printf("[RENAMEAT2] renameat2(newdirfd=%d) -> ENOENT (empty newpath)\n", newdirfd);
+        return -ENOENT;
     }
 
     /* Resolve newpath relative to newdirfd */

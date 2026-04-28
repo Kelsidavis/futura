@@ -1017,6 +1017,21 @@ long sys_move_mount(int from_dirfd, const char *from_pathname,
         return -EINVAL;
     (void)flags;
 
+    /* Linux's fs/namespace.c:SYSCALL_DEFINE5(move_mount) gates the
+     * entire syscall on CAP_SYS_ADMIN (via may_mount()):
+     *   if (!may_mount()) return -EPERM;
+     * The previous Futura code skipped this gate entirely, so any
+     * unprivileged caller could attach an fs_context fd they obtained
+     * via the (now-gated) fsopen/open_tree paths to a target path —
+     * defeating the privilege model the matching fsopen/open_tree
+     * fixes just established. */
+    {
+        fut_task_t *task = fut_task_current();
+        if (task && task->uid != 0 &&
+            !(task->cap_effective & (1ULL << CAP_SYS_ADMIN)))
+            return -EPERM;
+    }
+
     /* If from_dirfd is an fs_context fd (from fsmount/open_tree),
      * use it to mount at to_pathname */
     struct fs_context *ctx = fsctx_find_fd(from_dirfd);

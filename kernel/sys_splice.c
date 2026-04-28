@@ -126,74 +126,14 @@ long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
         return -EINVAL;
     }
 
-    /* Validate offset pointers are readable/writable if non-NULL.
-     * Inherent TOCTOU limitation: userspace can remap pages between the read
-     * and write probes. Best-effort validation catches most invalid pointers. */
-    if (local_off_in != NULL) {
-        int64_t test_offset;
-        /* Test readability - kernel needs to read current offset */
-        if (fut_copy_from_user(&test_offset, local_off_in, sizeof(int64_t)) != 0) {
-            fut_printf("[SPLICE] splice(fd_in=%d, off_in=%p) -> EFAULT "
-                       "(off_in not readable)\n",
-                       local_fd_in, local_off_in);
-            return -EFAULT;
-        }
-        /* Test writability - kernel needs to write updated offset */
-        if (fut_copy_to_user(local_off_in, &test_offset, sizeof(int64_t)) != 0) {
-            fut_printf("[SPLICE] splice(fd_in=%d, off_in=%p) -> EFAULT "
-                       "(off_in not writable)\n",
-                       local_fd_in, local_off_in);
-            return -EFAULT;
-        }
-        /* Validate offset value is non-negative */
-        if (test_offset < 0) {
-            fut_printf("[SPLICE] splice(fd_in=%d, off_in=%p, offset=%ld) -> EINVAL "
-                       "(negative offset)\n",
-                       local_fd_in, local_off_in, test_offset);
-            return -EINVAL;
-        }
-        /* Validate offset+len doesn't overflow */
-        if ((uint64_t)test_offset > (uint64_t)(INT64_MAX - local_len)) {
-            fut_printf("[SPLICE] splice(fd_in=%d, off_in=%ld, len=%zu) -> EOVERFLOW "
-                       "(offset+len would overflow, max_valid_offset=%ld)\n",
-                       local_fd_in, test_offset, local_len, (int64_t)(INT64_MAX - local_len));
-            return -EOVERFLOW;
-        }
-    }
-
-    if (local_off_out != NULL) {
-        int64_t test_offset;
-        /* Test readability - kernel needs to read current offset */
-        if (fut_copy_from_user(&test_offset, local_off_out, sizeof(int64_t)) != 0) {
-            fut_printf("[SPLICE] splice(fd_out=%d, off_out=%p) -> EFAULT "
-                       "(off_out not readable)\n",
-                       local_fd_out, local_off_out);
-            return -EFAULT;
-        }
-        /* Test writability - kernel needs to write updated offset */
-        if (fut_copy_to_user(local_off_out, &test_offset, sizeof(int64_t)) != 0) {
-            fut_printf("[SPLICE] splice(fd_out=%d, off_out=%p) -> EFAULT "
-                       "(off_out not writable)\n",
-                       local_fd_out, local_off_out);
-            return -EFAULT;
-        }
-        /* Validate offset value is non-negative */
-        if (test_offset < 0) {
-            fut_printf("[SPLICE] splice(fd_out=%d, off_out=%p, offset=%ld) -> EINVAL "
-                       "(negative offset)\n",
-                       local_fd_out, local_off_out, test_offset);
-            return -EINVAL;
-        }
-        /* Validate offset+len doesn't overflow */
-        if ((uint64_t)test_offset > (uint64_t)(INT64_MAX - local_len)) {
-            fut_printf("[SPLICE] splice(fd_out=%d, off_out=%ld, len=%zu) -> EOVERFLOW "
-                       "(offset+len would overflow, max_valid_offset=%ld)\n",
-                       local_fd_out, test_offset, local_len, (int64_t)(INT64_MAX - local_len));
-            return -EOVERFLOW;
-        }
-    }
-
-    /* Get source and destination file structures */
+    /* Linux's fs/splice.c orders the gates so ESPIPE (offset given for a
+     * pipe) takes precedence over EFAULT on the offset pointer.  The
+     * previous Futura order probed off_in/off_out via copy_from_user
+     * before pipe detection, so a splice call with fd_in=pipe and
+     * off_in=bad_ptr surfaced EFAULT instead of the documented
+     * ESPIPE.  Resolve fds and detect pipe-ness up front, then perform
+     * pipe/offset compatibility checks (ESPIPE / access-mode / pair
+     * EINVAL), and finally probe the offset pointers for EFAULT. */
     if (local_fd_in >= task->max_fds || local_fd_out >= task->max_fds) {
         return -EBADF;
     }
@@ -228,9 +168,70 @@ long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
     if (!out_is_pipe && (file_out->flags & O_ACCMODE) == O_RDONLY)
         return -EBADF;
 
-    /* ESPIPE: offset not allowed for pipes */
+    /* ESPIPE: offset not allowed for pipes (must precede EFAULT on
+     * offset pointer to match Linux's fs/splice.c gate order). */
     if (local_off_in  && in_is_pipe)  return -ESPIPE;
     if (local_off_out && out_is_pipe) return -ESPIPE;
+
+    /* Now that ESPIPE has been ruled out, probe offset pointers.
+     * Inherent TOCTOU limitation: userspace can remap pages between the
+     * read and write probes. Best-effort validation catches most invalid
+     * pointers. */
+    if (local_off_in != NULL) {
+        int64_t test_offset;
+        if (fut_copy_from_user(&test_offset, local_off_in, sizeof(int64_t)) != 0) {
+            fut_printf("[SPLICE] splice(fd_in=%d, off_in=%p) -> EFAULT "
+                       "(off_in not readable)\n",
+                       local_fd_in, local_off_in);
+            return -EFAULT;
+        }
+        if (fut_copy_to_user(local_off_in, &test_offset, sizeof(int64_t)) != 0) {
+            fut_printf("[SPLICE] splice(fd_in=%d, off_in=%p) -> EFAULT "
+                       "(off_in not writable)\n",
+                       local_fd_in, local_off_in);
+            return -EFAULT;
+        }
+        if (test_offset < 0) {
+            fut_printf("[SPLICE] splice(fd_in=%d, off_in=%p, offset=%ld) -> EINVAL "
+                       "(negative offset)\n",
+                       local_fd_in, local_off_in, test_offset);
+            return -EINVAL;
+        }
+        if ((uint64_t)test_offset > (uint64_t)(INT64_MAX - local_len)) {
+            fut_printf("[SPLICE] splice(fd_in=%d, off_in=%ld, len=%zu) -> EOVERFLOW "
+                       "(offset+len would overflow, max_valid_offset=%ld)\n",
+                       local_fd_in, test_offset, local_len, (int64_t)(INT64_MAX - local_len));
+            return -EOVERFLOW;
+        }
+    }
+
+    if (local_off_out != NULL) {
+        int64_t test_offset;
+        if (fut_copy_from_user(&test_offset, local_off_out, sizeof(int64_t)) != 0) {
+            fut_printf("[SPLICE] splice(fd_out=%d, off_out=%p) -> EFAULT "
+                       "(off_out not readable)\n",
+                       local_fd_out, local_off_out);
+            return -EFAULT;
+        }
+        if (fut_copy_to_user(local_off_out, &test_offset, sizeof(int64_t)) != 0) {
+            fut_printf("[SPLICE] splice(fd_out=%d, off_out=%p) -> EFAULT "
+                       "(off_out not writable)\n",
+                       local_fd_out, local_off_out);
+            return -EFAULT;
+        }
+        if (test_offset < 0) {
+            fut_printf("[SPLICE] splice(fd_out=%d, off_out=%p, offset=%ld) -> EINVAL "
+                       "(negative offset)\n",
+                       local_fd_out, local_off_out, test_offset);
+            return -EINVAL;
+        }
+        if ((uint64_t)test_offset > (uint64_t)(INT64_MAX - local_len)) {
+            fut_printf("[SPLICE] splice(fd_out=%d, off_out=%ld, len=%zu) -> EOVERFLOW "
+                       "(offset+len would overflow, max_valid_offset=%ld)\n",
+                       local_fd_out, test_offset, local_len, (int64_t)(INT64_MAX - local_len));
+            return -EOVERFLOW;
+        }
+    }
 
     /* Zero-length transfer is a valid no-op */
     if (local_len == 0)

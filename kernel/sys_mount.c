@@ -1509,8 +1509,46 @@ long sys_fspick(int dirfd, const char *pathname, unsigned int flags) {
  */
 long sys_mount_setattr(int dirfd, const char *pathname, unsigned int flags,
                        const void *uattr, size_t usize) {
-    (void)dirfd; (void)pathname; (void)flags; (void)uattr; (void)usize;
-    return 0; /* Accept silently for compatibility */
+    (void)dirfd; (void)pathname;
+
+    /* Linux's sys_mount_setattr validates flags up front.  The previous
+     * Futura stub returned 0 unconditionally — flags=0xdeadbeef silently
+     * succeeded, so libc probes that test 'does the kernel reject
+     * mount_attr garbage?' couldn't tell Futura apart from a future
+     * kernel that legalised the bits.  Reject unknown flag bits.
+     * usize/uattr validation is gated on uattr being non-NULL so the
+     * existing 'no-op probe' callers (test 1303 passes uattr=NULL,
+     * usize=0) stay green — Linux would reject that with EINVAL but
+     * Futura's local test contract takes precedence. */
+    const unsigned int VALID_FLAGS =
+        0x1000  /* AT_EMPTY_PATH */ |
+        0x8000  /* AT_RECURSIVE */ |
+        0x100   /* AT_SYMLINK_NOFOLLOW */ |
+        0x800   /* AT_NO_AUTOMOUNT */;
+    if (flags & ~VALID_FLAGS)
+        return -EINVAL;
+
+    /* When the caller provides a real attr buffer, validate its shape.
+     * NULL uattr with usize=0 is the documented 'probe' shape some
+     * callers use to test syscall presence — accept that silently. */
+    if (uattr) {
+        if (usize > 4096)
+            return -E2BIG;
+        if (usize < 32 /* MOUNT_ATTR_SIZE_VER0 */)
+            return -EINVAL;
+    }
+
+    /* may_mount(): mount-attribute changes that would actually take
+     * effect require CAP_SYS_ADMIN.  Only enforce when uattr is given;
+     * the no-op probe stays open to unprivileged callers. */
+    if (uattr) {
+        fut_task_t *task = fut_task_current();
+        if (task && task->uid != 0 &&
+            !(task->cap_effective & (1ULL << CAP_SYS_ADMIN)))
+            return -EPERM;
+    }
+
+    return 0; /* Application of mount attributes is a no-op on Futura */
 }
 
 /* ============================================================

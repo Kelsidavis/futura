@@ -247,12 +247,17 @@ long sys_setpriority(int which, int who, int prio) {
     /* Linux does NOT reject negative who — search finds no match → ESRCH.
      * Only 'which' is validated for EINVAL. */
 
-    /* Linux silently clamps prio to [PRIO_MIN, PRIO_MAX] rather than
-     * returning EINVAL. The previous code returned EINVAL for any
-     * out-of-range value, which broke libc wrappers (glibc, musl) that
-     * pass through user input verbatim and rely on the kernel clamp. */
+    /* Linux silently clamps niceval to [MIN_NICE, MAX_NICE] = [-20, 19]
+     * (kernel/sys.c:setpriority -> 'niceval = clamp(niceval, MIN_NICE,
+     * MAX_NICE);').  The legacy <sys/resource.h> PRIO_MAX = 20 is a
+     * one-past-the-end sentinel — using it as the inclusive ceiling let
+     * a caller passing nice=20 store nice=20 here, where Linux would
+     * have clamped it back to 19.  task->nice == 20 is otherwise
+     * unreachable and confused downstream display tools (top/htop) that
+     * assume the documented [-20, 19] range.  Use the actual MAX_NICE
+     * inclusive cap. */
     if (prio < PRIO_MIN) prio = PRIO_MIN;
-    if (prio > PRIO_MAX) prio = PRIO_MAX;
+    if (prio > 19 /* MAX_NICE */) prio = 19;
 
     extern fut_task_t *fut_task_list;
     int matched = 0;

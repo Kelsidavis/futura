@@ -45,6 +45,20 @@ static inline int rcvmm_copy_from_user(void *dst, const void *src, size_t n) {
 
 long sys_recvmmsg(int sockfd, void *msgvec, unsigned int vlen,
                   unsigned int flags, const struct timespec *timeout) {
+    /* Linux's __sys_recvmmsg runs sockfd_lookup_light FIRST, before any
+     * vlen / msgvec inspection.  recvmmsg(bad_fd, NULL, 0, ...) therefore
+     * returns -EBADF on Linux, not 0 (vlen short-circuit) or -EFAULT
+     * (NULL msgvec).  Validate the socket fd up front so the EBADF
+     * errno class is preserved for libc probes. */
+    {
+        extern struct fut_file *vfs_get_file(int fd);
+        extern fut_socket_t *get_socket_from_fd(int fd);
+        if (sockfd < 0 || !vfs_get_file(sockfd))
+            return -EBADF;
+        if (!get_socket_from_fd(sockfd))
+            return -ENOTSOCK;
+    }
+
     /* Linux: vlen == 0 is not an error; the loop runs zero times and
      * the syscall returns 0. Only a NULL msgvec is rejected (EFAULT).
      * The previous EINVAL gate broke Linux ABI parity and any libc

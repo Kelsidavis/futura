@@ -41,6 +41,20 @@ static inline int sndmm_copy_to_user(void *dst, const void *src, size_t n) {
 #define MMSGHDR_MSGLEN_OFFSET   sizeof(struct msghdr)
 
 long sys_sendmmsg(int sockfd, void *msgvec, unsigned int vlen, unsigned int flags) {
+    /* Linux's __sys_sendmmsg runs sockfd_lookup_light FIRST, before any
+     * vlen / msgvec inspection.  sendmmsg(bad_fd, NULL, 0, ...) therefore
+     * returns -EBADF on Linux, not 0 (vlen short-circuit) or -EFAULT
+     * (NULL msgvec).  Validate the socket fd up front so the EBADF
+     * errno class is preserved for libc probes. */
+    {
+        extern struct fut_file *vfs_get_file(int fd);
+        extern fut_socket_t *get_socket_from_fd(int fd);
+        if (sockfd < 0 || !vfs_get_file(sockfd))
+            return -EBADF;
+        if (!get_socket_from_fd(sockfd))
+            return -ENOTSOCK;
+    }
+
     /* Linux: vlen == 0 is not an error; the loop simply runs zero times
      * and the syscall returns 0 (no datagrams sent). Only NULL msgvec
      * is rejected. The previous EINVAL gate diverged from Linux's

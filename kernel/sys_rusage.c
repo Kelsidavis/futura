@@ -90,23 +90,13 @@ long sys_getrusage(int who, struct rusage *usage) {
         return -ESRCH;
     }
 
-    if (!usage) {
-        fut_printf("[RUSAGE] getrusage(who=%d, usage=%p) -> EFAULT (usage is NULL)\n", who, usage);
-        return -EFAULT;
-    }
-
-    /* Validate usage write permission early (kernel writes statistics)
-     * VULNERABILITY: Invalid Output Buffer Pointer
-     * ATTACK: Attacker provides read-only or unmapped usage buffer
-     * IMPACT: Kernel page fault when writing resource usage statistics
-     * DEFENSE: Check write permission before processing */
-    if (rusage_access_ok_write(usage, sizeof(struct rusage)) != 0) {
-        fut_printf("[RUSAGE] getrusage(who=%d, usage=%p) -> EFAULT (buffer not writable for %zu bytes)\n",
-                   who, usage, sizeof(struct rusage));
-        return -EFAULT;
-    }
-
-    /* Phase 2: Validate and identify 'who' parameter */
+    /* Linux's sys_getrusage validates 'who' against RUSAGE_SELF /
+     * RUSAGE_CHILDREN / RUSAGE_THREAD up front and returns -EINVAL;
+     * only after that does copy_to_user surface a NULL/bad usage
+     * pointer as -EFAULT.  The previous order returned EFAULT for
+     * getrusage(99, NULL), masking the real parameter-domain error.
+     * Same EINVAL-before-EFAULT reorder pattern as the recent
+     * sys_getitimer / sys_getrlimit / sys_clock_gettime fixes. */
     const char *who_desc;
 
     switch (who) {
@@ -123,6 +113,22 @@ long sys_getrusage(int who, struct rusage *usage) {
             fut_printf("[RUSAGE] getrusage(who=%d, usage=%p) -> EINVAL (invalid who parameter)\n",
                        who, usage);
             return -EINVAL;
+    }
+
+    if (!usage) {
+        fut_printf("[RUSAGE] getrusage(who=%s, usage=%p) -> EFAULT (usage is NULL)\n", who_desc, usage);
+        return -EFAULT;
+    }
+
+    /* Validate usage write permission early (kernel writes statistics)
+     * VULNERABILITY: Invalid Output Buffer Pointer
+     * ATTACK: Attacker provides read-only or unmapped usage buffer
+     * IMPACT: Kernel page fault when writing resource usage statistics
+     * DEFENSE: Check write permission before processing */
+    if (rusage_access_ok_write(usage, sizeof(struct rusage)) != 0) {
+        fut_printf("[RUSAGE] getrusage(who=%s, usage=%p) -> EFAULT (buffer not writable for %zu bytes)\n",
+                   who_desc, usage, sizeof(struct rusage));
+        return -EFAULT;
     }
 
     /*

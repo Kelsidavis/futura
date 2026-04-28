@@ -693,9 +693,14 @@ long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
 
     case PR_GET_AUXV: {
         /* Linux 6.5+: copy the ELF auxiliary vector into caller-supplied buffer.
-         * arg2 = buf (void *), arg3 = buflen (size_t), arg4 must be 0.
-         * Returns the total auxv byte count; EINVAL if arg4 != 0 or buf too small. */
-        if (arg4 != 0)
+         * arg2 = buf (void *), arg3 = buflen (size_t), arg4 and arg5 must be 0.
+         * Returns the total auxv byte count; EINVAL if arg4/arg5 != 0 or buf too small.
+         *
+         * Linux kernel/sys.c: `if (arg4 || arg5) return -EINVAL;` — both
+         * reserved tail args are gated, not just arg4.  Without the arg5
+         * check, callers walking the prctl ABI by varying unused-args saw
+         * Futura accept inputs that Linux rejects with EINVAL. */
+        if (arg4 != 0 || arg5 != 0)
             return -EINVAL;
 
         /* Build the same minimal auxv that /proc/<pid>/auxv generates */

@@ -566,12 +566,17 @@ long sys_sched_getattr(int pid, struct sched_attr *uattr, unsigned int usize,
                        unsigned int flags) {
     if (flags != 0)
         return -EINVAL;
-    /* Linux's sched_getattr surfaces a NULL uattr through copy_to_user
-     * as -EFAULT — pointer faults are EFAULT, parameter-domain errors
-     * (bad usize, unknown flags) are EINVAL. Keep the two distinct so
-     * libc wrappers can branch on the real error class. */
+    /* Linux's sched_getattr combines !uattr / bad pid / huge usize into
+     * a single EINVAL up front:
+     *   if (!uattr || pid < 0 || usize > PAGE_SIZE) return -EINVAL;
+     * NULL uattr is a parameter-domain error here (NOT a copy_to_user
+     * EFAULT) — same combined-EINVAL convention as the matching
+     * sched_getparam / sched_setscheduler fixes.  The previous comment
+     * claimed EFAULT 'matches Linux', but Linux's sched_getattr is one
+     * of the syscalls that explicitly classifies NULL uattr as EINVAL
+     * to distinguish 'fix the call shape' from 'retry after page fault'. */
     if (!uattr)
-        return -EFAULT;
+        return -EINVAL;
     /* Linux's sched_getattr enforces both size bounds — kernel/sched/syscalls.c:
      *   if (usize < SCHED_ATTR_SIZE_VER0 || usize > PAGE_SIZE)
      *       return -EINVAL;
@@ -626,12 +631,19 @@ long sys_sched_getattr(int pid, struct sched_attr *uattr, unsigned int usize,
  * @return 0 on success, -errno on error
  */
 long sys_sched_setattr(int pid, const struct sched_attr *uattr, unsigned int flags) {
+    /* Linux's sched_setattr combines !uattr / pid<0 / non-zero flags
+     * into a single EINVAL up front:
+     *   if (!uattr || pid < 0 || flags) return -EINVAL;
+     * NULL uattr is a parameter-domain error (NOT a copy_from_user
+     * EFAULT) — same combined-EINVAL convention as the matching
+     * sched_getparam / sched_getattr / sched_setscheduler fixes.  The
+     * previous Futura code returned EFAULT for NULL uattr citing
+     * 'copy_from_user contract', but setattr's gate is the
+     * combined-EINVAL pattern, not the setparam copy-fault EFAULT. */
     if (flags != 0)
         return -EINVAL;
-    /* NULL uattr is a pointer fault (EFAULT), matching the
-     * sched_getattr branch above and Linux's copy_from_user contract. */
     if (!uattr)
-        return -EFAULT;
+        return -EINVAL;
 
     struct sched_attr attr;
     __builtin_memset(&attr, 0, sizeof(attr));

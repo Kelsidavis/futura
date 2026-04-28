@@ -830,14 +830,32 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
     /* pselect6 signal mask handling:
      * - Kernel self-tests/internal callers pass direct sigset_t* (kptr path).
      * - Syscall callers pass Linux pselect6_arg { sigset_t *ss; size_t ss_len }.
+     *
+     * Linux's set_user_sigmask() short-circuits when the inner ss pointer
+     * is NULL — it returns 0 WITHOUT validating sigsetsize and WITHOUT
+     * touching the procmask:
+     *
+     *   if (!umask) return 0;
+     *   if (sigsetsize != sizeof(sigset_t)) return -EINVAL;
+     *   if (copy_from_user(&kmask, umask, sizeof(kmask))) return -EFAULT;
+     *   set_current_blocked(&kmask);
+     *
+     * Futura previously validated arg.ss_len BEFORE checking arg.ss for
+     * NULL, so a caller passing a {ss=NULL, ss_len=garbage} sigset_argpack
+     * got -EINVAL where Linux returns 0.  Worse, it then invoked
+     * SIGPROCMASK_SETMASK with an all-zero mask even when ss was NULL,
+     * silently CLEARING the caller's blocked-signal mask for the
+     * duration of the syscall.  Both faults are below.
      */
     sigset_t saved_mask = {0};
     bool mask_applied = false;
     if (local_sigmask) {
         sigset_t requested_mask = {0};
+        bool have_mask = false;
 
         if (IS_KPTR(local_sigmask)) {
             memcpy(&requested_mask, local_sigmask, sizeof(requested_mask));
+            have_mask = true;
         } else {
             struct pselect6_sigmask_arg {
                 const sigset_t *ss;
@@ -847,21 +865,27 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
             if (fut_copy_from_user(&arg, local_sigmask, sizeof(arg)) != 0) {
                 return -EFAULT;
             }
-            if (arg.ss_len != sizeof(sigset_t)) {
-                return -EINVAL;
-            }
+            /* NULL inner ss = no mask change requested; do not touch the
+             * procmask (and skip the size check, matching Linux's
+             * `if (!umask) return 0` early return). */
             if (arg.ss) {
+                if (arg.ss_len != sizeof(sigset_t)) {
+                    return -EINVAL;
+                }
                 if (fut_copy_from_user(&requested_mask, arg.ss, sizeof(requested_mask)) != 0) {
                     return -EFAULT;
                 }
+                have_mask = true;
             }
         }
 
-        int mret = fut_signal_procmask(task, SIGPROCMASK_SETMASK, &requested_mask, &saved_mask);
-        if (mret < 0) {
-            return mret;
+        if (have_mask) {
+            int mret = fut_signal_procmask(task, SIGPROCMASK_SETMASK, &requested_mask, &saved_mask);
+            if (mret < 0) {
+                return mret;
+            }
+            mask_applied = true;
         }
-        mask_applied = true;
     }
 
     /* Copy fd_sets from userspace (or kernel buffer for self-tests) */

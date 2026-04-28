@@ -300,6 +300,17 @@ static inline long xattr_copy_path_and_name(const char *path, const char *name,
         return -ENAMETOOLONG;
     }
 
+    /* Empty pathname is ENOENT per Linux's xattr syscalls — they
+     * route the path through getname() which rejects len == 0 with
+     * -ENOENT before any namespace lookup runs.  Without this gate
+     * the VFS walk below would silently treat "" as the empty-name
+     * root entry and report ENODATA / EINVAL from the wrong layer. */
+    if (path_buf[0] == '\0') {
+        fut_printf("[XATTR] %s(path='' [empty], pid=%d) -> ENOENT\n",
+                   syscall, pid);
+        return -ENOENT;
+    }
+
     /* Copy name from userspace (full buffer to detect truncation) */
     if (xattr_copy_from_user(name_buf, name, XATTR_NAME_MAX + 1) != 0) {
         fut_printf("[XATTR] %s(path='%s', name=? [bad addr], pid=%d) -> EFAULT\n",
@@ -451,6 +462,14 @@ static inline long xattr_copy_path(const char *path, char *path_buf,
                    "(path exceeds %d bytes)\n",
                    syscall, pid, FUT_VFS_PATH_BUFFER_SIZE - 1);
         return -ENAMETOOLONG;
+    }
+
+    /* Empty pathname is ENOENT per Linux's getname() — same gate as
+     * xattr_copy_path_and_name above for the listxattr path. */
+    if (path_buf[0] == '\0') {
+        fut_printf("[XATTR] %s(path='' [empty], pid=%d) -> ENOENT\n",
+                   syscall, pid);
+        return -ENOENT;
     }
 
     return 0;

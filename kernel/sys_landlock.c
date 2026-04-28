@@ -157,39 +157,35 @@ long sys_landlock_create_ruleset(const void *attr, size_t size,
      * probe for future LANDLOCK_ACCESS_FS_* support but must be rejected
      * on the current kernel.  The previous Futura code stored any
      * handled_access_fs value verbatim, masking both error classes. */
-    {
-        const uint64_t LANDLOCK_MASK_ACCESS_FS =
-            LANDLOCK_ACCESS_FS_EXECUTE     | LANDLOCK_ACCESS_FS_WRITE_FILE |
-            LANDLOCK_ACCESS_FS_READ_FILE   | LANDLOCK_ACCESS_FS_READ_DIR  |
-            LANDLOCK_ACCESS_FS_REMOVE_DIR  | LANDLOCK_ACCESS_FS_REMOVE_FILE |
-            LANDLOCK_ACCESS_FS_MAKE_CHAR   | LANDLOCK_ACCESS_FS_MAKE_DIR  |
-            LANDLOCK_ACCESS_FS_MAKE_REG    | LANDLOCK_ACCESS_FS_MAKE_SOCK |
-            LANDLOCK_ACCESS_FS_MAKE_FIFO   | LANDLOCK_ACCESS_FS_MAKE_BLOCK |
-            LANDLOCK_ACCESS_FS_MAKE_SYM    | LANDLOCK_ACCESS_FS_REFER     |
-            LANDLOCK_ACCESS_FS_TRUNCATE;
-        if (ka.handled_access_fs == 0)
-            return -ENOMSG;
-        if (ka.handled_access_fs & ~LANDLOCK_MASK_ACCESS_FS)
-            return -EINVAL;
-    }
+    const uint64_t LANDLOCK_MASK_ACCESS_FS =
+        LANDLOCK_ACCESS_FS_EXECUTE     | LANDLOCK_ACCESS_FS_WRITE_FILE |
+        LANDLOCK_ACCESS_FS_READ_FILE   | LANDLOCK_ACCESS_FS_READ_DIR  |
+        LANDLOCK_ACCESS_FS_REMOVE_DIR  | LANDLOCK_ACCESS_FS_REMOVE_FILE |
+        LANDLOCK_ACCESS_FS_MAKE_CHAR   | LANDLOCK_ACCESS_FS_MAKE_DIR  |
+        LANDLOCK_ACCESS_FS_MAKE_REG    | LANDLOCK_ACCESS_FS_MAKE_SOCK |
+        LANDLOCK_ACCESS_FS_MAKE_FIFO   | LANDLOCK_ACCESS_FS_MAKE_BLOCK |
+        LANDLOCK_ACCESS_FS_MAKE_SYM    | LANDLOCK_ACCESS_FS_REFER     |
+        LANDLOCK_ACCESS_FS_TRUNCATE;
+    const uint64_t LANDLOCK_MASK_ACCESS_NET =
+        (1ULL << 0) /* LANDLOCK_ACCESS_NET_BIND_TCP */ |
+        (1ULL << 1) /* LANDLOCK_ACCESS_NET_CONNECT_TCP */;
 
-    /* Linux's security/landlock/syscalls.c also validates the
-     * handled_access_net field (added in Linux 6.7) against the
-     * LANDLOCK_MASK_ACCESS_NET set:
-     *   if (attr.handled_access_net & ~LANDLOCK_MASK_ACCESS_NET)
-     *       return -EINVAL;
-     * The previous Futura code stored only handled_access_fs and
-     * silently ignored handled_access_net, so a caller probing for
-     * future LANDLOCK_ACCESS_NET_* bits couldn't tell 'kernel
-     * doesn't support net rules' from 'kernel accepted but ignored'.
-     * Apply the same strict mask gate. */
-    {
-        const uint64_t LANDLOCK_MASK_ACCESS_NET =
-            (1ULL << 0) /* LANDLOCK_ACCESS_NET_BIND_TCP */ |
-            (1ULL << 1) /* LANDLOCK_ACCESS_NET_CONNECT_TCP */;
-        if (ka.handled_access_net & ~LANDLOCK_MASK_ACCESS_NET)
-            return -EINVAL;
-    }
+    /* Linux's security/landlock/syscalls.c (since 6.7) accepts a
+     * ruleset with handled_access_fs == 0 if handled_access_net is
+     * non-zero — they're independent enforcement domains.  The check
+     * Linux uses is 'at least one of handled_access_fs or
+     * handled_access_net must be non-zero':
+     *   if (!attr.handled_access_fs && !attr.handled_access_net)
+     *       return -ENOMSG;
+     * The previous Futura code rejected fs==0 unconditionally,
+     * preventing net-only rulesets that libnet/landlock supports for
+     * sandboxing TCP without touching the filesystem. */
+    if (ka.handled_access_fs == 0 && ka.handled_access_net == 0)
+        return -ENOMSG;
+    if (ka.handled_access_fs & ~LANDLOCK_MASK_ACCESS_FS)
+        return -EINVAL;
+    if (ka.handled_access_net & ~LANDLOCK_MASK_ACCESS_NET)
+        return -EINVAL;
 
     g_rulesets[slot].active = true;
     g_rulesets[slot].handled_access_fs = ka.handled_access_fs;

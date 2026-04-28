@@ -1128,6 +1128,15 @@ long sys_io_uring_setup(unsigned int entries, void *params) {
     }
     ctx->ring_fd = fd;
 
+    /* Linux's io_uring_install_fd always sets O_CLOEXEC on the
+     * returned descriptor: 'get_unused_fd_flags(O_RDWR | O_CLOEXEC)'.
+     * Without this any exec across an io_uring fd silently leaks the
+     * ring (and its registered files / eventfd / pinned buffers) into
+     * the new program.  Same FD_CLOEXEC default applied to mq_open,
+     * pidfd_open, perf_event_open, fanotify_init, etc. */
+    if (task && task->fd_flags && fd < (int)task->max_fds)
+        task->fd_flags[fd] |= 1 /* FD_CLOEXEC */;
+
     /* Fill in params for the caller */
     p->sq_entries = sq_entries;
     p->cq_entries = cq_entries;

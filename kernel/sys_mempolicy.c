@@ -89,7 +89,18 @@ static inline long mempol_validate_mode(int mode) {
 long sys_mbind(unsigned long addr, unsigned long len, int mode,
                const unsigned long *nodemask, unsigned long maxnode,
                unsigned int flags) {
-    (void)addr; (void)len; (void)nodemask;
+    (void)len; (void)nodemask;
+    /* Linux's kernel_mbind validates 'addr' page-alignment up front:
+     *   start = untagged_addr(start);
+     *   if (start & ~PAGE_MASK) return -EINVAL;
+     * (mm/mempolicy.c).  The previous Futura stub silently ignored
+     * addr alignment, so a libnuma probe passing a deliberately
+     * misaligned address to detect kernel-side validation got success
+     * where Linux returns EINVAL — masking the parameter-domain
+     * error class.  addr == 0 stays valid (page-aligned by definition,
+     * preserving the test 1183 contract). */
+    if (addr & ((uintptr_t)PAGE_SIZE - 1))
+        return -EINVAL;
     /* Linux's kernel_mbind strips MPOL_MODE_FLAGS (MPOL_F_STATIC_NODES
      * | MPOL_F_RELATIVE_NODES, mask 0xC000) from mode before validating
      * against MPOL_MAX, and rejects the two mode_flags being set

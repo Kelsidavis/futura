@@ -139,6 +139,22 @@ long sys_pread64(unsigned int fd, void *buf, size_t count, int64_t offset) {
         return -EINVAL;
     }
 
+    /* Linux's ksys_pread64 runs fdget AFTER the offset gate but BEFORE
+     * any buffer-pointer access (vfs_read surfaces a bad buf as EFAULT).
+     * Futura's previous order rejected NULL buf before the fd lookup,
+     * so pread64(bad_fd, NULL, _, valid_offset) returned EFAULT where
+     * Linux returns EBADF — same EBADF-before-EFAULT class as the
+     * recent socket-syscall reorders. */
+    {
+        extern fut_task_t *fut_task_current(void);
+        fut_task_t *pre_task = fut_task_current();
+        if (!pre_task)
+            return -ESRCH;
+        if (fd >= (unsigned int)pre_task->max_fds ||
+            !pre_task->fd_table || !pre_task->fd_table[fd])
+            return -EBADF;
+    }
+
     /* Phase 2: Validate buffer pointer */
     if (!buf) {
         fut_printf("[PREAD64] pread64(fd=%u, buf=NULL, count=%zu, offset=%ld) -> EFAULT "

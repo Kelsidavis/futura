@@ -133,6 +133,21 @@ long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset
         return -EINVAL;
     }
 
+    /* Linux's ksys_pwrite64 runs fdget AFTER the offset gate but BEFORE
+     * any buffer-pointer access (vfs_write surfaces a bad buf as EFAULT).
+     * Futura's previous order rejected NULL buf before the fd lookup,
+     * so pwrite64(bad_fd, NULL, _, valid_offset) returned EFAULT where
+     * Linux returns EBADF — same fix as the matching pread64 reorder. */
+    {
+        extern fut_task_t *fut_task_current(void);
+        fut_task_t *pwr_task = fut_task_current();
+        if (!pwr_task)
+            return -ESRCH;
+        if (local_fd >= (unsigned int)pwr_task->max_fds ||
+            !pwr_task->fd_table || !pwr_task->fd_table[local_fd])
+            return -EBADF;
+    }
+
     /* Validate buffer pointer */
     if (!local_buf) {
         fut_printf("[PWRITE64] pwrite64(fd=%u, buf=NULL, count=%zu, offset=%ld) -> EFAULT "

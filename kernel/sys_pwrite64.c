@@ -119,18 +119,25 @@ long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset
     size_t local_count = count;
     int64_t local_offset = offset;
 
+    /* Linux's fs/read_write.c:ksys_pwrite64 validates the offset BEFORE
+     * any user-pointer access:
+     *   if (pos < 0) return -EINVAL;
+     *   ...
+     *   ret = vfs_write(...);   // EFAULT for bad buf
+     * The previous Futura order rejected NULL buf before the offset
+     * check, inverting the errno class.  Same EINVAL-before-EFAULT
+     * reorder as the matching sys_pread64 fix. */
+    if (local_offset < 0) {
+        fut_printf("[PWRITE64] pwrite64(fd=%u, count=%zu, offset=%ld) -> EINVAL "
+                   "(negative offset)\n", local_fd, local_count, local_offset);
+        return -EINVAL;
+    }
+
     /* Validate buffer pointer */
     if (!local_buf) {
         fut_printf("[PWRITE64] pwrite64(fd=%u, buf=NULL, count=%zu, offset=%ld) -> EFAULT "
                    "(NULL buffer)\n", local_fd, local_count, local_offset);
         return -EFAULT;
-    }
-
-    /* Validate offset is non-negative */
-    if (local_offset < 0) {
-        fut_printf("[PWRITE64] pwrite64(fd=%u, count=%zu, offset=%ld) -> EINVAL "
-                   "(negative offset)\n", local_fd, local_count, local_offset);
-        return -EINVAL;
     }
 
     /* Prevent offset+count overflow

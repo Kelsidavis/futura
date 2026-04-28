@@ -122,18 +122,28 @@
  * Phase 4: Advanced features (async I/O, readahead hints)
  */
 long sys_pread64(unsigned int fd, void *buf, size_t count, int64_t offset) {
+    /* Linux's fs/read_write.c:ksys_pread64 validates the offset BEFORE
+     * any user-pointer access:
+     *   if (pos < 0) return -EINVAL;
+     *   f = fdget(fd);
+     *   ...
+     *   ret = vfs_read(...);   // EFAULT for bad buf
+     * The previous Futura order rejected NULL buf before the offset
+     * check, inverting the errno class for callers that probe with
+     * offset==-1 to detect the kernel's pread64 path.  Same
+     * EINVAL-before-EFAULT reorder pattern as the matching
+     * sched_getaffinity / clock_gettime / semop fixes. */
+    if (offset < 0) {
+        fut_printf("[PREAD64] pread64(fd=%u, count=%zu, offset=%ld) -> EINVAL "
+                   "(negative offset)\n", fd, count, offset);
+        return -EINVAL;
+    }
+
     /* Phase 2: Validate buffer pointer */
     if (!buf) {
         fut_printf("[PREAD64] pread64(fd=%u, buf=NULL, count=%zu, offset=%ld) -> EFAULT "
                    "(NULL buffer)\n", fd, count, offset);
         return -EFAULT;
-    }
-
-    /* Phase 2: Validate offset is non-negative */
-    if (offset < 0) {
-        fut_printf("[PREAD64] pread64(fd=%u, count=%zu, offset=%ld) -> EINVAL "
-                   "(negative offset)\n", fd, count, offset);
-        return -EINVAL;
     }
 
     /* Validate buffer is writable BEFORE expensive operations

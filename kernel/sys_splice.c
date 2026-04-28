@@ -786,6 +786,27 @@ long sys_sync_file_range(int fd, int64_t offset, int64_t nbytes, unsigned int fl
         return -EINVAL;
     }
 
+    /* Linux's mm/filemap.c:ksys_sync_file_range computes the endbyte and
+     * rejects the call if it overflows int64_t or wraps below offset:
+     *   endbyte = offset + nbytes;
+     *   if ((s64)endbyte < 0) goto out;        // would-be-negative
+     *   if (endbyte < offset)  goto out;       // wraparound
+     * Both surface as -EINVAL.  The previous Futura code only checked
+     * offset and nbytes individually, so a caller passing
+     * (offset=INT64_MAX-1, nbytes=10) got success on Futura where Linux
+     * returns EINVAL — masking the parameter-domain wraparound that the
+     * eventual page-cache walk would trip on. */
+    {
+        int64_t endbyte;
+        if (__builtin_add_overflow(local_offset, local_nbytes, &endbyte) ||
+            endbyte < 0 || endbyte < local_offset) {
+            fut_printf("[SYNC_FILE_RANGE] sync_file_range(fd=%d, offset=%ld, nbytes=%ld) -> EINVAL "
+                       "(offset+nbytes overflow)\n",
+                       local_fd, local_offset, local_nbytes);
+            return -EINVAL;
+        }
+    }
+
     /* Validate fd exists and check O_PATH */
     if (local_fd >= task->max_fds) return -EBADF;
     struct fut_file *sfr_file = vfs_get_file_from_task(task, local_fd);

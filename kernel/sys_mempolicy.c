@@ -89,7 +89,7 @@ static inline long mempol_validate_mode(int mode) {
 long sys_mbind(unsigned long addr, unsigned long len, int mode,
                const unsigned long *nodemask, unsigned long maxnode,
                unsigned int flags) {
-    (void)addr; (void)len; (void)nodemask; (void)flags;
+    (void)addr; (void)len; (void)nodemask;
     /* Linux's kernel_mbind strips MPOL_MODE_FLAGS (MPOL_F_STATIC_NODES
      * | MPOL_F_RELATIVE_NODES, mask 0xC000) from mode before validating
      * against MPOL_MAX, and rejects the two mode_flags being set
@@ -97,6 +97,18 @@ long sys_mbind(unsigned long addr, unsigned long len, int mode,
      * bits set, so MPOL_DEFAULT|MPOL_F_STATIC_NODES (a documented
      * combination) returned EINVAL where Linux accepts it. */
     if (maxnode > MEMPOL_MAXNODE_LIMIT)
+        return -EINVAL;
+    /* Linux's kernel_mbind validates flags against MPOL_MF_VALID
+     * (MPOL_MF_STRICT | MPOL_MF_MOVE | MPOL_MF_MOVE_ALL) and rejects
+     * unknown bits with -EINVAL:
+     *   if (flags & ~(unsigned int)MPOL_MF_VALID) return -EINVAL;
+     * The previous Futura code silently ignored every flag bit, so a
+     * caller probing for future MPOL_MF_* additions saw 'success'
+     * regardless of the requested flag — masking the parameter-domain
+     * error class libnuma's feature-detection code-paths expect. */
+    const unsigned int MPOL_MF_VALID =
+        MPOL_MF_STRICT | MPOL_MF_MOVE | MPOL_MF_MOVE_ALL;
+    if (flags & ~MPOL_MF_VALID)
         return -EINVAL;
     return mempol_validate_mode(mode);
 }

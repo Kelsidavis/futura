@@ -141,9 +141,18 @@ long sys_pidfd_open(int pid, unsigned int flags) {
     if (!pidfd_fops.release) {
         pidfd_fops.release = pidfd_release;
     }
-    if (pid <= 0)
-        return -EINVAL;
+    /* Linux kernel/pid.c:sys_pidfd_open validates flags FIRST, then pid:
+     *
+     *   if (flags & ~(PIDFD_NONBLOCK | PIDFD_THREAD)) return -EINVAL;
+     *   if (pid <= 0) return -EINVAL;
+     *
+     * Both branches return -EINVAL, so the observable effect on a single
+     * input is the same.  But callers walking the flag space with a
+     * fixed bad pid (or vice versa) get a more consistent class signal
+     * by hitting the same gate Linux does.  Match the order. */
     if (flags & ~PIDFD_NONBLOCK)
+        return -EINVAL;
+    if (pid <= 0)
         return -EINVAL;
 
     /* Verify process exists.  Linux distinguishes two failure cases:

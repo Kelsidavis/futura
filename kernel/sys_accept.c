@@ -206,6 +206,25 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
         return -EBADF;
     }
 
+    /* Linux's sys_accept runs sockfd_lookup_light FIRST, so EBADF and
+     * ENOTSOCK surface before any inspection of addr/addrlen.  Futura's
+     * previous order rejected the 'addr non-NULL && addrlen NULL' shape
+     * with EFAULT before the socket lookup, so accept(non_socket_fd,
+     * &buf, NULL) returned EFAULT where Linux returns ENOTSOCK — same
+     * fix as the matching bind / connect / getsockname / getpeername /
+     * shutdown reorder. */
+    {
+        fut_socket_t *acc_sock_probe = get_socket_from_fd(local_sockfd);
+        if (!acc_sock_probe) {
+            if (task->fd_table && task->fd_table[local_sockfd]) {
+                accept_printf("[ACCEPT] accept(local_sockfd=%d) -> ENOTSOCK (not a socket)\n",
+                           local_sockfd);
+                return -ENOTSOCK;
+            }
+            return -EBADF;
+        }
+    }
+
     /* Phase 2: Categorize address request */
     const char *addr_request;
     if (local_addr == NULL && local_addrlen == NULL) {

@@ -918,6 +918,23 @@ long sys_open_tree(int dirfd, const char *pathname, unsigned int flags) {
      * 'submount tree' to apply the flag to. Linux returns -EINVAL. */
     if ((flags & 0x8000u /* AT_RECURSIVE */) && !(flags & OPEN_TREE_CLONE))
         return -EINVAL;
+
+    /* Linux's fs/namespace.c:SYSCALL_DEFINE3(open_tree) gates the
+     * detached-clone variant on CAP_SYS_ADMIN (via may_mount()):
+     *   if (detached && !may_mount()) return -EPERM;
+     * Plain open_tree (no OPEN_TREE_CLONE) is unprivileged — it just
+     * returns an O_PATH-like fd to an existing mount.  The previous
+     * Futura code skipped the privilege gate entirely, so an
+     * unprivileged caller could call open_tree(.., OPEN_TREE_CLONE)
+     * and obtain a detached subtree they should not have been able to
+     * create. */
+    if ((flags & OPEN_TREE_CLONE)) {
+        fut_task_t *task = fut_task_current();
+        if (task && task->uid != 0 &&
+            !(task->cap_effective & (1ULL << CAP_SYS_ADMIN)))
+            return -EPERM;
+    }
+
     if (!pathname) return -EFAULT;
 
     /* Stage pathname into a kernel buffer rather than walking the user

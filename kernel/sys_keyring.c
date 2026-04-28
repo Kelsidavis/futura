@@ -780,14 +780,21 @@ long sys_keyctl(int operation, unsigned long arg2, unsigned long arg3,
         struct kernel_key *found = key_find_in_keyring(kr_serial, k_type, k_desc);
         if (!found) return -ENOKEY;
 
-        /* Optionally link to dest keyring */
+        /* Optionally link to dest keyring.  Linux's keyctl_keyring_search
+         * surfaces a non-keyring destringid as ENOTDIR (lookup_user_key
+         * succeeded but key->type != &key_type_keyring).  The previous
+         * Futura code silently skipped non-keyring destinations, masking
+         * caller bugs as 'search succeeded, link silently failed'.
+         * Match Linux: search succeeds (return found->serial) only when
+         * the destination link itself succeeds; otherwise propagate the
+         * ENOTDIR. */
         if (arg5 != 0) {
             int32_t dst = resolve_keyring((int)(long)arg5);
-            if (dst > 0) {
-                struct kernel_key *dkr = key_find_serial(dst);
-                if (dkr && dkr->is_keyring)
-                    keyring_link(dkr, found->serial);
-            }
+            if (dst < 0) return dst;
+            struct kernel_key *dkr = key_find_serial(dst);
+            if (!dkr) return -ENOKEY;
+            if (!dkr->is_keyring) return -ENOTDIR;
+            keyring_link(dkr, found->serial);
         }
 
         return (long)found->serial;

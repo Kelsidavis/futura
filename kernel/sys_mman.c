@@ -170,20 +170,26 @@ long sys_mlock(const void *addr, size_t len) {
         return 0;
     }
 
-    /* Phase 2: Overflow check - prevent SIZE_MAX values causing wraparound */
+    /* Linux mlock(2): 'EINVAL — the result of the addition addr+len was
+     * less than addr (e.g., the addition may have resulted in an
+     * overflow).'  ENOMEM is reserved for 'range not mapped' or
+     * 'RLIMIT_MEMLOCK exceeded' — overflow of the addition is a
+     * call-shape error, not a memory-availability error.  The previous
+     * code mapped overflow and wraparound to ENOMEM, so libc wrappers
+     * branching on EINVAL/ENOMEM to distinguish 'fix the call' from
+     * 'raise the lock limit' saw the wrong class. */
     uintptr_t addr_val = (uintptr_t)local_addr;
     if (SIZE_MAX - addr_val < local_len) {
-        fut_printf("[MLOCK] mlock(addr=%p, len=%zu) -> ENOMEM (overflow: SIZE_MAX - addr < len)\n",
+        fut_printf("[MLOCK] mlock(addr=%p, len=%zu) -> EINVAL (overflow: SIZE_MAX - addr < len)\n",
                    local_addr, local_len);
-        return -ENOMEM;
+        return -EINVAL;
     }
 
-    /* Phase 2: Wraparound check - validate addr + len doesn't wrap */
     uintptr_t end_addr = addr_val + local_len;
     if (end_addr <= addr_val) {
-        fut_printf("[MLOCK] mlock(addr=%p, len=%zu) -> ENOMEM (wraparound: addr + len <= addr)\n",
+        fut_printf("[MLOCK] mlock(addr=%p, len=%zu) -> EINVAL (wraparound: addr + len <= addr)\n",
                    local_addr, local_len);
-        return -ENOMEM;
+        return -EINVAL;
     }
 
     /* Phase 3 Full: Cumulative RLIMIT_MEMLOCK enforcement with locked_vm tracking */
@@ -326,20 +332,22 @@ long sys_munlock(const void *addr, size_t len) {
         return 0;
     }
 
-    /* Phase 2: Overflow check - prevent SIZE_MAX values causing wraparound */
+    /* Linux munlock(2): 'EINVAL — the result of the addition addr+len
+     * was less than addr (e.g., the addition may have resulted in an
+     * overflow).'  Mirror the matching sys_mlock fix above; the
+     * arithmetic-overflow class is EINVAL, not ENOMEM. */
     uintptr_t addr_val = (uintptr_t)local_addr;
     if (SIZE_MAX - addr_val < local_len) {
-        fut_printf("[MUNLOCK] munlock(addr=%p, len=%zu) -> ENOMEM (overflow: SIZE_MAX - addr < len)\n",
+        fut_printf("[MUNLOCK] munlock(addr=%p, len=%zu) -> EINVAL (overflow: SIZE_MAX - addr < len)\n",
                    local_addr, local_len);
-        return -ENOMEM;
+        return -EINVAL;
     }
 
-    /* Phase 2: Wraparound check - validate addr + len doesn't wrap */
     uintptr_t end_addr = addr_val + local_len;
     if (end_addr <= addr_val) {
-        fut_printf("[MUNLOCK] munlock(addr=%p, len=%zu) -> ENOMEM (wraparound: addr + len <= addr)\n",
+        fut_printf("[MUNLOCK] munlock(addr=%p, len=%zu) -> EINVAL (wraparound: addr + len <= addr)\n",
                    local_addr, local_len);
-        return -ENOMEM;
+        return -EINVAL;
     }
 
     /* Decrement cumulative locked pages counter and clear VMA_LOCKED.

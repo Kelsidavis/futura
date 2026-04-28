@@ -153,10 +153,31 @@ static ssize_t signalfd_read_op(void *inode, void *priv,
     size_t remain = len;
 
     while (remain >= sizeof(struct signalfd_siginfo)) {
-        /* Find lowest-numbered pending signal in our mask */
+        /* Find lowest-numbered pending signal in our mask.
+         *
+         * Linux's signalfd_dequeue calls dequeue_signal() which checks
+         * BOTH per-task and per-thread pending masks; otherwise a
+         * signal sent via tgkill / pthread_kill (which lands in
+         * thread_pending_signals) is invisible to signalfd_read on the
+         * targeted thread.  The previous code only consulted
+         * task->pending_signals, so tgkill targets reported a
+         * permanent EINTR (via the fast-path block-check below) and
+         * never delivered the siginfo through the fd.  We dequeue from
+         * the matching queue so the right siginfo_t is read out. */
         uint64_t pending;
+        bool from_thread = false;
         fut_spinlock_acquire(&ctx->lock);
         pending = task->pending_signals & ctx->sigmask;
+        if (!pending) {
+            fut_thread_t *cur_thr = fut_thread_current();
+            if (cur_thr) {
+                uint64_t tp = __atomic_load_n(&cur_thr->thread_pending_signals,
+                                              __ATOMIC_ACQUIRE);
+                pending = tp & ctx->sigmask;
+                if (pending)
+                    from_thread = true;
+            }
+        }
         fut_spinlock_release(&ctx->lock);
 
         if (!pending) {
@@ -206,22 +227,39 @@ static ssize_t signalfd_read_op(void *inode, void *priv,
         int signo = __builtin_ctzll(pending) + 1;  /* signals are 1-based */
         uint64_t bit = 1ULL << (signo - 1);
 
-        /* Atomically consume the signal from task->pending_signals */
+        /* Atomically consume the signal from the matching queue.
+         * For thread-pending (tgkill/pthread_kill) signals, we dequeue
+         * from thread_pending_signals; for task-wide (kill/raise) we
+         * dequeue from task->pending_signals. */
+        fut_thread_t *cur_thr_dq = fut_thread_current();
         fut_spinlock_acquire(&ctx->lock);
-        /* Re-check: another reader may have taken it */
-        if (!(task->pending_signals & bit)) {
-            fut_spinlock_release(&ctx->lock);
-            continue;
+        if (from_thread && cur_thr_dq) {
+            if (!(cur_thr_dq->thread_pending_signals & bit)) {
+                fut_spinlock_release(&ctx->lock);
+                continue;
+            }
+            __atomic_and_fetch(&cur_thr_dq->thread_pending_signals,
+                               ~bit, __ATOMIC_RELEASE);
+        } else {
+            /* Re-check: another reader may have taken it */
+            if (!(task->pending_signals & bit)) {
+                fut_spinlock_release(&ctx->lock);
+                continue;
+            }
+            task->pending_signals &= ~bit;
         }
-        task->pending_signals &= ~bit;
         fut_spinlock_release(&ctx->lock);
 
         /* Fill in signalfd_siginfo from the per-signal queue info.
          * Linux copies all available siginfo_t fields so applications
-         * (e.g. SIGCHLD handlers, timer consumers) get complete data. */
+         * (e.g. SIGCHLD handlers, timer consumers) get complete data.
+         * Per-thread signals carry their own queue info; pull from the
+         * right place so si_pid / si_uid reflect the tgkill sender. */
         struct signalfd_siginfo info;
         __builtin_memset(&info, 0, sizeof(info));
-        const siginfo_t *qi = &task->sig_queue_info[signo - 1];
+        const siginfo_t *qi = (from_thread && cur_thr_dq)
+            ? &cur_thr_dq->thread_sig_queue_info[signo - 1]
+            : &task->sig_queue_info[signo - 1];
         info.ssi_signo   = (uint32_t)signo;
         info.ssi_errno   = qi->si_errno;
         info.ssi_code    = qi->si_code;

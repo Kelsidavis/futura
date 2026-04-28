@@ -1242,7 +1242,17 @@ long sys_io_uring_enter(unsigned int fd, unsigned int to_submit,
     }
 
     struct io_uring_ctx *ctx = uring_get_ctx(fd);
-    if (!ctx) return -EBADF;
+    if (!ctx) {
+        /* Same EBADF / EOPNOTSUPP split as io_uring_register: Linux's
+         * io_uring/io_uring.c:io_uring_enter returns EBADF for an
+         * unallocated fd and EOPNOTSUPP for a valid fd that isn't an
+         * io_uring (f->f_op != &io_uring_fops).  Distinguish via the
+         * task fd_table so liburing's feature-detection probes get
+         * the right errno. */
+        extern struct fut_file *fut_vfs_get_file(int fd);
+        struct fut_file *file = fut_vfs_get_file((int)fd);
+        return file ? -EOPNOTSUPP : -EBADF;
+    }
 
     /* Validate ownership */
     fut_task_t *task = fut_task_current();

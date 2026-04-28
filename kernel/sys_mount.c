@@ -1262,6 +1262,24 @@ long sys_fsconfig(int fs_fd, unsigned int cmd, const char *key,
  * Returns: fd representing the new mount (pass to move_mount).
  */
 long sys_fsmount(int fs_fd, unsigned int flags, unsigned int attr_flags) {
+    /* Linux's sys_fsmount validates both flag arguments up front:
+     *   if (flags & ~FSMOUNT_CLOEXEC) return -EINVAL;
+     *   if (attr_flags & ~MOUNT_ATTR__MASK) return -EINVAL;
+     * The previous Futura code accepted any bits in either field and
+     * silently dropped the unknown ones, so a caller probing for
+     * MOUNT_ATTR_NOSYMFOLLOW / MOUNT_ATTR_IDMAP support couldn't tell
+     * 'kernel doesn't honour it' from 'kernel accepted but ignored'.
+     * Mirror Linux's gate. */
+    if (flags & ~(unsigned int)FSMOUNT_CLOEXEC)
+        return -EINVAL;
+    const unsigned int VALID_MOUNT_ATTR =
+        MOUNT_ATTR_RDONLY    | MOUNT_ATTR_NOSUID  |
+        MOUNT_ATTR_NODEV     | MOUNT_ATTR_NOEXEC  |
+        MOUNT_ATTR_NOATIME   | MOUNT_ATTR_STRICTATIME |
+        MOUNT_ATTR_NODIRATIME| MOUNT_ATTR_IDMAP;
+    if (attr_flags & ~VALID_MOUNT_ATTR)
+        return -EINVAL;
+
     struct fs_context *ctx = fsctx_find_fd(fs_fd);
     if (!ctx) return -EBADF;
     if (!ctx->created) return -EINVAL;

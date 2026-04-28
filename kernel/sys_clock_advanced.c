@@ -114,28 +114,11 @@ long sys_clock_settime(int clock_id, const fut_timespec_t *tp) {
         return -ESRCH;
     }
 
-    if (!local_tp) {
-        fut_printf("[CLOCK_SETTIME] clock_settime(clock_id=%d, tp=%p) -> EFAULT (tp is NULL)\n",
-                   local_clock_id, local_tp);
-        return -EFAULT;
-    }
-
-    /* Copy time from user */
-    fut_timespec_t time;
-    if (clock_copy_from_user(&time, local_tp, sizeof(fut_timespec_t)) != 0) {
-        fut_printf("[CLOCK_SETTIME] clock_settime(clock_id=%d) -> EFAULT (copy_from_user failed)\n",
-                   local_clock_id);
-        return -EFAULT;
-    }
-
-    /* Validate timespec */
-    if (time.tv_sec < 0 || time.tv_nsec < 0 || time.tv_nsec >= 1000000000LL) {
-        fut_printf("[CLOCK_SETTIME] clock_settime(clock_id=%d, sec=%lld, nsec=%lld) -> EINVAL "
-                   "(invalid timespec)\n",
-                   local_clock_id, time.tv_sec, time.tv_nsec);
-        return -EINVAL;
-    }
-
+    /* Linux's sys_clock_settime resolves the clock_id (clockid_to_kclock)
+     * AND checks kc->clock_set first, returning -EINVAL for unknown or
+     * non-settable clocks BEFORE get_timespec64 ever touches the user
+     * pointer.  The previous order returned EFAULT for
+     * clock_settime(99, NULL), masking the real parameter-domain error. */
     const char *clock_name;
     int is_settable = 0;
 
@@ -167,9 +150,31 @@ long sys_clock_settime(int clock_id, const fut_timespec_t *tp) {
     }
 
     if (!is_settable) {
-        fut_printf("[CLOCK_SETTIME] clock_settime(clock_id=%s, sec=%lld, nsec=%lld) -> EINVAL "
+        fut_printf("[CLOCK_SETTIME] clock_settime(clock_id=%s) -> EINVAL "
                    "(%s is not settable)\n",
-                   clock_name, time.tv_sec, time.tv_nsec, clock_name);
+                   clock_name, clock_name);
+        return -EINVAL;
+    }
+
+    if (!local_tp) {
+        fut_printf("[CLOCK_SETTIME] clock_settime(clock_id=%s, tp=%p) -> EFAULT (tp is NULL)\n",
+                   clock_name, local_tp);
+        return -EFAULT;
+    }
+
+    /* Copy time from user */
+    fut_timespec_t time;
+    if (clock_copy_from_user(&time, local_tp, sizeof(fut_timespec_t)) != 0) {
+        fut_printf("[CLOCK_SETTIME] clock_settime(clock_id=%s) -> EFAULT (copy_from_user failed)\n",
+                   clock_name);
+        return -EFAULT;
+    }
+
+    /* Validate timespec */
+    if (time.tv_sec < 0 || time.tv_nsec < 0 || time.tv_nsec >= 1000000000LL) {
+        fut_printf("[CLOCK_SETTIME] clock_settime(clock_id=%s, sec=%lld, nsec=%lld) -> EINVAL "
+                   "(invalid timespec)\n",
+                   clock_name, time.tv_sec, time.tv_nsec);
         return -EINVAL;
     }
 

@@ -161,6 +161,22 @@ static struct sem_set *semtable_find_by_key(long key) {
  * @return semaphore set ID on success, -errno on error
  */
 long sys_semget(long key, int nsems, int semflg) {
+    /* Linux ipc/sem.c:SYSCALL_DEFINE3(semget) gates nsems FIRST:
+     *
+     *   if (nsems < 0 || nsems > sc_semmsl) return -EINVAL;
+     *
+     * up front, before the key lookup.  Futura previously only enforced
+     * the bound on the create path, so semget(EXISTING_KEY, -5, 0)
+     * returned the existing id (silently ignoring the negative nsems)
+     * where Linux returns EINVAL.  Move the bound check to the top so
+     * the parameter-domain error class is preserved on every code path.
+     *
+     * The 'lookup' arm below additionally checks nsems > s->nsems for
+     * existing sets — that's the IPC_STAT-equivalent shrink check
+     * Linux applies in sem_more_checks; keep it. */
+    if (nsems < 0 || nsems > SEMMSL)
+        return -EINVAL;
+
     /* Key-based lookup */
     if (key != IPC_PRIVATE) {
         struct sem_set *s = semtable_find_by_key(key);
@@ -178,8 +194,9 @@ long sys_semget(long key, int nsems, int semflg) {
             return -ENOENT;
     }
 
-    /* Create new set */
-    if (nsems <= 0 || nsems > SEMMSL)
+    /* Create new set: nsems must additionally be > 0 (creating a 0-sem
+     * set is meaningless and Linux's newary uses nsems as a slab index). */
+    if (nsems == 0)
         return -EINVAL;
 
     for (int i = 0; i < SEMMNI; i++) {

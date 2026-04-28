@@ -342,14 +342,31 @@ long sys_process_madvise(int pidfd, const void *iovec_ptr, unsigned long vlen,
     if (!target)
         return -ESRCH;
 
-    /* Permission check: caller must own the target or be root */
+    /* Permission check: Linux's process_madvise uses
+     * mm_access(task, PTRACE_MODE_READ_FSCREDS), which compares the
+     * caller's effective (fs) uid against ALL THREE of the target's
+     * uids (real, effective, saved):
+     *
+     *   if (uid_eq(caller_uid, tcred->euid) &&
+     *       uid_eq(caller_uid, tcred->suid) &&
+     *       uid_eq(caller_uid, tcred->uid))
+     *       goto ok;
+     *
+     * The previous Futura gate only compared self->uid (effective)
+     * against target->uid (effective), letting an unprivileged caller
+     * apply MADV_DONTNEED / MADV_PAGEOUT to a dropped-setuid victim
+     * (suid==0) — a memory-pressure DoS vector against a target that
+     * Linux's strict gate refuses outright.  Same triple-uid match
+     * as the ptrace / process_vm / kcmp / pidfd_getfd fixes. */
     extern fut_task_t *fut_task_current(void);
     fut_task_t *caller = fut_task_current();
     if (!caller)
         return -ESRCH;
     if (caller->uid != 0 &&
         !(caller->cap_effective & (1ULL << 19 /* CAP_SYS_PTRACE */)) &&
-        caller->uid != target->uid)
+        (caller->uid != target->uid  ||
+         caller->uid != target->ruid ||
+         caller->uid != target->suid))
         return -EPERM;
 
     /* Validate vlen (Linux caps at UIO_MAXIOV=1024) */

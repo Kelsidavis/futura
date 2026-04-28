@@ -304,12 +304,13 @@ long sys_capset(struct __user_cap_header_struct *hdrp,
         return -EFAULT;
     }
 
-    /* Phase 2: Validate data pointer */
-    if (!datap) {
-        fut_printf("[CAPABILITY] capset(hdrp=%p, datap=NULL, pid=%d) -> EFAULT\n",
-                   hdrp, task->pid);
-        return -EFAULT;
-    }
+    /* Linux's capset validates the header version (cap_validate_magic)
+     * BEFORE copy_from_user touches data, so an invalid-version probe
+     * with NULL datap returns -EINVAL (with the kernel's preferred
+     * version written back via cap_copy_to_user) — not -EFAULT.  The
+     * previous Futura order rejected NULL datap up front, masking the
+     * real version-mismatch error class libc capset wrappers
+     * use to negotiate the ABI version. */
 
     /* Copy capability header from userspace */
     struct __user_cap_header_struct hdr;

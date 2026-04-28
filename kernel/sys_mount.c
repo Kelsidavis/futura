@@ -1388,6 +1388,20 @@ long sys_fsmount(int fs_fd, unsigned int flags, unsigned int attr_flags) {
  */
 long sys_fspick(int dirfd, const char *pathname, unsigned int flags) {
     (void)dirfd;
+    /* Linux's sys_fspick gates the entire syscall on CAP_SYS_ADMIN
+     * (via may_mount()) before any other validation:
+     *   if (!may_mount()) return -EPERM;
+     * The previous Futura code skipped this gate, so any unprivileged
+     * caller could obtain a reconfiguration handle on any mount point —
+     * defeating the privilege model the matching fsopen / fsmount /
+     * open_tree / move_mount fixes already established. */
+    {
+        fut_task_t *task = fut_task_current();
+        if (task && task->uid != 0 &&
+            !(task->cap_effective & (1ULL << CAP_SYS_ADMIN)))
+            return -EPERM;
+    }
+
     /* Linux's sys_fspick rejects unknown flag bits up front:
      *   if (flags & ~(FSPICK_CLOEXEC | FSPICK_SYMLINK_NOFOLLOW |
      *                 FSPICK_NO_AUTOMOUNT | FSPICK_EMPTY_PATH))

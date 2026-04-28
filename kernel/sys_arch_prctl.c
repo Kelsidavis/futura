@@ -143,9 +143,20 @@ long sys_arch_prctl(int code, unsigned long addr) {
         /* Permitted == supported on Futura */
         return aprctl_put_u64((uint64_t *)addr, XFEATURE_SUPP);
 
-    case ARCH_REQ_XCOMP_PERM:
-        /* Grant permission to use any supported xstate component */
+    case ARCH_REQ_XCOMP_PERM: {
+        /* Linux's xstate_request_perm() takes a feature INDEX (not a mask)
+         * and rejects out-of-range indices with -EINVAL and unsupported
+         * indices with -EOPNOTSUPP. The previous code returned 0 for any
+         * value the caller passed, so a runtime probing for AMX
+         * (XFEATURE_XTILE_DATA = 18, unsupported on Futura) believed the
+         * request succeeded and would later trap when issuing AMX ops. */
+        #define XFEATURE_MAX 19
+        if (addr >= XFEATURE_MAX)
+            return -EINVAL;
+        if (!(XFEATURE_SUPP & (1ULL << addr)))
+            return -EOPNOTSUPP;
         return 0;
+    }
 
     case ARCH_GET_XCOMP_GUEST_PERM:
         /* No guest VM support — guest perm is 0 */

@@ -320,6 +320,21 @@ long sys_statx(int dirfd, const char *pathname, int flags,
         return -EINVAL;
     }
 
+    /* Linux's do_statx rejects the AT_STATX_FORCE_SYNC | AT_STATX_DONT_SYNC
+     * combination — they're mutually-exclusive selectors of a 2-bit
+     * sync-mode field:
+     *   if ((flags & AT_STATX_SYNC_TYPE) == AT_STATX_SYNC_TYPE)
+     *       return -EINVAL;
+     * The previous Futura code accepted this nonsense combination as
+     * 'unknown bits not set' since both bits are individually within
+     * STATX_VALID_FLAGS — masking the documented Linux gate that lets
+     * libc statx wrappers detect malformed flag combos. */
+    if ((local_flags & AT_STATX_SYNC_TYPE) == AT_STATX_SYNC_TYPE) {
+        fut_printf("[STATX] statx(flags=0x%x) -> EINVAL (FORCE_SYNC|DONT_SYNC both set)\n",
+                   local_flags);
+        return -EINVAL;
+    }
+
     /* Validate output buffer */
     if (!local_statxbuf)
         return -EFAULT;

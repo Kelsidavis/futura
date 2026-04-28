@@ -276,6 +276,13 @@ long sys_swapoff(const char *path) {
     if (swap_copy_path(kpath, path, sizeof(kpath)) != 0)
         return -EFAULT;
 
+    /* Empty pathname is ENOENT per Linux's swapoff(2) — matches the
+     * sister sys_swapon empty-path check.  Without this gate the
+     * scan below would silently report 'not found' (-EINVAL) for an
+     * empty string, which is the wrong errno class. */
+    if (kpath[0] == '\0')
+        return -ENOENT;
+
     for (int i = 0; i < g_swap_count; i++) {
         if (!g_swap_areas[i].active) continue;
         int match = 1;

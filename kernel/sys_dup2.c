@@ -374,12 +374,21 @@ long sys_dup3(int oldfd, int newfd, int flags) {
         return -EINVAL;
     }
 
-    /* Validate newfd upper bound — POSIX: EINVAL for out-of-range newfd */
+    /* Validate newfd upper bound.  Linux's ksys_dup3 returns -EBADF when
+     * newfd >= rlimit(RLIMIT_NOFILE) — the canonical 'fd is out of the
+     * caller's allowed range' errno class.  The previous EINVAL gate
+     * conflated 'malformed call shape' with 'fd-out-of-range' (the
+     * comment that justified it cited POSIX, but POSIX dup2's text
+     * actually says 'EBADF: ... negative or greater than or equal to
+     * {OPEN_MAX}', and dup3 inherits the same errno via the Linux
+     * implementation).  Glibc / musl wrappers branch on EBADF here to
+     * retry with a smaller newfd; EINVAL was treated as a fatal
+     * call-shape error and abort. */
     if (local_newfd >= (int)task->max_fds) {
-        fut_printf("[DUP3] dup3(oldfd=%d, newfd=%d, max_fds=%u, flags=0x%x) -> EINVAL "
-                   "(newfd exceeds max_fds, POSIX: EINVAL for out-of-range)\n",
+        fut_printf("[DUP3] dup3(oldfd=%d, newfd=%d, max_fds=%u, flags=0x%x) -> EBADF "
+                   "(newfd >= rlimit(NOFILE))\n",
                    local_oldfd, local_newfd, task->max_fds, local_flags);
-        return -EINVAL;
+        return -EBADF;
     }
 
     /* Enforce RLIMIT_NOFILE — see sys_dup2 for treating rlim_cur == 0

@@ -154,6 +154,18 @@ long sys_fstat(int fd, struct fut_stat *statbuf) {
         return -EBADF;
     }
 
+    /* Linux's vfs_fstat runs fdget_raw FIRST — EBADF surfaces before
+     * cp_new_stat ever touches the user statbuf pointer.  Futura's
+     * previous order rejected NULL statbuf up front with EFAULT, so
+     * fstat(closed_fd_in_range, NULL) returned EFAULT where Linux
+     * returns EBADF — same EBADF-before-EFAULT pattern as the matching
+     * read/write/readv/writev reorders. */
+    if (local_fd >= (int)task->max_fds ||
+        !task->fd_table || !task->fd_table[local_fd]) {
+        fut_printf("[FSTAT] fstat(fd=%d) -> EBADF (fd not open)\n", local_fd);
+        return -EBADF;
+    }
+
     /* NULL statbuf is a pointer fault (EFAULT) per Linux fstat(2) — the
      * kernel must dereference it to write the stat structure. The
      * sister sys_stat() and sys_fstatat() entry points already return

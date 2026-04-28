@@ -225,6 +225,16 @@ long sys_timer_settime(timer_t timerid, int flags,
     if (!task)
         return -ESRCH;
 
+    /* Linux's kernel/time/posix-timers.c:do_timer_settime rejects any
+     * flag bit outside TIMER_ABSTIME (1) up front:
+     *   if (flags & ~TIMER_ABSTIME) return -EINVAL;
+     * The previous Futura code silently ignored unknown flag bits and
+     * branched only on the TIMER_ABSTIME bit (line 285), so a future
+     * Linux flag (or a buggy caller passing 0xff) would be ignored
+     * instead of erroring out — masking the parameter-domain bug. */
+    if (local_flags & ~1 /* TIMER_ABSTIME */)
+        return -EINVAL;
+
     if (!local_new_value)
         return -EINVAL;
 

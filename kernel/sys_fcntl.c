@@ -1030,6 +1030,35 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
             return -EINVAL;
         }
 
+        /* Linux's posix_lock_inode rejects F_GETLK with anything other
+         * than F_RDLCK or F_WRLCK in l_type — F_UNLCK has no meaning
+         * for a "would this lock be blocked?" query and any other
+         * value is undefined.  The previous Futura code silently
+         * treated unknown l_type as 'no conflict' and reported
+         * F_UNLCK, masking the malformed input. */
+        if (lk.l_type != F_RDLCK && lk.l_type != F_WRLCK) {
+            fut_printf("[FCNTL] fcntl(fd=%d, cmd=%s, l_type=%d) -> EINVAL "
+                       "(F_GETLK requires F_RDLCK or F_WRLCK)\n",
+                       local_fd,
+                       local_cmd == F_OFD_GETLK ? "F_OFD_GETLK" : "F_GETLK",
+                       (int)lk.l_type);
+            return -EINVAL;
+        }
+
+        /* Same l_whence ∈ {SEEK_SET, SEEK_CUR, SEEK_END} validation
+         * as F_SETLK above.  Linux's flock_to_posix_lock applies the
+         * same gate to GETLK and SETLK paths. */
+        if (lk.l_whence != 0 /* SEEK_SET */ &&
+            lk.l_whence != 1 /* SEEK_CUR */ &&
+            lk.l_whence != 2 /* SEEK_END */) {
+            fut_printf("[FCNTL] fcntl(fd=%d, cmd=%s, l_whence=%d) -> EINVAL "
+                       "(unknown whence)\n",
+                       local_fd,
+                       local_cmd == F_OFD_GETLK ? "F_OFD_GETLK" : "F_GETLK",
+                       (int)lk.l_whence);
+            return -EINVAL;
+        }
+
         struct fut_vnode *vnode = file ? file->vnode : NULL;
         if (!vnode) {
             fut_printf("[FCNTL] fcntl(fd=%d, cmd=F_GETLK) -> EBADF (no vnode)\n", local_fd);

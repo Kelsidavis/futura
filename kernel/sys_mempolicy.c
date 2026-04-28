@@ -156,6 +156,23 @@ long sys_get_mempolicy(int *mode_out, unsigned long *nodemask_out,
         (flags & (MPOL_F_NODE | MPOL_F_ADDR)))
         return -EINVAL;
 
+    /* Linux's do_get_mempolicy: when MPOL_F_ADDR is NOT set, both a
+     * non-zero addr and the MPOL_F_NODE flag are rejected with -EINVAL:
+     *
+     *   } else if (addr || (flags & MPOL_F_NODE)) {
+     *       return -EINVAL;
+     *   }
+     *
+     * MPOL_F_NODE means "report which node the addr lives on", which is
+     * only meaningful when MPOL_F_ADDR is also set to identify the addr.
+     * Futura previously honoured MPOL_F_NODE alone (returning node 0)
+     * and silently ignored a non-zero addr without MPOL_F_ADDR — masking
+     * the malformed-flag-combination error class libnuma probes via
+     * `get_mempolicy(&node, NULL, 0, NULL, MPOL_F_NODE)` expect. */
+    if (!(flags & MPOL_F_MEMS_ALLOWED) && !(flags & MPOL_F_ADDR) &&
+        (addr || (flags & MPOL_F_NODE)))
+        return -EINVAL;
+
     /* MPOL_F_NODE: report node number for addr (always 0 here). Otherwise
      * report the policy mode (always MPOL_DEFAULT). Either way the value
      * lives in mode_out. */

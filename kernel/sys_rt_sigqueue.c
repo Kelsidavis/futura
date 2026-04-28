@@ -120,13 +120,24 @@ long sys_rt_sigqueueinfo(int tgid, int sig, const void *uinfo) {
     if (!target)
         return -ESRCH;
 
-    /* Permission check: caller's eUID must match target's eUID, or caller
-     * must have CAP_KILL (bit 5), unless sending SIGCONT to same session. */
+    /* Permission check: Linux's kill_ok_by_cred compares the caller's
+     * uids against the target's REAL and SAVED uids (not effective):
+     *
+     *   uid_eq(cred->euid, tcred->suid) || uid_eq(cred->euid, tcred->uid) ||
+     *   uid_eq(cred->uid,  tcred->suid) || uid_eq(cred->uid,  tcred->uid);
+     *
+     * (tcred->uid is the real uid in Linux's struct cred.)  The
+     * previous Futura check compared against target->uid (effective),
+     * letting an unprivileged caller send a queued signal to a
+     * setuid-down daemon (target->uid dropped to a regular user
+     * while ruid/suid stayed at 0) — same setuid-down kill vector
+     * the recent kill / tgkill / pidfd_send_signal fixes closed. */
     if (caller && caller->pid != (uint64_t)tgid) {
         bool cap_kill = (caller->cap_effective & (1ULL << 5)) != 0;
-        bool same_uid = (caller->uid == target->uid) ||
-                        (caller->uid == target->ruid) ||
-                        (caller->ruid == target->uid);
+        bool same_uid = (caller->uid  == target->ruid) ||
+                        (caller->uid  == target->suid) ||
+                        (caller->ruid == target->ruid) ||
+                        (caller->ruid == target->suid);
         bool sigcont_same_session = (sig == SIGCONT) &&
                                     (caller->pgid == target->pgid);
         if (!cap_kill && !same_uid && !sigcont_same_session)
@@ -195,12 +206,14 @@ long sys_rt_tgsigqueueinfo(int tgid, int tid, int sig, const void *uinfo) {
     if (!target)
         return -ESRCH;
 
-    /* Permission check (same rules as rt_sigqueueinfo) */
+    /* Permission check (same rules as rt_sigqueueinfo) — match
+     * target->ruid/suid (not effective) per kill_ok_by_cred. */
     if (caller && caller->pid != (uint64_t)tgid) {
         bool cap_kill = (caller->cap_effective & (1ULL << 5)) != 0;
-        bool same_uid = (caller->uid == target->uid) ||
-                        (caller->uid == target->ruid) ||
-                        (caller->ruid == target->uid);
+        bool same_uid = (caller->uid  == target->ruid) ||
+                        (caller->uid  == target->suid) ||
+                        (caller->ruid == target->ruid) ||
+                        (caller->ruid == target->suid);
         bool sigcont_same_session = (sig == SIGCONT) &&
                                     (caller->pgid == target->pgid);
         if (!cap_kill && !same_uid && !sigcont_same_session)

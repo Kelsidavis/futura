@@ -71,6 +71,25 @@ long sys_pivot_root(const char *new_root, const char *put_old) {
     fut_task_t *task = fut_task_current();
     if (!task) return -ESRCH;
 
+    /* Linux's fs/namespace.c:SYSCALL_DEFINE2(pivot_root) gates the
+     * entire syscall on CAP_SYS_ADMIN (via may_mount()) BEFORE any
+     * user-pointer access:
+     *   if (!may_mount()) return -EPERM;
+     *   error = user_path_at(AT_FDCWD, new_root, ...);
+     * The previous Futura order copied both pathnames first, then
+     * checked the cap.  That let an unprivileged caller probe
+     * directory existence (ENOENT vs EPERM) by passing speculative
+     * paths — same recon vector the matching fsopen / fsmount /
+     * open_tree / move_mount / fspick / chroot fixes already closed. */
+    {
+        bool has_cap = (task->cap_effective & (1ULL << CAP_SYS_ADMIN)) != 0;
+        if (!has_cap && task->uid != 0) {
+            fut_printf("[PIVOT_ROOT] denied pid=%llu (CAP_SYS_ADMIN required)\n",
+                       (unsigned long long)task->pid);
+            return -EPERM;
+        }
+    }
+
     /* Copy and validate new_root from userspace */
     if (!new_root) {
         fut_printf("[PIVOT_ROOT] new_root=NULL pid=%llu\n", (unsigned long long)task->pid);
@@ -97,13 +116,6 @@ long sys_pivot_root(const char *new_root, const char *put_old) {
         return -ENAMETOOLONG;
     if (put_old_buf[0] == '\0')
         return -ENOENT;
-
-    /* Permission check: require CAP_SYS_ADMIN or root */
-    bool has_cap = (task->cap_effective & (1ULL << CAP_SYS_ADMIN)) != 0;
-    if (!has_cap && task->uid != 0) {
-        fut_printf("[PIVOT_ROOT] denied pid=%llu\n", (unsigned long long)task->pid);
-        return -EPERM;
-    }
 
     /* Resolve new_root to absolute path */
     char nr_abs[256];

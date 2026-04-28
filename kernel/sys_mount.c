@@ -1772,9 +1772,13 @@ long sys_lsm_set_self_attr(unsigned int attr, void *ctx, uint32_t size,
  */
 long sys_lsm_list_modules(uint64_t *ids, uint32_t *size, uint32_t flags) {
     (void)ids; (void)flags;
+    /* Report 0 modules — buffer size needed is 0.  The previous code
+     * wrote '*size = 0' directly to the user pointer; same uaccess
+     * hazard fixed in lsm_get_self_attr.  Stage via copy_to_user. */
     if (size) {
-        /* Report 0 modules — buffer size needed is 0 */
-        *size = 0;
+        uint32_t zero = 0;
+        if (mount_copy_to_user(size, &zero, sizeof(zero)) != 0)
+            return -EFAULT;
     }
     return 0;
 }

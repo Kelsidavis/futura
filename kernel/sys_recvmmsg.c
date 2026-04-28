@@ -85,14 +85,16 @@ long sys_recvmmsg(int sockfd, void *msgvec, unsigned int vlen,
             nonblock_subsequent = 1;
     }
 
-    /* Linux: vlen == 0 is not an error; the loop runs zero times and
-     * the syscall returns 0. Only a NULL msgvec is rejected (EFAULT).
-     * The previous EINVAL gate broke Linux ABI parity and any libc
-     * recvmmsg() that forwards user vlen unchanged. */
-    if (!msgvec)
-        return -EFAULT;
+    /* Linux: vlen == 0 short-circuits — __sys_recvmmsg's loop runs zero
+     * times and the syscall returns 0 without dereferencing msgvec.
+     * The previous order (NULL check before vlen==0) surfaced EFAULT
+     * for the documented no-op recvmmsg(fd, NULL, 0, _, _) probe; libc
+     * uses this pattern to detect 'syscall exists, fd is a socket'.
+     * Reorder so vlen==0 short-circuits before any pointer deref. */
     if (vlen == 0)
         return 0;
+    if (!msgvec)
+        return -EFAULT;
     if (vlen > 1024)
         vlen = 1024;
 

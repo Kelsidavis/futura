@@ -55,15 +55,18 @@ long sys_sendmmsg(int sockfd, void *msgvec, unsigned int vlen, unsigned int flag
             return -ENOTSOCK;
     }
 
-    /* Linux: vlen == 0 is not an error; the loop simply runs zero times
-     * and the syscall returns 0 (no datagrams sent). Only NULL msgvec
-     * is rejected. The previous EINVAL gate diverged from Linux's
-     * sendmmsg(2) ABI and broke libc wrappers that pass user-supplied
-     * vlen through verbatim. */
-    if (!msgvec)
-        return -EFAULT;
+    /* Linux: vlen == 0 is a no-op short-circuit — __sys_sendmmsg's
+     * 'while (datagrams < vlen)' loop simply doesn't enter, and the
+     * msgvec pointer is never dereferenced.  sendmmsg(fd, NULL, 0, _)
+     * therefore returns 0 on Linux, not EFAULT.  The previous order
+     * checked NULL before vlen, surfacing EFAULT for the documented
+     * no-op pattern (used by libc/glibc as a probe of 'syscall exists,
+     * fd is a socket').  Reorder: fd validity first (already done
+     * above), then vlen==0 short-circuit, then NULL pointer check. */
     if (vlen == 0)
         return 0;
+    if (!msgvec)
+        return -EFAULT;
     if (vlen > 1024)
         vlen = 1024;
 

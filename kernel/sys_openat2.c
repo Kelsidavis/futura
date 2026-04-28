@@ -193,6 +193,23 @@ long sys_openat2(int dirfd, const char *path, const struct open_how *how,
     if (kow.mode != 0 && !(kow.flags & ((uint64_t)O_CREAT | (uint64_t)O_TMPFILE)))
         return -EINVAL;
 
+    /* Linux's build_open_flags requires O_TMPFILE to be combined with
+     * write access (O_WRONLY or O_RDWR):
+     *   if (flags & __O_TMPFILE) {
+     *       if (!(acc_mode & MAY_WRITE)) return -EINVAL;
+     *   }
+     * sys_openat enforces this gate (sys_openat.c line 234-237) but
+     * sys_openat2 previously skipped it because openat2 calls
+     * fut_vfs_open_at directly without going through the openat-level
+     * validation.  An O_TMPFILE | O_RDONLY openat2 silently fell
+     * through and either succeeded or surfaced a downstream errno
+     * that didn't match Linux's parameter-domain rejection. */
+    if ((kow.flags & (uint64_t)O_TMPFILE) == (uint64_t)O_TMPFILE) {
+        unsigned int acc = (unsigned int)kow.flags & O_ACCMODE;
+        if (acc != O_WRONLY && acc != O_RDWR)
+            return -EINVAL;
+    }
+
     /* RESOLVE_NO_XDEV, RESOLVE_NO_MAGICLINKS, RESOLVE_CACHED: naturally satisfied
      * by Futura's in-memory VFS (no mount points or magic links).
      * RESOLVE_NO_SYMLINKS: enforced via per-task flag in VFS path resolution.

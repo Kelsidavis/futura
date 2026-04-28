@@ -890,7 +890,17 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
         switch (optname) {
             case 26: socket->ipv6_v6only    = (uint8_t)(val != 0); return 0; /* IPV6_V6ONLY */
             case 66: socket->ipv6_recvtclass= (uint8_t)(val != 0); return 0; /* IPV6_RECVTCLASS */
-            case 67: socket->ipv6_tclass    = (uint8_t)(val & 0xff); return 0; /* IPV6_TCLASS */
+            case 67: /* IPV6_TCLASS */
+                /* Linux's net/ipv6/ipv6_sockglue.c rejects val < -1 or
+                 * val > 0xff with -EINVAL, and treats val == -1 as
+                 * 'system default' (stored as 0).  The previous code
+                 * silently masked with 0xff, so val == 256 became 0
+                 * and val == -1 became 0xff — divergent ABI either
+                 * way. */
+                if (val < -1 || val > 0xff)
+                    return -EINVAL;
+                socket->ipv6_tclass = (uint8_t)(val == -1 ? 0 : val);
+                return 0;
             default:
                 if ((optname >= 1 && optname <= 25) ||
                     (optname >= 27 && optname <= 80)) return 0;

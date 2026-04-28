@@ -1044,12 +1044,19 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
         num[num_pos] = '\0';
         for (int i = 0; num[i]; i++) { msg[pos++] = num[i]; }
 
-        text = ") -> EBADF (invalid epoll fd)\n";
+        text = ") -> EBADF/EINVAL (invalid epoll fd)\n";
         while (*text) { msg[pos++] = *text++; }
         msg[pos] = '\0';
         fut_printf("%s", msg);
 
-        return -EBADF;
+        /* Linux's fs/eventpoll.c:do_epoll_ctl splits these errno classes:
+         *   - EBADF when fdget(epfd) fails (epfd out of range/unallocated)
+         *   - EINVAL when epfd is a valid fd but f->f_op != &eventpoll_fops
+         * Match Linux: distinguish by consulting the task's fd_table for
+         * epfd directly. Same EBADF/EINVAL split as the matching signalfd
+         * / inotify / timerfd fixes. */
+        struct fut_file *epfile_chk = fut_vfs_get_file(epfd);
+        return epfile_chk ? -EINVAL : -EBADF;
     }
     /* Lock remains held through the switch statement below */
 
@@ -1515,12 +1522,14 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
         text = " [";
         while (*text) { msg[pos++] = *text++; }
         while (*epfd_category) { msg[pos++] = *epfd_category++; }
-        text = "]) -> EBADF (invalid epoll fd)\n";
+        text = "]) -> EBADF/EINVAL (invalid epoll fd)\n";
         while (*text) { msg[pos++] = *text++; }
         msg[pos] = '\0';
         fut_printf("%s", msg);
 
-        return -EBADF;
+        /* Same EBADF/EINVAL split as epoll_ctl above. */
+        struct fut_file *epfile_chk = fut_vfs_get_file(epfd);
+        return epfile_chk ? -EINVAL : -EBADF;
     }
 
     /* Validate timeout: only -1 (infinite), 0 (poll), and positive values are valid.
@@ -2073,8 +2082,11 @@ long sys_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
     fut_spinlock_acquire(&epoll_lock);
     struct epoll_set *set = epoll_get_set(epfd);
     fut_spinlock_release(&epoll_lock);
-    if (!set)
-        return -EBADF;
+    if (!set) {
+        /* Same EBADF/EINVAL split as epoll_ctl/epoll_wait above. */
+        struct fut_file *epfile_chk = fut_vfs_get_file(epfd);
+        return epfile_chk ? -EINVAL : -EBADF;
+    }
 
     /* ── Install signal mask atomically ── */
     fut_task_t *task = fut_task_current();

@@ -175,18 +175,30 @@ long sys_rmdir(const char *path) {
         path_type = "relative";
     }
 
-    /* Phase 2: Validate not attempting to remove . or .. */
-    if ((path_buf[0] == '.' && path_buf[1] == '\0') ||
-        (path_buf[0] == '.' && path_buf[1] == '.' && path_buf[2] == '\0')) {
-        fut_printf("[RMDIR] rmdir(path='%s' [%s]) -> EINVAL (cannot remove . or ..)\n",
-                   path_buf, path_type);
+    /* Linux's do_rmdir splits the trivial-target rejection into three
+     * distinct errno classes via the LAST_* path-component category
+     * (fs/namei.c:do_rmdir):
+     *
+     *   case LAST_DOTDOT:  error = -ENOTEMPTY;  // ".." — parent isn't empty
+     *   case LAST_DOT:     error = -EINVAL;     // "."  — refuses self
+     *   case LAST_ROOT:    error = -EBUSY;      // "/"  — root is busy
+     *
+     * The previous Futura code collapsed both "." and ".." into -EINVAL
+     * and reported "/" as -EPERM, which broke libc rmdir wrappers and
+     * test harnesses that branch on the specific errno: -ENOTEMPTY is
+     * how callers detect "the directory has surviving entries" and
+     * -EBUSY is the documented signal for mount/root pinning. */
+    if (path_buf[0] == '.' && path_buf[1] == '\0') {
+        fut_printf("[RMDIR] rmdir(path='.' [%s]) -> EINVAL (refuses '.')\n", path_type);
         return -EINVAL;
     }
-
-    /* Phase 3: Prevent removal of root directory */
+    if (path_buf[0] == '.' && path_buf[1] == '.' && path_buf[2] == '\0') {
+        fut_printf("[RMDIR] rmdir(path='..' [%s]) -> ENOTEMPTY (parent not empty)\n", path_type);
+        return -ENOTEMPTY;
+    }
     if (path_buf[0] == '/' && path_buf[1] == '\0') {
-        fut_printf("[RMDIR] rmdir(path='/' [root]) -> EPERM (cannot remove root directory)\n");
-        return -EPERM;
+        fut_printf("[RMDIR] rmdir(path='/' [root]) -> EBUSY (root directory)\n");
+        return -EBUSY;
     }
 
     /* Phase 3: Normalize path by stripping trailing "/" (if not root, if not . or ..) */

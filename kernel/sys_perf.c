@@ -28,6 +28,7 @@
 #include <kernel/errno.h>
 #include <kernel/fut_task.h>
 #include <kernel/chrdev.h>
+#include <kernel/fut_vfs.h>
 #include <kernel/uaccess.h>
 #include <stdint.h>
 #include <stddef.h>
@@ -299,8 +300,6 @@ static const struct fut_file_ops perf_fops = {
  */
 long sys_perf_event_open(const void *attr, int pid, int cpu,
                          int group_fd, unsigned long flags) {
-    (void)group_fd;
-
     if (!attr) return -EINVAL;
 
     /* Linux rejects any unknown bit in flags: PERF_FLAG_FD_NO_GROUP |
@@ -313,6 +312,25 @@ long sys_perf_event_open(const void *attr, int pid, int cpu,
                                  PERF_FLAG_PID_CGROUP |
                                  PERF_FLAG_FD_CLOEXEC))
         return -EINVAL;
+
+    /* Linux's perf_event_open validates group_fd: -1 means "no group
+     * leader" (standalone event); any other value must reference an
+     * already-open perf_event fd.  Passing a non-perf fd or a closed
+     * fd silently returned a working event in the previous code,
+     * which let mis-ported tooling (perf record / bpftrace) build
+     * groups whose leader was actually an unrelated chrdev — every
+     * read on the resulting fd then returned bogus counter values.
+     * Linux returns -EBADF for "fd not open" and -EINVAL for "fd is
+     * not a perf event"; mirror that. PERF_FLAG_FD_NO_GROUP combined
+     * with group_fd != -1 is also rejected with -EINVAL. */
+    if (group_fd != -1) {
+        if (flags & PERF_FLAG_FD_NO_GROUP) return -EINVAL;
+        fut_task_t *gt = fut_task_current();
+        if (!gt) return -ESRCH;
+        struct fut_file *gf = vfs_get_file_from_task(gt, group_fd);
+        if (!gf) return -EBADF;
+        if (gf->chr_ops != &perf_fops) return -EINVAL;
+    }
 
     /* Copy perf_event_attr from user before reading any fields. The
      * previous code cast attr directly and dereferenced a->type /

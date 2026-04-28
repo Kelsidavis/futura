@@ -917,6 +917,26 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
             return -EBADF;
         }
 
+        /* Linux's flock_to_posix_lock validates l_whence against the
+         * three SEEK_* values and returns -EINVAL for anything else:
+         *   switch (l->l_whence) {
+         *   case SEEK_SET / SEEK_CUR / SEEK_END: ...
+         *   default: return -EINVAL;
+         *   }
+         * The previous Futura cascade silently treated unknown
+         * l_whence as SEEK_SET (the if/else fell through with no
+         * adjustment), so a caller passing an out-of-range whence
+         * got the lock applied at l_start verbatim — masking the
+         * invalid input. */
+        if (lk.l_whence != 0 /* SEEK_SET */ &&
+            lk.l_whence != 1 /* SEEK_CUR */ &&
+            lk.l_whence != 2 /* SEEK_END */) {
+            fut_printf("[FCNTL] fcntl(fd=%d, cmd=%s, l_whence=%d) -> EINVAL "
+                       "(unknown whence)\n",
+                       local_fd, cmd_name, (int)lk.l_whence);
+            return -EINVAL;
+        }
+
         /* Resolve byte-range: compute absolute start and end offsets.
          * l_whence adjusts l_start relative to file position or size.
          * l_len==0 means lock extends to EOF (represented as end=-1). */

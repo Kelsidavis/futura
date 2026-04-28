@@ -185,6 +185,24 @@ long sys_swapon(const char *path, int swapflags) {
      * EFAULT. Keep the existing test contract green for CI. */
     if (!path) return -EINVAL;
 
+    /* Linux's sys_swapon validates swap_flags against SWAP_FLAGS_VALID
+     * (SWAP_FLAG_PREFER | SWAP_FLAG_PRIO_MASK | SWAP_FLAG_DISCARD |
+     *  SWAP_FLAG_DISCARD_ONCE | SWAP_FLAG_DISCARD_PAGES, mask 0x7FFFF)
+     * and rejects unknown bits with -EINVAL.  The previous Futura code
+     * silently accepted any swap_flags value and only extracted the
+     * priority bits, so a caller probing for SWAP_FLAG_DISCARD support
+     * couldn't tell 'kernel doesn't honour it' from 'kernel accepted
+     * but ignored', and userspace had no way to detect future
+     * SWAP_FLAG_* extensions. */
+    const int SWAP_FLAGS_VALID =
+        0x7FFF  | /* SWAP_FLAG_PRIO_MASK */
+        0x8000  | /* SWAP_FLAG_PREFER */
+        0x10000 | /* SWAP_FLAG_DISCARD */
+        0x20000 | /* SWAP_FLAG_DISCARD_ONCE */
+        0x40000;  /* SWAP_FLAG_DISCARD_PAGES */
+    if (swapflags & ~SWAP_FLAGS_VALID)
+        return -EINVAL;
+
     /* Permission check: Linux gates swapon on CAP_SYS_ADMIN, not just
      * effective-uid 0. The previous check rejected non-root callers
      * holding CAP_SYS_ADMIN — the standard way to delegate swap

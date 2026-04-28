@@ -747,6 +747,24 @@ long sys_sync_file_range(int fd, int64_t offset, int64_t nbytes, unsigned int fl
         return -ESRCH;
     }
 
+    /* Linux's mm/filemap.c:ksys_sync_file_range validates flags FIRST
+     * (before any fd lookup or offset/nbytes domain check):
+     *   if (flags & ~VALID_FLAGS) goto out;   // EINVAL
+     *   ...
+     *   f = fdget(fd);
+     *   if (!f.file) ret = -EBADF;
+     * The previous Futura order rejected negative fd / offset / nbytes
+     * before flags, inverting the errno class for callers that probe
+     * with deliberately bad fds to detect supported flag bits.  Same
+     * flags-first reorder pattern as the matching splice / vmsplice /
+     * tee / mremap fixes. */
+    const unsigned int VALID_FLAGS = SYNC_FILE_RANGE_WAIT_BEFORE | SYNC_FILE_RANGE_WRITE | SYNC_FILE_RANGE_WAIT_AFTER;
+    if (local_flags & ~VALID_FLAGS) {
+        fut_printf("[SYNC_FILE_RANGE] sync_file_range(fd=%d, offset=%ld, nbytes=%ld, flags=0x%x [invalid], pid=%d) "
+                   "-> EINVAL\n", local_fd, local_offset, local_nbytes, local_flags, task->pid);
+        return -EINVAL;
+    }
+
     /* Validate fd */
     if (local_fd < 0) {
         fut_printf("[SYNC_FILE_RANGE] sync_file_range(fd=%d [invalid], offset=%ld, nbytes=%ld, flags=0x%x, pid=%d) "
@@ -764,14 +782,6 @@ long sys_sync_file_range(int fd, int64_t offset, int64_t nbytes, unsigned int fl
     /* Validate nbytes */
     if (local_nbytes < 0) {
         fut_printf("[SYNC_FILE_RANGE] sync_file_range(fd=%d, offset=%ld, nbytes=%ld [negative], flags=0x%x, pid=%d) "
-                   "-> EINVAL\n", local_fd, local_offset, local_nbytes, local_flags, task->pid);
-        return -EINVAL;
-    }
-
-    /* Validate flags */
-    const unsigned int VALID_FLAGS = SYNC_FILE_RANGE_WAIT_BEFORE | SYNC_FILE_RANGE_WRITE | SYNC_FILE_RANGE_WAIT_AFTER;
-    if (local_flags & ~VALID_FLAGS) {
-        fut_printf("[SYNC_FILE_RANGE] sync_file_range(fd=%d, offset=%ld, nbytes=%ld, flags=0x%x [invalid], pid=%d) "
                    "-> EINVAL\n", local_fd, local_offset, local_nbytes, local_flags, task->pid);
         return -EINVAL;
     }

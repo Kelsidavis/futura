@@ -61,10 +61,17 @@ long sys_getgroups(int size, uint32_t *list) {
     if (size < ngroups)
         return -EINVAL;
 
-    if (!list)
-        return -EFAULT;
-
+    /* Linux's getgroups() only writes through grouplist when there is
+     * something to copy: groups_to_user iterates over [0..ngroups) and
+     * returns 0 on count==0 without touching the user pointer. The
+     * previous unconditional 'list==NULL -> EFAULT' rejected the
+     * documented Linux pattern of getgroups(N, NULL) when ngroups==0
+     * (used by libc/grouplist sizing probes that allocate a buffer
+     * lazily after seeing zero supplementary groups). Only require a
+     * valid pointer when we actually need to write. */
     if (ngroups > 0) {
+        if (!list)
+            return -EFAULT;
         if (groups_copy_to_user(list, task->groups, ngroups * sizeof(uint32_t)) != 0)
             return -EFAULT;
     }

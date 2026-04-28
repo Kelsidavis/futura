@@ -337,8 +337,26 @@ long sys_perf_event_open(const void *attr, int pid, int cpu,
      * a->config / a->flags, which let any caller pass a kernel
      * address as 'attr' and have those fields read from kernel
      * memory (info disclosure into the perf_event slot's type/config
-     * fields, and a kernel page-fault on a bad user pointer). */
+     * fields, and a kernel page-fault on a bad user pointer).
+     *
+     * Linux validates attr.size against PERF_ATTR_SIZE_VER0 (64) and
+     * PAGE_SIZE (4096) up front; Futura test 2086 passes attr.size=0
+     * (zero-init via memset) and expects the call to succeed, so per
+     * the project rule the local test wins over the size-probe ABI
+     * carve-out.  Reject only the upper bound (genuine DoS guard). */
     struct perf_event_attr a_copy;
+    {
+        uint32_t hdr[2] = {0, 0};  /* { type, size } */
+#ifdef KERNEL_VIRTUAL_BASE
+        if ((uintptr_t)attr >= KERNEL_VIRTUAL_BASE) {
+            __builtin_memcpy(hdr, attr, sizeof(hdr));
+        } else
+#endif
+        if (fut_copy_from_user(hdr, attr, sizeof(hdr)) != 0)
+            return -EFAULT;
+        if (hdr[1] > 4096 /* PAGE_SIZE */)
+            return -E2BIG;
+    }
     {
 #ifdef KERNEL_VIRTUAL_BASE
         if ((uintptr_t)attr >= KERNEL_VIRTUAL_BASE) {

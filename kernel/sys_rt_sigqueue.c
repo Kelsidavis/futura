@@ -81,6 +81,18 @@ long sys_rt_sigqueueinfo(int tgid, int sig, const void *uinfo) {
     if (rtq_copy_from_user(&info, uinfo, sizeof(siginfo_t)) != 0)
         return -EFAULT;
 
+    /* Linux's __copy_siginfo_from_user enforces si_signo == sig:
+     *   if (sig != kinfo->si_signo) return -EINVAL;
+     * The previous Futura code silently overwrote info.si_signum with
+     * sig, hiding caller misuse where the siginfo's signo claimed to
+     * be a different signal than the syscall arg.  Applications often
+     * read both fields and trust they agree; a setuid handler reading
+     * si_signo to dispatch on signal type could be misdirected if
+     * Futura silently 'fixed' the mismatch.  Mirror Linux: reject the
+     * call so userspace surfaces the inconsistency. */
+    if (info.si_signum != sig)
+        return -EINVAL;
+
     fut_task_t *caller = fut_task_current();
 
     /* Kernel-reserved si_code: any positive value is reserved for the
@@ -102,9 +114,6 @@ long sys_rt_sigqueueinfo(int tgid, int sig, const void *uinfo) {
         if (info.si_code == 0 /* SI_USER */ || info.si_code == SI_TKILL)
             return -EPERM;
     }
-
-    /* Ensure si_signo matches the requested signal */
-    info.si_signum = sig;
 
     /* Locate target process */
     fut_task_t *target = fut_task_by_pid(tgid);
@@ -159,6 +168,12 @@ long sys_rt_tgsigqueueinfo(int tgid, int tid, int sig, const void *uinfo) {
     if (rtq_copy_from_user(&info, uinfo, sizeof(siginfo_t)) != 0)
         return -EFAULT;
 
+    /* Same si_signo == sig invariant as rt_sigqueueinfo (see comment
+     * there).  Linux returns -EINVAL on mismatch; the previous code
+     * silently overwrote info.si_signum, masking caller misuse. */
+    if (info.si_signum != sig)
+        return -EINVAL;
+
     fut_task_t *caller = fut_task_current();
 
     /* Kernel-reserved si_code: any positive value requires CAP_KILL. */
@@ -174,8 +189,6 @@ long sys_rt_tgsigqueueinfo(int tgid, int tid, int sig, const void *uinfo) {
         if (info.si_code == 0 /* SI_USER */ || info.si_code == SI_TKILL)
             return -EPERM;
     }
-
-    info.si_signum = sig;
 
     /* Locate the target process by TGID */
     fut_task_t *target = fut_task_by_pid(tgid);

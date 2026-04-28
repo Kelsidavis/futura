@@ -196,6 +196,23 @@ static inline uint8_t fut_type_to_dt(uint8_t fut_type) {
  * Phase 4: Advanced features (directory entry filtering, sorted traversal)
  */
 long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
+    /* Linux's sys_getdents64 runs fdget_pos FIRST and returns -EBADF
+     * before any inspection of the dirp pointer or count.  Futura's
+     * previous order rejected NULL dirp / undersized count up front
+     * with EFAULT/EINVAL, so getdents64(bad_fd, NULL, _) returned
+     * EFAULT where Linux returns EBADF — masking 'fd not open' as a
+     * pointer-domain error for libc probes.  Move the fd-table check
+     * ahead of the buffer-shape gates. */
+    {
+        extern fut_task_t *fut_task_current(void);
+        fut_task_t *gdt_task = fut_task_current();
+        if (!gdt_task)
+            return -ESRCH;
+        if (fd >= (unsigned int)gdt_task->max_fds ||
+            !gdt_task->fd_table || !gdt_task->fd_table[fd])
+            return -EBADF;
+    }
+
     /* Phase 2: Validate buffer pointer */
     if (!dirp) {
         fut_printf("[GETDENTS64] getdents64(fd=%u, dirp=NULL, count=%u) -> EFAULT (NULL buffer)\n",

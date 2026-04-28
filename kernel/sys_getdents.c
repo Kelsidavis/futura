@@ -65,6 +65,20 @@ extern long sys_getdents64(unsigned int fd, void *dirp, unsigned int count);
  * on error.
  */
 long sys_getdents(unsigned int fd, void *dirp, unsigned int count) {
+    /* Linux's sys_getdents runs fdget_pos FIRST — EBADF surfaces before
+     * any inspection of dirp or count.  Validate the fd-table slot up
+     * front so getdents(bad_fd, NULL, _) returns EBADF instead of the
+     * EFAULT the previous order produced — same fix as sys_getdents64. */
+    {
+        extern fut_task_t *fut_task_current(void);
+        fut_task_t *gd_task = fut_task_current();
+        if (!gd_task)
+            return -ESRCH;
+        if (fd >= (unsigned int)gd_task->max_fds ||
+            !gd_task->fd_table || !gd_task->fd_table[fd])
+            return -EBADF;
+    }
+
     if (!dirp)
         return -EFAULT;
     if (count < 32)

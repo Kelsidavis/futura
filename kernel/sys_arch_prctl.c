@@ -89,11 +89,17 @@ long sys_arch_prctl(int code, unsigned long addr) {
         /* Reject non-canonical / kernel-half FS bases before touching the MSR.
          * On x86_64 with FSGSBASE enabled, wrmsr(MSR_FS_BASE, non_canonical)
          * raises #GP and aborts the syscall in kernel mode — an unprivileged
-         * DoS primitive. Linux clamps to TASK_SIZE_MAX (~ (1<<47)-PAGE_SIZE);
-         * we apply the same upper bound. ARM64's TPIDR_EL0 takes any 64-bit
-         * value, but limiting it to user-space matches Linux's contract that
-         * a TLS pointer must address user memory. */
-        if (addr >= (1ULL << 47))
+         * DoS primitive. Linux's x86_64_set_fs_thread (arch/x86/kernel/process_64.c)
+         * uses `if (unlikely(arg2 >= TASK_SIZE_MAX)) return -EPERM;` where
+         * TASK_SIZE_MAX = (1ULL << 47) - PAGE_SIZE on x86_64 (4-level paging),
+         * which carves the highest user-space page out of the allowed range so
+         * the value can never collide with the non-canonical hole on machines
+         * without LA57. The previous `addr >= (1ULL << 47)` gate let the top
+         * page through, so a caller could pass 0x7FFFFFFFFFFF and Linux would
+         * reject it but Futura would accept it — a parity gap visible to
+         * userspace probing TASK_SIZE. ARM64's TPIDR_EL0 takes any 64-bit
+         * value, but matching Linux's bound keeps the contract uniform. */
+        if (addr >= ((1ULL << 47) - PAGE_SIZE))
             return -EPERM;
 #ifdef __x86_64__
         wrmsr(MSR_FS_BASE, addr);
@@ -111,11 +117,12 @@ long sys_arch_prctl(int code, unsigned long addr) {
     }
 
     case ARCH_SET_GS:
-        /* Same canonical/user-space guard as ARCH_SET_FS: even though Futura
-         * does not currently write MSR_GS_BASE here, a future SWAPGS path
-         * would, and stashing a kernel-half value would let the eventual
-         * wrmsr trap. Reject non-canonical values up-front. */
-        if (addr >= (1ULL << 47))
+        /* Same TASK_SIZE_MAX guard as ARCH_SET_FS: even though Futura does
+         * not currently write MSR_GS_BASE here, a future SWAPGS path would,
+         * and stashing a kernel-half value would let the eventual wrmsr trap.
+         * Use the same (1<<47) - PAGE_SIZE bound Linux applies in
+         * x86_64_set_gs_thread so probing tools see consistent behaviour. */
+        if (addr >= ((1ULL << 47) - PAGE_SIZE))
             return -EPERM;
         if (thread)
             thread->gs_base = addr;

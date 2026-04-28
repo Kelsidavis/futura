@@ -1059,6 +1059,22 @@ long sys_move_mount(int from_dirfd, const char *from_pathname,
  * Returns: fd for the filesystem context.
  */
 long sys_fsopen(const char *fsname, unsigned int flags) {
+    /* Linux's sys_fsopen requires CAP_SYS_ADMIN (via may_mount()) before
+     * any other validation:
+     *   if (!may_mount()) return -EPERM;
+     *   if (flags & ~FSOPEN_CLOEXEC) return -EINVAL;
+     * The previous Futura code skipped this gate entirely, so any
+     * unprivileged caller could enumerate available filesystem types
+     * (kernel returns -ENODEV for unknown fs_name vs success for known)
+     * and obtain an fs_context fd they should not have access to.
+     * Match Linux's privilege-first ordering. */
+    {
+        fut_task_t *task = fut_task_current();
+        if (task && task->uid != 0 &&
+            !(task->cap_effective & (1ULL << CAP_SYS_ADMIN)))
+            return -EPERM;
+    }
+
     /* Linux's sys_fsopen rejects unknown flag bits up front:
      *   if (flags & ~FSOPEN_CLOEXEC) return -EINVAL
      * The previous code only honoured FSOPEN_CLOEXEC and silently

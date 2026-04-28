@@ -623,8 +623,13 @@ long sys_sched_setattr(int pid, const struct sched_attr *uattr, unsigned int fla
     if (sched_copy_from_user(&attr, uattr, sizeof(attr)) != 0)
         return -EFAULT;
 
-    /* Caller's size must be at least the version-0 struct size */
-    if (attr.size < SCHED_ATTR_SIZE_VER0)
+    /* Caller's size must be at least the version-0 struct size and
+     * no larger than PAGE_SIZE.  Linux's sched_copy_attr enforces both
+     * bounds and returns -E2BIG, but Futura's existing tests pin the
+     * lower-bound EINVAL contract so keep that and add the upper-bound
+     * check (which closes a copy-from-user DoS path that the absurd-
+     * size case would otherwise enable). */
+    if (attr.size < SCHED_ATTR_SIZE_VER0 || attr.size > 4096 /* PAGE_SIZE */)
         return -EINVAL;
 
     fut_task_t *current = fut_task_current();

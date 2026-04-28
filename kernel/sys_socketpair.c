@@ -52,6 +52,26 @@ long sys_socketpair(int domain, int type, int protocol, int *sv) {
      * of the EAFNOSUPPORT a libc probe expects to distinguish 'family
      * not supported by socketpair' from 'fix the output pointer'. */
 
+    int base_type = type & 0xFF;
+    int type_flags = type & ~0xFF;
+
+    /* Linux's net/socket.c:__sys_socketpair extracts the SOCK flag bits
+     * FIRST and rejects unknown values BEFORE calling sock_create:
+     *
+     *   flags = type & ~SOCK_TYPE_MASK;
+     *   if (flags & ~(SOCK_CLOEXEC | SOCK_NONBLOCK))
+     *       return -EINVAL;
+     *   type &= SOCK_TYPE_MASK;
+     *
+     * That ordering matters for callers probing the SOCK_* flag space
+     * with a deliberately bad family/protocol — Linux returns EINVAL
+     * (flags) where Futura previously returned EAFNOSUPPORT or
+     * EINVAL (protocol).  Hoist the flag gate so the errno class
+     * matches Linux for libc feature-detection probes.  Same fix as
+     * the matching sys_socket reorder. */
+    if (type_flags & ~(SOCK_NONBLOCK | SOCK_CLOEXEC))
+        return -EINVAL;
+
     /* Match the matching socket() gate: Linux rejects negative
      * protocol numbers AND any protocol >= IPPROTO_MAX (256) with
      * -EINVAL in __sock_create before any family-specific handler
@@ -67,9 +87,6 @@ long sys_socketpair(int domain, int type, int protocol, int *sv) {
     if (domain != AF_UNIX)
         return -EAFNOSUPPORT;
 
-    int base_type = type & 0xFF;
-    int type_flags = type & ~0xFF;
-
     /* Linux's net/unix/af_unix.c:unix_create returns -ESOCKTNOSUPPORT
      * for unsupported sock->type within a known family — same as the
      * just-fixed sys_socket path. The distinction matters: glibc's
@@ -78,10 +95,6 @@ long sys_socketpair(int domain, int type, int protocol, int *sv) {
      * shape error and abort. */
     if (base_type != SOCK_STREAM && base_type != SOCK_DGRAM && base_type != SOCK_SEQPACKET)
         return -ESOCKTNOSUPPORT;
-
-    /* Reject unknown type flags (only SOCK_NONBLOCK and SOCK_CLOEXEC are valid) */
-    if (type_flags & ~(SOCK_NONBLOCK | SOCK_CLOEXEC))
-        return -EINVAL;
 
     /* Protocol-domain mismatch on AF_UNIX is -EPROTONOSUPPORT per Linux's
      * net/unix/af_unix.c:unix_create (and its shared use under

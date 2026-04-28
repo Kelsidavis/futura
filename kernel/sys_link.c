@@ -255,12 +255,20 @@ long sys_link(const char *oldpath, const char *newpath) {
         return -ENOENT;
     }
 
-    /* Validate oldpath and newpath are not identical
-     * Linking a file to itself is invalid and could cause filesystem corruption */
+    /* link(a, a): both paths resolve to the same existing file. Linux's
+     * vfs_link reaches may_create on the new dentry, finds it already
+     * exists, and returns -EEXIST.  The previous Futura code short-
+     * circuited with -EINVAL, but EINVAL is the wrong errno class:
+     * libc wrappers branching on EEXIST to handle the 'destination
+     * already there' case (e.g. mv-with-fallback or hardlink-or-skip
+     * patterns) saw EINVAL instead and treated it as a programming
+     * error.  Returning EEXIST matches Linux's link(2) contract and
+     * still rejects the no-op without filesystem-corruption risk —
+     * the lower link path doesn't run when both paths are identical. */
     if (strcmp(old_buf, new_buf) == 0) {
-        fut_printf("[LINK] link(oldpath='%s', newpath='%s') -> EINVAL "
+        fut_printf("[LINK] link(oldpath='%s', newpath='%s') -> EEXIST "
                    "(oldpath and newpath are identical)\n", old_buf, new_buf);
-        return -EINVAL;
+        return -EEXIST;
     }
 
     /* Phase 2: Categorize oldpath type */

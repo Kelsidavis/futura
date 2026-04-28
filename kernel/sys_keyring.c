@@ -783,18 +783,42 @@ long sys_keyctl(int operation, unsigned long arg2, unsigned long arg3,
         uint32_t gid = (uint32_t)arg4;
         struct kernel_key *k = key_find_serial(serial);
         if (!k) return -ENOKEY;
-        /* Linux keyctl(2): "To change the UID the caller must have an
-         * effective UID of zero or possess CAP_SYS_ADMIN. The same
-         * condition applies to changing the GID, except that GID can
-         * also be changed to a group of which the caller is a member."
-         * Without any check, any unprivileged process could chown the
-         * root @us/@u keyrings to itself. */
+        /* Linux keyctl(2) keyctl_chown_key:
+         *   if (uid != (uid_t)-1 && !capable(CAP_SYS_ADMIN))
+         *       return -EPERM;
+         *   if (gid != (gid_t)-1 && !capable(CAP_SYS_ADMIN) && !in_group_p(gid))
+         *       return -EPERM;
+         *
+         * UID change always requires CAP_SYS_ADMIN.  GID change
+         * additionally allows non-privileged callers to set the GID
+         * to a group they are a member of (effective gid or any
+         * supplementary group).  The previous Futura code rejected
+         * all non-privileged callers even for the legitimate
+         * change-gid-to-my-group case — a documented Linux carve-out
+         * that scripts use to set keyring GIDs without root. */
         {
             fut_task_t *cur = fut_task_current();
             bool privileged = cur && (cur->uid == 0 ||
                 (cur->cap_effective & (1ULL << 21 /* CAP_SYS_ADMIN */)));
-            if (!privileged)
-                return -EACCES;
+            if (!privileged) {
+                /* UID change is privileged-only. */
+                if (uid != (uint32_t)-1)
+                    return -EACCES;
+                /* GID change requires membership in the target group. */
+                if (gid != (uint32_t)-1) {
+                    bool in_group = cur && (cur->gid == gid);
+                    if (cur && !in_group) {
+                        for (int gi = 0; gi < cur->ngroups; gi++) {
+                            if (cur->groups[gi] == gid) {
+                                in_group = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!in_group)
+                        return -EACCES;
+                }
+            }
         }
         if (uid != (uint32_t)-1) k->uid = uid;
         if (gid != (uint32_t)-1) k->gid = gid;

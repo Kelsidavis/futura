@@ -297,22 +297,26 @@ long sys_statx(int dirfd, const char *pathname, int flags,
     if (!task)
         return -ESRCH;
 
-    /* Validate flags */
-    if (local_flags & ~STATX_VALID_FLAGS) {
-        fut_printf("[STATX] statx(flags=0x%x) -> EINVAL (invalid flags)\n", local_flags);
-        return -EINVAL;
-    }
-
-    /* Linux's sys_statx rejects the reserved high bit of mask:
+    /* Linux's fs/stat.c:do_statx validates mask BEFORE flags:
      *   if (mask & STATX__RESERVED) return -EINVAL;
+     *   if ((flags & AT_STATX_SYNC_TYPE) == AT_STATX_SYNC_TYPE)
+     *       return -EINVAL;
      * STATX__RESERVED is 0x80000000 (bit 31) — reserved for future
      * use to extend the mask beyond 31 bits.  Without this gate a
      * caller probing for future STATX_* fields by walking through
      * mask bits silently 'succeeded' on Futura where Linux returns
      * EINVAL, so userspace couldn't detect the kernel-too-old case
-     * for new fields.  Match Linux's strict gate. */
+     * for new fields.  Match Linux's mask-first ordering so probes
+     * with simultaneously-bad-mask + bad-flags get the documented
+     * mask-EINVAL class. */
     if (local_mask & 0x80000000U /* STATX__RESERVED */) {
         fut_printf("[STATX] statx(mask=0x%x) -> EINVAL (STATX__RESERVED set)\n", local_mask);
+        return -EINVAL;
+    }
+
+    /* Validate flags */
+    if (local_flags & ~STATX_VALID_FLAGS) {
+        fut_printf("[STATX] statx(flags=0x%x) -> EINVAL (invalid flags)\n", local_flags);
         return -EINVAL;
     }
 

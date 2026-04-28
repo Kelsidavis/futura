@@ -143,6 +143,27 @@ long sys_clock_settime(int clock_id, const fut_timespec_t *tp) {
         case CLOCK_BOOTTIME:
             clock_name = "CLOCK_BOOTTIME";
             break;
+        case CLOCK_REALTIME_ALARM:
+            /* Linux 5.10+: CLOCK_REALTIME_ALARM is settable through
+             * clock_settime via alarm_clock_set, gated on CAP_WAKE_ALARM
+             * (not CAP_SYS_TIME).  Futura aliases it to CLOCK_REALTIME
+             * (same g_realtime_offset_sec backing store), so accept it
+             * on the settime path.  The previous default arm rejected
+             * CLOCK_REALTIME_ALARM with -EINVAL, breaking systemd-
+             * timesyncd / chrony fallback paths that prefer the alarm-
+             * variant when scheduling wake-from-suspend stamps. */
+            clock_name = "CLOCK_REALTIME_ALARM";
+            is_settable = 1;
+            break;
+        case CLOCK_BOOTTIME_ALARM:
+            /* Linux 5.10+: same alarm_clock_set path as REALTIME_ALARM,
+             * but CLOCK_BOOTTIME is not settable; Linux's alarm_clock_set
+             * still returns -EINVAL via posix_clock_set when the
+             * underlying clock is not settable.  Mirror by accepting the
+             * id (so the gate above lets it past 'unknown clock') and
+             * then surfacing -EINVAL via the !is_settable branch below. */
+            clock_name = "CLOCK_BOOTTIME_ALARM";
+            break;
         default:
             fut_printf("[CLOCK_SETTIME] clock_settime(clock_id=%d) -> EINVAL (unknown clock_id)\n",
                        local_clock_id);

@@ -65,6 +65,15 @@ long sys_alarm(unsigned int seconds) {
         /* If alarm already expired, remaining_seconds stays 0 */
     }
 
+    /* Linux's alarm() is implemented as alarm_setitimer() which calls
+     * do_setitimer(ITIMER_REAL, {value, 0/0}) — i.e. it always clears
+     * the ITIMER_REAL interval, not just the value.  Without this any
+     * prior setitimer(ITIMER_REAL, {_, interval=N}) leaves the interval
+     * in place, and the timer-tick path would re-arm a periodic SIGALRM
+     * after alarm() supposedly set up a one-shot delivery.  Match Linux
+     * by zeroing the interval on every alarm(), regardless of seconds. */
+    task->itimer_real_interval_ms = 0;
+
     if (seconds > 0) {
         /* Schedule new alarm: convert seconds to ticks (100 ticks/sec) */
         task->alarm_expires_ms = current_ticks + ((uint64_t)seconds * 100);

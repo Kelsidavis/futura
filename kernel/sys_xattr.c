@@ -388,31 +388,41 @@ static inline long xattr_validate_setxattr_flags(int flags, size_t size,
     fut_task_t *task = fut_task_current();
     int64_t pid = task ? (int64_t)task->pid : -1;
 
-    /* Linux's vfs_setxattr surfaces a NULL value with size>0 through
-     * copy_from_user as -EFAULT (pointer fault), reserving -EINVAL for
-     * parameter-domain errors (unknown flags, oversized value). The
-     * previous gate collapsed pointer faults into parameter-domain
-     * errors, breaking libc setxattr wrappers (glibc, attr utility)
-     * that distinguish 'bad pointer, retry after page fault' from
-     * 'rejected unconditionally'. */
-    if (!value && size > 0) {
-        fut_printf("[XATTR] %s(...) -> EFAULT (NULL value with size > 0, pid=%d)\n",
-                   syscall, pid);
-        return -EFAULT;
-    }
-
-    /* Validate flags */
+    /* Validate flags first — Linux's setxattr_copy() rejects unknown
+     * flag bits before touching the name or value pointers:
+     *
+     *   if (ctx->flags & ~(XATTR_CREATE|XATTR_REPLACE)) return -EINVAL;
+     *   error = strncpy_from_user(ctx->kname->name, name, ...);
+     *   ...
+     *   ctx->kvalue = vmemdup_user(ctx->cvalue, ctx->size);
+     *
+     * Putting the value-NULL EFAULT gate ahead of the flags check
+     * inverted the errno class for callers that probe the xattr ABI
+     * with a deliberately bad value pointer AND a malformed flag word
+     * — Linux returns EINVAL there, Futura was returning EFAULT. */
     if (flags & ~(XATTR_CREATE | XATTR_REPLACE)) {
         fut_printf("[XATTR] %s(...) -> EINVAL (invalid flags=0x%x, pid=%d)\n",
                    syscall, flags, pid);
         return -EINVAL;
     }
 
-    /* Validate size */
+    /* Validate size — matches setxattr_copy's `if (ctx->size > XATTR_SIZE_MAX)
+     * return -E2BIG;` which runs after the flag gate and before the
+     * value vmemdup. */
     if (size > XATTR_SIZE_MAX) {
         fut_printf("[XATTR] %s(...) -> E2BIG (size=%zu too large, pid=%d)\n",
                    syscall, size, pid);
         return -E2BIG;
+    }
+
+    /* NULL value with size>0 surfaces in Linux as the EFAULT from
+     * vmemdup_user().  Keep the explicit pre-check so the syscall
+     * doesn't have to allocate a kernel buffer just to fault, but run
+     * it AFTER flags/size so the errno class matches. */
+    if (!value && size > 0) {
+        fut_printf("[XATTR] %s(...) -> EFAULT (NULL value with size > 0, pid=%d)\n",
+                   syscall, pid);
+        return -EFAULT;
     }
 
     return 0;
@@ -507,16 +517,25 @@ long sys_setxattr(const char *path, const char *name, const void *value,
         return -ESRCH;
     }
 
-    if (!path || !name) {
-        fut_printf("[XATTR] setxattr(path=%p, name=%p, pid=%d) -> EFAULT\n",
-                   path, name, task->pid);
+    /* Path NULL surfaces as EFAULT in Linux's getname() before any
+     * setxattr_copy work runs, so probe path first. */
+    if (!path) {
+        fut_printf("[XATTR] setxattr(path=NULL, pid=%d) -> EFAULT\n", task->pid);
         return -EFAULT;
     }
 
-    /* Validate flags and size using helper */
+    /* Validate flags and size BEFORE the name-NULL pointer check —
+     * Linux's setxattr_copy gates flags first, so a bad-flag/NULL-name
+     * call returns EINVAL there, not EFAULT.  Same reorder applied to
+     * lsetxattr / fsetxattr below. */
     long ret = xattr_validate_setxattr_flags(flags, size, value, "setxattr");
     if (ret < 0) {
         return ret;
+    }
+
+    if (!name) {
+        fut_printf("[XATTR] setxattr(name=NULL, pid=%d) -> EFAULT\n", task->pid);
+        return -EFAULT;
     }
 
     /* Copy path and name from userspace using helper */
@@ -556,13 +575,18 @@ long sys_lsetxattr(const char *path, const char *name, const void *value,
         return -ESRCH;
     }
 
-    if (!path || !name) {
+    /* Path EFAULT first (mirrors Linux getname); flags before name. */
+    if (!path) {
         return -EFAULT;
     }
 
     long ret = xattr_validate_setxattr_flags(flags, size, value, "lsetxattr");
     if (ret < 0) {
         return ret;
+    }
+
+    if (!name) {
+        return -EFAULT;
     }
 
     char path_buf[FUT_VFS_PATH_BUFFER_SIZE];
@@ -614,13 +638,17 @@ long sys_fsetxattr(int fd, const char *name, const void *value,
     if (fd >= task->max_fds || !task->fd_table || !task->fd_table[fd])
         return -EBADF;
 
-    if (!name) {
-        return -EFAULT;
-    }
-
+    /* Validate flags BEFORE the name-NULL pointer check — Linux's
+     * setxattr_copy gates flags first, returning EINVAL for bad-flags
+     * even when the name pointer is NULL.  Same reorder as
+     * setxattr / lsetxattr above. */
     long ret = xattr_validate_setxattr_flags(flags, size, value, "fsetxattr");
     if (ret < 0) {
         return ret;
+    }
+
+    if (!name) {
+        return -EFAULT;
     }
 
     char name_buf[XATTR_NAME_MAX + 1];

@@ -194,6 +194,26 @@ long sys_umount2(const char *target, int flags) {
         return -ESRCH;
     }
 
+    /* Linux's fs/namespace.c:SYSCALL_DEFINE2(umount) gates the entire
+     * syscall on CAP_SYS_ADMIN (via may_mount()) BEFORE any user-pointer
+     * access:
+     *   if (!may_mount()) return -EPERM;
+     *   ret = user_path_at(AT_FDCWD, name, lookup_flags, &path);
+     * The previous Futura order copied the target path first, then
+     * checked the cap (line 285+ below).  That let an unprivileged
+     * caller probe directory existence (ENOENT vs EPERM) by passing
+     * speculative paths — same recon vector the matching fsopen /
+     * fsmount / open_tree / move_mount / fspick / chroot / pivot_root
+     * fixes already closed.  Move the CAP check up. */
+    {
+        bool has_cap = (task->cap_effective & (1ULL << CAP_SYS_ADMIN)) != 0;
+        if (!has_cap && task->uid != 0) {
+            fut_printf("[UMOUNT2] umount2(flags=0x%x, pid=%d) -> EPERM "
+                       "(CAP_SYS_ADMIN required)\n", flags, task->pid);
+            return -EPERM;
+        }
+    }
+
     /* Validate target pointer */
     if (!target) {
         fut_printf("[UMOUNT2] umount2(target=NULL, flags=0x%x, pid=%d) -> EFAULT\n",

@@ -237,14 +237,11 @@ long sys_fstatfs(int fd, struct fut_linux_statfs *buf) {
         return -ESRCH;
     }
 
-    /* Validate buffer pointer */
-    if (!buf) {
-        fut_printf("[FSTATFS] fstatfs(fd=%d, buf=NULL, pid=%d) -> EFAULT (null buffer)\n",
-                   fd, task->pid);
-        return -EFAULT;
-    }
-
-    /* Validate file descriptor */
+    /* Linux's fstatfs validates the fd FIRST (fd_statfs returns -EBADF
+     * for missing fd) and only then copies to userspace (EFAULT on bad
+     * buf).  The previous order returned EFAULT for fstatfs(bad_fd, NULL),
+     * masking the real EBADF — same EBADF-before-EFAULT reorder pattern
+     * applied earlier to other fd-taking syscalls.  Validate fd first. */
     if (fd < 0) {
         fut_printf("[FSTATFS] fstatfs(fd=%d, pid=%d) -> EBADF (invalid fd)\n", fd, task->pid);
         return -EBADF;
@@ -263,6 +260,13 @@ long sys_fstatfs(int fd, struct fut_linux_statfs *buf) {
     if (!file) {
         fut_printf("[FSTATFS] fstatfs(fd=%d, pid=%d) -> EBADF (fd not open)\n", fd, task->pid);
         return -EBADF;
+    }
+
+    /* Validate buffer pointer (after fd is known good, matching Linux). */
+    if (!buf) {
+        fut_printf("[FSTATFS] fstatfs(fd=%d, buf=NULL, pid=%d) -> EFAULT (null buffer)\n",
+                   fd, task->pid);
+        return -EFAULT;
     }
 
     /* Return real physical memory stats with correct f_type from the file's path.

@@ -469,7 +469,12 @@ long sys_chown(const char *pathname, uint32_t uid, uint32_t gid) {
      * a non-executable file would also clear S_ISGID — but on
      * non-executable files S_ISGID denotes mandatory locking, not setgid
      * execution, and Linux deliberately preserves it across chown. Apply
-     * the same rule for both uid-only and gid-only branches. */
+     * the same rule for both uid-only and gid-only branches.
+     *
+     * (Note: Linux additionally exempts CAP_FSETID-bearing callers from
+     * the suid/sgid clear, but Futura tests 1449-1451 run as root and
+     * pin the bits-cleared contract; per the project rule the test
+     * wins over the Linux ABI carve-out.) */
     if (vnode->type == VN_REG) {
         uint32_t old_local_uid = userns_host_to_ns_uid(ns, old_uid);
         uint32_t old_local_gid = userns_host_to_ns_gid(ns, old_gid);

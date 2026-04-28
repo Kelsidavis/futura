@@ -763,8 +763,10 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
             case 44: /* SO_LOCK_FILTER — once set, BPF filter cannot be replaced */
             case 45: /* SO_SELECT_ERR_QUEUE — was mislabeled as SO_BPF_EXTENSIONS;
                       * the real Linux SO_BPF_EXTENSIONS is 48 */
-            case 47: /* SO_MAX_PACING_RATE */
-            case 48: /* SO_BPF_EXTENSIONS — kernel BPF feature mask query */
+            case 48: /* SO_BPF_EXTENSIONS — kernel BPF feature mask query.
+                      * Note: case 47 (SO_MAX_PACING_RATE in Linux) is handled
+                      * above as SO_ATTACH_BPF — Futura's pre-existing assignment
+                      * takes precedence per the local-tests-win rule. */
             case 49: /* SO_INCOMING_CPU — was previously colliding with SO_BUSY_POLL=46 */
             case 55: /* SO_CNX_ADVICE */
             case 57: /* SO_MEMINFO */

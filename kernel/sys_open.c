@@ -148,11 +148,17 @@ long sys_open(const char *pathname, int flags, int mode) {
         return -EFAULT;
     }
 
-    /* Phase 3: Validate O_EXCL flag - requires O_CREAT */
-    if ((local_flags & O_EXCL) && !(local_flags & O_CREAT)) {
-        open_printf("[OPEN] open(pathname=?, flags=O_EXCL without O_CREAT) -> EINVAL (O_EXCL requires O_CREAT)\n");
-        return -EINVAL;
-    }
+    /* Linux's build_open_flags() silently strips O_EXCL when O_CREAT is
+     * absent (fs/open.c): 'if (!(flags & O_CREAT)) flags &= ~O_EXCL;'
+     * The previous Futura EINVAL gate diverged — libc open() wrappers
+     * that mask in O_EXCL via a generic 'set this bit if X' helper
+     * (without coordinating with the O_CREAT flag) saw EINVAL on
+     * Futura but a working open on Linux, breaking portability for
+     * code that relies on the silent-strip behaviour. Sister sys_openat
+     * already lacks the gate, so this also closes the open/openat
+     * inconsistency. */
+    if (!(local_flags & O_CREAT))
+        local_flags &= ~O_EXCL;
 
     /* O_CREAT | O_DIRECTORY without O_TMPFILE is invalid on Linux.
      * O_TMPFILE includes O_DIRECTORY, so only reject when the O_TMPFILE

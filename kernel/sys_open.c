@@ -162,6 +162,31 @@ long sys_open(const char *pathname, int flags, int mode) {
         return -EINVAL;
     }
 
+    /* Linux's build_open_flags() restricts O_PATH to a small whitelist of
+     * other flags that make sense for a path-only descriptor:
+     *
+     *   #define O_PATH_FLAGS (O_DIRECTORY | O_NOFOLLOW | O_PATH | O_CLOEXEC)
+     *   if (flags & O_PATH) {
+     *       if (flags & ~O_PATH_FLAGS) return -EINVAL;
+     *       acc_mode = 0;
+     *   }
+     *
+     * O_PATH | O_CREAT, O_PATH | O_TRUNC, O_PATH | O_APPEND, etc. are all
+     * meaningless (a path-only fd cannot perform I/O) and Linux returns
+     * -EINVAL for any of them.  Futura previously accepted these and
+     * silently created the file (or applied other I/O flags), which broke
+     * the O_PATH security guarantee that the fd never opens for I/O. */
+    if (local_flags & O_PATH) {
+        const int O_PATH_VALID =
+            O_DIRECTORY | O_NOFOLLOW | O_PATH | O_CLOEXEC;
+        if (local_flags & ~O_PATH_VALID) {
+            open_printf("[OPEN] open(flags=0x%x) -> EINVAL (O_PATH allows only "
+                        "O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC, got 0x%x)\n",
+                        local_flags, local_flags & ~O_PATH_VALID);
+            return -EINVAL;
+        }
+    }
+
     /* Validate access mode BEFORE use
      * VULNERABILITY: Invalid Access Mode Causing Undefined Behavior
      *

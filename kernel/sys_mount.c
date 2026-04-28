@@ -1742,8 +1742,16 @@ long sys_listmount(const void *req, uint64_t *mnt_ids, size_t nr_mnt_ids,
 long sys_lsm_get_self_attr(unsigned int attr, void *ctx, uint32_t *size,
                            uint32_t flags) {
     (void)attr; (void)ctx; (void)flags;
-    /* Report that no LSM attributes are available */
-    if (size) *size = 0;
+    /* Report that no LSM attributes are available.  The previous code
+     * wrote '*size = 0' directly to the user pointer — a kernel fault
+     * for bad user pointers and a write-anywhere primitive for kernel
+     * addresses.  Stage via copy_to_user with the standard
+     * KERNEL_VIRTUAL_BASE bypass for in-kernel selftests. */
+    if (size) {
+        uint32_t zero = 0;
+        if (mount_copy_to_user(size, &zero, sizeof(zero)) != 0)
+            return -EFAULT;
+    }
     return -EOPNOTSUPP;
 }
 

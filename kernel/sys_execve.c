@@ -245,6 +245,18 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
     }
     kernel_pathname[path_len] = '\0';  /* Ensure null termination */
 
+    /* Empty pathname is ENOENT per Linux's getname() — same gate as
+     * the broader empty-path-ENOENT sweep applied to the
+     * path-taking syscall family.  The previous code fell through to
+     * fut_exec_elf with kernel_pathname[0] == '\0', which then
+     * surfaced an inconsistent errno from a deeper VFS layer instead
+     * of the documented getname-level rejection. */
+    if (kernel_pathname[0] == '\0') {
+        fut_printf("[EXECVE] execve(path=\"\" [empty], pid=%u) -> ENOENT\n",
+                   task->pid);
+        return -ENOENT;
+    }
+
     /* Validate that argv is a valid userspace pointer (readable) */
     if (local_argv && execve_access_ok(local_argv, sizeof(char *)) != 0) {
         EXECVE_LOG("[EXECVE] execve(path=%s) -> EFAULT (argv not accessible)\n", kernel_pathname);

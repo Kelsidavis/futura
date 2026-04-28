@@ -315,17 +315,21 @@ long sys_seccomp(unsigned int operation, unsigned int flags, const void *uargs) 
     }
 
     case SECCOMP_GET_ACTION_AVAIL: {
-        /* Linux: `if (flags != 0 || uargs == NULL) return -EINVAL;`
-         * before any copy_from_user, so a NULL pointer is a parameter
-         * error (EINVAL), not a fault (EFAULT) — and any non-zero
-         * flag bit is rejected outright. The previous code accepted
-         * arbitrary flag bits and returned EFAULT on NULL, which lets
-         * libseccomp feature-probes that walk through flag values
-         * silently believe future flags are supported. */
+        /* Linux's do_seccomp pre-checks 'flags != 0 -> EINVAL' but
+         * does NOT pre-check uargs for NULL. The NULL case falls into
+         * seccomp_get_action_avail()'s copy_from_user, which surfaces
+         * the standard pointer-fault errno EFAULT. The earlier comment
+         * claiming Linux returns EINVAL for NULL was wrong: see
+         * kernel/seccomp.c:do_seccomp and seccomp_get_action_avail —
+         * libseccomp's feature probe (seccomp_api_get) actually
+         * branches on EFAULT-vs-EINVAL to detect the kernel's seccomp
+         * API level, so reporting EINVAL where Linux reports EFAULT
+         * makes the probe think the GET_ACTION_AVAIL operation itself
+         * is unsupported. Match Linux. */
         if (flags != 0) return -EINVAL;
-        if (!uargs) return -EINVAL;
         uint32_t action = 0;
-        if (sec_copy_from_user(&action, uargs, sizeof(action)) != 0)
+        if (!uargs ||
+            sec_copy_from_user(&action, uargs, sizeof(action)) != 0)
             return -EFAULT;
         switch (action) {
         case SECCOMP_RET_KILL_PROCESS:
@@ -346,19 +350,25 @@ long sys_seccomp(unsigned int operation, unsigned int flags, const void *uargs) 
          * Used by container runtimes (runc, crun) to allocate user
          * notification buffers for SECCOMP_RET_USER_NOTIF handling.
          *
-         * struct seccomp_notif_sizes { u16 notif, notif_resp, data; } */
-        /* Same Linux pre-check as SECCOMP_GET_ACTION_AVAIL: flags
-         * must be zero and uargs must be non-NULL, otherwise EINVAL. */
+         * struct seccomp_notif_sizes { u16 notif, notif_resp, data; }
+         *
+         * Linux's do_seccomp gates only flags=0 with EINVAL; the
+         * uargs=NULL case falls through to copy_to_user inside
+         * seccomp_get_notif_sizes, returning EFAULT. The previous
+         * pre-check returned EINVAL for NULL — same divergence as
+         * GET_ACTION_AVAIL (libseccomp's probe path branches on
+         * EFAULT vs EINVAL). Match Linux. */
         if (flags != 0) return -EINVAL;
-        if (!uargs) return -EINVAL;
         struct { uint16_t notif; uint16_t notif_resp; uint16_t data; } sizes;
         sizes.notif = 80;       /* sizeof(struct seccomp_notif) on Linux */
         sizes.notif_resp = 24;  /* sizeof(struct seccomp_notif_resp) */
         sizes.data = 64;        /* sizeof(struct seccomp_data) */
         /* Copy to userspace through copy_to_user — direct writes via
          * out[i] = let any caller pass a kernel address as uargs and
-         * have the values written into kernel memory. */
-        if (sec_copy_to_user((void *)(uintptr_t)uargs, &sizes, sizeof(sizes)) != 0)
+         * have the values written into kernel memory. NULL uargs is
+         * surfaced by sec_copy_to_user as EFAULT (matches Linux). */
+        if (!uargs ||
+            sec_copy_to_user((void *)(uintptr_t)uargs, &sizes, sizeof(sizes)) != 0)
             return -EFAULT;
         return 0;
     }

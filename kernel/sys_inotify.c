@@ -410,14 +410,22 @@ static int inotify_release(void *inode, void *priv) {
     return 0;
 }
 
-/* Look up inotify instance from FD (returns NULL on EBADF/EINVAL) */
+/* Look up inotify instance from FD.  Linux's fs/notify/inotify/inotify_user.c
+ * splits the errno classes for inotify_add_watch / inotify_rm_watch:
+ *   - EBADF only when fdget() fails (fd out of range or unallocated)
+ *   - EINVAL when the fd refers to a non-inotify file (wrong f_op)
+ * Futura previously collapsed both into EBADF, so libinotify's wrapper
+ * saw 'bad descriptor' for an entirely different cause ('this descriptor
+ * is the wrong kind of object').  Match Linux's split — same shape as
+ * the recent signalfd fix. */
 static struct inotify_instance *get_inotify_instance(fut_task_t *task, int fd, int *err) {
     if (fd < 0 || fd >= task->max_fds) { *err = -EBADF; return NULL; }
     if (!task->fd_table) { *err = -EBADF; return NULL; }
 
     struct fut_file *file = task->fd_table[fd];
-    if (!file || file->chr_ops != &inotify_fops || !file->chr_private) {
-        *err = -EBADF;
+    if (!file) { *err = -EBADF; return NULL; }
+    if (file->chr_ops != &inotify_fops || !file->chr_private) {
+        *err = -EINVAL;
         return NULL;
     }
     *err = 0;

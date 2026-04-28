@@ -563,6 +563,19 @@ long sys_tee(int fd_in, int fd_out, size_t len, unsigned int flags) {
         return -ESRCH;
     }
 
+    /* Linux's fs/splice.c:tee validates flags FIRST (before any fd
+     * lookup), so tee(-1, -1, 0, 0xff) returns EINVAL — not EBADF.
+     * The previous Futura order rejected negative fds before flags,
+     * inverting the errno class for callers that probe with deliberately
+     * bad fds to detect kernel-supported flag bits.  Match Linux's
+     * 'flags first, then fds' ordering. */
+    const unsigned int VALID_FLAGS = SPLICE_F_NONBLOCK | SPLICE_F_MORE;
+    if (local_flags & ~VALID_FLAGS) {
+        fut_printf("[TEE] tee(fd_in=%d, fd_out=%d, len=%zu, flags=0x%x [invalid], pid=%d) "
+                   "-> EINVAL\n", local_fd_in, local_fd_out, local_len, local_flags, task->pid);
+        return -EINVAL;
+    }
+
     /* Validate fds */
     if (local_fd_in < 0 || local_fd_out < 0) {
         fut_printf("[TEE] tee(fd_in=%d, fd_out=%d, len=%zu, flags=0x%x, pid=%d) "
@@ -573,14 +586,6 @@ long sys_tee(int fd_in, int fd_out, size_t len, unsigned int flags) {
     /* Check if same fd */
     if (local_fd_in == local_fd_out) {
         fut_printf("[TEE] tee(fd_in=%d, fd_out=%d [same], len=%zu, flags=0x%x, pid=%d) "
-                   "-> EINVAL\n", local_fd_in, local_fd_out, local_len, local_flags, task->pid);
-        return -EINVAL;
-    }
-
-    /* Validate flags */
-    const unsigned int VALID_FLAGS = SPLICE_F_NONBLOCK | SPLICE_F_MORE;
-    if (local_flags & ~VALID_FLAGS) {
-        fut_printf("[TEE] tee(fd_in=%d, fd_out=%d, len=%zu, flags=0x%x [invalid], pid=%d) "
                    "-> EINVAL\n", local_fd_in, local_fd_out, local_len, local_flags, task->pid);
         return -EINVAL;
     }

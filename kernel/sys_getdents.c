@@ -392,10 +392,18 @@ long sys_iopl(unsigned int level) {
  * Same EINVAL-before-EPERM ordering as the matching sys_iopl fix.
  */
 long sys_ioperm(unsigned long from, unsigned long num, int turn_on) {
-    (void)turn_on;
     if (from + num <= from)
         return -EINVAL;
     if (from + num > 65536 /* IO_BITMAP_BITS */)
         return -EINVAL;
+    /* Linux only requires CAP_SYS_RAWIO when turn_on is non-zero —
+     * clearing previously-granted bits (turn_on == 0) is always
+     * allowed and returns 0 even for an empty bitmap.  Futura's
+     * previous unconditional -EPERM rejected ioperm(_, _, 0) calls
+     * that libc cleanup paths emit at exit to release I/O port
+     * permissions, breaking programs that bracket their port-banged
+     * regions with ioperm-on / ioperm-off pairs. */
+    if (!turn_on)
+        return 0;
     return -EPERM;
 }

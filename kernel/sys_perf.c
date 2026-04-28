@@ -392,6 +392,20 @@ long sys_perf_event_open(const void *attr, int pid, int cpu,
         }
     }
 
+    /* Linux's perf_event_open calls find_lively_task_by_vpid(pid) for
+     * pid > 0 and returns -ESRCH if the target task does not exist.
+     * The previous Futura code stored target_pid without verifying the
+     * task existed, so a caller could perf_event_open(pid=99999,...) on
+     * a non-existent target and the resulting fd's reads would silently
+     * return zero counters as if monitoring a real (but idle) task —
+     * masking a programming error and breaking sampling-tool retry
+     * loops that branch on ESRCH to detect 'task gone'. */
+    if (pid > 0) {
+        fut_task_t *target = fut_task_by_pid((uint64_t)(unsigned int)pid);
+        if (!target)
+            return -ESRCH;
+    }
+
     /* Find free slot */
     struct perf_event *ev = NULL;
     for (int i = 0; i < MAX_PERF_EVENTS; i++) {

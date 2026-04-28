@@ -185,6 +185,17 @@ long sys_openat(int dirfd, const char *pathname, int flags, int mode) {
         return -ENAMETOOLONG;
     }
 
+    /* Empty pathname is ENOENT per Linux openat(2) — getname() returns
+     * -ENOENT for an empty string.  openat does not accept AT_EMPTY_PATH
+     * (that flag is openat2/statx/linkat-specific), so an empty path is
+     * always invalid here.  Match the matching sys_open empty-path-ENOENT
+     * fix so the open(2) and openat(2) entry points stay consistent. */
+    if (kpath[0] == '\0') {
+        fut_printf("[OPENAT] openat(dirfd=%d, pathname=\"\" [empty]) -> ENOENT\n",
+                   local_dirfd);
+        return -ENOENT;
+    }
+
     /* Phase 2: Categorize dirfd type */
     const char *dirfd_desc;
     const char *path_type;

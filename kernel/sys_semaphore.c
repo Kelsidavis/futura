@@ -485,14 +485,18 @@ long sys_semctl(int semid, int semnum, int cmd, unsigned long arg) {
 long sys_semtimedop(int semid, void *sops, unsigned int nsops,
                     const fut_timespec_t *timeout)
 {
-    if (!sops)
-        return -EFAULT;
+    /* Same EINVAL-before-EFAULT reorder as sys_semop above: Linux's
+     * ksys_semtimedop validates nsops before the user pointer.  The
+     * previous Futura order rejected NULL sops first, inverting the
+     * errno class for callers that probe with nsops==0 + NULL sops. */
     if (nsops == 0)
         return -EINVAL;
     /* See sys_semop: the stack ops[] buffer is sized for SEMMSL ops
      * total; reject any nsops above that to avoid silent truncation. */
     if (nsops > (unsigned int)SEMMSL)
         return -E2BIG;
+    if (!sops)
+        return -EFAULT;
 
     /* Parse optional timeout */
     uint64_t deadline_ticks = UINT64_MAX; /* infinite */

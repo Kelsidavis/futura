@@ -892,6 +892,24 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
             return -EFAULT;
         }
 
+        /* OFD (open file description) locks have no owning PID concept —
+         * Linux's fcntl rejects a non-zero l_pid up front for the OFD
+         * variants:
+         *   case F_OFD_SETLK:
+         *   case F_OFD_SETLKW:
+         *       if (flock.l_pid != 0) goto out;  // -> -EINVAL
+         * The previous Futura code accepted any l_pid value, so a
+         * caller that mistakenly passed F_OFD_SETLK with the
+         * POSIX-lock l_pid field still set didn't see the documented
+         * EINVAL — masking the OFD-vs-POSIX confusion. */
+        if ((local_cmd == F_OFD_SETLK || local_cmd == F_OFD_SETLKW) &&
+            lk.l_pid != 0) {
+            fut_printf("[FCNTL] fcntl(fd=%d, cmd=%s, l_pid=%d) -> EINVAL "
+                       "(OFD locks require l_pid == 0)\n",
+                       local_fd, cmd_name, lk.l_pid);
+            return -EINVAL;
+        }
+
         struct fut_vnode *vnode = file ? file->vnode : NULL;
         if (!vnode) {
             fut_printf("[FCNTL] fcntl(fd=%d, cmd=%s) -> EBADF (no vnode)\n",

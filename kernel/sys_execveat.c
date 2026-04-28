@@ -75,6 +75,17 @@ long sys_execveat(int dirfd, const char *pathname,
         kpath[len] = '\0';
     }
 
+    /* Empty pathname WITHOUT AT_EMPTY_PATH is ENOENT per Linux's
+     * getname_uflags — same gate the rest of the path-taking syscall
+     * sweep applies (open / openat / utimensat / chroot / pivot_root /
+     * inotify_add_watch / acct / truncate / chdir / readlink / stat /
+     * lstat / access / link / symlink / mknod / swapon / swapoff /
+     * xattr).  The previous Futura code fell through to sys_execve()
+     * with an empty kpath, leaving it to surface a downstream errno
+     * that didn't match Linux's getname-level rejection. */
+    if (kpath[0] == '\0' && !(flags & EXECVEAT_AT_EMPTY_PATH))
+        return -ENOENT;
+
     /* AT_EMPTY_PATH with empty pathname: execute dirfd itself */
     if ((flags & EXECVEAT_AT_EMPTY_PATH) && kpath[0] == '\0') {
         if (dirfd < 0 && dirfd != AT_FDCWD)

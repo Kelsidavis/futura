@@ -832,9 +832,18 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                 }
                 return 0;
             }
-            case 4:  socket->tcp_keepidle    = (uint32_t)(val > 0 ? val : 0); return 0; /* TCP_KEEPIDLE */
-            case 5:  socket->tcp_keepintvl   = (uint32_t)(val > 0 ? val : 0); return 0; /* TCP_KEEPINTVL */
-            case 6:  socket->tcp_keepcnt     = (uint32_t)(val > 0 ? val : 0); return 0; /* TCP_KEEPCNT */
+            case 4: /* TCP_KEEPIDLE — Linux: 1..MAX_TCP_KEEPIDLE (32767) */
+                if (val < 1 || val > 32767) return -EINVAL;
+                socket->tcp_keepidle = (uint32_t)val;
+                return 0;
+            case 5: /* TCP_KEEPINTVL — Linux: 1..MAX_TCP_KEEPINTVL (32767) */
+                if (val < 1 || val > 32767) return -EINVAL;
+                socket->tcp_keepintvl = (uint32_t)val;
+                return 0;
+            case 6: /* TCP_KEEPCNT — Linux: 1..MAX_TCP_KEEPCNT (127) */
+                if (val < 1 || val > 127) return -EINVAL;
+                socket->tcp_keepcnt = (uint32_t)val;
+                return 0;
             case 7:  socket->tcp_syncnt      = (uint32_t)(val > 0 ? val : 0); return 0; /* TCP_SYNCNT */
             case 8:  socket->tcp_linger2     = val; return 0; /* TCP_LINGER2 */
             case 9:  socket->tcp_defer_accept= (uint32_t)(val > 0 ? val : 0); return 0; /* TCP_DEFER_ACCEPT */

@@ -1424,15 +1424,22 @@ long sys_timerfd_settime(int ufd, int flags,
     fut_task_t *task = fut_task_current();
     if (!task) return -ESRCH;
 
-    /* Linux's timerfd_settime surfaces a NULL new_value through
-     * copy_from_user as -EFAULT (pointer fault), reserving -EINVAL for
-     * parameter-domain errors (bad flags, negative tv_sec, etc.). The
-     * previous gate collapsed the two — same EFAULT/EINVAL split as the
-     * recent rt_sigtimedwait / rt_sigqueueinfo / sched_param /
-     * setxattr / io_submit fixes. */
+    /* Linux's timerfd_settime ordering (fs/timerfd.c):
+     *
+     *   if (get_itimerspec64(&new, utmr))   return -EFAULT;
+     *   ret = do_timerfd_settime(...)
+     *     -> if (flags & ~TFD_SETTIME_FLAGS || !itimerspec64_valid(new))
+     *           return -EINVAL;
+     *     -> timerfd_fget(ufd) -> EBADF or EINVAL
+     *
+     * That is, the new_value copy is FIRST (NULL/bad ptr -> EFAULT), then
+     * the flags + itimerspec validation runs (EINVAL), and only then is
+     * the fd looked up (EBADF/EINVAL).  Futura previously checked
+     * `ufd < 0` between the new_value pointer probe and the flags gate,
+     * so a caller passing (-1, BAD_FLAGS, valid_new) saw EBADF where
+     * Linux returns EINVAL — masking the parameter-domain error behind a
+     * descriptor error. */
     if (!new_value) return -EFAULT;
-    if (ufd < 0) return -EBADF;
-    if (flags & ~(TFD_TIMER_ABSTIME | TFD_TIMER_CANCEL_ON_SET)) return -EINVAL;
 
     /* Copy itimerspec from user space (or kernel buffer for selftests) */
     struct itimerspec kits;
@@ -1444,6 +1451,8 @@ long sys_timerfd_settime(int ufd, int flags,
     if (fut_copy_from_user(&kits, new_value, sizeof(kits)) != 0) {
         return -EFAULT;
     }
+
+    if (flags & ~(TFD_TIMER_ABSTIME | TFD_TIMER_CANCEL_ON_SET)) return -EINVAL;
 
     /* Validate the timespec fields. Without this a negative tv_sec casts
      * to a huge uint64_t in timespec_to_ms() and arms a timer ~292 years
@@ -1461,6 +1470,7 @@ long sys_timerfd_settime(int ufd, int flags,
      * of range or unallocated), EINVAL when the fd refers to a non-
      * timerfd file (wrong f_op).  Same EBADF/EINVAL split as the
      * matching signalfd / inotify fixes. */
+    if (ufd < 0) return -EBADF;
     if (!task->fd_table || ufd >= task->max_fds) return -EBADF;
     struct fut_file *file = task->fd_table[ufd];
     if (!file) return -EBADF;

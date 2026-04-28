@@ -156,7 +156,7 @@ long sys_getrusage(int who, struct rusage *usage) {
             }
         } else {
             /* All threads of the task — use per-task ->next link, not global list */
-            for (fut_thread_t *t = task->threads; t != nullptr; t = t->next) {
+            for (fut_thread_t *t = task->threads; t != NULL; t = t->next) {
                 total_ticks     += t->stats.cpu_ticks;
                 total_switches  += t->stats.context_switches;
                 total_voluntary += t->stats.voluntary_yields;
@@ -195,7 +195,7 @@ long sys_getrusage(int who, struct rusage *usage) {
         fut_mm_t *mm = fut_task_get_mm(task);
         if (mm) {
             size_t total_bytes = 0;
-            for (struct fut_vma *vma = mm->vma_list; vma != nullptr; vma = vma->next) {
+            for (struct fut_vma *vma = mm->vma_list; vma != NULL; vma = vma->next) {
                 if (vma->end > vma->start)
                     total_bytes += vma->end - vma->start;
             }

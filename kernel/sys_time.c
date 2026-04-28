@@ -248,7 +248,7 @@ long sys_clock_gettime(int clock_id, fut_timespec_t *tp) {
         fut_task_t *task = fut_task_current();
         uint64_t total_ticks = 0;
         if (task) {
-            for (fut_thread_t *t = task->threads; t != nullptr; t = t->next)
+            for (fut_thread_t *t = task->threads; t != NULL; t = t->next)
                 total_ticks += t->stats.cpu_ticks;
         }
         uint64_t ns_total = total_ticks * (1000000000UL / FUT_TIMER_HZ);

@@ -95,7 +95,7 @@ long sys_times(struct tms *buf) {
      * child_cpu_ticks, which is incremented in fut_task_waitpid().
      */
     uint64_t total_cpu_ticks = 0;
-    for (fut_thread_t *t = task->threads; t != nullptr; t = t->next) {
+    for (fut_thread_t *t = task->threads; t != NULL; t = t->next) {
         total_cpu_ticks += t->stats.cpu_ticks;
     }
 

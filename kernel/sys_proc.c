@@ -125,7 +125,10 @@ long sys_getpgrp(void) {
         return 1;  /* Default to init process group */
     }
 
-    return task->pgid;
+    /* Same fallback as the matching getpgid / getsid fixes — a task
+     * whose pgid was never explicitly set is its own group leader per
+     * POSIX, so report its pid rather than 0. */
+    return task->pgid ? (long)task->pgid : (long)task->pid;
 }
 
 /**

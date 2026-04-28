@@ -367,14 +367,23 @@ long sys_signalfd4(int ufd, const void *mask, size_t sizemask, int flags) {
     sigmask &= ~((1ULL << (9  - 1)) |   /* SIGKILL */
                  (1ULL << (19 - 1)));    /* SIGSTOP */
 
-    /* ---- Update-mask case: ufd refers to an existing signalfd ---- */
+    /* ---- Update-mask case: ufd refers to an existing signalfd ----
+     * Linux's fs/signalfd.c:do_signalfd4 splits these errno classes:
+     *   - EBADF only when fdget() fails (ufd out of range or unallocated)
+     *   - EINVAL when the fd refers to a non-signalfd file (wrong f_op)
+     * Futura previously collapsed both into EBADF, so libc's signalfd
+     * wrapper saw 'bad descriptor' for an entirely different cause
+     * ('this descriptor is the wrong kind of object'). Match Linux's
+     * split so fd-validity probes that test EBADF vs EINVAL behave
+     * the same way. */
     if (ufd != -1) {
         if (!task->fd_table || ufd < 0 || ufd >= task->max_fds) return -EBADF;
         struct fut_file *file = task->fd_table[ufd];
-        if (!file || file->chr_ops != &signalfd_fops || !file->chr_private)
-            return -EBADF;
+        if (!file) return -EBADF;
+        if (file->chr_ops != &signalfd_fops || !file->chr_private)
+            return -EINVAL;
         struct signalfd_file *sfile = (struct signalfd_file *)file->chr_private;
-        if (!sfile->ctx) return -EBADF;
+        if (!sfile->ctx) return -EINVAL;
         fut_spinlock_acquire(&sfile->ctx->lock);
         sfile->ctx->sigmask = sigmask;
         fut_spinlock_release(&sfile->ctx->lock);

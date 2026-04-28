@@ -411,6 +411,27 @@ long sys_fanotify_mark(int fanotify_fd, unsigned int flags,
             return -EINVAL;
     }
 
+    /* Linux's fs/notify/fanotify/fanotify_user.c gates FAN_MARK_FILESYSTEM
+     * on CAP_SYS_ADMIN — a filesystem-wide mark observes events on every
+     * mount that uses the same superblock and is reserved for privileged
+     * monitoring tools (auditd, security agents):
+     *   if ((flags & FANOTIFY_MARK_TYPE_BITS) == FAN_MARK_FILESYSTEM &&
+     *       !ns_capable(user_ns, CAP_SYS_ADMIN))
+     *       return -EPERM;
+     * The previous Futura code accepted FAN_MARK_FILESYSTEM from
+     * unprivileged callers, letting any process attach a global watch
+     * that observes activity it shouldn't see (e.g. accesses to other
+     * users' files).  Mirror Linux's gate. */
+    if ((flags & FAN_MARK_FILESYSTEM)) {
+        fut_task_t *t = fut_task_current();
+        if (t && t->uid != 0 &&
+            !(t->cap_effective & (1ULL << 21 /* CAP_SYS_ADMIN */))) {
+            fut_printf("[FANOTIFY] fanotify_mark(FAN_MARK_FILESYSTEM, pid=%d) -> EPERM "
+                       "(CAP_SYS_ADMIN required)\n", t->pid);
+            return -EPERM;
+        }
+    }
+
     /* Linux fanotify_mark gates the *_PERM events on the group's class:
      * permission events (FAN_OPEN_PERM, FAN_ACCESS_PERM, FAN_OPEN_EXEC_PERM)
      * are only meaningful on FAN_CLASS_CONTENT or FAN_CLASS_PRE_CONTENT

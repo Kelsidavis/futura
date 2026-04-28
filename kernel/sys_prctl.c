@@ -459,14 +459,32 @@ long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
     case PR_SET_VMA: {
         /* PR_SET_VMA_ANON_NAME (arg2=0): set anonymous VMA name for debuggers.
          * arg3=addr, arg4=len, arg5=name (NULL to clear).
-         * Shows as [anon:name] in /proc/self/maps. Max 80 chars. */
+         * Shows as [anon:name] in /proc/self/maps. Max 80 chars.
+         *
+         * Linux's prctl_set_vma (mm/mmap.c) validates start page-alignment
+         * and end-overflow up front:
+         *   if (start & ~PAGE_MASK) return -EINVAL;
+         *   len = PAGE_ALIGN(len_in);
+         *   if (end_addr < start) return -EINVAL;
+         * The previous Futura code stored arg3 verbatim without alignment
+         * checking, so a caller passing an unaligned start saw success on
+         * Futura where Linux returns EINVAL — masking the parameter-domain
+         * error class libc/jemalloc anon-name probes use to detect kernel
+         * support. */
         if (arg2 != 0) return -EINVAL; /* Only PR_SET_VMA_ANON_NAME=0 supported */
 
         uintptr_t va_start = (uintptr_t)arg3;
         size_t    va_len   = (size_t)arg4;
         const char *uname  = (const char *)(uintptr_t)arg5;
 
+        if (va_start & ((uintptr_t)PAGE_SIZE - 1))
+            return -EINVAL;
+
         if (va_len == 0) return 0;  /* Nothing to do */
+
+        /* Reject end-of-range overflow */
+        if (va_start > UINTPTR_MAX - va_len)
+            return -EINVAL;
 
         /* Copy and validate name from userspace (or NULL to clear) */
         char name_buf[81]; /* ANON_VMA_NAME_MAX_LEN=80 + NUL */

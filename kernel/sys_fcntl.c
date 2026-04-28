@@ -999,6 +999,17 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
             return -EFAULT;
         }
 
+        /* OFD lock query also requires l_pid == 0 — Linux's fcntl
+         * rejects non-zero l_pid for F_OFD_GETLK with EINVAL, same as
+         * the SETLK / SETLKW variants.  Catches the common
+         * OFD-vs-POSIX-l_pid confusion when porting code. */
+        if (local_cmd == F_OFD_GETLK && lk.l_pid != 0) {
+            fut_printf("[FCNTL] fcntl(fd=%d, cmd=F_OFD_GETLK, l_pid=%d) -> EINVAL "
+                       "(OFD locks require l_pid == 0)\n",
+                       local_fd, lk.l_pid);
+            return -EINVAL;
+        }
+
         struct fut_vnode *vnode = file ? file->vnode : NULL;
         if (!vnode) {
             fut_printf("[FCNTL] fcntl(fd=%d, cmd=F_GETLK) -> EBADF (no vnode)\n", local_fd);

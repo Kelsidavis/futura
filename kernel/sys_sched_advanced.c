@@ -194,10 +194,17 @@ long sys_sched_getparam(int pid, struct sched_param *param) {
         return -ESRCH;
     }
 
-    /* NULL param is a pointer fault (EFAULT) — see sched_setparam. */
+    /* Linux's sched_getparam combines the pid<0 and !param gates into a
+     * single EINVAL: 'if (!param || pid < 0) return -EINVAL'.  This
+     * differs from sched_setparam (which surfaces NULL through
+     * copy_from_user as EFAULT) — getparam decides EINVAL up front so
+     * libc probes can distinguish 'invalid syscall shape' from a
+     * faulting copy on the same syscall family.  The previous Futura
+     * comment claimed EFAULT 'matches sched_setparam', but that's the
+     * inverse of every Linux kernel since the syscall existed. */
     if (!param) {
-        fut_printf("[SCHED] sched_getparam(pid=%d) -> EFAULT (null param)\n", pid);
-        return -EFAULT;
+        fut_printf("[SCHED] sched_getparam(pid=%d) -> EINVAL (null param)\n", pid);
+        return -EINVAL;
     }
 
     /* Find target thread: pid=0 means self, otherwise look up by PID */

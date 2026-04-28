@@ -885,6 +885,8 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
             case 37: /* SO_TIMESTAMPING */
             case 41: /* SO_WIFI_STATUS */
             case 42: /* SO_PEEK_OFF */
+            case 43: /* SO_NOFCS — disable Frame Check Sequence on raw Ethernet */
+            case 44: /* SO_LOCK_FILTER — BPF filter is locked */
             case 45: /* SO_SELECT_ERR_QUEUE — was mislabeled SO_BPF_EXTENSIONS; the
                       * real Linux SO_BPF_EXTENSIONS is 48 */
             case 46: /* SO_BUSY_POLL — was mislabeled SO_INCOMING_CPU; the real

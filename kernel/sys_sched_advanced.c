@@ -700,10 +700,20 @@ long sys_sched_setattr(int pid, const struct sched_attr *uattr, unsigned int fla
     if (nice < -20) nice = -20;
     if (nice >  19) nice =  19;
     if (current->uid != 0 && !HAS_CAP_SYS_NICE(current)) {
-        int64_t lim = (int64_t)current->rlimits[13 /* RLIMIT_NICE */].rlim_cur;
-        if (lim < 0) lim = 0;
-        if (lim > 40) lim = 40;
-        int min_nice = 20 - (int)lim;
+        uint64_t lim_u = current->rlimits[13 /* RLIMIT_NICE */].rlim_cur;
+        /* RLIM_INFINITY means 'unlimited' — caller may set nice all
+         * the way down to -20.  The previous code cast rlim_cur to
+         * int64_t (turning UINT64_MAX into -1), then clamped lim < 0
+         * up to 0, which made min_nice = 20 — the max possible nice
+         * value, blocking any reduction even when the limit was
+         * supposed to be unlimited. */
+        int min_nice;
+        if (lim_u == (uint64_t)-1 /* RLIM_INFINITY */) {
+            min_nice = -20;
+        } else {
+            int lim = (lim_u > 40) ? 40 : (int)lim_u;
+            min_nice = 20 - lim;
+        }
         if (nice < min_nice)
             return -EPERM;
     }

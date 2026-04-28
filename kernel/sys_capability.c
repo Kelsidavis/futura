@@ -166,25 +166,21 @@ long sys_capget(struct __user_cap_header_struct *hdrp,
         return -EFAULT;
     }
 
-    /* Phase 2: Validate data pointer */
-    if (!datap) {
-        fut_printf("[CAPABILITY] capget(hdrp=%p, datap=NULL, pid=%d) -> EFAULT\n",
-                   hdrp, task->pid);
-        return -EFAULT;
-    }
+    /* Linux's capget validates the header version (cap_validate_magic)
+     * BEFORE checking datap.  When datap is NULL, capget is a probe:
+     *   - unknown version -> writes preferred V3 back, returns 0
+     *     (the libc capget wrapper uses this to negotiate the ABI version)
+     *   - known version   -> returns 0 (caller already has the version)
+     * When datap is non-NULL:
+     *   - unknown version -> writes V3 back, returns -EINVAL
+     *   - known version   -> proceeds to fill the data struct
+     *
+     * The previous Futura order rejected NULL datap up front with EFAULT
+     * before any version probe ran, so libc's capget(hdr, NULL) version-
+     * negotiation path got EFAULT instead of "version corrected, retry".
+     * Reorder to match Linux's cap_validate_magic-first ordering. */
 
-    /* Validate datap write permission early (kernel writes capability data)
-     * VULNERABILITY: Invalid Output Buffer Pointer
-     * ATTACK: Attacker provides read-only or unmapped datap buffer
-     * IMPACT: Kernel page fault when writing capability data
-     * DEFENSE: Check write permission before processing */
-    if (cap_access_ok(datap, sizeof(struct __user_cap_data_struct)) != 0) {
-        fut_printf("[CAPABILITY] capget(hdrp=%p, datap=%p) -> EFAULT (datap not writable for %zu bytes)\n",
-                   hdrp, datap, sizeof(struct __user_cap_data_struct));
-        return -EFAULT;
-    }
-
-    /* Phase 2: Copy capability header from userspace */
+    /* Copy capability header from userspace */
     struct __user_cap_header_struct hdr;
     if (cap_copy_from_user(&hdr, hdrp, sizeof(hdr)) != 0) {
         fut_printf("[CAPABILITY] capget(hdrp=?, datap=%p, pid=%d) -> EFAULT "
@@ -192,8 +188,9 @@ long sys_capget(struct __user_cap_header_struct *hdrp,
         return -EFAULT;
     }
 
-    /* Validate version.  Unknown version: write preferred version back and return EINVAL. */
+    /* Validate version.  Unknown version: write preferred version back. */
     int two_structs = 0;  /* 1 if V2/V3 (two __user_cap_data_struct entries) */
+    int version_invalid = 0;
     if (hdr.version == _LINUX_CAPABILITY_VERSION_1) {
         two_structs = 0;
     } else if (hdr.version == _LINUX_CAPABILITY_VERSION_2 ||
@@ -203,9 +200,28 @@ long sys_capget(struct __user_cap_header_struct *hdrp,
         /* Write back preferred version so caller can retry */
         uint32_t preferred = _LINUX_CAPABILITY_VERSION_3;
         cap_copy_to_user(&hdrp->version, &preferred, sizeof(preferred));
-        fut_printf("[CAPABILITY] capget: unknown version 0x%x -> EINVAL (wrote V3)\n",
+        fut_printf("[CAPABILITY] capget: unknown version 0x%x -> EINVAL/probe (wrote V3)\n",
                    hdr.version);
+        version_invalid = 1;
+    }
+
+    /* Linux: NULL datap is a version-probe — return 0 regardless of
+     * whether the version was valid (we already wrote V3 back on
+     * mismatch). */
+    if (!datap) {
+        return 0;
+    }
+
+    /* datap non-NULL with unknown version: surface EINVAL now. */
+    if (version_invalid) {
         return -EINVAL;
+    }
+
+    /* Validate datap write permission (kernel writes capability data) */
+    if (cap_access_ok(datap, sizeof(struct __user_cap_data_struct)) != 0) {
+        fut_printf("[CAPABILITY] capget(hdrp=%p, datap=%p) -> EFAULT (datap not writable for %zu bytes)\n",
+                   hdrp, datap, sizeof(struct __user_cap_data_struct));
+        return -EFAULT;
     }
 
     /* Resolve target task by pid (0 = current, >0 = lookup by pid).

@@ -399,6 +399,18 @@ ssize_t sys_readv(int fd, const struct iovec *iov, int iovcnt) {
         return -EINVAL;
     }
 
+    /* Linux's do_readv runs fdget_pos FIRST and only then iov_iter_init.
+     * For readv(bad_fd, _, 0) Linux returns -EBADF (fdget fails before
+     * the iovcnt=0 short-circuit inside vfs_readv returns 0).  The
+     * previous Futura order returned 0 for readv(bad_fd, _, 0), masking
+     * the real fd error from libc probes.  Validate fd up front. */
+    if (fd < 0 || fd >= (int)task->max_fds ||
+        !task->fd_table || !task->fd_table[fd]) {
+        fut_printf("[READV] readv(fd=%d, iov=%p, iovcnt=%d) -> EBADF\n",
+                   fd, iov, iovcnt);
+        return -EBADF;
+    }
+
     if (iovcnt == 0) {
         fut_printf("[READV] readv(fd=%d, iov=%p, iovcnt=0) -> 0 (nothing to read)\n",
                    fd, iov);

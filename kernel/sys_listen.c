@@ -93,9 +93,16 @@ long sys_listen(int sockfd, int backlog) {
     int effective_backlog = local_backlog;
 
     if (local_backlog < 0) {
-        /* Negative backlog: treat as 0 or minimal default */
-        backlog_desc = "negative (will use default)";
-        effective_backlog = 128;  /* Common default */
+        /* Linux's __sys_listen casts backlog to unsigned int before
+         * comparing against somaxconn, so any negative value becomes a
+         * huge unsigned and gets clamped to SOMAXCONN — not to a small
+         * fixed default.  Futura previously substituted 128 here, so a
+         * caller relying on Linux's "negative → maximum queue" behavior
+         * (e.g. servers that pass -1 as a sentinel meaning 'as much as
+         * the kernel allows') saw a far smaller queue than expected and
+         * dropped connections under load. */
+        backlog_desc = "negative (clamp to SOMAXCONN, Linux semantics)";
+        effective_backlog = SOMAXCONN;
     } else if (local_backlog == 0) {
         backlog_desc = "zero (minimal queue)";
         effective_backlog = 1;  /* At least 1 */

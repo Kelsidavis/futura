@@ -120,6 +120,17 @@ long sys_madvise(void *addr, size_t length, int advice) {
         return -EINVAL;
     }
 
+    /* Linux's do_madvise rejects misaligned addr up front:
+     *   if (start & ~PAGE_MASK) return -EINVAL;
+     * The previous Futura code silently rounded down via PAGE_ALIGN_DOWN,
+     * masking caller bugs (e.g. madvise(buf+1, len, ...) on a buffer
+     * returned from malloc rather than mmap).  An unaligned addr is a
+     * documented EINVAL on every Linux kernel; libc wrappers branch
+     * on EINVAL to detect and surface the programming error. */
+    if ((uintptr_t)addr & (PAGE_SIZE - 1)) {
+        return -EINVAL;
+    }
+
     /* Overflow-safe alignment: compute aligned range */
     uintptr_t addr_aligned = PAGE_ALIGN_DOWN((uintptr_t)addr);
     size_t offset = (uintptr_t)addr - addr_aligned;

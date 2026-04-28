@@ -543,6 +543,23 @@ long sys_inotify_add_watch(int fd, const char *pathname, uint32_t mask) {
     fut_task_t *task = fut_task_current();
     if (!task) return -ESRCH;
 
+    /* Linux's fs/notify/inotify/inotify_user.c validates the mask FIRST
+     * (before fdget() / pathname access):
+     *   mask = inotify_arg_to_mask(mask);
+     *   if (unlikely(!(mask & ALL_INOTIFY_BITS))) return -EINVAL;
+     *   f = fdget(fd);
+     *   if (unlikely(!f.file)) return -EBADF;
+     * The previous Futura order looked up the fd and probed the
+     * pathname before mask validation, inverting the errno class for
+     * callers that probe with deliberately bad fds/paths to detect
+     * supported event bits.  Match Linux — same shape as the matching
+     * splice / vmsplice / tee fixes. */
+    if ((mask & IN_ALL_EVENTS) == 0) {
+        fut_printf("[INOTIFY] inotify_add_watch(fd=%d, mask=0x%x) -> EINVAL (no events)\n",
+                   fd, mask);
+        return -EINVAL;
+    }
+
     int err;
     struct inotify_instance *inst = get_inotify_instance(task, fd, &err);
     if (!inst) {
@@ -569,12 +586,6 @@ long sys_inotify_add_watch(int fd, const char *pathname, uint32_t mask) {
     if (path_buf[0] == '\0') {
         fut_printf("[INOTIFY] inotify_add_watch(fd=%d, path=\"\") -> ENOENT\n", fd);
         return -ENOENT;
-    }
-
-    if ((mask & IN_ALL_EVENTS) == 0) {
-        fut_printf("[INOTIFY] inotify_add_watch(fd=%d, path='%s', mask=0x%x) -> EINVAL (no events)\n",
-                   fd, path_buf, mask);
-        return -EINVAL;
     }
 
     /* Note: Linux 4.18+ returns -EINVAL when IN_MASK_ADD and IN_MASK_CREATE

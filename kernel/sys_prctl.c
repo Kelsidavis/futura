@@ -669,11 +669,36 @@ long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
         return -ENOTSUP;
 
     case PR_SET_MDWE:
-        /* Linux 6.3+ memory-deny-write-execute; silently accept. */
+        /* Linux 6.3+ memory-deny-write-execute.
+         *
+         * Linux's prctl_set_mdwe (mm/mmap.c) gates strictly:
+         *   if (arg3 || arg4 || arg5) return -EINVAL;
+         *   if (bits & ~(PR_MDWE_REFUSE_EXEC_GAIN | PR_MDWE_NO_INHERIT))
+         *       return -EINVAL;
+         *   if ((bits & PR_MDWE_NO_INHERIT) &&
+         *       !(bits & PR_MDWE_REFUSE_EXEC_GAIN))
+         *       return -EINVAL;
+         * The previous Futura code silently accepted any arg combination,
+         * masking the malformed-call detection libc/glibc MDWE probes use
+         * to discover kernel support for the inherit-disable refinement. */
+        if (arg3 != 0 || arg4 != 0 || arg5 != 0)
+            return -EINVAL;
+        if (arg2 & ~(unsigned long)(0x1 /* PR_MDWE_REFUSE_EXEC_GAIN */ |
+                                    0x2 /* PR_MDWE_NO_INHERIT */))
+            return -EINVAL;
+        if ((arg2 & 0x2 /* NO_INHERIT */) && !(arg2 & 0x1 /* REFUSE_EXEC_GAIN */))
+            return -EINVAL;
         return 0;
 
     case PR_GET_MDWE:
-        /* Return 0: no MDWE restrictions. */
+        /* Return 0: no MDWE restrictions.
+         *
+         * Linux's prctl_get_mdwe rejects all unused args:
+         *   if (arg2 || arg3 || arg4 || arg5) return -EINVAL;
+         * Futura previously accepted any args, masking the malformed-call
+         * detection. */
+        if (arg2 != 0 || arg3 != 0 || arg4 != 0 || arg5 != 0)
+            return -EINVAL;
         return 0;
 
     case PR_TASK_PERF_EVENTS_DISABLE:

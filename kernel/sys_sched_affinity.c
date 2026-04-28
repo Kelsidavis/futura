@@ -50,11 +50,19 @@ static inline int affinity_copy_from_user(void *dst, const void *src, size_t n) 
  *   - -EFAULT if user_mask is invalid
  */
 long sys_sched_getaffinity(int pid, unsigned int len, void *user_mask) {
-    if (!user_mask) {
-        return -EFAULT;
-    }
-
-    /* Minimum mask size is 8 bytes (64 CPUs) */
+    /* Linux's kernel/sched/syscalls.c:SYSCALL_DEFINE3(sched_getaffinity)
+     * validates len BEFORE the user pointer:
+     *   if ((len & (sizeof(unsigned long)-1)) ||
+     *       (len < sizeof(unsigned long)))
+     *       return -EINVAL;
+     *   ...
+     *   ret = copy_to_user(user_mask_ptr, &mask, ...);
+     * The previous Futura order rejected NULL user_mask before len,
+     * inverting the errno class for callers that probe with
+     * deliberately bad pointers to detect kernel-supported lengths.
+     * Same EINVAL-before-EFAULT reorder pattern as the matching
+     * clock_gettime / clock_settime / getitimer / getrlimit /
+     * settimeofday fixes. */
     if (len < sizeof(uint64_t)) {
         return -EINVAL;
     }
@@ -69,6 +77,10 @@ long sys_sched_getaffinity(int pid, unsigned int len, void *user_mask) {
      * affinity buffers be unsigned-long-aligned. */
     if (len & (sizeof(unsigned long) - 1)) {
         return -EINVAL;
+    }
+
+    if (!user_mask) {
+        return -EFAULT;
     }
 
     /* Find target thread */
@@ -119,20 +131,24 @@ long sys_sched_getaffinity(int pid, unsigned int len, void *user_mask) {
  *   - -EFAULT if user_mask is invalid
  */
 long sys_sched_setaffinity(int pid, unsigned int len, const void *user_mask) {
-    if (!user_mask) {
-        return -EFAULT;
-    }
-
+    /* Same EINVAL-before-EFAULT reorder as sys_sched_getaffinity above:
+     * Linux validates len first, then copy_from_user surfaces NULL as
+     * EFAULT.  The previous order returned EFAULT for sched_setaffinity
+     * (pid, 4, NULL) where Linux returns EINVAL. */
     if (len < sizeof(uint64_t)) {
         return -EINVAL;
     }
 
     /* Same alignment requirement Linux enforces on the matching
-     * sched_setaffinity entry — the kernel walks the cpumask as
+     * sched_getaffinity entry — the kernel walks the cpumask as
      * unsigned-long-sized chunks, so non-aligned lengths produce
      * undefined high bits. */
     if (len & (sizeof(unsigned long) - 1)) {
         return -EINVAL;
+    }
+
+    if (!user_mask) {
+        return -EFAULT;
     }
 
     /* Copy mask from userspace */

@@ -212,8 +212,6 @@ int pidfd_get_pid(int fd) {
  * @return 0 on success, -errno on error
  */
 long sys_pidfd_send_signal(int pidfd, int sig, const void *info, unsigned int flags) {
-    (void)info;  /* siginfo_t contents not used for basic signal delivery */
-
     if (flags != 0)
         return -EINVAL;
     if (sig < 0 || sig > 64)
@@ -231,6 +229,45 @@ long sys_pidfd_send_signal(int pidfd, int sig, const void *info, unsigned int fl
 
     struct pidfd_ctx *ctx = (struct pidfd_ctx *)file->chr_private;
     int target_pid = ctx->pid;
+
+    /* Linux's pidfd_send_signal copies siginfo from user when info != NULL
+     * and enforces two invariants:
+     *   1. info->si_signo must equal the 'sig' argument (else -EINVAL) —
+     *      prevents the caller from claiming to send signal X while
+     *      actually faking signal Y in si_signo.
+     *   2. For a cross-task target, si_code must be one of the user-
+     *      generated codes (SI_USER = 0, SI_QUEUE = -1).  Kernel-generated
+     *      codes (>= 0 except SI_USER itself, or SI_TKILL = -6) would
+     *      let a caller spoof 'sent by the kernel' / 'sent by tgkill'
+     *      to processes they shouldn't.  Sending to self is unrestricted.
+     * The previous '(void)info' silently ignored both invariants, so
+     * any unprivileged caller could pidfd_send_signal a peer with a
+     * spoofed siginfo claiming kernel origin. */
+    if (info) {
+        struct mini_siginfo {
+            int si_signo;
+            int si_errno;
+            int si_code;
+            /* tail bytes ignored — we only validate the prefix */
+        } kinfo;
+#ifdef KERNEL_VIRTUAL_BASE
+        if ((uintptr_t)info >= KERNEL_VIRTUAL_BASE) {
+            __builtin_memcpy(&kinfo, info, sizeof(kinfo));
+        } else
+#endif
+        if (fut_copy_from_user(&kinfo, info, sizeof(kinfo)) != 0)
+            return -EFAULT;
+        if (kinfo.si_signo != sig)
+            return -EINVAL;
+        /* For cross-task delivery, only user-origin codes are allowed.
+         * SI_USER == 0, SI_QUEUE == -1.  Anything else (kernel-generated
+         * positive codes like SI_KERNEL=0x80, or SI_TKILL=-6) is rejected
+         * with EPERM unless the target is self. */
+        if ((unsigned int)target_pid != task->pid &&
+            kinfo.si_code != 0 /* SI_USER */ &&
+            kinfo.si_code != -1 /* SI_QUEUE */)
+            return -EPERM;
+    }
 
     /* Find target task */
     fut_task_t *target = fut_task_by_pid((uint64_t)target_pid);

@@ -19,17 +19,15 @@
 /* Portable syscall wrappers using libfutura */
 #include "syscall_portable.h"
 
-/* Additional syscall numbers not in syscall_portable.h */
-#if defined(__aarch64__)
-#define __NR_openat_compositor 56
-#define __NR_mkdirat_compositor 34
-#else
+/* Additional x86_64-only syscall numbers (the *at variants are now
+ * in syscall_portable.h for both archs). */
+#if !defined(__aarch64__)
 #define __NR_mkdir 83
 #endif
 
 static inline int sys_open(const char *pathname, int flags, int mode) {
 #if defined(__aarch64__)
-    return (int)syscall4(__NR_openat_compositor, -100 /*AT_FDCWD*/, (long)pathname, flags, mode);
+    return (int)syscall4(__NR_openat, -100 /*AT_FDCWD*/, (long)pathname, flags, mode);
 #else
     return (int)syscall3(__NR_open, (long)pathname, flags, mode);
 #endif
@@ -45,7 +43,7 @@ static inline int sys_close(int fd) {
 
 static inline int sys_mkdir(const char *pathname, int mode) {
 #if defined(__aarch64__)
-    return (int)syscall3(__NR_mkdirat_compositor, -100 /*AT_FDCWD*/, (long)pathname, mode);
+    return (int)syscall3(__NR_mkdirat, -100 /*AT_FDCWD*/, (long)pathname, mode);
 #else
     return (int)syscall2(__NR_mkdir, (long)pathname, mode);
 #endif

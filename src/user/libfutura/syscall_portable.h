@@ -252,6 +252,7 @@ static inline long syscall6(long nr, long arg1, long arg2, long arg3, long arg4,
 #define __NR_unlink         1035  /* deprecated; prefer unlinkat */
 #define __NR_open           1024  /* deprecated; prefer openat */
 #define __NR_openat         56
+#define __NR_mkdirat        34
 #define __NR_unlinkat       35
 #define __NR_fchmodat       53
 #define __NR_epoll_ctl      21
@@ -269,6 +270,10 @@ static inline long syscall6(long nr, long arg1, long arg2, long arg3, long arg4,
 #define __NR_unlink         87
 #define __NR_chmod          90
 #define __NR_fchmod         91
+#define __NR_openat         257
+#define __NR_mkdirat        258
+#define __NR_unlinkat       263
+#define __NR_fchmodat       268
 #define __NR_epoll_ctl      229
 #endif
 

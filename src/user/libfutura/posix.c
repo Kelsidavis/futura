@@ -6,9 +6,11 @@
  * POSIX-compatible functions that communicate with posixd via FIPC.
  */
 
+#include <stdarg.h>
 #include <stdint.h>
 #include <stddef.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <kernel/fut_fipc.h>
 #include <user/futura_posix.h>
 #include <user/libfutura.h>
@@ -72,7 +74,20 @@ int open(const char *path, int flags, ...) {
     msg.req.path[i] = '\0';
 
     msg.req.flags = flags;
-    msg.req.mode = 0644;  /* Default mode */
+
+    /* The mode arg is variadic and only meaningful when O_CREAT or
+     * O_TMPFILE is set. Hardcoding 0644 ignored callers' intent —
+     * libwayland's wl_os_create_anonymous_file passes 0600 specifically
+     * to keep the file private; we silently overrode it to world-
+     * readable. */
+    int mode = 0;
+    if (flags & (O_CREAT | 020000000 /* O_TMPFILE */)) {
+        va_list ap;
+        va_start(ap, flags);
+        mode = va_arg(ap, int);
+        va_end(ap);
+    }
+    msg.req.mode = mode;
 
     /* Send request to posixd */
     int ret = fut_fipc_send(posixd_channel, POSIXD_MSG_OPEN,

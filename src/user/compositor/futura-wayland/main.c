@@ -20,10 +20,19 @@
 #include "syscall_portable.h"
 
 /* Additional syscall numbers not in syscall_portable.h */
+#if defined(__aarch64__)
+#define __NR_openat_compositor 56
+#define __NR_mkdirat_compositor 34
+#else
 #define __NR_mkdir 83
+#endif
 
 static inline int sys_open(const char *pathname, int flags, int mode) {
+#if defined(__aarch64__)
+    return (int)syscall4(__NR_openat_compositor, -100 /*AT_FDCWD*/, (long)pathname, flags, mode);
+#else
     return (int)syscall3(__NR_open, (long)pathname, flags, mode);
+#endif
 }
 
 static inline long sys_write(int fd, const void *buf, size_t count) {
@@ -35,7 +44,11 @@ static inline int sys_close(int fd) {
 }
 
 static inline int sys_mkdir(const char *pathname, int mode) {
+#if defined(__aarch64__)
+    return (int)syscall3(__NR_mkdirat_compositor, -100 /*AT_FDCWD*/, (long)pathname, mode);
+#else
     return (int)syscall2(__NR_mkdir, (long)pathname, mode);
+#endif
 }
 
 /* Helper: Test if directory is writable for sockets */

@@ -16045,7 +16045,7 @@ watch_sleep:
             status = simple_atoi(argv[1]);
         }
         write_str(1, "Goodbye!\n");
-        syscall1(60, status);
+        sys_exit(status);
         while (1);
     } else {
         write_str(1, "Command not found: ");
@@ -21149,7 +21149,7 @@ static int sctl_start(const char *name) {
         char *child_argv[2] = { path, NULL };
         sys_execve(path, child_argv, NULL);
         /* If exec fails, exit child */
-        syscall1(60, 127);
+        sys_exit(127);
         while (1);
     }
     /* Parent */

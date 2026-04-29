@@ -235,7 +235,27 @@ static inline long syscall6(long nr, long arg1, long arg2, long arg3, long arg4,
  *   Common Syscall Definitions
  * ============================================================ */
 
-/* Syscall numbers (x86-64 / ARM64 Linux ABI) */
+/* Syscall numbers — arch-conditional. ARM64 uses Linux generic
+ * numbering, x86_64 uses historical x86_64 numbering. */
+#if defined(__aarch64__)
+#define __NR_read           63
+#define __NR_write          64
+#define __NR_close          57
+#define __NR_socket         198
+#define __NR_connect        203
+#define __NR_bind           200
+#define __NR_listen         201
+#define __NR_exit           93
+#define __NR_fcntl          25
+#define __NR_chmod          1042  /* deprecated; prefer fchmodat */
+#define __NR_fchmod         52
+#define __NR_unlink         1035  /* deprecated; prefer unlinkat */
+#define __NR_open           1024  /* deprecated; prefer openat */
+#define __NR_openat         56
+#define __NR_unlinkat       35
+#define __NR_fchmodat       53
+#define __NR_epoll_ctl      21
+#else
 #define __NR_read           0
 #define __NR_write          1
 #define __NR_open           2
@@ -250,6 +270,7 @@ static inline long syscall6(long nr, long arg1, long arg2, long arg3, long arg4,
 #define __NR_chmod          90
 #define __NR_fchmod         91
 #define __NR_epoll_ctl      229
+#endif
 
 /* Common file flags - only define if not already defined by system headers */
 #ifndef O_RDONLY

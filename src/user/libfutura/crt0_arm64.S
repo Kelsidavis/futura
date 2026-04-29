@@ -83,7 +83,7 @@ _start:
  *     out of place here. */
 .global exit
 exit:
-    mov x8, #60                 /* SYS_exit (Futura/x86_64-aligned ABI) */
+    mov x8, #93                 /* SYS_exit (Linux ARM64 generic) */
     svc #0                      /* Trap to EL1 */
     .inst 0xd4200000            /* unreachable */
 

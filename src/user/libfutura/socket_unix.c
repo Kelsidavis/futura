@@ -17,13 +17,17 @@
  * Linux-compatible syscall numbers. */
 #include "syscall_portable.h"
 
-#define __NR_socket   41
+/* Most __NR_* now come from syscall_portable.h. Define the handful
+ * the header doesn't expose. */
+#if defined(__aarch64__)
+#define __NR_accept   202
+#define __NR_sendmsg  211
+#define __NR_recvmsg  212
+#else
 #define __NR_accept   43
 #define __NR_sendmsg  46
 #define __NR_recvmsg  47
-#define __NR_bind     49
-#define __NR_listen   50
-#define __NR_connect  53
+#endif
 
 static inline long sys_socket(int domain, int type, int protocol) {
     return syscall3(__NR_socket, domain, type, protocol);

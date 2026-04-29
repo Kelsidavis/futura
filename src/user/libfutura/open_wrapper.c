@@ -31,7 +31,12 @@ int open64(const char *pathname, int flags, ...) __attribute__((visibility("defa
         va_end(ap);
     }
 
+#if defined(__aarch64__)
+    /* ARM64 generic syscall set has no SYS_open — use openat(AT_FDCWD,…). */
+    long result = syscall4(__NR_openat, -100 /*AT_FDCWD*/, (long)pathname, (long)flags, (long)mode);
+#else
     long result = syscall3(__NR_open, (long)pathname, (long)flags, (long)mode);
+#endif
 
     if (result < 0) {
         errno = -result;
@@ -51,7 +56,12 @@ int open(const char *pathname, int flags, ...) __attribute__((visibility("defaul
         va_end(ap);
     }
 
+#if defined(__aarch64__)
+    /* ARM64 generic syscall set has no SYS_open — use openat(AT_FDCWD,…). */
+    long result = syscall4(__NR_openat, -100 /*AT_FDCWD*/, (long)pathname, (long)flags, (long)mode);
+#else
     long result = syscall3(__NR_open, (long)pathname, (long)flags, (long)mode);
+#endif
 
     if (result < 0) {
         errno = -result;

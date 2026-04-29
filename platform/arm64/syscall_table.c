@@ -3701,7 +3701,9 @@ static int64_t sys_set_mempolicy_home_node_wrapper(uint64_t start, uint64_t len,
 }
 
 /* Initialize syscall table at runtime to avoid ARM64 relocation issues */
-/* x86_64 compat wrappers for path-based syscalls */
+/* x86_64 compat wrappers for path-based syscalls — only referenced when
+ * the x86_64-compat alias block is enabled. */
+__attribute__((unused))
 static int64_t sys_symlink_compat(uint64_t target, uint64_t linkpath,
                                    uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5) {
     (void)a2; (void)a3; (void)a4; (void)a5;
@@ -3711,6 +3713,7 @@ static int64_t sys_symlink_compat(uint64_t target, uint64_t linkpath,
     return sys_symlink((const char *)target, (const char *)linkpath);
 }
 
+__attribute__((unused))
 static int64_t sys_link_compat(uint64_t oldpath, uint64_t newpath,
                                 uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5) {
     (void)a2; (void)a3; (void)a4; (void)a5;
@@ -3720,6 +3723,7 @@ static int64_t sys_link_compat(uint64_t oldpath, uint64_t newpath,
     return sys_link((const char *)oldpath, (const char *)newpath);
 }
 
+__attribute__((unused))
 static int64_t sys_readlink_compat(uint64_t path, uint64_t buf, uint64_t size,
                                     uint64_t a3, uint64_t a4, uint64_t a5) {
     (void)a3; (void)a4; (void)a5;
@@ -3729,6 +3733,7 @@ static int64_t sys_readlink_compat(uint64_t path, uint64_t buf, uint64_t size,
 }
 
 /* x86_64 compat: chmod(path, mode) — x86_64 #90 takes path, ARM64 fchmod takes fd */
+__attribute__((unused))
 static int64_t sys_chmod_compat(uint64_t path, uint64_t mode,
                                  uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5) {
     (void)a2; (void)a3; (void)a4; (void)a5;
@@ -4543,16 +4548,14 @@ static void arm64_syscall_table_init(void) {
     syscall_table[273].handler = (syscall_fn_t)sys_init_module_wrapper;
     syscall_table[273].name = "finit_module";
 
-    /* x86_64 compatibility aliases — Futura userland uses x86_64 syscall numbers.
-     *
-     * IMPORTANT: do NOT use `syscall_table[__NR_X].handler` to copy the
-     * handler. Many ARM64 native __NR_* numbers are small (13, 17, 19,
-     * 20, 22, 28, 32, …) and overlap with x86_64 numbers we deliberately
-     * overwrite below. Reading syscall_table[__NR_X] *after* such an
-     * overwrite returns the x86_64 handler, not the original ARM64-native
-     * handler — which is exactly the bug that routed wayland's
-     * epoll_pwait into sys_pipe. Always wire to the wrapper symbol
-     * directly so the order of table writes can't matter. */
+    /* x86_64 compatibility aliases — historically used when libfutura
+     * emitted x86_64 syscall numbers on ARM64. With libfutura now
+     * native (see include/user/sysnums.h, ARM64 path), these aliases
+     * collide with the ARM64-native indices (e.g. x86_64 fchown=93 vs
+     * ARM64 exit=93). Disabled by default for native ARM64 builds.
+     * Re-enable by defining FUTURA_X86_64_COMPAT_SYSCALLS=1 if you
+     * need to run x86_64-numbered userland on this kernel. */
+#if defined(FUTURA_X86_64_COMPAT_SYSCALLS) && FUTURA_X86_64_COMPAT_SYSCALLS
 
     /* Process / file lifecycle */
     syscall_table[32].handler = (syscall_fn_t)sys_dup_wrapper;       syscall_table[32].name = "dup";
@@ -4657,6 +4660,11 @@ static void arm64_syscall_table_init(void) {
     syscall_table[124].handler = (syscall_fn_t)sys_getsid_wrapper;   syscall_table[124].name = "getsid";
     syscall_table[109].handler = (syscall_fn_t)sys_setpgid_wrapper;  syscall_table[109].name = "setpgid";
     syscall_table[121].handler = (syscall_fn_t)sys_getpgid_wrapper;  syscall_table[121].name = "getpgid";
+#endif /* FUTURA_X86_64_COMPAT_SYSCALLS */
+
+    /* Futura extensions — must register regardless of compat block. */
+    syscall_table[400].handler = (syscall_fn_t)sys_time_millis_wrapper;
+    syscall_table[400].name = "time_millis";
 
     /* Modern mount API (Linux 5.2+) */
     syscall_table[__NR_open_tree].handler = (syscall_fn_t)sys_open_tree_wrapper;

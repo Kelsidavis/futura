@@ -52,7 +52,12 @@ static inline long sys_exit(long code) {
 }
 
 static inline long sys_open(const char *path, long flags, long mode) {
+#if defined(__aarch64__)
+    /* ARM64 generic syscall set has no SYS_open — route through openat. */
+    return sys_call4(SYS_openat, -100 /*AT_FDCWD*/, (long)path, flags, mode);
+#else
     return sys_call3(SYS_open, (long)path, flags, mode);
+#endif
 }
 
 static inline long sys_close(long fd) {
@@ -60,7 +65,11 @@ static inline long sys_close(long fd) {
 }
 
 static inline long sys_unlink(const char *path) {
+#if defined(__aarch64__)
+    return sys_call3(SYS_unlinkat, -100 /*AT_FDCWD*/, (long)path, 0);
+#else
     return sys_call1(SYS_unlink, (long)path);
+#endif
 }
 
 static inline long sys_truncate_call(const char *path, long length) {
@@ -124,11 +133,28 @@ static inline long sys_nanosleep_call(const fut_timespec_t *req, fut_timespec_t 
 }
 
 static inline long sys_poll_call(void *fds, unsigned long nfds, int timeout) {
+#if defined(__aarch64__)
+    /* ARM64 has no SYS_poll — use ppoll with NULL sigmask.
+     * timeout is ms, ppoll wants struct timespec; pass NULL for "wait
+     * forever" when timeout < 0 and a synthesized timespec otherwise. */
+    if (timeout < 0) {
+        return sys_call4(SYS_ppoll, (long)fds, (long)nfds, 0, 0);
+    } else {
+        struct { long sec; long nsec; } ts = { timeout / 1000, (timeout % 1000) * 1000000 };
+        return sys_call4(SYS_ppoll, (long)fds, (long)nfds, (long)&ts, 0);
+    }
+#else
     return sys_call3(SYS_poll, (long)fds, (long)nfds, (long)timeout);
+#endif
 }
 
 static inline long sys_fork_call(void) {
+#if defined(__aarch64__)
+    /* ARM64 has no SYS_fork — clone with SIGCHLD and zero stack/flags. */
+    return sys_call5(SYS_clone, 17 /*SIGCHLD*/, 0, 0, 0, 0);
+#else
     return sys_call0(SYS_fork);
+#endif
 }
 
 static inline long sys_execve_call(const char *pathname, char *const *argv, char *const *envp) {
@@ -149,7 +175,14 @@ static inline long sys_chdir_call(const char *path) {
 
 /* epoll() syscall veneers */
 static inline long sys_epoll_create_call(int size) {
+#if defined(__aarch64__)
+    /* ARM64 generic has only epoll_create1. size argument is ignored
+     * by the kernel anyway since Linux 2.6.8 — pass 0 flags. */
+    (void)size;
+    return sys_call1(SYS_epoll_create1, 0);
+#else
     return sys_call1(SYS_epoll_create, (long)size);
+#endif
 }
 
 static inline long sys_epoll_create1_call(int flags) {
@@ -161,7 +194,13 @@ static inline long sys_epoll_ctl_call(int epfd, int op, int fd, void *event) {
 }
 
 static inline long sys_epoll_wait_call(int epfd, void *events, int maxevents, int timeout) {
+#if defined(__aarch64__)
+    /* ARM64 has only epoll_pwait. NULL sigmask = unmodified mask. */
+    return sys_call6(SYS_epoll_pwait, (long)epfd, (long)events, (long)maxevents,
+                      (long)timeout, 0, 0);
+#else
     return sys_call4(SYS_epoll_wait, (long)epfd, (long)events, (long)maxevents, (long)timeout);
+#endif
 }
 
 /* madvise() syscall veneer */
@@ -216,7 +255,12 @@ static inline long sys_getppid_call(void) {
 }
 
 static inline long sys_getpgrp_call(void) {
+#if defined(__aarch64__)
+    /* ARM64 has no SYS_getpgrp — the POSIX semantics are getpgid(0). */
+    return sys_call1(SYS_getpgid, 0);
+#else
     return sys_call0(SYS_getpgrp);
+#endif
 }
 
 static inline long sys_getsid_call(long pid) {
@@ -228,11 +272,21 @@ static inline long sys_setsid_call(void) {
 }
 
 static inline long sys_rename_call(const char *oldpath, const char *newpath) {
+#if defined(__aarch64__)
+    /* renameat(AT_FDCWD, old, AT_FDCWD, new) */
+    return sys_call4(SYS_renameat, -100, (long)oldpath, -100, (long)newpath);
+#else
     return sys_call2(SYS_rename, (long)oldpath, (long)newpath);
+#endif
 }
 
 static inline long sys_stat_call(const char *path, void *statbuf) {
+#if defined(__aarch64__)
+    /* newfstatat(AT_FDCWD, path, statbuf, 0) */
+    return sys_call4(SYS_newfstatat, -100, (long)path, (long)statbuf, 0);
+#else
     return sys_call2(SYS_stat, (long)path, (long)statbuf);
+#endif
 }
 
 static inline long sys_fstat_call(long fd, void *statbuf) {
@@ -240,7 +294,12 @@ static inline long sys_fstat_call(long fd, void *statbuf) {
 }
 
 static inline long sys_chmod_call(const char *path, long mode) {
+#if defined(__aarch64__)
+    /* fchmodat(AT_FDCWD, path, mode, 0) */
+    return sys_call4(SYS_fchmodat, -100, (long)path, mode, 0);
+#else
     return sys_call2(SYS_chmod, (long)path, mode);
+#endif
 }
 
 static inline long sys_fchmod_call(long fd, long mode) {
@@ -248,7 +307,12 @@ static inline long sys_fchmod_call(long fd, long mode) {
 }
 
 static inline long sys_chown_call(const char *path, long uid, long gid) {
+#if defined(__aarch64__)
+    /* fchownat(AT_FDCWD, path, uid, gid, 0) */
+    return sys_call5(SYS_fchownat, -100, (long)path, uid, gid, 0);
+#else
     return sys_call3(SYS_chown, (long)path, uid, gid);
+#endif
 }
 
 static inline long sys_fchown_call(long fd, long uid, long gid) {
@@ -256,7 +320,12 @@ static inline long sys_fchown_call(long fd, long uid, long gid) {
 }
 
 static inline long sys_access_call(const char *path, long mode) {
+#if defined(__aarch64__)
+    /* faccessat(AT_FDCWD, path, mode, 0) */
+    return sys_call4(SYS_faccessat, -100, (long)path, mode, 0);
+#else
     return sys_call2(SYS_access, (long)path, mode);
+#endif
 }
 
 static inline long sys_fsync_call(int fd) {
@@ -268,28 +337,54 @@ static inline long sys_fdatasync_call(int fd) {
 }
 
 static inline long sys_mkdir_call(const char *path, long mode) {
+#if defined(__aarch64__)
+    return sys_call3(SYS_mkdirat, -100, (long)path, mode);
+#else
     return sys_call2(SYS_mkdir, (long)path, mode);
+#endif
 }
 
 static inline long sys_rmdir_call(const char *path) {
+#if defined(__aarch64__)
+    /* unlinkat(AT_FDCWD, path, AT_REMOVEDIR=0x200) */
+    return sys_call3(SYS_unlinkat, -100, (long)path, 0x200);
+#else
     return sys_call1(SYS_rmdir, (long)path);
+#endif
 }
 
 static inline long sys_link_call(const char *oldpath, const char *newpath) {
+#if defined(__aarch64__)
+    /* linkat(AT_FDCWD, old, AT_FDCWD, new, 0) */
+    return sys_call5(SYS_linkat, -100, (long)oldpath, -100, (long)newpath, 0);
+#else
     return sys_call2(SYS_link, (long)oldpath, (long)newpath);
+#endif
 }
 
 static inline long sys_symlink_call(const char *target, const char *linkpath) {
+#if defined(__aarch64__)
+    return sys_call3(SYS_symlinkat, (long)target, -100, (long)linkpath);
+#else
     return sys_call2(SYS_symlink, (long)target, (long)linkpath);
+#endif
 }
 
 static inline long sys_readlink_call(const char *path, char *buf, long bufsiz) {
+#if defined(__aarch64__)
+    return sys_call4(SYS_readlinkat, -100, (long)path, (long)buf, bufsiz);
+#else
     return sys_call3(SYS_readlink, (long)path, (long)buf, bufsiz);
+#endif
 }
 
 /* IPC and file descriptor syscall veneers */
 static inline long sys_pipe_call(int pipefd[2]) {
+#if defined(__aarch64__)
+    return sys_call2(SYS_pipe2, (long)pipefd, 0);
+#else
     return sys_call1(SYS_pipe, (long)pipefd);
+#endif
 }
 
 static inline long sys_dup_call(int oldfd) {
@@ -297,7 +392,12 @@ static inline long sys_dup_call(int oldfd) {
 }
 
 static inline long sys_dup2_call(int oldfd, int newfd) {
+#if defined(__aarch64__)
+    /* dup3(oldfd, newfd, 0) — flags 0 makes it equivalent to dup2 */
+    return sys_call3(SYS_dup3, (long)oldfd, (long)newfd, 0);
+#else
     return sys_call2(SYS_dup2, (long)oldfd, (long)newfd);
+#endif
 }
 
 /* Scheduler syscall veneers */

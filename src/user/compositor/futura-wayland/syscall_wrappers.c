@@ -43,16 +43,36 @@ static const char *strerror_simple(int err);
 #define SYS_CHMOD     (__NR_chmod)
 #define SYS_FCHMOD    (__NR_fchmod)
 
-/* Architecture-agnostic syscall dispatch using portable wrappers */
+#if defined(__aarch64__)
+/* ARM64 generic has openat/unlinkat/fchmodat instead of the path-based
+ * syscalls.  Translate at the wrapper layer so call sites stay simple. */
+#define __NR_openat   56
+#define __NR_unlinkat 35
+#define __NR_fchmodat 53
+#endif
+
+/* Architecture-agnostic syscall dispatch using portable wrappers.
+ * On ARM64 the path-based variants don't exist in the generic syscall
+ * set; route them through the *at family. */
+#if defined(__aarch64__)
+#define SYSCALL_OPEN(p, f, m) \
+    syscall4(__NR_openat, -100 /*AT_FDCWD*/, (long)(p), (long)(f), (long)(m))
+#define SYSCALL_UNLINK(p) \
+    syscall3(__NR_unlinkat, -100 /*AT_FDCWD*/, (long)(p), 0)
+#define SYSCALL_CHMOD(p, m) \
+    syscall4(__NR_fchmodat, -100 /*AT_FDCWD*/, (long)(p), (long)(m), 0)
+#else
 #define SYSCALL_OPEN(p, f, m)          syscall3(__NR_open, (long)(p), (long)(f), (long)(m))
+#define SYSCALL_UNLINK(p)              syscall1(__NR_unlink, (long)(p))
+#define SYSCALL_CHMOD(p, m)            syscall2(__NR_chmod, (long)(p), (long)(m))
+#endif
+
 #define SYSCALL_SOCKET(d, t, p)        syscall3(__NR_socket, (long)(d), (long)(t), (long)(p))
 #define SYSCALL_BIND(s, a, l)          syscall3(__NR_bind, (long)(s), (long)(a), (long)(l))
 #define SYSCALL_LISTEN(s, b)           syscall2(__NR_listen, (long)(s), (long)(b))
 #define SYSCALL_CONNECT(s, a, l)       syscall3(__NR_connect, (long)(s), (long)(a), (long)(l))
 #define SYSCALL_EPOLL_CTL(e, o, f, ev) syscall4(__NR_epoll_ctl, (long)(e), (long)(o), (long)(f), (long)(ev))
 #define SYSCALL_FCNTL(f, c, a)         syscall3(__NR_fcntl, (long)(f), (long)(c), (long)(a))
-#define SYSCALL_UNLINK(p)              syscall1(__NR_unlink, (long)(p))
-#define SYSCALL_CHMOD(p, m)            syscall2(__NR_chmod, (long)(p), (long)(m))
 #define SYSCALL_FCHMOD(f, m)           syscall2(__NR_fchmod, (long)(f), (long)(m))
 
 /* Linker-wrapped flock() - always succeeds (single-process OS) */

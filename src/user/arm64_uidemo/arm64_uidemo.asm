@@ -23,7 +23,7 @@ Disassembly of section .text:
   40003c:	d4200000 	brk	#0x0
 
 0000000000400040 <exit>:
-  400040:	d2800788 	mov	x8, #0x3c                  	// #60
+  400040:	d2800ba8 	mov	x8, #0x5d                  	// #93
   400044:	d4000001 	svc	#0x0
   400048:	d4200000 	brk	#0x0
 	...
@@ -592,7 +592,7 @@ Disassembly of section .text:
   4008d4:	910020c6 	add	x6, x6, #0x8
   4008d8:	089ffcdf 	stlrb	wzr, [x6]
   4008dc:	d65f03c0 	ret
-  4008e0:	d2800188 	mov	x8, #0xc                   	// #12
+  4008e0:	d2801ac8 	mov	x8, #0xd6                  	// #214
   4008e4:	d2800000 	mov	x0, #0x0                   	// #0
   4008e8:	d4000001 	svc	#0x0
   4008ec:	aa0003e1 	mov	x1, x0

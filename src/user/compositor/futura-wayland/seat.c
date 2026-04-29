@@ -1080,8 +1080,12 @@ static void compositor_launch_terminal(void) {
     if (pid == 0) {
         /* Child: exec wl-term */
         char *argv[] = { "/bin/wl-term", (void*)0 };
-        char *envp[] = { "WAYLAND_DISPLAY=wayland-0", "XDG_RUNTIME_DIR=/tmp",
-                         "TERM=xterm-256color", (void*)0 };
+        /* XDG_RUNTIME_DIR must match the dir the compositor actually
+         * bound the wayland-0 socket in (set by platform_init: /run).
+         * Hardcoding /tmp here meant children opened /tmp/wayland-0
+         * and got ENOENT instead of connecting. */
+        char *envp[] = { "WAYLAND_DISPLAY=wayland-0", "XDG_RUNTIME_DIR=/run",
+                         "TERM=xterm-256color", "PATH=/bin:/sbin", (void*)0 };
         sys_execve_call("/bin/wl-term", argv, envp);
         sys_exit(127);
     }
@@ -1092,8 +1096,8 @@ static void compositor_launch_edit(void) {
     long pid = sys_fork_call();
     if (pid == 0) {
         char *argv[] = { "/bin/wl-edit", (void*)0 };
-        char *envp[] = { "WAYLAND_DISPLAY=wayland-0", "XDG_RUNTIME_DIR=/tmp",
-                         (void*)0 };
+        char *envp[] = { "WAYLAND_DISPLAY=wayland-0", "XDG_RUNTIME_DIR=/run",
+                         "PATH=/bin:/sbin", (void*)0 };
         sys_execve_call("/bin/wl-edit", argv, envp);
         sys_exit(127);
     }
@@ -1104,8 +1108,8 @@ static void compositor_launch_sysmon(void) {
     long pid = sys_fork_call();
     if (pid == 0) {
         char *argv[] = { "/bin/wl-sysmon", (void*)0 };
-        char *envp[] = { "WAYLAND_DISPLAY=wayland-0", "XDG_RUNTIME_DIR=/tmp",
-                         (void*)0 };
+        char *envp[] = { "WAYLAND_DISPLAY=wayland-0", "XDG_RUNTIME_DIR=/run",
+                         "PATH=/bin:/sbin", (void*)0 };
         sys_execve_call("/bin/wl-sysmon", argv, envp);
         sys_exit(127);
     }

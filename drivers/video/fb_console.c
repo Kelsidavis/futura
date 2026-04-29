@@ -124,6 +124,18 @@ static const uint8_t g_font_8x8[95][8] = {
  *   Framebuffer Console State
  * ============================================================ */
 
+/* ANSI/VT escape parser state. Userland (the shell) drives the console
+ * with ECMA-48 sequences (color, cursor moves, clears) — without a tiny
+ * parser those sequences land on the framebuffer as literal '?[33m' etc.
+ * and turn the screen into garbage. We don't need to render colors yet
+ * (the font is mono-white-on-black), but stripping the sequences lets
+ * actual text show through cleanly. */
+typedef enum {
+    ANSI_NORMAL = 0,
+    ANSI_ESC,        /* saw ESC (0x1B), waiting for '[' or single-char  */
+    ANSI_CSI         /* in CSI body, swallowing until final byte 0x40-0x7E */
+} ansi_state_t;
+
 struct fb_console_state {
     volatile uint8_t *fb_mem;        /* Framebuffer memory pointer */
     uint32_t width;                  /* Framebuffer width in pixels */
@@ -140,6 +152,7 @@ struct fb_console_state {
     int protected_y_end;             /* End row of protected region (logo area) */
     int initialized;                 /* Has been initialized */
     int disabled;                    /* Disabled for GUI mode */
+    ansi_state_t ansi;               /* Escape-sequence parser state */
 };
 
 static struct fb_console_state g_fb_console = {0};
@@ -384,6 +397,45 @@ void fb_console_putc(char c) {
     struct fb_console_state *cons = &g_fb_console;
 
     if (!cons->initialized || cons->disabled) {
+        return;
+    }
+
+    /* Strip ANSI/VT escape sequences. Without this the shell's color
+     * codes ('\033[36m', '\033[1m', '\033[0m', etc.) print as literal
+     * '?[36m' garbage all over the framebuffer. We don't render colors
+     * yet — just consume the sequence and drop it on the floor.
+     *
+     *   Single-char escapes:   ESC X         (X in 0x40-0x5F except '[')
+     *   CSI sequences:         ESC [ params final-byte (0x40-0x7E)
+     *
+     * Anything we don't recognize is consumed up through the final byte
+     * to avoid leaking control bytes onto the screen. */
+    if (cons->ansi == ANSI_ESC) {
+        if ((unsigned char)c == '[') {
+            cons->ansi = ANSI_CSI;
+        } else {
+            /* Single-char ESC sequence (or noise) — done */
+            cons->ansi = ANSI_NORMAL;
+        }
+        return;
+    }
+    if (cons->ansi == ANSI_CSI) {
+        /* CSI body consumes parameter bytes 0x20-0x3F until the final
+         * byte 0x40-0x7E. */
+        if ((unsigned char)c >= 0x40 && (unsigned char)c <= 0x7E) {
+            cons->ansi = ANSI_NORMAL;
+        }
+        return;
+    }
+    if ((unsigned char)c == 0x1B) {  /* ESC */
+        cons->ansi = ANSI_ESC;
+        return;
+    }
+    if ((unsigned char)c == 0x07) {  /* BEL — just drop */
+        return;
+    }
+    if ((unsigned char)c == 0x08) {  /* BS */
+        if (cons->cursor_x > 0) cons->cursor_x--;
         return;
     }
 

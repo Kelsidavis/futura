@@ -135,6 +135,12 @@ struct sigaction {
 #define BUS_ADRERR   2   /* Non-existent physical address */
 #define BUS_OBJERR   3   /* Object-specific hardware error */
 
+/* SIGTRAP si_code values */
+#define TRAP_BRKPT   1   /* Process breakpoint (e.g. AArch64 BRK #0) */
+#define TRAP_TRACE   2   /* Process trace trap (single-step) */
+#define TRAP_BRANCH  3   /* Process taken branch trap */
+#define TRAP_HWBKPT  4   /* Hardware breakpoint/watchpoint */
+
 /* SIGILL si_code values */
 #define ILL_ILLOPC   1   /* Illegal opcode */
 #define ILL_ILLOPN   2   /* Illegal operand */

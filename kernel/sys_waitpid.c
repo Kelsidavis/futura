@@ -213,15 +213,21 @@ long sys_waitpid(int pid, int *u_status, int flags) {
     int status = 0;
     int rc = fut_task_waitpid(local_pid, &status, local_flags, NULL);
 
-    /* Phase 2: Handle error cases with detailed logging */
+    /* Phase 2: Handle error cases with detailed logging.
+     *
+     * EINTR is part of the normal contract — userland is expected to
+     * retry the syscall — so it's not an error worth logging on every
+     * occurrence. Loud kernels that printf every EINTR drown the serial
+     * console (e.g. an init-style spawner that gets a flood of pending
+     * signals can produce dozens of identical lines per shell exit). */
     if (rc < 0) {
+        if (rc == -EINTR) {
+            return rc;
+        }
         const char *error_desc;
         switch (rc) {
             case -ECHILD:
                 error_desc = "no matching children";
-                break;
-            case -EINTR:
-                error_desc = "interrupted by signal";
                 break;
             case -EINVAL:
                 error_desc = "invalid arguments";

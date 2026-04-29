@@ -1768,20 +1768,26 @@ static void arm64_init_spawner_thread(void *arg) {
         } else {
             /* exec succeeded — wait for child to exit.
              *
-             * The previous code never incremented shell_attempts here, so
-             * if waitpid returned immediately (EINTR, no child reaped, the
-             * shell exits before we even arrive at waitpid), the loop
-             * would respin forever calling fut_exec_elf in a tight loop,
-             * with each iteration triggering a slab double-free as the
-             * partially-built task tore down. Count the respawn against
-             * the attempt budget too — a shell that keeps quitting fast
-             * is just as broken as one that fails to exec — and add the
-             * same backoff delay so we don't peg the CPU. */
+             * waitpid can return -EINTR if a signal arrives before the
+             * child terminates, but for kernel-launched root spawners
+             * that EINTR is just noise — there's no signal handler to
+             * run and the right thing is to keep waiting. Retry up to
+             * a small bound; if we're still getting EINTR we've fallen
+             * into a livelock so give up rather than infinite-loop.
+             *
+             * Treating EINTR as 'shell exited' (the previous behavior)
+             * caused the loop to re-exec the shell while the original
+             * was still running, stacking up duplicate shell processes
+             * and producing a slab double-free per restart as the
+             * partially-built task tore down. */
             extern long sys_waitpid(int pid, int *status, int options);
             int status = 0;
-            sys_waitpid(-1, &status, 0);
-            fut_printf("[INIT] Shell process exited (attempt %d), restarting...\n",
-                       shell_attempts + 1);
+            long w = -4;
+            for (int retries = 0; retries < 32 && w == -4 /* -EINTR */; retries++) {
+                w = sys_waitpid(-1, &status, 0);
+            }
+            fut_printf("[INIT] Shell process exited (attempt %d, waitpid=%ld), restarting...\n",
+                       shell_attempts + 1, w);
             shell_attempts++;
             for (volatile int i = 0; i < 10000000; i++);
         }

@@ -12,75 +12,39 @@
 #include <sys/epoll.h>
 
 /* Kernel syscall wrappers for socket operations */
-#define __NR_socket 41
-#define __NR_sendmsg 46
-#define __NR_recvmsg 47
-#define __NR_bind   49
-#define __NR_listen 50
-#define __NR_accept 43
-#define __NR_connect 53
+/* Use the portable syscall trampolines so this file builds on both
+ * x86_64 (int $0x80) and aarch64-elf (svc #0) — same source, same
+ * Linux-compatible syscall numbers. */
+#include "syscall_portable.h"
+
+#define __NR_socket   41
+#define __NR_accept   43
+#define __NR_sendmsg  46
+#define __NR_recvmsg  47
+#define __NR_bind     49
+#define __NR_listen   50
+#define __NR_connect  53
 
 static inline long sys_socket(int domain, int type, int protocol) {
-    long ret;
-    __asm__ volatile("syscall"
-                     : "=a"(ret)
-                     : "0"(__NR_socket), "D"((long)domain), "S"((long)type), "d"((long)protocol)
-                     : "rcx", "r11", "r15", "memory");
-    return ret;
+    return syscall3(__NR_socket, domain, type, protocol);
 }
-
 static inline long sys_bind(int sockfd, const void *addr, uint32_t addrlen) {
-    long ret;
-    __asm__ volatile("syscall"
-                     : "=a"(ret)
-                     : "0"(__NR_bind), "D"((long)sockfd), "S"((long)addr), "d"((long)addrlen)
-                     : "rcx", "r11", "r15", "memory");
-    return ret;
+    return syscall3(__NR_bind, sockfd, (long)addr, addrlen);
 }
-
 static inline long sys_listen(int sockfd, int backlog) {
-    long ret;
-    __asm__ volatile("syscall"
-                     : "=a"(ret)
-                     : "0"(__NR_listen), "D"((long)sockfd), "S"((long)backlog)
-                     : "rcx", "r11", "r15", "memory");
-    return ret;
+    return syscall2(__NR_listen, sockfd, backlog);
 }
-
 static inline long sys_accept(int sockfd, void *addr, uint32_t *addrlen) {
-    long ret;
-    __asm__ volatile("syscall"
-                     : "=a"(ret)
-                     : "0"(__NR_accept), "D"((long)sockfd), "S"((long)addr), "d"((long)addrlen)
-                     : "rcx", "r11", "r15", "memory");
-    return ret;
+    return syscall3(__NR_accept, sockfd, (long)addr, (long)addrlen);
 }
-
 static inline long sys_sendmsg(int sockfd, const void *msg, int flags) {
-    long ret;
-    __asm__ volatile("syscall"
-                     : "=a"(ret)
-                     : "0"(__NR_sendmsg), "D"((long)sockfd), "S"((long)msg), "d"((long)flags)
-                     : "rcx", "r11", "r15", "memory");
-    return ret;
+    return syscall3(__NR_sendmsg, sockfd, (long)msg, flags);
 }
-
 static inline long sys_recvmsg(int sockfd, void *msg, int flags) {
-    long ret;
-    __asm__ volatile("syscall"
-                     : "=a"(ret)
-                     : "0"(__NR_recvmsg), "D"((long)sockfd), "S"((long)msg), "d"((long)flags)
-                     : "rcx", "r11", "r15", "memory");
-    return ret;
+    return syscall3(__NR_recvmsg, sockfd, (long)msg, flags);
 }
-
 static inline long sys_connect(int sockfd, const void *addr, uint32_t addrlen) {
-    long ret;
-    __asm__ volatile("syscall"
-                     : "=a"(ret)
-                     : "0"(__NR_connect), "D"((long)sockfd), "S"((long)addr), "d"((long)addrlen)
-                     : "rcx", "r11", "r15", "memory");
-    return ret;
+    return syscall3(__NR_connect, sockfd, (long)addr, addrlen);
 }
 
 #define UNIX_MAX_STREAMS       64

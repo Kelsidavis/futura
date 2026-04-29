@@ -27,7 +27,19 @@ BUILD_ROOT := $(ROOT)/build
 OBJ_DIR := $(BUILD_ROOT)/obj/$(PLATFORM)/user/compositor/futura-wayland
 BIN_DIR := $(BUILD_ROOT)/bin/$(PLATFORM)/user
 
+# WAYLAND_SCANNER must be visible to mk/wayland.mk's protocol-gen
+# rules at the include site, so set it BEFORE the include.  The host
+# build always supplies the scanner; the target arch's build never
+# does.
+WAYLAND_HOST_PREFIX := $(ROOT)/build/third_party/wayland/install-host
+WAYLAND_SCANNER     := $(WAYLAND_HOST_PREFIX)/bin/wayland-scanner
+
 include $(ROOT)/mk/wayland.mk
+
+# Set the default goal explicitly — the wayland_proto_server eval
+# below adds a rule for the protocol output directory which would
+# otherwise become the implicit default.
+.DEFAULT_GOAL := all
 
 TARGET := $(BIN_DIR)/futura-wayland
 SRCS := main.c bootstrap.c comp.c shm_backend.c xdg_shell.c output.c seat.c cursor.c ui_text.c shadow.c data_device.c syscall_wrappers.c
@@ -40,21 +52,28 @@ WAYLAND_GEN_HDRS := $(OUT)/compositor/xdg-shell-server-protocol.h
 OBJS := $(SRCS:%.c=$(OBJ_DIR)/%.o)
 OBJS += $(OBJ_DIR)/xdg-shell-protocol.o
 
-WAYLAND_PREFIX ?= $(ROOT)/build/third_party/wayland/install
+# libwayland target-arch lib prefix.
+WAYLAND_PREFIX ?= $(ROOT)/build/third_party/wayland/install-$(PLATFORM)
 WAYLAND_INCLUDEDIR ?= $(WAYLAND_PREFIX)/include
 WAYLAND_LIBDIR ?= $(WAYLAND_PREFIX)/lib
 WAYLAND_PKGCONFIG ?= $(WAYLAND_PREFIX)/lib/pkgconfig
-WAYLAND_SCANNER ?= $(WAYLAND_PREFIX)/bin/wayland-scanner
+LIBFFI_PREFIX ?= $(ROOT)/build/third_party/libffi/install-$(PLATFORM)
 
-# Extract Wayland flags using pkg-config
-WAYLAND_CFLAGS ?= -I$(WAYLAND_INCLUDEDIR)
-WAYLAND_LDFLAGS ?= -L$(WAYLAND_LIBDIR)
+WAYLAND_CFLAGS ?= -I$(WAYLAND_INCLUDEDIR) -I$(LIBFFI_PREFIX)/include
+WAYLAND_LDFLAGS ?= -L$(WAYLAND_LIBDIR) -L$(LIBFFI_PREFIX)/lib
+# Futura's libfutura provides pthread/math/rt/c implementations as part
+# of the static link below; we don't pull glibc-side -lpthread / -lm /
+# -lrt / -lc for the cross build.
+ifeq ($(PLATFORM),arm64)
+WAYLAND_LIBS ?= -lwayland-server -lwayland-client -lffi
+else
 WAYLAND_LIBS ?= -lwayland-server -lwayland-client -lffi -lpthread -lm -lrt
+endif
 
 # Linker flags
 ifeq ($(PLATFORM),arm64)
     LDSCRIPT := ../../libfutura/userland_arm64.ld
-    LDFLAGS := -static -T $(LDSCRIPT)
+    LDFLAGS := -nostdlib -static -T $(LDSCRIPT)
     LIBGCC := $(shell $(CC) -print-libgcc-file-name)
 else
     LDSCRIPT := ../../libfutura/userland.ld
@@ -67,8 +86,13 @@ LIBFUTURA := $(BUILD_ROOT)/lib/$(PLATFORM)/libfutura.a
 
 CFLAGS := -std=c2x -ffreestanding -nostdlib -fno-builtin -fno-stack-protector
 CFLAGS += -Wall -Wextra -Werror -g -O2
+# wayland-server-core.h uses [[deprecated]] which aarch64-elf-gcc warns
+# about as an unhandled attribute on free-standing builds; demote that
+# specific warning so -Werror doesn't reject the third-party header.
+CFLAGS += -Wno-attributes
 CFLAGS += $(ARCH_CFLAGS)
-CFLAGS += -I$(ROOT)/include -I$(OUT)/compositor -I$(ROOT)/src/user/libfutura
+CFLAGS += -I$(ROOT)/include -I$(ROOT)/include/user
+CFLAGS += -I$(OUT)/compositor -I$(ROOT)/src/user/libfutura
 CFLAGS += -I$(WAYLAND_INCLUDEDIR) $(WAYLAND_CFLAGS)
 
 CPPFLAGS += -DWAYLAND_MULTI_BUILD=1
@@ -86,7 +110,7 @@ all: $(TARGET)
 
 $(TARGET): $(OBJS) $(CRT0) $(LIBFUTURA) | $(BIN_DIR)
 	@echo "LD $@"
-	@$(CC) $(FINAL_LDFLAGS) $(CRT0) $(OBJS) $(LDLIBS) -o $@
+	$(CC) $(FINAL_LDFLAGS) $(CRT0) $(OBJS) $(LDLIBS) -o $@
 
 $(OBJ_DIR)/%.o: %.c $(WAYLAND_GEN_HDRS) | $(OBJ_DIR)
 	@echo "CC $<"

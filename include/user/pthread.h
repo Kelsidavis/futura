@@ -8,6 +8,9 @@
 #include <stddef.h>
 #include <sys/types.h>
 #include <time.h>
+#include <signal.h>     /* glibc's pthread.h transitively exposes
+                         * sigset_t/SIG_*, third-party code (compositor
+                         * main.c, libwayland-shm) relies on that. */
 
 #ifdef __cplusplus
 extern "C" {

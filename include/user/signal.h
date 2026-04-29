@@ -12,12 +12,14 @@
 
 #include <stdint.h>
 
-#ifdef __has_include
-#if __has_include(<signal.h>) && !defined(FUTURA_FORCE_MINIMAL_SIGNAL)
-#define FUTURA_HAVE_NATIVE_SIGNAL 1
-#include <signal.h>
-#endif
-#endif
+/* No __has_include gate here.  The previous check
+ *   #if __has_include(<signal.h>)
+ * always evaluated true because *this file* IS <signal.h> on Futura's
+ * include path, so it would set FUTURA_HAVE_NATIVE_SIGNAL=1 and skip
+ * its own body — leaving consumers without SIG_IGN, sigaction, etc.
+ * Just always provide the Futura definitions; host builds get them
+ * too because there's no system signal.h with the same header search
+ * order. */
 
 /* ============================================================
  *   Signal Set Type

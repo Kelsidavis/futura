@@ -62,10 +62,10 @@ ASFLAGS := $(ARCH_ASFLAGS)
 # Source files (platform-specific crt0)
 C_SRCS := abort.c string.c strerror.c env.c fputs.c fwrite.c malloc.c fipc.c fipc_stub.c posix.c fcntl.c mremap.c memory_map.c fstat.c eventfd.c printf.c printf_core.c vsnprintf.c posix_shm.c epoll.c poll.c timerfd.c signalfd.c time.c stack_chk.c pthread_stub.c assert.c signals.c fd.c errno.c syscall_shim.c stat_stub.c
 
-# socket_unix.c uses x86_64 inline asm (syscall instruction)
-ifneq ($(PLATFORM),arm64)
+# socket_unix.c — uses syscall_portable.h trampolines so it builds for
+# both x86_64 (int $0x80) and aarch64-elf (svc #0). Compositor + wl-*
+# clients depend on it for their AF_UNIX socket plumbing.
 C_SRCS += socket_unix.c
-endif
 
 # ARM64 libgcc requires __getauxval for LSE atomics detection
 ifeq ($(PLATFORM),arm64)

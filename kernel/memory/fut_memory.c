@@ -177,11 +177,19 @@ void fut_pmm_free_page(void *addr) {
         return;
     }
 
-#if defined(__x86_64__)
+    /* Convert the caller's virtual page pointer to a physical address.
+     * Both x86_64 and ARM64 use a high-half kernel mapping, so callers
+     * always pass kernel-virtual addresses (e.g. 0xffffff8042c1a000 on
+     * ARM64) — never physical. The previous ARM64 branch cast the virt
+     * straight to phys_addr_t, which made the bitmap idx calculation
+     * "(virt - pmm_base)/PAGE_SIZE" produce astronomically large indices
+     * (e.g. idx=4503599493160474) and the page-free path silently
+     * dropped every release with "Free rejected: ... beyond managed
+     * range" — leaking pages on every fork/exit. Use the architecture-
+     * correct pmap_virt_to_phys (defined per-arch in
+     * <platform/.../memory/pmap.h>; on ARM64 this is just
+     * `va - KERNEL_VIRT_OFFSET`). */
     phys_addr_t phys = pmap_virt_to_phys(addr_val);
-#else
-    phys_addr_t phys = (phys_addr_t)addr_val;
-#endif
 
     if (phys < pmm_base) {
         fut_printf("[PMM] WARNING: Free rejected: phys %p below PMM base %p\n",

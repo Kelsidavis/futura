@@ -382,13 +382,17 @@ void virtio_mmio_init(uint64_t dtb_ptr) {
      * and once at the normal block/network init point. Without this
      * guard the second call would re-probe every MMIO slot, registering
      * each device a second time and pushing virtio_device_count past
-     * MAX_VIRTIO_DEVICES (or worse, attaching duplicate handles to the
-     * same physical device with mismatched queue state). */
-    if (virtio_device_count > 0) {
-        fut_printf("[virtio-mmio] Already initialized (%d device(s)) — skipping\n",
-                   virtio_device_count);
+     * MAX_VIRTIO_DEVICES.
+     *
+     * Use a one-shot flag rather than checking virtio_device_count so
+     * the second call is silent even when zero devices were found the
+     * first time (otherwise the boot log gets two identical "Discovered
+     * 0 VirtIO device(s)" blocks). */
+    static bool already_initialized = false;
+    if (already_initialized) {
         return;
     }
+    already_initialized = true;
 
     fut_printf("[virtio-mmio] Initializing VirtIO MMIO subsystem...\n");
 

@@ -2120,9 +2120,7 @@ void fut_kernel_main(void) {
      *   Stage Core Wayland Binaries (Production)
      * ======================================== */
     fut_printf("[INIT] Staging futura-wayland compositor...\n");
-    fut_printf("[INIT-DEBUG] About to call fut_stage_wayland_compositor_binary\n");
     wayland_stage = fut_stage_wayland_compositor_binary();
-    fut_printf("[INIT-DEBUG] Returned from fut_stage_wayland_compositor_binary, stage=%d\n", wayland_stage);
     if (wayland_stage != 0) {
         fut_printf("[WARN] Failed to stage futura-wayland binary (error %d, continuing)\n", wayland_stage);
         /* Continue even if staging fails for interactive testing */

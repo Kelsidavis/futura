@@ -53001,11 +53001,11 @@ __attribute__((noinline)) static void test_sighup_session_leader(void) {
             member->state = FUT_TASK_ZOMBIE;
             member->exit_code = 0; member->term_signal = 0;
             int st = 0; uint64_t ct = 0;
-            fut_task_waitpid((int)member->pid, &st, 0, &ct);
-            fut_task_waitpid((int)leader->pid, &st, 0, &ct);
+            fut_task_waitpid((int)member->pid, &st, 1 /*WNOHANG*/, &ct);
+            fut_task_waitpid((int)leader->pid, &st, 1 /*WNOHANG*/, &ct);
         } else {
-            if (leader) { leader->state = FUT_TASK_ZOMBIE; int st=0; uint64_t ct=0; fut_task_waitpid((int)leader->pid,&st,0,&ct); }
-            if (member) { member->state = FUT_TASK_ZOMBIE; int st=0; uint64_t ct=0; fut_task_waitpid((int)member->pid,&st,0,&ct); }
+            if (leader) { leader->state = FUT_TASK_ZOMBIE; int st=0; uint64_t ct=0; fut_task_waitpid((int)leader->pid,&st,1 /*WNOHANG*/,&ct); }
+            if (member) { member->state = FUT_TASK_ZOMBIE; int st=0; uint64_t ct=0; fut_task_waitpid((int)member->pid,&st,1 /*WNOHANG*/,&ct); }
             fut_printf("[MISC-TEST] ✗ Test 1761: task create failed\n");
             fut_test_fail(1761);
         }
@@ -53026,11 +53026,18 @@ __attribute__((noinline)) static void test_sighup_session_leader(void) {
             uint64_t saved_pending = parent_task->pending_signals;
             __atomic_store_n(&parent_task->pending_signals, 0, __ATOMIC_RELEASE);
 
-            /* "Exit" the child (non-leader, no ctty → no SIGHUP) */
+            /* "Exit" the child (non-leader, no ctty → no SIGHUP).
+             * Use WNOHANG so we never block — if the test thread isn't
+             * the actual parent of the just-created child (e.g. because
+             * fut_task_create's parent inheritance picked the wrong
+             * thread context), waitpid would otherwise sleep forever
+             * waiting for a wakeup that never comes, hanging CI. The
+             * SIGHUP-pending check below is what the test actually
+             * exercises; reaping the zombie is incidental. */
             child->state = FUT_TASK_ZOMBIE;
             child->exit_code = 0; child->term_signal = 0;
             int st = 0; uint64_t ct = 0;
-            fut_task_waitpid((int)child->pid, &st, 0, &ct);
+            fut_task_waitpid((int)child->pid, &st, 1 /*WNOHANG*/, &ct);
 
             uint64_t pending = __atomic_load_n(&parent_task->pending_signals, __ATOMIC_ACQUIRE);
             if (!(pending & 1ULL)) {  /* bit 0 = SIGHUP */
@@ -53075,11 +53082,11 @@ __attribute__((noinline)) static void test_sighup_session_leader(void) {
             member->state = FUT_TASK_ZOMBIE;
             member->exit_code = 0; member->term_signal = 0;
             int st=0; uint64_t ct=0;
-            fut_task_waitpid((int)member->pid, &st, 0, &ct);
-            fut_task_waitpid((int)leader->pid, &st, 0, &ct);
+            fut_task_waitpid((int)member->pid, &st, 1 /*WNOHANG*/, &ct);
+            fut_task_waitpid((int)leader->pid, &st, 1 /*WNOHANG*/, &ct);
         } else {
-            if (leader) { leader->state = FUT_TASK_ZOMBIE; int st=0; uint64_t ct=0; fut_task_waitpid((int)leader->pid,&st,0,&ct); }
-            if (member) { member->state = FUT_TASK_ZOMBIE; int st=0; uint64_t ct=0; fut_task_waitpid((int)member->pid,&st,0,&ct); }
+            if (leader) { leader->state = FUT_TASK_ZOMBIE; int st=0; uint64_t ct=0; fut_task_waitpid((int)leader->pid,&st,1 /*WNOHANG*/,&ct); }
+            if (member) { member->state = FUT_TASK_ZOMBIE; int st=0; uint64_t ct=0; fut_task_waitpid((int)member->pid,&st,1 /*WNOHANG*/,&ct); }
             fut_test_fail(1763);
         }
     }

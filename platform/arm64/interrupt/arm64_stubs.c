@@ -78,6 +78,8 @@ ARM64_STAGE_FN(fut_stage_wayland_compositor_binary, futura_wayland, "/sbin", "/s
 ARM64_STAGE_FN(fut_stage_futura_shell_binary,       futura_shell,   "/sbin", "/sbin/futura-shell")
 ARM64_STAGE_FN(fut_stage_wl_term_binary,            wl_term,        "/bin",  "/bin/wl-term")
 ARM64_STAGE_FN(fut_stage_wl_panel_binary,           wl_panel,       "/bin",  "/bin/wl-panel")
+ARM64_STAGE_FN(fut_stage_init_binary,               init,           "/sbin", "/sbin/init")
+ARM64_STAGE_FN(fut_stage_shell_binary,              shell,          "/bin",  "/bin/shell")
 
 /* Optional / not-yet-staged on ARM64 */
 int fut_stage_wayland_client_binary(void) {
@@ -88,12 +90,9 @@ int fut_stage_wayland_color_client_binary(void) {
     return -ENODEV;  /* wl-colorwheel — diagnostics-only, not staged */
 }
 
-/* Other staging entry points the kernel exposes — ARM64 boot flows
- * through arm64_init_spawner_thread() which directly stages init /
- * second / shell / fbtest, so these named helpers stay no-ops. */
-int fut_stage_init_binary(void)         { return -ENODEV; }
+/* fbtest / second-stub aren't part of the ARM64 build set — the
+ * kernel image only embeds the binaries listed above. */
 int fut_stage_second_stub_binary(void)  { return -ENODEV; }
-int fut_stage_shell_binary(void)        { return -ENODEV; }
 int fut_stage_fbtest_binary(void)       { return -ENODEV; }
 
 /* ============================================================

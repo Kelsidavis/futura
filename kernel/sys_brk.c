@@ -358,8 +358,10 @@ long sys_brk(uintptr_t new_break) {
 #include <platform/arm64/memory/pmap.h>
 
 static uint64_t heap_page_flags(void) {
-    /* ARM64: User-writable pages (PTE_USER_RW already includes VALID, ATTR_NORMAL, SH_INNER, AF_BIT, PXN_BIT) */
-    return PTE_USER_RW;
+    /* Use generic flags so arm64_translate_flags() can compute the correct
+     * AP bits. Returning native PTE_USER_RW would skip translation and lose
+     * the writable signal (bit 62), causing the page to map as user read-only. */
+    return PTE_PRESENT | PTE_USER | PTE_WRITABLE | PTE_NX;
 }
 
 static void brk_unmap_range(fut_vmem_context_t *ctx, uintptr_t start, uintptr_t end) {

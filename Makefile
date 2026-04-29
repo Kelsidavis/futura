@@ -123,7 +123,7 @@ endif
 
 ifeq ($(PLATFORM),arm64)
 # ARM64 virt: use explicit MMIO device types
-RUN_QEMU_FLAGS += -drive file=$(QEMU_DISK_IMG),if=none,id=hd0 -device virtio-blk-device,drive=hd0
+RUN_QEMU_FLAGS += -drive file=$(QEMU_DISK_IMG),if=none,id=hd0,format=raw -device virtio-blk-device,drive=hd0
 RUN_QEMU_FLAGS += -netdev user,id=net0 -device virtio-net-device,netdev=net0
 else
 RUN_QEMU_FLAGS += -drive if=virtio,file=$(QEMU_DISK_IMG),format=raw

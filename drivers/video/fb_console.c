@@ -377,9 +377,22 @@ void fb_console_clear(void) {
  * RESOURCE_FLUSH. Without this, fb_console_putc draws into guest DRAM
  * and the QEMU window stays black even though the pixels are correct.
  *
+ * Re-entrancy guard: submit_gpu_command in the virtio-gpu driver isn't
+ * reentrant — desc[0]/desc[1] are reused on every call. fb_console_putc
+ * runs in arbitrary contexts (kernel printf from an IRQ handler can
+ * fire while a previous flush is still polling for completion); without
+ * the guard, the nested call corrupts the in-flight descriptor and the
+ * display stops updating after the first couple of lines. With the
+ * guard, the inner call drops its flush — the outer one is already
+ * about to refresh anything the inner write modified.
+ *
  * Resolved at runtime so this driver builds on platforms without
  * virtio-gpu (the symbol is just absent → the weak ref is NULL → no-op). */
+static volatile int fb_console_present_busy = 0;
 static void fb_console_present(void) {
+    if (__atomic_exchange_n(&fb_console_present_busy, 1, __ATOMIC_ACQ_REL)) {
+        return;  /* Already flushing on the outer caller; inner call drops. */
+    }
 #if defined(__aarch64__)
     extern void virtio_gpu_flush_display_mmio(void) __attribute__((weak));
     if (virtio_gpu_flush_display_mmio) {
@@ -391,6 +404,7 @@ static void fb_console_present(void) {
         virtio_gpu_flush_display();
     }
 #endif
+    __atomic_store_n(&fb_console_present_busy, 0, __ATOMIC_RELEASE);
 }
 
 void fb_console_putc(char c) {

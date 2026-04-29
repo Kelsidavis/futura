@@ -42,11 +42,17 @@ struct virtq_used {
     /* uint16_t avail_event follows ring[] but we don't use event_idx yet */
 } __attribute__((packed));
 
-/* VirtIO MMIO device structure */
+/* VirtIO MMIO device structure.
+ * Must stay in sync with the local definition in
+ * platform/arm64/drivers/virtio_mmio.c — both translation units must see
+ * the same layout, otherwise field offsets diverge and any callsite that
+ * touches `desc`, `avail`, `used`, or `queue_size` via the public header
+ * will read/write the wrong field. */
 typedef struct {
     uint64_t base_addr;       /* MMIO base address (virtual) */
     uint32_t irq;             /* GIC IRQ number */
     uint32_t device_type;     /* VirtIO device type */
+    uint32_t version;         /* MMIO transport version (1=legacy, 2=modern) */
     bool in_use;              /* Device claimed */
 
     /* Virtqueue state (single queue for now) */

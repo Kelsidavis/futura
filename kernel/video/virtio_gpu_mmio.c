@@ -12,12 +12,12 @@
 #include <stdbool.h>
 #include <string.h>
 #include <platform/arm64/drivers/virtio_mmio.h>
+#include <platform/arm64/memory/pmap.h>
 #include <kernel/errno.h>
 
 #include <kernel/kprintf.h>
 extern void *fut_malloc_pages(size_t num_pages);
 extern void *memset(void *, int, size_t);
-extern int fut_virt_to_phys(void *ctx, const void *virt, uint64_t *phys);
 
 /* VirtIO GPU command types */
 #define VIRTIO_GPU_CMD_GET_DISPLAY_INFO      0x0100
@@ -133,14 +133,12 @@ static int submit_gpu_command(const void *cmd, size_t cmd_size, void *resp, size
         return -ENODEV;
     }
 
-    /* Get physical addresses for command and response buffers */
-    uint64_t cmd_phys, resp_phys;
-    if (fut_virt_to_phys(NULL, cmd, &cmd_phys) != 0) {
-        return -EFAULT;
-    }
-    if (fut_virt_to_phys(NULL, resp, &resp_phys) != 0) {
-        return -EFAULT;
-    }
+    /* Get physical addresses for command and response buffers.
+     * Use pmap_virt_to_phys (linear-offset macro) — kernel-half stack and
+     * heap addresses live in the TTBR1 linear map and are not walkable via
+     * the TTBR0 page-table walker that fut_virt_to_phys uses. */
+    uint64_t cmd_phys = pmap_virt_to_phys((uintptr_t)cmd);
+    uint64_t resp_phys = pmap_virt_to_phys((uintptr_t)resp);
 
     /* Setup descriptor chain:
      * desc[0] = command buffer (device-readable)
@@ -262,10 +260,7 @@ int virtio_gpu_init_mmio(uint64_t *out_fb_phys, uint32_t width, uint32_t height)
 
     memset(framebuffer_virt, 0, fb_size);
 
-    if (fut_virt_to_phys(NULL, framebuffer_virt, &framebuffer_phys) != 0) {
-        fut_printf("[virtio-gpu-mmio] Failed to get physical address of framebuffer\n");
-        return -EIO;
-    }
+    framebuffer_phys = pmap_virt_to_phys((uintptr_t)framebuffer_virt);
 
     fut_printf("[virtio-gpu-mmio] Framebuffer allocated: virt=%p phys=0x%llx size=%zu KB\n",
                framebuffer_virt, (unsigned long long)framebuffer_phys, fb_size / 1024);

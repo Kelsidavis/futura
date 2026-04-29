@@ -27,10 +27,13 @@
 #define VIRTIO_MMIO_DEVICE_FEATURES_SEL 0x014  /* Feature selector */
 #define VIRTIO_MMIO_DRIVER_FEATURES     0x020  /* Driver features */
 #define VIRTIO_MMIO_DRIVER_FEATURES_SEL 0x024  /* Driver feature selector */
+#define VIRTIO_MMIO_GUEST_PAGE_SIZE     0x028  /* Legacy v1: guest page size */
 #define VIRTIO_MMIO_QUEUE_SEL           0x030  /* Queue selector */
 #define VIRTIO_MMIO_QUEUE_NUM_MAX       0x034  /* Max queue size */
 #define VIRTIO_MMIO_QUEUE_NUM           0x038  /* Current queue size */
-#define VIRTIO_MMIO_QUEUE_READY         0x044  /* Queue ready flag */
+#define VIRTIO_MMIO_QUEUE_ALIGN         0x03c  /* Legacy v1: queue alignment */
+#define VIRTIO_MMIO_QUEUE_PFN           0x040  /* Legacy v1: queue PFN (phys/page) */
+#define VIRTIO_MMIO_QUEUE_READY         0x044  /* Queue ready flag (modern v2) */
 #define VIRTIO_MMIO_QUEUE_NOTIFY        0x050  /* Queue notification */
 #define VIRTIO_MMIO_INTERRUPT_STATUS    0x060  /* Interrupt status */
 #define VIRTIO_MMIO_INTERRUPT_ACK       0x064  /* Interrupt acknowledge */
@@ -116,6 +119,7 @@ typedef struct {
     uint64_t base_addr;       /* MMIO base address (virtual) */
     uint32_t irq;             /* GIC IRQ number */
     uint32_t device_type;     /* VirtIO device type */
+    uint32_t version;         /* MMIO transport version (1=legacy, 2=modern) */
     bool in_use;              /* Device claimed */
 
     /* Virtqueue state (single queue for now) */
@@ -179,6 +183,12 @@ static void virtio_mmio_set_status(virtio_mmio_device_t *dev, uint8_t status) {
 
 /**
  * Initialize a single virtqueue.
+ *
+ * Supports both legacy v1 (PFN-based, single contiguous block) and modern v2
+ * (split desc/avail/used, separate physical addresses) MMIO transports.
+ * Required because QEMU's `-machine virt` defaults virtio-mmio to legacy v1
+ * unless `-global virtio-mmio.force-legacy=false` is set, and real ARM hardware
+ * may also expose legacy transports.
  */
 static int virtio_mmio_init_queue(virtio_mmio_device_t *dev, uint32_t queue_idx, uint32_t queue_size) {
     extern void *fut_malloc_pages(size_t num_pages);
@@ -201,7 +211,66 @@ static int virtio_mmio_init_queue(virtio_mmio_device_t *dev, uint32_t queue_idx,
         return -1;  /* Queue size must be at least 1 */
     }
 
-    /* Allocate separate pages for each queue component for alignment */
+    if (dev->version == 1) {
+        /* Legacy v1: single contiguous block, layout is
+         *   desc[N] | avail | pad-to-align | used
+         * register the start as PFN = phys >> 12. We pick a small
+         * QueueAlign (64) so desc+avail+used fits in one page — this
+         * sidesteps the fact that fut_malloc_pages doesn't guarantee
+         * physical page contiguity, and one PMM page is always contiguous
+         * with itself. queue_size capped accordingly. */
+        const uint32_t align = 64;  /* small but power-of-two; spec allows */
+
+        /* Cap queue_size so total fits in one 4KB page */
+        while (queue_size > 0) {
+            size_t desc_bytes  = (size_t)queue_size * sizeof(struct virtq_desc);
+            size_t avail_bytes = sizeof(struct virtq_avail) + queue_size * sizeof(uint16_t) + sizeof(uint16_t);
+            size_t used_off    = (desc_bytes + avail_bytes + align - 1) & ~((size_t)align - 1);
+            size_t used_bytes  = sizeof(struct virtq_used) + queue_size * sizeof(struct virtq_used_elem) + sizeof(uint16_t);
+            if (used_off + used_bytes <= 4096) break;
+            queue_size /= 2;
+        }
+        if (queue_size == 0) return -1;
+
+        size_t desc_bytes  = (size_t)queue_size * sizeof(struct virtq_desc);
+        size_t avail_bytes = sizeof(struct virtq_avail) + queue_size * sizeof(uint16_t) + sizeof(uint16_t);
+        size_t used_off    = (desc_bytes + avail_bytes + align - 1) & ~((size_t)align - 1);
+
+        void *block = fut_malloc_pages(1);
+        if (!block) return -1;
+        memset(block, 0, 4096);
+
+        phys_addr_t base_phys = pmap_virt_to_phys((uintptr_t)block);
+        if ((base_phys >> 12) > 0xFFFFFFFFULL) {
+            return -1;
+        }
+
+        dev->desc = (struct virtq_desc *)block;
+        dev->avail = (struct virtq_avail *)((uint8_t *)block + desc_bytes);
+        dev->used = (struct virtq_used *)((uint8_t *)block + used_off);
+
+        dev->desc_phys = base_phys;
+        dev->avail_phys = base_phys + desc_bytes;
+        dev->used_phys = base_phys + used_off;
+
+        dev->queue_size = queue_size;
+        dev->last_used_idx = 0;
+        dev->next_free_desc = 0;
+
+        for (uint32_t i = 0; i < queue_size - 1; i++) {
+            dev->desc[i].next = i + 1;
+        }
+        dev->desc[queue_size - 1].next = 0;
+
+        virtio_mmio_write32(dev->base_addr, VIRTIO_MMIO_GUEST_PAGE_SIZE, 4096);
+        virtio_mmio_write32(dev->base_addr, VIRTIO_MMIO_QUEUE_NUM, queue_size);
+        virtio_mmio_write32(dev->base_addr, VIRTIO_MMIO_QUEUE_ALIGN, align);
+        virtio_mmio_write32(dev->base_addr, VIRTIO_MMIO_QUEUE_PFN,
+                            (uint32_t)(base_phys >> 12));
+        return 0;
+    }
+
+    /* Modern v2: split layout, separate desc/avail/used pages */
     void *desc_virt = fut_malloc_pages(1);
     void *avail_virt = fut_malloc_pages(1);
     void *used_virt = fut_malloc_pages(1);
@@ -220,7 +289,6 @@ static int virtio_mmio_init_queue(virtio_mmio_device_t *dev, uint32_t queue_idx,
     dev->avail = (struct virtq_avail *)avail_virt;
     dev->used = (struct virtq_used *)used_virt;
 
-    /* Save physical addresses for device configuration */
     dev->desc_phys = desc_phys;
     dev->avail_phys = avail_phys;
     dev->used_phys = used_phys;
@@ -229,13 +297,11 @@ static int virtio_mmio_init_queue(virtio_mmio_device_t *dev, uint32_t queue_idx,
     dev->last_used_idx = 0;
     dev->next_free_desc = 0;
 
-    /* Initialize descriptor chain (all descriptors free) */
     for (uint32_t i = 0; i < queue_size - 1; i++) {
         dev->desc[i].next = i + 1;
     }
-    dev->desc[queue_size - 1].next = 0;  /* Last wraps to 0 */
+    dev->desc[queue_size - 1].next = 0;
 
-    /* Configure queue in device (device uses physical addresses) */
     virtio_mmio_write32(dev->base_addr, VIRTIO_MMIO_QUEUE_NUM, queue_size);
     virtio_mmio_write64(dev->base_addr, VIRTIO_MMIO_QUEUE_DESC_LOW, desc_phys);
     virtio_mmio_write64(dev->base_addr, VIRTIO_MMIO_QUEUE_DRIVER_LOW, avail_phys);
@@ -281,6 +347,7 @@ static int virtio_mmio_probe_device(uint64_t phys_addr, uint32_t irq) {
     dev->base_addr = virt_addr;
     dev->irq = irq;
     dev->device_type = device_id;
+    dev->version = version;
     dev->in_use = false;
     dev->queue_size = 0;
 

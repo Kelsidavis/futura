@@ -334,6 +334,28 @@ void fb_console_clear(void) {
     cons->cursor_y = 0;
 }
 
+/* Push the dirty framebuffer region to the display. virtio-gpu (both
+ * MMIO and PCI transports) keeps the host-side resource separate from
+ * the guest backing pages and only refreshes on TRANSFER_TO_HOST_2D +
+ * RESOURCE_FLUSH. Without this, fb_console_putc draws into guest DRAM
+ * and the QEMU window stays black even though the pixels are correct.
+ *
+ * Resolved at runtime so this driver builds on platforms without
+ * virtio-gpu (the symbol is just absent → the weak ref is NULL → no-op). */
+static void fb_console_present(void) {
+#if defined(__aarch64__)
+    extern void virtio_gpu_flush_display_mmio(void) __attribute__((weak));
+    if (virtio_gpu_flush_display_mmio) {
+        virtio_gpu_flush_display_mmio();
+    }
+#else
+    extern void virtio_gpu_flush_display(void) __attribute__((weak));
+    if (virtio_gpu_flush_display) {
+        virtio_gpu_flush_display();
+    }
+#endif
+}
+
 void fb_console_putc(char c) {
     struct fb_console_state *cons = &g_fb_console;
 
@@ -351,6 +373,9 @@ void fb_console_putc(char c) {
             fb_console_scroll();
             cons->cursor_y = cons->rows - 1;
         }
+        /* Flush on newline so each completed line shows up on the
+         * display promptly without paying the round-trip per char. */
+        fb_console_present();
     } else if (c == '\r') {
         cons->cursor_x = 0;
     } else if (c == '\t') {
@@ -373,6 +398,10 @@ void fb_console_putc(char c) {
                 fb_console_scroll();
                 cons->cursor_y = cons->rows - 1;
             }
+            /* Flush on wrap too — long lines without newlines (e.g.
+             * shell prompt waiting for input on the same row) still
+             * appear without depending on a trailing '\n'. */
+            fb_console_present();
         }
     }
 }

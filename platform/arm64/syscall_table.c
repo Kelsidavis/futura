@@ -455,6 +455,16 @@ static int64_t sys_echo_wrapper(uint64_t u_in, uint64_t u_out, uint64_t n,
     return (int64_t)sys_echo((const char *)u_in, (char *)u_out, (size_t)n);
 }
 
+/* sys_time_millis - return monotonic milliseconds since boot
+ * No arguments. Used by libfutura/wayland for frame timing. */
+static int64_t sys_time_millis_wrapper(uint64_t arg0, uint64_t arg1,
+                                       uint64_t arg2, uint64_t arg3,
+                                       uint64_t arg4, uint64_t arg5) {
+    (void)arg0; (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
+    extern long sys_time_millis(void);
+    return (int64_t)sys_time_millis();
+}
+
 /* sys_clock_gettime - get time
  * x0 = clockid, x1 = timespec*
  */
@@ -4624,6 +4634,9 @@ static void arm64_syscall_table_init(void) {
     /* eventfd2 (x86_64: 290, ARM64: 19) */
     syscall_table[290].handler = syscall_table[__NR_eventfd2].handler;
     syscall_table[290].name = "eventfd2";
+    /* time_millis (Futura-specific, see include/user/sysnums.h) */
+    syscall_table[400].handler = (syscall_fn_t)sys_time_millis_wrapper;
+    syscall_table[400].name = "time_millis";
     /* File ops batch */
     syscall_table[73].handler = syscall_table[__NR_flock].handler;
     syscall_table[73].name = "flock";

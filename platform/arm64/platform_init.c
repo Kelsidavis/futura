@@ -499,11 +499,18 @@ void fut_serial_putc(char c) {
 
     /* Mirror to framebuffer console so the QEMU window shows the same
      * output as the serial console (matches x86_64's fut_serial_putc).
-     * Without this, the QEMU display only shows the boot splash and
-     * goes blank thereafter — kernel/shell text never appears on the
-     * framebuffer because nothing else feeds fb_console_putc on ARM64. */
-    extern void fb_console_putc(char c);
-    fb_console_putc(c);
+     *
+     * Only do this when the virtio-gpu transport actually came up — on
+     * QEMU virt the GPU probe usually fails (no virtio-gpu-mmio device
+     * by default) and the fallback fb is just a phys-mapped region that
+     * isn't actually scanned out, so writing into it just stalls the
+     * boot thread inside fb_console_scroll's giant per-byte memcpy
+     * without any display result. */
+    extern bool virtio_gpu_mmio_initialized(void) __attribute__((weak));
+    if (virtio_gpu_mmio_initialized && virtio_gpu_mmio_initialized()) {
+        extern void fb_console_putc(char c);
+        fb_console_putc(c);
+    }
 }
 
 void fut_serial_puts(const char *str) {

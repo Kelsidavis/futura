@@ -118,6 +118,14 @@ struct virtio_gpu_resource_flush {
 
 /* Static state */
 static virtio_mmio_device_t *gpu_dev = NULL;
+
+/* True once virtio-gpu MMIO probe + setup completes successfully.
+ * Other subsystems (e.g. ARM64 fut_serial_putc → fb_console_putc) gate
+ * heavy framebuffer work on this so they don't burn time scanning out
+ * to a fallback fb that the host can't actually see. */
+bool virtio_gpu_mmio_initialized(void) {
+    return gpu_dev != NULL;
+}
 static uint64_t framebuffer_phys = 0;
 static void *framebuffer_virt = NULL;
 static uint32_t fb_width = 0;

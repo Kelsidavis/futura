@@ -2335,8 +2335,13 @@ void fut_kernel_main(void) {
             if (mount_rc == 0) {
                 fut_printf("[INIT] ✓ FuturaFS mounted at /mnt (virtio-blk)\n");
             } else {
-                /* VirtIO block failed — fall back to ramdisk */
-                fut_printf("[INIT] VirtIO block I/O failed, using ramdisk fallback\n");
+                /* Mount failed — likely "no FuturaFS superblock on disk"
+                 * (rc=-EINVAL/-ENOENT) on a fresh image, not a hardware
+                 * I/O fault. Either way the ramdisk fallback below covers
+                 * the boot. The previous "VirtIO block I/O failed"
+                 * wording made it look like the device was broken. */
+                fut_printf("[INIT] FuturaFS mount on blk:vda failed (rc=%d) — using ramdisk fallback\n",
+                           mount_rc);
                 goto try_ramdisk;
             }
         } else {

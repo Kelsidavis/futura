@@ -503,14 +503,31 @@ bss_cleared:
     // mov     x11, #0x54                
     // strb    w11, [x10] 
 
-    /* Fix stack pointer for high VA execution
-     * SP_EL1 was set up at low VA during early boot. Now that we're executing
-     * at high VA, we need to adjust SP to point to the high VA stack.
-     * Kernel virtual offset: 0xFFFFFF8040000000 - 0x40000000 = 0xFFFFFF8000000000
-     */
-    movz    x18, #0xFFFF, lsl #48     /* Load kernel virtual offset */
-    movk    x18, #0xFF80, lsl #32     /* 0xFFFFFF8000000000 */
-    add     sp, sp, x18               /* SP = SP + kernel_virt_offset */
+    /* Fix stack pointer for high VA execution.
+     *
+     * SP_EL1 was set to the PA of _stack_top at line 148 (MMU off, adrp
+     * resolved to PA). Now that the MMU is on and we're executing at
+     * high VA, reload SP directly from the symbol — adrp here resolves
+     * to the symbol's high-VA address since the linker placed the kernel
+     * at KERN_VA_BASE.
+     *
+     * The previous code added a hard-coded offset of 0xFFFFFF8000000000
+     * (computed as KERN_VA_BASE - 0x40000000), but the kernel actually
+     * loads at PA 0x40200000 (QEMU ARM64 Image format places the kernel
+     * 2 MiB above DRAM base), so the correct offset is 0xFFFFFF7FFFE00000.
+     * The 2 MiB error pushed SP _above_ the linked stack region (past
+     * _stack_top) into the kernel heap. Once buddy_malloc handed out a
+     * 64 KiB chunk that happened to span the live SP, the slab init
+     * loop's writes to obj->next clobbered the local `slab` pointer on
+     * the stack, producing the long-running "[SLAB-VALIDATE] Slab has
+     * corrupted magic" / "[SLAB-MALLOC] data range [0,0]" reports during
+     * early boot.
+     *
+     * Reloading from the symbol sidesteps the offset bug entirely: the
+     * page tables and the linker agree on where _stack_top lives. */
+    adrp    x0, _stack_top
+    add     x0, x0, :lo12:_stack_top
+    mov     sp, x0
 
     /* Debug: Stack pointer updated */
     movz    x10, #0xFFFF, lsl #48

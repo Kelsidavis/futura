@@ -1870,16 +1870,18 @@ static void arm64_init_spawner_thread(void *arg) {
                     }
                 }
 
-                /* Wait forever — compositor is the desktop. */
+                /* Wait forever — compositor is the desktop. waitpid(-1)
+                 * reaps any child, including non-compositor ones like
+                 * forktest, so don't claim the pid is the compositor. */
                 extern long sys_waitpid(int pid, int *status, int options);
                 int status = 0;
                 for (;;) {
                     long w = sys_waitpid(-1, &status, 0);
                     if (w < 0) break;
-                    fut_printf("[INIT] compositor child reaped: pid=%ld status=0x%x\n",
+                    fut_printf("[INIT] reaped child pid=%ld status=0x%x\n",
                                w, status);
                 }
-                fut_printf("[INIT] compositor exited unexpectedly, falling back to text shell\n");
+                fut_printf("[INIT] all children exited, falling back to text shell\n");
             } else {
                 fut_printf("[INIT] futura-wayland exec failed (rc=%d), falling back to text shell\n", ret);
             }

@@ -413,7 +413,15 @@ void fb_boot_splash(void) {
         return;
     }
 
-    fut_printf("[FB] ARM64: virtio-gpu-mmio initialization failed (rc=%d), using fallback\n", rc);
+    /* rc == -ENODEV (-19) just means QEMU was launched without
+     * `-device virtio-gpu-device`, which is the normal case for
+     * headless boots — log it as info, not failure. Genuine errors
+     * (init handshake failed, etc.) still warn. */
+    if (rc == -19 /* -ENODEV */) {
+        fut_printf("[FB] ARM64: no virtio-gpu device (headless QEMU), using fallback framebuffer\n");
+    } else {
+        fut_printf("[FB] ARM64: virtio-gpu-mmio initialization failed (rc=%d), using fallback\n", rc);
+    }
 
     /* Fall back to hardcoded framebuffer address */
     g_fb_hw.phys = FB_PHYS_FALLBACK;

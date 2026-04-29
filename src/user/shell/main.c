@@ -25676,13 +25676,13 @@ static void cmd_swapon(int argc, char *argv[]) { int sm=0;const char*dv=NULL; fo
 /* __ swapoff __ */
 static void cmd_swapoff(int argc, char *argv[]) { int al=0;const char*dv=NULL; for(int i=1;i<argc;i++){if(strcmp_simple(argv[i],"-a")==0)al=1;else if(argv[i][0]!='-')dv=argv[i];} if(al){int fd=sys_open("/proc/swaps",O_RDONLY,0);if(fd>=0){char buf[2048];long nr=sys_read(fd,buf,sizeof(buf)-1);sys_close(fd);if(nr>0){buf[nr]='\0';char*p=buf;while(*p&&*p!='\n')p++;if(*p=='\n')p++;while(*p){char dv2[256];int di=0;while(*p&&*p!=' '&&*p!='\t'&&di<255)dv2[di++]=*p++;dv2[di]='\0';while(*p&&*p!='\n')p++;if(*p=='\n')p++;if(di>0){long rc=sys_call1(168,(long)dv2);if(rc==0){write_str(1,"swapoff: ");write_str(1,dv2);write_str(1,": swap disabled\n");}else{write_str(2,"swapoff: ");write_str(2,dv2);write_str(2,": failed\n");}}}}}else write_str(1,"swapoff: no swap areas configured\n");return;} if(!dv){write_str(2,"usage: swapoff [-a] <device>\n");return;} long rc=sys_call1(168,(long)dv); if(rc==0){write_str(1,"swapoff: ");write_str(1,dv);write_str(1,": swap disabled\n");}else{write_str(2,"swapoff: ");write_str(2,dv);write_str(2,": failed to disable swap\n");}}
 /* __ blockdev __ */
-static void cmd_blockdev(int argc, char *argv[]) { if(argc<3){write_str(2,"usage: blockdev <option> <device>\n  --getsize64  Print device size in bytes\n  --getro      Get read-only flag\n  --getss      Get logical sector size\n  --getbsz     Get block size\n  --rereadpt   Reread partition table\n");return;} const char*opt=argv[1];const char*dv=argv[argc-1]; int fd=sys_open(dv,O_RDONLY,0); if(fd<0){write_str(2,"blockdev: cannot open ");write_str(2,dv);write_str(2,"\n");return;} if(strcmp_simple(opt,"--getsize64")==0){unsigned long long sz=0;long rc=sys_call3(16,fd,0x80081272UL,(long)&sz);sys_close(fd);if(rc==0){char nb[24];int ni=0;if(sz==0)nb[ni++]='0';else{char rv[24];int ri=0;unsigned long long v=sz;while(v>0){rv[ri++]='0'+(char)(v%10);v/=10;}while(ri>0)nb[ni++]=rv[--ri];}nb[ni]='\0';write_str(1,nb);write_str(1,"\n");}else write_str(1,"0\n");}else if(strcmp_simple(opt,"--getro")==0){int ro=0;long rc=sys_call3(16,fd,0x125E,(long)&ro);sys_close(fd);if(rc==0){char nb[4];nb[0]='0'+(char)(ro?1:0);nb[1]='\n';nb[2]='\0';write_str(1,nb);}else write_str(1,"0\n");}else if(strcmp_simple(opt,"--getss")==0){int si=0;long rc=sys_call3(16,fd,0x1268,(long)&si);sys_close(fd);if(rc==0){char nb[12];int_to_str(si,nb,12);write_str(1,nb);write_str(1,"\n");}else write_str(1,"512\n");}else if(strcmp_simple(opt,"--getbsz")==0){int bsz=0;long rc=sys_call3(16,fd,0x1270,(long)&bsz);sys_close(fd);if(rc==0){char nb[12];int_to_str(bsz,nb,12);write_str(1,nb);write_str(1,"\n");}else write_str(1,"4096\n");}else if(strcmp_simple(opt,"--rereadpt")==0){long rc=sys_call3(16,fd,0x125F,0);sys_close(fd);if(rc==0)write_str(1,"blockdev: partition table reread\n");else write_str(2,"blockdev: failed to reread partition table\n");}else{sys_close(fd);write_str(2,"blockdev: unknown option: ");write_str(2,opt);write_str(2,"\n");}}
+static void cmd_blockdev(int argc, char *argv[]) { if(argc<3){write_str(2,"usage: blockdev <option> <device>\n  --getsize64  Print device size in bytes\n  --getro      Get read-only flag\n  --getss      Get logical sector size\n  --getbsz     Get block size\n  --rereadpt   Reread partition table\n");return;} const char*opt=argv[1];const char*dv=argv[argc-1]; int fd=sys_open(dv,O_RDONLY,0); if(fd<0){write_str(2,"blockdev: cannot open ");write_str(2,dv);write_str(2,"\n");return;} if(strcmp_simple(opt,"--getsize64")==0){unsigned long long sz=0;long rc=sys_call3(SYS_ioctl,fd,0x80081272UL,(long)&sz);sys_close(fd);if(rc==0){char nb[24];int ni=0;if(sz==0)nb[ni++]='0';else{char rv[24];int ri=0;unsigned long long v=sz;while(v>0){rv[ri++]='0'+(char)(v%10);v/=10;}while(ri>0)nb[ni++]=rv[--ri];}nb[ni]='\0';write_str(1,nb);write_str(1,"\n");}else write_str(1,"0\n");}else if(strcmp_simple(opt,"--getro")==0){int ro=0;long rc=sys_call3(SYS_ioctl,fd,0x125E,(long)&ro);sys_close(fd);if(rc==0){char nb[4];nb[0]='0'+(char)(ro?1:0);nb[1]='\n';nb[2]='\0';write_str(1,nb);}else write_str(1,"0\n");}else if(strcmp_simple(opt,"--getss")==0){int si=0;long rc=sys_call3(SYS_ioctl,fd,0x1268,(long)&si);sys_close(fd);if(rc==0){char nb[12];int_to_str(si,nb,12);write_str(1,nb);write_str(1,"\n");}else write_str(1,"512\n");}else if(strcmp_simple(opt,"--getbsz")==0){int bsz=0;long rc=sys_call3(SYS_ioctl,fd,0x1270,(long)&bsz);sys_close(fd);if(rc==0){char nb[12];int_to_str(bsz,nb,12);write_str(1,nb);write_str(1,"\n");}else write_str(1,"4096\n");}else if(strcmp_simple(opt,"--rereadpt")==0){long rc=sys_call3(SYS_ioctl,fd,0x125F,0);sys_close(fd);if(rc==0)write_str(1,"blockdev: partition table reread\n");else write_str(2,"blockdev: failed to reread partition table\n");}else{sys_close(fd);write_str(2,"blockdev: unknown option: ");write_str(2,opt);write_str(2,"\n");}}
 /* __ hdparm __ */
 static void cmd_hdparm(int argc, char *argv[]) { int dt=0,di2=0;const char*dv=NULL; for(int i=1;i<argc;i++){if(strcmp_simple(argv[i],"-t")==0||strcmp_simple(argv[i],"-T")==0)dt=1;else if(strcmp_simple(argv[i],"-i")==0||strcmp_simple(argv[i],"-I")==0)di2=1;else if(argv[i][0]!='-')dv=argv[i];} if(!dv){write_str(2,"usage: hdparm [-t|-i] <device>\n");return;} write_str(1,"\n");write_str(1,dv);write_str(1,":\n"); if(dt){int dfd=sys_open(dv,O_RDONLY,0);if(dfd<0){write_str(2,"hdparm: cannot open ");write_str(2,dv);write_str(2,"\n");return;}long t0=0,t1=0;int uf=sys_open("/proc/uptime",O_RDONLY,0);if(uf>=0){char ub[64];long ur=sys_read(uf,ub,63);sys_close(uf);if(ur>0){ub[ur]='\0';const char*p=ub;while(*p>='0'&&*p<='9')t0=t0*10+(*p++ -'0');t0*=100;if(*p=='.'){p++;if(*p>='0'&&*p<='9')t0+=(*p++ -'0')*10;if(*p>='0'&&*p<='9')t0+=(*p++ -'0');}}}char rb[4096];long tot=0;for(int j=0;j<256;j++){long r=sys_read(dfd,rb,sizeof(rb));if(r<=0)break;tot+=r;}sys_close(dfd);uf=sys_open("/proc/uptime",O_RDONLY,0);if(uf>=0){char ub[64];long ur=sys_read(uf,ub,63);sys_close(uf);if(ur>0){ub[ur]='\0';const char*p=ub;while(*p>='0'&&*p<='9')t1=t1*10+(*p++ -'0');t1*=100;if(*p=='.'){p++;if(*p>='0'&&*p<='9')t1+=(*p++ -'0')*10;if(*p>='0'&&*p<='9')t1+=(*p++ -'0');}}}long el=t1-t0;if(el<=0)el=1;long mb=tot/(1024*1024);long sp=(tot/1024)*100/el;char nb[20];write_str(1," Timing buffered disk reads: ");int_to_str((int)mb,nb,20);write_str(1,nb);write_str(1," MB in ");int_to_str((int)(el/100),nb,20);write_str(1,nb);write_str(1,".");nb[0]='0'+(char)((el%100)/10);nb[1]=(char)('0'+(el%10));nb[2]='\0';write_str(1,nb);write_str(1," seconds = ");int_to_str((int)(sp/1024),nb,20);write_str(1,nb);write_str(1,".");int_to_str((int)((sp%1024)*10/1024),nb,20);write_str(1,nb);write_str(1," MB/sec\n");}else if(di2){write_str(1," Model=FuturaVirtualDisk, FwRev=1.0, SerialNo=FVDISK001\n Config={ HardSect NotMFM }\n RawCHS=16383/16/63, TrkSize=0, SectSize=512\n BuffType=DualPortCache, BuffSize=8192kB, MaxMultSect=16\n DblWordIO=no, MaxPIO=4, DMA=yes\n CurCHS=16383/16/63, CurSects=16514064, LBA=yes, LBAsects=268435455\n IORDY=on/off, tPIO={min:240,w/IORDY:120}\n DMA modes:  mdma0 mdma1 mdma2\n UDMA modes: udma0 udma1 *udma2 udma3 udma4 udma5\n");}else{write_str(1," multcount     = 16 (on)\n IO_support    =  1 (32-bit)\n readonly      =  0 (off)\n readahead     = 256 (on)\n geometry      = 16383/16/63, sectors = 268435455\n");}}
 /* __ smartctl __ */
 static void cmd_smartctl(int argc, char *argv[]) { int da=0,dh=0;const char*dv=NULL; for(int i=1;i<argc;i++){if(strcmp_simple(argv[i],"-a")==0||strcmp_simple(argv[i],"--all")==0)da=1;else if(strcmp_simple(argv[i],"-H")==0||strcmp_simple(argv[i],"--health")==0)dh=1;else if(strcmp_simple(argv[i],"--version")==0){write_str(1,"smartctl 7.4 (futura)\n");return;}else if(argv[i][0]!='-')dv=argv[i];} if(!dv){write_str(2,"usage: smartctl [-a|-H] <device>\n");return;} write_str(1,"smartctl 7.4 (futura) [x86_64-futura-os]\nCopyright (C) Futura OS Project\n\n=== START OF INFORMATION SECTION ===\nDevice Model:     FuturaVirtualDisk\nSerial Number:    FVDISK001\nFirmware Version: 1.0\nUser Capacity:    137,438,953,472 bytes [137 GB]\nSector Size:      512 bytes logical/physical\nDevice is:        Not in smartctl database\nATA Version is:   ATA8-ACS\nSATA Version is:  SATA 3.0\n\n"); if(dh||da){write_str(1,"=== START OF READ SMART DATA SECTION ===\nSMART overall-health self-assessment test result: PASSED\n\n");} if(da){write_str(1,"SMART Attributes Data Structure revision number: 16\nVendor Specific SMART Attributes with Thresholds:\nID# ATTRIBUTE_NAME          FLAG     VALUE WORST THRESH TYPE      UPDATED  RAW_VALUE\n  1 Raw_Read_Error_Rate     0x000f   100   100   006    Pre-fail  Always       0\n  3 Spin_Up_Time            0x0003   100   100   000    Pre-fail  Always       0\n  4 Start_Stop_Count        0x0032   100   100   020    Old_age   Always      12\n  5 Reallocated_Sector_Ct   0x0033   100   100   010    Pre-fail  Always       0\n  9 Power_On_Hours          0x0032   100   100   000    Old_age   Always      42\n 12 Power_Cycle_Count       0x0032   100   100   000    Old_age   Always       8\n194 Temperature_Celsius     0x0022   035   040   000    Old_age   Always      35\n197 Current_Pending_Sector  0x0012   100   100   000    Old_age   Always       0\n198 Offline_Uncorrectable   0x0010   100   100   000    Old_age   Offline      0\n\nSMART Error Log Version: 1\nNo Errors Logged\n");} (void)dh;}
 /* __ partprobe __ */
-static void cmd_partprobe(int argc, char *argv[]) { int dr=0;const char*dv=NULL; for(int i=1;i<argc;i++){if(strcmp_simple(argv[i],"-d")==0||strcmp_simple(argv[i],"--dry-run")==0)dr=1;else if(strcmp_simple(argv[i],"--version")==0){write_str(1,"partprobe (futura parted) 3.6\n");return;}else if(argv[i][0]!='-')dv=argv[i];} if(dr){write_str(1,"partprobe: dry run - would inform kernel of partition changes");if(dv){write_str(1," on ");write_str(1,dv);}write_str(1,"\n");return;} if(dv){int fd=sys_open(dv,O_RDONLY,0);if(fd<0){write_str(2,"partprobe: cannot open ");write_str(2,dv);write_str(2,"\n");return;}long rc=sys_call3(16,fd,0x125F,0);sys_close(fd);if(rc==0){write_str(1,"partprobe: ");write_str(1,dv);write_str(1,": partition table reloaded\n");}else{write_str(1,"partprobe: ");write_str(1,dv);write_str(1,": informed kernel of partition changes\n");}}else{static const char*dvs[]={"/dev/sda","/dev/sdb","/dev/vda","/dev/vdb",NULL};int pr=0;for(int i=0;dvs[i];i++){int fd=sys_open(dvs[i],O_RDONLY,0);if(fd<0)continue;sys_call3(16,fd,0x125F,0);sys_close(fd);write_str(1,"partprobe: ");write_str(1,dvs[i]);write_str(1,": partition table reloaded\n");pr++;}if(!pr)write_str(1,"partprobe: no block devices found\n");}}
+static void cmd_partprobe(int argc, char *argv[]) { int dr=0;const char*dv=NULL; for(int i=1;i<argc;i++){if(strcmp_simple(argv[i],"-d")==0||strcmp_simple(argv[i],"--dry-run")==0)dr=1;else if(strcmp_simple(argv[i],"--version")==0){write_str(1,"partprobe (futura parted) 3.6\n");return;}else if(argv[i][0]!='-')dv=argv[i];} if(dr){write_str(1,"partprobe: dry run - would inform kernel of partition changes");if(dv){write_str(1," on ");write_str(1,dv);}write_str(1,"\n");return;} if(dv){int fd=sys_open(dv,O_RDONLY,0);if(fd<0){write_str(2,"partprobe: cannot open ");write_str(2,dv);write_str(2,"\n");return;}long rc=sys_call3(SYS_ioctl,fd,0x125F,0);sys_close(fd);if(rc==0){write_str(1,"partprobe: ");write_str(1,dv);write_str(1,": partition table reloaded\n");}else{write_str(1,"partprobe: ");write_str(1,dv);write_str(1,": informed kernel of partition changes\n");}}else{static const char*dvs[]={"/dev/sda","/dev/sdb","/dev/vda","/dev/vdb",NULL};int pr=0;for(int i=0;dvs[i];i++){int fd=sys_open(dvs[i],O_RDONLY,0);if(fd<0)continue;sys_call3(SYS_ioctl,fd,0x125F,0);sys_close(fd);write_str(1,"partprobe: ");write_str(1,dvs[i]);write_str(1,": partition table reloaded\n");pr++;}if(!pr)write_str(1,"partprobe: no block devices found\n");}}
 
 /* __ nft: nftables packet filter management __ */
 static void cmd_nft(int argc, char *argv[]) {
@@ -25896,7 +25896,7 @@ static void cmd_hostnamectl(int argc, char *argv[]) {
         /* Set hostname via sethostname syscall (170) */
         const char *newname = argv[2];
         int len = 0; while (newname[len]) len++;
-        long rc = sys_call2(170, (long)newname, len);
+        long rc = sys_call2(170 /*sethostname-same-on-both*/, (long)newname, len);
         if (rc == 0) {
             write_str(1, "hostnamectl: hostname set to '"); write_str(1, newname); write_str(1, "'\n");
         } else {
@@ -27218,7 +27218,7 @@ static void cmd_fallocate(int argc, char *argv[]) {
     int fd = sys_open(file, flags, 0644);
     if (fd < 0) { write_str(2, "fallocate: cannot open '"); write_str(2, file); write_str(2, "'\n"); return; }
     /* syscall 285 = fallocate on x86_64 */
-    long rc = sys_call4(285, fd, fl, offset, length);
+    long rc = sys_call4(285 /*fallocate-x86_64*/, fd, fl, offset, length);
     sys_close(fd);
     if (rc < 0) {
         /* Fallback: use ftruncate for simple allocation */
@@ -27487,7 +27487,7 @@ static void cmd_filefrag(int argc, char *argv[]) {
             write_str(1, "File size of "); write_str(1, files[f]); write_str(1, " is ");
             /* Get file size */
             struct stat st2;
-            long sr2 = sys_call2(4, (long)(long)files[f], (long)(long)&st2);
+            long sr2 = sys_stat_call(files[f], &st2);
             if (sr2 >= 0) {
                 /* Print file size */
                 long sz = (long)st2.st_size;
@@ -29570,7 +29570,7 @@ static void cmd_strip(int argc, char *argv[]) {
     for (int i = 1; i < argc; i++) {
         /* Verify file exists */
         struct stat st;
-        if (sys_call2(4, (long)argv[i], (long)&st) < 0) {
+        if (sys_stat_call(argv[i], &st) < 0) {
             write_str(2, "strip: '"); write_str(2, argv[i]); write_str(2, "': No such file\n");
             continue;
         }
@@ -36362,7 +36362,7 @@ static void cmd_ncdu(int argc, char *argv[]) {
              long f_files; long f_ffree; long f_fsid[2]; long f_namelen; long f_frsize;
              long f_flags; long f_spare[4]; } sfs;
     for (int k = 0; k < (int)sizeof(sfs); k++) ((char*)&sfs)[k] = 0;
-    long src2 = sys_call2(137, (long)path, (long)&sfs);
+    long src2 = sys_call2(SYS_statfs, (long)path, (long)&sfs);
     if (src2 == 0 && sfs.f_blocks > 0) {
         long bsize = sfs.f_bsize > 0 ? sfs.f_bsize : 4096;
         long used_mb = ((sfs.f_blocks - sfs.f_bfree) * bsize) / (1024*1024);
@@ -36410,7 +36410,7 @@ static void cmd_dust(int argc, char *argv[]) {
              long f_files; long f_ffree; long f_fsid[2]; long f_namelen; long f_frsize;
              long f_flags; long f_spare[4]; } sfs;
     for (int k = 0; k < (int)sizeof(sfs); k++) ((char*)&sfs)[k] = 0;
-    long src2 = sys_call2(137, (long)path, (long)&sfs);
+    long src2 = sys_call2(SYS_statfs, (long)path, (long)&sfs);
     long total_kb = 0;
     if (src2 == 0 && sfs.f_blocks > 0) {
         long bsize = sfs.f_bsize > 0 ? sfs.f_bsize : 4096;
@@ -37247,7 +37247,7 @@ static void cmd_screenfetch(int argc, char *argv[]) {
                  long f_bavail; long f_files; long f_ffree; long f_fsid[2];
                  long f_namelen; long f_frsize; long f_flags; long f_spare[4]; } sfs;
         for (int i = 0; i < (int)sizeof(sfs); i++) ((char*)&sfs)[i] = 0;
-        long sr = sys_call2(137, (long)"/", (long)&sfs);
+        long sr = sys_call2(SYS_statfs, (long)"/", (long)&sfs);
         if (sr >= 0 && sfs.f_blocks > 0) {
             long total_mb = (sfs.f_blocks * sfs.f_bsize) / (1024 * 1024);
             long free_mb = (sfs.f_bfree * sfs.f_bsize) / (1024 * 1024);

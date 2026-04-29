@@ -6,6 +6,7 @@
  */
 
 #include <errno.h>
+#include <stdbool.h>
 #include <user/futura_posix.h>
 #include <user/libfutura.h>
 #include <user/stdlib.h>
@@ -14,6 +15,11 @@ static volatile int g_env_lock;
 static char **g_environ = NULL;
 static size_t g_env_count;
 static size_t g_env_capacity;
+/* g_environ may initially alias the envp array passed on the user
+ * stack — that storage is not malloc'd and must NOT be freed when the
+ * environment grows past its initial capacity. Cleared once we copy
+ * to a heap-owned buffer. */
+static bool g_env_heap_owned = false;
 
 char **environ = NULL;
 
@@ -32,35 +38,27 @@ void __libc_init_environ(char **envp) {
         return;
     }
 
-    /* Point directly to the envp array on the stack.
-     * This avoids malloc during early startup before the heap is initialized.
-     * The envp array and strings are on the user stack set up by execve
-     * and persist for the lifetime of the process. */
-    g_environ = envp;
-    environ = envp;
-
     /* Count environment variables */
     size_t count = 0;
     while (envp[count] != NULL) {
         count++;
     }
-    g_env_count = count;
-    g_env_capacity = count;
-    return;
 
-    /* --- DEAD CODE: original malloc-based copy (kept for reference) --- */
-
-    /* Allocate environment array (+1 for NULL terminator) */
+    /* Aliasing the stack envp array directly was tempting (no malloc
+     * during startup), but set_pair() / unsetenv() / ensure_capacity()
+     * later try to free() entries and the array itself. Freeing a
+     * stack pointer is undefined; the program would crash the first
+     * time anything called setenv() to overwrite an inherited var or
+     * pushed past the initial capacity. Copy to heap up front. */
     g_environ = (char **)malloc((count + 1) * sizeof(char *));
     if (!g_environ) {
         environ = NULL;
         g_env_count = 0;
         g_env_capacity = 0;
+        g_env_heap_owned = false;
         return;
     }
 
-    /* Copy environment variable strings, skipping failed allocations
-     * to avoid NULL holes in the middle of the environ array */
     size_t copied = 0;
     for (size_t i = 0; i < count; i++) {
         size_t len = strlen(envp[i]) + 1;
@@ -69,12 +67,15 @@ void __libc_init_environ(char **envp) {
             memcpy(copy, envp[i], len);
             g_environ[copied++] = copy;
         }
+        /* Drop entries we couldn't copy rather than leave a NULL hole
+         * mid-array; getenv/find_index iterate up to g_env_count. */
     }
     g_environ[copied] = NULL;
 
     environ = g_environ;
     g_env_count = copied;
     g_env_capacity = count + 1;
+    g_env_heap_owned = true;
 }
 
 static void env_lock(void) {
@@ -136,10 +137,13 @@ static int ensure_capacity(size_t required) {
         new_env[i] = NULL;
     }
 
-    free(g_environ);
+    if (g_env_heap_owned) {
+        free(g_environ);
+    }
     g_environ = new_env;
     environ = g_environ;
     g_env_capacity = new_cap;
+    g_env_heap_owned = true;
     return 0;
 }
 

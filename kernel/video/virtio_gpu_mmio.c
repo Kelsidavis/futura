@@ -171,8 +171,13 @@ static int submit_gpu_command(const void *cmd, size_t cmd_size, void *resp, size
     /* Notify device */
     virtio_mmio_notify(gpu_dev, 0);
 
-    /* Wait for response (simple polling) */
-    int timeout = 100000;
+    /* Wait for response (simple polling). 100k nops was ~100µs on
+     * a Cortex-A72 — plenty for steady-state commands but the first
+     * flush after device init consistently timed out in QEMU and
+     * dropped a "Command timeout" line into every fresh boot log.
+     * 5M is still <10ms in the worst case but covers the initial
+     * queue setup latency. */
+    int timeout = 5000000;
     while (!virtio_mmio_has_used_buffers(gpu_dev) && timeout-- > 0) {
         __asm__ volatile("nop");
     }

@@ -634,7 +634,7 @@ static inline long sys_dup2(int oldfd, int newfd) {
 
 static inline long sys_dup(int oldfd) {
 #ifdef __aarch64__
-    return sys_call1(23 /* __NR_dup on ARM64 */, oldfd);
+    return sys_call1(SYS_dup, oldfd);
 #else
     return sys_call1(SYS_dup, oldfd);
 #endif
@@ -659,16 +659,16 @@ static inline long sys_sigaction(int signum, const void *act, void *oldact) {
     return sys_call4(SYS_sigaction, signum, (long)act, (long)oldact, 8 /* sizeof(sigset_t) */);
 }
 static inline long sys_chroot(const char *path) {
-    return sys_call1(161 /* SYS_chroot */, (long)path);
+    return sys_call1(SYS_chroot, (long)path);
 }
 static inline long sys_chown(const char *pathname, unsigned int uid, unsigned int gid) {
-    return sys_call3(92 /* SYS_chown */, (long)pathname, uid, gid);
+    return sys_chown_call(pathname, uid, gid);
 }
 static inline long sys_kill(int pid, int sig) {
-    return sys_call2(62 /* SYS_kill */, pid, sig);
+    return sys_call2(SYS_kill, pid, sig);
 }
 static inline long sys_setpriority(int which, int who, int prio) {
-    return sys_call3(141 /* SYS_setpriority */, which, who, prio);
+    return sys_call3(SYS_setpriority, which, who, prio);
 }
 
 /* Note: sys_read, sys_write, sys_close, sys_unlink, sys_open are provided by sys.h */
@@ -779,14 +779,14 @@ static ssize_t read_line(int fd, char *buf, size_t max_len) {
     int rl_tios_saved = 0;
     {
         char tios[60];
-        if (sys_call3(16 /* ioctl */, fd, 0x5401 /* TCGETS */, (long)tios) == 0) {
+        if (sys_call3(SYS_ioctl, fd, 0x5401 /* TCGETS */, (long)tios) == 0) {
             for (int i = 0; i < 60; i++) rl_saved_tios[i] = tios[i];
             rl_tios_saved = 1;
             unsigned int lf;
             for (int i = 0; i < 4; i++) ((char *)&lf)[i] = tios[12 + i];
             lf &= ~0x0008u;  /* clear ECHO */
             for (int i = 0; i < 4; i++) tios[12 + i] = ((char *)&lf)[i];
-            sys_call3(16, fd, 0x5402 /* TCSETS */, (long)tios);
+            sys_call3(SYS_ioctl, fd, 0x5402 /* TCSETS */, (long)tios);
         }
     }
 
@@ -799,7 +799,7 @@ static ssize_t read_line(int fd, char *buf, size_t max_len) {
 
         if (nread <= 0) {
             /* EOF or error */
-            if (rl_tios_saved) sys_call3(16, fd, 0x5402, (long)rl_saved_tios);
+            if (rl_tios_saved) sys_call3(SYS_ioctl, fd, 0x5402, (long)rl_saved_tios);
             if (len > 0) {
                 buf[len] = '\0';
                 return (ssize_t)len;
@@ -879,7 +879,7 @@ static ssize_t read_line(int fd, char *buf, size_t max_len) {
             while (cursor < len) { write_str(1, "\033[C"); cursor++; }
             write_char(1, '\n');
             buf[len] = '\0';
-            if (rl_tios_saved) sys_call3(16, fd, 0x5402, (long)rl_saved_tios);
+            if (rl_tios_saved) sys_call3(SYS_ioctl, fd, 0x5402, (long)rl_saved_tios);
             return (ssize_t)len;
         } else if (c == 0x7F || c == 0x08) {
             /* Backspace (DEL=0x7F or BS=0x08) */
@@ -901,13 +901,13 @@ static ssize_t read_line(int fd, char *buf, size_t max_len) {
             /* Ctrl+C - interrupt */
             write_str(1, "^C\n");
             buf[0] = '\0';
-            if (rl_tios_saved) sys_call3(16, fd, 0x5402, (long)rl_saved_tios);
+            if (rl_tios_saved) sys_call3(SYS_ioctl, fd, 0x5402, (long)rl_saved_tios);
             return 0;
         } else if (c == 0x1A) {
             /* Ctrl+Z - suspend */
             write_str(1, "^Z\n");
             buf[0] = '\0';
-            if (rl_tios_saved) sys_call3(16, fd, 0x5402, (long)rl_saved_tios);
+            if (rl_tios_saved) sys_call3(SYS_ioctl, fd, 0x5402, (long)rl_saved_tios);
             return 0;
         } else if (c == 0x11 || c == 0x13) {
             /* Ctrl+Q (XON) / Ctrl+S (XOFF) - flow control, ignore */
@@ -956,7 +956,7 @@ static ssize_t read_line(int fd, char *buf, size_t max_len) {
 
     /* Buffer full */
     buf[max_len - 1] = '\0';
-    if (rl_tios_saved) sys_call3(16, fd, 0x5402, (long)rl_saved_tios);
+    if (rl_tios_saved) sys_call3(SYS_ioctl, fd, 0x5402, (long)rl_saved_tios);
     return max_len - 1;
 }
 
@@ -2095,7 +2095,7 @@ static void cmd_uname(int argc, char *argv[]) {
     struct { char sysname[65]; char nodename[65]; char release[65];
              char version[65]; char machine[65]; char domainname[65]; } uts;
     for (int i = 0; i < (int)sizeof(uts); i++) ((char*)&uts)[i] = 0;
-    long ret = sys_call1(63 /* uname */, (long)&uts);
+    long ret = sys_call1(SYS_uname, (long)&uts);
     if (ret < 0) {
         /* Fallback to hardcoded */
         write_str(1, "Futura futura 0.3.1 aarch64\n");
@@ -2130,7 +2130,7 @@ static void cmd_date(int argc, char *argv[]) {
     (void)argc; (void)argv;
     /* Use CLOCK_REALTIME (0) for wall-clock time */
     struct { long tv_sec; long tv_nsec; } ts = {0, 0};
-    long ret = sys_call2(98 /* clock_gettime x86 compat */, 0 /* CLOCK_REALTIME */, (long)&ts);
+    long ret = sys_call2(SYS_clock_gettime, 0 /* CLOCK_REALTIME */, (long)&ts);
     if (ret == 0 && ts.tv_sec > 1000000000L) {
         /* Convert epoch seconds to date/time (simplified UTC) */
         long t = ts.tv_sec;
@@ -2428,7 +2428,7 @@ static void cmd_dmesg(int argc, char *argv[]) {
         }
     }
     if (clear_log) {
-        sys_call3(103 /* syslog */, 5 /* SYSLOG_ACTION_CLEAR */, 0, 0);
+        sys_call3(SYS_syslog, 5 /* SYSLOG_ACTION_CLEAR */, 0, 0);
         return;
     }
     if (follow_mode) {
@@ -2446,7 +2446,7 @@ static void cmd_dmesg(int argc, char *argv[]) {
     }
     /* Read entire ring buffer */
     char buf[8192];
-    long ret = sys_call3(103 /* syslog */, 3, (long)buf, sizeof(buf) - 1);
+    long ret = sys_call3(SYS_syslog, 3, (long)buf, sizeof(buf) - 1);
     if (ret > 0) {
         buf[ret] = '\0';
         /* If filtering, process line-by-line; otherwise output directly */
@@ -2511,7 +2511,7 @@ static int dns_cache_next = 0; /* round-robin insert index */
 /* Get current wall-clock seconds (0 on failure) */
 static long dns_now(void) {
     struct { long tv_sec; long tv_nsec; } ts = {0, 0};
-    long r = sys_call2(98 /* clock_gettime */, 0 /* CLOCK_REALTIME */, (long)&ts);
+    long r = sys_call2(SYS_clock_gettime, 0 /* CLOCK_REALTIME */, (long)&ts);
     return (r == 0) ? ts.tv_sec : 0;
 }
 
@@ -2693,11 +2693,11 @@ static uint32_t dns_query(const char *hostname, int qtype) {
         sa.addr = ns_addr;
         for (int i = 0; i < 8; i++) sa.pad[i] = 0;
 
-        sys_call6(44 /* sendto */, sock, (long)pkt, pos, 0, (long)&sa, 16);
+        sys_call6(SYS_sendto, sock, (long)pkt, pos, 0, (long)&sa, 16);
 
         /* Receive with 3-second timeout */
         struct { long tv_sec; long tv_usec; } tv = {3, 0};
-        sys_call6(54 /* setsockopt */, sock, 1 /* SOL_SOCKET */,
+        sys_call6(SYS_setsockopt, sock, 1 /* SOL_SOCKET */,
                   20 /* SO_RCVTIMEO */, (long)&tv, (long)sizeof(tv), 0);
         static uint8_t reply[512];
         ssize_t rn = sys_read(sock, reply, sizeof(reply));
@@ -2801,7 +2801,7 @@ static void cmd_ping(int argc, char *argv[]) {
                      ((ip << 8) & 0xFF0000) | ((ip << 24) & 0xFF000000);
 
     /* Create raw ICMP socket */
-    long fd = sys_call3(41 /* socket */, 2 /* AF_INET */, 3 /* SOCK_RAW */, 1 /* IPPROTO_ICMP */);
+    long fd = sys_call3(SYS_socket, 2 /* AF_INET */, 3 /* SOCK_RAW */, 1 /* IPPROTO_ICMP */);
     if (fd < 0) {
         /* Fallback: try SOCK_DGRAM with ICMP */
         fd = sys_call3(41, 2, 2 /* SOCK_DGRAM */, 1);
@@ -2831,13 +2831,13 @@ static void cmd_ping(int argc, char *argv[]) {
         uint16_t csum = ~(uint16_t)sum;
         pkt[2] = (uint8_t)(csum >> 8); pkt[3] = (uint8_t)(csum & 0xFF);
 
-        long sent = sys_call6(44 /* sendto */, fd, (long)pkt, 64, 0, (long)&sa, 16);
+        long sent = sys_call6(SYS_sendto, fd, (long)pkt, 64, 0, (long)&sa, 16);
         if (sent > 0) {
             /* Wait for reply */
             struct { long tv_sec; long tv_nsec; } start = {0,0};
             sys_call2(98, 1, (long)&start);
             char rbuf[128];
-            long rcv = sys_call6(45 /* recvfrom */, fd, (long)rbuf, 128, 0, 0, 0);
+            long rcv = sys_call6(SYS_recvfrom, fd, (long)rbuf, 128, 0, 0, 0);
             struct { long tv_sec; long tv_nsec; } end_t = {0,0};
             sys_call2(98, 1, (long)&end_t);
             long ms = (end_t.tv_sec - start.tv_sec) * 1000 + (end_t.tv_nsec - start.tv_nsec) / 1000000;
@@ -2880,7 +2880,7 @@ static void cmd_nc(int argc, char *argv[]) {
         for (int i = 0; argv[arg_start][i]; i++)
             port = port * 10 + (argv[arg_start][i] - '0');
 
-        long sfd = sys_call3(41 /* socket */, 2, 1 /* SOCK_STREAM */, 0);
+        long sfd = sys_call3(SYS_socket, 2, 1 /* SOCK_STREAM */, 0);
         if (sfd < 0) { write_str(2, "nc: socket failed\n"); return; }
 
         struct { uint16_t family; uint16_t port; uint32_t addr; uint8_t pad[8]; } sa;
@@ -2888,10 +2888,10 @@ static void cmd_nc(int argc, char *argv[]) {
         sa.addr = 0; /* INADDR_ANY */
         for (int i = 0; i < 8; i++) sa.pad[i] = 0;
 
-        if (sys_call3(49 /* bind */, sfd, (long)&sa, 16) < 0) {
+        if (sys_call3(SYS_bind, sfd, (long)&sa, 16) < 0) {
             write_str(2, "nc: bind failed\n"); sys_close(sfd); return;
         }
-        if (sys_call2(50 /* listen */, sfd, 1) < 0) {
+        if (sys_call2(SYS_listen, sfd, 1) < 0) {
             write_str(2, "nc: listen failed\n"); sys_close(sfd); return;
         }
 
@@ -2899,7 +2899,7 @@ static void cmd_nc(int argc, char *argv[]) {
         char nb[8]; int_to_str(port, nb, 8); write_str(1, nb);
         write_str(1, "...\n");
 
-        long cfd = sys_call3(43 /* accept */, sfd, 0, 0);
+        long cfd = sys_call3(SYS_accept, sfd, 0, 0);
         sys_close(sfd);
         if (cfd < 0) { write_str(2, "nc: accept failed\n"); return; }
 
@@ -2946,7 +2946,7 @@ static void cmd_nc(int argc, char *argv[]) {
                      ((ip << 8) & 0xFF0000) | ((ip << 24) & 0xFF000000);
 
     /* Create socket */
-    long fd = sys_call3(41 /* socket */, 2 /* AF_INET */, 1 /* SOCK_STREAM */, 0);
+    long fd = sys_call3(SYS_socket, 2 /* AF_INET */, 1 /* SOCK_STREAM */, 0);
     if (fd < 0) {
         write_str(1, "nc: socket failed\n");
         return;
@@ -2959,7 +2959,7 @@ static void cmd_nc(int argc, char *argv[]) {
     sa.addr = ip_be;
     for (int i = 0; i < 8; i++) sa.pad[i] = 0;
 
-    long ret = sys_call3(42 /* connect */, fd, (long)&sa, 16);
+    long ret = sys_call3(SYS_connect, fd, (long)&sa, 16);
     if (ret < 0) {
         write_str(1, "nc: connect failed\n");
         sys_close(fd);
@@ -2975,10 +2975,10 @@ static void cmd_nc(int argc, char *argv[]) {
         if (n <= 0) break;
 
         /* Send to socket */
-        sys_call6(44 /* sendto */, fd, (long)buf, n, 0, 0, 0);
+        sys_call6(SYS_sendto, fd, (long)buf, n, 0, 0, 0);
 
         /* Try to receive response */
-        ssize_t r = sys_call6(45 /* recvfrom */, fd, (long)buf, sizeof(buf) - 1, 0x40 /* MSG_DONTWAIT */, 0, 0);
+        ssize_t r = sys_call6(SYS_recvfrom, fd, (long)buf, sizeof(buf) - 1, 0x40 /* MSG_DONTWAIT */, 0, 0);
         if (r > 0) {
             buf[r] = '\0';
             write_str(1, buf);
@@ -3538,7 +3538,7 @@ static void cmd_sleep(int argc, char *argv[]) {
         }
     }
     struct { long tv_sec; long tv_nsec; } ts = { secs, nsec };
-    sys_call2(35 /* nanosleep */, (long)&ts, 0);
+    sys_call2(SYS_nanosleep, (long)&ts, 0);
 }
 
 /* Built-in: hexdump - Display file contents in hex */
@@ -3677,7 +3677,7 @@ static void cmd_lsof(int argc, char *argv[]) {
                 fdpath[fp] = '\0';
 
                 char target[128];
-                long rl = sys_call3(89 /* readlink */, (long)fdpath, (long)target, 127);
+                long rl = sys_readlink_call(fdpath, target, 127);
                 if (rl > 0) {
                     target[rl] = '\0';
                     /* Determine type from target path */
@@ -3785,7 +3785,7 @@ static void cmd_strace(int argc, char *argv[]) {
     pid_t child = sys_fork();
     if (child == 0) {
         sys_call4(101 /* ptrace */, 0 /* PTRACE_TRACEME */, 0, 0, 0);
-        sys_call2(62 /* kill */, sys_call0(39 /* getpid */), 19 /* SIGSTOP */);
+        sys_call2(SYS_kill, sys_getpid_call(), 19 /*SIGSTOP*/);
         execute_command(argc - cmd_start, &argv[cmd_start]);
         syscall1(60, 0);
         while (1);
@@ -3921,13 +3921,13 @@ static void cmd_time(int argc, char *argv[]) {
     if (argc < 2) { write_str(1, "usage: time <command>\n"); return; }
     /* Get start time */
     struct { long tv_sec; long tv_nsec; } start = {0,0}, end_ts = {0,0};
-    sys_call2(98 /* clock_gettime */, 1, (long)&start);
+    sys_call2(SYS_clock_gettime, 1, (long)&start);
     
     /* Execute the rest as a command */
     /* For simplicity, just run it as a builtin */
     execute_command(argc - 1, &argv[1]);
     
-    sys_call2(98 /* clock_gettime */, 1, (long)&end_ts);
+    sys_call2(SYS_clock_gettime, 1, (long)&end_ts);
     
     long elapsed_ms = (end_ts.tv_sec - start.tv_sec) * 1000 +
                       (end_ts.tv_nsec - start.tv_nsec) / 1000000;
@@ -3969,7 +3969,7 @@ static void cmd_df(int argc, char *argv[]) {
              long f_frsize; long f_flags; long f_spare[4]; } sfs;
 
     for (int i = 0; mounts[i]; i++) {
-        long ret = sys_call2(137 /* statfs */, (long)mounts[i], (long)&sfs);
+        long ret = sys_call2(SYS_statfs, (long)mounts[i], (long)&sfs);
         write_str(1, names[i]);
         int pad = 16 - (int)strlen_simple(names[i]);
         while (pad-- > 0) write_char(1, ' ');
@@ -4203,7 +4203,7 @@ static void cmd_kill(int argc, char *argv[]) {
         return;
     }
 
-    long ret = sys_call2(62 /* SYS_kill x86 compat */, pid, sig);
+    long ret = sys_call2(SYS_kill, pid, sig);
     if (ret < 0) {
         write_str(1, "kill: ");
         char buf[16];
@@ -4372,7 +4372,7 @@ static void cmd_hostname(int argc, char *argv[]) {
         const char *newname = argv[1];
         int len = 0; while (newname[len]) len++;
         /* Use sethostname syscall (170) */
-        sys_call2(170 /* sethostname */, (long)newname, len);
+        sys_call2(170 /*sethostname — TODO arch*/, (long)newname, len);
         /* Also update /etc/hostname for persistence */
         int fd = sys_open("/etc/hostname", O_WRONLY | O_TRUNC, 0644);
         if (fd >= 0) {
@@ -4420,7 +4420,7 @@ static void cmd_uptime(int argc, char *argv[]) {
     if (since) {
         /* -s: show boot time */
         struct { long tv_sec; long tv_nsec; } ts2 = {0, 0};
-        sys_call2(98 /* clock_gettime */, 0 /* CLOCK_REALTIME */, (long)&ts2);
+        sys_call2(SYS_clock_gettime, 0 /* CLOCK_REALTIME */, (long)&ts2);
         long boot = ts2.tv_sec - up_secs;
         long bd = boot % 86400;
         long bh = bd / 3600, bm = (bd % 3600) / 60, bs = bd % 60;
@@ -4449,7 +4449,7 @@ static void cmd_uptime(int argc, char *argv[]) {
     /* Default mode: standard uptime output */
     /* Show current time HH:MM:SS */
     struct { long tv_sec; long tv_nsec; } ts = {0, 0};
-    long ret = sys_call2(98 /* clock_gettime */, 0 /* CLOCK_REALTIME */, (long)&ts);
+    long ret = sys_call2(SYS_clock_gettime, 0 /* CLOCK_REALTIME */, (long)&ts);
     if (ret == 0 && ts.tv_sec > 1000000000L) {
         long daytime = ts.tv_sec % 86400;
         long hour = daytime / 3600;
@@ -4571,7 +4571,7 @@ static void cmd_ifconfig(int argc, char *argv[]) {
                 /* Get link type */
                 for (int k = 0; k < 40; k++) ifr[k] = 0;
                 for (int k = 0; ifname[k] && k < 15; k++) ifr[k] = ifname[k];
-                long irc = sys_call3(16, sock, 0x8913/*SIOCGIFFLAGS*/, (long)ifr);
+                long irc = sys_call3(SYS_ioctl, sock, 0x8913/*SIOCGIFFLAGS*/, (long)ifr);
                 short flags = 0;
                 if (irc == 0) for (int k = 0; k < 2; k++) flags |= (short)((unsigned char)ifr[16+k] << (k*8));
                 write_str(1, (flags & 0x0008) ? "Link encap:Local Loopback\n" : "Link encap:Ethernet\n");
@@ -4579,14 +4579,14 @@ static void cmd_ifconfig(int argc, char *argv[]) {
                 /* inet addr + netmask */
                 for (int k = 0; k < 40; k++) ifr[k] = 0;
                 for (int k = 0; ifname[k] && k < 15; k++) ifr[k] = ifname[k];
-                irc = sys_call3(16, sock, 0x8915/*SIOCGIFADDR*/, (long)ifr);
+                irc = sys_call3(SYS_ioctl, sock, 0x8915/*SIOCGIFADDR*/, (long)ifr);
                 if (irc == 0) {
                     write_str(1, "          inet addr:");
                     ifconfig_print_ip(1, (unsigned char *)&ifr[20]);
                     /* Get netmask */
                     for (int k = 0; k < 40; k++) ifr[k] = 0;
                     for (int k = 0; ifname[k] && k < 15; k++) ifr[k] = ifname[k];
-                    irc = sys_call3(16, sock, 0x891B, (long)ifr);
+                    irc = sys_call3(SYS_ioctl, sock, 0x891B, (long)ifr);
                     if (irc == 0) {
                         write_str(1, "  Mask:");
                         ifconfig_print_ip(1, (unsigned char *)&ifr[20]);
@@ -4604,7 +4604,7 @@ static void cmd_ifconfig(int argc, char *argv[]) {
                 /* MTU */
                 for (int k = 0; k < 40; k++) ifr[k] = 0;
                 for (int k = 0; ifname[k] && k < 15; k++) ifr[k] = ifname[k];
-                irc = sys_call3(16, sock, 0x8921/*SIOCGIFMTU*/, (long)ifr);
+                irc = sys_call3(SYS_ioctl, sock, 0x8921/*SIOCGIFMTU*/, (long)ifr);
                 if (irc == 0) {
                     int mtu = 0;
                     for (int k = 0; k < 4; k++) mtu |= ((unsigned char)ifr[16+k]) << (k*8);
@@ -5162,10 +5162,10 @@ static void cmd_xargs(int argc, char *argv[]) {
                 if (max_procs > 1) {
                     /* Parallel: fork a child for each invocation */
                     while (active_children >= max_procs) {
-                        sys_call4(61 /* wait4 */, -1, 0, 0, 0);
+                        sys_call4(SYS_wait4, -1, 0, 0, 0);
                         active_children--;
                     }
-                    long pid = sys_call2(57 /* fork (clone) */, 0, 0);
+                    long pid = sys_fork_call();
                     if (pid == 0) {
                         execute_command(xargc, xargv);
                         syscall1(60, 0);
@@ -5810,7 +5810,7 @@ static void cmd_tail(int argc, char *argv[]) {
                 } else {
                     /* No new data — sleep briefly and retry */
                     struct { long tv_sec; long tv_nsec; } ts = {0, 100000000}; /* 100ms */
-                    sys_call2(35 /* nanosleep */, (long)&ts, 0);
+                    sys_call2(SYS_nanosleep, (long)&ts, 0);
                 }
             }
         }
@@ -9544,7 +9544,7 @@ static void cmd_chmod(int argc, char *argv[]) {
                  int64_t blocks; uint64_t atime_sec; uint64_t atime_nsec;
                  uint64_t mtime_sec; uint64_t mtime_nsec;
                  uint64_t ctime_sec; uint64_t ctime_nsec; } st;
-        long sr = sys_call2(4 /* stat */, (long)argv[2], (long)&st);
+        long sr = sys_stat_call(argv[2], &st);
         if (sr < 0) {
             write_str(2, "chmod: cannot stat file\n");
             return;
@@ -9621,7 +9621,7 @@ static void cmd_chmod(int argc, char *argv[]) {
     }
     (void)symbolic;
     /* chmod syscall: x86_64=90, ARM64 uses fchmodat */
-    long ret = sys_call3(90 /* chmod */, (long)argv[2], (long)mode, 0);
+    long ret = sys_chmod_call(argv[2], mode);
     if (ret < 0) {
         write_str(2, "chmod: failed\n");
     }
@@ -9756,13 +9756,13 @@ static void cmd_ln(int argc, char *argv[]) {
 
     if (symbolic) {
         /* symlink(target, linkpath) — x86_64: 88, ARM64: 36 */
-        long ret = sys_call2(88 /* symlink */, (long)target, (long)linkname);
+        long ret = sys_symlink_call(target, linkname);
         if (ret < 0) {
             write_str(2, "ln: failed to create symlink\n");
         }
     } else {
         /* link(oldpath, newpath) — x86_64: 86, ARM64: 37 */
-        long ret = sys_call2(86 /* link */, (long)target, (long)linkname);
+        long ret = sys_link_call(target, linkname);
         if (ret < 0) {
             write_str(2, "ln: failed to create hard link\n");
         }
@@ -9777,7 +9777,7 @@ static void cmd_readlink(int argc, char *argv[]) {
     }
     char buf[256];
     /* readlink(path, buf, size) — x86_64: 89, ARM64: 78 */
-    long ret = sys_call3(89 /* readlink */, (long)argv[1], (long)buf, 255);
+    long ret = sys_readlink_call(argv[1], buf, 255);
     if (ret > 0) {
         buf[ret] = '\0';
         write_str(1, buf);
@@ -9883,7 +9883,7 @@ static void cmd_realpath(int argc, char *argv[]) {
             /* Try to resolve symlink */
             if (!no_symlinks && symlink_limit > 0) {
                 char lnk[256];
-                long lr = sys_call3(89 /* readlink */, (long)out, (long)lnk, 255);
+                long lr = sys_readlink_call(out, lnk, 255);
                 if (lr > 0) {
                     symlink_limit--;
                     lnk[lr] = '\0';
@@ -10224,7 +10224,7 @@ static int cmd_test(int argc, char *argv[]) {
                      int64_t blocks; uint64_t atime_sec; uint64_t atime_nsec;
                      uint64_t mtime_sec; uint64_t mtime_nsec;
                      uint64_t ctime_sec; uint64_t ctime_nsec; } st;
-            if (sys_call2(4 /* stat */, (long)arg, (long)&st) == 0 && (st.mode & 0170000) == 0040000)
+            if (sys_stat_call(arg, &st) == 0 && (st.mode & 0170000) == 0040000)
                 return 0;
             return 1;
         } else if (strcmp_simple(op, "-r") == 0) {
@@ -10249,7 +10249,7 @@ static int cmd_test(int argc, char *argv[]) {
                      int64_t blocks; uint64_t atime_sec; uint64_t atime_nsec;
                      uint64_t mtime_sec; uint64_t mtime_nsec;
                      uint64_t ctime_sec; uint64_t ctime_nsec; } st;
-            if (sys_call2(4 /* stat */, (long)arg, (long)&st) == 0 && st.size > 0)
+            if (sys_stat_call(arg, &st) == 0 && st.size > 0)
                 return 0;
             return 1;
         } else if (strcmp_simple(op, "-L") == 0 || strcmp_simple(op, "-h") == 0) {
@@ -10679,10 +10679,10 @@ static int execute_command(int argc, char *argv[]) {
 
         /* Set 3s receive timeout */
         struct { long tv_sec; long tv_usec; } tv = {3, 0};
-        sys_call6(54 /* setsockopt */, fd, 1 /* SOL_SOCKET */, 20 /* SO_RCVTIMEO */,
+        sys_call6(SYS_setsockopt, fd, 1 /* SOL_SOCKET */, 20 /* SO_RCVTIMEO */,
                   (long)&tv, (long)sizeof(tv), 0);
 
-        sys_call6(44 /* sendto */, fd, (long)pkt, pos, 0, (long)&sa, 16);
+        sys_call6(SYS_sendto, fd, (long)pkt, pos, 0, (long)&sa, 16);
         uint8_t resp[512];
         long rn = sys_read(fd, resp, 512);
         sys_close(fd);
@@ -11111,7 +11111,7 @@ static int execute_command(int argc, char *argv[]) {
             }
         }
 
-        long sfd = sys_call3(41 /* socket */, 2, 1, 0);
+        long sfd = sys_call3(SYS_socket, 2, 1, 0);
         if (sfd < 0) { write_str(2, "httpd: socket failed\n"); return 1; }
 
         /* SO_REUSEADDR */
@@ -11126,7 +11126,7 @@ static int execute_command(int argc, char *argv[]) {
         if (sys_call3(49, sfd, (long)&sa, 16) < 0) {
             write_str(2, "httpd: bind failed\n"); sys_close(sfd); return 1;
         }
-        if (sys_call2(50 /* listen */, sfd, 5) < 0) {
+        if (sys_call2(SYS_listen, sfd, 5) < 0) {
             write_str(2, "httpd: listen failed\n"); sys_close(sfd); return 1;
         }
 
@@ -11145,7 +11145,7 @@ static int execute_command(int argc, char *argv[]) {
 
         /* Accept loop — handle one connection at a time */
         for (int conn = 0; conn < 100; conn++) {
-            long cfd = sys_call3(43 /* accept */, sfd, 0, 0);
+            long cfd = sys_call3(SYS_accept, sfd, 0, 0);
             if (cfd < 0) continue;
 
             /* Read HTTP request */
@@ -11472,7 +11472,7 @@ watch_sleep:
             /* Sleep */
             ;
             struct { long tv_sec; long tv_nsec; } ts = { interval, 0 };
-            sys_call2(35 /* nanosleep */, (long)&ts, 0);
+            sys_call2(SYS_nanosleep, (long)&ts, 0);
         }
         return 0;
     } else if (strcmp_simple(argv[0], "sysctl") == 0) {
@@ -11608,14 +11608,14 @@ watch_sleep:
 
         /* SO_BROADCAST */
         int one = 1;
-        sys_call6(54 /* setsockopt */, sock, 1, 6 /* SO_BROADCAST */, (long)&one, sizeof(one), 0);
+        sys_call6(SYS_setsockopt, sock, 1, 6 /* SO_BROADCAST */, (long)&one, sizeof(one), 0);
 
         /* Bind to 0.0.0.0:68 (DHCP client port) */
         struct { uint16_t family; uint16_t port; uint32_t addr; uint8_t pad[8]; } sa;
         sa.family = 2; sa.addr = 0;
         sa.port = (uint16_t)((68 >> 8) | ((68 & 0xFF) << 8)); /* 68 in network order */
         for (int i = 0; i < 8; i++) sa.pad[i] = 0;
-        sys_call3(49 /* bind */, sock, (long)&sa, 16);
+        sys_call3(SYS_bind, sock, (long)&sa, 16);
 
         /* Build DHCP DISCOVER packet (simplified) */
         uint8_t pkt[300];
@@ -11633,7 +11633,7 @@ watch_sleep:
             if (isock >= 0) {
                 char ifr[40]; for (int k = 0; k < 40; k++) ifr[k] = 0;
                 for (int k = 0; iface[k] && k < 15; k++) ifr[k] = iface[k];
-                if (sys_call3(16, isock, 0x8927/*SIOCGIFHWADDR*/, (long)ifr) == 0) {
+                if (sys_call3(SYS_ioctl, isock, 0x8927/*SIOCGIFHWADDR*/, (long)ifr) == 0) {
                     for (int k = 0; k < 6; k++) pkt[28+k] = (uint8_t)ifr[18+k];
                 }
                 sys_close(isock);
@@ -11654,7 +11654,7 @@ watch_sleep:
         dest.port = (uint16_t)((67 >> 8) | ((67 & 0xFF) << 8));
         dest.addr = 0xFFFFFFFF; /* broadcast */
         for (int i = 0; i < 8; i++) dest.pad[i] = 0;
-        long sent = sys_call6(44 /* sendto */, sock, (long)pkt, 250, 0, (long)&dest, 16);
+        long sent = sys_call6(SYS_sendto, sock, (long)pkt, 250, 0, (long)&dest, 16);
         if (sent <= 0) {
             write_str(2, "dhclient: sendto failed\n");
             sys_close(sock); return 1;
@@ -11844,21 +11844,21 @@ watch_sleep:
         if (strcmp_simple(argv[1], "addbr") == 0 && argc >= 3) {
             char name[16] = {0};
             for (int k = 0; argv[2][k] && k < 15; k++) name[k] = argv[2][k];
-            long rc = sys_call3(16, sock, 0x89a0/*SIOCBRADDBR*/, (long)name);
+            long rc = sys_call3(SYS_ioctl, sock, 0x89a0/*SIOCBRADDBR*/, (long)name);
             if (rc >= 0) { write_str(1, "Bridge created\n"); }
             else { write_str(2, "brctl addbr: failed\n"); }
         } else if (strcmp_simple(argv[1], "addif") == 0 && argc >= 4) {
             struct { char br[16]; char port[16]; } req = {{0},{0}};
             for (int k = 0; argv[2][k] && k < 15; k++) req.br[k] = argv[2][k];
             for (int k = 0; argv[3][k] && k < 15; k++) req.port[k] = argv[3][k];
-            long rc = sys_call3(16, sock, 0x89a2/*SIOCBRADDIF*/, (long)&req);
+            long rc = sys_call3(SYS_ioctl, sock, 0x89a2/*SIOCBRADDIF*/, (long)&req);
             if (rc == 0) { write_str(1, "Port added\n"); }
             else { write_str(2, "brctl addif: failed\n"); }
         } else if (strcmp_simple(argv[1], "delif") == 0 && argc >= 4) {
             struct { char br[16]; char port[16]; } req = {{0},{0}};
             for (int k = 0; argv[2][k] && k < 15; k++) req.br[k] = argv[2][k];
             for (int k = 0; argv[3][k] && k < 15; k++) req.port[k] = argv[3][k];
-            long rc = sys_call3(16, sock, 0x89a3/*SIOCBRDELIF*/, (long)&req);
+            long rc = sys_call3(SYS_ioctl, sock, 0x89a3/*SIOCBRDELIF*/, (long)&req);
             if (rc == 0) { write_str(1, "Port removed\n"); }
             else { write_str(2, "brctl delif: failed\n"); }
         } else if (strcmp_simple(argv[1], "show") == 0) {
@@ -12017,7 +12017,7 @@ watch_sleep:
             struct { unsigned int c_iflag; unsigned int c_oflag; unsigned int c_cflag;
                      unsigned int c_lflag; unsigned char c_line; unsigned char c_cc[32];
                      unsigned int c_ispeed; unsigned int c_ospeed; } tio;
-            long rc = sys_call3(16 /* ioctl */, 0 /* stdin */, 0x5401 /* TCGETS */, (long)&tio);
+            long rc = sys_call3(SYS_ioctl, 0 /* stdin */, 0x5401 /* TCGETS */, (long)&tio);
             if (rc == 0) {
                 write_str(1, "speed 115200 baud; rows 24; columns 80\n");
                 write_str(1, "intr = ^C; quit = ^\\; erase = ^?; kill = ^U; ");
@@ -12041,7 +12041,7 @@ watch_sleep:
             struct { unsigned int c_iflag; unsigned int c_oflag; unsigned int c_cflag;
                      unsigned int c_lflag; unsigned char c_line; unsigned char c_cc[32];
                      unsigned int c_ispeed; unsigned int c_ospeed; } stio;
-            long src = sys_call3(16 /* ioctl */, 0, 0x5401 /* TCGETS */, (long)&stio);
+            long src = sys_call3(SYS_ioctl, 0, 0x5401 /* TCGETS */, (long)&stio);
             for (int i = 1; i < argc; i++) {
                 if (strcmp_simple(argv[i], "raw") == 0) {
                     if (src == 0) {
@@ -12050,7 +12050,7 @@ watch_sleep:
                         stio.c_lflag &= ~(0x0002u | 0x0008u | 0x0001u | 0x0020u); /* ~ICANON ~ECHO ~ISIG ~IEXTEN */
                         stio.c_cc[6] = 1; /* VMIN=1 */
                         stio.c_cc[5] = 0; /* VTIME=0 */
-                        sys_call3(16, 0, 0x5402 /* TCSETS */, (long)&stio);
+                        sys_call3(SYS_ioctl, 0, 0x5402 /* TCSETS */, (long)&stio);
                     }
                     write_str(1, "raw mode set\n");
                 } else if (strcmp_simple(argv[i], "-raw") == 0 || strcmp_simple(argv[i], "cooked") == 0) {
@@ -12058,25 +12058,25 @@ watch_sleep:
                         stio.c_iflag |= 0x0100u | 0x0002u; /* ICRNL | IXON */
                         stio.c_oflag |= 0x0001u; /* OPOST */
                         stio.c_lflag |= 0x0002u | 0x0008u | 0x0001u | 0x0020u; /* ICANON|ECHO|ISIG|IEXTEN */
-                        sys_call3(16, 0, 0x5402, (long)&stio);
+                        sys_call3(SYS_ioctl, 0, 0x5402, (long)&stio);
                     }
                     write_str(1, "cooked mode set\n");
                 } else if (strcmp_simple(argv[i], "-echo") == 0) {
                     if (src == 0) {
                         stio.c_lflag &= ~0x0008u; /* ~ECHO */
-                        sys_call3(16, 0, 0x5402, (long)&stio);
+                        sys_call3(SYS_ioctl, 0, 0x5402, (long)&stio);
                     }
                     write_str(1, "echo disabled\n");
                 } else if (strcmp_simple(argv[i], "echo") == 0) {
                     if (src == 0) {
                         stio.c_lflag |= 0x0008u; /* ECHO */
-                        sys_call3(16, 0, 0x5402, (long)&stio);
+                        sys_call3(SYS_ioctl, 0, 0x5402, (long)&stio);
                     }
                     write_str(1, "echo enabled\n");
                 } else if (strcmp_simple(argv[i], "size") == 0) {
                     struct { unsigned short ws_row; unsigned short ws_col;
                              unsigned short ws_xpixel; unsigned short ws_ypixel; } wsz;
-                    long wrc = sys_call3(16, 0, 0x5413 /* TIOCGWINSZ */, (long)&wsz);
+                    long wrc = sys_call3(SYS_ioctl, 0, 0x5413 /* TIOCGWINSZ */, (long)&wsz);
                     if (wrc == 0 && wsz.ws_row > 0) {
                         char tmp[16];
                         int_to_str(wsz.ws_row, tmp, 16);
@@ -12093,7 +12093,7 @@ watch_sleep:
                         stio.c_iflag = 0x0500u; /* ICRNL | IXON */
                         stio.c_oflag = 0x0005u; /* OPOST | ONLCR */
                         stio.c_lflag = 0x002Bu; /* ECHO|ICANON|ISIG|IEXTEN */
-                        sys_call3(16, 0, 0x5402, (long)&stio);
+                        sys_call3(SYS_ioctl, 0, 0x5402, (long)&stio);
                     }
                     write_str(1, "terminal settings restored to sane defaults\n");
                 } else {
@@ -12135,7 +12135,7 @@ watch_sleep:
                 char cbuf[512] = {0};
                 /* SIOCTCCLASSSHOW = 0x89E6 */
                 if (cdev) { for (int k = 0; cdev[k] && k < 15; k++) cbuf[k] = cdev[k]; }
-                sys_call3(16, sock, 0x89E6, (long)cbuf);
+                sys_call3(SYS_ioctl, sock, 0x89E6, (long)cbuf);
                 sys_close(sock);
                 if (cbuf[0]) {
                     write_str(1, cbuf);
@@ -12186,7 +12186,7 @@ watch_sleep:
                 if (sock < 0) return 1;
                 char buf[512] = {0};
                 /* SIOCTCSHOW = 0x89E4 */
-                sys_call3(16, sock, 0x89E4, (long)buf);
+                sys_call3(SYS_ioctl, sock, 0x89E4, (long)buf);
                 sys_close(sock);
                 if (buf[0]) write_str(1, buf);
                 else write_str(1, "(no qdiscs configured)\n");
@@ -12221,7 +12221,7 @@ watch_sleep:
                 if (sock < 0) return 1;
                 struct { char name[16]; unsigned char type; unsigned int rate; unsigned int burst; } req = {{0}, (unsigned char)qtype, rate, burst};
                 for (int k = 0; dev[k] && k < 15; k++) req.name[k] = dev[k];
-                long rc = sys_call3(16, sock, 0x89E5 /* SIOCTCADD */, (long)&req);
+                long rc = sys_call3(SYS_ioctl, sock, 0x89E5 /* SIOCTCADD */, (long)&req);
                 sys_close(sock);
                 if (rc == 0) write_str(1, "qdisc added\n");
                 else write_str(2, "tc qdisc add: failed\n");
@@ -12473,7 +12473,7 @@ watch_sleep:
                 int fd = sys_open(path, O_RDWR, 0);
                 if (fd < 0) continue;
                 char status_buf[128];
-                long rc = sys_call3(16, fd, 0x4C03 /* LOOP_GET_STATUS */, (long)status_buf);
+                long rc = sys_call3(SYS_ioctl, fd, 0x4C03 /* LOOP_GET_STATUS */, (long)status_buf);
                 sys_close(fd);
                 if (rc < 0) { found = i; break; }
             }
@@ -12491,7 +12491,7 @@ watch_sleep:
                 if (loop_fd < 0) { write_str(2, "losetup: cannot open "); write_str(2, free_path); write_char(2, '\n'); return 1; }
                 int back_fd = sys_open(attach_file, O_RDWR, 0);
                 if (back_fd < 0) { sys_close(loop_fd); write_str(2, "losetup: cannot open "); write_str(2, attach_file); write_char(2, '\n'); return 1; }
-                long rc = sys_call3(16, loop_fd, 0x4C00, back_fd);
+                long rc = sys_call3(SYS_ioctl, loop_fd, 0x4C00, back_fd);
                 sys_close(loop_fd);
                 if (rc == 0) {
                     if (show_mode) { write_str(1, free_path); write_str(1, "\n"); }
@@ -12518,7 +12518,7 @@ watch_sleep:
                 write_str(2, "losetup: cannot open "); write_str(2, backing);
                 write_char(2, '\n'); return 1;
             }
-            long rc = sys_call3(16 /* ioctl */, loop_fd, 0x4C00 /* LOOP_SET_FD */, back_fd);
+            long rc = sys_call3(SYS_ioctl, loop_fd, 0x4C00 /* LOOP_SET_FD */, back_fd);
             sys_close(loop_fd);
             if (rc == 0) {
                 if (show) { write_str(1, loopdev); write_str(1, "\n"); }
@@ -12532,7 +12532,7 @@ watch_sleep:
             /* losetup -d /dev/loopN — detach */
             int loop_fd = sys_open(argv[2], O_RDWR, 0);
             if (loop_fd < 0) { write_str(2, "losetup: cannot open device\n"); return 1; }
-            long rc = sys_call3(16, loop_fd, 0x4C01 /* LOOP_CLR_FD */, 0);
+            long rc = sys_call3(SYS_ioctl, loop_fd, 0x4C01 /* LOOP_CLR_FD */, 0);
             sys_close(loop_fd);
             if (rc == 0) write_str(1, "Detached\n");
             else write_str(2, "losetup: detach failed\n");
@@ -12667,7 +12667,7 @@ watch_sleep:
         /* Verify device exists via SIOCGIFFLAGS */
         char ifr[40]; for (int k = 0; k < 40; k++) ifr[k] = 0;
         for (int k = 0; dev[k] && k < 15; k++) ifr[k] = dev[k];
-        long rc = sys_call3(16, sock, 0x8913/*SIOCGIFFLAGS*/, (long)ifr);
+        long rc = sys_call3(SYS_ioctl, sock, 0x8913/*SIOCGIFFLAGS*/, (long)ifr);
         if (rc != 0) { write_str(2, "ethtool: no such device: "); write_str(2, dev); write_str(2, "\n"); sys_close(sock); return 1; }
         short flags = 0;
         for (int k = 0; k < 2; k++) flags |= (short)((unsigned char)ifr[16+k] << (k*8));
@@ -12735,7 +12735,7 @@ watch_sleep:
         /* Get MTU */
         for (int k = 0; k < 40; k++) ifr[k] = 0;
         for (int k = 0; dev[k] && k < 15; k++) ifr[k] = dev[k];
-        rc = sys_call3(16, sock, 0x8921/*SIOCGIFMTU*/, (long)ifr);
+        rc = sys_call3(SYS_ioctl, sock, 0x8921/*SIOCGIFMTU*/, (long)ifr);
         if (rc == 0) {
             int mtu = 0;
             for (int k = 0; k < 4; k++) mtu |= ((unsigned char)ifr[16+k]) << (k*8);
@@ -12745,7 +12745,7 @@ watch_sleep:
         /* Get HW address */
         for (int k = 0; k < 40; k++) ifr[k] = 0;
         for (int k = 0; dev[k] && k < 15; k++) ifr[k] = dev[k];
-        rc = sys_call3(16, sock, 0x8927/*SIOCGIFHWADDR*/, (long)ifr);
+        rc = sys_call3(SYS_ioctl, sock, 0x8927/*SIOCGIFHWADDR*/, (long)ifr);
         if (rc == 0) {
             write_str(1, "\tHW address: ");
             for (int k = 0; k < 6; k++) {
@@ -12827,12 +12827,12 @@ watch_sleep:
         write_str(1, host);
         write_str(1, ", 30 hops max\n");
 
-        long sock = sys_call3(41 /* socket */, 2 /* AF_INET */, 3 /* SOCK_RAW */, 1 /* IPPROTO_ICMP */);
+        long sock = sys_call3(SYS_socket, 2 /* AF_INET */, 3 /* SOCK_RAW */, 1 /* IPPROTO_ICMP */);
         if (sock < 0) { write_str(2, "traceroute: raw socket failed\n"); return 1; }
 
         /* Set receive timeout 2s */
         struct { long tv_sec; long tv_usec; } tv = {2, 0};
-        sys_call6(54 /* setsockopt */, sock, 1 /* SOL_SOCKET */, 20 /* SO_RCVTIMEO */, (long)&tv, sizeof(tv), 0);
+        sys_call6(SYS_setsockopt, sock, 1 /* SOL_SOCKET */, 20 /* SO_RCVTIMEO */, (long)&tv, sizeof(tv), 0);
 
         for (int ttl = 1; ttl <= 30; ttl++) {
             /* Set IP_TTL */
@@ -12858,13 +12858,13 @@ watch_sleep:
             struct { uint16_t family; uint16_t port; uint32_t addr; uint8_t pad[8]; } sa;
             sa.family = 2; sa.port = 0; sa.addr = dest_be;
             for (int i = 0; i < 8; i++) sa.pad[i] = 0;
-            sys_call6(44 /* sendto */, sock, (long)pkt, 64, 0, (long)&sa, 16);
+            sys_call6(SYS_sendto, sock, (long)pkt, 64, 0, (long)&sa, 16);
 
             /* Receive reply (ICMP Time Exceeded or Echo Reply) */
             uint8_t reply[256];
             struct { uint16_t family; uint16_t port; uint32_t addr; uint8_t pad[8]; } from;
             unsigned int fromlen = 16;
-            ssize_t n = sys_call6(45 /* recvfrom */, sock, (long)reply, 256, 0, (long)&from, (long)&fromlen);
+            ssize_t n = sys_call6(SYS_recvfrom, sock, (long)reply, 256, 0, (long)&from, (long)&fromlen);
 
             /* Print hop */
             char num[4]; int ni = 0;
@@ -12979,9 +12979,9 @@ watch_sleep:
             if (chain < 0) {
                 /* Flush all chains */
                 for (fc = 0; fc < 3; fc++)
-                    sys_call3(16, sock, 0x89F2/*SIOCFWFLUSH*/, (long)&fc);
+                    sys_call3(SYS_ioctl, sock, 0x89F2/*SIOCFWFLUSH*/, (long)&fc);
             } else {
-                sys_call3(16, sock, 0x89F2, (long)&fc);
+                sys_call3(SYS_ioctl, sock, 0x89F2, (long)&fc);
             }
             write_str(1, "Flushed\n");
         }
@@ -12991,7 +12991,7 @@ watch_sleep:
             unsigned char policy = 0; /* ACCEPT */
             if (strcmp_simple(argv[3], "DROP") == 0) policy = 1;
             unsigned char pp[2] = { (unsigned char)chain, policy };
-            long rc = sys_call3(16, sock, 0x89F1/*SIOCFWPOLICY*/, (long)pp);
+            long rc = sys_call3(SYS_ioctl, sock, 0x89F1/*SIOCFWPOLICY*/, (long)pp);
             if (rc == 0) write_str(1, "Policy set\n");
             else write_str(2, "iptables: policy set failed\n");
         }
@@ -13027,7 +13027,7 @@ watch_sleep:
                 .dst_ip = dst_ip, .dst_mask = dst_mask,
                 .dport_min = dport_min, .dport_max = dport_max
             };
-            long rc = sys_call3(16, sock, 0x89F0/*SIOCFWADDRULE*/, (long)&fwr);
+            long rc = sys_call3(SYS_ioctl, sock, 0x89F0/*SIOCFWADDRULE*/, (long)&fwr);
             if (rc >= 0) write_str(1, "Rule added\n");
             else write_str(2, "iptables: add rule failed\n");
         }
@@ -13072,7 +13072,7 @@ watch_sleep:
             for (int k = 0; k < 16; k++) vreq.ifname[k] = 0;
             for (int k = 0; parent[k] && k < 15; k++) vreq.ifname[k] = parent[k];
             vreq.vlan_id = (unsigned short)vid;
-            long rc = sys_call3(16, sock, 0x8983/*SIOCSIFVLAN*/, (long)&vreq);
+            long rc = sys_call3(SYS_ioctl, sock, 0x8983/*SIOCSIFVLAN*/, (long)&vreq);
             sys_close(sock);
             if (rc >= 0) {
                 write_str(1, "VLAN ");
@@ -13096,7 +13096,7 @@ watch_sleep:
             char ifr[40];
             for (int k = 0; k < 40; k++) ifr[k] = 0;
             for (int k = 0; devname[k] && k < 15; k++) ifr[k] = devname[k];
-            long irc = sys_call3(16, sock, 0x8913/*SIOCGIFFLAGS*/, (long)ifr);
+            long irc = sys_call3(SYS_ioctl, sock, 0x8913/*SIOCGIFFLAGS*/, (long)ifr);
             if (irc != 0) { write_str(2, "ip link set: no such device\n"); sys_close(sock); return 1; }
             short flags = 0;
             for (int k = 0; k < 2; k++) flags |= (short)((unsigned char)ifr[16+k] << (k*8));
@@ -13114,14 +13114,14 @@ watch_sleep:
                     for (int k = 0; devname[k] && k < 15; k++) mifr[k] = devname[k];
                     mifr[16] = (char)(mtu & 0xFF); mifr[17] = (char)((mtu>>8) & 0xFF);
                     mifr[18] = (char)((mtu>>16) & 0xFF); mifr[19] = (char)((mtu>>24) & 0xFF);
-                    sys_call3(16, sock, 0x8922/*SIOCSIFMTU*/, (long)mifr);
+                    sys_call3(SYS_ioctl, sock, 0x8922/*SIOCSIFMTU*/, (long)mifr);
                 }
             }
             /* Write flags back */
             for (int k = 0; k < 40; k++) ifr[k] = 0;
             for (int k = 0; devname[k] && k < 15; k++) ifr[k] = devname[k];
             ifr[16] = (char)(flags & 0xFF); ifr[17] = (char)((flags >> 8) & 0xFF);
-            sys_call3(16, sock, 0x8914/*SIOCSIFFLAGS*/, (long)ifr);
+            sys_call3(SYS_ioctl, sock, 0x8914/*SIOCSIFFLAGS*/, (long)ifr);
             sys_close(sock);
             return 0;
         }
@@ -13187,7 +13187,7 @@ watch_sleep:
                             /* SIOCGIFMTU (0x8921) */
                             for (int k = 0; k < 40; k++) ifr[k] = 0;
                             for (int k = 0; ifname[k] && k < 15; k++) ifr[k] = ifname[k];
-                            irc = sys_call3(16, sock, 0x8921, (long)ifr);
+                            irc = sys_call3(SYS_ioctl, sock, 0x8921, (long)ifr);
                             if (irc == 0) {
                                 int mtu = 0;
                                 for (int k = 0; k < 4; k++) mtu |= ((unsigned char)ifr[16+k]) << (k*8);
@@ -13205,7 +13205,7 @@ watch_sleep:
                                 /* SIOCGIFADDR (0x8915) */
                                 for (int k = 0; k < 40; k++) ifr[k] = 0;
                                 for (int k = 0; ifname[k] && k < 15; k++) ifr[k] = ifname[k];
-                                irc = sys_call3(16, sock, 0x8915, (long)ifr);
+                                irc = sys_call3(SYS_ioctl, sock, 0x8915, (long)ifr);
                                 if (irc == 0) {
                                     unsigned char *ip = (unsigned char *)&ifr[20];
                                     write_str(1, "    inet ");
@@ -13222,7 +13222,7 @@ watch_sleep:
                                     /* Get netmask for prefix length */
                                     for (int k = 0; k < 40; k++) ifr[k] = 0;
                                     for (int k = 0; ifname[k] && k < 15; k++) ifr[k] = ifname[k];
-                                    irc = sys_call3(16, sock, 0x891B/*SIOCGIFNETMASK*/, (long)ifr);
+                                    irc = sys_call3(SYS_ioctl, sock, 0x891B/*SIOCGIFNETMASK*/, (long)ifr);
                                     if (irc == 0) {
                                         unsigned char *m = (unsigned char *)&ifr[20];
                                         unsigned int mask = ((unsigned)m[0]<<24)|((unsigned)m[1]<<16)|((unsigned)m[2]<<8)|m[3];
@@ -13316,9 +13316,9 @@ watch_sleep:
                          int iface; unsigned int metric; unsigned char table; } trt;
                 trt.dst = dst; trt.mask = mask; trt.gw = gw;
                 trt.iface = -1; trt.metric = 0; trt.table = (unsigned char)table_id;
-                rc = sys_call3(16, sock, 0x89E3/*SIOCADDRT_TABLE*/, (long)&trt);
+                rc = sys_call3(SYS_ioctl, sock, 0x89E3/*SIOCADDRT_TABLE*/, (long)&trt);
             } else {
-                rc = sys_call3(16, sock, 0x890B/*SIOCADDRT*/, (long)rt);
+                rc = sys_call3(SYS_ioctl, sock, 0x890B/*SIOCADDRT*/, (long)rt);
             }
             sys_close(sock);
             if (rc == 0) { write_str(1, "Route added\n"); }
@@ -13349,7 +13349,7 @@ watch_sleep:
             rt[16] = 2; /* rt_gateway */
             rt[32] = 2; rt[36] = (char)((mask>>24)&0xFF); rt[37] = (char)((mask>>16)&0xFF);
             rt[38] = (char)((mask>>8)&0xFF); rt[39] = (char)(mask&0xFF);
-            long rc = sys_call3(16, sock, 0x890C/*SIOCDELRT*/, (long)rt);
+            long rc = sys_call3(SYS_ioctl, sock, 0x890C/*SIOCDELRT*/, (long)rt);
             sys_close(sock);
             if (rc == 0) write_str(1, "Route deleted\n");
             else write_str(2, "ip route del: not found\n");
@@ -13465,7 +13465,7 @@ watch_sleep:
             ifr[21] = (char)((ip4 >> 16) & 0xFF);
             ifr[22] = (char)((ip4 >> 8) & 0xFF);
             ifr[23] = (char)(ip4 & 0xFF);
-            long rc = sys_call3(16, sock, 0x8916/*SIOCSIFADDR*/, (long)ifr);
+            long rc = sys_call3(SYS_ioctl, sock, 0x8916/*SIOCSIFADDR*/, (long)ifr);
             if (rc != 0) { write_str(2, "ip addr add: SIOCSIFADDR failed\n"); sys_close(sock); return 1; }
 
             /* Set netmask via SIOCSIFNETMASK */
@@ -13477,7 +13477,7 @@ watch_sleep:
             ifr[21] = (char)((mask >> 16) & 0xFF);
             ifr[22] = (char)((mask >> 8) & 0xFF);
             ifr[23] = (char)(mask & 0xFF);
-            sys_call3(16, sock, 0x891C/*SIOCSIFNETMASK*/, (long)ifr);
+            sys_call3(SYS_ioctl, sock, 0x891C/*SIOCSIFNETMASK*/, (long)ifr);
 
             sys_close(sock);
             write_str(1, "Address configured on ");
@@ -13495,7 +13495,7 @@ watch_sleep:
             char ifr[40]; for (int k = 0; k < 40; k++) ifr[k] = 0;
             for (int k = 0; devname2[k] && k < 15; k++) ifr[k] = devname2[k];
             ifr[16] = 2; /* AF_INET, all zeros = 0.0.0.0 */
-            sys_call3(16, sock, 0x8916/*SIOCSIFADDR*/, (long)ifr);
+            sys_call3(SYS_ioctl, sock, 0x8916/*SIOCSIFADDR*/, (long)ifr);
             sys_close(sock);
             write_str(1, "Address removed from ");
             write_str(1, devname2);
@@ -13604,7 +13604,7 @@ watch_sleep:
                 struct { unsigned int prio; unsigned int src; unsigned int src_mask; unsigned char table; int iface; } rreq;
                 rreq.prio = prio; rreq.src = src; rreq.src_mask = src_mask;
                 rreq.table = (unsigned char)table; rreq.iface = -1;
-                long rc = sys_call3(16, sock, 0x89E1/*SIOCADDRULE*/, (long)&rreq);
+                long rc = sys_call3(SYS_ioctl, sock, 0x89E1/*SIOCADDRULE*/, (long)&rreq);
                 sys_close(sock);
                 if (rc == 0) write_str(1, "Rule added\n");
                 else write_str(2, "ip rule add: failed\n");
@@ -13617,7 +13617,7 @@ watch_sleep:
                 }
                 int sock = sys_call3(41, 2, 2, 0);
                 if (sock < 0) { write_str(2, "ip rule: socket failed\n"); return 1; }
-                long rc = sys_call3(16, sock, 0x89E2/*SIOCDELRULE*/, (long)&prio);
+                long rc = sys_call3(SYS_ioctl, sock, 0x89E2/*SIOCDELRULE*/, (long)&prio);
                 sys_close(sock);
                 if (rc == 0) write_str(1, "Rule deleted\n");
                 else write_str(2, "ip rule del: failed\n");
@@ -13649,7 +13649,7 @@ watch_sleep:
                 greq.local = local_ip;
                 greq.remote = remote_ip;
                 greq.key = 0;
-                long rc = sys_call3(16, sock, 0x89E0/*SIOCADDGRETUN*/, (long)&greq);
+                long rc = sys_call3(SYS_ioctl, sock, 0x89E0/*SIOCADDGRETUN*/, (long)&greq);
                 sys_close(sock);
                 if (rc >= 0) {
                     write_str(1, "GRE tunnel "); write_str(1, tname);
@@ -13714,7 +13714,7 @@ watch_sleep:
                              unsigned char proto; unsigned char mode; unsigned char auth; unsigned char enc; } req;
                     req.spi = spi; req.src = src; req.dst = dst;
                     req.proto = (unsigned char)proto; req.mode = 1; req.auth = 1; req.enc = 1;
-                    long rc = sys_call3(16, sock, 0x89E6 /* SIOCIPSECSA_ADD */, (long)&req);
+                    long rc = sys_call3(SYS_ioctl, sock, 0x89E6 /* SIOCIPSECSA_ADD */, (long)&req);
                     sys_close(sock);
                     if (rc == 0) write_str(1, "SA added\n");
                     else write_str(2, "ip xfrm state add: failed\n");
@@ -22059,7 +22059,7 @@ static void cmd_scp(int argc, char *argv[]) {
     int port = 2222;
 
     /* Create TCP socket and connect */
-    long sock = sys_call3(41 /* socket */, 2 /* AF_INET */, 1 /* SOCK_STREAM */, 0);
+    long sock = sys_call3(SYS_socket, 2 /* AF_INET */, 1 /* SOCK_STREAM */, 0);
     if (sock < 0) { write_str(2, "scp: socket failed\n"); return; }
 
     struct { uint16_t family; uint16_t port; uint32_t addr; uint8_t pad[8]; } sa;
@@ -22068,7 +22068,7 @@ static void cmd_scp(int argc, char *argv[]) {
     sa.port = (uint16_t)(((port >> 8) & 0xFF) | ((port & 0xFF) << 8));
     sa.addr = ip_be;
 
-    if (sys_call3(42 /* connect */, sock, (long)&sa, 16) < 0) {
+    if (sys_call3(SYS_connect, sock, (long)&sa, 16) < 0) {
         write_str(2, "scp: connect to ");
         write_str(2, host_buf);
         write_str(2, " failed\n");
@@ -23256,7 +23256,7 @@ __attribute__((used)) static void cmd_mkswap(int argc, char *argv[]) {
     page[1031] = (char)((last_page >> 24) & 0xFF);
     /* Generate a pseudo-UUID from clock at offset 1036 (16 bytes) */
     struct { long tv_sec; long tv_nsec; } ts = {0, 0};
-    sys_call2(98 /* clock_gettime */, 0, (long)&ts);
+    sys_call2(SYS_clock_gettime, 0, (long)&ts);
     unsigned long seed = (unsigned long)ts.tv_nsec ^ ((unsigned long)ts.tv_sec << 16);
     for (int i = 0; i < 16; i++) {
         seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;
@@ -23593,7 +23593,7 @@ __attribute__((used)) static void cmd_w(int argc, char *argv[]) {
     }
     /* Print uptime header line (like real w) */
     struct { long tv_sec; long tv_nsec; } ts = {0, 0};
-    sys_call2(98 /* clock_gettime */, 0 /* CLOCK_REALTIME */, (long)&ts);
+    sys_call2(SYS_clock_gettime, 0 /* CLOCK_REALTIME */, (long)&ts);
     if (ts.tv_sec > 1000000000L) {
         long daytime = ts.tv_sec % 86400;
         long hour = daytime / 3600;
@@ -26145,7 +26145,7 @@ static void cmd_journalctl(int argc, char *argv[]) {
     if (kernel_only) {
         /* Read kernel ring buffer via syslog syscall */
         char buf[8192];
-        long ret = sys_call3(103 /* syslog */, 3 /* SYSLOG_ACTION_READ_ALL */, (long)buf, sizeof(buf) - 1);
+        long ret = sys_call3(SYS_syslog, 3 /* SYSLOG_ACTION_READ_ALL */, (long)buf, sizeof(buf) - 1);
         if (ret > 0) {
             buf[ret] = '\0';
             if (last_n > 0) {
@@ -26233,7 +26233,7 @@ static void cmd_journalctl(int argc, char *argv[]) {
         }
     } else {
         /* Fall back to kernel ring buffer */
-        long ret = sys_call3(103 /* syslog */, 3 /* SYSLOG_ACTION_READ_ALL */, (long)buf, sizeof(buf) - 1);
+        long ret = sys_call3(SYS_syslog, 3 /* SYSLOG_ACTION_READ_ALL */, (long)buf, sizeof(buf) - 1);
         if (ret > 0) {
             buf[ret] = '\0';
             write_str(1, buf);
@@ -26258,7 +26258,7 @@ static void cmd_journalctl(int argc, char *argv[]) {
                 }
                 /* Sleep 100ms */
                 struct { long tv_sec; long tv_nsec; } ts = {0, 100000000};
-                sys_call2(35 /* nanosleep */, (long)&ts, 0);
+                sys_call2(SYS_nanosleep, (long)&ts, 0);
             }
             sys_close(sfd);
         }
@@ -27277,7 +27277,7 @@ static void cmd_fstrim(int argc, char *argv[]) {
             if (mfd < 0) continue;
             /* FITRIM ioctl = 0xC0185879 */
             unsigned long range[3]; range[0] = 0; range[1] = (unsigned long)-1; range[2] = (unsigned long)minimum;
-            long rc = sys_call3(16, mfd, 0xC0185879UL, (long)range);
+            long rc = sys_call3(SYS_ioctl, mfd, 0xC0185879UL, (long)range);
             sys_close(mfd);
             if (verbose) {
                 write_str(1, mp); write_str(1, ": ");
@@ -27290,7 +27290,7 @@ static void cmd_fstrim(int argc, char *argv[]) {
     int fd = sys_open(mountpoint, O_RDONLY, 0);
     if (fd < 0) { write_str(2, "fstrim: "); write_str(2, mountpoint); write_str(2, ": cannot open\n"); return; }
     unsigned long range[3]; range[0] = 0; range[1] = (unsigned long)-1; range[2] = (unsigned long)minimum;
-    long rc = sys_call3(16, fd, 0xC0185879UL, (long)range);
+    long rc = sys_call3(SYS_ioctl, fd, 0xC0185879UL, (long)range);
     sys_close(fd);
     if (rc < 0) {
         if (verbose) { write_str(1, mountpoint); write_str(1, ": 0 bytes trimmed (TRIM not supported on this filesystem)\n"); }
@@ -27410,7 +27410,7 @@ static void cmd_fsfreeze(int argc, char *argv[]) {
     /* FIFREEZE = 0xC0045877, FITHAW = 0xC0045878 */
     unsigned long ioctl_nr = freeze ? 0xC0045877UL : 0xC0045878UL;
     int dummy = 0;
-    long rc = sys_call3(16, fd, ioctl_nr, (long)&dummy);
+    long rc = sys_call3(SYS_ioctl, fd, ioctl_nr, (long)&dummy);
     sys_close(fd);
     if (rc < 0) {
         /* On ramfs/tmpfs this won't be supported, provide informative message */
@@ -27460,7 +27460,7 @@ static void cmd_filefrag(int argc, char *argv[]) {
         *fm_length = (unsigned long long)-1;
         *fm_flags = 0;
         *fm_count = 32; /* Request up to 32 extents */
-        long rc = sys_call3(16, fd, 0xC020660BUL, (long)fiemap_buf);
+        long rc = sys_call3(SYS_ioctl, fd, 0xC020660BUL, (long)fiemap_buf);
         int extents = 0;
         long file_blocks = 0;
         if (rc >= 0 && *fm_mapped > 0) {
@@ -31918,7 +31918,7 @@ __attribute__((used)) static void cmd_mtr(int argc, char *argv[]) {
     write_str(1, "HOST: futura                    Loss%   Snt   Last   Avg  Best  Wrst StDev\n");
 
     /* Create raw ICMP socket for traceroute+ping */
-    long sock = sys_call3(41 /* socket */, 2 /* AF_INET */, 3 /* SOCK_RAW */, 1 /* IPPROTO_ICMP */);
+    long sock = sys_call3(SYS_socket, 2 /* AF_INET */, 3 /* SOCK_RAW */, 1 /* IPPROTO_ICMP */);
     if (sock < 0) {
         /* Fallback: show simulated output */
         char nbuf[16];
@@ -31958,14 +31958,14 @@ __attribute__((used)) static void cmd_mtr(int argc, char *argv[]) {
 
     /* Set receive timeout 2s */
     struct { long tv_sec; long tv_usec; } tv = {2, 0};
-    sys_call6(54 /* setsockopt */, sock, 1 /* SOL_SOCKET */, 20 /* SO_RCVTIMEO */, (long)&tv, sizeof(tv), 0);
+    sys_call6(SYS_setsockopt, sock, 1 /* SOL_SOCKET */, 20 /* SO_RCVTIMEO */, (long)&tv, sizeof(tv), 0);
 
     uint32_t dest_be = ((dest_ip >> 24) & 0xFF) | ((dest_ip >> 8) & 0xFF00) |
                        ((dest_ip << 8) & 0xFF0000) | ((dest_ip << 24) & 0xFF000000);
 
     char nbuf[16];
     for (int ttl = 1; ttl <= 30; ttl++) {
-        sys_call6(54 /* setsockopt */, sock, 0 /* IPPROTO_IP */, 2 /* IP_TTL */, (long)&ttl, sizeof(ttl), 0);
+        sys_call6(SYS_setsockopt, sock, 0 /* IPPROTO_IP */, 2 /* IP_TTL */, (long)&ttl, sizeof(ttl), 0);
 
         struct { uint16_t family; uint16_t port; uint32_t addr; uint8_t pad[8]; } da;
         da.family = 2; da.port = 0; da.addr = dest_be;
@@ -31990,7 +31990,7 @@ __attribute__((used)) static void cmd_mtr(int argc, char *argv[]) {
 
         for (int p = 0; p < count; p++) {
             sys_call2(228 /* clock_gettime */, 0, (long)&ts1);
-            sys_call6(44 /* sendto */, sock, (long)pkt, 64, 0, (long)&da, 16);
+            sys_call6(SYS_sendto, sock, (long)pkt, 64, 0, (long)&da, 16);
 
             uint8_t rbuf[256];
             long rn = sys_call4(45 /* recvfrom */, sock, (long)rbuf, 256, 0);
@@ -44031,7 +44031,7 @@ static void cmd_utmpdump(int argc, char *argv[]) {
 
         /* Get current time */
         struct { long tv_sec; long tv_nsec; } ts = {0, 0};
-        sys_call2(98 /* clock_gettime */, 0 /* CLOCK_REALTIME */, (long)&ts);
+        sys_call2(SYS_clock_gettime, 0 /* CLOCK_REALTIME */, (long)&ts);
 
         /* Show boot record */
         write_str(1, "[2] [00000] [~~  ] [reboot  ] [~           ] [                    ] [0.0.0.0        ] [");

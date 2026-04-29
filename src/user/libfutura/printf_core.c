@@ -232,6 +232,26 @@ int fut_vprintf_fmt(fut_putc_fn cb, void *ctx, const char *fmt, va_list ap) {
             }
             break;
         }
+        case 'o': {
+            /* Octal — used by file mode formatting (chmod, ls -l).
+             * Without it the default branch would print '%o' literally
+             * and skip the va_arg, shifting every subsequent
+             * conversion. Same bug class we already fixed in the
+             * kernel's fut_printf. */
+            uint64_t val;
+            if (is_longlong) {
+                val = va_arg(ap, unsigned long long);
+            } else if (is_long || is_size) {
+                val = va_arg(ap, unsigned long);
+            } else {
+                val = va_arg(ap, unsigned int);
+            }
+            if (emit_unsigned(cb, ctx, (uint64_t)val, 8, false,
+                              width, pad_char, &total) < 0) {
+                return -1;
+            }
+            break;
+        }
         case 'p': {
             uintptr_t val = (uintptr_t)va_arg(ap, void *);
             if (emit_string(cb, ctx, "0x", &total) < 0) {

@@ -255,6 +255,17 @@ long __isoc23_strtol(const char *nptr, char **endptr, int base) {
     return strtol(nptr, endptr, base);
 }
 
+/* atoi/atol — thin wrappers around strtol(s, NULL, 10).  libwayland's
+ * connection.c uses atoi() to parse @since version markers in protocol
+ * messages. */
+int atoi(const char *nptr) {
+    return (int)strtol(nptr, (char **)0, 10);
+}
+
+long atol(const char *nptr) {
+    return strtol(nptr, (char **)0, 10);
+}
+
 /**
  * Copy memory.
  */

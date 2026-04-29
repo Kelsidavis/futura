@@ -410,42 +410,25 @@ static int64_t sys_getppid_wrapper(uint64_t arg0, uint64_t arg1, uint64_t arg2,
     return sys_getppid();
 }
 
-/* sys_brk - change data segment size
- * x0 = new_brk
- * Returns: new break on success, current break if new_brk is 0
- */
-static int64_t sys_brk(uint64_t new_brk, uint64_t arg1, uint64_t arg2,
-                       uint64_t arg3, uint64_t arg4, uint64_t arg5) {
+/* sys_brk wrapper — delegate to the real per-process implementation
+ * in kernel/sys_brk.c instead of the previous static-256KB-heap stub.
+ *
+ * The old stub returned a kernel-half pointer (&heap[0]) as the user's
+ * heap base, which malloc() in libfutura then tried to grow into via a
+ * non-zero brk call.  malloc()'s 'current < 0x10000' validity check
+ * never tripped (kernel addresses are huge), but every subsequent
+ * write through the returned pointer would have faulted in user mode.
+ * In practice the call returned -1 from somewhere — likely the
+ * compositor's libwayland-shm code calling brk(0) and the stub's
+ * static-init-on-first-call hitting a per-task-not-per-image race
+ * across forks — and malloc() bailed.  The real sys_brk in
+ * kernel/sys_brk.c sets up a proper VMA-backed heap that grows via
+ * fut_pmm_alloc_page on demand. */
+extern long sys_brk(uintptr_t new_break);
+static int64_t sys_brk_wrapper(uint64_t new_brk, uint64_t arg1, uint64_t arg2,
+                               uint64_t arg3, uint64_t arg4, uint64_t arg5) {
     (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
-
-    /* Simple implementation: maintain a per-"process" heap
-     * For now, use a static heap region since we only have one test process
-     * In a real implementation, this would be per-task
-     */
-    static uint8_t heap[256 * 1024];  /* 256KB heap */
-    static uint64_t current_brk = 0;
-
-    /* Initialize on first call */
-    if (current_brk == 0) {
-        current_brk = (uint64_t)&heap[0];
-    }
-
-    /* If new_brk is 0, return current break */
-    if (new_brk == 0) {
-        return (int64_t)current_brk;
-    }
-
-    /* Validate new_brk is within heap bounds */
-    uint64_t heap_start = (uint64_t)&heap[0];
-    uint64_t heap_end = (uint64_t)&heap[sizeof(heap)];
-
-    if (new_brk < heap_start || new_brk > heap_end) {
-        return (int64_t)current_brk;  /* Return current break on error */
-    }
-
-    /* Set new break */
-    current_brk = new_brk;
-    return (int64_t)current_brk;
+    return (int64_t)sys_brk((uintptr_t)new_brk);
 }
 
 /* sys_read_wrapper - read from file descriptor
@@ -4185,7 +4168,7 @@ static void arm64_syscall_table_init(void) {
     syscall_table[__NR_getsockopt].name = "getsockopt";
     syscall_table[__NR_shutdown].handler = (syscall_fn_t)sys_shutdown_wrapper;
     syscall_table[__NR_shutdown].name = "shutdown";
-    syscall_table[__NR_brk].handler = (syscall_fn_t)sys_brk;
+    syscall_table[__NR_brk].handler = (syscall_fn_t)sys_brk_wrapper;
     syscall_table[__NR_brk].name = "brk";
     syscall_table[__NR_munmap].handler = (syscall_fn_t)sys_munmap_wrapper;
     syscall_table[__NR_munmap].name = "munmap";
@@ -4251,7 +4234,7 @@ static void arm64_syscall_table_init(void) {
     syscall_table[9].name = "mmap";
     syscall_table[11].handler = (syscall_fn_t)sys_munmap_wrapper;
     syscall_table[11].name = "munmap";
-    syscall_table[12].handler = (syscall_fn_t)sys_brk;
+    syscall_table[12].handler = (syscall_fn_t)sys_brk_wrapper;
     syscall_table[12].name = "brk";
     syscall_table[16].handler = (syscall_fn_t)sys_ioctl_wrapper;
     syscall_table[16].name = "ioctl";

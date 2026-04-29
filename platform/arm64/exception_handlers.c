@@ -527,3 +527,4 @@ void arm64_handle_serror(fut_interrupt_frame_t *frame) {
         __asm__ volatile("wfi");
     }
 }
+

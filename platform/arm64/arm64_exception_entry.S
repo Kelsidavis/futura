@@ -277,10 +277,17 @@ sync_exception_entry:
     msr     daifset, #3          /* Mask IRQ and FIQ */
 
     /* Restore SP (deallocates frame), then x0/x1.  IRQs are masked so
-     * the frame memory below SP cannot be overwritten before we finish. */
+     * the frame memory below SP cannot be overwritten before we finish.
+     *
+     * Use two separate LDR instructions instead of one LDP. Per ARM ARM
+     * C6.2.155, an LDP whose destination register matches its base
+     * register (here x0 = both Rt1 and Rn) is CONSTRAINED UNPREDICTABLE.
+     * Two LDRs sidestep the UNPREDICTABLE clause — Rn is used at decode
+     * time and only written once. */
     ldr     x1, [x0, #248]      /* x1 = original SP from frame->sp */
     mov     sp, x1               /* Restore SP — frame now below SP */
-    ldp     x0, x1, [x0, #0]   /* Restore x0, x1 from frame (uses pre-write x0) */
+    ldr     x1, [x0, #8]         /* x1 = frame->x[1]                  */
+    ldr     x0, [x0, #0]         /* x0 = frame->x[0] (base used pre-write) */
 
     /* Return from exception */
     eret

@@ -195,7 +195,12 @@ static void panel_draw(struct panel_state *state) {
     /* Draw launcher button (left side) with rounded-look highlight */
     uint32_t launcher_color = state->launcher_hovered ? ACCENT_COLOR : 0xFF333340;
     draw_rect(state->shm_data, PANEL_WIDTH, 6, 4, 72, 20, launcher_color);
-    draw_text(state->shm_data, PANEL_WIDTH, 14, 8, "APPS", TEXT_COLOR);
+    /* Centre "APPS" inside the 72×20 button rather than nailing it to
+     * x=14 / y=8 (which left a noticeable left/top weight when the
+     * button hovered). 4 chars × 6px stride = 24px wide, glyphs are
+     * 5px tall. Button origin (6, 4); centre = (6 + (72-24)/2,
+     * 4 + (20-5)/2) ≈ (30, 11). */
+    draw_text(state->shm_data, PANEL_WIDTH, 30, 11, "APPS", TEXT_COLOR);
 
     /* Branding: "FUTURA" left of center */
     draw_text(state->shm_data, PANEL_WIDTH, 90, 11, "FUTURA", ACCENT_COLOR);

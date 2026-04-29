@@ -1025,14 +1025,37 @@ int fut_task_waitpid(int pid, int *status_out, int flags, uint64_t *child_ticks_
             return 0;
         }
 
-        /* Check for pending unblocked signals → EINTR */
+        /* Check for pending unblocked signals → EINTR.
+         *
+         * A pending SIGCHLD whose handler is SIG_IGN or SIG_DFL is a
+         * non-event for waitpid: POSIX says SIGCHLD's default action
+         * is to discard, and SIG_IGN explicitly drops it. Returning
+         * EINTR for it would force kernel callers (init/spawner-style
+         * loops with no signal handlers installed) into a tight retry
+         * loop, since each child exit re-arms the pending bit and the
+         * subsequent waitpid sees it again before reaching the wait
+         * queue. The actual notification — the child entering ZOMBIE
+         * — is handled by the child_waiters wakeup, which is exactly
+         * what waitpid is here to consume. */
         {
             uint64_t pending = __atomic_load_n(&parent->pending_signals, __ATOMIC_ACQUIRE);
             fut_thread_t *wp_thr = fut_thread_current();
             uint64_t wp_mask = wp_thr ?
                 __atomic_load_n(&wp_thr->signal_mask, __ATOMIC_ACQUIRE) :
                 __atomic_load_n(&parent->signal_mask, __ATOMIC_ACQUIRE);
-            if (pending & ~wp_mask) {
+            uint64_t actionable = pending & ~wp_mask;
+            uint64_t sigchld_bit = 1ULL << (SIGCHLD - 1);
+            if (actionable & sigchld_bit) {
+                sighandler_t h = fut_signal_get_handler(parent, SIGCHLD);
+                if (h == SIG_IGN || h == SIG_DFL) {
+                    actionable &= ~sigchld_bit;
+                    /* Clear pending so we don't re-trip on the same
+                     * drop-on-the-floor signal each iteration. */
+                    __atomic_and_fetch(&parent->pending_signals,
+                                       ~sigchld_bit, __ATOMIC_ACQ_REL);
+                }
+            }
+            if (actionable) {
                 fut_spinlock_release(&task_list_lock);
                 return -EINTR;
             }
@@ -1165,14 +1188,37 @@ int fut_task_waitpid_ex(int pid, int *status_out, int flags, uint32_t *uid_out) 
             return 0;
         }
 
-        /* Check for pending unblocked signals → EINTR */
+        /* Check for pending unblocked signals → EINTR.
+         *
+         * A pending SIGCHLD whose handler is SIG_IGN or SIG_DFL is a
+         * non-event for waitpid: POSIX says SIGCHLD's default action
+         * is to discard, and SIG_IGN explicitly drops it. Returning
+         * EINTR for it would force kernel callers (init/spawner-style
+         * loops with no signal handlers installed) into a tight retry
+         * loop, since each child exit re-arms the pending bit and the
+         * subsequent waitpid sees it again before reaching the wait
+         * queue. The actual notification — the child entering ZOMBIE
+         * — is handled by the child_waiters wakeup, which is exactly
+         * what waitpid is here to consume. */
         {
             uint64_t pending = __atomic_load_n(&parent->pending_signals, __ATOMIC_ACQUIRE);
             fut_thread_t *wp_thr = fut_thread_current();
             uint64_t wp_mask = wp_thr ?
                 __atomic_load_n(&wp_thr->signal_mask, __ATOMIC_ACQUIRE) :
                 __atomic_load_n(&parent->signal_mask, __ATOMIC_ACQUIRE);
-            if (pending & ~wp_mask) {
+            uint64_t actionable = pending & ~wp_mask;
+            uint64_t sigchld_bit = 1ULL << (SIGCHLD - 1);
+            if (actionable & sigchld_bit) {
+                sighandler_t h = fut_signal_get_handler(parent, SIGCHLD);
+                if (h == SIG_IGN || h == SIG_DFL) {
+                    actionable &= ~sigchld_bit;
+                    /* Clear pending so we don't re-trip on the same
+                     * drop-on-the-floor signal each iteration. */
+                    __atomic_and_fetch(&parent->pending_signals,
+                                       ~sigchld_bit, __ATOMIC_ACQ_REL);
+                }
+            }
+            if (actionable) {
                 fut_spinlock_release(&task_list_lock);
                 return -EINTR;
             }

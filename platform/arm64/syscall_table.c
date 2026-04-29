@@ -4620,15 +4620,11 @@ static void arm64_syscall_table_init(void) {
     syscall_table[93].handler  = (syscall_fn_t)sys_fchown_wrapper;       syscall_table[93].name = "fchown";
     syscall_table[217].handler = (syscall_fn_t)sys_getdents64_wrapper;   syscall_table[217].name = "getdents64";
     syscall_table[169].handler = (syscall_fn_t)sys_reboot_wrapper;       syscall_table[169].name = "reboot";
-    /* uname (x86_64: 63, ARM64: 160) — for shell uname command */
-    syscall_table[63].handler = syscall_table[__NR_uname].handler;
-    syscall_table[63].name = "uname";
-    /* statfs (x86_64: 137, ARM64: 43) — for df command */
-    syscall_table[137].handler = syscall_table[__NR_statfs].handler;
-    syscall_table[137].name = "statfs";
-    /* fcntl (x86_64: 72, ARM64: 25) — needed by shell for F_GETFL on stdio */
-    syscall_table[72].handler = syscall_table[__NR_fcntl].handler;
-    syscall_table[72].name = "fcntl";
+    /* x86_64-numbered slots wired directly to the wrapper symbols
+     * (don't read syscall_table[__NR_X] — see header comment above). */
+    syscall_table[63].handler  = (syscall_fn_t)sys_uname;            syscall_table[63].name  = "uname";
+    syscall_table[137].handler = (syscall_fn_t)sys_statfs_wrapper;   syscall_table[137].name = "statfs";
+    syscall_table[72].handler  = (syscall_fn_t)sys_fcntl_wrapper;    syscall_table[72].name  = "fcntl";
     /* symlink (x86_64: 88) → wrapper calls sys_symlink(target, linkpath) */
     {
         extern long sys_symlink(const char *, const char *);
@@ -4648,42 +4644,19 @@ static void arm64_syscall_table_init(void) {
         syscall_table[89].name = "readlink";
     }
 
-    /* sync (x86_64: 162, ARM64: 81) */
-    syscall_table[162].handler = syscall_table[__NR_sync].handler;
-    syscall_table[162].name = "sync";
-    /* umask (x86_64: 95, ARM64: 166) */
-    syscall_table[95].handler = syscall_table[__NR_umask].handler;
-    syscall_table[95].name = "umask";
-    /* getpid (x86_64: 39, ARM64: 172) */
-    syscall_table[39].handler = syscall_table[__NR_getpid].handler;
-    syscall_table[39].name = "getpid";
-    /* getppid (x86_64: 110, ARM64: 173) */
-    syscall_table[110].handler = syscall_table[__NR_getppid].handler;
-    syscall_table[110].name = "getppid";
-    /* getuid (x86_64: 102, ARM64: 174) */
-    syscall_table[102].handler = syscall_table[__NR_getuid].handler;
-    syscall_table[102].name = "getuid";
-    /* getgid (x86_64: 104, ARM64: 176) */
-    syscall_table[104].handler = syscall_table[__NR_getgid].handler;
-    syscall_table[104].name = "getgid";
-    /* geteuid (x86_64: 107, ARM64: 175) */
-    syscall_table[107].handler = syscall_table[__NR_geteuid].handler;
-    syscall_table[107].name = "geteuid";
-    /* getegid (x86_64: 108, ARM64: 177) */
-    syscall_table[108].handler = syscall_table[__NR_getegid].handler;
-    syscall_table[108].name = "getegid";
-    /* setsid (x86_64: 112, ARM64: 157) */
-    syscall_table[112].handler = syscall_table[__NR_setsid].handler;
-    syscall_table[112].name = "setsid";
-    /* getsid (x86_64: 124, ARM64: 156) */
-    syscall_table[124].handler = syscall_table[__NR_getsid].handler;
-    syscall_table[124].name = "getsid";
-    /* setpgid (x86_64: 109, ARM64: 154) */
-    syscall_table[109].handler = syscall_table[__NR_setpgid].handler;
-    syscall_table[109].name = "setpgid";
-    /* getpgid (x86_64: 121, ARM64: 155) */
-    syscall_table[121].handler = syscall_table[__NR_getpgid].handler;
-    syscall_table[121].name = "getpgid";
+    /* Process / identity / session — direct wrappers */
+    syscall_table[162].handler = (syscall_fn_t)sys_sync_wrapper;     syscall_table[162].name = "sync";
+    syscall_table[95].handler  = (syscall_fn_t)sys_umask_wrapper;    syscall_table[95].name  = "umask";
+    syscall_table[39].handler  = (syscall_fn_t)sys_getpid_wrapper;   syscall_table[39].name  = "getpid";
+    syscall_table[110].handler = (syscall_fn_t)sys_getppid_wrapper;  syscall_table[110].name = "getppid";
+    syscall_table[102].handler = (syscall_fn_t)sys_getuid_wrapper;   syscall_table[102].name = "getuid";
+    syscall_table[104].handler = (syscall_fn_t)sys_getgid_wrapper;   syscall_table[104].name = "getgid";
+    syscall_table[107].handler = (syscall_fn_t)sys_geteuid_wrapper;  syscall_table[107].name = "geteuid";
+    syscall_table[108].handler = (syscall_fn_t)sys_getegid_wrapper;  syscall_table[108].name = "getegid";
+    syscall_table[112].handler = (syscall_fn_t)sys_setsid_wrapper;   syscall_table[112].name = "setsid";
+    syscall_table[124].handler = (syscall_fn_t)sys_getsid_wrapper;   syscall_table[124].name = "getsid";
+    syscall_table[109].handler = (syscall_fn_t)sys_setpgid_wrapper;  syscall_table[109].name = "setpgid";
+    syscall_table[121].handler = (syscall_fn_t)sys_getpgid_wrapper;  syscall_table[121].name = "getpgid";
 
     /* Modern mount API (Linux 5.2+) */
     syscall_table[__NR_open_tree].handler = (syscall_fn_t)sys_open_tree_wrapper;

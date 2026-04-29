@@ -724,8 +724,12 @@ static void process_key(struct client_state *s, uint32_t key) {
              * "armed" state piggybacks on a dedicated status string. */
             static const char quit_warn[] = "unsaved changes - Ctrl+Q again to quit";
             if (ed_dirty) {
+                /* The armed window must also still be unexpired — once
+                 * the status fades, the user has visually moved on and
+                 * shouldn't lose their work to a stale buffer match. */
                 bool armed = (ed_status_msg[0] == quit_warn[0] &&
-                              ed_strlen(ed_status_msg) == ed_strlen(quit_warn));
+                              ed_strlen(ed_status_msg) == ed_strlen(quit_warn) &&
+                              tick_ms < ed_status_expire_ms);
                 if (!armed) {
                     ed_set_status(quit_warn, tick_ms);
                     s->needs_redraw = true;

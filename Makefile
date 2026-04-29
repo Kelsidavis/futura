@@ -1559,6 +1559,11 @@ $(FBTEST_BIN):
 $(INIT_BIN) $(SECOND_STUB_BIN):
 	@$(MAKE) -C src/user stubs
 
+# Generic wayland binary rules — only used for x86_64 builds.
+# On ARM64 these would collide with the ARM64-specific rules below
+# (ARM64_WAYLAND_*_BIN expands to the same path as the generic form),
+# and the ARM64 versions correctly build third_party/wayland first.
+ifneq ($(PLATFORM),arm64)
 $(WAYLAND_COMPOSITOR_BIN):
 	@$(MAKE) -C src/user/compositor/futura-wayland all
 
@@ -1579,6 +1584,7 @@ $(WAYLAND_COLOR_BIN):
 
 $(WAYLAND_SHELL_BIN):
 	@$(MAKE) -C src/user/shell/futura-shell all
+endif
 
 $(OBJ_DIR)/kernel/blobs:
 	@mkdir -p $@

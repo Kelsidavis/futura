@@ -8,6 +8,7 @@
 
 #include <kernel/errno.h>
 #include <kernel/fut_memory.h>
+#include <generated/feature_flags.h>
 
 /* ============================================================
  *   Test Framework Stubs (x86-64 specific)

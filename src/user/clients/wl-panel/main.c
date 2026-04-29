@@ -270,12 +270,25 @@ static void pointer_button(void *data, struct wl_pointer *pointer, uint32_t seri
     if (button_state == WL_POINTER_BUTTON_STATE_PRESSED && state->launcher_hovered) {
         printf("[PANEL] Launcher button clicked - attempting to launch terminal\n");
 
-        /* Fork and exec a terminal application */
+        /* Fork and exec a terminal application. The child must inherit
+         * the wayland envvars or it can't connect to the compositor —
+         * launching with envp={NULL} produced terminal processes that
+         * silently exited with wl_display_connect() == NULL. Mirror the
+         * cli_envp set up by the spawner thread in platform_init. */
         long pid = sys_fork_call();
         if (pid == 0) {
             /* Child process - launch terminal */
             const char *argv[] = {"/bin/wl-term", NULL};
-            const char *envp[] = {NULL};
+            const char *envp[] = {
+                "PATH=/bin:/sbin",
+                "HOME=/",
+                "TERM=vt100",
+                "USER=root",
+                "HOSTNAME=futura",
+                "WAYLAND_DISPLAY=wayland-0",
+                "XDG_RUNTIME_DIR=/run",
+                NULL,
+            };
             sys_execve_call("/bin/wl-term", (char *const *)argv, (char *const *)envp);
 
             /* If execve fails, try futura-shell as fallback */

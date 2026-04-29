@@ -366,6 +366,12 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
     /* Get file structure for this fd from task's FD table */
     struct fut_file *file = vfs_get_file_from_task(task, local_fd);
     if (!file) {
+        /* F_DUPFD / F_DUPFD_CLOEXEC against an unopened fd is a normal
+         * libwayland / libc probe pattern (used to discover the lowest
+         * unused fd >= some hint). Don't log it as a failure. */
+        if (local_cmd == 0 /*F_DUPFD*/ || local_cmd == 1030 /*F_DUPFD_CLOEXEC*/) {
+            return -EBADF;
+        }
         fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%d, arg=%llu) -> EBADF (fd not open)\n",
                    local_fd, fd_category, local_cmd, local_arg);
         return -EBADF;

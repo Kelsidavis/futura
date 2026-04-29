@@ -2052,7 +2052,7 @@ perf-ci: perf
 
 .PHONY: sym-audit
 sym-audit:
-	@files=$$(find build/third_party/wayland/build -name '*.a' -print); \
+	@files=$$(find build/third_party/wayland/build -name '*.a' -print 2>/dev/null); \
 	if [ -z "$$files" ]; then \
 		echo "[sym-audit] no archives found under third_party/wayland/build"; \
 		exit 0; \

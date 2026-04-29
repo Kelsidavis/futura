@@ -4543,130 +4543,83 @@ static void arm64_syscall_table_init(void) {
     syscall_table[273].handler = (syscall_fn_t)sys_init_module_wrapper;
     syscall_table[273].name = "finit_module";
 
-    /* x86_64 compatibility aliases — Futura userland uses x86_64 syscall numbers */
-    /* dup (x86_64: 32, ARM64: 23) */
-    syscall_table[32].handler = syscall_table[__NR_dup].handler;
-    syscall_table[32].name = "dup";
-    /* dup2 (x86_64: 33) — use proper sys_dup2 handler instead of mknodat */
-    syscall_table[33].handler = (syscall_fn_t)sys_dup2_wrapper;
-    syscall_table[33].name = "dup2";
-    /* kill (x86_64: 62, ARM64: 129) */
-    syscall_table[62].handler = syscall_table[__NR_kill].handler;
-    syscall_table[62].name = "kill";
-    /* rename (x86_64: 82) — shell 'mv' command */
+    /* x86_64 compatibility aliases — Futura userland uses x86_64 syscall numbers.
+     *
+     * IMPORTANT: do NOT use `syscall_table[__NR_X].handler` to copy the
+     * handler. Many ARM64 native __NR_* numbers are small (13, 17, 19,
+     * 20, 22, 28, 32, …) and overlap with x86_64 numbers we deliberately
+     * overwrite below. Reading syscall_table[__NR_X] *after* such an
+     * overwrite returns the x86_64 handler, not the original ARM64-native
+     * handler — which is exactly the bug that routed wayland's
+     * epoll_pwait into sys_pipe. Always wire to the wrapper symbol
+     * directly so the order of table writes can't matter. */
+
+    /* Process / file lifecycle */
+    syscall_table[32].handler = (syscall_fn_t)sys_dup_wrapper;       syscall_table[32].name = "dup";
+    syscall_table[33].handler = (syscall_fn_t)sys_dup2_wrapper;      syscall_table[33].name = "dup2";
+    syscall_table[62].handler = (syscall_fn_t)sys_kill_wrapper;      syscall_table[62].name = "kill";
     extern int64_t sys_rename_compat(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
-    syscall_table[82].handler = (syscall_fn_t)sys_rename_compat;
-    syscall_table[82].name = "rename";
-    /* clock_gettime (x86_64: 228, ARM64: 113) — for shell 'date' command */
-    syscall_table[228].handler = syscall_table[__NR_clock_gettime].handler;
-    syscall_table[228].name = "clock_gettime";
-    /* getrusage (x86_64: 98, ARM64: 165) — wayland/glibc malloc reads it */
-    syscall_table[98].handler = syscall_table[__NR_getrusage].handler;
-    syscall_table[98].name = "getrusage";
-    /* syslog (x86_64: 103, ARM64: 116) — for dmesg */
-    syscall_table[103].handler = (syscall_fn_t)sys_syslog_wrapper;
-    syscall_table[103].name = "syslog";
+    syscall_table[82].handler = (syscall_fn_t)sys_rename_compat;     syscall_table[82].name = "rename";
+
+    /* Time / resource */
+    syscall_table[228].handler = (syscall_fn_t)sys_clock_gettime;    syscall_table[228].name = "clock_gettime";
+    syscall_table[98].handler  = (syscall_fn_t)sys_getrusage_wrapper; syscall_table[98].name = "getrusage";
+
+    /* syslog — wired in two slots */
+    syscall_table[103].handler = (syscall_fn_t)sys_syslog_wrapper;   syscall_table[103].name = "syslog";
     syscall_table[__NR_syslog].handler = (syscall_fn_t)sys_syslog_wrapper;
     syscall_table[__NR_syslog].name = "syslog";
-    /* readv/writev (x86_64: 19/20, ARM64: 65/66) */
-    syscall_table[19].handler = syscall_table[__NR_readv].handler;
-    syscall_table[19].name = "readv";
-    syscall_table[20].handler = syscall_table[__NR_writev].handler;
-    syscall_table[20].name = "writev";
-    /* pread64/pwrite64 (x86_64: 17/18, ARM64: 67/68) */
-    syscall_table[17].handler = syscall_table[__NR_pread64].handler;
-    syscall_table[17].name = "pread64";
-    syscall_table[18].handler = syscall_table[__NR_pwrite64].handler;
-    syscall_table[18].name = "pwrite64";
-    /* socket (x86_64: 41, ARM64: 198) */
-    syscall_table[41].handler = syscall_table[__NR_socket].handler;
-    syscall_table[41].name = "socket";
-    /* connect (x86_64: 42, ARM64: 203) */
-    syscall_table[42].handler = syscall_table[__NR_connect].handler;
-    syscall_table[42].name = "connect";
-    /* sendto (x86_64: 44, ARM64: 206) */
-    syscall_table[44].handler = syscall_table[__NR_sendto].handler;
-    syscall_table[44].name = "sendto";
-    /* recvfrom (x86_64: 45, ARM64: 207) */
-    syscall_table[45].handler = syscall_table[__NR_recvfrom].handler;
-    syscall_table[45].name = "recvfrom";
-    /* madvise (x86_64: 28, ARM64: 233) */
-    syscall_table[28].handler = syscall_table[__NR_madvise].handler;
-    syscall_table[28].name = "madvise";
-    /* Network syscalls (x86_64 → ARM64 compat) */
-    syscall_table[43].handler = syscall_table[__NR_accept].handler;
-    syscall_table[43].name = "accept";
-    syscall_table[46].handler = syscall_table[__NR_sendmsg].handler;
-    syscall_table[46].name = "sendmsg";
-    syscall_table[47].handler = syscall_table[__NR_recvmsg].handler;
-    syscall_table[47].name = "recvmsg";
-    syscall_table[48].handler = syscall_table[__NR_shutdown].handler;
-    syscall_table[48].name = "shutdown";
-    syscall_table[49].handler = syscall_table[__NR_bind].handler;
-    syscall_table[49].name = "bind";
-    syscall_table[50].handler = syscall_table[__NR_listen].handler;
-    syscall_table[50].name = "listen";
-    syscall_table[51].handler = syscall_table[__NR_getsockname].handler;
-    syscall_table[51].name = "getsockname";
-    syscall_table[52].handler = syscall_table[__NR_getpeername].handler;
-    syscall_table[52].name = "getpeername";
-    /* x86_64 #53 is socketpair, NOT connect (connect is x86_64 #42) —
-     * wiring it to connect routed wayland's wl_os_socket_cloexec
-     * socketpair calls into connect with mismatched args, which then
-     * tripped sys_writev later when the buffers it returned were
-     * misinterpreted as iovecs. */
-    syscall_table[53].handler = syscall_table[__NR_socketpair].handler;
-    syscall_table[53].name = "socketpair";
-    syscall_table[54].handler = syscall_table[__NR_setsockopt].handler;
-    syscall_table[54].name = "setsockopt";
-    syscall_table[55].handler = syscall_table[__NR_getsockopt].handler;
-    syscall_table[55].name = "getsockopt";
-    /* File permission syscalls */
-    /* x86_64 chmod(90) takes (path, mode), NOT fd — use sys_chmod directly */
-    syscall_table[90].handler = (syscall_fn_t)sys_chmod_compat;
-    syscall_table[90].name = "chmod";
-    syscall_table[91].handler = syscall_table[__NR_fchmod].handler;
-    syscall_table[91].name = "fchmod";
-    /* Signal syscalls (x86_64: 13/14, ARM64: 134/135) */
-    syscall_table[13].handler = syscall_table[__NR_rt_sigaction].handler;
-    syscall_table[13].name = "rt_sigaction";
-    syscall_table[14].handler = syscall_table[__NR_rt_sigprocmask].handler;
-    syscall_table[14].name = "rt_sigprocmask";
-    /* epoll (x86_64: 229/230/291, ARM64: 21/22/20) */
-    syscall_table[229].handler = syscall_table[__NR_epoll_ctl].handler;
-    syscall_table[229].name = "epoll_ctl";
-    syscall_table[230].handler = syscall_table[__NR_epoll_pwait].handler;
-    syscall_table[230].name = "epoll_wait";
-    /* Bypass __NR_epoll_create1 alias — that index (#20) was overwritten
-     * with writev above for x86_64 compat (x86_64 writev=20, but ARM64
-     * native epoll_create1=20). Wire 291 directly to the wrapper. */
-    syscall_table[291].handler = (syscall_fn_t)sys_epoll_create1_wrapper;
-    syscall_table[291].name = "epoll_create1";
-    /* eventfd2 (x86_64: 290, ARM64: 19) — same overwrite issue:
-     * x86_64 readv=19 took ARM64's eventfd2 slot, so wire 290 directly. */
-    syscall_table[290].handler = (syscall_fn_t)sys_eventfd2_wrapper;
-    syscall_table[290].name = "eventfd2";
-    /* time_millis (Futura-specific, see include/user/sysnums.h) */
-    syscall_table[400].handler = (syscall_fn_t)sys_time_millis_wrapper;
-    syscall_table[400].name = "time_millis";
-    /* File ops batch */
-    syscall_table[73].handler = syscall_table[__NR_flock].handler;
-    syscall_table[73].name = "flock";
-    syscall_table[74].handler = syscall_table[__NR_fsync].handler;
-    syscall_table[74].name = "fsync";
-    syscall_table[75].handler = syscall_table[__NR_fdatasync].handler;
-    syscall_table[75].name = "fdatasync";
-    syscall_table[76].handler = syscall_table[__NR_truncate].handler;
-    syscall_table[76].name = "truncate";
-    syscall_table[77].handler = syscall_table[__NR_ftruncate].handler;
-    syscall_table[77].name = "ftruncate";
-    syscall_table[93].handler = syscall_table[__NR_fchown].handler;
-    syscall_table[93].name = "fchown";
-    syscall_table[217].handler = syscall_table[__NR_getdents64].handler;
-    syscall_table[217].name = "getdents64";
-    /* reboot (x86_64: 169, ARM64: 142) — for shell reboot/poweroff commands */
-    syscall_table[169].handler = syscall_table[__NR_reboot].handler;
-    syscall_table[169].name = "reboot";
+
+    /* I/O */
+    syscall_table[19].handler = (syscall_fn_t)sys_readv_wrapper;     syscall_table[19].name = "readv";
+    syscall_table[20].handler = (syscall_fn_t)sys_writev_wrapper;    syscall_table[20].name = "writev";
+    syscall_table[17].handler = (syscall_fn_t)sys_pread64_wrapper;   syscall_table[17].name = "pread64";
+    syscall_table[18].handler = (syscall_fn_t)sys_pwrite64_wrapper;  syscall_table[18].name = "pwrite64";
+    syscall_table[28].handler = (syscall_fn_t)sys_madvise_wrapper;   syscall_table[28].name = "madvise";
+
+    /* Networking */
+    syscall_table[41].handler = (syscall_fn_t)sys_socket_wrapper;       syscall_table[41].name = "socket";
+    syscall_table[42].handler = (syscall_fn_t)sys_connect_wrapper;      syscall_table[42].name = "connect";
+    syscall_table[43].handler = (syscall_fn_t)sys_accept_wrapper;       syscall_table[43].name = "accept";
+    syscall_table[44].handler = (syscall_fn_t)sys_sendto_wrapper;       syscall_table[44].name = "sendto";
+    syscall_table[45].handler = (syscall_fn_t)sys_recvfrom_wrapper;     syscall_table[45].name = "recvfrom";
+    syscall_table[46].handler = (syscall_fn_t)sys_sendmsg_wrapper;      syscall_table[46].name = "sendmsg";
+    syscall_table[47].handler = (syscall_fn_t)sys_recvmsg_wrapper;      syscall_table[47].name = "recvmsg";
+    syscall_table[48].handler = (syscall_fn_t)sys_shutdown_wrapper;     syscall_table[48].name = "shutdown";
+    syscall_table[49].handler = (syscall_fn_t)sys_bind_wrapper;         syscall_table[49].name = "bind";
+    syscall_table[50].handler = (syscall_fn_t)sys_listen_wrapper;       syscall_table[50].name = "listen";
+    syscall_table[51].handler = (syscall_fn_t)sys_getsockname_wrapper;  syscall_table[51].name = "getsockname";
+    syscall_table[52].handler = (syscall_fn_t)sys_getpeername_wrapper;  syscall_table[52].name = "getpeername";
+    syscall_table[53].handler = (syscall_fn_t)sys_socketpair_wrapper;   syscall_table[53].name = "socketpair";
+    syscall_table[54].handler = (syscall_fn_t)sys_setsockopt_wrapper;   syscall_table[54].name = "setsockopt";
+    syscall_table[55].handler = (syscall_fn_t)sys_getsockopt_wrapper;   syscall_table[55].name = "getsockopt";
+
+    /* File permissions */
+    syscall_table[90].handler = (syscall_fn_t)sys_chmod_compat;       syscall_table[90].name = "chmod";
+    syscall_table[91].handler = (syscall_fn_t)sys_fchmod_wrapper;     syscall_table[91].name = "fchmod";
+
+    /* Signals */
+    syscall_table[13].handler = (syscall_fn_t)sys_rt_sigaction_wrapper;    syscall_table[13].name = "rt_sigaction";
+    syscall_table[14].handler = (syscall_fn_t)sys_rt_sigprocmask_wrapper;  syscall_table[14].name = "rt_sigprocmask";
+
+    /* epoll / eventfd */
+    syscall_table[229].handler = (syscall_fn_t)sys_epoll_ctl_wrapper;     syscall_table[229].name = "epoll_ctl";
+    syscall_table[230].handler = (syscall_fn_t)sys_epoll_pwait_wrapper;   syscall_table[230].name = "epoll_wait";
+    syscall_table[291].handler = (syscall_fn_t)sys_epoll_create1_wrapper; syscall_table[291].name = "epoll_create1";
+    syscall_table[290].handler = (syscall_fn_t)sys_eventfd2_wrapper;      syscall_table[290].name = "eventfd2";
+
+    /* Futura-specific */
+    syscall_table[400].handler = (syscall_fn_t)sys_time_millis_wrapper;   syscall_table[400].name = "time_millis";
+
+    /* File ops */
+    syscall_table[73].handler  = (syscall_fn_t)sys_flock_wrapper;        syscall_table[73].name = "flock";
+    syscall_table[74].handler  = (syscall_fn_t)sys_fsync_wrapper;        syscall_table[74].name = "fsync";
+    syscall_table[75].handler  = (syscall_fn_t)sys_fdatasync_wrapper;    syscall_table[75].name = "fdatasync";
+    syscall_table[76].handler  = (syscall_fn_t)sys_truncate_wrapper;     syscall_table[76].name = "truncate";
+    syscall_table[77].handler  = (syscall_fn_t)sys_ftruncate_wrapper;    syscall_table[77].name = "ftruncate";
+    syscall_table[93].handler  = (syscall_fn_t)sys_fchown_wrapper;       syscall_table[93].name = "fchown";
+    syscall_table[217].handler = (syscall_fn_t)sys_getdents64_wrapper;   syscall_table[217].name = "getdents64";
+    syscall_table[169].handler = (syscall_fn_t)sys_reboot_wrapper;       syscall_table[169].name = "reboot";
     /* uname (x86_64: 63, ARM64: 160) — for shell uname command */
     syscall_table[63].handler = syscall_table[__NR_uname].handler;
     syscall_table[63].name = "uname";

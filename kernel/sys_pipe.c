@@ -594,7 +594,8 @@ long sys_pipe(int pipefd[2]) {
     uintptr_t ptr_val = (uintptr_t)pipefd;
     bool is_kernel_ptr = (ptr_val >= KERNEL_VIRTUAL_BASE);  /* Architecture-specific */
     if (!is_kernel_ptr && fut_access_ok(pipefd, sizeof(int) * 2, 1) != 0) {
-        fut_printf("[PIPE] pipe(pipefd=?) -> EFAULT (pipefd not accessible)\n");
+        fut_printf("[PIPE] pipe(pipefd=%p) -> EFAULT (pipefd not accessible)\n",
+                   (void *)pipefd);
         return -EFAULT;
     }
 

@@ -39,7 +39,7 @@
 #define MAP_SHARED  0x0001
 
 /* Application definitions */
-#define APP_COUNT 3
+#define APP_COUNT 4
 struct app_info {
     const char *name;
     const char *label;
@@ -47,10 +47,14 @@ struct app_info {
     uint32_t color;
 };
 
+/* Apps that are actually staged into ramfs by the spawner. wl-colorwheel
+ * / wl-simple were listed before but never built into the ARM64 image,
+ * so the corresponding sidebar slots silently failed when clicked. */
 static const struct app_info apps[APP_COUNT] = {
-    {"colorwheel", "Gallery", "/bin/wl-colorwheel", 0xFF4CAF50u},
-    {"simple",     "Canvas",  "/bin/wl-simple",     0xFF2196F3u},
-    {"terminal",   "Shell",   "/bin/sh",            0xFF9C27B0u},
+    {"terminal", "Term",   "/bin/wl-term",   0xFF9C27B0u},
+    {"editor",   "Edit",   "/bin/wl-edit",   0xFF4CAF50u},
+    {"sysmon",   "Tasks",  "/bin/wl-sysmon", 0xFF2196F3u},
+    {"shell",    "Shell",  "/bin/shell",     0xFFE91E63u},
 };
 
 /* Shell state */
@@ -165,7 +169,26 @@ static void pointer_button(void *data, struct wl_pointer *pointer,
                                  (ICON_SIZE + ICON_PADDING);
             if (icon_index >= 0 && icon_index < APP_COUNT) {
                 printf("[SHELL] Launching app: %s\n", apps[icon_index].path);
-                /* In a real implementation, we'd fork/exec the app */
+                long pid = sys_fork_call();
+                if (pid == 0) {
+                    /* Child: exec the app with wayland envvars so it can
+                     * connect to the compositor at /run/wayland-0. */
+                    const char *argv[] = { apps[icon_index].path, NULL };
+                    const char *envp[] = {
+                        "PATH=/bin:/sbin",
+                        "HOME=/",
+                        "TERM=vt100",
+                        "USER=root",
+                        "HOSTNAME=futura",
+                        "WAYLAND_DISPLAY=wayland-0",
+                        "XDG_RUNTIME_DIR=/run",
+                        NULL,
+                    };
+                    sys_execve_call(apps[icon_index].path,
+                                    (char *const *)argv,
+                                    (char *const *)envp);
+                    sys_exit(127);
+                }
             }
         }
     } else if (button == BTN_LEFT && button_state == WL_POINTER_BUTTON_STATE_RELEASED) {

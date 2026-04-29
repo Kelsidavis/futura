@@ -4743,7 +4743,8 @@ int64_t arm64_syscall_dispatch(uint64_t syscall_num,
 
     /* Validate syscall number */
     if (syscall_num >= MAX_SYSCALL) {
-        fut_serial_puts("[SYSCALL] Invalid syscall number: ");
+        fut_printf("[SYSCALL] Invalid syscall number: %llu\n",
+                   (unsigned long long)syscall_num);
         return -ENOSYS;
     }
 

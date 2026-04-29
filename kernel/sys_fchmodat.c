@@ -243,9 +243,8 @@ long sys_fchmodat(int dirfd, const char *pathname, uint32_t mode, int flags) {
         return ret;
     }
 
-    /* Success */
-    fut_printf("[FCHMODAT] fchmodat(dirfd=%d, pathname='%s' [%s, len=%lu], mode=0%o [%s], flags=%s) -> 0 (Phase 2: directory FD resolution)\n",
-               local_dirfd, path_buf, path_type, (unsigned long)path_len, local_mode, mode_desc, flags_desc);
-
+    /* Success path silent — every `chmod -R` and tarball extract
+     * fires this, drowning the log. Errors still log explicitly. */
+    (void)path_type; (void)path_len; (void)mode_desc; (void)flags_desc;
     return 0;
 }

@@ -744,7 +744,7 @@ static int spawn_shell(struct terminal *term) {
         sys_close(master_fd);
 
         /* Create new session so child becomes session leader */
-        sys_call1(112 /* setsid */, 0);
+        sys_setsid_call();
 
         int slave_fd = sys_open(slave_path, 2 /* O_RDWR */, 0);
         if (slave_fd < 0) sys_exit(126);
@@ -1034,7 +1034,7 @@ int main(void) {
     state.shm_size = (size_t)TERM_MAX_WIDTH * TERM_MAX_HEIGHT * 4u;
     char shm_name[32];
     {
-        long pid = sys_call1(39 /* getpid */, 0);
+        long pid = sys_getpid_call();
         int si = 0;
         shm_name[si++] = '/';
         shm_name[si++] = 'w';
@@ -1153,7 +1153,7 @@ int main(void) {
      * with closed fds (in pipe mode) or relying on the controlling-
      * terminal hangup that doesn't always fire under our PTY. */
     if (state.term.shell_pid > 0) {
-        sys_call2(62 /* SYS_kill */, (long)state.term.shell_pid, 1 /* SIGHUP */);
+        sys_call2(SYS_kill, (long)state.term.shell_pid, 1 /* SIGHUP */);
     }
 
     /* In PTY mode shell_stdin_fd and shell_stdout_fd are the same master_fd;

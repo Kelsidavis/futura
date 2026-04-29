@@ -439,7 +439,7 @@ void comp_show_toast(struct compositor_state *comp, const char *text) {
      * comp_render_frame is updated to match. */
     struct { long tv_sec; long tv_nsec; } ts = {0, 0};
     extern long sys_call2(long nr, long a, long b);
-    sys_call2(98, 1, (long)&ts);  /* CLOCK_MONOTONIC */
+    sys_call2(SYS_clock_gettime, 1, (long)&ts);  /* CLOCK_MONOTONIC */
     comp->toast_expire_ns = (uint64_t)ts.tv_sec * 1000000000ULL +
                             (uint64_t)ts.tv_nsec + 5000000000ULL;  /* 5 seconds */
     comp->toast_active = true;
@@ -1650,7 +1650,7 @@ void comp_render_frame(struct compositor_state *comp) {
     struct { long tv_sec; long tv_nsec; } wp_ts = {0, 0};
     {
         extern long sys_call2(long nr, long a, long b);
-        sys_call2(98, 1, (long)&wp_ts);  /* CLOCK_MONOTONIC */
+        sys_call2(SYS_clock_gettime, 1, (long)&wp_ts);  /* CLOCK_MONOTONIC */
     }
     int wp_sec = (int)(wp_ts.tv_sec & 0x7FFFFFFF);
 
@@ -2025,7 +2025,7 @@ void comp_render_frame(struct compositor_state *comp) {
         /* Get current time */
         struct { long tv_sec; long tv_nsec; } wc_ts = {0, 0};
         extern long sys_call2(long nr, long a, long b);
-        sys_call2(98, 0, (long)&wc_ts);
+        sys_call2(SYS_clock_gettime, 0, (long)&wc_ts);
         long wc_secs = wc_ts.tv_sec;
         long wc_daytime = wc_secs % 86400;
         int wc_hr = (int)(wc_daytime / 3600);
@@ -2472,7 +2472,7 @@ void comp_render_frame(struct compositor_state *comp) {
             /* Get current time for menubar clock */
             struct { long tv_sec; long tv_nsec; } mb_ts = {0, 0};
             extern long sys_call2(long nr, long a, long b);
-            sys_call2(98, 0, (long)&mb_ts);
+            sys_call2(SYS_clock_gettime, 0, (long)&mb_ts);
             long mb_secs = mb_ts.tv_sec;
             long mb_daytime = mb_secs % 86400;
             int mb_hr = (int)(mb_daytime / 3600);
@@ -2667,7 +2667,7 @@ void comp_render_frame(struct compositor_state *comp) {
         /* Get current time and date for clock display */
         struct { long tv_sec; long tv_nsec; } clock_ts = {0, 0};
         extern long sys_call2(long nr, long a, long b);
-        sys_call2(98, 0, (long)&clock_ts);  /* SYS_clock_gettime(CLOCK_REALTIME, &ts) */
+        sys_call2(SYS_clock_gettime, 0, (long)&clock_ts);  /* SYS_clock_gettime(CLOCK_REALTIME, &ts) */
         long total_secs = clock_ts.tv_sec;
         long daytime = total_secs % 86400;
         int clock_hr = (int)(daytime / 3600);
@@ -4771,7 +4771,7 @@ void comp_render_frame(struct compositor_state *comp) {
             {
                 struct { long tv_sec; long tv_nsec; } up_ts = {0, 0};
                 extern long sys_call2(long nr, long a, long b);
-                sys_call2(98, 1, (long)&up_ts);  /* CLOCK_MONOTONIC */
+                sys_call2(SYS_clock_gettime, 1, (long)&up_ts);  /* CLOCK_MONOTONIC */
                 long up_secs = up_ts.tv_sec;
                 int up_h = (int)(up_secs / 3600);
                 int up_m = (int)((up_secs % 3600) / 60);
@@ -4845,7 +4845,7 @@ void comp_render_frame(struct compositor_state *comp) {
          * (CLOCK_MONOTONIC), not CLOCK_REALTIME. */
         struct { long tv_sec; long tv_nsec; } toast_ts = {0, 0};
         extern long sys_call2(long nr, long a, long b);
-        sys_call2(98, 1, (long)&toast_ts);  /* CLOCK_MONOTONIC */
+        sys_call2(SYS_clock_gettime, 1, (long)&toast_ts);  /* CLOCK_MONOTONIC */
         uint64_t now_ns = (uint64_t)toast_ts.tv_sec * 1000000000ULL +
                           (uint64_t)toast_ts.tv_nsec;
         if (now_ns >= comp->toast_expire_ns) {
@@ -5186,7 +5186,7 @@ static void comp_handle_timer_tick(struct compositor_state *comp, uint64_t expir
     {
         struct { long tv_sec; long tv_nsec; } cts = {0, 0};
         extern long sys_call2(long nr, long a, long b);
-        sys_call2(98, 0, (long)&cts);  /* SYS_clock_gettime(CLOCK_REALTIME) */
+        sys_call2(SYS_clock_gettime, 0, (long)&cts);  /* SYS_clock_gettime(CLOCK_REALTIME) */
         int cur_sec = (int)(cts.tv_sec % 60);
         int cur_min = (int)((cts.tv_sec % 3600) / 60);
         /* Per-second: damage ONLY menubar and dock clock text areas.

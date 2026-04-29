@@ -661,7 +661,7 @@ int main(void) {
 
     char shm_name[32];
     {
-        long pid = sys_call1(39 /* getpid */, 0);
+        long pid = sys_getpid_call();
         int si = 0;
         const char *pfx = "/wl-sysmon-";
         while (*pfx) shm_name[si++] = *pfx++;

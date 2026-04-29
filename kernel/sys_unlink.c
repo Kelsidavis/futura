@@ -169,9 +169,8 @@ long sys_unlink(const char *path) {
         return ret;
     }
 
-    /* Phase 2: Detailed success logging */
-    fut_printf("[UNLINK] unlink(path='%s' [%s, len=%lu]) -> 0 (file deleted, Phase 2)\n",
-               path_buf, path_type, (unsigned long)path_len);
-
+    /* Success path is silent — `rm` and tarball extraction emit
+     * thousands of these per shell session. The error paths above
+     * still log explicitly. */
     return 0;
 }

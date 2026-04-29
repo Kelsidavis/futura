@@ -457,11 +457,10 @@ long sys_chown(const char *pathname, uint32_t uid, uint32_t gid) {
         return ret;
     }
 
-    /* Phase 2: Detailed success logging */
-    fut_printf("[CHOWN] chown(path='%s' [%s], vnode_ino=%lu, ownership=%s, "
-               "uid=%s, gid=%s, op=%s) -> 0 (ownership changed, Phase 2)\n",
-               path_buf, path_type, vnode->ino, ownership_change_buf,
-               uid_desc, gid_desc, operation_type);
+    /* Success path is silent — `chown -R` and tarball extraction emit
+     * thousands per shell session. Errors still log explicitly. */
+    (void)path_type; (void)ownership_change_buf;
+    (void)uid_desc; (void)gid_desc; (void)operation_type;
 
     /* POSIX/Linux: clear S_ISUID/S_ISGID on ownership change.
      * S_ISUID is always cleared; S_ISGID is only cleared when the file is

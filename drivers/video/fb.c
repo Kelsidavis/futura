@@ -120,36 +120,24 @@ static int fb_ioctl(void *inode, void *private_data,
     case FBIOFLUSH: {
 
 #ifdef __aarch64__
-        /* ARM64: Flush CPU cache for framebuffer region to ensure GPU sees writes */
-        /* Ensure kernel has framebuffer mapped */
+        /* ARM64: Flush CPU cache for framebuffer region so the GPU sees
+         * writes from a different mapping. Used to log per-flush; that
+         * was useful while bringing up the cache-coherency story but
+         * spams ~12 lines per compositor frame, drowning the kernel
+         * log under ordinary use. Stay silent on the fast path. */
         int rc = fb_ensure_mapped(fb);
-        fut_printf("[FB-CHAR] fb_ensure_mapped returned: %d (kva=%p)\n", rc, fb->kva);
-
         if (rc == 0 && fb->kva && fb->hw.length > 0) {
             uint64_t fb_ptr = (uint64_t)fb->kva;
             uint64_t fb_size = fb->hw.length;
 
-            fut_printf("[FB-CHAR] Flushing cache for kernel FB at 0x%llx size=%llu bytes\n",
-                       (unsigned long long)fb_ptr, (unsigned long long)fb_size);
-
-            /* Clean AND invalidate D-cache for framebuffer memory (dc civac by VA)
-             * This is necessary because user-space may have cached the same physical
-             * memory under a different virtual address. We need both clean (flush to RAM)
-             * and invalidate (remove from cache) to ensure GPU sees fresh data. */
+            /* Clean AND invalidate D-cache for framebuffer memory
+             * (dc civac by VA) — necessary because user-space may
+             * have cached the same physical memory under a different
+             * virtual address. */
             for (uint64_t addr = fb_ptr; addr < fb_ptr + fb_size; addr += 64) {
                 __asm__ volatile("dc civac, %0" : : "r"(addr));
             }
-            __asm__ volatile("dsb sy" ::: "memory");  /* Data sync barrier */
-            fut_printf("[FB-CHAR] ✓ Cache flush complete (cleaned and invalidated)\n");
-
-            /* Diagnostic: Read back first and last pixels to verify they were written */
-            if (fb->kva) {
-                uint32_t *fb_pixels = (uint32_t *)fb->kva;
-                uint32_t first_pixel = fb_pixels[0];
-                uint32_t last_pixel = fb_pixels[(1024 * 768) - 1];
-                fut_printf("[FB-CHAR] Framebuffer content check: first=0x%x last=0x%x (expect 0xFFFFFFFF for white)\n",
-                           (unsigned int)first_pixel, (unsigned int)last_pixel);
-            }
+            __asm__ volatile("dsb sy" ::: "memory");
         } else {
             fut_printf("[FB-CHAR] WARNING: Could not map framebuffer for cache flush (rc=%d kva=%p)\n", rc, fb->kva);
             /* Still issue DSB as a fallback */

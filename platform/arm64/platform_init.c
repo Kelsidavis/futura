@@ -1747,11 +1747,24 @@ static void arm64_init_spawner_thread(void *arg) {
             /* Wait a bit before restarting */
             for (volatile int i = 0; i < 10000000; i++);
         } else {
-            /* exec succeeded — wait for child to exit */
+            /* exec succeeded — wait for child to exit.
+             *
+             * The previous code never incremented shell_attempts here, so
+             * if waitpid returned immediately (EINTR, no child reaped, the
+             * shell exits before we even arrive at waitpid), the loop
+             * would respin forever calling fut_exec_elf in a tight loop,
+             * with each iteration triggering a slab double-free as the
+             * partially-built task tore down. Count the respawn against
+             * the attempt budget too — a shell that keeps quitting fast
+             * is just as broken as one that fails to exec — and add the
+             * same backoff delay so we don't peg the CPU. */
             extern long sys_waitpid(int pid, int *status, int options);
             int status = 0;
             sys_waitpid(-1, &status, 0);
-            fut_printf("[INIT] Shell process exited, restarting...\n");
+            fut_printf("[INIT] Shell process exited (attempt %d), restarting...\n",
+                       shell_attempts + 1);
+            shell_attempts++;
+            for (volatile int i = 0; i < 10000000; i++);
         }
     }
     fut_printf("[INIT] Shell failed to start after %d attempts\n", shell_attempts);

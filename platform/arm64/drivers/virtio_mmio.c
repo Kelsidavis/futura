@@ -310,6 +310,19 @@ static int virtio_mmio_probe_device(uint64_t phys_addr, uint32_t irq) {
  * Initialize VirtIO MMIO subsystem by scanning device tree.
  */
 void virtio_mmio_init(uint64_t dtb_ptr) {
+    /* Idempotent — kernel_main calls this twice on ARM64: once early so
+     * the framebuffer probe can find virtio-gpu before fb_boot_splash,
+     * and once at the normal block/network init point. Without this
+     * guard the second call would re-probe every MMIO slot, registering
+     * each device a second time and pushing virtio_device_count past
+     * MAX_VIRTIO_DEVICES (or worse, attaching duplicate handles to the
+     * same physical device with mismatched queue state). */
+    if (virtio_device_count > 0) {
+        fut_printf("[virtio-mmio] Already initialized (%d device(s)) — skipping\n",
+                   virtio_device_count);
+        return;
+    }
+
     fut_printf("[virtio-mmio] Initializing VirtIO MMIO subsystem...\n");
 
     /* Try device tree discovery first */

@@ -1139,6 +1139,22 @@ void fut_kernel_main(void) {
     if (fb_enabled) {
         bool should_init_fb = wayland_interactive_boot || fb_available;
         if (should_init_fb) {
+#if defined(__aarch64__)
+            /* The ARM64 framebuffer probe (fb_boot_splash → virtio_gpu_init_mmio)
+             * looks up the virtio-gpu device on the virtio-mmio bus, but the
+             * bus enumeration ran much later in the boot (alongside virtio-net
+             * / virtio-blk init around line 1609). Result: every probe printed
+             * "[virtio-gpu-mmio] No virtio-gpu device found" and we fell back
+             * to a memory-only framebuffer at phys=0x4000000 that QEMU's
+             * display device doesn't read — the boot splash silently rendered
+             * into RAM nobody draws. Initialize virtio-mmio early on ARM64 so
+             * the GPU device is on the discovered list when the FB probe
+             * happens, allowing the splash and console text to actually
+             * appear in the QEMU window. */
+            extern void virtio_mmio_init(uint64_t dtb_ptr);
+            extern uint64_t fut_platform_get_dtb(void);
+            virtio_mmio_init(fut_platform_get_dtb());
+#endif
             /* Initialize graphics device and show boot splash */
             fb_boot_splash();
             fb_char_init();

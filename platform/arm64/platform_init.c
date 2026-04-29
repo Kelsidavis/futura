@@ -1790,7 +1790,10 @@ static void arm64_init_spawner_thread(void *arg) {
         }
     }
 
-    fut_printf("[INIT] Boot self-tests complete (22 checks passed)\n");
+    /* Don't print a hardcoded check count — it had drifted to 22 while
+     * the actual ✓ prints number 13, which is misleading. The individual
+     * pass/fail lines above are authoritative. */
+    fut_printf("[INIT] Boot self-tests complete\n");
 
     /* Run forktest and wait for completion before launching the shell.
      * The forktest must finish before the shell starts, otherwise its

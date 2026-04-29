@@ -70,26 +70,47 @@ unsafe extern "C" {
 }
 
 // ── Virtio MMIO register offsets ────────────────────────────────────────────
-
+//
+// Many of these are documented for spec reference but the current
+// implementation only programs a subset directly — the rest are reached
+// via common helpers. Suppress dead-code warnings on the whole block so
+// CI logs stay clean without losing the documentation.
+#[allow(dead_code)]
 const MMIO_MAGIC:              u32 = 0x000;
+#[allow(dead_code)]
 const MMIO_DEVICE_ID:          u32 = 0x008;
+#[allow(dead_code)]
 const MMIO_DEVICE_FEATURES:    u32 = 0x010;
+#[allow(dead_code)]
 const MMIO_DEVICE_FEATURES_SEL:u32 = 0x014;
+#[allow(dead_code)]
 const MMIO_DRIVER_FEATURES:    u32 = 0x020;
+#[allow(dead_code)]
 const MMIO_DRIVER_FEATURES_SEL:u32 = 0x024;
+#[allow(dead_code)]
 const MMIO_QUEUE_SEL:          u32 = 0x030;
+#[allow(dead_code)]
 const MMIO_QUEUE_NUM_MAX:      u32 = 0x034;
+#[allow(dead_code)]
 const MMIO_QUEUE_NUM:          u32 = 0x038;
+#[allow(dead_code)]
 const MMIO_QUEUE_READY:        u32 = 0x044;
 const MMIO_QUEUE_NOTIFY:       u32 = 0x050;
 const MMIO_INTERRUPT_STATUS:   u32 = 0x060;
 const MMIO_INTERRUPT_ACK:      u32 = 0x064;
+#[allow(dead_code)]
 const MMIO_STATUS:             u32 = 0x070;
+#[allow(dead_code)]
 const MMIO_QUEUE_DESC_LOW:     u32 = 0x080;
+#[allow(dead_code)]
 const MMIO_QUEUE_DESC_HIGH:    u32 = 0x084;
+#[allow(dead_code)]
 const MMIO_QUEUE_DRIVER_LOW:   u32 = 0x090;
+#[allow(dead_code)]
 const MMIO_QUEUE_DRIVER_HIGH:  u32 = 0x094;
+#[allow(dead_code)]
 const MMIO_QUEUE_DEVICE_LOW:   u32 = 0x0a0;
+#[allow(dead_code)]
 const MMIO_QUEUE_DEVICE_HIGH:  u32 = 0x0a4;
 
 const VIRTIO_MAGIC: u32 = 0x74726976; // 'virt'

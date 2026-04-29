@@ -21,7 +21,7 @@ use core::ptr::{self, write_volatile, read_volatile};
 use core::sync::atomic::{AtomicU16, AtomicU64, AtomicU8, Ordering};
 
 use common::{
-    alloc, alloc_page, free, log, map_mmio_region, register, thread_yield, unmap_mmio_region,
+    alloc, alloc_page, free, log, map_mmio_region, register, unmap_mmio_region,
     FutBlkBackend, FutBlkDev, FutStatus, RawSpinLock, SpinLock, FUT_BLK_ADMIN, FUT_BLK_READ,
     FUT_BLK_WRITE, MMIO_DEFAULT_FLAGS,
 };

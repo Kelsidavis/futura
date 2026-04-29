@@ -4,6 +4,10 @@
 
 #include <stdarg.h>
 #include <stddef.h>
+#include <sys/types.h>     /* ssize_t, off_t — POSIX functions below
+                            * need them and third-party userland
+                            * (libffi etc.) expects them visible after
+                            * <stdio.h>. */
 
 typedef enum {
     FUT_FILE_KIND_STD = 0,

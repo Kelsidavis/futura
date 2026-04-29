@@ -383,20 +383,32 @@ ssize_t tty_ldisc_read(tty_ldisc_t *ldisc, void *buf, size_t len) {
     /* Acquire lock before accessing buffer */
     fut_spinlock_acquire(&ldisc->lock);
 
-    /* In canonical mode, block until a complete line is available */
-    if (ldisc->flags & TTY_CANONICAL) {
-        while (!tty_ldisc_data_available(ldisc)) {
-            if (ldisc->read_waitq) {
-                /* Sleep on wait queue - lock is released during sleep */
-                fut_waitq_sleep_locked(ldisc->read_waitq, &ldisc->lock, FUT_THREAD_BLOCKED);
-                /* Re-acquire lock after waking — sleep_locked released it */
-                fut_spinlock_acquire(&ldisc->lock);
-            } else {
-                /* No wait queue - error condition */
-                fut_spinlock_release(&ldisc->lock);
-                fut_printf("[LDISC] ERROR: No wait queue available in tty_ldisc_read\n");
-                return -EAGAIN;
-            }
+    /* Block until at least one byte is available.
+     *
+     * Canonical mode waits for a complete line (the existing behavior).
+     * Raw mode also waits — until at least one byte arrives — instead
+     * of returning 0. Returning 0 from a raw read on an empty buffer
+     * looks like EOF to the caller, and any reasonable shell exits on
+     * EOF, which produced the visible 'shell respawns forever / banner
+     * stacks up the screen' behavior on ARM64: the shell flipped the
+     * tty into raw mode for line editing, did read(0,&c,1), got 0
+     * back, treated it as EOF, exited. The init spawner restarted it.
+     * Repeat. Block instead so the shell sits at its prompt waiting
+     * for a key, like every other Unix shell does.
+     *
+     * (POSIX VMIN=0/VTIME=0 'polling' raw reads are not yet supported
+     * here; if/when they are, gate the block on (VMIN > 0 || VTIME > 0).) */
+    while (!tty_ldisc_data_available(ldisc)) {
+        if (ldisc->read_waitq) {
+            /* Sleep on wait queue - lock is released during sleep */
+            fut_waitq_sleep_locked(ldisc->read_waitq, &ldisc->lock, FUT_THREAD_BLOCKED);
+            /* Re-acquire lock after waking — sleep_locked released it */
+            fut_spinlock_acquire(&ldisc->lock);
+        } else {
+            /* No wait queue - error condition */
+            fut_spinlock_release(&ldisc->lock);
+            fut_printf("[LDISC] ERROR: No wait queue available in tty_ldisc_read\n");
+            return -EAGAIN;
         }
     }
 

@@ -97,10 +97,15 @@ static ssize_t console_write(void *inode, void *priv, const void *buf, size_t le
     (void)inode;
     (void)priv;
 
-    /* Write to both serial console AND framebuffer console */
-    extern void fb_console_write(const char *str, size_t len);
-    fb_console_write((const char *)buf, len);
-
+    /* Write to the serial console. fut_serial_putc already mirrors to
+     * fb_console_putc on platforms where that's wired up (every arch
+     * since the ARM64 fb-mirror commit), so there is NO separate
+     * fb_console_write call here — adding one would render every
+     * character twice on the framebuffer (once via the explicit write
+     * loop, once via the serial path), producing the doubled/garbled
+     * text that was visible on the QEMU display: 'Futura OS Shell v0.9'
+     * appearing as 'FFuuttuurraa  OOSS  SShheellll' overprinted on
+     * itself. */
     const uint8_t *bytes = (const uint8_t *)buf;
     for (size_t i = 0; i < len; ++i) {
         char c = (char)bytes[i];

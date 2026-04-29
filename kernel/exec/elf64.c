@@ -2412,7 +2412,10 @@ static int map_segment(fut_mm_t *mm, int fd, const elf64_phdr_t *phdr) {
 
     fut_free(pages);
     __asm__ volatile("dmb sy" ::: "memory");
-    fut_free(buf);
+    /* (buf was already freed above at the start of the cache-flush block;
+     * the second fut_free(buf) here was a refactor leftover that was the
+     * source of the recurring per-exec '[SLAB-FREE] Double-free detected
+     * (cache_size=...) caller=map_segment+0x...' warnings on ARM64.) */
     return 0;
 }
 

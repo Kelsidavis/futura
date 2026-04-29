@@ -403,6 +403,12 @@ void *fut_malloc(size_t size) {
     return result;
 }
 
+/* Diagnostic: record fut_free's caller so slab_free can print it on
+ * double-free detection. Single global, so it's only meaningful when
+ * the offending path dominates — adequate for chasing recurring
+ * boot/exec-time double-frees. */
+void *slab_last_free_caller = NULL;
+
 void fut_free(void *ptr) {
     if (!ptr) return;
 
@@ -410,6 +416,9 @@ void fut_free(void *ptr) {
     extern uint64_t fut_save_and_disable_interrupts(void);
     extern void fut_restore_interrupts(uint64_t state);
     uint64_t irq_state = fut_save_and_disable_interrupts();
+
+    /* Capture caller PC so slab_free can blame the right code path */
+    slab_last_free_caller = __builtin_return_address(0);
 
     /* Use slab allocator */
     slab_free(ptr);

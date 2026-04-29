@@ -456,8 +456,10 @@ void slab_free(void *ptr) {
                 if (!obj->is_allocated) {
                     /* Log double-free attempts to aid debugging.
                      * Silent double-frees can mask use-after-free bugs. */
-                    fut_printf("[SLAB-FREE] WARNING: Double-free detected for ptr=%p in slab %p (cache_size=%zu)\n",
-                               ptr, (void*)slab, SLAB_SIZES[i]);
+                    extern void *slab_last_free_caller;
+                    fut_printf("[SLAB-FREE] WARNING: Double-free detected for ptr=%p in slab %p (cache_size=%zu) caller=%p\n",
+                               ptr, (void*)slab, SLAB_SIZES[i],
+                               slab_last_free_caller);
                     return;  /* Double free */
                 }
 

@@ -2386,10 +2386,15 @@ try_ramdisk: (void)0;
         }
     }
 
-#if ENABLE_WAYLAND
+#if ENABLE_WAYLAND && !defined(__aarch64__)
     /* ========================================
      *   Launch Init Process (Wayland Desktop)
      * ======================================== */
+    /* On ARM64, init/wayland staging+exec is handled by
+     * arm64_init_spawner_thread via arch_late_init() — see
+     * platform/arm64/platform_init.c.  Doing it here on ARM64
+     * runs into a bug where the boot thread hangs after launching
+     * init, preventing arch_late_init from ever running. */
     extern int fut_stage_init_binary(void);
 
     fut_printf("[INIT] Staging init process...\n");
@@ -2465,10 +2470,12 @@ try_ramdisk: (void)0;
     }
 #endif
 
-#if ENABLE_WAYLAND
+#if ENABLE_WAYLAND && !defined(__aarch64__)
     /* Launch init process with environment for Wayland.
      * init will fork and exec the compositor, then launch wl-term.
-     * This replaces the old direct kernel compositor launch. */
+     * This replaces the old direct kernel compositor launch.
+     *
+     * ARM64 launches init from arm64_init_spawner_thread instead. */
     int init_exec = -1;  /* Track init launch result for wayland_ready check */
     if (init_stage == 0) {
         fut_printf("[INIT] Launching init process...\n");
@@ -2485,6 +2492,9 @@ try_ramdisk: (void)0;
             fut_printf("[INIT] Init process launched successfully\n");
         }
     }
+#elif ENABLE_WAYLAND && defined(__aarch64__)
+    /* ARM64: init exec deferred to arch_late_init() spawner thread. */
+    int init_exec = 0;
 #endif
 
     /* ========================================

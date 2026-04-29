@@ -74,6 +74,7 @@ static int  ed_line_count = 1;
 static int  ed_cursor_row = 0;
 static int  ed_cursor_col = 0;
 static int  ed_scroll_y   = 0;
+static int  ed_scroll_x   = 0;
 static bool ed_dirty      = false;
 static char ed_filename[256] = "/tmp/scratch.txt";
 static char ed_status_msg[64] = "";
@@ -137,6 +138,14 @@ static void ed_ensure_visible(void) {
     if (ed_cursor_row >= ed_scroll_y + ED_VIS_ROWS)
         ed_scroll_y = ed_cursor_row - ED_VIS_ROWS + 1;
     if (ed_scroll_y < 0) ed_scroll_y = 0;
+
+    /* Horizontal: keep the cursor inside the visible columns. Without
+     * this the cursor (and any text past column ED_VIS_COLS) just
+     * disappears off the right edge while the user is still typing. */
+    if (ed_cursor_col < ed_scroll_x) ed_scroll_x = ed_cursor_col;
+    if (ed_cursor_col >= ed_scroll_x + ED_VIS_COLS)
+        ed_scroll_x = ed_cursor_col - ED_VIS_COLS + 1;
+    if (ed_scroll_x < 0) ed_scroll_x = 0;
 }
 
 /* ─── File I/O ─── */
@@ -458,20 +467,24 @@ static void redraw_all(struct client_state *state) {
         }
 
         if (row < ed_line_count) {
-            int len = ed_line_len[row];
-            if (len > vis_cols) len = vis_cols;
+            int line_len = ed_line_len[row];
+            int start = ed_scroll_x;
+            if (start > line_len) start = line_len;
+            int avail = line_len - start;
+            int len = avail < vis_cols ? avail : vis_cols;
             if (len > 0) {
                 draw_text_run(px, w, h, stride,
                               gutter_w + ED_MARGIN_X, py,
-                              ed_lines[row], len,
+                              ed_lines[row] + start, len,
                               COL_TEXT, COL_BG);
             }
         }
     }
 
     /* Cursor */
-    if (ed_cursor_row >= ed_scroll_y && ed_cursor_row < ed_scroll_y + vis_rows) {
-        int cx = gutter_w + ED_MARGIN_X + ed_cursor_col * FONT_WIDTH;
+    if (ed_cursor_row >= ed_scroll_y && ed_cursor_row < ed_scroll_y + vis_rows &&
+        ed_cursor_col >= ed_scroll_x && ed_cursor_col <= ed_scroll_x + vis_cols) {
+        int cx = gutter_w + ED_MARGIN_X + (ed_cursor_col - ed_scroll_x) * FONT_WIDTH;
         int cy = ED_PAD + (ed_cursor_row - ed_scroll_y) * FONT_HEIGHT;
         if (cx + 2 <= w && cy + FONT_HEIGHT <= h - ED_STATUS_H) {
             fill_rect(px, stride, cx, cy, 2, FONT_HEIGHT, COL_CURSOR);

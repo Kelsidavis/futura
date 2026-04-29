@@ -43,7 +43,14 @@ int posix_init(void) {
  * Open a file.
  */
 int open(const char *path, int flags, ...) {
-    if (!posixd_channel || !path) {
+    /* NULL path is a programmer error / EFAULT. The original combined
+     * check (!posixd_channel || !path) just bounced through posix_init
+     * and then dereferenced path anyway. */
+    if (!path) {
+        errno = EFAULT;
+        return -1;
+    }
+    if (!posixd_channel) {
         if (posix_init() < 0) {
             return -1;
         }

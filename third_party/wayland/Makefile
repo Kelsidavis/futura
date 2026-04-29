@@ -27,7 +27,7 @@ WAYLAND_SHA256 := 7c5c28fa73f22d1c5021e17e1148f29ab17bf8b776a406f1c4489d3e2992ec
 
 ROOT_DIR := $(abspath ../..)
 BUILD_ROOT := $(ROOT_DIR)/build/third_party/wayland
-SRC_ROOT := $(BUILD_ROOT)/src
+SRC_ROOT := $(BUILD_ROOT)/src-$(PLATFORM)
 SRC_DIR := $(SRC_ROOT)/wayland-$(WAYLAND_VERSION)
 BUILD_DIR := $(BUILD_ROOT)/build-$(PLATFORM)
 INSTALL_DIR := $(BUILD_ROOT)/install-$(PLATFORM)
@@ -57,8 +57,8 @@ export ARFLAGS
 
 NATIVE_FILE := $(STATE_DIR)/native.ini
 CROSS_FILE := $(STATE_DIR)/cross.ini
-STAMP_EXTRACT := $(BUILD_ROOT)/state/extract.stamp
-STAMP_PATCH := $(BUILD_ROOT)/state/patch.stamp
+STAMP_EXTRACT := $(STATE_DIR)/extract.stamp
+STAMP_PATCH := $(STATE_DIR)/patch.stamp
 STAMP_CONFIGURE := $(STATE_DIR)/configure.stamp
 STAMP_BUILD := $(STATE_DIR)/build.stamp
 STAMP_INSTALL := $(INSTALL_DIR)/.stamp-installed
@@ -145,8 +145,8 @@ $(TARBALL): | $(DOWNLOAD_DIR)
 	@echo "$(WAYLAND_SHA256)  $@.tmp" | shasum -a 256 -c -
 	@mv $@.tmp $@
 
-$(STAMP_EXTRACT): $(TARBALL) $(PATCHES) | $(SRC_ROOT) $(BUILD_ROOT)/state
-	@echo ">> Extracting $(TARBALL)"
+$(STAMP_EXTRACT): $(TARBALL) $(PATCHES) | $(SRC_ROOT) $(STATE_DIR)
+	@echo ">> Extracting $(TARBALL) for $(PLATFORM)"
 	@rm -rf $(SRC_ROOT)
 	@mkdir -p $(SRC_ROOT)
 	@tar -xzf $(TARBALL) -C $(SRC_ROOT)
@@ -167,13 +167,18 @@ endif
 	@sed -i.bak '/SFD_CLOEXEC/d; /TFD_CLOEXEC/d' $(SRC_DIR)/meson.build
 	@# macOS: Skip CLOCK_MONOTONIC check
 	@sed -i.bak "s/error('@0@ is needed to compile Wayland libraries'.format(d\['symbol'\]))/# macOS: Skip check/" $(SRC_DIR)/meson.build
+# macOS host-only patches: comment out Linux-specific includes that the
+# host build can't satisfy. Cross-builds for arm64-elf target Futura
+# headers and DO satisfy them, so don't strip the includes there.
 ifeq ($(shell uname -s),Darwin)
+ifeq ($(PLATFORM),host)
 	@# macOS: Comment out Linux-specific includes (we provide stubs in wayland_nofortify.h)
 	@sed -i.bak 's|#include <sys/epoll.h>|/* #include <sys/epoll.h> - using stub from wayland_nofortify.h */|' $(SRC_DIR)/src/wayland-os.c
 	@sed -i.bak 's|#include <sys/epoll.h>|/* #include <sys/epoll.h> - using stub from wayland_nofortify.h */|' $(SRC_DIR)/src/event-loop.c
 	@sed -i.bak 's|#include <sys/eventfd.h>|/* #include <sys/eventfd.h> - using stub from wayland_nofortify.h */|' $(SRC_DIR)/src/wayland-server.c
 	@sed -i.bak 's|#include <sys/signalfd.h>|/* #include <sys/signalfd.h> - using stub from wayland_nofortify.h */|' $(SRC_DIR)/src/event-loop.c
 	@sed -i.bak 's|#include <sys/timerfd.h>|/* #include <sys/timerfd.h> - using stub from wayland_nofortify.h */|' $(SRC_DIR)/src/event-loop.c
+endif
 endif
 	@touch $@
 

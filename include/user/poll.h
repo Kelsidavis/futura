@@ -2,6 +2,8 @@
 #pragma once
 
 #include <sys/types.h>
+#include <signal.h>      /* sigset_t for ppoll() */
+#include <time.h>        /* struct timespec for ppoll() */
 
 #ifdef __cplusplus
 extern "C" {

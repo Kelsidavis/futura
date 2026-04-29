@@ -222,10 +222,7 @@ long sys_symlinkat(const char *target, int newdirfd, const char *linkpath) {
         return ret;
     }
 
-    /* Success */
-    fut_printf("[SYMLINKAT] symlinkat(target='%s' [len=%lu], newdirfd=%d, linkpath='%s' [%s, len=%lu]) -> 0 (Phase 2: directory FD resolution)\n",
-               target_buf, (unsigned long)target_len, local_newdirfd,
-               linkpath_buf, path_type, (unsigned long)link_len);
-
+    /* Success path silent — same shape as symlink/link cleanup. */
+    (void)target_len; (void)path_type; (void)link_len;
     return 0;
 }

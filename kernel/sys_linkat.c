@@ -390,11 +390,8 @@ long sys_linkat(int olddirfd, const char *oldpath, int newdirfd, const char *new
         return ret;
     }
 
-    /* Success */
-    fut_printf("[LINKAT] linkat(olddirfd=%d, oldpath='%s' [%s, len=%lu], newdirfd=%d, newpath='%s' [%s, len=%lu], flags=%s) -> 0\n",
-               local_olddirfd, oldpath_buf, old_path_type, (unsigned long)old_path_len,
-               local_newdirfd, newpath_buf, new_path_type, (unsigned long)new_path_len,
-               flags_desc);
-
+    /* Success path silent — same shape as link/unlink/chown cleanup. */
+    (void)old_path_type; (void)new_path_type;
+    (void)old_path_len; (void)new_path_len; (void)flags_desc;
     return 0;
 }

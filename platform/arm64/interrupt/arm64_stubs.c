@@ -74,10 +74,17 @@ extern int stage_arm64_blob(const unsigned char *start, const unsigned char *end
                                 path);                                    \
     }
 
+#if defined(ENABLE_WAYLAND) && ENABLE_WAYLAND
 ARM64_STAGE_FN(fut_stage_wayland_compositor_binary, futura_wayland, "/sbin", "/sbin/futura-wayland")
 ARM64_STAGE_FN(fut_stage_futura_shell_binary,       futura_shell,   "/sbin", "/sbin/futura-shell")
 ARM64_STAGE_FN(fut_stage_wl_term_binary,            wl_term,        "/bin",  "/bin/wl-term")
 ARM64_STAGE_FN(fut_stage_wl_panel_binary,           wl_panel,       "/bin",  "/bin/wl-panel")
+#else
+int fut_stage_wayland_compositor_binary(void) { return -ENODEV; }
+int fut_stage_futura_shell_binary(void)       { return -ENODEV; }
+int fut_stage_wl_term_binary(void)            { return -ENODEV; }
+int fut_stage_wl_panel_binary(void)           { return -ENODEV; }
+#endif
 ARM64_STAGE_FN(fut_stage_init_binary,               init,           "/sbin", "/sbin/init")
 ARM64_STAGE_FN(fut_stage_shell_binary,              shell,          "/bin",  "/bin/shell")
 

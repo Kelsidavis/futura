@@ -13,12 +13,7 @@
 
 #include <user/sys.h>
 
-/* Syscall numbers */
-#define SYS_write 1
-#define SYS_open 2
-#define SYS_close 3
-#define SYS_mmap 9
-#define SYS_exit 60
+/* Syscall numbers come from <user/sysnums.h> (arch-conditional). */
 
 /* File flags */
 #define O_RDWR 0x0002

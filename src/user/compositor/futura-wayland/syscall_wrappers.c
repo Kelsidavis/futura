@@ -88,8 +88,10 @@ int __wrap_flock(int fd, int operation) {
 int __wrap_close(int fd) {
     extern long syscall(long, ...);
 
-    /* Call kernel close */
-    long result = syscall(3, fd);  /* SYS_close = 3 */
+    /* Call kernel close — number is arch-dependent (3 on x86_64,
+     * 57 on ARM64 generic). Hardcoding 3 silently routed to
+     * io_cancel on ARM64 and broke every wayland disconnect. */
+    long result = syscall(__NR_close, fd);
 
     if (result < 0) {
         errno = -result;
@@ -312,7 +314,7 @@ static void debug_write(const char *msg) {
     while (msg[len]) len++;
 
     /* Write to fd 1 (stdout) instead of stderr */
-    long result = syscall(1, 1, msg, len);  /* SYS_write = 1, stdout = 1 */
+    long result = syscall(__NR_write, 1, msg, len);  /* fd 1 = stdout */
     (void)result;  /* Suppress unused warning */
 #else
     (void)msg;

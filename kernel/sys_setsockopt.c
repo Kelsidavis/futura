@@ -699,13 +699,43 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
 
             case 32: /* SO_SNDBUFFORCE — forced send buffer (privileged) */
             case 33: /* SO_RCVBUFFORCE — forced recv buffer (privileged) */
+                /* Linux: requires CAP_NET_ADMIN, then sets the buffer
+                 * BYPASSING sysctl_{w,r}mem_max. Same doubling rule as
+                 * SO_SNDBUF/SO_RCVBUF (Linux multiplies user val by 2)
+                 * but no system-max clamp — that's the whole point of
+                 * the *FORCE variants. The previous stub returned 0
+                 * without actually setting anything, so a privileged
+                 * caller calling SO_SNDBUFFORCE saw success but the
+                 * subsequent send queue still honoured the unforced
+                 * sndbuf, and the matching getsockopt would round-trip
+                 * the *unchanged* value. Mirror Linux's behaviour. */
+                {
+                    if (optlen < (socklen_t)sizeof(int)) return -EINVAL;
+                    if (task->uid != 0 &&
+                        !(task->cap_effective & (1ULL << 12 /* CAP_NET_ADMIN */)))
+                        return -EPERM;
+                    int req = 0;
+                    if (sso_copy_from_user(&req, optval, sizeof(int)) != 0)
+                        return -EFAULT;
+                    if (req < 0) req = 0;
+                    uint32_t ureq = (uint32_t)req;
+                    if (ureq > 0x7FFFFFFFu) ureq = 0x7FFFFFFFu;
+                    uint32_t effective = ureq * 2u;
+                    if (effective < 2048) effective = 2048;
+                    /* No max_buf clamp: SO_*BUFFORCE bypasses sysctl. */
+                    if (optname == 32 /* SO_SNDBUFFORCE */)
+                        socket->sndbuf = effective;
+                    else
+                        socket->rcvbuf = effective;
+                    return 0;
+                }
             case 36: /* SO_MARK — socket mark for policy routing */
-                /* Linux requires CAP_NET_ADMIN for these privileged
-                 * options; without the gate, an unprivileged caller
-                 * sees success when Linux would return EPERM,
-                 * masking sandbox-policy assumptions. We still don't
-                 * enforce the actual semantics, but we match the
-                 * permission ABI. */
+                /* Linux requires CAP_NET_ADMIN for SO_MARK; without the
+                 * gate, an unprivileged caller sees success when Linux
+                 * would return EPERM, masking sandbox-policy
+                 * assumptions. Futura's network stack doesn't yet
+                 * consume sk_mark, so accept-and-stub after the cap
+                 * check is the right shape here. */
                 if (task->uid != 0 &&
                     !(task->cap_effective & (1ULL << 12 /* CAP_NET_ADMIN */)))
                     return -EPERM;

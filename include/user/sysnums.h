@@ -363,6 +363,14 @@
 #define SYS_ptrace              101
 #define SYS_reboot              169
 #define SYS_statfs              137
+#define SYS_mount               165
+#define SYS_umount2             166
+#define SYS_prlimit64           302
+#define SYS_sched_setaffinity   203
+#define SYS_sched_getaffinity   204
+#define SYS_sched_getparam      143
+#define SYS_sched_setscheduler  144
+#define SYS_sched_getscheduler  145
 #define SYS_sigaction           13
 #define SYS_sigprocmask         14
 #define SYS_truncate            76

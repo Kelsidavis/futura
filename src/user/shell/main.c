@@ -11123,7 +11123,7 @@ static int execute_command(int argc, char *argv[]) {
         sa.port = (uint16_t)(((port >> 8) & 0xFF) | ((port & 0xFF) << 8));
         for (int i = 0; i < 8; i++) sa.pad[i] = 0;
 
-        if (sys_call3(49, sfd, (long)&sa, 16) < 0) {
+        if (sys_call3(SYS_bind, sfd, (long)&sa, 16) < 0) {
             write_str(2, "httpd: bind failed\n"); sys_close(sfd); return 1;
         }
         if (sys_call2(SYS_listen, sfd, 5) < 0) {
@@ -13773,7 +13773,7 @@ watch_sleep:
                 long ur = sys_call1(272 /* __NR_unshare */, 0x40000000 /* CLONE_NEWNET */);
                 if (ur == 0) {
                     /* mount --bind /proc/self/ns/net <nspath> */
-                    sys_call5(165, (long)"/proc/self/ns/net", (long)nspath, 0, 0x1000/*MS_BIND*/, 0);
+                    sys_call5(SYS_mount, (long)"/proc/self/ns/net", (long)nspath, 0, 0x1000/*MS_BIND*/, 0);
                     write_str(1, "Network namespace '");
                     write_str(1, argv[3]);
                     write_str(1, "' created\n");
@@ -13788,7 +13788,7 @@ watch_sleep:
                 while (*pf) nspath[np++] = *pf++;
                 for (int k = 0; argv[3][k] && np < 126; k++) nspath[np++] = argv[3][k];
                 nspath[np] = '\0';
-                sys_call2(166, (long)nspath, 0);
+                sys_call2(SYS_umount2, (long)nspath, 0);
                 sys_call1(SYS_unlink, (long)nspath);
                 write_str(1, "Network namespace '");
                 write_str(1, argv[3]);
@@ -14138,8 +14138,8 @@ watch_sleep:
             sys_call1(95 /* umask */, mask);
         } else {
             /* Display current umask */
-            long old = sys_call1(95, 0);  /* Read current */
-            sys_call1(95, old);  /* Restore */
+            long old = sys_call1(SYS_umask, 0);  /* Read current */
+            sys_call1(SYS_umask, old);  /* Restore */
             char buf[5];
             buf[0] = '0';
             buf[1] = '0' + (char)((old >> 6) & 7);
@@ -22085,7 +22085,7 @@ static void cmd_scp(int argc, char *argv[]) {
         }
         /* Get file size via lseek */
         long size = sys_call3(8 /* lseek */, lfd, 0, 2 /* SEEK_END */);
-        sys_call3(8, lfd, 0, 0 /* SEEK_SET */);
+        sys_call3(SYS_lseek, lfd, 0, 0 /* SEEK_SET */);
         if (size < 0) size = 0;
 
         /* Send header: "PUT <path> <size>\n" */
@@ -25237,7 +25237,7 @@ static void cmd_shuf(int argc, char *argv[]) {
     }
     /* Fisher-Yates shuffle */
     struct { long sec; long nsec; } ts;
-    sys_call2(228, 0, (long)&ts);
+    sys_call2(SYS_clock_gettime, 0, (long)&ts);
     unsigned long rng = (unsigned long)ts.nsec ^ ((unsigned long)sys_call0(39) << 16);
     for (int i = nlines - 1; i > 0; i--) {
         rng = rng * 6364136223846793005ULL + 1;
@@ -25519,12 +25519,12 @@ static void cmd_hd(int argc, char *argv[]) {
     cmd_hexdump(new_argc, new_argv);
 }
 static void cmd_lsns(int argc, char *argv[]) { const char *ft=NULL; for(int i=1;i<argc;i++){if(strcmp_simple(argv[i],"-t")==0&&i+1<argc)ft=argv[++i];} write_str(1,"        NS TYPE   NPROCS   PID COMMAND\n"); int pfd=sys_open("/proc",O_RDONLY,0); if(pfd<0){write_str(2,"lsns: cannot open /proc\n");return;} struct linux_dirent64{unsigned long long d_ino;long long d_off;unsigned short d_reclen;unsigned char d_type;char d_name[256];}; char db[4096]; static const char*nn[]={"cgroup","ipc","mnt","net","pid","user","uts"}; long nr; while((nr=sys_getdents64(pfd,db,sizeof(db)))>0){char*pt=db;while(pt<db+nr){struct linux_dirent64*d=(struct linux_dirent64*)pt;pt+=d->d_reclen;if(d->d_name[0]<'1'||d->d_name[0]>'9')continue;int pid=0;for(int k=0;d->d_name[k]>='0'&&d->d_name[k]<='9';k++)pid=pid*10+(d->d_name[k]-'0');char cp[64],cm[64];int ci=0;const char*px="/proc/";while(*px)cp[ci++]=*px++;{int v=pid;char rv[12];int rp=0;if(v==0)rv[rp++]='0';else while(v>0){rv[rp++]='0'+(v%10);v/=10;}while(rp>0)cp[ci++]=rv[--rp];}const char*sf="/comm";while(*sf)cp[ci++]=*sf++;cp[ci]='\0';cm[0]='-';cm[1]='\0';int cf=sys_open(cp,O_RDONLY,0);if(cf>=0){long cr=sys_read(cf,cm,63);if(cr>0){if(cm[cr-1]=='\n')cr--;cm[cr]='\0';}sys_close(cf);}for(int ni=0;ni<7;ni++){if(ft&&strcmp_simple(ft,nn[ni])!=0)continue;char np[80];int npi=0;px="/proc/";while(*px)np[npi++]=*px++;{int v=pid;char rv[12];int rp=0;if(v==0)rv[rp++]='0';else while(v>0){rv[rp++]='0'+(v%10);v/=10;}while(rp>0)np[npi++]=rv[--rp];}const char*ns="/ns/";while(*ns)np[npi++]=*ns++;const char*t=nn[ni];while(*t)np[npi++]=*t++;np[npi]='\0';struct stat st;if(sys_call2(__NR_stat,(long)np,(long)&st)==0){char nb[20];int_to_str((long)st.st_ino,nb,20);int nl=0;while(nb[nl])nl++;for(int s=0;s<10-nl;s++)write_str(1," ");write_str(1,nb);write_str(1," ");write_str(1,nn[ni]);int tl=0;while(nn[ni][tl])tl++;for(int s=tl;s<7;s++)write_str(1," ");write_str(1,"      1 ");char pb[12];int_to_str(pid,pb,12);int pl=0;while(pb[pl])pl++;for(int s=0;s<5-pl;s++)write_str(1," ");write_str(1,pb);write_str(1," ");write_str(1,cm);write_str(1,"\n");}}}}sys_close(pfd);}
-static void cmd_prlimit(int argc, char *argv[]) { int tp=0,sn=-1,cs=-1; for(int i=1;i<argc;i++){if(strcmp_simple(argv[i],"-p")==0&&i+1<argc){const char*p=argv[++i];while(*p>='0'&&*p<='9')tp=tp*10+(*p++-'0');}else if(argv[i][0]=='-'&&argv[i][1]=='-'&&argv[i][2]=='n'&&argv[i][3]=='o'&&argv[i][4]=='f'&&argv[i][5]=='i'&&argv[i][6]=='l'&&argv[i][7]=='e'&&argv[i][8]=='='){const char*p=argv[i]+9;sn=0;while(*p>='0'&&*p<='9')sn=sn*10+(*p++-'0');}else{cs=i;break;}} if(sn>=0&&cs>=0){uint64_t rl[2];rl[0]=(uint64_t)sn;rl[1]=(uint64_t)sn;sys_call4(302,0,7,(long)rl,0);int sa=argc-cs;char*sv[64];for(int i=0;i<sa&&i<63;i++)sv[i]=argv[i+cs];sv[sa]=NULL;execute_command(sa,sv);return;} static const struct{int r;const char*n;}rl[]={{0,"RLIMIT_CPU        "},{1,"RLIMIT_FSIZE      "},{2,"RLIMIT_DATA       "},{3,"RLIMIT_STACK      "},{4,"RLIMIT_CORE       "},{5,"RLIMIT_RSS        "},{6,"RLIMIT_NPROC      "},{7,"RLIMIT_NOFILE     "},{8,"RLIMIT_MEMLOCK    "},{9,"RLIMIT_AS         "},{10,"RLIMIT_LOCKS      "},{11,"RLIMIT_SIGPENDING "},{12,"RLIMIT_MSGQUEUE   "},{15,"RLIMIT_RTPRIO     "}}; write_str(1,"RESOURCE                SOFT      HARD\n"); for(int i=0;i<(int)(sizeof(rl)/sizeof(rl[0]));i++){uint64_t rv[2]={0,0};long r=sys_call4(302,tp,rl[i].r,0,(long)rv);write_str(1,rl[i].n);if(r<0){write_str(1,"  (error)\n");continue;}char b[20];if(rv[0]==(uint64_t)-1)write_str(1," unlimited");else{int_to_str((long)rv[0],b,20);int l=0;while(b[l])l++;for(int s=0;s<10-l;s++)write_str(1," ");write_str(1,b);}if(rv[1]==(uint64_t)-1)write_str(1," unlimited");else{int_to_str((long)rv[1],b,20);int l=0;while(b[l])l++;for(int s=0;s<10-l;s++)write_str(1," ");write_str(1,b);}write_str(1,"\n");}}
-static void cmd_taskset(int argc, char *argv[]) { if(argc<2){write_str(2,"usage: taskset [-p] [-a] [-c] [mask] [PID|cmd]\n");return;} int sp=0,ag=1,all_threads=0,cpu_list=0; while(ag<argc&&argv[ag][0]=='-'){if(strcmp_simple(argv[ag],"-p")==0){sp=1;}else if(strcmp_simple(argv[ag],"-a")==0){all_threads=1;}else if(strcmp_simple(argv[ag],"-c")==0){cpu_list=1;}else if(strcmp_simple(argv[ag],"-ap")==0||strcmp_simple(argv[ag],"-pa")==0){sp=1;all_threads=1;}else if(strcmp_simple(argv[ag],"-cp")==0||strcmp_simple(argv[ag],"-pc")==0){sp=1;cpu_list=1;}else break;ag++;}(void)all_threads;(void)cpu_list; if(sp){if(ag>=argc){write_str(2,"taskset: missing PID\n");return;}int pid=0;unsigned long mk=0;int sm=0;if(ag+1<argc){const char*p=argv[ag];if(p[0]=='0'&&p[1]=='x'){p+=2;while(*p){mk<<=4;if(*p>='0'&&*p<='9')mk|=(unsigned long)(*p-'0');else if(*p>='a'&&*p<='f')mk|=(unsigned long)(*p-'a'+10);else if(*p>='A'&&*p<='F')mk|=(unsigned long)(*p-'A'+10);p++;}}else while(*p>='0'&&*p<='9')mk=mk*10+(unsigned long)(*p++-'0');sm=1;ag++;p=argv[ag];while(*p>='0'&&*p<='9')pid=pid*10+(*p++-'0');}else{const char*p=argv[ag];while(*p>='0'&&*p<='9')pid=pid*10+(*p++-'0');}if(sm){long r=sys_call3(203,pid,sizeof(mk),(long)&mk);if(r<0){write_str(2,"taskset: failed\n");return;}write_str(1,"pid ");char pb[12];int_to_str(pid,pb,12);write_str(1,pb);write_str(1,"'s new affinity mask: ");}else{write_str(1,"pid ");char pb[12];int_to_str(pid,pb,12);write_str(1,pb);write_str(1,"'s current affinity mask: ");}unsigned long gm=0;sys_call3(204,pid,sizeof(gm),(long)&gm);char hb[20];hb[0]='0';hb[1]='x';int hi=2;int st=0;for(int b=60;b>=0;b-=4){int n=(int)((gm>>b)&0xf);if(n||st||b==0){hb[hi++]=(char)(n<10?'0'+n:'a'+n-10);st=1;}}hb[hi]='\0';write_str(1,hb);write_str(1,"\n");}else{if(ag+1>=argc){write_str(2,"usage: taskset [mask] cmd\n");return;}unsigned long mk=0;const char*p=argv[ag];if(p[0]=='0'&&p[1]=='x'){p+=2;while(*p){mk<<=4;if(*p>='0'&&*p<='9')mk|=(unsigned long)(*p-'0');else if(*p>='a'&&*p<='f')mk|=(unsigned long)(*p-'a'+10);else if(*p>='A'&&*p<='F')mk|=(unsigned long)(*p-'A'+10);p++;}}else while(*p>='0'&&*p<='9')mk=mk*10+(unsigned long)(*p++-'0');ag++;sys_call3(203,0,sizeof(mk),(long)&mk);int sa=argc-ag;char*sv[64];for(int i=0;i<sa&&i<63;i++)sv[i]=argv[i+ag];sv[sa]=NULL;execute_command(sa,sv);}}
-static void cmd_chrt(int argc, char *argv[]) { if(argc<2){write_str(2,"usage: chrt [-f|-r|-o|-b] [-p] [prio] [PID|cmd]\n");return;} int po=-1,pr=0,sp=0,ag=1; while(ag<argc&&argv[ag][0]=='-'){const char*f=argv[ag];if(strcmp_simple(f,"-f")==0)po=1;else if(strcmp_simple(f,"-r")==0)po=2;else if(strcmp_simple(f,"-o")==0)po=0;else if(strcmp_simple(f,"-b")==0)po=3;else if(strcmp_simple(f,"-p")==0)sp=1;else break;ag++;} if(sp){int pid=0;if(ag<argc){const char*p=argv[ag];while(*p>='0'&&*p<='9')pid=pid*10+(*p++-'0');}long cp=sys_call1(145,pid);int pm[1]={0};sys_call2(143,pid,(long)pm);write_str(1,"pid ");char pb[12];int_to_str(pid,pb,12);write_str(1,pb);write_str(1,"'s current scheduling policy: ");if(cp==0)write_str(1,"SCHED_OTHER");else if(cp==1)write_str(1,"SCHED_FIFO");else if(cp==2)write_str(1,"SCHED_RR");else if(cp==3)write_str(1,"SCHED_BATCH");else if(cp==5)write_str(1,"SCHED_IDLE");else{char nb[12];int_to_str(cp,nb,12);write_str(1,nb);}write_str(1,"\npid ");write_str(1,pb);write_str(1,"'s current scheduling priority: ");char prb[12];int_to_str(pm[0],prb,12);write_str(1,prb);write_str(1,"\n");return;} if(ag<argc){const char*p=argv[ag];while(*p>='0'&&*p<='9')pr=pr*10+(*p++-'0');ag++;}if(ag>=argc){write_str(2,"chrt: missing command\n");return;}if(po<0)po=1;int sm[1];sm[0]=pr;long r=sys_call3(144,0,po,(long)sm);if(r<0)write_str(2,"chrt: failed to set scheduling policy\n");int sa=argc-ag;char*sv[64];for(int i=0;i<sa&&i<63;i++)sv[i]=argv[i+ag];sv[sa]=NULL;execute_command(sa,sv);}
+static void cmd_prlimit(int argc, char *argv[]) { int tp=0,sn=-1,cs=-1; for(int i=1;i<argc;i++){if(strcmp_simple(argv[i],"-p")==0&&i+1<argc){const char*p=argv[++i];while(*p>='0'&&*p<='9')tp=tp*10+(*p++-'0');}else if(argv[i][0]=='-'&&argv[i][1]=='-'&&argv[i][2]=='n'&&argv[i][3]=='o'&&argv[i][4]=='f'&&argv[i][5]=='i'&&argv[i][6]=='l'&&argv[i][7]=='e'&&argv[i][8]=='='){const char*p=argv[i]+9;sn=0;while(*p>='0'&&*p<='9')sn=sn*10+(*p++-'0');}else{cs=i;break;}} if(sn>=0&&cs>=0){uint64_t rl[2];rl[0]=(uint64_t)sn;rl[1]=(uint64_t)sn;sys_call4(SYS_prlimit64,0,7,(long)rl,0);int sa=argc-cs;char*sv[64];for(int i=0;i<sa&&i<63;i++)sv[i]=argv[i+cs];sv[sa]=NULL;execute_command(sa,sv);return;} static const struct{int r;const char*n;}rl[]={{0,"RLIMIT_CPU        "},{1,"RLIMIT_FSIZE      "},{2,"RLIMIT_DATA       "},{3,"RLIMIT_STACK      "},{4,"RLIMIT_CORE       "},{5,"RLIMIT_RSS        "},{6,"RLIMIT_NPROC      "},{7,"RLIMIT_NOFILE     "},{8,"RLIMIT_MEMLOCK    "},{9,"RLIMIT_AS         "},{10,"RLIMIT_LOCKS      "},{11,"RLIMIT_SIGPENDING "},{12,"RLIMIT_MSGQUEUE   "},{15,"RLIMIT_RTPRIO     "}}; write_str(1,"RESOURCE                SOFT      HARD\n"); for(int i=0;i<(int)(sizeof(rl)/sizeof(rl[0]));i++){uint64_t rv[2]={0,0};long r=sys_call4(SYS_prlimit64,tp,rl[i].r,0,(long)rv);write_str(1,rl[i].n);if(r<0){write_str(1,"  (error)\n");continue;}char b[20];if(rv[0]==(uint64_t)-1)write_str(1," unlimited");else{int_to_str((long)rv[0],b,20);int l=0;while(b[l])l++;for(int s=0;s<10-l;s++)write_str(1," ");write_str(1,b);}if(rv[1]==(uint64_t)-1)write_str(1," unlimited");else{int_to_str((long)rv[1],b,20);int l=0;while(b[l])l++;for(int s=0;s<10-l;s++)write_str(1," ");write_str(1,b);}write_str(1,"\n");}}
+static void cmd_taskset(int argc, char *argv[]) { if(argc<2){write_str(2,"usage: taskset [-p] [-a] [-c] [mask] [PID|cmd]\n");return;} int sp=0,ag=1,all_threads=0,cpu_list=0; while(ag<argc&&argv[ag][0]=='-'){if(strcmp_simple(argv[ag],"-p")==0){sp=1;}else if(strcmp_simple(argv[ag],"-a")==0){all_threads=1;}else if(strcmp_simple(argv[ag],"-c")==0){cpu_list=1;}else if(strcmp_simple(argv[ag],"-ap")==0||strcmp_simple(argv[ag],"-pa")==0){sp=1;all_threads=1;}else if(strcmp_simple(argv[ag],"-cp")==0||strcmp_simple(argv[ag],"-pc")==0){sp=1;cpu_list=1;}else break;ag++;}(void)all_threads;(void)cpu_list; if(sp){if(ag>=argc){write_str(2,"taskset: missing PID\n");return;}int pid=0;unsigned long mk=0;int sm=0;if(ag+1<argc){const char*p=argv[ag];if(p[0]=='0'&&p[1]=='x'){p+=2;while(*p){mk<<=4;if(*p>='0'&&*p<='9')mk|=(unsigned long)(*p-'0');else if(*p>='a'&&*p<='f')mk|=(unsigned long)(*p-'a'+10);else if(*p>='A'&&*p<='F')mk|=(unsigned long)(*p-'A'+10);p++;}}else while(*p>='0'&&*p<='9')mk=mk*10+(unsigned long)(*p++-'0');sm=1;ag++;p=argv[ag];while(*p>='0'&&*p<='9')pid=pid*10+(*p++-'0');}else{const char*p=argv[ag];while(*p>='0'&&*p<='9')pid=pid*10+(*p++-'0');}if(sm){long r=sys_call3(SYS_sched_setaffinity,pid,sizeof(mk),(long)&mk);if(r<0){write_str(2,"taskset: failed\n");return;}write_str(1,"pid ");char pb[12];int_to_str(pid,pb,12);write_str(1,pb);write_str(1,"'s new affinity mask: ");}else{write_str(1,"pid ");char pb[12];int_to_str(pid,pb,12);write_str(1,pb);write_str(1,"'s current affinity mask: ");}unsigned long gm=0;sys_call3(SYS_sched_getaffinity,pid,sizeof(gm),(long)&gm);char hb[20];hb[0]='0';hb[1]='x';int hi=2;int st=0;for(int b=60;b>=0;b-=4){int n=(int)((gm>>b)&0xf);if(n||st||b==0){hb[hi++]=(char)(n<10?'0'+n:'a'+n-10);st=1;}}hb[hi]='\0';write_str(1,hb);write_str(1,"\n");}else{if(ag+1>=argc){write_str(2,"usage: taskset [mask] cmd\n");return;}unsigned long mk=0;const char*p=argv[ag];if(p[0]=='0'&&p[1]=='x'){p+=2;while(*p){mk<<=4;if(*p>='0'&&*p<='9')mk|=(unsigned long)(*p-'0');else if(*p>='a'&&*p<='f')mk|=(unsigned long)(*p-'a'+10);else if(*p>='A'&&*p<='F')mk|=(unsigned long)(*p-'A'+10);p++;}}else while(*p>='0'&&*p<='9')mk=mk*10+(unsigned long)(*p++-'0');ag++;sys_call3(SYS_sched_setaffinity,0,sizeof(mk),(long)&mk);int sa=argc-ag;char*sv[64];for(int i=0;i<sa&&i<63;i++)sv[i]=argv[i+ag];sv[sa]=NULL;execute_command(sa,sv);}}
+static void cmd_chrt(int argc, char *argv[]) { if(argc<2){write_str(2,"usage: chrt [-f|-r|-o|-b] [-p] [prio] [PID|cmd]\n");return;} int po=-1,pr=0,sp=0,ag=1; while(ag<argc&&argv[ag][0]=='-'){const char*f=argv[ag];if(strcmp_simple(f,"-f")==0)po=1;else if(strcmp_simple(f,"-r")==0)po=2;else if(strcmp_simple(f,"-o")==0)po=0;else if(strcmp_simple(f,"-b")==0)po=3;else if(strcmp_simple(f,"-p")==0)sp=1;else break;ag++;} if(sp){int pid=0;if(ag<argc){const char*p=argv[ag];while(*p>='0'&&*p<='9')pid=pid*10+(*p++-'0');}long cp=sys_call1(SYS_sched_getscheduler,pid);int pm[1]={0};sys_call2(SYS_sched_getparam,pid,(long)pm);write_str(1,"pid ");char pb[12];int_to_str(pid,pb,12);write_str(1,pb);write_str(1,"'s current scheduling policy: ");if(cp==0)write_str(1,"SCHED_OTHER");else if(cp==1)write_str(1,"SCHED_FIFO");else if(cp==2)write_str(1,"SCHED_RR");else if(cp==3)write_str(1,"SCHED_BATCH");else if(cp==5)write_str(1,"SCHED_IDLE");else{char nb[12];int_to_str(cp,nb,12);write_str(1,nb);}write_str(1,"\npid ");write_str(1,pb);write_str(1,"'s current scheduling priority: ");char prb[12];int_to_str(pm[0],prb,12);write_str(1,prb);write_str(1,"\n");return;} if(ag<argc){const char*p=argv[ag];while(*p>='0'&&*p<='9')pr=pr*10+(*p++-'0');ag++;}if(ag>=argc){write_str(2,"chrt: missing command\n");return;}if(po<0)po=1;int sm[1];sm[0]=pr;long r=sys_call3(SYS_sched_setscheduler,0,po,(long)sm);if(r<0)write_str(2,"chrt: failed to set scheduling policy\n");int sa=argc-ag;char*sv[64];for(int i=0;i<sa&&i<63;i++)sv[i]=argv[i+ag];sv[sa]=NULL;execute_command(sa,sv);}
 static void cmd_ionice(int argc, char *argv[]) { int ic=-1,ip=-1,tp=0,cs=-1; for(int i=1;i<argc;i++){if(strcmp_simple(argv[i],"-c")==0&&i+1<argc){i++;ic=0;const char*p=argv[i];while(*p>='0'&&*p<='9')ic=ic*10+(*p++-'0');}else if(argv[i][0]=='-'&&argv[i][1]=='c'&&argv[i][2]>='0')ic=argv[i][2]-'0';else if(strcmp_simple(argv[i],"-n")==0&&i+1<argc){i++;ip=0;const char*p=argv[i];while(*p>='0'&&*p<='9')ip=ip*10+(*p++-'0');}else if(argv[i][0]=='-'&&argv[i][1]=='n'&&argv[i][2]>='0')ip=argv[i][2]-'0';else if(strcmp_simple(argv[i],"-p")==0&&i+1<argc){i++;const char*p=argv[i];while(*p>='0'&&*p<='9')tp=tp*10+(*p++-'0');}else{cs=i;break;}} if(cs<0&&ic<0){long c=sys_call2(252,1,tp);if(c<0)c=0;int cl=(int)((c>>13)&0x3);int p=(int)(c&0x1fff);const char*cn[]={"none","realtime","best-effort","idle"};write_str(1,cn[cl<4?cl:0]);write_str(1,": prio ");char pb[8];int_to_str(p,pb,8);write_str(1,pb);write_str(1,"\n");return;}if(ic<0)ic=2;if(ip<0)ip=4;int io=(ic<<13)|ip;if(tp>0){sys_call3(251,1,tp,io);return;}sys_call3(251,1,0,io);if(cs>=0&&cs<argc){int sa=argc-cs;char*sv[64];for(int i=0;i<sa&&i<63;i++)sv[i]=argv[i+cs];sv[sa]=NULL;execute_command(sa,sv);}}
 static void cmd_cpupower(int argc, char *argv[]) { (void)argc;(void)argv; int fd=sys_open("/proc/cpuinfo",O_RDONLY,0);if(fd<0){write_str(2,"cpupower: cannot open /proc/cpuinfo\n");return;}char buf[4096];long nr=sys_read(fd,buf,sizeof(buf)-1);sys_close(fd);if(nr<=0)return;buf[nr]='\0';write_str(1,"analyzing CPU information:\n");int cc=0;char mn[128]={0};char mz[32]={0};char*p=buf;while(*p){if(p[0]=='p'&&p[1]=='r'&&p[2]=='o'&&p[3]=='c'&&p[4]=='e'&&p[5]=='s'&&p[6]=='s'&&p[7]=='o'&&p[8]=='r')cc++;if(p[0]=='m'&&p[1]=='o'&&p[2]=='d'&&p[3]=='e'&&p[4]=='l'&&p[5]==' '&&p[6]=='n'&&p[7]=='a'&&p[8]=='m'&&p[9]=='e'&&!mn[0]){const char*q=p;while(*q&&*q!=':')q++;if(*q==':'){q++;while(*q==' '||*q=='\t')q++;int mi=0;while(*q&&*q!='\n'&&mi<126)mn[mi++]=*q++;mn[mi]='\0';}}if(p[0]=='c'&&p[1]=='p'&&p[2]=='u'&&p[3]==' '&&p[4]=='M'&&p[5]=='H'&&p[6]=='z'&&!mz[0]){const char*q=p;while(*q&&*q!=':')q++;if(*q==':'){q++;while(*q==' '||*q=='\t')q++;int mi=0;while(*q&&*q!='\n'&&mi<30)mz[mi++]=*q++;mz[mi]='\0';}}while(*p&&*p!='\n')p++;if(*p=='\n')p++;}char nb[12];write_str(1,"  CPUs:       ");int_to_str(cc?cc:1,nb,12);write_str(1,nb);write_str(1,"\n");if(mn[0]){write_str(1,"  Model:      ");write_str(1,mn);write_str(1,"\n");}if(mz[0]){write_str(1,"  Frequency:  ");write_str(1,mz);write_str(1," MHz\n");}else write_str(1,"  Frequency:  (not available)\n");int gf=sys_open("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor",O_RDONLY,0);if(gf>=0){char gv[64];long gr=sys_read(gf,gv,sizeof(gv)-1);sys_close(gf);if(gr>0){if(gv[gr-1]=='\n')gr--;gv[gr]='\0';write_str(1,"  Governor:   ");write_str(1,gv);write_str(1,"\n");}}else write_str(1,"  Governor:   (not available)\n");}
-static void cmd_numactl(int argc, char *argv[]) { if(argc>=2&&strcmp_simple(argv[1],"--hardware")==0){write_str(1,"available: 1 node (0)\n");int fd=sys_open("/proc/meminfo",O_RDONLY,0);if(fd>=0){char buf[2048];long nr=sys_read(fd,buf,sizeof(buf)-1);sys_close(fd);if(nr>0){buf[nr]='\0';char*p=buf;while(*p){if(p[0]=='M'&&p[1]=='e'&&p[2]=='m'&&p[3]=='T'&&p[4]=='o'&&p[5]=='t'){write_str(1,"node 0 size: ");while(*p&&*p!=':')p++;if(*p==':')p++;while(*p==' ')p++;while(*p&&*p!='\n'){sys_write(1,p,1);p++;}write_str(1,"\n");break;}while(*p&&*p!='\n')p++;if(*p=='\n')p++;}}}write_str(1,"node 0 cpus: 0\n");return;}write_str(1,"policy: default\n");write_str(1,"preferred node: current\n");unsigned long mk=0;long r=sys_call3(204,0,sizeof(mk),(long)&mk);if(r>=0){write_str(1,"physcpubind: ");char nb[8];int f=1;for(int i=0;i<64;i++){if(mk&(1UL<<i)){if(!f)write_str(1," ");int_to_str(i,nb,8);write_str(1,nb);f=0;}}write_str(1,"\n");}write_str(1,"cpubind: 0\n");write_str(1,"nodebind: 0\n");write_str(1,"membind: 0\n");(void)argc;(void)argv;}
+static void cmd_numactl(int argc, char *argv[]) { if(argc>=2&&strcmp_simple(argv[1],"--hardware")==0){write_str(1,"available: 1 node (0)\n");int fd=sys_open("/proc/meminfo",O_RDONLY,0);if(fd>=0){char buf[2048];long nr=sys_read(fd,buf,sizeof(buf)-1);sys_close(fd);if(nr>0){buf[nr]='\0';char*p=buf;while(*p){if(p[0]=='M'&&p[1]=='e'&&p[2]=='m'&&p[3]=='T'&&p[4]=='o'&&p[5]=='t'){write_str(1,"node 0 size: ");while(*p&&*p!=':')p++;if(*p==':')p++;while(*p==' ')p++;while(*p&&*p!='\n'){sys_write(1,p,1);p++;}write_str(1,"\n");break;}while(*p&&*p!='\n')p++;if(*p=='\n')p++;}}}write_str(1,"node 0 cpus: 0\n");return;}write_str(1,"policy: default\n");write_str(1,"preferred node: current\n");unsigned long mk=0;long r=sys_call3(SYS_sched_getaffinity,0,sizeof(mk),(long)&mk);if(r>=0){write_str(1,"physcpubind: ");char nb[8];int f=1;for(int i=0;i<64;i++){if(mk&(1UL<<i)){if(!f)write_str(1," ");int_to_str(i,nb,8);write_str(1,nb);f=0;}}write_str(1,"\n");}write_str(1,"cpubind: 0\n");write_str(1,"nodebind: 0\n");write_str(1,"membind: 0\n");(void)argc;(void)argv;}
 static void cmd_perf(int argc, char *argv[]) {
     if (argc < 2) {
         write_str(2, "usage: perf <command> [args...]\n");
@@ -29325,7 +29325,7 @@ static void cmd_ar(int argc, char *argv[]) {
             } else {
                 long skip = sz;
                 if (skip & 1) skip++;
-                sys_call3(8, fd, skip, 1);
+                sys_call3(SYS_lseek, fd, skip, 1);
             }
         }
         sys_close(fd);
@@ -31593,7 +31593,7 @@ __attribute__((used)) static void cmd_ab(int argc, char *argv[]) {
         completed++;
     }
 
-    sys_call2(228, 0, (long)&ts_end);
+    sys_call2(SYS_clock_gettime, 0, (long)&ts_end);
     long elapsed_ms = (ts_end.tv_sec - ts_start.tv_sec) * 1000 +
                       (ts_end.tv_nsec - ts_start.tv_nsec) / 1000000;
     if (elapsed_ms < 1) elapsed_ms = 1;
@@ -31697,7 +31697,7 @@ __attribute__((used)) static void cmd_dig(int argc, char *argv[]) {
 
     /* Get current time for dig output */
     struct timespec ts;
-    sys_call2(228, 0, (long)&ts);
+    sys_call2(SYS_clock_gettime, 0, (long)&ts);
     char tbuf[16];
     int_to_str((int)ts.tv_sec, tbuf, 16);
     write_str(1, "epoch ");
@@ -31994,7 +31994,7 @@ __attribute__((used)) static void cmd_mtr(int argc, char *argv[]) {
 
             uint8_t rbuf[256];
             long rn = sys_call4(45 /* recvfrom */, sock, (long)rbuf, 256, 0);
-            sys_call2(228, 0, (long)&ts2);
+            sys_call2(SYS_clock_gettime, 0, (long)&ts2);
 
             if (rn > 0) {
                 long lat = (ts2.tv_sec - ts1.tv_sec) * 1000 + (ts2.tv_nsec - ts1.tv_nsec) / 1000000;
@@ -34970,7 +34970,7 @@ static void cmd_at(int argc, char *argv[]) {
 
     /* Generate job ID from clock */
     struct { long sec; long nsec; } ts;
-    sys_call2(228, 0, (long)&ts);
+    sys_call2(SYS_clock_gettime, 0, (long)&ts);
     int jobid = (int)(ts.nsec % 99999) + 1;
     char jobpath[64];
     int jp = 0;

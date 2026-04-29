@@ -224,6 +224,13 @@ long sys_waitpid(int pid, int *u_status, int flags) {
         if (rc == -EINTR) {
             return rc;
         }
+        /* WNOHANG + no zombies → ECHILD is the contract for the
+         * non-blocking poll. Don't log it as if waitpid failed.
+         * Same goes for blocking waits where there are no children
+         * left at all — the caller treats ECHILD as "I'm done". */
+        if (rc == -ECHILD) {
+            return rc;
+        }
         const char *error_desc;
         switch (rc) {
             case -ECHILD:

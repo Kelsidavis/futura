@@ -792,8 +792,16 @@ void fut_schedule(void) {
         return;
     }
 
-    // Validate prev pointer before use
-    if (prev && (uintptr_t)prev < 0xFFFFFFFF80000000ULL) {
+    // Validate prev pointer before use.
+    //
+    // The previous hardcoded base (0xFFFFFFFF80000000) was the x86_64 kernel
+    // half start; ARM64 uses 0xFFFF800000000000, so every legitimate ARM64
+    // thread pointer (e.g. 0xffffff80409b2750) tripped this gate and the
+    // scheduler refused to context-switch — the kernel booted to "init
+    // complete" and then sat in the idle loop forever, never running real
+    // work. Use the architecture-correct KERNEL_VIRTUAL_BASE macro from
+    // <platform/platform.h>; on x86_64 this is the same constant.
+    if (prev && (uintptr_t)prev < KERNEL_VIRTUAL_BASE) {
         fut_printf("[SCHED] BUG: prev=%p (not kernel addr) — skipping switch\n", (void *)prev);
         /* Don't context-switch with a corrupt current-thread pointer:
          * we can't safely save state or re-queue prev.  Skip this tick

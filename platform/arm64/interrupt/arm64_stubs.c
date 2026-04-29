@@ -90,6 +90,14 @@ int fut_stage_fbtest_binary(void) {
     return -ENODEV;  /* Not implemented for ARM64 */
 }
 
+int fut_stage_wl_panel_binary(void) {
+    return -ENODEV;  /* Not implemented for ARM64 */
+}
+
+int fut_stage_futura_shell_binary(void) {
+    return -ENODEV;  /* Not implemented for ARM64 */
+}
+
 /* ============================================================
  *   Page Table Management
  * ============================================================

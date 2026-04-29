@@ -1103,8 +1103,23 @@ extern void fut_kernel_main(void);
 void fut_platform_early_init(uint32_t boot_magic, void *boot_info) {
     (void)boot_magic;
 
-    /* Save DTB pointer for later use (convert physical to virtual address) */
-    g_dtb_ptr = (uint64_t)pmap_phys_to_virt((uint64_t)boot_info);
+    /* Save DTB pointer for later use (convert physical to virtual address).
+     *
+     * If the bootloader didn't pass a DTB (boot_info == NULL — happens when
+     * x0 wasn't preserved through the EL2→EL1 drop, or when QEMU's `-kernel`
+     * path skipped the device-tree blob), don't synthesize a "valid-looking"
+     * virtual address by adding KERNEL_VIRT_OFFSET to 0. That pointed
+     * fut_dtb_validate at 0xFFFFFF7FFFE00000 (just below the kernel base),
+     * the magic-number read translation-faulted in early boot, and the
+     * kernel hung in virtio-mmio init before reaching the splash. Keep the
+     * sentinel 0 so fut_dtb_validate's null guard short-circuits and
+     * downstream callers fall back to hardcoded QEMU virt MMIO addresses
+     * (which the virtio-mmio code already handles). */
+    if (boot_info != NULL) {
+        g_dtb_ptr = (uint64_t)pmap_phys_to_virt((uint64_t)boot_info);
+    } else {
+        g_dtb_ptr = 0;
+    }
 
     volatile uint32_t *uart = (volatile uint32_t *)0xFFFFFF8009000000UL;
     (void)uart;  /* Used for early debug if needed */

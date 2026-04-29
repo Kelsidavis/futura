@@ -4557,9 +4557,12 @@ static void arm64_syscall_table_init(void) {
     extern int64_t sys_rename_compat(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
     syscall_table[82].handler = (syscall_fn_t)sys_rename_compat;
     syscall_table[82].name = "rename";
-    /* clock_gettime (x86_64: 98, ARM64: 113) — for shell 'date' command */
-    syscall_table[98].handler = syscall_table[__NR_clock_gettime].handler;
-    syscall_table[98].name = "clock_gettime";
+    /* clock_gettime (x86_64: 228, ARM64: 113) — for shell 'date' command */
+    syscall_table[228].handler = syscall_table[__NR_clock_gettime].handler;
+    syscall_table[228].name = "clock_gettime";
+    /* getrusage (x86_64: 98, ARM64: 165) — wayland/glibc malloc reads it */
+    syscall_table[98].handler = syscall_table[__NR_getrusage].handler;
+    syscall_table[98].name = "getrusage";
     /* syslog (x86_64: 103, ARM64: 116) — for dmesg */
     syscall_table[103].handler = (syscall_fn_t)sys_syslog_wrapper;
     syscall_table[103].name = "syslog";
@@ -4607,8 +4610,13 @@ static void arm64_syscall_table_init(void) {
     syscall_table[51].name = "getsockname";
     syscall_table[52].handler = syscall_table[__NR_getpeername].handler;
     syscall_table[52].name = "getpeername";
-    syscall_table[53].handler = syscall_table[__NR_connect].handler;
-    syscall_table[53].name = "connect";
+    /* x86_64 #53 is socketpair, NOT connect (connect is x86_64 #42) —
+     * wiring it to connect routed wayland's wl_os_socket_cloexec
+     * socketpair calls into connect with mismatched args, which then
+     * tripped sys_writev later when the buffers it returned were
+     * misinterpreted as iovecs. */
+    syscall_table[53].handler = syscall_table[__NR_socketpair].handler;
+    syscall_table[53].name = "socketpair";
     syscall_table[54].handler = syscall_table[__NR_setsockopt].handler;
     syscall_table[54].name = "setsockopt";
     syscall_table[55].handler = syscall_table[__NR_getsockopt].handler;

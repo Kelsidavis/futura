@@ -67,20 +67,15 @@ _start:
 
 /* exit() system call wrapper.
  *
- * Two arch fixes vs the original:
- *   - Use Futura's syscall number 60 for exit (matches the
- *     SYS_exit constant in include/user/sysnums.h and the rest of
- *     libfutura's syscall wrappers).  Linux ARM64's #93 is mapped
- *     to fchown in Futura's syscall_table.c, so calling 'mov x8,
- *     #93 ; svc' returned -EBADF/something instead of terminating
- *     the process — and the caller fell through into the
- *     'brk #0' on the next instruction, looking like a BRK
- *     exception at PC=exit+0x8 in every userland binary that ever
- *     hit exit.
- *   - Use 'svc #0' (Linux/AArch64 convention).  The imm field is
- *     informational and Futura's exception handler doesn't check
- *     it, but '#0x80' is the legacy x86 trap-gate convention and
- *     out of place here. */
+ * Uses ARM64 Linux generic syscall #93 = exit. The kernel's
+ * arm64 syscall table registers sys_exit_wrapper at slot 93,
+ * matching Linux. (Earlier versions of this file used #60 from
+ * the x86_64 historical numbering, which collided with fchown
+ * in the ARM64 generic ABI and caused exit to silently fail —
+ * that compat path is gone now.)
+ *
+ * SVC immediate is informational on AArch64 and our exception
+ * handler ignores it, but #0 is the standard Linux convention. */
 .global exit
 exit:
     mov x8, #93                 /* SYS_exit (Linux ARM64 generic) */

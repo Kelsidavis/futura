@@ -457,6 +457,7 @@
 #define SYS_setrlimit           160
 #define SYS_sethostname         170
 #define SYS_unshare             272
+#define SYS_setns               308
 #define SYS_seteuid             109
 #define SYS_setegid             110
 #define SYS_getpgrp             111

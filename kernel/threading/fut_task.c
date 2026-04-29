@@ -501,8 +501,14 @@ fut_task_t *fut_task_current(void) {
     fut_thread_t *thread = fut_thread_current();
     if (!thread) return NULL;
     fut_task_t *task = thread->task;
-    /* Guard against corrupt task pointer (e.g. GS_BASE race) */
-    if (task && (uintptr_t)task < 0xFFFFFFFF80000000ULL)
+    /* Guard against corrupt task pointer (e.g. GS_BASE race on x86_64,
+     * TPIDR_EL1 corruption on ARM64). The previous hard-coded x86_64 base
+     * (0xFFFFFFFF80000000) flagged every legitimate ARM64 task pointer
+     * (which lives at 0xffffff80…) as corrupt and made fut_task_current()
+     * return NULL — early-boot /etc creation, init staging, syscalls all
+     * tripped over this. Use the architecture-correct KERNEL_VIRTUAL_BASE
+     * macro from <platform/platform.h>. */
+    if (task && (uintptr_t)task < KERNEL_VIRTUAL_BASE)
         return NULL;
     return task;
 }

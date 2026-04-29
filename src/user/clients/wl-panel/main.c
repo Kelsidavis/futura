@@ -229,9 +229,28 @@ static void frame_callback(void *data, struct wl_callback *callback, uint32_t ti
         wl_callback_destroy(callback);
     }
 
-    panel_draw(state);
+    /* Only redraw when something visible actually changed: clock minute
+     * tick or hover state. The previous unconditional redraw was
+     * hammering the CPU at the compositor's frame rate (~60 fps) just
+     * to repaint a panel whose contents change once a minute. Hover
+     * transitions already trigger an out-of-band panel_draw() from
+     * pointer_motion(), so we just need to catch the minute roll. */
+    static char last_time_str[6] = {0};
+    char now_time_str[6];
+    get_time_string(now_time_str);
+    bool changed = false;
+    for (int i = 0; i < 6; i++) {
+        if (last_time_str[i] != now_time_str[i]) { changed = true; break; }
+    }
+    if (changed) {
+        for (int i = 0; i < 6; i++) last_time_str[i] = now_time_str[i];
+        panel_draw(state);
+    }
 
-    /* Request next frame */
+    /* Request next frame. wl_surface_frame is part of the next commit;
+     * the wl_surface_commit below submits the frame request. (When
+     * changed==true panel_draw also committed a buffer above; the
+     * commit here is the one that arms the frame callback.) */
     state->frame_cb = wl_surface_frame(state->surface);
     wl_callback_add_listener(state->frame_cb, &frame_listener, state);
     wl_surface_commit(state->surface);

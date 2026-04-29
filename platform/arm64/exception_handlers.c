@@ -67,6 +67,7 @@ extern fut_interrupt_frame_t *fut_current_frame;
 #define ESR_EC_DABT_EL1     0x25    /* Data abort from same EL */
 #define ESR_EC_IABT_EL0     0x20    /* Instruction abort from lower EL */
 #define ESR_EC_IABT_EL1     0x21    /* Instruction abort from same EL */
+#define ESR_EC_BRK64        0x3C    /* BRK instruction (AArch64) — debug breakpoint */
 
 /* Extract exception class from ESR */
 static inline uint32_t esr_get_ec(uint64_t esr) {
@@ -422,6 +423,24 @@ void arm64_exception_dispatch(fut_interrupt_frame_t *frame) {
             handle_unknown(frame);
             break;
 
+        case ESR_EC_BRK64:
+            /* BRK instruction in user code — typically the unreachable
+             * `brk #0` after a syscall stub returns when it shouldn't,
+             * or compiler-emitted UB traps. Send SIGTRAP to the task
+             * (which by default kills with core dump on Linux) instead
+             * of falling into the generic "Unknown exception" handler
+             * that hangs the whole kernel. */
+            if (ec == ESR_EC_BRK64 && (frame->pstate & 0xF) == 0) {
+                /* User-mode BRK */
+                uint64_t far_brk = 0;
+                __asm__ volatile("mrs %0, far_el1" : "=r"(far_brk));
+                fut_printf("[BRK64] user brk #0 at PC=0x%016llx — sending SIGTRAP\n",
+                           (unsigned long long)frame->pc);
+                fut_task_signal_exit(5 /* SIGTRAP */);
+                /* fut_task_signal_exit doesn't return for the current
+                 * task; if it does we fall through. */
+            }
+            /* fallthrough */
         case ESR_EC_UNKNOWN:
         case ESR_EC_WFX_TRAP:
         case ESR_EC_ILL_STATE:

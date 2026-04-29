@@ -1189,6 +1189,20 @@ ARM64_FORKTEST_BLOB := $(OBJ_DIR)/kernel/blobs/arm64_forktest_blob.o
 ARM64_NANO_BIN := $(BIN_DIR)/arm64/user/nano
 ARM64_NANO_BLOB := $(OBJ_DIR)/kernel/blobs/arm64_nano_blob.o
 
+# ARM64 wayland desktop binaries — same source as x86_64, cross-built.
+ARM64_WAYLAND_COMPOSITOR_BIN  := $(BIN_DIR)/arm64/user/futura-wayland
+ARM64_WAYLAND_COMPOSITOR_BLOB := $(OBJ_DIR)/kernel/blobs/arm64_futura_wayland_blob.o
+ARM64_WAYLAND_SHELL_BIN       := $(BIN_DIR)/arm64/user/futura-shell
+ARM64_WAYLAND_SHELL_BLOB      := $(OBJ_DIR)/kernel/blobs/arm64_futura_shell_blob.o
+ARM64_WL_TERM_BIN             := $(BIN_DIR)/arm64/user/wl-term
+ARM64_WL_TERM_BLOB            := $(OBJ_DIR)/kernel/blobs/arm64_wl_term_blob.o
+ARM64_WL_PANEL_BIN            := $(BIN_DIR)/arm64/user/wl-panel
+ARM64_WL_PANEL_BLOB           := $(OBJ_DIR)/kernel/blobs/arm64_wl_panel_blob.o
+ARM64_WL_EDIT_BIN             := $(BIN_DIR)/arm64/user/wl-edit
+ARM64_WL_EDIT_BLOB            := $(OBJ_DIR)/kernel/blobs/arm64_wl_edit_blob.o
+ARM64_WL_SYSMON_BIN           := $(BIN_DIR)/arm64/user/wl-sysmon
+ARM64_WL_SYSMON_BLOB          := $(OBJ_DIR)/kernel/blobs/arm64_wl_sysmon_blob.o
+
 ifeq ($(PLATFORM),x86_64)
 # Skip shell blob on macOS (uses GNU nested functions not supported by clang)
 ifneq ($(shell uname -s),Darwin)
@@ -1211,6 +1225,12 @@ endif
 else ifeq ($(PLATFORM),arm64)
 # Re-enabled for UI testing
 OBJECTS += $(ARM64_INIT_BLOB) $(ARM64_UIDEMO_BLOB) $(ARM64_SHELL_BLOB) $(ARM64_FORKTEST_BLOB) $(ARM64_NANO_BLOB)
+# Wayland desktop (compositor + shell + clients) — same source as x86_64,
+# cross-built for arm64-elf via the per-platform Makefiles under
+# src/user/{compositor,clients,shell}/.
+ifeq ($(ENABLE_WAYLAND),1)
+OBJECTS += $(ARM64_WAYLAND_COMPOSITOR_BLOB) $(ARM64_WAYLAND_SHELL_BLOB) $(ARM64_WL_TERM_BLOB) $(ARM64_WL_PANEL_BLOB) $(ARM64_WL_EDIT_BLOB) $(ARM64_WL_SYSMON_BLOB)
+endif
 endif
 
 # ============================================================
@@ -1687,6 +1707,62 @@ $(ARM64_NANO_BLOB): $(ARM64_NANO_BIN) | $(OBJ_DIR)/kernel/blobs
 $(ARM64_NANO_BIN):
 	@echo "Building nano editor..."
 	@$(MAKE) -C src/user/nano all
+
+# ARM64 wayland desktop binaries — same Makefiles as x86_64, just
+# PLATFORM=arm64 invokes the cross-compile branch. Always available
+# when building the ARM64 kernel; the wayland third-party libs build
+# implicitly via each binary's Makefile dependency on libwayland.
+ifeq ($(PLATFORM),arm64)
+$(ARM64_WAYLAND_COMPOSITOR_BIN): arm64-libfutura
+	@echo "Building ARM64 futura-wayland compositor..."
+	@$(MAKE) -C third_party/wayland PLATFORM=arm64 all
+	@$(MAKE) -C src/user/compositor/futura-wayland PLATFORM=arm64 all
+
+$(ARM64_WAYLAND_SHELL_BIN): arm64-libfutura
+	@echo "Building ARM64 futura-shell..."
+	@$(MAKE) -C src/user/shell/futura-shell PLATFORM=arm64 all
+
+$(ARM64_WL_TERM_BIN): arm64-libfutura
+	@echo "Building ARM64 wl-term..."
+	@$(MAKE) -C src/user/clients/wl-term PLATFORM=arm64 all
+
+$(ARM64_WL_PANEL_BIN): arm64-libfutura
+	@echo "Building ARM64 wl-panel..."
+	@$(MAKE) -C src/user/clients/wl-panel PLATFORM=arm64 all
+
+$(ARM64_WL_EDIT_BIN): arm64-libfutura
+	@echo "Building ARM64 wl-edit..."
+	@$(MAKE) -C src/user/clients/wl-edit PLATFORM=arm64 all
+
+$(ARM64_WL_SYSMON_BIN): arm64-libfutura
+	@echo "Building ARM64 wl-sysmon..."
+	@$(MAKE) -C src/user/clients/wl-sysmon PLATFORM=arm64 all
+endif
+
+# Strip + objcopy each wayland binary into a kernel-embeddable blob.
+$(ARM64_WAYLAND_COMPOSITOR_BLOB): $(ARM64_WAYLAND_COMPOSITOR_BIN) | $(OBJ_DIR)/kernel/blobs
+	@$(OBJCOPY) --strip-debug $< $<.tmp && mv $<.tmp $<
+	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
+
+$(ARM64_WAYLAND_SHELL_BLOB): $(ARM64_WAYLAND_SHELL_BIN) | $(OBJ_DIR)/kernel/blobs
+	@$(OBJCOPY) --strip-debug $< $<.tmp && mv $<.tmp $<
+	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
+
+$(ARM64_WL_TERM_BLOB): $(ARM64_WL_TERM_BIN) | $(OBJ_DIR)/kernel/blobs
+	@$(OBJCOPY) --strip-debug $< $<.tmp && mv $<.tmp $<
+	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
+
+$(ARM64_WL_PANEL_BLOB): $(ARM64_WL_PANEL_BIN) | $(OBJ_DIR)/kernel/blobs
+	@$(OBJCOPY) --strip-debug $< $<.tmp && mv $<.tmp $<
+	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
+
+$(ARM64_WL_EDIT_BLOB): $(ARM64_WL_EDIT_BIN) | $(OBJ_DIR)/kernel/blobs
+	@$(OBJCOPY) --strip-debug $< $<.tmp && mv $<.tmp $<
+	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
+
+$(ARM64_WL_SYSMON_BLOB): $(ARM64_WL_SYSMON_BIN) | $(OBJ_DIR)/kernel/blobs
+	@$(OBJCOPY) --strip-debug $< $<.tmp && mv $<.tmp $<
+	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
 
 # Build userland services (all user binaries: compositor, shell, utilities)
 userland: libfutura vendor

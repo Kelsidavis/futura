@@ -1332,7 +1332,9 @@ void arch_memory_config(uintptr_t *ram_start, uintptr_t *ram_end, size_t *heap_s
  */
 /* Helper function to stage embedded binary to filesystem */
 #if 1  /* Re-enabled for UI testing */
-static int stage_arm64_blob(const uint8_t *start, const uint8_t *end, const char *path) {
+/* Non-static so the per-binary fut_stage_*_binary() helpers in
+ * arm64_stubs.c can use it as the common drop-blob-into-VFS plumbing. */
+int stage_arm64_blob(const uint8_t *start, const uint8_t *end, const char *path) {
     extern int fut_vfs_open(const char *, int, int);
     extern long fut_vfs_write(int, const void *, size_t);
     extern int fut_vfs_close(int);
@@ -1445,6 +1447,20 @@ static void arm64_init_spawner_thread(void *arg) {
             if (ret == 0) staged++;
         }
     }
+
+    /* Wayland desktop binaries — same source as x86_64, embedded by
+     * the kernel build for ARM64 too.  fut_stage_*_binary helpers
+     * (defined in arm64_stubs.c) drop them in /sbin and /bin.  Each
+     * returns -ENODEV when the corresponding blob is missing. */
+    extern int fut_stage_wayland_compositor_binary(void);
+    extern int fut_stage_futura_shell_binary(void);
+    extern int fut_stage_wl_term_binary(void);
+    extern int fut_stage_wl_panel_binary(void);
+    if (fut_stage_wayland_compositor_binary() == 0) staged++;
+    if (fut_stage_futura_shell_binary() == 0)        staged++;
+    if (fut_stage_wl_term_binary() == 0)             staged++;
+    if (fut_stage_wl_panel_binary() == 0)            staged++;
+
     fut_printf("[INIT] Staged %d userland binaries to ramfs\n", staged);
 
     /* Quick FuturaFS write/read self-test */
@@ -1758,6 +1774,43 @@ static void arm64_init_spawner_thread(void *arg) {
         if (ret == 0) {
             /* Brief delay for forktest to run and exit */
             for (volatile int d = 0; d < 20000000; d++);
+        }
+    }
+
+    /* Try to launch the wayland desktop first.  If the compositor was
+     * staged successfully, exec it as the long-running root process and
+     * skip the text-shell respawn loop entirely.  Falls through to the
+     * shell loop if the binary isn't present (e.g. ENABLE_WAYLAND=0
+     * builds, or first ARM64 boots before the compositor was added). */
+    {
+        extern int fut_vfs_open(const char *, int, int);
+        extern int fut_vfs_close(int);
+        int fd = fut_vfs_open("/sbin/futura-wayland", 0 /* O_RDONLY */, 0);
+        if (fd >= 0) {
+            fut_vfs_close(fd);
+            char *wl_argv[] = {"/sbin/futura-wayland", NULL};
+            char *wl_envp[] = {"PATH=/sbin:/bin", "HOME=/", "TERM=vt100",
+                               "USER=root", "HOSTNAME=futura",
+                               "WAYLAND_DISPLAY=wayland-0",
+                               "XDG_RUNTIME_DIR=/run", NULL};
+            fut_printf("[INIT] Launching futura-wayland compositor\n");
+            ret = fut_exec_elf("/sbin/futura-wayland", wl_argv, wl_envp);
+            if (ret == 0) {
+                /* Wait forever — compositor is the desktop. */
+                extern long sys_waitpid(int pid, int *status, int options);
+                int status = 0;
+                for (;;) {
+                    long w = sys_waitpid(-1, &status, 0);
+                    if (w < 0) break;
+                    fut_printf("[INIT] compositor child reaped: pid=%ld status=0x%x\n",
+                               w, status);
+                }
+                fut_printf("[INIT] compositor exited unexpectedly, falling back to text shell\n");
+            } else {
+                fut_printf("[INIT] futura-wayland exec failed (rc=%d), falling back to text shell\n", ret);
+            }
+        } else {
+            fut_printf("[INIT] /sbin/futura-wayland not present, using text shell\n");
         }
     }
 

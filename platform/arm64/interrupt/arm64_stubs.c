@@ -49,54 +49,52 @@ void fut_perf_selftest_schedule(void) {
 /* virtio_net_init now implemented in Rust for ARM64 - see drivers/rust/virtio_net */
 
 /* ============================================================
- *   Wayland Staging Stubs (x86-64 specific)
+ *   Wayland staging — ARM64 implementations
  * ============================================================
  *
- * NOTE: ARM64 userland binary staging works differently than x86-64.
- *       ARM64 uses arm64_init_spawner_thread() in platform_init.c
- *       which stages binaries directly via stage_arm64_blob().
- *       The fut_stage_*_binary() functions are x86-64 specific.
+ * Same API as x86_64's fut_stage_*_binary() functions, just pulling
+ * from the ARM64-built blobs that the kernel image embeds.  The
+ * arm64_init_spawner_thread() in platform_init.c calls these to drop
+ * the wayland desktop binaries into the staging filesystem at boot.
  * ============================================================ */
 
-int fut_stage_wayland_compositor_binary(void) {
-    return -ENODEV;  /* Wayland not available for ARM64 */
-}
+extern int fut_vfs_mkdir(const char *path, int mode);
+extern int stage_arm64_blob(const unsigned char *start, const unsigned char *end, const char *path);
 
+#define ARM64_BLOB_DECL(name)                                          \
+    extern unsigned char _binary_build_bin_arm64_user_##name##_start[]; \
+    extern unsigned char _binary_build_bin_arm64_user_##name##_end[]
+
+#define ARM64_STAGE_FN(fn, name, dir, path)                              \
+    ARM64_BLOB_DECL(name);                                                \
+    int fn(void) {                                                        \
+        (void)fut_vfs_mkdir(dir, 0755);                                   \
+        return stage_arm64_blob(_binary_build_bin_arm64_user_##name##_start, \
+                                _binary_build_bin_arm64_user_##name##_end,   \
+                                path);                                    \
+    }
+
+ARM64_STAGE_FN(fut_stage_wayland_compositor_binary, futura_wayland, "/sbin", "/sbin/futura-wayland")
+ARM64_STAGE_FN(fut_stage_futura_shell_binary,       futura_shell,   "/sbin", "/sbin/futura-shell")
+ARM64_STAGE_FN(fut_stage_wl_term_binary,            wl_term,        "/bin",  "/bin/wl-term")
+ARM64_STAGE_FN(fut_stage_wl_panel_binary,           wl_panel,       "/bin",  "/bin/wl-panel")
+
+/* Optional / not-yet-staged on ARM64 */
 int fut_stage_wayland_client_binary(void) {
-    return -ENODEV;  /* Wayland not available for ARM64 */
+    return -ENODEV;  /* wl-simple — diagnostics-only, not staged */
 }
 
 int fut_stage_wayland_color_client_binary(void) {
-    return -ENODEV;  /* Wayland not available for ARM64 */
+    return -ENODEV;  /* wl-colorwheel — diagnostics-only, not staged */
 }
 
-int fut_stage_wl_term_binary(void) {
-    return -ENODEV;  /* Wayland not available for ARM64 */
-}
-
-int fut_stage_init_binary(void) {
-    return -ENODEV;  /* Not implemented for ARM64 */
-}
-
-int fut_stage_second_stub_binary(void) {
-    return -ENODEV;  /* Not implemented for ARM64 */
-}
-
-int fut_stage_shell_binary(void) {
-    return -ENODEV;  /* Not implemented for ARM64 */
-}
-
-int fut_stage_fbtest_binary(void) {
-    return -ENODEV;  /* Not implemented for ARM64 */
-}
-
-int fut_stage_wl_panel_binary(void) {
-    return -ENODEV;  /* Not implemented for ARM64 */
-}
-
-int fut_stage_futura_shell_binary(void) {
-    return -ENODEV;  /* Not implemented for ARM64 */
-}
+/* Other staging entry points the kernel exposes — ARM64 boot flows
+ * through arm64_init_spawner_thread() which directly stages init /
+ * second / shell / fbtest, so these named helpers stay no-ops. */
+int fut_stage_init_binary(void)         { return -ENODEV; }
+int fut_stage_second_stub_binary(void)  { return -ENODEV; }
+int fut_stage_shell_binary(void)        { return -ENODEV; }
+int fut_stage_fbtest_binary(void)       { return -ENODEV; }
 
 /* ============================================================
  *   Page Table Management

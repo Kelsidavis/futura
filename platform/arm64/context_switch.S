@@ -163,6 +163,19 @@ fut_switch_context:
     mov     x2, #0x05                 /* EL1h mode */
     str     x2, [x0, #272]            /* Save PSTATE at new offset 272 */
 
+    /* Save TTBR0_EL1 — the user page-table base. The cooperative EL1
+     * switch path (.Lrestore_el1) resumes a kernel-mode caller, but
+     * that caller may still need the original task's user mappings to
+     * service copy_to_user / copy_from_user. Without saving and
+     * restoring it, an EL1 thread that yielded mid-syscall picks up
+     * whatever TTBR0 the most recent .Lrestore (EL0) path installed,
+     * which is the wrong process's page table. Symptom: copy_to_user
+     * silently writes the syscall result into the WRONG process's
+     * memory, so e.g. forktest's wait4 status arrives as 0 instead of
+     * (42<<8) and the parent prints FAIL. */
+    mrs     x2, ttbr0_el1
+    str     x2, [x0, #280]            /* Save TTBR0_EL1 at offset 280 */
+
 .Lrestore_only:
     /* Context structure layout (with x2-x18 added for fork support):
      *   Offset 0:   x0
@@ -290,6 +303,18 @@ fut_switch_context:
 .Lrestore_el1:
     /* Target is EL1 - use regular cooperative switch */
     /* Only restore callee-saved registers (x2-x18 are caller's responsibility) */
+
+    /* Restore TTBR0_EL1 first so any uaccess that runs after this resume
+     * targets the correct process's user mappings. Without this, a kernel
+     * thread resumed mid-syscall inherits whatever TTBR0 the most recent
+     * .Lrestore (EL0) path installed, and copy_to_user / copy_from_user
+     * silently use a different task's page table. */
+    ldr     x2, [x1, #280]            /* Load saved TTBR0_EL1 */
+    msr     ttbr0_el1, x2
+    isb
+    tlbi    vmalle1is                 /* Invalidate stale TLB entries */
+    dsb     ish
+    isb
 
     /* Restore callee-saved registers (x19-x30) with new offsets */
     ldp     x19, x20, [x1, #152]      /* Restore x19, x20 from new offset 152 */

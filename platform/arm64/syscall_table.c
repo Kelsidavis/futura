@@ -4637,10 +4637,14 @@ static void arm64_syscall_table_init(void) {
     syscall_table[229].name = "epoll_ctl";
     syscall_table[230].handler = syscall_table[__NR_epoll_pwait].handler;
     syscall_table[230].name = "epoll_wait";
-    syscall_table[291].handler = syscall_table[__NR_epoll_create1].handler;
+    /* Bypass __NR_epoll_create1 alias — that index (#20) was overwritten
+     * with writev above for x86_64 compat (x86_64 writev=20, but ARM64
+     * native epoll_create1=20). Wire 291 directly to the wrapper. */
+    syscall_table[291].handler = (syscall_fn_t)sys_epoll_create1_wrapper;
     syscall_table[291].name = "epoll_create1";
-    /* eventfd2 (x86_64: 290, ARM64: 19) */
-    syscall_table[290].handler = syscall_table[__NR_eventfd2].handler;
+    /* eventfd2 (x86_64: 290, ARM64: 19) — same overwrite issue:
+     * x86_64 readv=19 took ARM64's eventfd2 slot, so wire 290 directly. */
+    syscall_table[290].handler = (syscall_fn_t)sys_eventfd2_wrapper;
     syscall_table[290].name = "eventfd2";
     /* time_millis (Futura-specific, see include/user/sysnums.h) */
     syscall_table[400].handler = (syscall_fn_t)sys_time_millis_wrapper;

@@ -201,8 +201,21 @@ static void fb_console_scroll(void) {
 
     uint8_t *fb = (uint8_t *)cons->fb_mem;
 
-    /* Sanity check: fb_mem should be a valid kernel virtual address (>= 0xFFFFFFFF80000000) */
+    /* Sanity check: fb_mem must be a kernel-half virtual address.
+     * The threshold differs per arch — x86_64 puts the kernel half at
+     * 0xFFFFFFFF80000000 (negative-2 GiB), ARM64 at 0xFFFF800000000000
+     * (TTBR1 base). The previous hard-coded x86 value was always
+     * larger than any valid ARM64 fb_mem (e.g. 0xFFFFFF8042c02000), so
+     * the check tripped on every scroll → the early 'return' meant the
+     * ARM64 console NEVER scrolled. Once the screen filled, the cursor
+     * stuck on the last row and every new character overwrote the
+     * previous one, hiding the bottom of the boot log and the shell
+     * prompt under itself. */
+#if defined(__aarch64__)
+    if ((uintptr_t)fb < 0xFFFF800000000000ULL) {
+#else
     if ((uintptr_t)fb < 0xFFFFFFFF80000000ULL) {
+#endif
         return;  /* Skip scroll to avoid crash - corruption detected */
     }
 

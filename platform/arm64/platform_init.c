@@ -1780,7 +1780,7 @@ static void arm64_init_spawner_thread(void *arg) {
         ret = fut_exec_elf("/bin/forktest", forktest_argv, forktest_envp);
         if (ret == 0) {
             /* Brief delay for forktest to run and exit */
-            for (volatile int d = 0; d < 20000000; d++);
+            for (volatile int d = 0; d < 2000000; d++);
         }
     }
 
@@ -1806,8 +1806,10 @@ static void arm64_init_spawner_thread(void *arg) {
                 /* Give the compositor a moment to bind its socket before
                  * launching the first client.  fut_exec_elf returns 0 on
                  * the spawner thread (the new task runs on its own thread),
-                 * so the spawner can keep going. */
-                for (volatile int d = 0; d < 80000000; d++);
+                 * so the spawner can keep going.  Short busy-wait — the
+                 * compositor only needs to reach socket() + bind() + listen()
+                 * before wl_display_connect can race for it. */
+                for (volatile int d = 0; d < 5000000; d++);
 
                 int wlt_fd = fut_vfs_open("/bin/wl-term", 0 /* O_RDONLY */, 0);
                 if (wlt_fd >= 0) {

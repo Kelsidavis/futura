@@ -360,6 +360,10 @@ int unlink(const char *path) {
 }
 
 int mkdir(const char *path, mode_t mode) {
+    if (!path) {
+        errno = EFAULT;
+        return -1;
+    }
     if (!posixd_channel && posix_init() < 0) {
         return -1;
     }

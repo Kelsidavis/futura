@@ -161,8 +161,19 @@ static void fb_console_draw_pixel(int x, int y, uint32_t color) {
 
     uint8_t *fb = (uint8_t *)cons->fb_mem;
 
-    /* Sanity check: fb_mem should be a valid kernel virtual address */
+    /* Sanity check: fb_mem must be a kernel-half virtual address.
+     * Per-arch threshold — same root cause as the matching check in
+     * fb_console_scroll: the hard-coded x86 base (0xFFFFFFFF80000000)
+     * is far above any valid ARM64 fb_mem (TTBR1 base is
+     * 0xFFFF800000000000), so on ARM64 the check tripped on every
+     * single pixel and EVERY draw was silently skipped — the actual
+     * cause of the QEMU-window-stays-black symptom even after the
+     * phys→virt mapping and virtio-gpu flush were correct. */
+#if defined(__aarch64__)
+    if ((uintptr_t)fb < 0xFFFF800000000000ULL) {
+#else
     if ((uintptr_t)fb < 0xFFFFFFFF80000000ULL) {
+#endif
         return;  /* Skip draw - fb_mem corrupted */
     }
 

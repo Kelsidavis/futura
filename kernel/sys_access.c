@@ -290,10 +290,11 @@ long sys_access(const char *pathname, int mode) {
         return -ENOENT;
     }
 
-    /* Phase 3: F_OK just checks if file exists (already verified) */
+    /* Phase 3: F_OK just checks if file exists (already verified). Silent
+     * success — `which`, `command -v`, and shell auto-complete bombard
+     * this path. */
     if (local_mode == F_OK) {
-        fut_printf("[ACCESS] access(path='%s' [%s], mode=%s) -> 0 "
-                   "(file exists, Phase 4: uid/gid checking and ACLs)\n", path_buf, path_type, mode_desc);
+        (void)path_type; (void)mode_desc;
         fut_vnode_unref(vnode);
         return 0;
     }

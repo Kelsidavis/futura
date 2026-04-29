@@ -19,7 +19,12 @@ static inline ssize_t sys_write(int fd, const void *buf, size_t count) {
 }
 
 static inline int sys_open(const char *pathname, int flags, int mode) {
+#if defined(__aarch64__)
+    extern long syscall4(long nr, long, long, long, long);
+    return (int)syscall4(56 /*openat*/, -100 /*AT_FDCWD*/, (long)pathname, flags, mode);
+#else
     return (int)syscall3(__NR_open, (long)pathname, flags, mode);
+#endif
 }
 
 static inline int sys_close(int fd) {

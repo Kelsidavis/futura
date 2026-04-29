@@ -167,7 +167,9 @@ long sys_lstat(const char *path, struct fut_stat *statbuf) {
         return -EFAULT;
     }
 
-    fut_printf("[LSTAT] lstat(\"%s\") -> 0 (type=%s, size=%llu, mode=%o, ino=%llu)\n",
-               path_buf, file_type, kernel_stat.st_size, kernel_stat.st_mode, kernel_stat.st_ino);
+    /* Success path is silent — every shell `ls` calls lstat per entry,
+     * so a successful one-line trace turns into a screenful of noise.
+     * The error paths above still log explicitly. */
+    (void)file_type;
     return 0;
 }

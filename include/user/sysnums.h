@@ -106,6 +106,7 @@
 #define SYS_exit_group          94
 #define SYS_waitid              95
 #define SYS_set_tid_address     96
+#define SYS_unshare             97
 #define SYS_futex               98
 #define SYS_set_robust_list     99
 #define SYS_get_robust_list     100
@@ -162,6 +163,7 @@
 #define SYS_getgroups           158
 #define SYS_setgroups           159
 #define SYS_uname               160
+#define SYS_sethostname         161
 #define SYS_setrlimit           164
 #define SYS_getrlimit           163
 #define SYS_getrusage           165
@@ -212,6 +214,14 @@
 #define SYS_msgctl              187
 #define SYS_msgrcv              188
 #define SYS_msgsnd              189
+#define SYS_semget              190
+#define SYS_semctl              191
+#define SYS_semtimedop          192
+#define SYS_semop               193
+#define SYS_shmget              194
+#define SYS_shmctl              195
+#define SYS_shmat               196
+#define SYS_shmdt               197
 #define SYS_mbind               235
 #define SYS_get_mempolicy       236
 #define SYS_set_mempolicy       237
@@ -387,6 +397,14 @@
 #define SYS_msgsnd              69
 #define SYS_msgrcv              70
 #define SYS_msgctl              71
+#define SYS_semget              64
+#define SYS_semop               65
+#define SYS_semctl              66
+#define SYS_shmget              29
+#define SYS_shmat               30
+#define SYS_shmctl              31
+#define SYS_shmdt               67
+#define SYS_fallocate           285
 #define SYS_sigaction           13
 #define SYS_sigprocmask         14
 #define SYS_truncate            76
@@ -413,6 +431,8 @@
 #define SYS_mkdir               83
 #define SYS_rmdir               84
 #define SYS_rename              82
+#define SYS_mknod               133
+#define SYS_rt_sigaction        13
 #define SYS_getdents64          217
 #define SYS_getpid              39
 #define SYS_gettid              186
@@ -435,6 +455,8 @@
 #define SYS_times               100
 #define SYS_getegid             108
 #define SYS_setrlimit           160
+#define SYS_sethostname         170
+#define SYS_unshare             272
 #define SYS_seteuid             109
 #define SYS_setegid             110
 #define SYS_getpgrp             111

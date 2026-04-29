@@ -344,6 +344,15 @@ static inline long sys_mkdir_call(const char *path, long mode) {
 #endif
 }
 
+static inline long sys_mknod_call(const char *path, long mode, long dev) {
+#if defined(__aarch64__)
+    /* ARM64 generic doesn't expose plain mknod, only mknodat. */
+    return sys_call4(SYS_mknodat, -100 /*AT_FDCWD*/, (long)path, mode, dev);
+#else
+    return sys_call3(SYS_mknod, (long)path, mode, dev);
+#endif
+}
+
 static inline long sys_rmdir_call(const char *path) {
 #if defined(__aarch64__)
     /* unlinkat(AT_FDCWD, path, AT_REMOVEDIR=0x200) */

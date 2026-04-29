@@ -4371,8 +4371,7 @@ static void cmd_hostname(int argc, char *argv[]) {
         /* Set hostname: write to /proc/sys/kernel/hostname and /etc/hostname */
         const char *newname = argv[1];
         int len = 0; while (newname[len]) len++;
-        /* Use sethostname syscall (170) */
-        sys_call2(170 /*sethostname — TODO arch*/, (long)newname, len);
+        sys_call2(SYS_sethostname, (long)newname, len);
         /* Also update /etc/hostname for persistence */
         int fd = sys_open("/etc/hostname", O_WRONLY | O_TRUNC, 0644);
         if (fd >= 0) {
@@ -11321,7 +11320,7 @@ static int execute_command(int argc, char *argv[]) {
             /* Sleep 1s between iterations (if more than one) */
             if (iter + 1 < iterations) {
                 struct { long tv_sec; long tv_nsec; } ts_sleep = {1, 0};
-                sys_call2(35/*nanosleep*/, (long)&ts_sleep, 0);
+                sys_call2(SYS_nanosleep, (long)&ts_sleep, 0);
             }
         }
         return 0;
@@ -12585,7 +12584,7 @@ watch_sleep:
         write_str(1, "Formatting "); write_str(1, dev);
         write_str(1, " as FuturaFS...\n");
         /* Mount syscall with special flag triggers format+mount */
-        long rc = sys_call6(165 /* mount */, (long)dev, (long)"/mnt",
+        long rc = sys_call6(SYS_mount, (long)dev, (long)"/mnt",
                             (long)"futurafs", 0, 0, 0);
         if (rc == 0) {
             write_str(1, "FuturaFS formatted and mounted at /mnt\n");
@@ -13171,7 +13170,7 @@ watch_sleep:
                             /* SIOCGIFFLAGS (0x8913) */
                             for (int k = 0; k < 40; k++) ifr[k] = 0;
                             for (int k = 0; ifname[k] && k < 15; k++) ifr[k] = ifname[k];
-                            long irc = sys_call3(16/*ioctl*/, sock, 0x8913, (long)ifr);
+                            long irc = sys_call3(SYS_ioctl, sock, 0x8913, (long)ifr);
                             if (irc == 0) {
                                 short flags = 0;
                                 for (int k = 0; k < 2; k++) flags |= (short)((unsigned char)ifr[16+k] << (k*8));
@@ -13770,7 +13769,7 @@ watch_sleep:
                 int nfd = sys_open(nspath, O_WRONLY | O_CREAT, 0644);
                 if (nfd >= 0) sys_close(nfd);
                 /* Unshare CLONE_NEWNET and bind mount to the file */
-                long ur = sys_call1(272 /* __NR_unshare */, 0x40000000 /* CLONE_NEWNET */);
+                long ur = sys_call1(SYS_unshare, 0x40000000 /* CLONE_NEWNET */);
                 if (ur == 0) {
                     /* mount --bind /proc/self/ns/net <nspath> */
                     sys_call5(SYS_mount, (long)"/proc/self/ns/net", (long)nspath, 0, 0x1000/*MS_BIND*/, 0);
@@ -13807,7 +13806,7 @@ watch_sleep:
                     write_str(2, argv[3]);
                     write_str(2, "' not found\n");
                 } else {
-                    long sr = sys_call2(308 /* __NR_setns */, nfd, 0x40000000 /* CLONE_NEWNET */);
+                    long sr = sys_call2(SYS_setns, nfd, 0x40000000 /* CLONE_NEWNET */);
                     sys_close((int)nfd);
                     if (sr < 0) {
                         write_str(2, "ip netns exec: setns failed\n");
@@ -14135,7 +14134,7 @@ watch_sleep:
                 if (argv[1][j] >= '0' && argv[1][j] <= '7')
                     mask = (mask << 3) | (argv[1][j] - '0');
             }
-            sys_call1(95 /* umask */, mask);
+            sys_call1(SYS_umask, mask);
         } else {
             /* Display current umask */
             long old = sys_call1(SYS_umask, 0);  /* Read current */
@@ -17617,7 +17616,7 @@ static void cmd_unshare(int argc, char *argv[]) {
     if (flags == 0) flags = 0x00020000;  /* Default: CLONE_NEWNS */
 
     /* Call unshare(2) */
-    long r = sys_call1(272 /* __NR_unshare */, (long)flags);
+    long r = sys_call1(SYS_unshare, (long)flags);
     if (r < 0) {
         write_str(2, "unshare: failed (");
         char num[12]; int_to_str(-(int)r, num, 12);
@@ -17751,7 +17750,7 @@ static void cmd_nsenter(int argc, char *argv[]) {
         long fd = sys_open(ns_path, O_RDONLY, 0);
         if (fd < 0) continue;  /* namespace not available, skip silently (auto-detect) */
         /* setns(fd, 0) — auto-detect ns type */
-        long r = sys_call2(308 /* __NR_setns */, fd, 0);
+        long r = sys_call2(SYS_setns, fd, 0);
         sys_close((int)fd);
         if (r < 0) {
             write_str(2, "nsenter: setns(");
@@ -17816,10 +17815,10 @@ static void cmd_chroot(int argc, char *argv[]) {
 
     /* Apply userspec if provided: setgid then setuid */
     if (set_gid >= 0) {
-        sys_call1(106 /* __NR_setgid */, set_gid);
+        sys_call1(SYS_setgid, set_gid);
     }
     if (set_uid >= 0) {
-        sys_call1(105 /* __NR_setuid */, set_uid);
+        sys_call1(SYS_setuid, set_uid);
     }
 
     int cmd_idx = argi + 1;
@@ -18823,7 +18822,7 @@ static void cmd_mkfifo(int argc, char *argv[]) {
     if (argc < 2) { write_str(2, "usage: mkfifo NAME...\n"); return; }
     for (int i = 1; i < argc; i++) {
         /* mknod(path, S_IFIFO | 0666, 0) creates a named pipe */
-        long r = sys_call3(133 /* SYS_mknod */, (long)argv[i], 010666 /* S_IFIFO | 0666 */, 0);
+        long r = sys_mknod_call(argv[i], 010666 /* S_IFIFO | 0666 */, 0);
         if (r != 0) {
             write_str(2, "mkfifo: ");
             write_str(2, argv[i]);
@@ -19682,7 +19681,7 @@ static void cal_print_month(int month, int year) {
 static void cmd_cal(int argc, char *argv[]) {
     /* Get current date from kernel clock */
     struct { long tv_sec; long tv_nsec; } ts = {0, 0};
-    sys_call2(228 /* clock_gettime */, 0 /* CLOCK_REALTIME */, (long)&ts);
+    sys_call2(SYS_clock_gettime, 0 /* CLOCK_REALTIME */, (long)&ts);
     /* Convert epoch seconds to year/month/day */
     long epoch = ts.tv_sec;
     int year = 1970, month = 1, day = 1;
@@ -21446,7 +21445,7 @@ int main(int argc, char **argv, char **envp) {
         long sa[16];  /* 128 bytes — enough for struct sigaction */
         for (int i = 0; i < 16; i++) sa[i] = 0;
         sa[0] = 1;  /* sa_handler = SIG_IGN */
-        sys_call4(13 /* rt_sigaction */, 2 /* SIGINT */, (long)sa, 0, 8);
+        sys_call4(SYS_rt_sigaction, 2 /* SIGINT */, (long)sa, 0, 8);
     }
 
     /* Set default environment variables if not inherited from parent */
@@ -22084,7 +22083,7 @@ static void cmd_scp(int argc, char *argv[]) {
             sys_close(sock); return;
         }
         /* Get file size via lseek */
-        long size = sys_call3(8 /* lseek */, lfd, 0, 2 /* SEEK_END */);
+        long size = sys_call3(SYS_lseek, lfd, 0, 2 /* SEEK_END */);
         sys_call3(SYS_lseek, lfd, 0, 0 /* SEEK_SET */);
         if (size < 0) size = 0;
 
@@ -22728,7 +22727,7 @@ static int screen_spawn_window(struct screen_window *win) {
     if (pid == 0) {
         /* Child: set up slave PTY as stdio */
         sys_close(mfd);
-        sys_call1(112 /* setsid */, 0);
+        sys_call1(SYS_setsid, 0);
 
         int sfd = (int)sys_open(slave_path, 0x0002 /* O_RDWR */, 0);
         if (sfd < 0) sys_exit(126);
@@ -23234,7 +23233,7 @@ __attribute__((used)) static void cmd_mkswap(int argc, char *argv[]) {
         return;
     }
     /* Get file/device size via lseek to end */
-    long size = sys_call3(8 /* lseek */, fd, 0, 2 /* SEEK_END */);
+    long size = sys_call3(SYS_lseek, fd, 0, 2 /* SEEK_END */);
     if (size < 4096) {
         write_str(2, "mkswap: device too small (need at least one page)\n");
         sys_close(fd);
@@ -23266,7 +23265,7 @@ __attribute__((used)) static void cmd_mkswap(int argc, char *argv[]) {
     page[1036 + 6] = (char)((page[1036 + 6] & 0x0F) | 0x40);
     page[1036 + 8] = (char)((page[1036 + 8] & 0x3F) | 0x80);
     /* Write header to device */
-    sys_call3(8 /* lseek */, fd, 0, 0 /* SEEK_SET */);
+    sys_call3(SYS_lseek, fd, 0, 0 /* SEEK_SET */);
     sys_write(fd, page, 4096);
     sys_close(fd);
     /* Print result */
@@ -24127,7 +24126,7 @@ static void cmd_newgrp(int argc, char *argv[]) {
         write_str(2, "'\n");
         return;
     }
-    long rc = sys_call1(106 /* setgid */, gid);
+    long rc = sys_call1(SYS_setgid, gid);
     if (rc < 0) {
         write_str(2, "newgrp: failed to set group\n");
     }
@@ -25176,7 +25175,7 @@ static void cmd_uuidgen(int argc, char *argv[]) {
         /* Fallback: use system ticks and PID for pseudo-randomness */
         long pid = sys_call0(39);
         struct { long sec; long nsec; } ts;
-        sys_call2(228 /* clock_gettime */, 0, (long)&ts);
+        sys_call2(SYS_clock_gettime, 0, (long)&ts);
         unsigned long seed = (unsigned long)ts.nsec ^ ((unsigned long)pid << 16) ^ (unsigned long)ts.sec;
         for (int i = 0; i < 16; i++) {
             seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;
@@ -25280,7 +25279,7 @@ static void cmd_truncate(int argc, char *argv[]) {
         fd = sys_open(argv[file_idx], O_WRONLY | O_CREAT, 0644);
         if (fd < 0) { write_str(2, "truncate: cannot open file\n"); return; }
     }
-    long r = sys_call2(77 /* ftruncate */, fd, size);
+    long r = sys_call2(SYS_ftruncate, fd, size);
     sys_close(fd);
     if (r != 0) { write_str(2, "truncate: failed\n"); last_exit_status = 1; }
 }
@@ -25896,7 +25895,7 @@ static void cmd_hostnamectl(int argc, char *argv[]) {
         /* Set hostname via sethostname syscall (170) */
         const char *newname = argv[2];
         int len = 0; while (newname[len]) len++;
-        long rc = sys_call2(170 /*sethostname-same-on-both*/, (long)newname, len);
+        long rc = sys_call2(SYS_sethostname, (long)newname, len);
         if (rc == 0) {
             write_str(1, "hostnamectl: hostname set to '"); write_str(1, newname); write_str(1, "'\n");
         } else {
@@ -26006,7 +26005,7 @@ static void cmd_timedatectl(int argc, char *argv[]) {
     }
     /* Get current time from clock_gettime(CLOCK_REALTIME) */
     struct { long tv_sec; long tv_nsec; } ts = {0, 0};
-    sys_call2(228 /* clock_gettime */, 0 /* CLOCK_REALTIME */, (long)&ts);
+    sys_call2(SYS_clock_gettime, 0 /* CLOCK_REALTIME */, (long)&ts);
     long epoch = ts.tv_sec;
     /* Convert epoch to date/time (simplified UTC) */
     long days = epoch / 86400;
@@ -26248,7 +26247,7 @@ static void cmd_journalctl(int argc, char *argv[]) {
         int sfd = sys_open("/var/log/syslog", O_RDONLY, 0);
         if (sfd >= 0) {
             /* Seek to end */
-            sys_call3(8 /* lseek */, sfd, 0, 2 /* SEEK_END */);
+            sys_call3(SYS_lseek, sfd, 0, 2 /* SEEK_END */);
             for (int iter = 0; iter < 300; iter++) { /* ~30 seconds max */
                 char tbuf[512];
                 ssize_t n = sys_read(sfd, tbuf, sizeof(tbuf) - 1);
@@ -26275,7 +26274,7 @@ static void cmd_loginctl(int argc, char *argv[]) {
     /* Get current PID and UID info */
     long pid = sys_call0(39 /* getpid */);
     long uid = sys_call0(102 /* getuid */);
-    long sid = sys_call1(124 /* getsid */, 0);
+    long sid = sys_call1(SYS_getsid, 0);
 
     /* Get TTY name */
     char tty_name[64] = "?";
@@ -26358,7 +26357,7 @@ static void cmd_loginctl(int argc, char *argv[]) {
         write_str(1, "      Name="); write_str(1, user); write_str(1, "\n");
         /* Determine timestamp from epoch - uptime */
         struct { long tv_sec; long tv_nsec; } ts = {0, 0};
-        sys_call2(228 /* clock_gettime */, 0 /* CLOCK_REALTIME */, (long)&ts);
+        sys_call2(SYS_clock_gettime, 0 /* CLOCK_REALTIME */, (long)&ts);
         long since_epoch = ts.tv_sec - uptime_secs;
         /* Format simplified timestamp */
         long days = since_epoch / 86400;
@@ -27218,14 +27217,14 @@ static void cmd_fallocate(int argc, char *argv[]) {
     int fd = sys_open(file, flags, 0644);
     if (fd < 0) { write_str(2, "fallocate: cannot open '"); write_str(2, file); write_str(2, "'\n"); return; }
     /* syscall 285 = fallocate on x86_64 */
-    long rc = sys_call4(285 /*fallocate-x86_64*/, fd, fl, offset, length);
+    long rc = sys_call4(SYS_fallocate, fd, fl, offset, length);
     sys_close(fd);
     if (rc < 0) {
         /* Fallback: use ftruncate for simple allocation */
         if (mode == 0 && !keep_size) {
             fd = sys_open(file, O_WRONLY | O_CREAT, 0644);
             if (fd >= 0) {
-                sys_call2(77 /* ftruncate */, fd, offset + length);
+                sys_call2(SYS_ftruncate, fd, offset + length);
                 sys_close(fd);
                 return;
             }
@@ -27373,7 +27372,7 @@ static void cmd_wipefs(int argc, char *argv[]) {
         if (fd < 0) { write_str(2, "wipefs: "); write_str(2, device); write_str(2, ": permission denied\n"); return; }
         char zeros[16]; for (int z = 0; z < 16; z++) zeros[z] = 0;
         for (int i = 0; i < nsigs; i++) {
-            sys_call3(8 /* lseek */, fd, sigs[i].offset, 0 /* SEEK_SET */);
+            sys_call3(SYS_lseek, fd, sigs[i].offset, 0 /* SEEK_SET */);
             sys_write(fd, zeros, sigs[i].len);
             write_str(1, "wipefs: wiped "); write_str(1, sigs[i].type);
             write_str(1, " signature at offset 0x"); int_to_str((int)sigs[i].offset, nb, 20);
@@ -27474,7 +27473,7 @@ static void cmd_filefrag(int argc, char *argv[]) {
         } else {
             /* Fallback: stat the file to estimate */
             struct stat st;
-            long sr = sys_call2(4 /* stat */, (long)files[f], (long)&st);
+            long sr = sys_stat_call(files[f], &st);
             if (sr >= 0) {
                 file_blocks = (long)((st.st_size + 4095) / 4096);
                 extents = file_blocks > 0 ? 1 : 0;
@@ -28188,7 +28187,7 @@ static void cmd_ssh_keygen(int argc, char *argv[]) {
         sys_close(ufd);
     } else {
         /* Fallback: use ticks */
-        unsigned long t = (unsigned long)sys_call1(201 /* SYS_time */, 0);
+        unsigned long t = (unsigned long)sys_call1(SYS_time, 0);
         for (int j = 0; j < 64; j++) keybuf[j] = (unsigned char)((t * 1103515245 + 12345 + j * 7) >> 8);
     }
     /* Write private key */
@@ -29278,7 +29277,7 @@ static void cmd_ar(int argc, char *argv[]) {
                 sz = sz * 10 + (hdr[i] - '0');
             /* Skip member data (aligned to 2 bytes) */
             if (sz & 1) sz++;
-            sys_call3(8 /* lseek */, fd, sz, 1); /* SEEK_CUR */
+            sys_call3(SYS_lseek, fd, sz, 1); /* SEEK_CUR */
         }
         sys_close(fd);
     } else if (op[0] == 'x') {
@@ -29320,7 +29319,7 @@ static void cmd_ar(int argc, char *argv[]) {
                     /* skip */
                     long skip = sz;
                     if (skip & 1) skip++;
-                    sys_call3(8 /* lseek */, fd, skip, 1);
+                    sys_call3(SYS_lseek, fd, skip, 1);
                 }
             } else {
                 long skip = sz;
@@ -30627,13 +30626,13 @@ __attribute__((used)) static void cmd_ipcmk(int argc, char *argv[]) {
     }
     /* Generate pseudo-unique key from clock */
     struct { long tv_sec; long tv_nsec; } kts = {0, 0};
-    sys_call2(228 /* clock_gettime */, 0, (long)&kts);
+    sys_call2(SYS_clock_gettime, 0, (long)&kts);
     long key = (kts.tv_sec & 0xFFFF) ^ (kts.tv_nsec & 0xFFFF0000);
     if (key <= 0) key = 0x4F550001;
     char tmp[32];
     if (do_queue) {
         /* msgget syscall 68 */
-        long qid = sys_call2(68 /* msgget */, key, mode | 0x200 /* IPC_CREAT */);
+        long qid = sys_call2(SYS_msgget, key, mode | 0x200 /* IPC_CREAT */);
         if (qid < 0) {
             write_str(1, "Message queue id: ");
             int_to_str((int)(key & 0x7FFFFFFF) % 100000, tmp, 32);
@@ -30648,7 +30647,7 @@ __attribute__((used)) static void cmd_ipcmk(int argc, char *argv[]) {
     }
     if (do_sem) {
         /* semget syscall 64 */
-        long sid = sys_call3(64 /* semget */, key + 1, nsems, mode | 0x200);
+        long sid = sys_call3(SYS_semget, key + 1, nsems, mode | 0x200);
         if (sid < 0) {
             write_str(1, "Semaphore id: ");
             int_to_str((int)((key + 1) & 0x7FFFFFFF) % 100000, tmp, 32);
@@ -30663,7 +30662,7 @@ __attribute__((used)) static void cmd_ipcmk(int argc, char *argv[]) {
     }
     if (do_shm) {
         /* shmget syscall 29 */
-        long mid = sys_call3(29 /* shmget */, key + 2, shm_size, mode | 0x200);
+        long mid = sys_call3(SYS_shmget, key + 2, shm_size, mode | 0x200);
         if (mid < 0) {
             write_str(1, "Shared memory id: ");
             int_to_str((int)((key + 2) & 0x7FFFFFFF) % 100000, tmp, 32);
@@ -30699,7 +30698,7 @@ __attribute__((used)) static void cmd_ipcrm(int argc, char *argv[]) {
         char tmp[32];
         if (strcmp_simple(flag, "-q") == 0) {
             /* msgctl(id, IPC_RMID, NULL) - syscall 71 */
-            long rc = sys_call3(71 /* msgctl */, val, 0 /* IPC_RMID */, 0);
+            long rc = sys_call3(SYS_msgctl, val, 0 /* IPC_RMID */, 0);
             if (rc < 0) {
                 write_str(2, "ipcrm: failed to remove msg queue id ");
                 int_to_str(val, tmp, 32); write_str(2, tmp); write_str(2, "\n");
@@ -30708,7 +30707,7 @@ __attribute__((used)) static void cmd_ipcrm(int argc, char *argv[]) {
             }
         } else if (strcmp_simple(flag, "-Q") == 0) {
             /* msgget then msgctl - find by key first */
-            long qid = sys_call2(68 /* msgget */, val, 0);
+            long qid = sys_call2(SYS_msgget, val, 0);
             if (qid >= 0) {
                 sys_call3(SYS_msgctl, qid, 0, 0);
                 write_str(1, "resource(s) deleted\n");
@@ -30718,7 +30717,7 @@ __attribute__((used)) static void cmd_ipcrm(int argc, char *argv[]) {
             }
         } else if (strcmp_simple(flag, "-s") == 0) {
             /* semctl(id, 0, IPC_RMID) - syscall 66 */
-            long rc = sys_call4(66 /* semctl */, val, 0, 0 /* IPC_RMID */, 0);
+            long rc = sys_call4(SYS_semctl, val, 0, 0 /* IPC_RMID */, 0);
             if (rc < 0) {
                 write_str(2, "ipcrm: failed to remove semaphore id ");
                 int_to_str(val, tmp, 32); write_str(2, tmp); write_str(2, "\n");
@@ -30726,7 +30725,7 @@ __attribute__((used)) static void cmd_ipcrm(int argc, char *argv[]) {
                 write_str(1, "resource(s) deleted\n");
             }
         } else if (strcmp_simple(flag, "-S") == 0) {
-            long sid = sys_call3(64 /* semget */, val, 0, 0);
+            long sid = sys_call3(SYS_semget, val, 0, 0);
             if (sid >= 0) {
                 sys_call4(SYS_msgsnd, sid, 0, 0, 0);
                 write_str(1, "resource(s) deleted\n");
@@ -30736,7 +30735,7 @@ __attribute__((used)) static void cmd_ipcrm(int argc, char *argv[]) {
             }
         } else if (strcmp_simple(flag, "-m") == 0) {
             /* shmctl(id, IPC_RMID, NULL) - syscall 31 */
-            long rc = sys_call3(31 /* shmctl */, val, 0 /* IPC_RMID */, 0);
+            long rc = sys_call3(SYS_shmctl, val, 0 /* IPC_RMID */, 0);
             if (rc < 0) {
                 write_str(2, "ipcrm: failed to remove shm id ");
                 int_to_str(val, tmp, 32); write_str(2, tmp); write_str(2, "\n");
@@ -30744,7 +30743,7 @@ __attribute__((used)) static void cmd_ipcrm(int argc, char *argv[]) {
                 write_str(1, "resource(s) deleted\n");
             }
         } else if (strcmp_simple(flag, "-M") == 0) {
-            long mid = sys_call3(29 /* shmget */, val, 0, 0);
+            long mid = sys_call3(SYS_shmget, val, 0, 0);
             if (mid >= 0) {
                 sys_call3(SYS_msgctl, mid, 0, 0);
                 write_str(1, "resource(s) deleted\n");
@@ -31557,7 +31556,7 @@ __attribute__((used)) static void cmd_ab(int argc, char *argv[]) {
 
     /* Get start time */
     struct timespec ts_start, ts_end;
-    sys_call2(228 /* clock_gettime */, 0 /* CLOCK_REALTIME */, (long)&ts_start);
+    sys_call2(SYS_clock_gettime, 0 /* CLOCK_REALTIME */, (long)&ts_start);
 
     int completed = 0, failed = 0;
     long total_bytes = 0;
@@ -31989,11 +31988,11 @@ __attribute__((used)) static void cmd_mtr(int argc, char *argv[]) {
         int got = 0;
 
         for (int p = 0; p < count; p++) {
-            sys_call2(228 /* clock_gettime */, 0, (long)&ts1);
+            sys_call2(SYS_clock_gettime, 0, (long)&ts1);
             sys_call6(SYS_sendto, sock, (long)pkt, 64, 0, (long)&da, 16);
 
             uint8_t rbuf[256];
-            long rn = sys_call4(45 /* recvfrom */, sock, (long)rbuf, 256, 0);
+            long rn = sys_call4(SYS_recvfrom, sock, (long)rbuf, 256, 0);
             sys_call2(SYS_clock_gettime, 0, (long)&ts2);
 
             if (rn > 0) {
@@ -36315,7 +36314,7 @@ static void cmd_duf(int argc, char *argv[]) {
                          long f_files; long f_ffree; long f_fsid[2]; long f_namelen; long f_frsize;
                          long f_flags; long f_spare[4]; } sfs;
                 for (int k = 0; k < (int)sizeof(sfs); k++) ((char*)&sfs)[k] = 0;
-                long src2 = sys_call2(137/*statfs*/, (long)mpoint, (long)&sfs);
+                long src2 = sys_call2(SYS_statfs, (long)mpoint, (long)&sfs);
                 if (src2 == 0 && sfs.f_blocks > 0) {
                     long bsize = sfs.f_bsize > 0 ? sfs.f_bsize : 4096;
                     long total_mb = (sfs.f_blocks * bsize) / (1024*1024);
@@ -42546,7 +42545,7 @@ static void cmd_systemd_nspawn(int argc, char *argv[]) {
     /* CLONE_NEWNS | CLONE_NEWUTS | CLONE_NEWIPC | CLONE_NEWPID */
     if (private_net) flags |= 0x40000000; /* CLONE_NEWNET */
 
-    long ur = sys_call1(272 /* __NR_unshare */, (long)flags);
+    long ur = sys_call1(SYS_unshare, (long)flags);
     if (ur < 0) {
         write_str(2, "systemd-nspawn: unshare failed (");
         char num[12]; int_to_str(-(int)ur, num, 12);
@@ -42920,7 +42919,7 @@ static void cmd_firejail(int argc, char *argv[]) {
     if (no_net) flags |= 0x40000000; /* CLONE_NEWNET */
     if (no_root) flags |= 0x10000000; /* CLONE_NEWUSER */
 
-    long ur = sys_call1(272 /* __NR_unshare */, (long)flags);
+    long ur = sys_call1(SYS_unshare, (long)flags);
     if (ur < 0) {
         write_str(2, "firejail: sandbox setup failed (");
         char num[12]; int_to_str(-(int)ur, num, 12);
@@ -43029,15 +43028,15 @@ static void cmd_bwrap(int argc, char *argv[]) {
 
     /* Apply namespace unsharing */
     if (flags != 0) {
-        long ur = sys_call1(272 /* __NR_unshare */, (long)flags);
+        long ur = sys_call1(SYS_unshare, (long)flags);
         if (ur < 0) {
             write_str(2, "bwrap: namespace setup failed\n");
         }
     }
 
     /* Apply uid/gid */
-    if (set_gid >= 0) sys_call1(106 /* __NR_setgid */, set_gid);
-    if (set_uid >= 0) sys_call1(105 /* __NR_setuid */, set_uid);
+    if (set_gid >= 0) sys_call1(SYS_setgid, set_gid);
+    if (set_uid >= 0) sys_call1(SYS_setuid, set_uid);
 
     /* Apply chdir */
     if (chdir_path) sys_chdir(chdir_path);
@@ -43380,7 +43379,7 @@ static void cmd_flock(int argc, char *argv[]) {
     /* Acquire lock via flock syscall (73 on x86_64) */
     int flags = lock_type;
     if (nonblock) flags |= 4; /* LOCK_NB */
-    long r = sys_call2(73 /* flock */, fd, flags);
+    long r = sys_call2(SYS_flock, fd, flags);
     if (r < 0) {
         write_str(2, "flock: lock acquisition failed\n");
         sys_close(fd);
@@ -43394,7 +43393,7 @@ static void cmd_flock(int argc, char *argv[]) {
     sub_argv[sub_argc] = NULL;
     execute_command(sub_argc, sub_argv);
     /* Release lock */
-    sys_call2(73 /* flock */, fd, 8 /* LOCK_UN */);
+    sys_call2(SYS_flock, fd, 8 /* LOCK_UN */);
     sys_close(fd);
 }
 

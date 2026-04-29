@@ -3,6 +3,18 @@
 > **Note**: This document contains historical path/line references from the original author environment; adjust paths for the current tree.
 
 ## Status
+**RESOLVED (2026-04-28)** — root cause was TTBR0_EL1 not being saved/
+restored on the cooperative EL1 context-switch path. fut_switch_context's
+.Lrestore_el1 inherited whatever TTBR0 the most recent .Lrestore (EL0)
+path had installed, so any uaccess that ran after a thread blocked
+(e.g. fut_copy_to_user from sys_waitpid after the parent woke from
+child_waiters) silently used the wrong process's page table. The same
+mechanism explains the x7 corruption: the child's page table fixed up
+its registers via the wrong mapping, leaving stale pre-fork state in
+caller-saved slots. Fix in commit ARM64 cooperative context switch
+saves and restores TTBR0_EL1; forktest now PASSes.
+
+## Original (historical) status
 **UNRESOLVED** - Extensive investigation conducted, critical exception handler bugs fixed, root cause still unknown
 
 ## Problem Description

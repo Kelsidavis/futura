@@ -294,9 +294,8 @@ long sys_utimensat(int dirfd, const char *pathname, const fut_timespec_t *times,
             return ret;
         }
 
-        fut_printf("[UTIMENSAT] utimensat(dirfd=%d [futimens], vnode_ino=%lu, times=%s, "
-                   "flags=%s, pid=%d) -> 0 (success)\n",
-                   dirfd, vnode->ino, time_spec_desc, flags_desc, task->pid);
+        /* Success path silent — fires on every `touch`, `cp -p`, etc. */
+        (void)time_spec_desc; (void)flags_desc;
         return 0;
     }
 

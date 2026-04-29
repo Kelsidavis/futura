@@ -674,11 +674,9 @@ long sys_link(const char *oldpath, const char *newpath) {
             return ret;
         }
 
-        /* Success */
-        fut_printf("[LINK] link(old='%s' [%s], new='%s' [%s], old_type=%s, "
-                   "old_ino=%lu, old_nlinks=%u->%u) -> 0 (success)\n",
-                   old_buf, old_path_type, new_buf, new_path_type,
-                   file_type_desc, old_vnode->ino, current_nlinks, would_be_nlinks);
+        /* Success path is silent — same rationale as unlink/chown. */
+        (void)old_path_type; (void)new_path_type;
+        (void)file_type_desc; (void)current_nlinks; (void)would_be_nlinks;
         fut_vnode_unref(old_vnode);
         fut_vnode_unref(new_parent);
         return 0;

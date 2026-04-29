@@ -254,11 +254,10 @@ long sys_symlink(const char *target, const char *linkpath) {
         return ret;
     }
 
-    /* Success */
-    fut_printf("[SYMLINK] symlink(target='%s' [%s], linkpath='%s' [%s], "
-               "parent_ino=%lu) -> 0 (success, symlink created)\n",
-               target_buf, target_type, linkpath_buf, linkpath_type, parent->ino);
-
+    /* Success path is silent — early-boot creates dozens of symlinks
+     * (/etc/mtab → /proc/self/mounts, /var/run → /run, etc.) and the
+     * trace is just noise. Errors still log explicitly. */
+    (void)target_type; (void)linkpath_type;
     fut_vnode_unref(parent);
     return 0;
 }

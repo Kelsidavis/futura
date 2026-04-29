@@ -80,11 +80,15 @@ ARM64_STAGE_FN(fut_stage_wayland_compositor_binary, futura_wayland, "/sbin", "/s
 ARM64_STAGE_FN(fut_stage_futura_shell_binary,       futura_shell,   "/sbin", "/sbin/futura-shell")
 ARM64_STAGE_FN(fut_stage_wl_term_binary,            wl_term,        "/bin",  "/bin/wl-term")
 ARM64_STAGE_FN(fut_stage_wl_panel_binary,           wl_panel,       "/bin",  "/bin/wl-panel")
+ARM64_STAGE_FN(fut_stage_wl_edit_binary,            wl_edit,        "/bin",  "/bin/wl-edit")
+ARM64_STAGE_FN(fut_stage_wl_sysmon_binary,          wl_sysmon,      "/bin",  "/bin/wl-sysmon")
 #else
 int fut_stage_wayland_compositor_binary(void) { return -ENODEV; }
 int fut_stage_futura_shell_binary(void)       { return -ENODEV; }
 int fut_stage_wl_term_binary(void)            { return -ENODEV; }
 int fut_stage_wl_panel_binary(void)           { return -ENODEV; }
+int fut_stage_wl_edit_binary(void)            { return -ENODEV; }
+int fut_stage_wl_sysmon_binary(void)          { return -ENODEV; }
 #endif
 ARM64_STAGE_FN(fut_stage_init_binary,               init,           "/sbin", "/sbin/init")
 ARM64_STAGE_FN(fut_stage_shell_binary,              shell,          "/bin",  "/bin/shell")

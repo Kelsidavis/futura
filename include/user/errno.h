@@ -3,7 +3,15 @@
 
 #pragma once
 
-#include <kernel/errno.h>
+/* Pull in kernel/errno.h ONLY when it's reachable in the include path
+ * (host builds, where the project tree's -I covers it). Cross-compiles
+ * for ARM64-elf-Futura against include/user/ alone don't have it on
+ * the search path, so fall back to the inline definitions below. */
+#if defined(__has_include)
+#  if __has_include(<kernel/errno.h>)
+#    include <kernel/errno.h>
+#  endif
+#endif
 
 /* Define a core subset of errno values if they have not been declared yet. */
 #ifndef EPERM

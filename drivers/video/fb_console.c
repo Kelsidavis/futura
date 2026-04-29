@@ -257,12 +257,20 @@ static void fb_console_scroll(void) {
         }
     }
 
-    /* Clear the bottom line (only in text area, not logo area) */
-    uint32_t bottom_offset = (cons->rows - 1) * cons->char_height * cons->pitch;
+    /* Clear the bottom CHARACTER row — that's char_height pixel rows,
+     * not just one. The previous code wrote bg_color to a single pixel
+     * row at the start of the last char row, leaving the other 7 rows
+     * full of whatever was there before scroll. New characters drawn on
+     * top of those stale pixels look visibly overprinted on the prior
+     * line — visible on the QEMU display as garbled / overlapping text
+     * at the bottom of the screen during boot. */
     uint32_t bg_color = make_color(0, 0, 0, 255);
-    uint32_t *fb_word = (uint32_t *)(fb + bottom_offset);
-    for (uint32_t i = 0; i < (uint32_t)(protected_x_pixels / 4); i++) {
-        fb_word[i] = bg_color;
+    for (int row = 0; row < cons->char_height; row++) {
+        uint32_t row_offset = ((cons->rows - 1) * cons->char_height + row) * cons->pitch;
+        uint32_t *fb_word = (uint32_t *)(fb + row_offset);
+        for (uint32_t i = 0; i < (uint32_t)(protected_x_pixels / 4); i++) {
+            fb_word[i] = bg_color;
+        }
     }
 }
 

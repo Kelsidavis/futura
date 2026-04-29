@@ -50,6 +50,8 @@
 #define SYS_inotify_add_watch   27
 #define SYS_inotify_rm_watch    28
 #define SYS_ioctl               29
+#define SYS_ioprio_set          30
+#define SYS_ioprio_get          31
 #define SYS_flock               32
 #define SYS_mknodat             33
 #define SYS_mkdirat             34
@@ -204,6 +206,12 @@
 #define SYS_mincore             228
 #define SYS_madvise             231
 #define SYS_remap_file_pages    234
+#define SYS_swapon              224
+#define SYS_swapoff             225
+#define SYS_msgget              186
+#define SYS_msgctl              187
+#define SYS_msgrcv              188
+#define SYS_msgsnd              189
 #define SYS_mbind               235
 #define SYS_get_mempolicy       236
 #define SYS_set_mempolicy       237
@@ -371,6 +379,14 @@
 #define SYS_sched_getparam      143
 #define SYS_sched_setscheduler  144
 #define SYS_sched_getscheduler  145
+#define SYS_ioprio_set          251
+#define SYS_ioprio_get          252
+#define SYS_swapon              167
+#define SYS_swapoff             168
+#define SYS_msgget              68
+#define SYS_msgsnd              69
+#define SYS_msgrcv              70
+#define SYS_msgctl              71
 #define SYS_sigaction           13
 #define SYS_sigprocmask         14
 #define SYS_truncate            76

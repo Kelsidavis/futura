@@ -725,6 +725,23 @@ void fut_printf(const char *fmt, ...) {
                     print_num(val, 16, 1, 0, width, pad_char);
                     break;
                 }
+                case 'o': {
+                    /* Octal — used by mkdirat/chmodat traces (mode=0%o).
+                     * Without this case the default branch prints "%o"
+                     * literally and skips the va_arg, which shifts every
+                     * subsequent %s to the wrong argument and double-faults
+                     * on the dereference. */
+                    uint64_t val;
+                    if (is_longlong) {
+                        val = va_arg(args, uint64_t);
+                    } else if (is_long || is_size_t) {
+                        val = va_arg(args, unsigned long);
+                    } else {
+                        val = va_arg(args, unsigned int);
+                    }
+                    print_num(val, 8, 0, 0, width, pad_char);
+                    break;
+                }
                 case 'p': {
                     void *ptr = va_arg(args, void *);
                     fut_serial_puts("0x");

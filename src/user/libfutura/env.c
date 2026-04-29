@@ -15,10 +15,10 @@ static volatile int g_env_lock;
 static char **g_environ = NULL;
 static size_t g_env_count;
 static size_t g_env_capacity;
-/* g_environ may initially alias the envp array passed on the user
- * stack — that storage is not malloc'd and must NOT be freed when the
- * environment grows past its initial capacity. Cleared once we copy
- * to a heap-owned buffer. */
+/* True iff g_environ points to a malloc'd buffer. Init copies the
+ * stack envp to heap right away; this flag exists for the
+ * malloc-failed fallback path so ensure_capacity() doesn't try to
+ * free a non-owned pointer. */
 static bool g_env_heap_owned = false;
 
 char **environ = NULL;

@@ -377,34 +377,51 @@ void fb_console_clear(void) {
  * RESOURCE_FLUSH. Without this, fb_console_putc draws into guest DRAM
  * and the QEMU window stays black even though the pixels are correct.
  *
- * Re-entrancy guard: submit_gpu_command in the virtio-gpu driver isn't
- * reentrant — desc[0]/desc[1] are reused on every call. fb_console_putc
- * runs in arbitrary contexts (kernel printf from an IRQ handler can
- * fire while a previous flush is still polling for completion); without
- * the guard, the nested call corrupts the in-flight descriptor and the
- * display stops updating after the first couple of lines. With the
- * guard, the inner call drops its flush — the outer one is already
- * about to refresh anything the inner write modified.
+ * Two protection mechanisms working together:
+ * 1) Disable IRQs across the flush so no kernel printf from an IRQ
+ *    handler can preempt us mid-flush. submit_gpu_command in the
+ *    virtio-gpu driver isn't reentrant — desc[0]/desc[1] are reused on
+ *    every call — so a nested fb_console_putc → flush would corrupt
+ *    the in-flight descriptor and the device would stop processing.
+ * 2) An additional same-CPU re-entrancy guard for the case where the
+ *    outer flush itself somehow recurses (e.g. fut_serial_putc inside
+ *    the GPU driver), to keep behavior bounded.
+ *
+ * A previous version of this code only had the busy guard. That
+ * dropped most flushes (every IRQ-context printf was a candidate for
+ * coming in mid-flush) and the display stopped updating after the
+ * first line. Disabling IRQs eliminates the race entirely.
  *
  * Resolved at runtime so this driver builds on platforms without
  * virtio-gpu (the symbol is just absent → the weak ref is NULL → no-op). */
 static volatile int fb_console_present_busy = 0;
 static void fb_console_present(void) {
-    if (__atomic_exchange_n(&fb_console_present_busy, 1, __ATOMIC_ACQ_REL)) {
-        return;  /* Already flushing on the outer caller; inner call drops. */
+    extern uint64_t fut_save_and_disable_interrupts(void) __attribute__((weak));
+    extern void fut_restore_interrupts(uint64_t state) __attribute__((weak));
+
+    uint64_t irq_state = 0;
+    if (fut_save_and_disable_interrupts) {
+        irq_state = fut_save_and_disable_interrupts();
     }
+
+    if (__atomic_exchange_n(&fb_console_present_busy, 1, __ATOMIC_ACQ_REL) == 0) {
 #if defined(__aarch64__)
-    extern void virtio_gpu_flush_display_mmio(void) __attribute__((weak));
-    if (virtio_gpu_flush_display_mmio) {
-        virtio_gpu_flush_display_mmio();
-    }
+        extern void virtio_gpu_flush_display_mmio(void) __attribute__((weak));
+        if (virtio_gpu_flush_display_mmio) {
+            virtio_gpu_flush_display_mmio();
+        }
 #else
-    extern void virtio_gpu_flush_display(void) __attribute__((weak));
-    if (virtio_gpu_flush_display) {
-        virtio_gpu_flush_display();
-    }
+        extern void virtio_gpu_flush_display(void) __attribute__((weak));
+        if (virtio_gpu_flush_display) {
+            virtio_gpu_flush_display();
+        }
 #endif
-    __atomic_store_n(&fb_console_present_busy, 0, __ATOMIC_RELEASE);
+        __atomic_store_n(&fb_console_present_busy, 0, __ATOMIC_RELEASE);
+    }
+
+    if (fut_restore_interrupts) {
+        fut_restore_interrupts(irq_state);
+    }
 }
 
 void fb_console_putc(char c) {

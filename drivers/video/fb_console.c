@@ -268,11 +268,22 @@ int fb_console_init(void) {
         return -EFAULT;
     }
 #elif defined(__aarch64__)
-    /* On ARM64, convert physical address to kernel virtual address.
-     * The kernel TTBR1 page tables map peripherals starting at
-     * 0xFFFFFF8000000000. TTBR0 identity mapping is overwritten when
-     * user processes are scheduled, so we must use kernel VA. */
-    cons->fb_mem = (volatile uint8_t *)((uintptr_t)hw_info.phys + 0xFFFFFF8000000000ULL);
+    /* On ARM64, convert framebuffer physical address to kernel virtual.
+     *
+     * The framebuffer that virtio-gpu (MMIO transport) hands us lives
+     * in DRAM (allocated via PMM), not in the peripheral region. The
+     * kernel-half mapping for DRAM uses KERN_VA_BASE/KERN_PA_BASE with
+     * an offset of 0xFFFFFF7FFFE00000 (NOT 0xFFFFFF8000000000 — that's
+     * 2 MiB too high because the kernel loads at PA 0x40200000, not
+     * 0x40000000). Writing to the wrong virt address produced silent
+     * 'black screen' behavior: the kernel happily wrote characters to
+     * an unmapped or wrongly-mapped page and the actual framebuffer
+     * stayed all-zero.
+     *
+     * Use pmap_phys_to_virt so this stays in lock-step with the kernel
+     * memory map. */
+    extern void *pmap_phys_to_virt(uint64_t pa);
+    cons->fb_mem = (volatile uint8_t *)pmap_phys_to_virt((uint64_t)hw_info.phys);
 #else
     cons->fb_mem = (volatile uint8_t *)hw_info.phys;
 #endif

@@ -653,7 +653,7 @@ static int64_t sys_waitpid_wrapper(uint64_t pid, uint64_t wstatus, uint64_t opti
 /* sys_pipe_wrapper - create pipe
  * x0 = pipefd array pointer
  */
-static int64_t sys_pipe_wrapper(uint64_t pipefd, uint64_t arg1, uint64_t arg2,
+__attribute__((unused)) static int64_t sys_pipe_wrapper(uint64_t pipefd, uint64_t arg1, uint64_t arg2,
                                 uint64_t arg3, uint64_t arg4, uint64_t arg5) {
     (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
     return sys_pipe((int *)pipefd);
@@ -681,7 +681,7 @@ static int64_t sys_dup_wrapper(uint64_t oldfd, uint64_t arg1, uint64_t arg2,
 /* sys_dup2_wrapper - duplicate file descriptor to specific fd
  * x0 = oldfd, x1 = newfd
  */
-static int64_t sys_dup2_wrapper(uint64_t oldfd, uint64_t newfd, uint64_t arg2,
+__attribute__((unused)) static int64_t sys_dup2_wrapper(uint64_t oldfd, uint64_t newfd, uint64_t arg2,
                                 uint64_t arg3, uint64_t arg4, uint64_t arg5) {
     (void)arg2; (void)arg3; (void)arg4; (void)arg5;
     return sys_dup2((int)oldfd, (int)newfd);
@@ -838,7 +838,7 @@ static int64_t sys_getsockopt_wrapper(uint64_t sockfd, uint64_t level, uint64_t 
  * x0 = pathname, x1 = mode
  * Wraps kernel sys_mkdir() for Futura syscall ABI
  */
-static int64_t sys_mkdir_wrapper(uint64_t pathname, uint64_t mode, uint64_t arg2,
+__attribute__((unused)) static int64_t sys_mkdir_wrapper(uint64_t pathname, uint64_t mode, uint64_t arg2,
                                   uint64_t arg3, uint64_t arg4, uint64_t arg5) {
     (void)arg2; (void)arg3; (void)arg4; (void)arg5;
     /* ARM64: Stabilize parameters */
@@ -851,7 +851,7 @@ static int64_t sys_mkdir_wrapper(uint64_t pathname, uint64_t mode, uint64_t arg2
  * x0 = pathname
  * Wraps kernel sys_rmdir() for Futura syscall ABI
  */
-static int64_t sys_rmdir_wrapper(uint64_t pathname, uint64_t arg1, uint64_t arg2,
+__attribute__((unused)) static int64_t sys_rmdir_wrapper(uint64_t pathname, uint64_t arg1, uint64_t arg2,
                                   uint64_t arg3, uint64_t arg4, uint64_t arg5) {
     (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
     /* ARM64: Stabilize pathname parameter */
@@ -863,7 +863,7 @@ static int64_t sys_rmdir_wrapper(uint64_t pathname, uint64_t arg1, uint64_t arg2
  * x0 = pathname
  * Wraps kernel sys_unlink() for Futura syscall ABI
  */
-static int64_t sys_unlink_wrapper(uint64_t pathname, uint64_t arg1, uint64_t arg2,
+__attribute__((unused)) static int64_t sys_unlink_wrapper(uint64_t pathname, uint64_t arg1, uint64_t arg2,
                                    uint64_t arg3, uint64_t arg4, uint64_t arg5) {
     (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
     /* ARM64: Stabilize pathname parameter */
@@ -1004,7 +1004,7 @@ static int64_t sys_pselect6_wrapper(uint64_t nfds, uint64_t readfds, uint64_t wr
 /* sys_open_wrapper - open file
  * x0 = pathname, x1 = flags, x2 = mode
  */
-static int64_t sys_open_wrapper(uint64_t pathname, uint64_t flags, uint64_t mode,
+__attribute__((unused)) static int64_t sys_open_wrapper(uint64_t pathname, uint64_t flags, uint64_t mode,
                                  uint64_t arg3, uint64_t arg4, uint64_t arg5) {
     (void)arg3; (void)arg4; (void)arg5;
     return sys_open((const char *)pathname, (int)flags, (int)mode);
@@ -1013,7 +1013,7 @@ static int64_t sys_open_wrapper(uint64_t pathname, uint64_t flags, uint64_t mode
 /* sys_stat_wrapper - get file status
  * x0 = path, x1 = statbuf
  */
-static int64_t sys_stat_wrapper(uint64_t path, uint64_t statbuf, uint64_t arg2,
+__attribute__((unused)) static int64_t sys_stat_wrapper(uint64_t path, uint64_t statbuf, uint64_t arg2,
                                  uint64_t arg3, uint64_t arg4, uint64_t arg5) {
     (void)arg2; (void)arg3; (void)arg4; (void)arg5;
     return sys_stat((const char *)path, (void *)statbuf);
@@ -1675,7 +1675,7 @@ static int64_t sys_setgid_wrapper(uint64_t gid, uint64_t arg1, uint64_t arg2,
 /* sys_seteuid_wrapper - set effective user ID
  * x0 = euid
  */
-static int64_t sys_seteuid_wrapper(uint64_t euid, uint64_t arg1, uint64_t arg2,
+__attribute__((unused)) static int64_t sys_seteuid_wrapper(uint64_t euid, uint64_t arg1, uint64_t arg2,
                                     uint64_t arg3, uint64_t arg4, uint64_t arg5) {
     (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
     return sys_seteuid((uint32_t)euid);
@@ -1684,7 +1684,7 @@ static int64_t sys_seteuid_wrapper(uint64_t euid, uint64_t arg1, uint64_t arg2,
 /* sys_setegid_wrapper - set effective group ID
  * x0 = egid
  */
-static int64_t sys_setegid_wrapper(uint64_t egid, uint64_t arg1, uint64_t arg2,
+__attribute__((unused)) static int64_t sys_setegid_wrapper(uint64_t egid, uint64_t arg1, uint64_t arg2,
                                     uint64_t arg3, uint64_t arg4, uint64_t arg5) {
     (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
     return sys_setegid((uint32_t)egid);
@@ -1812,7 +1812,7 @@ static int64_t sys_setsid_wrapper(uint64_t arg0, uint64_t arg1, uint64_t arg2,
 /* sys_getpgrp_wrapper - get process group ID
  * No arguments
  */
-static int64_t sys_getpgrp_wrapper(uint64_t arg0, uint64_t arg1, uint64_t arg2,
+__attribute__((unused)) static int64_t sys_getpgrp_wrapper(uint64_t arg0, uint64_t arg1, uint64_t arg2,
                                     uint64_t arg3, uint64_t arg4, uint64_t arg5) {
     (void)arg0; (void)arg1; (void)arg2; (void)arg3; (void)arg4; (void)arg5;
     return sys_getpgrp();
@@ -4221,16 +4221,14 @@ static void arm64_syscall_table_init(void) {
     syscall_table[__NR_prlimit64].handler = (syscall_fn_t)sys_prlimit64_wrapper;
     syscall_table[__NR_prlimit64].name = "prlimit64";
     
-    /* Futura syscall numbers (from include/user/sysnums.h) - added last to override Linux numbers
-    *
-    * IMPORTANT: These entries override conflicting Linux AArch64 syscall numbers.
-    * For example:
-    *   - Futura SYS_write = 1,  Linux AArch64 __NR_write = 64
-    *   - Futura SYS_getpid = 39, Linux AArch64 __NR_umount2 = 39
-    *
-    * By placing Futura syscalls at the end of this array, they take precedence
-    * over earlier Linux mappings when userland programs use Futura syscall numbers.
-    */
+    /* Historical x86_64-numbered slot block. These entries override
+     * native ARM64 indices (e.g. x86_64 close=3 vs ARM64 io_cancel=3,
+     * x86_64 fork=57 vs ARM64 close=57, x86_64 execve=59 vs ARM64
+     * pipe2=59, x86_64 getppid=113 vs ARM64 clock_gettime=113), which
+     * is exactly the bug FUTURA_X86_64_COMPAT_SYSCALLS exists to gate.
+     * Keep them off by default for native ARM64 userland; flip the
+     * macro on if you need to run x86_64-numbered binaries. */
+#if defined(FUTURA_X86_64_COMPAT_SYSCALLS) && FUTURA_X86_64_COMPAT_SYSCALLS
     syscall_table[0].handler = (syscall_fn_t)sys_read_wrapper;
     syscall_table[0].name = "read";
     syscall_table[1].handler = (syscall_fn_t)sys_write_wrapper;
@@ -4309,6 +4307,12 @@ static void arm64_syscall_table_init(void) {
     syscall_table[113].name = "getppid";
     syscall_table[124].handler = (syscall_fn_t)sys_getsid_wrapper;
     syscall_table[124].name = "getsid";
+#endif /* FUTURA_X86_64_COMPAT_SYSCALLS */
+
+    /* Futura extensions — always registered. SYS_echo lives in the
+     * normally-unused slot 42 on ARM64 (pivot_root is at 41). */
+    syscall_table[42].handler = (syscall_fn_t)sys_echo_wrapper;
+    syscall_table[42].name = "echo";
 
     /* FIPC syscalls - Futura-specific range 401-406 */
     syscall_table[__NR_fipc_create].handler = (syscall_fn_t)sys_fipc_create_wrapper;

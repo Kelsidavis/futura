@@ -10,11 +10,9 @@
 
 #include <user/sys.h>
 
-#define SYS_write  1
-#define SYS_exit   60
-#define SYS_fork   57
-#define SYS_wait4  61
-#define SYS_getpid 39
+/* Syscall numbers come from <user/sysnums.h> which is arch-conditional.
+ * Don't redefine them here — local #defines would shadow the arch
+ * version and route ARM64 binaries into the wrong handlers. */
 
 /* Use static strings to avoid stack issues */
 static const char msg_start[] = "\nTEST START\n";
@@ -66,9 +64,9 @@ int main(void) {
     write_num(parent_pid);
     sys_write(1, "\n", 1);
 
-    /* Fork a child */
+    /* Fork a child — use sys_fork_call so ARM64 routes through clone. */
     write_str(msg_fork);
-    long pid = sys_call0(SYS_fork);
+    long pid = sys_fork_call();
 
     if (pid < 0) {
         write_str(msg_err);

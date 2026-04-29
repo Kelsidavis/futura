@@ -180,11 +180,15 @@ long sys_mkdirat(int dirfd, const char *pathname, unsigned int mode) {
 
     /* Handle errors */
     if (ret < 0) {
+        /* EEXIST is the standard "create if missing" race idiom — init
+         * scripts and library bootstrap routinely call mkdir on the
+         * known-good directories like /tmp and ignore EEXIST. Don't
+         * spam it as if it were a real failure. */
+        if (ret == -EEXIST) {
+            return ret;
+        }
         const char *error_desc;
         switch (ret) {
-            case -EEXIST:
-                error_desc = "already exists";
-                break;
             case -ENOENT:
                 error_desc = "parent directory doesn't exist";
                 break;

@@ -213,7 +213,7 @@ $(CROSS_FILE): | $(STATE_DIR)
 		echo "pkg-config = 'pkg-config'"; \
 		echo ""; \
 		echo "[built-in options]"; \
-		printf "c_args = ['-O2','-g0','-ffreestanding','-nostdlib','-fno-stack-protector','-fvisibility=hidden','-march=armv8-a','-mno-outline-atomics','-mstrict-align','-DFUTURA_NO_GLIBC=1','-D_POSIX_C_SOURCE=200809L','-I$(ROOT_DIR)/include/user','-I$(LIBFFI_ARM64_PREFIX)/include']\n"; \
+		printf "c_args = ['-O2','-g0','-ffreestanding','-nostdlib','-fno-stack-protector','-fvisibility=hidden','-march=armv8-a','-mno-outline-atomics','-mstrict-align','-DFUTURA_NO_GLIBC=1','-DFUTURA_FORCE_MINIMAL_SIGNAL=1','-D_POSIX_C_SOURCE=200809L','-I$(ROOT_DIR)/include/user','-I$(LIBFFI_ARM64_PREFIX)/include']\n"; \
 		printf "c_link_args = ['-nostdlib','-Wl,--build-id=none','-Wl,--gc-sections','-L$(LIBFFI_ARM64_PREFIX)/lib']\n"; \
 		echo "warning_level = '1'"; \
 		echo ""; \

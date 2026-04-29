@@ -156,16 +156,39 @@ typedef void (*sighandler_t)(int);
 #endif
 
 /* ============================================================
+ *   siginfo_t — extended signal info passed to SA_SIGINFO handlers
+ * ============================================================ */
+
+#ifndef __siginfo_t_defined
+#define __siginfo_t_defined 1
+typedef struct {
+    int          si_signo;
+    int          si_errno;
+    int          si_code;
+    int          si_pid;
+    unsigned int si_uid;
+    int          si_status;
+    int          si_fd;
+    void        *si_addr;
+    long         si_band;
+    int          si_value_int;
+    void        *si_value_ptr;
+    char         __pad[64];
+} siginfo_t;
+#endif
+
+/* ============================================================
  *   sigaction Structure
  * ============================================================ */
 
 struct sigaction {
     union {
         sighandler_t sa_handler;
-        void (*sa_sigaction)(int, void *, void *);
+        void (*sa_sigaction)(int, siginfo_t *, void *);
     };
     sigset_t sa_mask;
     int sa_flags;
+    void (*sa_restorer)(void);
 };
 
 /* ============================================================
@@ -210,10 +233,41 @@ struct sigaction {
 
 /* ============================================================
  *   Timer-related Types (sigevent, timer_t, sigval)
- *   Provided by shared/fut_sigevent.h
+ *   Provided by shared/fut_sigevent.h on builds where the project
+ *   tree's -Iinclude/ covers it. Cross-compiles for ARM64-elf-Futura
+ *   only see include/user/, so fall back to local minimal definitions.
  * ============================================================ */
 
-#include <shared/fut_sigevent.h>
+#if defined(__has_include)
+#  if __has_include(<shared/fut_sigevent.h>)
+#    include <shared/fut_sigevent.h>
+#    define FUTURA_HAVE_SHARED_SIGEVENT 1
+#  endif
+#endif
+
+#ifndef FUTURA_HAVE_SHARED_SIGEVENT
+#ifndef __sigval_t_defined
+#define __sigval_t_defined 1
+union sigval {
+    int   sival_int;
+    void *sival_ptr;
+};
+#endif
+
+#ifndef __sigevent_t_defined
+#define __sigevent_t_defined 1
+struct sigevent {
+    union sigval sigev_value;
+    int          sigev_signo;
+    int          sigev_notify;
+    void       (*sigev_notify_function)(union sigval);
+    void        *sigev_notify_attributes;
+};
+#define SIGEV_NONE      1
+#define SIGEV_SIGNAL    0
+#define SIGEV_THREAD    2
+#endif
+#endif
 
 /* ============================================================
  *   Function Declarations

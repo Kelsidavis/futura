@@ -49,6 +49,15 @@ extern "C" {
 /* fd flags */
 #define FD_CLOEXEC      1
 
+/* memfd seals (Linux F_GET_SEALS / F_ADD_SEALS) */
+#define F_ADD_SEALS     1033
+#define F_GET_SEALS     1034
+#define F_SEAL_SEAL     0x0001
+#define F_SEAL_SHRINK   0x0002
+#define F_SEAL_GROW     0x0004
+#define F_SEAL_WRITE    0x0008
+#define F_SEAL_FUTURE_WRITE 0x0010
+
 int open(const char *pathname, int flags, ...);
 int openat(int dirfd, const char *pathname, int flags, ...);
 int creat(const char *pathname, mode_t mode);

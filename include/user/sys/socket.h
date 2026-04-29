@@ -18,6 +18,7 @@ typedef unsigned short sa_family_t;
 #define AF_INET6   10
 #define PF_UNSPEC   AF_UNSPEC
 #define PF_UNIX     AF_UNIX
+#define PF_LOCAL    AF_LOCAL
 #define PF_INET     AF_INET
 #define PF_INET6    AF_INET6
 

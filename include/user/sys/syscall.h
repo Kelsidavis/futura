@@ -1,7 +1,79 @@
 // SPDX-License-Identifier: MPL-2.0
-// Minimal syscall numbers used by vendored libraries.
+//
+// Linux syscall numbers + raw syscall(2) — vendored third-party
+// userland (libwayland, etc.) sometimes calls syscall(SYS_xxx, ...)
+// directly when no glibc wrapper exists. Match Linux x86_64
+// numbering (which Futura's syscall_table mirrors) so the source
+// compiles untouched; libfutura provides the syscall() trampoline.
 
 #pragma once
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+long syscall(long number, ...);
+
+#ifndef SYS_read
+#define SYS_read         0
+#endif
+#ifndef SYS_write
+#define SYS_write        1
+#endif
+#ifndef SYS_open
+#define SYS_open         2
+#endif
+#ifndef SYS_close
+#define SYS_close        3
+#endif
+#ifndef SYS_mmap
+#define SYS_mmap         9
+#endif
+#ifndef SYS_mprotect
+#define SYS_mprotect    10
+#endif
+#ifndef SYS_munmap
+#define SYS_munmap      11
+#endif
+#ifndef SYS_ioctl
+#define SYS_ioctl       16
+#endif
+#ifndef SYS_madvise
+#define SYS_madvise     28
+#endif
+#ifndef SYS_eventfd
+#define SYS_eventfd     284
+#endif
+#ifndef SYS_eventfd2
+#define SYS_eventfd2    290
+#endif
+#ifndef SYS_signalfd
+#define SYS_signalfd    282
+#endif
+#ifndef SYS_signalfd4
+#define SYS_signalfd4   289
+#endif
+#ifndef SYS_timerfd_create
+#define SYS_timerfd_create  283
+#endif
+#ifndef SYS_timerfd_settime
+#define SYS_timerfd_settime 286
+#endif
+#ifndef SYS_epoll_create
+#define SYS_epoll_create  213
+#endif
+#ifndef SYS_epoll_create1
+#define SYS_epoll_create1 291
+#endif
+#ifndef SYS_epoll_ctl
+#define SYS_epoll_ctl   233
+#endif
+#ifndef SYS_epoll_wait
+#define SYS_epoll_wait  232
+#endif
+#ifndef SYS_memfd_create
+#define SYS_memfd_create 319
+#endif
 
 #ifndef SYS_getpid
 #define SYS_getpid      39
@@ -76,4 +148,8 @@
 #endif
 #ifndef SYS_statat_cap
 #define SYS_statat_cap  510  /* Get file stats relative to parent handle */
+#endif
+
+#ifdef __cplusplus
+}
 #endif

@@ -360,6 +360,8 @@
 #define SYS_uname               63
 #define SYS_syslog              103
 #define SYS_chroot              161
+#define SYS_ptrace              101
+#define SYS_reboot              169
 #define SYS_sigaction           13
 #define SYS_sigprocmask         14
 #define SYS_truncate            76

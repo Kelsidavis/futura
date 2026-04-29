@@ -1240,7 +1240,7 @@ static const char *get_var(const char *name) {
         static uint32_t rng_state = 0;
         if (rng_state == 0) {
             struct { long tv_sec; long tv_nsec; } ts = {0, 0};
-            sys_call2(98, 1, (long)&ts);
+            sys_call2(SYS_clock_gettime, 1, (long)&ts);
             rng_state = (uint32_t)(ts.tv_nsec ^ ts.tv_sec);
         }
         rng_state = rng_state * 1103515245 + 12345;
@@ -2224,7 +2224,7 @@ static void cmd_date(int argc, char *argv[]) {
     } else {
         /* Fallback: show uptime */
         struct { long tv_sec; long tv_nsec; } mono = {0, 0};
-        sys_call2(98, 1 /* CLOCK_MONOTONIC */, (long)&mono);
+        sys_call2(SYS_clock_gettime, 1 /* CLOCK_MONOTONIC */, (long)&mono);
         write_str(1, "up ");
         char tmp[16]; int_to_str(mono.tv_sec, tmp, 16);
         write_str(1, tmp); write_str(1, "s\n");
@@ -2655,7 +2655,7 @@ static uint32_t dns_query(const char *hostname, int qtype) {
     qname[DNS_MAX_NAME - 1] = '\0';
 
     for (int hop = 0; hop < 8; hop++) {
-        long sock = sys_call3(41, 2 /* AF_INET */, 2 /* SOCK_DGRAM */, 0);
+        long sock = sys_call3(SYS_socket, 2 /* AF_INET */, 2 /* SOCK_DGRAM */, 0);
         if (sock < 0) return 0;
 
         /* Build DNS query packet */
@@ -2804,7 +2804,7 @@ static void cmd_ping(int argc, char *argv[]) {
     long fd = sys_call3(SYS_socket, 2 /* AF_INET */, 3 /* SOCK_RAW */, 1 /* IPPROTO_ICMP */);
     if (fd < 0) {
         /* Fallback: try SOCK_DGRAM with ICMP */
-        fd = sys_call3(41, 2, 2 /* SOCK_DGRAM */, 1);
+        fd = sys_call3(SYS_socket, 2, 2 /* SOCK_DGRAM */, 1);
         if (fd < 0) { write_str(2, "ping: socket failed\n"); return; }
     }
 
@@ -2835,11 +2835,11 @@ static void cmd_ping(int argc, char *argv[]) {
         if (sent > 0) {
             /* Wait for reply */
             struct { long tv_sec; long tv_nsec; } start = {0,0};
-            sys_call2(98, 1, (long)&start);
+            sys_call2(SYS_clock_gettime, 1, (long)&start);
             char rbuf[128];
             long rcv = sys_call6(SYS_recvfrom, fd, (long)rbuf, 128, 0, 0, 0);
             struct { long tv_sec; long tv_nsec; } end_t = {0,0};
-            sys_call2(98, 1, (long)&end_t);
+            sys_call2(SYS_clock_gettime, 1, (long)&end_t);
             long ms = (end_t.tv_sec - start.tv_sec) * 1000 + (end_t.tv_nsec - start.tv_nsec) / 1000000;
             if (rcv > 0) {
                 write_str(1, "64 bytes from ");
@@ -2854,7 +2854,7 @@ static void cmd_ping(int argc, char *argv[]) {
         /* Sleep 1 second between pings */
         if (seq < 3) {
             struct { long tv_sec; long tv_nsec; } ts = {1, 0};
-            sys_call2(35, (long)&ts, 0);
+            sys_call2(SYS_nanosleep, (long)&ts, 0);
         }
     }
     sys_close(fd);
@@ -3074,7 +3074,7 @@ static void cmd_curl(int argc, char *argv[]) {
     uint32_t ip_be = ((ip >> 24) & 0xFF) | ((ip >> 8) & 0xFF00) |
                      ((ip << 8) & 0xFF0000) | ((ip << 24) & 0xFF000000);
 
-    long fd = sys_call3(41, 2, 1, 0);
+    long fd = sys_call3(SYS_socket, 2, 1, 0);
     if (fd < 0) { write_str(2, "curl: socket failed\n"); return; }
 
     struct { uint16_t family; uint16_t port; uint32_t addr; uint8_t pad[8]; } sa;
@@ -3083,7 +3083,7 @@ static void cmd_curl(int argc, char *argv[]) {
     sa.addr = ip_be;
     for (int i = 0; i < 8; i++) sa.pad[i] = 0;
 
-    if (sys_call3(42, fd, (long)&sa, 16) < 0) {
+    if (sys_call3(SYS_connect, fd, (long)&sa, 16) < 0) {
         write_str(2, "curl: connect failed\n"); sys_close(fd); return;
     }
 
@@ -3319,7 +3319,7 @@ static void cmd_wget(int argc, char *argv[]) {
                      ((ip << 8) & 0xFF0000) | ((ip << 24) & 0xFF000000);
 
     /* Connect */
-    long fd = sys_call3(41, 2, 1, 0);
+    long fd = sys_call3(SYS_socket, 2, 1, 0);
     if (fd < 0) { write_str(2, "wget: socket failed\n"); return; }
 
     struct { uint16_t family; uint16_t port; uint32_t addr; uint8_t pad[8]; } sa;
@@ -3328,7 +3328,7 @@ static void cmd_wget(int argc, char *argv[]) {
     sa.addr = ip_be;
     for (int i = 0; i < 8; i++) sa.pad[i] = 0;
 
-    if (sys_call3(42, fd, (long)&sa, 16) < 0) {
+    if (sys_call3(SYS_connect, fd, (long)&sa, 16) < 0) {
         write_str(2, "wget: connect failed\n");
         sys_close(fd); return;
     }
@@ -3353,7 +3353,7 @@ static void cmd_wget(int argc, char *argv[]) {
     while (*hend) req[ri++] = *hend++;
     req[ri] = '\0';
 
-    sys_call6(44, fd, (long)req, ri, 0, 0, 0);
+    sys_call6(SYS_sendto, fd, (long)req, ri, 0, 0, 0);
 
     /* Receive response — skip HTTP headers, write body */
     char buf[512];
@@ -3784,10 +3784,10 @@ static void cmd_strace(int argc, char *argv[]) {
 
     pid_t child = sys_fork();
     if (child == 0) {
-        sys_call4(101 /* ptrace */, 0 /* PTRACE_TRACEME */, 0, 0, 0);
+        sys_call4(SYS_ptrace, 0 /* PTRACE_TRACEME */, 0, 0, 0);
         sys_call2(SYS_kill, sys_getpid_call(), 19 /*SIGSTOP*/);
         execute_command(argc - cmd_start, &argv[cmd_start]);
-        syscall1(60, 0);
+        sys_exit(0);
         while (1);
     } else if (child < 0) {
         write_str(2, "strace: fork failed\n");
@@ -3796,8 +3796,8 @@ static void cmd_strace(int argc, char *argv[]) {
 
     int status = 0;
     sys_waitpid(child, &status, 0);
-    sys_call4(101, 0x4200 /* PTRACE_SETOPTIONS */, child, 0, 0x01 /* PTRACE_O_TRACESYSGOOD */);
-    sys_call4(101, 24 /* PTRACE_SYSCALL */, child, 0, 0);
+    sys_call4(SYS_ptrace, 0x4200 /* PTRACE_SETOPTIONS */, child, 0, 0x01 /* PTRACE_O_TRACESYSGOOD */);
+    sys_call4(SYS_ptrace, 24 /* PTRACE_SYSCALL */, child, 0, 0);
 
     int in_syscall = 0;
     long last_nr = -1;
@@ -3823,11 +3823,11 @@ static void cmd_strace(int argc, char *argv[]) {
 
         if (sig == (0x80 | 5)) {
             if (!in_syscall) {
-                long nr = sys_call4(101, 3 /* PTRACE_PEEKUSR */, child, 120 /* ORIG_RAX */, 0);
+                long nr = sys_call4(SYS_ptrace, 3 /* PTRACE_PEEKUSR */, child, 120 /* ORIG_RAX */, 0);
                 last_nr = nr;
                 in_syscall = 1;
             } else {
-                long ret = sys_call4(101, 3 /* PTRACE_PEEKUSR */, child, 80 /* RAX */, 0);
+                long ret = sys_call4(SYS_ptrace, 3 /* PTRACE_PEEKUSR */, child, 80 /* RAX */, 0);
                 /* Check trace filter */
                 int show = 1;
                 if (trace_filter == 1) { /* file */
@@ -3872,10 +3872,10 @@ static void cmd_strace(int argc, char *argv[]) {
                 in_syscall = 0;
             }
         } else {
-            sys_call4(101, 24, child, 0, sig);
+            sys_call4(SYS_ptrace, 24, child, 0, sig);
             continue;
         }
-        sys_call4(101, 24 /* PTRACE_SYSCALL */, child, 0, 0);
+        sys_call4(SYS_ptrace, 24 /* PTRACE_SYSCALL */, child, 0, 0);
     }
 
     if (summary_mode) {
@@ -4036,7 +4036,7 @@ static void cmd_reboot(int argc, char *argv[]) {
     write_str(1, "Syncing filesystems...\n");
     sys_call0(162 /* sync */);
     write_str(1, "Rebooting...\n");
-    sys_call4(169, REBOOT_MAGIC1, REBOOT_MAGIC2, REBOOT_CMD_RESTART, 0);
+    sys_call4(SYS_reboot, REBOOT_MAGIC1, REBOOT_MAGIC2, REBOOT_CMD_RESTART, 0);
     write_str(2, "reboot: failed\n");
 }
 
@@ -4045,7 +4045,7 @@ static void cmd_poweroff(int argc, char *argv[]) {
     write_str(1, "Syncing filesystems...\n");
     sys_call0(162 /* sync */);
     write_str(1, "Powering off...\n");
-    sys_call4(169, REBOOT_MAGIC1, REBOOT_MAGIC2, REBOOT_CMD_POWEROFF, 0);
+    sys_call4(SYS_reboot, REBOOT_MAGIC1, REBOOT_MAGIC2, REBOOT_CMD_POWEROFF, 0);
     write_str(2, "poweroff: failed\n");
 }
 
@@ -4555,7 +4555,7 @@ static void cmd_ifconfig(int argc, char *argv[]) {
 
     int line = 0;
     char *p = buf;
-    int sock = sys_call3(41/*socket*/, 2, 2, 0);
+    int sock = sys_call3(SYS_socket, 2, 2, 0);
     while (*p) {
         char *eol = p; while (*eol && *eol != '\n') eol++;
         if (line >= 2) {
@@ -5168,7 +5168,7 @@ static void cmd_xargs(int argc, char *argv[]) {
                     long pid = sys_fork_call();
                     if (pid == 0) {
                         execute_command(xargc, xargv);
-                        syscall1(60, 0);
+                        sys_exit(0);
                         while (1);
                     } else if (pid > 0) {
                         active_children++;
@@ -5191,13 +5191,13 @@ static void cmd_xargs(int argc, char *argv[]) {
             if (xargc > 0) {
                 if (max_procs > 1) {
                     while (active_children >= max_procs) {
-                        sys_call4(61, -1, 0, 0, 0);
+                        sys_call4(SYS_wait4, -1, 0, 0, 0);
                         active_children--;
                     }
-                    long pid = sys_call2(57, 0, 0);
+                    long pid = sys_fork_call();
                     if (pid == 0) {
                         execute_command(xargc, xargv);
-                        syscall1(60, 0);
+                        sys_exit(0);
                         while (1);
                     } else if (pid > 0) {
                         active_children++;
@@ -5220,7 +5220,7 @@ static void cmd_xargs(int argc, char *argv[]) {
 
     /* Wait for any remaining parallel children */
     while (active_children > 0) {
-        sys_call4(61, -1, 0, 0, 0);
+        sys_call4(SYS_wait4, -1, 0, 0, 0);
         active_children--;
     }
 }
@@ -10255,7 +10255,7 @@ static int cmd_test(int argc, char *argv[]) {
         } else if (strcmp_simple(op, "-L") == 0 || strcmp_simple(op, "-h") == 0) {
             /* File is a symbolic link (check readlink) */
             char lbuf[64];
-            long lr = sys_call3(89 /* readlink */, (long)arg, (long)lbuf, 63);
+            long lr = sys_readlink_call(arg, lbuf, 63);
             return (lr > 0) ? 0 : 1;
         } else if (strcmp_simple(op, "-p") == 0) {
             /* File is a named pipe (FIFO) */
@@ -10389,7 +10389,7 @@ static void cmd_fg(int argc, char *argv[]) {
     write_str(1, j->command);
     write_str(1, "\n");
     if (j->status == JOB_STOPPED) {
-        sys_call2(62 /* kill */, j->pid, 18 /* SIGCONT */);
+        sys_call2(SYS_kill, j->pid, 18 /* SIGCONT */);
         j->status = JOB_RUNNING;
     }
 
@@ -10421,7 +10421,7 @@ static void cmd_bg(int argc, char *argv[]) {
     }
 
     /* Send SIGCONT to resume the stopped process */
-    sys_call2(62 /* kill */, j->pid, 18 /* SIGCONT */);
+    sys_call2(SYS_kill, j->pid, 18 /* SIGCONT */);
     j->status = JOB_RUNNING;
     write_str(1, "[");
     char num[8]; int ni = 0;
@@ -10668,7 +10668,7 @@ static int execute_command(int argc, char *argv[]) {
         /* Read nameserver from /etc/resolv.conf */
         uint32_t nsl_ns = dns_get_nameserver();
 
-        long fd = sys_call3(41, 2 /* AF_INET */, 2 /* SOCK_DGRAM */, 0);
+        long fd = sys_call3(SYS_socket, 2 /* AF_INET */, 2 /* SOCK_DGRAM */, 0);
         if (fd < 0) { write_str(2, "nslookup: socket error\n"); return 1; }
 
         struct { uint16_t family; uint16_t port; uint32_t addr; uint8_t pad[8]; } sa;
@@ -11116,7 +11116,7 @@ static int execute_command(int argc, char *argv[]) {
 
         /* SO_REUSEADDR */
         int one = 1;
-        sys_call6(54, sfd, 1, 2 /* SO_REUSEADDR */, (long)&one, sizeof(one), 0);
+        sys_call6(SYS_setsockopt, sfd, 1, 2 /* SO_REUSEADDR */, (long)&one, sizeof(one), 0);
 
         struct { uint16_t family; uint16_t port; uint32_t addr; uint8_t pad[8]; } sa;
         sa.family = 2; sa.addr = 0;
@@ -11603,7 +11603,7 @@ watch_sleep:
         write_str(1, "...\n");
 
         /* Create UDP socket */
-        long sock = sys_call3(41, 2 /* AF_INET */, 2 /* SOCK_DGRAM */, 17 /* IPPROTO_UDP */);
+        long sock = sys_call3(SYS_socket, 2 /* AF_INET */, 2 /* SOCK_DGRAM */, 17 /* IPPROTO_UDP */);
         if (sock < 0) { write_str(2, "dhclient: socket failed\n"); return 1; }
 
         /* SO_BROADCAST */
@@ -11629,7 +11629,7 @@ watch_sleep:
         pkt[10] = 0x80; pkt[11] = 0x00;
         /* chaddr: get MAC from interface */
         {
-            int isock = sys_call3(41, 2, 2, 0);
+            int isock = sys_call3(SYS_socket, 2, 2, 0);
             if (isock >= 0) {
                 char ifr[40]; for (int k = 0; k < 40; k++) ifr[k] = 0;
                 for (int k = 0; iface[k] && k < 15; k++) ifr[k] = iface[k];
@@ -11663,7 +11663,7 @@ watch_sleep:
 
         /* Set timeout 5s */
         struct { long tv_sec; long tv_usec; } tv = {5, 0};
-        sys_call6(54, sock, 1, 20 /* SO_RCVTIMEO */, (long)&tv, sizeof(tv), 0);
+        sys_call6(SYS_setsockopt, sock, 1, 20 /* SO_RCVTIMEO */, (long)&tv, sizeof(tv), 0);
 
         /* Wait for DHCP OFFER */
         uint8_t reply[512];
@@ -11839,7 +11839,7 @@ watch_sleep:
             write_str(1, "       brctl show\n");
             return 0;
         }
-        int sock = sys_call3(41, 2, 2, 0);
+        int sock = sys_call3(SYS_socket, 2, 2, 0);
         if (sock < 0) { write_str(2, "brctl: socket failed\n"); return 1; }
         if (strcmp_simple(argv[1], "addbr") == 0 && argc >= 3) {
             char name[16] = {0};
@@ -12005,9 +12005,9 @@ watch_sleep:
         write_str(1, "System going down...\n");
         sys_call0(162 /* sync */);
         if (do_reboot)
-            sys_call4(169, 0xfee1dead, 672274793, 0x01234567, 0);
+            sys_call4(SYS_reboot, 0xfee1dead, 672274793, 0x01234567, 0);
         else
-            sys_call4(169, 0xfee1dead, 672274793, 0x4321FEDC, 0);
+            sys_call4(SYS_reboot, 0xfee1dead, 672274793, 0x4321FEDC, 0);
         write_str(2, "shutdown failed\n");
         return 1;
     } else if (strcmp_simple(argv[0], "stty") == 0) {
@@ -12130,7 +12130,7 @@ watch_sleep:
                     if (strcmp_simple(argv[i], "dev") == 0 && i + 1 < argc) cdev = argv[++i];
                 }
                 /* Query class info via ioctl or show defaults */
-                int sock = sys_call3(41, 2, 2, 0);
+                int sock = sys_call3(SYS_socket, 2, 2, 0);
                 if (sock < 0) return 1;
                 char cbuf[512] = {0};
                 /* SIOCTCCLASSSHOW = 0x89E6 */
@@ -12182,7 +12182,7 @@ watch_sleep:
         } else if (strcmp_simple(argv[arg_start], "qdisc") == 0) {
             if (argc >= 3 && strcmp_simple(argv[2], "show") == 0) {
                 /* Show qdiscs — use custom ioctl */
-                int sock = sys_call3(41, 2, 2, 0);
+                int sock = sys_call3(SYS_socket, 2, 2, 0);
                 if (sock < 0) return 1;
                 char buf[512] = {0};
                 /* SIOCTCSHOW = 0x89E4 */
@@ -12217,7 +12217,7 @@ watch_sleep:
                     }
                 }
                 if (!dev) { write_str(2, "tc: missing dev\n"); return 1; }
-                int sock = sys_call3(41, 2, 2, 0);
+                int sock = sys_call3(SYS_socket, 2, 2, 0);
                 if (sock < 0) return 1;
                 struct { char name[16]; unsigned char type; unsigned int rate; unsigned int burst; } req = {{0}, (unsigned char)qtype, rate, burst};
                 for (int k = 0; dev[k] && k < 15; k++) req.name[k] = dev[k];
@@ -12371,7 +12371,7 @@ watch_sleep:
 
         /* Get timestamp */
         struct { long tv_sec; long tv_nsec; } lts = {0, 0};
-        sys_call2(98, 0 /* CLOCK_REALTIME */, (long)&lts);
+        sys_call2(SYS_clock_gettime, 0 /* CLOCK_REALTIME */, (long)&lts);
         long lt = lts.tv_sec;
         long ldays = lt / 86400;
         long ldaytime = lt % 86400;
@@ -12662,7 +12662,7 @@ watch_sleep:
             else if (argv[i][0] != '-') dev = argv[i];
         }
         if (!dev) { write_str(2, "ethtool: missing interface\n"); return 1; }
-        int sock = sys_call3(41, 2, 2, 0);
+        int sock = sys_call3(SYS_socket, 2, 2, 0);
         if (sock < 0) { write_str(2, "ethtool: socket failed\n"); return 1; }
         /* Verify device exists via SIOCGIFFLAGS */
         char ifr[40]; for (int k = 0; k < 40; k++) ifr[k] = 0;
@@ -12836,7 +12836,7 @@ watch_sleep:
 
         for (int ttl = 1; ttl <= 30; ttl++) {
             /* Set IP_TTL */
-            sys_call6(54, sock, 0 /* IPPROTO_IP */, 2 /* IP_TTL */, (long)&ttl, sizeof(ttl), 0);
+            sys_call6(SYS_setsockopt, sock, 0 /* IPPROTO_IP */, 2 /* IP_TTL */, (long)&ttl, sizeof(ttl), 0);
 
             /* Build ICMP echo request */
             uint8_t pkt[64];
@@ -12962,7 +12962,7 @@ watch_sleep:
         }
 
         /* iptables — minimal firewall configuration via ioctls */
-        int sock = sys_call3(41, 2, 2, 0);
+        int sock = sys_call3(SYS_socket, 2, 2, 0);
         if (sock < 0) { write_str(2, "iptables: socket failed\n"); return 1; }
 
         /* Parse chain name → number: INPUT=0, FORWARD=1, OUTPUT=2 */
@@ -13066,7 +13066,7 @@ watch_sleep:
                 write_str(2, "usage: ip link add link <parent> type vlan id <vid>\n");
                 return 1;
             }
-            int sock = sys_call3(41, 2, 2, 0);
+            int sock = sys_call3(SYS_socket, 2, 2, 0);
             if (sock < 0) { write_str(2, "ip link add: socket failed\n"); return 1; }
             struct { char ifname[16]; unsigned short vlan_id; } vreq;
             for (int k = 0; k < 16; k++) vreq.ifname[k] = 0;
@@ -13090,7 +13090,7 @@ watch_sleep:
         if (argc >= 5 && strcmp_simple(argv[1], "link") == 0 &&
             strcmp_simple(argv[2], "set") == 0) {
             const char *devname = argv[3];
-            int sock = sys_call3(41, 2, 2, 0);
+            int sock = sys_call3(SYS_socket, 2, 2, 0);
             if (sock < 0) { write_str(2, "ip link set: socket failed\n"); return 1; }
             /* Read current flags */
             char ifr[40];
@@ -13155,7 +13155,7 @@ watch_sleep:
                     ifname[j] = '\0';
                     if (j > 0) {
                         /* Query interface info via ioctl */
-                        int sock = sys_call3(41/*socket*/, 2/*AF_INET*/, 2/*SOCK_DGRAM*/, 0);
+                        int sock = sys_call3(SYS_socket, 2/*AF_INET*/, 2/*SOCK_DGRAM*/, 0);
                         if (sock >= 0) {
                             char ifr[40];
                             /* Print index and name with flags */
@@ -13289,7 +13289,7 @@ watch_sleep:
                 }
             }
             /* Use SIOCADDRT ioctl */
-            int sock = sys_call3(41, 2, 2, 0);
+            int sock = sys_call3(SYS_socket, 2, 2, 0);
             if (sock < 0) { write_str(2, "ip route add: socket failed\n"); return 1; }
             /* rtentry: 3x sockaddr(16) + short flags(2) + short pad(2) + char dev[16] = 68 bytes */
             char rt[68];
@@ -13341,7 +13341,7 @@ watch_sleep:
                 if (*dp == '/') { dp++; while (*dp >= '0' && *dp <= '9') { prefix = prefix * 10 + (*dp - '0'); dp++; } }
                 mask = (prefix > 0 && prefix <= 32) ? ~((1u << (32 - prefix)) - 1) : 0;
             }
-            int sock = sys_call3(41, 2, 2, 0);
+            int sock = sys_call3(SYS_socket, 2, 2, 0);
             if (sock < 0) { write_str(2, "ip route del: socket failed\n"); return 1; }
             char rt[68]; for (int k = 0; k < 68; k++) rt[k] = 0;
             rt[0] = 2; rt[4] = (char)((dst>>24)&0xFF); rt[5] = (char)((dst>>16)&0xFF);
@@ -13453,7 +13453,7 @@ watch_sleep:
             if (!devname) { write_str(2, "ip addr add: missing 'dev <name>'\n"); return 1; }
 
             /* Set IP via SIOCSIFADDR ioctl */
-            int sock = sys_call3(41, 2, 2, 0);
+            int sock = sys_call3(SYS_socket, 2, 2, 0);
             if (sock < 0) { write_str(2, "ip: socket failed\n"); return 1; }
 
             char ifr[40];
@@ -13490,7 +13490,7 @@ watch_sleep:
             for (int i = 4; i < argc - 1; i++)
                 if (strcmp_simple(argv[i], "dev") == 0) { devname2 = argv[i+1]; break; }
             if (!devname2) { write_str(2, "ip addr del: missing 'dev <name>'\n"); return 1; }
-            int sock = sys_call3(41, 2, 2, 0);
+            int sock = sys_call3(SYS_socket, 2, 2, 0);
             if (sock < 0) { write_str(2, "ip addr del: socket failed\n"); return 1; }
             char ifr[40]; for (int k = 0; k < 40; k++) ifr[k] = 0;
             for (int k = 0; devname2[k] && k < 15; k++) ifr[k] = devname2[k];
@@ -13599,7 +13599,7 @@ watch_sleep:
                     }
                 }
                 /* Use an ioctl to add the rule (custom 0x89E1) */
-                int sock = sys_call3(41, 2, 2, 0);
+                int sock = sys_call3(SYS_socket, 2, 2, 0);
                 if (sock < 0) { write_str(2, "ip rule: socket failed\n"); return 1; }
                 struct { unsigned int prio; unsigned int src; unsigned int src_mask; unsigned char table; int iface; } rreq;
                 rreq.prio = prio; rreq.src = src; rreq.src_mask = src_mask;
@@ -13615,7 +13615,7 @@ watch_sleep:
                         i++; for (int k = 0; argv[i][k]; k++) prio = prio*10 + (unsigned)(argv[i][k]-'0');
                     }
                 }
-                int sock = sys_call3(41, 2, 2, 0);
+                int sock = sys_call3(SYS_socket, 2, 2, 0);
                 if (sock < 0) { write_str(2, "ip rule: socket failed\n"); return 1; }
                 long rc = sys_call3(SYS_ioctl, sock, 0x89E2/*SIOCDELRULE*/, (long)&prio);
                 sys_close(sock);
@@ -13641,7 +13641,7 @@ watch_sleep:
                         { remote_ip = parse_ipv4(argv[++i]); }
                 }
                 if (!tname) tname = "gre0";
-                int sock = sys_call3(41, 2, 2, 0);
+                int sock = sys_call3(SYS_socket, 2, 2, 0);
                 if (sock < 0) { write_str(2, "ip tunnel: socket failed\n"); return 1; }
                 struct { char name[16]; unsigned int local; unsigned int remote; unsigned int key; } greq;
                 for (int k = 0; k < 16; k++) greq.name[k] = 0;
@@ -13708,7 +13708,7 @@ watch_sleep:
                         }
                         else if (strcmp_simple(argv[i], "ah") == 0) proto = 51;
                     }
-                    int sock = sys_call3(41, 2, 2, 0);
+                    int sock = sys_call3(SYS_socket, 2, 2, 0);
                     if (sock < 0) { write_str(2, "ip xfrm: socket failed\n"); return 1; }
                     struct { unsigned int spi; unsigned int src; unsigned int dst;
                              unsigned char proto; unsigned char mode; unsigned char auth; unsigned char enc; } req;
@@ -13863,7 +13863,7 @@ watch_sleep:
             argi++;
         }
         struct { long tv_sec; long tv_nsec; } ts = {0, 0};
-        sys_call2(98, 1, (long)&ts);
+        sys_call2(SYS_clock_gettime, 1, (long)&ts);
         char path[128];
         int p = 0;
         for (int i = 0; parent[i] && p < 100; i++) path[p++] = parent[i];
@@ -17660,7 +17660,7 @@ static void cmd_unshare(int argc, char *argv[]) {
         long pid = sys_fork();
         if (pid == 0) {
             execute_command(sub_argc, sub_argv);
-            syscall1(60, 0);
+            sys_exit(0);
             while(1);
         } else if (pid > 0) {
             int st = 0;
@@ -29939,7 +29939,7 @@ static void cmd_telnet(int argc, char *argv[]) {
     uint32_t ip_be = ((ip >> 24) & 0xFF) | ((ip >> 8) & 0xFF00) |
                      ((ip << 8) & 0xFF0000) | ((ip << 24) & 0xFF000000);
 
-    long fd = sys_call3(41, 2, 1, 0); /* socket(AF_INET, SOCK_STREAM, 0) */
+    long fd = sys_call3(SYS_socket, 2, 1, 0); /* socket(AF_INET, SOCK_STREAM, 0) */
     if (fd < 0) {
         write_str(2, "telnet: socket failed\n");
         return;
@@ -29955,7 +29955,7 @@ static void cmd_telnet(int argc, char *argv[]) {
     write_str(1, host);
     write_str(1, "...\n");
 
-    if (sys_call3(42, fd, (long)&sa, 16) < 0) {
+    if (sys_call3(SYS_connect, fd, (long)&sa, 16) < 0) {
         write_str(2, "telnet: Unable to connect to remote host\n");
         sys_close((int)fd);
         return;
@@ -30046,7 +30046,7 @@ static void cmd_nmap(int argc, char *argv[]) {
 
     for (int port = port_start; port <= port_end && port <= 65535; port++) {
         /* Try TCP connect */
-        long fd = sys_call3(41, 2, 1, 0);
+        long fd = sys_call3(SYS_socket, 2, 1, 0);
         if (fd < 0) continue;
 
         struct { uint16_t family; uint16_t port; uint32_t addr; uint8_t pad[8]; } sa;
@@ -30055,7 +30055,7 @@ static void cmd_nmap(int argc, char *argv[]) {
         sa.addr = ip_be;
         for (int j = 0; j < 8; j++) sa.pad[j] = 0;
 
-        long ret = sys_call3(42, fd, (long)&sa, 16);
+        long ret = sys_call3(SYS_connect, fd, (long)&sa, 16);
         if (ret == 0) {
             int_to_str(port, numbuf, sizeof(numbuf));
             write_str(1, numbuf);
@@ -31563,7 +31563,7 @@ __attribute__((used)) static void cmd_ab(int argc, char *argv[]) {
     long total_bytes = 0;
 
     for (int r = 0; r < num_requests; r++) {
-        long fd = sys_call3(41, 2, 1, 0);
+        long fd = sys_call3(SYS_socket, 2, 1, 0);
         if (fd < 0) { failed++; continue; }
 
         struct { uint16_t family; uint16_t port; uint32_t addr; uint8_t pad[8]; } sa;
@@ -31572,7 +31572,7 @@ __attribute__((used)) static void cmd_ab(int argc, char *argv[]) {
         sa.addr = ip_be;
         for (int i = 0; i < 8; i++) sa.pad[i] = 0;
 
-        if (sys_call3(42, fd, (long)&sa, 16) < 0) { sys_close(fd); failed++; continue; }
+        if (sys_call3(SYS_connect, fd, (long)&sa, 16) < 0) { sys_close(fd); failed++; continue; }
 
         char req[256]; int ri = 0;
         const char *get = "GET "; while (*get) req[ri++] = *get++;
@@ -36920,7 +36920,7 @@ static void cmd_sar(int argc, char *argv[]) {
         if (interval > 0 && iter + 1 < count) {
             struct { long tv_sec; long tv_nsec; } ts_sleep;
             ts_sleep.tv_sec = interval; ts_sleep.tv_nsec = 0;
-            sys_call2(35, (long)&ts_sleep, 0);
+            sys_call2(SYS_nanosleep, (long)&ts_sleep, 0);
         }
     }
 }
@@ -37977,10 +37977,10 @@ static void cmd_hyperfine(int argc, char *argv[]) {
     long total_ms = 0, min_ms = 999999999, max_ms = 0;
 
     for (int r = 0; r < runs; r++) {
-        sys_call2(98, 1, (long)&start);
+        sys_call2(SYS_clock_gettime, 1, (long)&start);
         /* Execute the command */
         execute_command(argc - cmd_start, &argv[cmd_start]);
-        sys_call2(98, 1, (long)&end_ts);
+        sys_call2(SYS_clock_gettime, 1, (long)&end_ts);
         long ms = (end_ts.tv_sec - start.tv_sec) * 1000 +
                   (end_ts.tv_nsec - start.tv_nsec) / 1000000;
         times_ms[r] = ms;

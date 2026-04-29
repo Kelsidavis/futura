@@ -480,9 +480,22 @@ void fb_console_putc(char c) {
             fb_console_scroll();
             cons->cursor_y = cons->rows - 1;
         }
-        /* Flush on newline so each completed line shows up on the
-         * display promptly without paying the round-trip per char. */
-        fb_console_present();
+        /* Throttle GPU flushes — flushing on every newline is too
+         * aggressive (the boot log has ~100 lines, each flush sends
+         * TRANSFER_TO_HOST_2D + RESOURCE_FLUSH and polls for both
+         * with IRQs off; the device queue can't drain fast enough
+         * and we hit '[virtio-gpu-mmio] Command timeout' and the
+         * display freezes again). Flushing every 8 newlines cuts
+         * GPU pressure ~8x while still keeping per-screen latency
+         * sub-second at boot rates. The trailing data is still
+         * visible because fb_console_putc on a column wrap also
+         * presents (handles the shell prompt sitting on a partial
+         * line at the bottom). */
+        static unsigned int newlines_since_flush = 0;
+        if (++newlines_since_flush >= 8) {
+            newlines_since_flush = 0;
+            fb_console_present();
+        }
     } else if (c == '\r') {
         cons->cursor_x = 0;
     } else if (c == '\t') {

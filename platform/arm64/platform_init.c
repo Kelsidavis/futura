@@ -569,8 +569,12 @@ void serial_puts(const char *str) {
     fut_serial_puts(str);
 }
 
-/* Printf implementation with format string support */
-static void print_num(uint64_t num, int base, int uppercase, int sign, int width) {
+/* Printf implementation with format string support.
+ *
+ * pad_char: ' ' (default) or '0' when caller passed the leading-0 flag
+ * (e.g. "%016llx" wants zero-padded, "%16llx" wants space-padded). */
+static void print_num(uint64_t num, int base, int uppercase, int sign, int width,
+                      char pad_char) {
     char buf[32];
     const char *digits = uppercase ? "0123456789ABCDEF" : "0123456789abcdef";
     int i = 0;
@@ -597,10 +601,17 @@ static void print_num(uint64_t num, int base, int uppercase, int sign, int width
         buf[i++] = '-';
     }
 
-    /* Pad with spaces if needed (clamp to buffer size) */
+    /* Pad to width (clamp to buffer size). With zero-padding the digits
+     * stay flush-right with leading 0s — matches glibc/libc behaviour for
+     * %016llx so kernel diagnostics like
+     *   "TTBR0=0x%016llx TTBR1=0x%016llx"
+     * actually produce 16-hex-digit fields. The previous unconditional
+     * space-fill made every "0x%016llx" come out as
+     * "0x               0" with 15 leading spaces, mangling exception
+     * dumps and register printouts. */
     if (width > (int)sizeof(buf)) width = (int)sizeof(buf);
     while (i < width) {
-        buf[i++] = ' ';
+        buf[i++] = pad_char;
     }
 
     /* Print in correct order */
@@ -617,7 +628,15 @@ void fut_printf(const char *fmt, ...) {
         if (*fmt == '%') {
             fmt++;
 
-            /* Parse width */
+            /* Parse the '0' zero-pad flag, then width. The previous parser
+             * folded the leading '0' into the width digit, so "%016llx"
+             * was treated as width=16 with default space-padding instead
+             * of the intended zero-pad. */
+            char pad_char = ' ';
+            if (*fmt == '0') {
+                pad_char = '0';
+                fmt++;
+            }
             int width = 0;
             while (*fmt >= '0' && *fmt <= '9') {
                 width = width * 10 + (*fmt - '0');
@@ -652,7 +671,7 @@ void fut_printf(const char *fmt, ...) {
                     } else {
                         val = va_arg(args, int);
                     }
-                    print_num((uint64_t)val, 10, 0, 1, width);
+                    print_num((uint64_t)val, 10, 0, 1, width, pad_char);
                     break;
                 }
                 case 'u': {
@@ -664,7 +683,7 @@ void fut_printf(const char *fmt, ...) {
                     } else {
                         val = va_arg(args, unsigned int);
                     }
-                    print_num(val, 10, 0, 0, width);
+                    print_num(val, 10, 0, 0, width, pad_char);
                     break;
                 }
                 case 'x': {
@@ -676,7 +695,7 @@ void fut_printf(const char *fmt, ...) {
                     } else {
                         val = va_arg(args, unsigned int);
                     }
-                    print_num(val, 16, 0, 0, width);
+                    print_num(val, 16, 0, 0, width, pad_char);
                     break;
                 }
                 case 'X': {
@@ -688,13 +707,13 @@ void fut_printf(const char *fmt, ...) {
                     } else {
                         val = va_arg(args, unsigned int);
                     }
-                    print_num(val, 16, 1, 0, width);
+                    print_num(val, 16, 1, 0, width, pad_char);
                     break;
                 }
                 case 'p': {
                     void *ptr = va_arg(args, void *);
                     fut_serial_puts("0x");
-                    print_num((uint64_t)ptr, 16, 0, 0, 16);
+                    print_num((uint64_t)ptr, 16, 0, 0, 16, '0');
                     break;
                 }
                 case 's': {

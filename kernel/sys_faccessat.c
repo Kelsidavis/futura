@@ -563,10 +563,8 @@ handle_error:
     }
 
 success:
-    /* Success */
-    fut_printf("[FACCESSAT] faccessat(dirfd=%d, pathname='%s' [%s, len=%lu], mode=%s, flags=%s) -> 0 "
-               "(accessible, Phase 3: AT_SYMLINK_NOFOLLOW + AT_EACCESS)\n",
-               local_dirfd, path_buf, path_type, (unsigned long)path_len, mode_desc, flags_desc);
-
+    /* Success path silent — same rationale as access(F_OK): every
+     * shell tab-completion / `command -v` / PATH walk fires this. */
+    (void)path_type; (void)path_len; (void)mode_desc; (void)flags_desc;
     return 0;
 }

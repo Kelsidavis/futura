@@ -65,14 +65,26 @@ _start:
     /* Should never reach here */
     .inst 0xd4200000            /* brk #0 (illegal instruction trap) */
 
-/* exit() system call wrapper */
+/* exit() system call wrapper.
+ *
+ * Two arch fixes vs the original:
+ *   - Use Futura's syscall number 60 for exit (matches the
+ *     SYS_exit constant in include/user/sysnums.h and the rest of
+ *     libfutura's syscall wrappers).  Linux ARM64's #93 is mapped
+ *     to fchown in Futura's syscall_table.c, so calling 'mov x8,
+ *     #93 ; svc' returned -EBADF/something instead of terminating
+ *     the process — and the caller fell through into the
+ *     'brk #0' on the next instruction, looking like a BRK
+ *     exception at PC=exit+0x8 in every userland binary that ever
+ *     hit exit.
+ *   - Use 'svc #0' (Linux/AArch64 convention).  The imm field is
+ *     informational and Futura's exception handler doesn't check
+ *     it, but '#0x80' is the legacy x86 trap-gate convention and
+ *     out of place here. */
 .global exit
 exit:
-    /* Phase 3: Would send EXIT message to posixd via FIPC
-     * For now, make exit syscall
-     */
-    mov x8, #93                 /* exit syscall number (Linux ARM64) */
-    svc #0x80                   /* Make syscall */
+    mov x8, #60                 /* SYS_exit (Futura/x86_64-aligned ABI) */
+    svc #0                      /* Trap to EL1 */
     .inst 0xd4200000            /* unreachable */
 
 /* Mark stack as non-executable to silence linker warnings */

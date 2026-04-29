@@ -309,6 +309,15 @@ void arm64_exception_dispatch(fut_interrupt_frame_t *frame) {
 
         case ESR_EC_DABT_EL0:
         case ESR_EC_DABT_EL1:
+            /* Try to handle as a normal page fault first.  Demand-paging
+             * faults can hit thousands of times per process startup; the
+             * verbose per-fault tracing that used to live above this
+             * point dominated boot time and made the system look hung.
+             * Trace only when the fault couldn't be resolved. */
+            if (fut_trap_handle_page_fault(frame)) {
+                break;  /* Handled successfully — silent fast path */
+            }
+
             if (ec == ESR_EC_DABT_EL0) {
                 fut_serial_puts("[EXCEPTION] Data abort from lower EL (userspace)\n");
                 /* Debug: Read MMU configuration registers and saved TTBR0 from frame */
@@ -356,10 +365,6 @@ void arm64_exception_dispatch(fut_interrupt_frame_t *frame) {
                 __asm__ volatile("mrs %0, far_el1" : "=r"(far_el1));
                 fut_printf("[EXCEPTION] FAR_EL1=0x%016llx PC=0x%016llx\n",
                            (unsigned long long)far_el1, (unsigned long long)frame->pc);
-            }
-            /* Try to handle as page fault */
-            if (fut_trap_handle_page_fault(frame)) {
-                break;  /* Handled successfully */
             }
 
             /* Unhandled data abort - signal task with SIGSEGV */

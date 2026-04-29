@@ -1803,6 +1803,27 @@ static void arm64_init_spawner_thread(void *arg) {
             fut_printf("[INIT] Launching futura-wayland compositor\n");
             ret = fut_exec_elf("/sbin/futura-wayland", wl_argv, wl_envp);
             if (ret == 0) {
+                /* Give the compositor a moment to bind its socket before
+                 * launching the first client.  fut_exec_elf returns 0 on
+                 * the spawner thread (the new task runs on its own thread),
+                 * so the spawner can keep going. */
+                for (volatile int d = 0; d < 80000000; d++);
+
+                int wlt_fd = fut_vfs_open("/bin/wl-term", 0 /* O_RDONLY */, 0);
+                if (wlt_fd >= 0) {
+                    fut_vfs_close(wlt_fd);
+                    char *wlt_argv[] = {"/bin/wl-term", NULL};
+                    char *wlt_envp[] = {"PATH=/bin:/sbin", "HOME=/", "TERM=vt100",
+                                        "USER=root", "HOSTNAME=futura",
+                                        "WAYLAND_DISPLAY=wayland-0",
+                                        "XDG_RUNTIME_DIR=/run", NULL};
+                    fut_printf("[INIT] Launching wl-term as first compositor client\n");
+                    int wlt_ret = fut_exec_elf("/bin/wl-term", wlt_argv, wlt_envp);
+                    if (wlt_ret != 0) {
+                        fut_printf("[INIT] wl-term exec failed (rc=%d)\n", wlt_ret);
+                    }
+                }
+
                 /* Wait forever — compositor is the desktop. */
                 extern long sys_waitpid(int pid, int *status, int options);
                 int status = 0;

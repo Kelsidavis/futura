@@ -496,6 +496,14 @@ void fut_serial_putc(char c) {
             mmio_write32((volatile void *)(uart + UART_IMSC), imsc);
         }
     }
+
+    /* Mirror to framebuffer console so the QEMU window shows the same
+     * output as the serial console (matches x86_64's fut_serial_putc).
+     * Without this, the QEMU display only shows the boot splash and
+     * goes blank thereafter — kernel/shell text never appears on the
+     * framebuffer because nothing else feeds fb_console_putc on ARM64. */
+    extern void fb_console_putc(char c);
+    fb_console_putc(c);
 }
 
 void fut_serial_puts(const char *str) {

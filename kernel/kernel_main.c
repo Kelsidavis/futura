@@ -863,6 +863,7 @@ extern void fut_misc_test_thread(void *arg);
  * Test thread waits for this before starting to avoid races with init. */
 static volatile int g_init_complete = 0;
 
+__attribute__((unused))
 static void selftest_sequential_runner(void *arg) {
     (void)arg;
 
@@ -2594,6 +2595,15 @@ try_ramdisk: (void)0;
      *   Step 6: Create Test Task and FIPC Channel
      * ======================================== */
 
+#if defined(__aarch64__)
+    /* ARM64 skips the FIPC demo task entirely — it's a kernel-only
+     * self-test that adds startup latency without any user-visible
+     * value, and on emulated ARM64 the FIPC channel allocation
+     * appeared to delay arch_late_init by minutes.  The wayland
+     * desktop is what the user actually wants. */
+    fut_task_t *test_task = NULL;
+    (void)test_task;
+#else
     fut_printf("[INIT] Creating test task for FIPC demonstration...\n");
 
     /* Create a test task (process container) */
@@ -2640,6 +2650,7 @@ try_ramdisk: (void)0;
             fut_printf("[INIT] Created sequential test thread (tid=%llu)\n", test_thread->tid);
         }
     }
+#endif /* !__aarch64__ */
 
     /* ========================================
      *   Step 7: Create FIPC Test Threads

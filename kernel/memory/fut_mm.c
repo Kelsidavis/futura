@@ -1414,8 +1414,10 @@ void *fut_mm_map_anonymous(fut_mm_t *mm, uintptr_t hint, size_t len, int prot, i
     mm->mmap_base = end;
     fut_spinlock_release(&mm->mm_lock);
 
-    fut_printf("[MM-MAP-ANON] ARM64: Created mapping at 0x%llx-0x%llx size=%zu (lazy allocation)\n",
-               base, end, len);
+    /* Trace every anonymous mmap was useful while bringing up
+     * demand paging; now it just spams the boot log because every
+     * malloc / shm allocation hits this path. Silent on the fast
+     * path. */
     return (void *)(uintptr_t)base;
 }
 

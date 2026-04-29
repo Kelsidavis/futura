@@ -318,8 +318,7 @@ long sys_futimens(int fd, const fut_timespec_t *times) {
             inotify_dispatch_event(dir_path, 0x00000004 /* IN_ATTRIB */, vnode->name, 0);
     }
 
-    /* Success */
-    fut_printf("[FUTIMENS] futimens(fd=%d [%s], times=%p, op=%s, ino=%lu) -> 0 (success)\n",
-               local_fd, fd_desc, local_times, operation_type, file->vnode->ino);
+    /* Success path silent — fires on every `touch`/`cp -p`. */
+    (void)fd_desc; (void)operation_type;
     return 0;
 }

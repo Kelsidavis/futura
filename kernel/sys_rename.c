@@ -365,8 +365,9 @@ long sys_rename(const char *oldpath, const char *newpath) {
 
         ret = old_parent->ops->rename(old_parent, old_name, new_name);
         if (ret == 0) {
-            fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], op=%s) -> 0 (success, same-dir)\n",
-                       old_buf, old_path_type, new_buf, new_path_type, operation_type);
+            /* Success path silent — every `mv`/`git rebase` etc. fires
+             * a flood of these. Errors still log explicitly. */
+            (void)old_path_type; (void)new_path_type; (void)operation_type;
             vfs_dcache_invalidate_path(old_buf); vfs_dcache_invalidate_path(new_buf);
             /* Dispatch inotify IN_MOVED_FROM + IN_MOVED_TO with matching cookie */
             {
@@ -542,8 +543,7 @@ long sys_rename(const char *oldpath, const char *newpath) {
         return ret;
     }
 
-    fut_printf("[RENAME] rename(old='%s' [%s], new='%s' [%s], op=%s) -> 0 (success, cross-dir)\n",
-               old_buf, old_path_type, new_buf, new_path_type, operation_type);
+    /* Success path silent — same as the same-dir case above. */
     vfs_dcache_invalidate_path(old_buf); vfs_dcache_invalidate_path(new_buf);
 
     /* Dispatch inotify IN_MOVED_FROM on old dir + IN_MOVED_TO on new dir */

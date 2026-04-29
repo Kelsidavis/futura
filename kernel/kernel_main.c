@@ -70,6 +70,17 @@ __attribute__((unused)) static void fut_boot_delay_ms(uint32_t delay_ms) {
         return;
     }
 
+#if defined(__aarch64__)
+    /* On emulated ARM64 a 2500 ms busy-wait runs ~50× slower than the
+     * caller assumes (each fut_get_ticks read goes through the timer
+     * subsystem), pushing boot to 5+ minutes for no real benefit.  The
+     * actual reason this delay exists is to give the just-exec'd
+     * compositor a beat to bind its socket before the test client
+     * connects; we already busy-wait around the wl-term spawn for that,
+     * so just skip the heavy delay here. */
+    (void)delay_ms;
+    return;
+#else
     uint64_t start = fut_get_ticks();
     const uint64_t ceiling = start + delay_ms;
     const uint64_t guard_iterations = (uint64_t)delay_ms * 20000ULL;
@@ -82,6 +93,7 @@ __attribute__((unused)) static void fut_boot_delay_ms(uint32_t delay_ms) {
         __asm__ volatile("pause" ::: "memory");
 #endif
     }
+#endif
 }
 #endif
 extern fut_status_t virtio_blk_init(uint64_t pci_addr);

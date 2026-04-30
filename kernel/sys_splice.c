@@ -693,8 +693,8 @@ long sys_tee(int fd_in, int fd_out, size_t len, unsigned int flags) {
     if (nwritten < 0)
         return nwritten;
 
-    fut_printf("[TEE] tee(fd_in=%d, fd_out=%d, len=%zu, pid=%d) -> %zd bytes\n",
-               local_fd_in, local_fd_out, local_len, task->pid, nwritten);
+    /* Success path silent — tee is used in pipelines (`tee >(...) >(...)`)
+     * where it fires per buffered chunk. Errors above still trace. */
     return nwritten;
 }
 

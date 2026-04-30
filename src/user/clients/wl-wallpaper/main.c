@@ -505,6 +505,37 @@ int main(void) {
 
     refresh_procs();
 
+    /* Read the currently-active preset from /etc/wallpaper.conf so
+     * the picker opens with the right row pre-selected and shows
+     * "ACTIVE" next to it from the start. */
+    {
+        int wfd = sys_open("/etc/wallpaper.conf", O_RDONLY, 0);
+        if (wfd < 0) wfd = sys_open("/run/wallpaper.conf", O_RDONLY, 0);
+        if (wfd >= 0) {
+            char buf[24];
+            long n = sys_read(wfd, buf, sizeof(buf) - 1);
+            sys_close(wfd);
+            while (n > 0 && (buf[n-1] == '\n' || buf[n-1] == '\r' ||
+                             buf[n-1] == ' ' || buf[n-1] == '\t')) {
+                n--;
+            }
+            if (n > 0 && n < (long)sizeof(buf)) {
+                buf[n] = '\0';
+                for (int i = 0; i < proc_count; i++) {
+                    int eq = 1;
+                    for (long j = 0; j <= n; j++) {
+                        if (procs[i].value[j] != buf[j]) { eq = 0; break; }
+                    }
+                    if (eq) {
+                        applied = i;
+                        selected = i;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
     struct client_state state = {0};
     state.running = true;
     state.frame_done = true;

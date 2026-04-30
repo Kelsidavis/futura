@@ -192,14 +192,9 @@ ssize_t sys_echo(const char *u_in, char *u_out, size_t n) {
         echo_stats.min_size = total_processed;
     }
 
-    /* Phase 3: Detailed success logging with performance metrics */
-    fut_printf("[ECHO] echo(n=%zu [%s], u_in=%p, u_out=%p, calls=%lu, "
-               "avg_bytes=%lu, max=%lu, copy_ops=%lu) -> %zd (optimized, Phase 3)\n",
-               n, size_category, (void*)u_in, (void*)u_out,
-               echo_stats.total_calls,
-               echo_stats.total_bytes / (echo_stats.total_calls ? echo_stats.total_calls : 1),
-               echo_stats.max_size, copy_operations,
-               (ssize_t)total_processed);
-
+    /* Success path is silent — echo is a frequent test/probe syscall
+     * and the per-call performance trace was just console spam.
+     * Errors above still log explicitly. */
+    (void)size_category; (void)copy_operations;
     return (ssize_t)total_processed;
 }

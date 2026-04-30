@@ -589,7 +589,11 @@ int main(void) {
     }
 
     /* Refresh interval */
-    const uint64_t REFRESH_MS = 2000;
+    /* Settings entries are entirely static (preset strings + getenv()
+     * values that don't change at runtime). Inheriting the wl-sysmon
+     * 2-second refresh just re-runs add_setting() ~30 times a minute
+     * for no observable benefit. 60s. */
+    const uint64_t REFRESH_MS = 60000;
     last_refresh_ms = 0;
 
     while (state.running) {

@@ -632,7 +632,8 @@ int main(void) {
     }
 
     /* Refresh interval */
-    const uint64_t REFRESH_MS = 2000;
+    /* Preset list is static; refreshing every 2s is wasteful. 60s. */
+    const uint64_t REFRESH_MS = 60000;
     last_refresh_ms = 0;
 
     while (state.running) {

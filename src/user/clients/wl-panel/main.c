@@ -293,7 +293,12 @@ static void pointer_leave(void *data, struct wl_pointer *pointer, uint32_t seria
                          struct wl_surface *surface) {
     struct panel_state *state = data;
     (void)pointer; (void)serial; (void)surface;
-    state->launcher_hovered = false;
+    /* Pointer left the panel — clear the hover highlight and redraw,
+     * otherwise the button stays "lit" until the next minute tick. */
+    if (state->launcher_hovered) {
+        state->launcher_hovered = false;
+        panel_draw(state);
+    }
 }
 
 static void pointer_motion(void *data, struct wl_pointer *pointer, uint32_t time,

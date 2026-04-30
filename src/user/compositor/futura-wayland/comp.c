@@ -1937,6 +1937,28 @@ void comp_render_frame(struct compositor_state *comp) {
                 if (pg > 255) pg = 255;
                 if (pb > 255) pb = 255;
 
+                /* Stars + moon are atmospheric only on dark presets. On
+                 * sunset / lavender / solarized-light backgrounds the
+                 * white pinpricks and crescent moon look out of place,
+                 * so skip them. The presets are matched by first two
+                 * chars of comp->wallpaper_preset (set in init). */
+                bool dark_scene = true;
+                {
+                    const char *wpc = comp->wallpaper_preset;
+                    if (wpc[0] == 's' && wpc[1] == 'u') dark_scene = false; /* sunset   */
+                    else if (wpc[0] == 'l' && wpc[1] == 'a') dark_scene = false; /* lavender */
+                    else if (wpc[0] == 's' && wpc[1] == 'o' && wpc[5] == 'l') dark_scene = false; /* solarl */
+                }
+                if (!dark_scene) {
+                    /* Skip the deterministic star/moon block — finalise
+                     * the pixel with the gradient + glows we already
+                     * accumulated. */
+                    uint32_t color = 0xFF000000u | ((uint32_t)pr << 16) |
+                                     ((uint32_t)pg << 8) | (uint32_t)pb;
+                    row[gx] = color;
+                    continue;
+                }
+
                 /* Deterministic star field with colored stars + twinkling */
                 uint32_t hash = (uint32_t)(gx * 7919 + gy * 104729);
                 hash ^= hash >> 13;

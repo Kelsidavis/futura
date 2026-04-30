@@ -176,9 +176,18 @@ static void apply_preset(int idx) {
     const char *k = procs[idx].value;
     while (*k && n < (int)sizeof(buf) - 1) buf[n++] = *k++;
     buf[n++] = '\n';
-    sys_write(fd, buf, n);
+    /* Loop past short writes — a partial write would leave the file
+     * with a truncated key and the compositor's poll would parse
+     * something like "ocea" instead of "ocean". */
+    int off = 0;
+    bool ok = true;
+    while (off < n) {
+        long w = sys_write(fd, buf + off, n - off);
+        if (w <= 0) { ok = false; break; }
+        off += (int)w;
+    }
     sys_close(fd);
-    applied = idx;
+    if (ok) applied = idx;
 }
 
 /* ─── Rendering helpers ─── */

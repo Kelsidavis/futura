@@ -1033,8 +1033,7 @@ long sys_adjtimex(struct timex *txc) {
         return -EFAULT;
     }
 
-    fut_printf("[ADJTIMEX] adjtimex(modes=0x%x, freq=%d, status=%d, adj_usec=%lld) -> %d (Phase 3)\n",
-               modes, g_ntp_freq_ppm, g_ntp_status, (long long)g_ntp_adj_usec, g_ntp_status);
-
+    /* Success path is silent — chrony/systemd-timesyncd call adjtimex
+     * at a steady cadence; the trace was per-tick console spam. */
     return g_ntp_status;
 }

@@ -376,9 +376,10 @@ long sys_mknodat(int dirfd, const char *pathname, uint32_t mode, uint32_t dev) {
                        dirfd_desc, path_buf, type_desc, local_mode & 07777, task->pid, ret);
             return (long)ret;
         }
-        fut_printf("[MKNODAT] mknodat(dirfd=%s, pathname='%s', type=%s, mode=0%o, pid=%d) -> 0 "
-                   "(regular file created)\n",
-                   dirfd_desc, path_buf, type_desc, local_mode & 07777, task->pid);
+        /* Success path silent — install / dpkg / cmake invoke
+         * mknodat for regular-file creation in build directories;
+         * one log per file buries the kernel output. Errors above
+         * still trace explicitly. */
         return 0;
     }
 

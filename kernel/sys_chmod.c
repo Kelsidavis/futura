@@ -491,11 +491,10 @@ long sys_chmod(const char *pathname, uint32_t mode) {
     }
     */
 
-    /* Phase 4: Detailed success logging with ACL info */
-    fut_printf("[CHMOD] chmod(path='%s' [%s], vnode_ino=%lu, perms=%s, mode=%s, "
-               "special=%s, acl=%s [%s]) -> 0 (permissions changed, Phase 4: batched permission updates)\n",
-               path_buf, path_type, vnode->ino, perms_change_buf, mode_desc,
-               special_bits_desc, acl_summary, acl_status);
+    /* Success path silent — `cp -p`, tarball extract with --preserve-permissions,
+     * `chmod -R`, and `install -m` all run chmod per file in bursts. */
+    (void)path_type; (void)perms_change_buf; (void)mode_desc;
+    (void)special_bits_desc; (void)acl_summary; (void)acl_status;
 
     /* Phase 3: Release any ACL entries if they exist */
     /* ACL support not yet implemented in vnode structure

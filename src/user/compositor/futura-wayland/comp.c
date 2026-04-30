@@ -2616,8 +2616,8 @@ void comp_render_frame(struct compositor_state *comp) {
             mb_time[ci++] = '0' + (char)(mb_sec % 10);
             mb_time[ci] = '\0';
 
-            /* System tray indicators (right side, before clock) */
-            /* Render: [net] [vol] [DOW  HH:MM] */
+            /* Right-side menubar widget. Currently just the clock —
+             * net/vol indicators are a future addition. */
             int tray_right = fb_w - 10;
 
             /* Clock (rightmost) */

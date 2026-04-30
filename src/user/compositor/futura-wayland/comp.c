@@ -3115,19 +3115,24 @@ void comp_render_frame(struct compositor_state *comp) {
                         }
 
                         int max_chars = (DOCK_ITEM_W - 20) / UI_FONT_WIDTH;
-                        if (max_chars > 16) max_chars = 16;
+                        /* dock_title[24] holds at most 23 glyphs + NUL.
+                         * Previously this was [16] with a max_chars cap
+                         * of 16, so a 16-char title overflowed by one
+                         * byte when writing the trailing '\0'. */
+                        if (max_chars > 23) max_chars = 23;
                         if (max_chars > 0) {
                             int src_len = 0;
                             while (src_title[src_len]) src_len++;
-                            bool needs_ellipsis = src_len > max_chars && max_chars >= 3;
-                            char dock_title[16];
+                            bool needs_ellipsis = src_len > max_chars && max_chars >= 4;
+                            char dock_title[24];
                             int ti = 0;
-                            int copy_len = needs_ellipsis ? max_chars - 2 : max_chars;
+                            int copy_len = needs_ellipsis ? max_chars - 3 : max_chars;
                             while (ti < copy_len && src_title[ti]) {
                                 dock_title[ti] = src_title[ti];
                                 ti++;
                             }
                             if (needs_ellipsis) {
+                                dock_title[ti++] = '.';
                                 dock_title[ti++] = '.';
                                 dock_title[ti++] = '.';
                             }

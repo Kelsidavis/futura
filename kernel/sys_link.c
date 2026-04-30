@@ -624,12 +624,11 @@ long sys_link(const char *oldpath, const char *newpath) {
         return -EEXIST;
     }
 
-    /* Phase 3: Detailed logging before VFS integration */
-    fut_printf("[LINK] link(oldpath='%s' [%s, %s, ino=%lu, nlinks=%u [%s]], "
-               "newpath='%s' [%s]) attempting to create hard link "
-               "(would increment nlinks %u->%u, Phase 3)\n",
-               old_buf, old_path_type, file_type_desc, old_vnode->ino, current_nlinks,
-               link_count_category, new_buf, new_path_type, current_nlinks, would_be_nlinks);
+    /* Pre-VFS "attempting" log was firing once per successful link
+     * too, so it spammed alongside every cp -al / hard-link tarball
+     * extract. Drop it; the error and success paths below are
+     * already correctly gated. */
+    (void)link_count_category;
 
     /*
      * Phase 3 (Completed): VFS Integration - Call filesystem-specific link operation

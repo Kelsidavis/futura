@@ -39,7 +39,7 @@
 #define MAP_SHARED  0x0001
 
 /* Application definitions */
-#define APP_COUNT 4
+#define APP_COUNT 5
 struct app_info {
     const char *name;
     const char *label;
@@ -51,10 +51,11 @@ struct app_info {
  * / wl-simple were listed before but never built into the ARM64 image,
  * so the corresponding sidebar slots silently failed when clicked. */
 static const struct app_info apps[APP_COUNT] = {
-    {"terminal", "Term",   "/bin/wl-term",   0xFF9C27B0u},
-    {"editor",   "Edit",   "/bin/wl-edit",   0xFF4CAF50u},
-    {"sysmon",   "Tasks",  "/bin/wl-sysmon", 0xFF2196F3u},
-    {"shell",    "Shell",  "/bin/shell",     0xFFE91E63u},
+    {"terminal", "Term",     "/bin/wl-term",     0xFF9C27B0u},
+    {"editor",   "Edit",     "/bin/wl-edit",     0xFF4CAF50u},
+    {"sysmon",   "Tasks",    "/bin/wl-sysmon",   0xFF2196F3u},
+    {"settings", "Settings", "/bin/wl-settings", 0xFFFF9800u},
+    {"shell",    "Shell",    "/bin/shell",       0xFFE91E63u},
 };
 
 /* Shell state */

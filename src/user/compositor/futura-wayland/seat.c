@@ -1409,7 +1409,16 @@ static void seat_handle_key_event(struct seat_state *seat,
         /* Super+/: toggle shortcut overlay */
         if (mods_no_shift == COMP_MOD_SUPER && keycode == 53 /* / */) {
             if (seat->comp) {
-                seat->comp->shortcut_overlay_active = !seat->comp->shortcut_overlay_active;
+                bool now_on = !seat->comp->shortcut_overlay_active;
+                seat->comp->shortcut_overlay_active = now_on;
+                /* On activation, dismiss other modal UIs so only the
+                 * overlay is visible. */
+                if (now_on) {
+                    seat->comp->futura_menu_active = false;
+                    seat->comp->ctx_menu_active = false;
+                    seat->comp->about_active = false;
+                    seat->comp->alt_tab_active = false;
+                }
                 comp_damage_add_full(seat->comp);
                 seat->comp->needs_repaint = true;
             }

@@ -157,7 +157,19 @@ static void ed_load_file(const char *path) {
 
     int fd = sys_open(path, O_RDONLY, 0);
     if (fd < 0) {
-        ed_set_status("(new file)", 0);
+        /* -ENOENT means the file genuinely doesn't exist yet — that's
+         * the "open as a fresh blank buffer" path. Other errors
+         * (-EACCES on a real-but-unreadable file, -EIO, …) shouldn't
+         * be papered over as "(new file)" because Ctrl+S would then
+         * clobber the original on disk. Surface the real outcome so
+         * the user sees something is wrong before they save. */
+        if (fd == -2 /* -ENOENT */) {
+            ed_set_status("(new file)", 0);
+        } else if (fd == -13 /* -EACCES */) {
+            ed_set_status("permission denied", 0);
+        } else {
+            ed_set_status("open failed", 0);
+        }
         return;
     }
 

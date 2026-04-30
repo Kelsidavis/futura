@@ -296,10 +296,11 @@ long sys_mkdir(const char *path, uint32_t mode) {
         return ret;
     }
 
-    /* Phase 3: Detailed success logging with parent validation confirmation */
-    fut_printf("[MKDIR] mkdir(path='%s' [%s], parent='%s', name='%s' [%s], mode=%s) "
-               "-> 0 (directory created with parent validation, Phase 3)\n",
-               path_buf, path_type, parent_buf, dirname, name_len_category, mode_desc);
+    /* Success path silent — `mkdir -p`, tar extraction, and
+     * `git clone` create dozens of dirs in bursts. Errors above
+     * still log explicitly. */
+    (void)parent_buf; (void)dirname; (void)name_len_category;
+    (void)mode_desc; (void)path_type;
 
     return 0;
 }

@@ -4866,8 +4866,16 @@ void comp_render_frame(struct compositor_state *comp) {
             ui_draw_text(dst->px, dst->pitch, ax + 24, ay + 174,
                          0xFFA0A0B0u, "Kernel        Futura",
                          ac.x, ac.y, ac.w, ac.h);
+            /* The compositor builds for both archs and the About line
+             * was hard-coded "x86_64", so the ARM64 image lied about
+             * itself. Pick the label at compile time. */
             ui_draw_text(dst->px, dst->pitch, ax + 24, ay + 194,
-                         0xFFA0A0B0u, "Architecture  x86_64",
+                         0xFFA0A0B0u,
+#if defined(__aarch64__)
+                         "Architecture  aarch64",
+#else
+                         "Architecture  x86_64",
+#endif
                          ac.x, ac.y, ac.w, ac.h);
 
             /* Resolution line — dynamic */

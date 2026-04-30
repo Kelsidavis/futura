@@ -285,8 +285,10 @@ long sys_close_range(unsigned int first, unsigned int last, unsigned int flags) 
             if (task->fd_flags) task->fd_flags[fd] |= FD_CLOEXEC;
             closed++;
         }
-        fut_printf("[CLOSE_RANGE] close_range(%u, %u, CLOEXEC, pid=%d) -> 0 (%d fds marked)\n",
-                   first, last, task->pid, closed);
+        /* Success path silent (CLOSE_DEBUG can re-enable via close_printf
+         * elsewhere). close_range is called once per fork+exec, and a
+         * shell pipeline spawns it dozens of times — keep the log clean. */
+        (void)closed;
     } else {
         /* Close every open FD in the range.  Use sys_close() to reuse its
          * socket / epoll / vfs dispatch and epoll notification logic. */
@@ -296,8 +298,9 @@ long sys_close_range(unsigned int first, unsigned int last, unsigned int flags) 
             if (r == 0)
                 closed++;
         }
-        fut_printf("[CLOSE_RANGE] close_range(%u, %u, 0, pid=%d) -> 0 (%d fds closed)\n",
-                   first, last, task->pid, closed);
+        /* Success path silent — same reasoning as the CLOEXEC branch
+         * above. */
+        (void)closed;
     }
 
     return 0;

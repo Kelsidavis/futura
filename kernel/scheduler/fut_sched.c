@@ -959,7 +959,7 @@ void fut_schedule(void) {
         if (in_irq && fut_current_frame && !idle_involved) {
             // IRQ-safe context switch (uses IRET)
             // Pass NULL for prev when terminated to skip saving its state
-#if defined(__aarch64__)
+#if defined(__aarch64__) && defined(DEBUG_SCHED)
             fut_printf("[SCHED] IRQ path: prev=%p next=%p next->pstate=0x%llx next->ttbr0=0x%llx\n",
                        (void*)prev, (void*)next,
                        (unsigned long long)next->context.pstate,

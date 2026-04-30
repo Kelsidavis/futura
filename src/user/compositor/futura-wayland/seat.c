@@ -592,7 +592,12 @@ static void seat_handle_button(struct seat_state *seat,
                         : 0;
                     int dock_content_w = 8 + items_w + 8 + SEAT_CLOCK_W + 4 + SEAT_DOCK_DSKBTN_W + 4;
                     if (dock_content_w < 240) dock_content_w = 240;
-                    int dock_w = dock_content_w;
+                    /* Mirror the renderer's fb_w - 16 cap so the
+                     * hit-test geometry matches what's actually drawn
+                     * when many windows force the dock to clip. */
+                    int dock_w_max = fb_w - 16;
+                    if (dock_w_max < 240) dock_w_max = 240;
+                    int dock_w = dock_content_w > dock_w_max ? dock_w_max : dock_content_w;
                     int dock_x = (fb_w - dock_w) / 2;
 
                     if (mx >= dock_x && mx < dock_x + dock_w) {

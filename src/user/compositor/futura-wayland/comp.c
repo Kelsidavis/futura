@@ -5893,10 +5893,15 @@ void comp_pointer_motion(struct compositor_state *comp, int32_t new_x, int32_t n
                 : 0;
             int dock_content_w = 8 + items_w + 8 + HOV_CLOCK_W + 4 + HOV_DOCK_DSKBTN + 4;
             if (dock_content_w < 240) dock_content_w = 240;
-            int dock_x = (fb_w - dock_content_w) / 2;
+            /* Mirror the renderer's fb_w - 16 cap so hover geometry
+             * matches what's actually drawn when the dock clips. */
+            int dock_w_max = fb_w - 16;
+            if (dock_w_max < 240) dock_w_max = 240;
+            int dock_w = dock_content_w > dock_w_max ? dock_w_max : dock_content_w;
+            int dock_x = (fb_w - dock_w) / 2;
 
             /* Check desktop button at far right */
-            int dskbtn_x = dock_x + dock_content_w - HOV_DOCK_DSKBTN - 2;
+            int dskbtn_x = dock_x + dock_w - HOV_DOCK_DSKBTN - 2;
             if (comp->pointer_x >= dskbtn_x &&
                 comp->pointer_x < dskbtn_x + HOV_DOCK_DSKBTN) {
                 new_hover = -2;

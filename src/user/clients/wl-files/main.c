@@ -603,9 +603,13 @@ static void kb_key(void *d, struct wl_keyboard *k, uint32_t ser, uint32_t t,
         return;
     }
     process_key(s, key);
-    /* Don't auto-repeat modifier keys or any key pressed with ctrl/alt held. */
+    /* Don't auto-repeat modifier keys, ctrl/alt-modified keys, or
+     * keys with non-idempotent side effects: Enter (28) descends
+     * into a dir or spawns wl-edit on a file — repeating it would
+     * launch multiple editors from a single keypress. */
     bool ctrl_or_alt = (kbd_mods & 0xCu) != 0;
     if (ctrl_or_alt ||
+        key == 28 /* Enter */ ||
         key == 42 || key == 54 || key == 29 || key == 97 ||
         key == 56 || key == 100) {
         repeat_key = 0;

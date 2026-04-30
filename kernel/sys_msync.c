@@ -405,8 +405,11 @@ long sys_msync(void *addr, size_t length, int flags) {
         }
     }
 
-    fut_printf("[MSYNC] msync(%p, %zu bytes, %s) -> 0 (%zu pages, %s)\n",
-               local_addr, aligned_len, flags_str, num_pages, mode_desc);
+    /* Success path silent — mmap'd I/O (sqlite, mboxes, large
+     * file editors) calls msync per write-back; logging each
+     * call drowns the kernel log. */
+    (void)local_addr; (void)aligned_len; (void)flags_str;
+    (void)num_pages; (void)mode_desc;
 
     return 0;
 }

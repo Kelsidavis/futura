@@ -5,10 +5,9 @@
  *
  * Lists a handful of named wallpaper presets and shows a colour swatch
  * next to each.  Pressing Enter writes the selected preset name to
- * /etc/wallpaper.conf so the compositor can pick it up on the next
- * boot (wiring on the compositor side is a follow-up — for now this
- * panel just gives the dock a "Wallpaper" slot and a place to make
- * the choice persist).
+ * /etc/wallpaper.conf (or /run/wallpaper.conf if /etc isn't writable).
+ * The compositor polls the file ~once a second and remaps the desktop
+ * gradient endpoints to match — no compositor restart is needed.
  *
  * Controls:
  *   Up/Down     Move selection
@@ -159,9 +158,8 @@ static void refresh_procs(void) {
     if (scroll_off < 0) scroll_off = 0;
 }
 
-/* Write the selected preset key to /etc/wallpaper.conf. The compositor
- * doesn't yet read this file, but persisting the choice now makes the
- * compositor-side change a one-liner later. */
+/* Write the selected preset key to /etc/wallpaper.conf so the
+ * compositor's once-per-second poller picks up the change. */
 static void apply_preset(int idx) {
     if (idx < 0 || idx >= proc_count) return;
     int fd = sys_open("/etc/wallpaper.conf",

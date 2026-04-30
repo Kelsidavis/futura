@@ -3,10 +3,11 @@
  * Copyright (c) 2025 Kelsi Davis
  * Licensed under the MPL v2.0 — see LICENSE for details.
  *
- * Displays a simple list of system-info / preference entries.  Future
- * iterations will let the user toggle compositor flags (shadows, dock
- * width, TZ offset, …); for now the panel is read-only and exists so
- * the dock has a fourth launchable app slot to bind to.
+ * Displays a simple list of system-info / preference entries (OS name,
+ * version, kernel arch, framebuffer size, hostname, TZ offset, PATH,
+ * Wayland display, runtime dir).  Future iterations will let the user
+ * toggle compositor flags (shadows, dock width, …) directly; for now
+ * the panel is read-only.
  *
  * Controls:
  *   Up/Down   Scroll

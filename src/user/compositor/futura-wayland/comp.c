@@ -4919,7 +4919,14 @@ void comp_render_frame(struct compositor_state *comp) {
                 const char *up_pfx = "Uptime        ";
                 while (*up_pfx) up_buf[ui++] = *up_pfx++;
                 if (up_h > 0) {
-                    if (up_h >= 10) up_buf[ui++] = '0' + (char)(up_h / 10);
+                    /* Emit all leading digits, not just tens+ones; without
+                     * the hundreds-digit branch a 105h uptime rendered as
+                     * "05h". Cap the buffer at 5 digits (≈11 years) which
+                     * still fits in up_buf[40]. */
+                    if (up_h >= 10000) up_buf[ui++] = '0' + (char)(up_h / 10000 % 10);
+                    if (up_h >= 1000)  up_buf[ui++] = '0' + (char)(up_h / 1000  % 10);
+                    if (up_h >= 100)   up_buf[ui++] = '0' + (char)(up_h / 100   % 10);
+                    if (up_h >= 10)    up_buf[ui++] = '0' + (char)(up_h / 10    % 10);
                     up_buf[ui++] = '0' + (char)(up_h % 10);
                     up_buf[ui++] = 'h'; up_buf[ui++] = ' ';
                 }

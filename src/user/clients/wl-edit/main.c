@@ -76,6 +76,11 @@ static int  ed_cursor_col = 0;
 static int  ed_scroll_y   = 0;
 static int  ed_scroll_x   = 0;
 static bool ed_dirty      = false;
+/* Set when load_file saw an error other than -ENOENT — saving back to
+ * the same path would clobber the original (e.g. a directory) with our
+ * empty buffer. Cleared once the user explicitly recovers (currently:
+ * never; saving from this state is just refused). */
+static bool ed_load_failed = false;
 static char ed_filename[256] = "/tmp/scratch.txt";
 static char ed_status_msg[64] = "";
 static uint64_t ed_status_expire_ms = 0;
@@ -155,6 +160,7 @@ static void ed_load_file(const char *path) {
     ed_line_len[0] = 0;
     ed_lines[0][0] = '\0';
 
+    ed_load_failed = false;
     int fd = sys_open(path, O_RDONLY, 0);
     if (fd < 0) {
         /* -ENOENT means the file genuinely doesn't exist yet — that's
@@ -167,8 +173,10 @@ static void ed_load_file(const char *path) {
             ed_set_status("(new file)", 0);
         } else if (fd == -13 /* -EACCES */) {
             ed_set_status("permission denied", 0);
+            ed_load_failed = true;
         } else {
             ed_set_status("open failed", 0);
+            ed_load_failed = true;
         }
         return;
     }
@@ -234,6 +242,7 @@ static void ed_load_file(const char *path) {
         } else {
             ed_set_status("read failed", 0);
         }
+        ed_load_failed = true;
     } else if (truncated) {
         /* Warn the user: saving from this state would silently DROP
          * the unloaded tail. */
@@ -748,8 +757,17 @@ static void process_key(struct client_state *s, uint32_t key) {
     if (ctrl) {
         char c = key_to_ascii(key, false);
         if (c == 's') {
-            if (ed_save_file(ed_filename)) ed_set_status("saved", tick_ms);
-            else ed_set_status("save failed", tick_ms);
+            /* Refuse to save if the original load already errored out
+             * (e.g. the path is a directory or unreadable for reasons
+             * other than ENOENT). Saving would clobber whatever the
+             * path actually points to with our blank buffer. */
+            if (ed_load_failed) {
+                ed_set_status("save refused: original unreadable", tick_ms);
+            } else if (ed_save_file(ed_filename)) {
+                ed_set_status("saved", tick_ms);
+            } else {
+                ed_set_status("save failed", tick_ms);
+            }
             s->needs_redraw = true;
             return;
         }

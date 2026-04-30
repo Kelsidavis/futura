@@ -164,7 +164,10 @@ static int fb_ioctl(void *inode, void *private_data,
         return 0;
     }
     default:
-        fut_printf("[FB-CHAR] fb_ioctl unknown req=0x%lx\n", req);
+        /* Unknown ioctl is normal — userland probes ioctl numbers
+         * to detect feature support (libdrm, mesa, EGL bring-up).
+         * Returning -ENOTTY is the correct answer; no need to
+         * print a warning per probe. */
         break;
     }
 

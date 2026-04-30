@@ -412,12 +412,10 @@ long sys_access(const char *pathname, int mode) {
      * Applications must avoid access() for security checks.
      */
 
-    /* Phase 4: Detailed success logging with TOCTOU warning */
-    fut_printf("[ACCESS] access(path='%s' [%s], mode=%s, file_mode=0%o, uid=%u, gid=%u, "
-               "checking=%s) -> 0 (all permissions granted with uid/gid checks) "
-               "WARNING: access() is vulnerable to TOCTOU - use open() directly instead\n",
-               path_buf, path_type, mode_desc, file_mode, vnode->uid, vnode->gid, perm_check_buf);
-
+    /* Success path is silent — every successful PATH lookup, every
+     * `which`, and every shell completion ran a successful access(),
+     * each printing a multi-line trace + TOCTOU warning. The error
+     * paths above still log; ENOENT is filtered separately. */
     fut_vnode_unref(vnode);
     return 0;
 }

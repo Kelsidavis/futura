@@ -637,6 +637,23 @@ int main(void) {
         (void)sa;
     }
 
+    /* Start in $HOME if it's set and looks like an absolute path —
+     * otherwise stick with "/". Avoids landing the user at root
+     * every launch when the spawner already passed HOME. */
+    {
+        const char *home = getenv("HOME");
+        if (home && home[0] == '/' && home[1] != '\0') {
+            int hi = 0;
+            while (home[hi] && hi < (int)sizeof(cwd) - 1) {
+                cwd[hi] = home[hi];
+                hi++;
+            }
+            cwd[hi] = '\0';
+            /* Trim a trailing slash (except when HOME is just "/") */
+            if (hi > 1 && cwd[hi - 1] == '/') cwd[hi - 1] = '\0';
+        }
+    }
+
     refresh_procs();
 
     struct client_state state = {0};

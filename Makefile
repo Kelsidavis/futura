@@ -1178,6 +1178,8 @@ WL_SETTINGS_BIN := $(BIN_DIR)/$(PLATFORM)/user/wl-settings
 WL_SETTINGS_BLOB := $(OBJ_DIR)/kernel/blobs/wl_settings_blob.o
 WL_FILES_BIN := $(BIN_DIR)/$(PLATFORM)/user/wl-files
 WL_FILES_BLOB := $(OBJ_DIR)/kernel/blobs/wl_files_blob.o
+WL_WALLPAPER_BIN := $(BIN_DIR)/$(PLATFORM)/user/wl-wallpaper
+WL_WALLPAPER_BLOB := $(OBJ_DIR)/kernel/blobs/wl_wallpaper_blob.o
 
 # ARM64 userland binaries
 ARM64_INIT_BIN := $(BIN_DIR)/arm64/user/init
@@ -1210,6 +1212,8 @@ ARM64_WL_SETTINGS_BIN         := $(BIN_DIR)/arm64/user/wl-settings
 ARM64_WL_SETTINGS_BLOB        := $(OBJ_DIR)/kernel/blobs/arm64_wl_settings_blob.o
 ARM64_WL_FILES_BIN            := $(BIN_DIR)/arm64/user/wl-files
 ARM64_WL_FILES_BLOB           := $(OBJ_DIR)/kernel/blobs/arm64_wl_files_blob.o
+ARM64_WL_WALLPAPER_BIN        := $(BIN_DIR)/arm64/user/wl-wallpaper
+ARM64_WL_WALLPAPER_BLOB       := $(OBJ_DIR)/kernel/blobs/arm64_wl_wallpaper_blob.o
 
 ifeq ($(PLATFORM),x86_64)
 # Skip shell blob on macOS (uses GNU nested functions not supported by clang)
@@ -1224,7 +1228,7 @@ endif
 # Core Wayland binaries (production) - only when ENABLE_WAYLAND=1 on Linux
 ifeq ($(ENABLE_WAYLAND),1)
 ifneq ($(shell uname -s),Darwin)
-OBJECTS += $(WAYLAND_COMPOSITOR_BLOB) $(WAYLAND_SHELL_BLOB) $(WL_TERM_BLOB) $(WL_PANEL_BLOB) $(WL_EDIT_BLOB) $(WL_SYSMON_BLOB) $(WL_SETTINGS_BLOB) $(WL_FILES_BLOB)
+OBJECTS += $(WAYLAND_COMPOSITOR_BLOB) $(WAYLAND_SHELL_BLOB) $(WL_TERM_BLOB) $(WL_PANEL_BLOB) $(WL_EDIT_BLOB) $(WL_SYSMON_BLOB) $(WL_SETTINGS_BLOB) $(WL_FILES_BLOB) $(WL_WALLPAPER_BLOB)
 ifeq ($(ENABLE_WAYLAND_TEST_CLIENTS),1)
 OBJECTS += $(WAYLAND_CLIENT_BLOB) $(WAYLAND_COLOR_BLOB)
 endif
@@ -1237,7 +1241,7 @@ OBJECTS += $(ARM64_INIT_BLOB) $(ARM64_UIDEMO_BLOB) $(ARM64_SHELL_BLOB) $(ARM64_F
 # cross-built for arm64-elf via the per-platform Makefiles under
 # src/user/{compositor,clients,shell}/.
 ifeq ($(ENABLE_WAYLAND),1)
-OBJECTS += $(ARM64_WAYLAND_COMPOSITOR_BLOB) $(ARM64_WAYLAND_SHELL_BLOB) $(ARM64_WL_TERM_BLOB) $(ARM64_WL_PANEL_BLOB) $(ARM64_WL_EDIT_BLOB) $(ARM64_WL_SYSMON_BLOB) $(ARM64_WL_SETTINGS_BLOB) $(ARM64_WL_FILES_BLOB)
+OBJECTS += $(ARM64_WAYLAND_COMPOSITOR_BLOB) $(ARM64_WAYLAND_SHELL_BLOB) $(ARM64_WL_TERM_BLOB) $(ARM64_WL_PANEL_BLOB) $(ARM64_WL_EDIT_BLOB) $(ARM64_WL_SYSMON_BLOB) $(ARM64_WL_SETTINGS_BLOB) $(ARM64_WL_FILES_BLOB) $(ARM64_WL_WALLPAPER_BLOB)
 endif
 endif
 
@@ -1759,6 +1763,10 @@ $(ARM64_WL_SETTINGS_BIN): arm64-libfutura
 $(ARM64_WL_FILES_BIN): arm64-libfutura
 	@echo "Building ARM64 wl-files..."
 	@$(MAKE) -C src/user/clients/wl-files PLATFORM=arm64 all
+
+$(ARM64_WL_WALLPAPER_BIN): arm64-libfutura
+	@echo "Building ARM64 wl-wallpaper..."
+	@$(MAKE) -C src/user/clients/wl-wallpaper PLATFORM=arm64 all
 endif
 
 # Strip + objcopy each wayland binary into a kernel-embeddable blob.
@@ -1791,6 +1799,10 @@ $(ARM64_WL_SETTINGS_BLOB): $(ARM64_WL_SETTINGS_BIN) | $(OBJ_DIR)/kernel/blobs
 	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
 
 $(ARM64_WL_FILES_BLOB): $(ARM64_WL_FILES_BIN) | $(OBJ_DIR)/kernel/blobs
+	@$(OBJCOPY) --strip-debug $< $<.tmp && mv $<.tmp $<
+	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
+
+$(ARM64_WL_WALLPAPER_BLOB): $(ARM64_WL_WALLPAPER_BIN) | $(OBJ_DIR)/kernel/blobs
 	@$(OBJCOPY) --strip-debug $< $<.tmp && mv $<.tmp $<
 	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
 

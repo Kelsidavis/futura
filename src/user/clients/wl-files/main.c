@@ -533,7 +533,7 @@ static void process_key(struct client_state *s, uint32_t key) {
             for (size_t i = 0; i < nlen; i++) path[pi + i] = p->name[i];
             pi += nlen;
             path[pi] = '\0';
-            long pid = sys_call5(SYS_clone, 17 /*SIGCHLD*/, 0, 0, 0, 0);
+            long pid = sys_fork_call();
             if (pid == 0) {
                 const char *argv[] = { "/bin/wl-edit", path, NULL };
                 const char *tz = getenv("TZ_OFFSET_SEC");
@@ -558,9 +558,10 @@ static void process_key(struct client_state *s, uint32_t key) {
                     tz_kv[0] ? tz_kv : NULL,
                     NULL,
                 };
-                sys_call3(SYS_execve, (long)"/bin/wl-edit",
-                          (long)argv, (long)envp);
-                sys_call1(SYS_exit, 127);
+                sys_execve_call("/bin/wl-edit",
+                                (char *const *)argv,
+                                (char *const *)envp);
+                sys_exit(127);
             }
             return;  /* don't refresh / re-render */
         } else {

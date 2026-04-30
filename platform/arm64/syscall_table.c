@@ -468,21 +468,43 @@ static int64_t sys_time_millis_wrapper(uint64_t arg0, uint64_t arg1,
 /* sys_clock_gettime - get time
  * x0 = clockid, x1 = timespec*
  *
- * Delegate to the main kernel implementation in kernel/sys_time.c so
- * CLOCK_REALTIME picks up g_realtime_offset_sec (set from PL031 RTC at
- * boot). The previous local stub just turned cycles into a timespec
- * and ignored clockid entirely — every userland call to
- * clock_gettime(CLOCK_REALTIME, …) returned uptime instead of wall
- * clock, so the wallpaper clock and dock both displayed Jan 1 1970.
+ * Compute monotonic time directly here, then add the wall-clock offset
+ * for CLOCK_REALTIME so userland sees actual epoch seconds. The
+ * previous version ignored clockid completely and never added the
+ * PL031 RTC offset — every clock_gettime(CLOCK_REALTIME) returned
+ * uptime, so the wallpaper/dock displayed Jan 1 1970. We do this
+ * inline instead of delegating to kernel/sys_time.c because the
+ * latter's fut_access_ok() check rejects valid user stack pointers
+ * outside g_user_lo..g_user_hi on ARM64, breaking every caller.
  */
-extern long sys_clock_gettime_real(int clock_id, fut_timespec_t *tp)
-    __asm__("sys_clock_gettime");
+extern volatile int64_t g_realtime_offset_sec;
 
 static int64_t sys_clock_gettime(uint64_t clockid, uint64_t ts_ptr,
                                   uint64_t arg2, uint64_t arg3,
                                   uint64_t arg4, uint64_t arg5) {
     (void)arg2; (void)arg3; (void)arg4; (void)arg5;
-    return sys_clock_gettime_real((int)clockid, (fut_timespec_t *)ts_ptr);
+
+    if (ts_ptr == 0 || ts_ptr >= 0xFFFFFF8000000000ULL) {
+        return -EFAULT;
+    }
+
+    uint64_t cycles = fut_rdtsc();
+    uint64_t ns = fut_cycles_to_ns(cycles);
+
+    struct timespec kts;
+    kts.tv_sec = (int64_t)(ns / 1000000000ULL);
+    kts.tv_nsec = (int64_t)(ns % 1000000000ULL);
+
+    /* Apply wall-clock offset for CLOCK_REALTIME family.
+     * 0=REALTIME, 5=REALTIME_COARSE, 8=REALTIME_ALARM, 11=TAI. */
+    if (clockid == 0 || clockid == 5 || clockid == 8 || clockid == 11) {
+        kts.tv_sec += g_realtime_offset_sec;
+    }
+
+    if (fut_copy_to_user((void *)ts_ptr, &kts, sizeof(kts)) != 0) {
+        return -EFAULT;
+    }
+    return 0;
 }
 
 /* sys_nanosleep - sleep for specified time

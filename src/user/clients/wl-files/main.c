@@ -608,7 +608,14 @@ static void process_key(struct client_state *s, uint32_t key) {
         s->needs_redraw = true; return;
     }
     if (key == 14 /* Backspace */) {
+        /* Skip the dirent re-scan when we're already at root —
+         * a held Backspace would otherwise scan "/" at the soft
+         * auto-repeat cadence even though the listing can't change. */
+        size_t before = strlen(cwd);
         cwd_ascend();
+        if (strlen(cwd) == before) {
+            return;  /* cwd_ascend was a no-op (at root) */
+        }
         selected = 0;
         scroll_off = 0;
         refresh_procs();

@@ -205,8 +205,11 @@ long sys_waitid(int idtype, int id, siginfo_t *infop, int options,
                 return -EFAULT;
             }
         }
-        fut_printf("[WAITID] waitid(%s, id=%d, WNOHANG) -> 0 (no child ready)\n",
-                   idtype_desc, id);
+        /* WNOHANG with no child ready is the polling-tool steady state
+         * (sshd, the shell job-control loop, supervisord, etc.). The
+         * per-poll trace was just console spam. Silent return matches
+         * the rest of the wait family. */
+        (void)idtype_desc;
         return 0;
     }
 

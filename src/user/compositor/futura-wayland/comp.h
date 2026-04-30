@@ -181,6 +181,11 @@ struct compositor_state {
     uint64_t toast_expire_ns;      /* timestamp when toast should disappear */
     /* Timer watchdog — detects stalled timerfd and forces re-arm */
     uint64_t last_timer_tick_ms;   /* comp_now_msec() at last successful timer tick */
+    /* Wallpaper preset key, e.g. "nightsky" / "ocean" / "forest" / … —
+     * loaded from /etc/wallpaper.conf at startup and consulted by
+     * comp_render_frame to vary the gradient endpoints. Empty string
+     * means use the built-in night-sky default. */
+    char wallpaper_preset[24];
 };
 
 struct comp_surface {

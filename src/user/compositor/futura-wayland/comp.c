@@ -1001,6 +1001,33 @@ int comp_state_init(struct compositor_state *comp) {
     comp->toast_text[0] = '\0';
     comp->toast_expire_ns = 0;
 
+    /* Load wallpaper preset from config file (written by wl-wallpaper).
+     * Try /etc/wallpaper.conf first, fall back to /run/wallpaper.conf —
+     * /etc isn't always present on the ramfs but /run always is. */
+    comp->wallpaper_preset[0] = '\0';
+    {
+        int wfd = (int)sys_open("/etc/wallpaper.conf", O_RDONLY, 0);
+        if (wfd < 0) wfd = (int)sys_open("/run/wallpaper.conf", O_RDONLY, 0);
+        if (wfd >= 0) {
+            char wbuf[32];
+            long wn = sys_read(wfd, wbuf, sizeof(wbuf) - 1);
+            sys_close(wfd);
+            if (wn > 0) {
+                /* Strip trailing whitespace / newline */
+                while (wn > 0 && (wbuf[wn - 1] == '\n' || wbuf[wn - 1] == '\r' ||
+                                  wbuf[wn - 1] == ' '  || wbuf[wn - 1] == '\t')) {
+                    wn--;
+                }
+                if (wn > 0 && wn < (long)sizeof(comp->wallpaper_preset)) {
+                    for (long i = 0; i < wn; i++) {
+                        comp->wallpaper_preset[i] = wbuf[i];
+                    }
+                    comp->wallpaper_preset[wn] = '\0';
+                }
+            }
+        }
+    }
+
     /* Try to open /dev/fb0, but fall back to virtual framebuffer if not available */
     int fd = (int)sys_open("/dev/fb0", O_RDWR, 0);
     struct fut_fb_info info = {0};
@@ -1748,9 +1775,38 @@ void comp_render_frame(struct compositor_state *comp) {
             }
             if (row_occluded) continue;
             int t = (fb_h > 0) ? (gy * 255 / fb_h) : 0;
-            int base_r = 0x08 + (0x1A - 0x08) * t / 255;
-            int base_g = 0x08 + (0x18 - 0x08) * t / 255;
-            int base_b = 0x16 + (0x34 - 0x16) * t / 255;
+            /* Vertical-gradient endpoints, picked from
+             * comp->wallpaper_preset (set in comp_state_init). The two
+             * triplets are top→bottom RGB; everything else (stars,
+             * moon, aurora) keeps using its current colours. */
+            int top_r = 0x08, top_g = 0x08, top_b = 0x16;
+            int bot_r = 0x1A, bot_g = 0x18, bot_b = 0x34;
+            const char *wp = comp->wallpaper_preset;
+            if (wp[0] == 'o' && wp[1] == 'c') {                 /* ocean */
+                top_r = 0x00; top_g = 0x10; top_b = 0x28;
+                bot_r = 0x00; bot_g = 0x4F; bot_b = 0x7C;
+            } else if (wp[0] == 'f' && wp[1] == 'o') {          /* forest */
+                top_r = 0x0A; top_g = 0x1F; top_b = 0x18;
+                bot_r = 0x2D; bot_g = 0x55; bot_b = 0x3A;
+            } else if (wp[0] == 's' && wp[1] == 'u') {          /* sunset */
+                top_r = 0x42; top_g = 0x10; top_b = 0x10;
+                bot_r = 0xD6; bot_g = 0x60; bot_b = 0x28;
+            } else if (wp[0] == 'l' && wp[1] == 'a') {          /* lavender */
+                top_r = 0x2C; top_g = 0x1E; top_b = 0x40;
+                bot_r = 0x6B; bot_g = 0x5B; bot_b = 0x95;
+            } else if (wp[0] == 's' && wp[1] == 'l') {          /* slate */
+                top_r = 0x18; top_g = 0x18; top_b = 0x1A;
+                bot_r = 0x40; bot_g = 0x40; bot_b = 0x44;
+            } else if (wp[0] == 's' && wp[1] == 'o' && wp[5] == 'l') { /* solarl */
+                top_r = 0xEE; top_g = 0xE8; top_b = 0xD5;
+                bot_r = 0xFD; bot_g = 0xF6; bot_b = 0xE3;
+            } else if (wp[0] == 's' && wp[1] == 'o' && wp[5] == 'd') { /* solard */
+                top_r = 0x00; top_g = 0x1F; top_b = 0x28;
+                bot_r = 0x07; bot_g = 0x36; bot_b = 0x42;
+            }
+            int base_r = top_r + (bot_r - top_r) * t / 255;
+            int base_g = top_g + (bot_g - top_g) * t / 255;
+            int base_b = top_b + (bot_b - top_b) * t / 255;
             int32_t dy = gy - cy;
             int32_t dy2 = gy - cy2;
             /* Aurora Y falloff: Gaussian-ish bell curve */

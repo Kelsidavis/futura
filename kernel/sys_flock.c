@@ -328,10 +328,11 @@ long sys_flock(int fd, int operation) {
         lock_state = "exclusive";
     }
 
-    fut_printf("[FLOCK] flock(fd=%d [%s], operation=%s%s, pid=%u) -> 0 "
-               "(lock_state=%s, count=%u, owner=%u, Phase 3)\n",
-               local_fd, fd_category, op_name, is_nonblock ? "|LOCK_NB" : "",
-               pid, lock_state, lock_count, lock_owner);
+    /* Success path silent — make / cargo / dpkg / lockfile-style
+     * tools call flock heavily, sometimes on every build target.
+     * Errors above still log explicitly. */
+    (void)fd_category; (void)op_name; (void)is_nonblock;
+    (void)pid; (void)lock_state; (void)lock_count; (void)lock_owner;
 
     return 0;
 }

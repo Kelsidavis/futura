@@ -532,11 +532,10 @@ long sys_faccessat(int dirfd, const char *pathname, int mode, int flags) {
         ret = (int)sys_access(resolved_path, local_mode);
     }
 
-    /* Log AT_EACCESS if used */
-    if ((local_flags & AT_EACCESS) && ret >= 0) {
-        fut_printf("[FACCESSAT] Note: AT_EACCESS flag - using effective UID=%u GID=%u instead of real UID=%u GID=%u (Phase 3)\n",
-                   check_uid, check_gid, task->ruid, task->rgid);
-    }
+    /* AT_EACCESS success was logged on every faccessat — every command
+     * lookup probe (PATH search, shell test) hits this once per probe.
+     * Silent success matches the rest of the access(2) family. */
+    (void)check_uid; (void)check_gid;
 
 handle_error:
     /* Handle errors */

@@ -237,11 +237,9 @@ long sys_fchdir(int fd) {
         }
     }
 
-    /* Phase 3: Detailed success logging with VFS integration */
-    fut_printf("[FCHDIR] fchdir(fd=%d [%s], vnode_ino=%lu, old_dir_ino=%lu, pid=%d) "
-               "-> 0 (cwd='%s')\n",
-               fd, fd_category, vnode->ino, old_dir_ino, task->pid,
-               task->cwd_cache ? task->cwd_cache : "/");
-
+    /* Success path silent — fchdir matches chdir's silent success;
+     * shells and build systems use both interchangeably. Errors
+     * above still log explicitly. */
+    (void)fd_category; (void)old_dir_ino;
     return 0;
 }

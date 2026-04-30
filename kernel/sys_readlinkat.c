@@ -186,16 +186,16 @@ long sys_readlinkat(int dirfd, const char *pathname, char *buf, size_t bufsiz) {
 
     /* Handle errors */
     if (ret < 0) {
+        /* -ENOENT (probe miss) and -EINVAL (not a symlink — what
+         * ls -l gets for ordinary files) are routine and shouldn't
+         * spam the console. Match the sys_readlink filter. */
+        if ((int)ret == -ENOENT || (int)ret == -EINVAL) {
+            return ret;
+        }
         const char *error_desc;
         switch ((int)ret) {
-            case -ENOENT:
-                error_desc = "symlink not found";
-                break;
             case -ENOTDIR:
                 error_desc = "path component not a directory";
-                break;
-            case -EINVAL:
-                error_desc = "not a symbolic link";
                 break;
             case -EACCES:
                 error_desc = "permission denied";

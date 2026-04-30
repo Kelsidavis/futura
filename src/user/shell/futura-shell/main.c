@@ -39,7 +39,7 @@
 #define MAP_SHARED  0x0001
 
 /* Application definitions */
-#define APP_COUNT 5
+#define APP_COUNT 6
 struct app_info {
     const char *name;
     const char *label;
@@ -53,6 +53,7 @@ struct app_info {
 static const struct app_info apps[APP_COUNT] = {
     {"terminal", "Term",     "/bin/wl-term",     0xFF9C27B0u},
     {"editor",   "Edit",     "/bin/wl-edit",     0xFF4CAF50u},
+    {"files",    "Files",    "/bin/wl-files",    0xFF00BCD4u},
     {"sysmon",   "Tasks",    "/bin/wl-sysmon",   0xFF2196F3u},
     {"settings", "Settings", "/bin/wl-settings", 0xFFFF9800u},
     {"shell",    "Shell",    "/bin/shell",       0xFFE91E63u},

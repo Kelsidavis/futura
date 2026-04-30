@@ -346,6 +346,13 @@ static void ed_insert_char(char ch) {
         ed_set_status("line full", tick_ms);
         return;
     }
+    /* Defensive: clamp cursor inside the line. If the cursor were past
+     * the end, the shift loop would no-op and the insert would land in
+     * uninitialized bytes between line_len and cursor_col, leaking
+     * stack/garbage into the saved file. */
+    if (ed_cursor_col > ed_line_len[ed_cursor_row]) {
+        ed_cursor_col = ed_line_len[ed_cursor_row];
+    }
     char *line = ed_lines[ed_cursor_row];
     int len = ed_line_len[ed_cursor_row];
     for (int i = len; i > ed_cursor_col; i--) line[i] = line[i - 1];
@@ -361,6 +368,13 @@ static void ed_split_line(void) {
         /* Buffer full — silently dropping Enter looked like a hung editor. */
         ed_set_status("buffer full", tick_ms);
         return;
+    }
+    /* Defensive: clamp cursor inside the current line. The navigation
+     * paths already do this, but if any future code path leaves the
+     * cursor past line_len then `tail` below would go negative and
+     * next[tail] would be a wild write before the buffer. */
+    if (ed_cursor_col > ed_line_len[ed_cursor_row]) {
+        ed_cursor_col = ed_line_len[ed_cursor_row];
     }
     /* Shift lines below down by one */
     for (int i = ed_line_count; i > ed_cursor_row + 1; i--) {

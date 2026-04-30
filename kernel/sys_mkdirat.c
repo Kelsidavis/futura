@@ -214,9 +214,7 @@ long sys_mkdirat(int dirfd, const char *pathname, unsigned int mode) {
         return ret;
     }
 
-    /* Success */
-    fut_printf("[MKDIRAT] mkdirat(dirfd=%d, pathname='%s' [%s, len=%lu], mode=0%o [%s]) -> 0\n",
-               local_dirfd, path_buf, path_type, (unsigned long)path_len, local_mode, mode_desc);
-
+    /* Success path silent — same reasoning as sys_mkdir. */
+    (void)path_type; (void)mode_desc; (void)path_len;
     return 0;
 }

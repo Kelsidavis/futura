@@ -268,8 +268,8 @@ long sys_rmdir(const char *path) {
         return ret;
     }
 
-    /* Phase 3: Detailed success logging */
-    fut_printf("[RMDIR] rmdir(path='%s' [%s, %s]) -> 0 (Phase 3: VFS directory removal operation)\n",
-               path_buf, path_type, length_category);
+    /* Success path silent — `rm -r` / build tree teardown calls
+     * rmdir per-directory, errors above still log. */
+    (void)path_type; (void)length_category;
     return 0;
 }

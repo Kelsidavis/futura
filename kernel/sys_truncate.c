@@ -418,12 +418,11 @@ long sys_truncate(const char *path, uint64_t length) {
      */
     vnode->size = local_length;
 
-    fut_printf("[TRUNCATE] truncate(path='%s' [%s, len=%lu], vnode_ino=%lu, "
-               "length=%llu [%s], operation=%s [%llu -> %llu]) "
-               "-> 0 (no truncate operation, size updated only, deferred management, Phase 4: Lazy deallocation)\n",
-               path_buf, path_type, (unsigned long)path_len, vnode->ino,
-               (unsigned long long)local_length, length_category, operation,
-               (unsigned long long)current_size, (unsigned long long)local_length);
+    /* Success path silent — log rotation, build-output overwrite,
+     * and `> file` shell redirection all hit truncate per write.
+     * Errors above still log explicitly. */
+    (void)path_type; (void)path_len; (void)length_category;
+    (void)operation; (void)current_size;
 
     /* POSIX/Linux: clear setuid/setgid bits on truncate (fallback path) */
     if (vnode->type == VN_REG) {

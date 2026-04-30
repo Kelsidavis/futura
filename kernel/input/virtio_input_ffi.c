@@ -198,46 +198,48 @@ void virtio_input_post_event(uint16_t type, uint16_t code, int32_t value)
 
     if (type == EVTYPE_ABS) {
         /* virtio-tablet reports ABSOLUTE positions in a wide logical range
-         * (typically 0..32767), not deltas. Naively forwarding `value` as
-         * a relative delta jumps the pointer thousands of pixels off-screen
-         * on the very first event, which is why the cursor "isn't being
-         * captured" on QEMU virt. Convert ABS → REL by remembering the
-         * previous value per axis and emitting (current - previous). The
-         * first event per axis primes the baseline silently. */
-        static int32_t last_abs_x = 0;
-        static int32_t last_abs_y = 0;
-        static int have_abs_x = 0;
-        static int have_abs_y = 0;
+         * (typically 0..32767), not deltas. Convert to pixel coordinates
+         * (assume 1024x768 framebuffer for now) and emit the per-axis
+         * pixel-level delta. Tracking the last *pixel* position rather
+         * than the last raw value means sub-pixel jitter cumulatively
+         * still moves the cursor instead of being lost to integer
+         * truncation. The first event per axis primes silently. */
+        #define ABS_LOGICAL_MAX 32767
+        #define FB_W_PX         1024
+        #define FB_H_PX         768
 
+        static int32_t last_px_x = 0;
+        static int32_t last_px_y = 0;
+        static int have_px_x = 0;
+        static int have_px_y = 0;
+
+        int32_t cur_px;
         int32_t delta;
         int16_t out_code;
+
         if (code == 0) {
+            cur_px = (int32_t)((int64_t)value * FB_W_PX / ABS_LOGICAL_MAX);
             out_code = FUT_REL_X;
-            if (!have_abs_x) {
-                last_abs_x = value;
-                have_abs_x = 1;
+            if (!have_px_x) {
+                last_px_x = cur_px;
+                have_px_x = 1;
                 return;
             }
-            delta = value - last_abs_x;
-            last_abs_x = value;
+            delta = cur_px - last_px_x;
+            last_px_x = cur_px;
         } else if (code == 1) {
+            cur_px = (int32_t)((int64_t)value * FB_H_PX / ABS_LOGICAL_MAX);
             out_code = FUT_REL_Y;
-            if (!have_abs_y) {
-                last_abs_y = value;
-                have_abs_y = 1;
+            if (!have_px_y) {
+                last_px_y = cur_px;
+                have_px_y = 1;
                 return;
             }
-            delta = value - last_abs_y;
-            last_abs_y = value;
+            delta = cur_px - last_px_y;
+            last_px_y = cur_px;
         } else {
             return;
         }
-        if (delta == 0) return;
-
-        /* Scale tablet logical range (~32768) down to screen pixels.
-         * 1024-wide framebuffer ÷ 32768 ≈ /32 — round up so a 1-unit
-         * tablet step still produces a visible pixel motion. */
-        delta /= 32;
         if (delta == 0) {
             return;
         }

@@ -2066,8 +2066,10 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
             return 0; /* Accept silently */
 
         default:
-            fut_printf("[IOCTL] ioctl(fd=%d, request=0x%lx [%s], argp=%p) -> ENOTTY (no ioctl op)\n",
-                       fd, request, request_name, argp);
+            /* Silent — userland routinely probes ioctl numbers
+             * (libdrm, mesa, ncurses, autoconf checks, ...).
+             * ENOTTY is the correct POSIX answer; logging per
+             * probe just adds noise. */
             return -ENOTTY;
     }
 }

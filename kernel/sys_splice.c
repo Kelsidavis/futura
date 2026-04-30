@@ -405,9 +405,9 @@ long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
         }
     }
 
-    fut_printf("[SPLICE] splice(fd_in=%d, fd_out=%d, len=%zu, pid=%d) -> %zu bytes transferred\n",
-               local_fd_in, local_fd_out, local_len, task->pid, transferred);
-
+    /* Success path silent — zero-copy data movement (cat /dev/zero |
+     * pv > /dev/null, nginx sendfile-equivalent, dd via pipes) calls
+     * splice in tight loops. Errors above still trace. */
     result = (transferred > 0) ? (long)transferred : splice_err;
 
 restore_nb:

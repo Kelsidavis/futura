@@ -256,9 +256,16 @@ static void pointer_enter(void *data, struct wl_pointer *pointer,
     state->mouse_y = wl_fixed_to_int(y);
 }
 
-static void pointer_leave(void *data __attribute__((unused)), struct wl_pointer *pointer __attribute__((unused)),
+static void pointer_leave(void *data, struct wl_pointer *pointer,
                           uint32_t serial, struct wl_surface *surface) {
     (void)pointer; (void)serial; (void)surface;
+    /* Clear cached pointer so render_ui's hover hit-test doesn't keep
+     * a stale icon "lit" after the cursor moves to a different surface. */
+    struct shell_state *state = data;
+    if (state) {
+        state->mouse_x = -1;
+        state->mouse_y = -1;
+    }
 }
 
 static void pointer_motion(void *data, struct wl_pointer *pointer,

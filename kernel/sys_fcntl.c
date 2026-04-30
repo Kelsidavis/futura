@@ -1231,10 +1231,10 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
     }
 
     default:
-        /* Unknown command */
-        fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%d [%s], arg=%llu) -> EINVAL "
-                   "(unknown command, Phase 2)\n",
-                   local_fd, fd_category, local_cmd, cmd_category, local_arg);
+        /* Unknown command — apps probe fcntl cmd numbers (F_OFD_*,
+         * F_ADD_SEALS, F_GET_SEALS, …) for kernel feature detection.
+         * EINVAL is the correct POSIX answer; logging per probe just
+         * fills the kernel log. */
         return -EINVAL;
     }
 }

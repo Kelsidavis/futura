@@ -379,9 +379,7 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
     }
 
     if (iovcnt == 0) {
-        fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=0, offset=%ld) -> 0 (nothing to write)\n",
-                   fd, iov, offset);
-        return 0;  /* Nothing to write */
+        return 0;  /* Nothing to write — silent per Linux semantics */
     }
 
     /* Validate iov pointer */

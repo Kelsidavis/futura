@@ -209,9 +209,7 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
     }
 
     if (iovcnt == 0) {
-        fut_printf("[PREADV] preadv(fd=%d, iov=%p, iovcnt=0, offset=%ld) -> 0 (nothing to read)\n",
-                   fd, iov, offset);
-        return 0;  /* Nothing to read */
+        return 0;  /* Nothing to read — silent per Linux semantics */
     }
 
     /* Validate iov pointer */

@@ -6007,8 +6007,14 @@ void comp_pointer_motion(struct compositor_state *comp, int32_t new_x, int32_t n
     /* Update Futura menu hover state */
     if (comp->futura_menu_active) {
         #define FM_MENU_W       220
+        /* These MUST match the renderer's FM_ITEMS / FM_ITEM_H / FM_PAD
+         * / FM_SEP_AFTER / FM_SEP_H above. The previous count of 8 left
+         * a 26-px phantom hit slot below the visible menu where hovering
+         * highlighted an empty row and clicking would silently dismiss
+         * the menu — same UX as the old "Quit" item that was removed
+         * from the renderer when FM_ITEMS dropped to 7. */
         #define FM_MENU_ITEM_H  26
-        #define FM_MENU_ITEMS   8
+        #define FM_MENU_ITEMS   7
         #define FM_MENU_PAD     4
         #define FM_MENU_SEP_AFTER 2
         #define FM_MENU_SEP_H   7

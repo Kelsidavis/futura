@@ -177,7 +177,19 @@ static void ed_load_file(const char *path) {
     int row = 0, col = 0;
     long n;
     bool truncated = false;
-    while ((n = sys_read(fd, buf, sizeof(buf))) > 0) {
+    bool read_error = false;
+    int read_errno = 0;
+    while ((n = sys_read(fd, buf, sizeof(buf))) != 0) {
+        if (n < 0) {
+            /* Distinguish "this isn't readable as a file" (EISDIR on a
+             * directory passed in by accident from wl-files Enter on
+             * a symlink-to-dir) from generic IO failure. Without the
+             * branch the user sees an empty buffer and might Ctrl+S,
+             * clobbering whatever sys_open creates at that path. */
+            read_error = true;
+            read_errno = (int)n;
+            break;
+        }
         for (long i = 0; i < n; i++) {
             if (row >= ED_MAX_LINES) {
                 /* Saw at least one more byte past the buffer cap. */
@@ -215,7 +227,14 @@ static void ed_load_file(const char *path) {
     ed_line_count = row > 0 ? row : 1;
     sys_close(fd);
     ed_dirty = false;
-    if (truncated) {
+    if (read_error) {
+        /* Common case: -EISDIR (-21) when the path is a directory. */
+        if (read_errno == -21) {
+            ed_set_status("not a regular file", 0);
+        } else {
+            ed_set_status("read failed", 0);
+        }
+    } else if (truncated) {
         /* Warn the user: saving from this state would silently DROP
          * the unloaded tail. */
         ed_set_status("file truncated to fit buffer", 0);

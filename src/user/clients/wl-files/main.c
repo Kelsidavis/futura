@@ -682,6 +682,11 @@ int main(int argc, char **argv) {
         struct sigaction sa = {0};
         sa.sa_handler = SIG_IGN;
         sigaction(SIGPIPE, &sa, NULL);
+        /* Auto-reap children so the wl-edit launches from Enter on a
+         * regular file don't accumulate as zombies. SIG_IGN on
+         * SIGCHLD makes the kernel reap exited children on the
+         * parent's behalf — Linux POSIX behavior. */
+        sigaction(SIGCHLD, &sa, NULL);
         (void)sa;
     }
 

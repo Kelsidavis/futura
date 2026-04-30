@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include <futura/compat/posix_shm.h>
+#include <user/signal.h>
 #include <user/stdio.h>
 #include <user/stdlib.h>
 #include <user/string.h>
@@ -478,6 +479,17 @@ static const struct wl_registry_listener registry_listener = {
 
 int main(void) {
     struct shell_state state = {0};
+
+    /* Auto-reap children so launched apps don't accumulate as
+     * zombies. SIG_IGN on SIGCHLD makes the kernel auto-reap
+     * exited children — Linux POSIX behavior. SIGPIPE is also
+     * ignored so a Wayland disconnect doesn't kill the shell. */
+    {
+        struct sigaction sa = {0};
+        sa.sa_handler = SIG_IGN;
+        sigaction(SIGPIPE, &sa, NULL);
+        sigaction(SIGCHLD, &sa, NULL);
+    }
 
     /* Initialize standard streams */
     int console_fd = sys_open("/dev/console", O_RDWR, 0);

@@ -102,7 +102,21 @@ static void fill_rect(uint32_t *pixels, int32_t width, int32_t height, int32_t s
     }
 }
 
-static void render_ui(uint32_t *pixels, int32_t width, int32_t height, int32_t stride_bytes) {
+/* Brighten a 0xAARRGGBB colour by adding `delta` to each RGB channel.
+ * Used so the hovered icon visibly lifts without needing a separate
+ * highlight texture. */
+static uint32_t brighten(uint32_t c, int delta) {
+    int a = (c >> 24) & 0xFF;
+    int r = (c >> 16) & 0xFF; r += delta; if (r > 255) r = 255;
+    int g = (c >>  8) & 0xFF; g += delta; if (g > 255) g = 255;
+    int b = (c      ) & 0xFF; b += delta; if (b > 255) b = 255;
+    return ((uint32_t)a << 24) | ((uint32_t)r << 16) |
+           ((uint32_t)g <<  8) |  (uint32_t)b;
+}
+
+static void render_ui(struct shell_state *state,
+                      uint32_t *pixels, int32_t width, int32_t height,
+                      int32_t stride_bytes) {
     /* Clear background */
     fill_rect(pixels, width, height, stride_bytes, 0, 0, width, height, 0xFF1a1a1au);
 
@@ -113,21 +127,50 @@ static void render_ui(uint32_t *pixels, int32_t width, int32_t height, int32_t s
     fill_rect(pixels, width, height, stride_bytes, 0, TOPBAR_HEIGHT,
               SIDEBAR_WIDTH, height - TOPBAR_HEIGHT, 0xFF333333u);
 
+    /* Hover detection: which icon is the pointer over? */
+    int hover_idx = -1;
+    if (state) {
+        int32_t mx = state->mouse_x, my = state->mouse_y;
+        if (mx >= 0 && mx < SIDEBAR_WIDTH && my > TOPBAR_HEIGHT) {
+            int32_t off = my - TOPBAR_HEIGHT - ICON_PADDING;
+            int32_t cell = ICON_SIZE + ICON_PADDING;
+            if (off >= 0) {
+                int32_t idx = off / cell;
+                int32_t within = off - idx * cell;
+                if (idx >= 0 && idx < APP_COUNT && within < ICON_SIZE) {
+                    hover_idx = (int)idx;
+                }
+            }
+        }
+    }
+
     /* Draw app icons in sidebar */
     for (int i = 0; i < APP_COUNT; i++) {
         int32_t icon_y = TOPBAR_HEIGHT + ICON_PADDING + i * (ICON_SIZE + ICON_PADDING);
         if (icon_y + ICON_SIZE > height) break;
 
         int32_t icon_x = (SIDEBAR_WIDTH - ICON_SIZE) / 2;
+        bool is_hover = (i == hover_idx);
+        uint32_t icon_color = is_hover ? brighten(apps[i].color, 30) : apps[i].color;
 
-        /* Icon background — accented colour */
+        /* Icon background — accented colour, brightened on hover */
         fill_rect(pixels, width, height, stride_bytes,
-                  icon_x, icon_y, ICON_SIZE, ICON_SIZE, apps[i].color);
+                  icon_x, icon_y, ICON_SIZE, ICON_SIZE, icon_color);
+
+        /* 1-px white rim on hover for clear feedback */
+        if (is_hover) {
+            fill_rect(pixels, width, height, stride_bytes,
+                      icon_x, icon_y, ICON_SIZE, 1, 0xFFFFFFFFu);
+            fill_rect(pixels, width, height, stride_bytes,
+                      icon_x, icon_y + ICON_SIZE - 1, ICON_SIZE, 1, 0xFFFFFFFFu);
+            fill_rect(pixels, width, height, stride_bytes,
+                      icon_x, icon_y, 1, ICON_SIZE, 0xFFFFFFFFu);
+            fill_rect(pixels, width, height, stride_bytes,
+                      icon_x + ICON_SIZE - 1, icon_y, 1, ICON_SIZE, 0xFFFFFFFFu);
+        }
 
         /* Icon label: short text from apps[].label, centred inside the
-         * icon. Truncated to whatever fits at the current font width.
-         * 8x16 glyph cells × ICON_SIZE/8 cap chars = up to 6 glyphs at
-         * 48px wide. Centre horizontally and vertically. */
+         * icon. Truncated to whatever fits at the current font width. */
         const char *label = apps[i].label ? apps[i].label : "";
         int label_len = 0;
         while (label[label_len]) label_len++;
@@ -140,7 +183,7 @@ static void render_ui(uint32_t *pixels, int32_t width, int32_t height, int32_t s
             font_render_char(label[ci], pixels,
                              tx + ci * FONT_WIDTH, ty,
                              stride_bytes / 4, width, height,
-                             0xFFFFFFFFu, apps[i].color);
+                             0xFFFFFFFFu, icon_color);
         }
     }
 
@@ -424,7 +467,7 @@ int main(void) {
     wl_shm_pool_destroy(pool);
 
     /* Render initial UI */
-    render_ui(state.pixels, SCREEN_WIDTH, SCREEN_HEIGHT, SCREEN_WIDTH * 4);
+    render_ui(&state, state.pixels, SCREEN_WIDTH, SCREEN_HEIGHT, SCREEN_WIDTH * 4);
 
     /* Commit first frame */
     wl_surface_attach(state.surface, buffer, 0, 0);
@@ -438,7 +481,7 @@ int main(void) {
     /* Main event loop */
     while (wl_display_dispatch(state.display) != -1) {
         /* Re-render UI if needed */
-        render_ui(state.pixels, SCREEN_WIDTH, SCREEN_HEIGHT, SCREEN_WIDTH * 4);
+        render_ui(&state, state.pixels, SCREEN_WIDTH, SCREEN_HEIGHT, SCREEN_WIDTH * 4);
 
         wl_surface_attach(state.surface, buffer, 0, 0);
         wl_surface_damage_buffer(state.surface, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);

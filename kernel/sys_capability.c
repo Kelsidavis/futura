@@ -272,11 +272,9 @@ long sys_capget(struct __user_cap_header_struct *hdrp,
         return -EFAULT;
     }
 
-    fut_printf("[CAPABILITY] capget(pid=%d) -> eff=0x%x perm=0x%x inh=0x%x "
-               "(hi: eff=0x%x perm=0x%x inh=0x%x)\n",
-               hdr.pid,
-               cap_data[0].effective, cap_data[0].permitted, cap_data[0].inheritable,
-               cap_data[1].effective, cap_data[1].permitted, cap_data[1].inheritable);
+    /* Success path is silent — capget is called by libcap-using
+     * tools at process startup; logging each one floods the console.
+     * Errors above still log explicitly. */
     return 0;
 }
 
@@ -446,12 +444,9 @@ long sys_capset(struct __user_cap_header_struct *hdrp,
     target_task->cap_permitted   = new_permitted;
     target_task->cap_inheritable = new_inheritable;
 
-    fut_printf("[CAPABILITY] capset(pid=%d) -> eff=0x%llx->0x%llx perm=0x%llx inh=0x%llx\n",
-               hdr.pid,
-               (unsigned long long)old_effective,
-               (unsigned long long)new_effective,
-               (unsigned long long)new_permitted,
-               (unsigned long long)new_inheritable);
-
+    /* Success path is silent — process startup commonly performs a
+     * capset to drop privileges, and the trace was a per-process
+     * log spam with no diagnostic value. Errors above still log. */
+    (void)old_effective;
     return 0;
 }

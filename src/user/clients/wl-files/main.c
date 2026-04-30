@@ -225,6 +225,11 @@ static void refresh_procs(void) {
 
     sort_entries();
 
+    /* Clamp selection so an auto-refresh that removes entries from
+     * under us doesn't leave the cursor pointing at the void. */
+    if (selected >= proc_count) selected = proc_count - 1;
+    if (selected < 0) selected = 0;
+
     /* Clamp scroll */
     int max_scroll = proc_count - SM_VIS_ROWS;
     if (max_scroll < 0) max_scroll = 0;

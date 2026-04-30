@@ -260,11 +260,15 @@ long sys_access(const char *pathname, int mode) {
 
     /* Phase 2: Handle lookup errors with detailed logging */
     if (ret < 0) {
+        /* -ENOENT is the normal "file doesn't exist" answer that
+         * shell completion, `which`, `command -v` and PATH-walk apps
+         * use to probe; logging every miss spams the console with no
+         * diagnostic value. Other failure classes are still printed. */
+        if (ret == -ENOENT) {
+            return ret;
+        }
         const char *error_desc;
         switch (ret) {
-            case -ENOENT:
-                error_desc = "file not found or path component missing";
-                break;
             case -ENOTDIR:
                 error_desc = "path component not a directory";
                 break;

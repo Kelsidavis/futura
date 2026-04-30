@@ -269,19 +269,20 @@ long sys_readlink(const char *path, char *buf, size_t bufsiz) {
     /* Read symbolic link target without following the final component */
     ssize_t len = fut_vfs_readlink(path_buf, target_buf, local_bufsiz);
     if (len < 0) {
+        /* -ENOENT here means the path itself doesn't exist; many
+         * scripts probe optional symlinks. -EINVAL is "not a
+         * symlink" — also routine when ls -l resolves any non-link
+         * inode. Skip both to avoid spamming the kernel log. */
+        if ((int)len == -ENOENT || (int)len == -EINVAL) {
+            return len;
+        }
         const char *error_desc;
         switch ((int)len) {
-            case -ENOENT:
-                error_desc = "symbolic link not found";
-                break;
             case -ENOTDIR:
                 error_desc = "path component not a directory";
                 break;
             case -EACCES:
                 error_desc = "permission denied";
-                break;
-            case -EINVAL:
-                error_desc = "not a symbolic link";
                 break;
             case -ENOSYS:
                 error_desc = "filesystem doesn't support readlink";

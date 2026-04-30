@@ -956,9 +956,11 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
             }
 
             default:
-                /* Unknown option */
-                fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, SOL_SOCKET, optname=%d) -> ENOPROTOOPT (unknown)\n",
-                           sockfd, optname);
+                /* Unknown option — userland (curl, ssh, libuv) probes
+                 * setsockopt to detect kernel feature support; the
+                 * ENOPROTOOPT return is the correct answer per POSIX
+                 * and shouldn't fill the kernel log with one line per
+                 * probe. */
                 return -ENOPROTOOPT;
         }
     } else if (level == IPPROTO_TCP) {

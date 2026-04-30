@@ -33,6 +33,7 @@
 #include "xdg-shell-client-protocol.h"
 #include "font.h"
 #include <futura/fb_ioctl.h>
+#include <sys/utsname.h>
 
 #define O_RDONLY    0x0000
 #define O_RDWR      0x0002
@@ -172,7 +173,18 @@ static void refresh_procs(void) {
         add_setting("Display", disp);
     }
     add_setting("Compositor",     "futura-wayland");
-    add_setting("Hostname",       "futura");
+
+    /* Hostname via uname(2) — picks up sethostname() changes instead
+     * of always showing the boot-time literal. */
+    {
+        struct utsname uts = {0};
+        if (sys_call1(SYS_uname, (long)&uts) == 0 && uts.nodename[0]) {
+            add_setting("Hostname", uts.nodename);
+        } else {
+            add_setting("Hostname", "futura");
+        }
+    }
+
     add_setting("User",           "root");
 
     const char *tz = getenv("TZ_OFFSET_SEC");

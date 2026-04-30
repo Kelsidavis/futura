@@ -264,11 +264,11 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
         }
     }
 
-    /* Handle zero-length receive */
+    /* Handle zero-length receive — Wayland clients commonly issue
+     * len=0 reads as a wakeup probe; logging each one was per-frame
+     * console spam. Silent success matches Linux. */
     if (local_len == 0) {
-        fut_printf("[RECVFROM] recvfrom(sockfd=%d [%s], len=0, pid=%u) -> 0 "
-                   "(zero-length receive)\n",
-                   local_sockfd, fd_category, task->pid);
+        (void)fd_category;
         return 0;
     }
 

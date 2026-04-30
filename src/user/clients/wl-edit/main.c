@@ -300,11 +300,17 @@ static bool ed_save_file(const char *path) {
     }
     sys_close(fd);
     if (!ok) {
-        /* Leave the temp file behind for inspection rather than silently
-         * deleting it; the user already sees "save failed" status. */
+        /* Clean up the half-written temp file — leaving it behind
+         * pollutes the directory each failed save and the bytes weren't
+         * useful to inspect anyway (we already reported "save failed"). */
+        sys_unlink(tmp_path);
         return false;
     }
     if (sys_rename_call(tmp_path, path) < 0) {
+        /* Rename failed (e.g. target is a dir, cross-device, EACCES on
+         * the parent). The temp file is fully written but stranded —
+         * unlink so it doesn't accumulate every retry. */
+        sys_unlink(tmp_path);
         return false;
     }
     ed_dirty = false;

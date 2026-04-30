@@ -431,12 +431,14 @@ static void kb_key(void *d, struct wl_keyboard *k, uint32_t ser, uint32_t t,
     }
     process_key(s, key);
     /* Don't auto-repeat modifier keys, ctrl/alt-modified keys, or
-     * keys with non-idempotent side effects: Enter (28) writes
-     * /etc/wallpaper.conf — repeating it would spam the FS each
-     * frame the user holds Enter. */
+     * keys with non-idempotent / expensive side effects:
+     *   Enter (28)        writes /etc/wallpaper.conf
+     *   r (19)            re-reads the config and rebuilds the list
+     * Plain Up/Down/Home/End still repeat. */
     bool ctrl_or_alt = (kbd_mods & 0xCu) != 0;
     if (ctrl_or_alt ||
         key == 28 /* Enter */ ||
+        key == 19 /* r refresh */ ||
         key == 42 || key == 54 || key == 29 || key == 97 ||
         key == 56 || key == 100) {
         repeat_key = 0;

@@ -527,9 +527,13 @@ static void kb_key(void *d, struct wl_keyboard *k, uint32_t ser, uint32_t t,
         return;
     }
     process_key(s, key);
-    /* Don't auto-repeat modifier keys or any key pressed with ctrl/alt held. */
+    /* Don't auto-repeat modifier keys, ctrl/alt-modified keys, or
+     * 'r' (refresh): a held 'r' key would scan /proc and parse every
+     * /proc/<pid>/status every 60ms, hammering the kernel. Plain
+     * navigation keys (Up/Down/Home/End/PgUp/PgDn) still repeat. */
     bool ctrl_or_alt = (kbd_mods & 0xCu) != 0;
     if (ctrl_or_alt ||
+        key == 19 /* r refresh */ ||
         key == 42 || key == 54 || key == 29 || key == 97 ||
         key == 56 || key == 100) {
         repeat_key = 0;

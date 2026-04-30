@@ -611,12 +611,15 @@ static void kb_key(void *d, struct wl_keyboard *k, uint32_t ser, uint32_t t,
     }
     process_key(s, key);
     /* Don't auto-repeat modifier keys, ctrl/alt-modified keys, or
-     * keys with non-idempotent side effects: Enter (28) descends
-     * into a dir or spawns wl-edit on a file — repeating it would
-     * launch multiple editors from a single keypress. */
+     * keys with non-idempotent / expensive side effects:
+     *   Enter (28)        descends or spawns wl-edit
+     *   r (19)            scans /proc-like dirent listing
+     * Plain navigation keys (Up/Down/Home/End/PgUp/PgDn/Backspace)
+     * still repeat. */
     bool ctrl_or_alt = (kbd_mods & 0xCu) != 0;
     if (ctrl_or_alt ||
         key == 28 /* Enter */ ||
+        key == 19 /* r refresh */ ||
         key == 42 || key == 54 || key == 29 || key == 97 ||
         key == 56 || key == 100) {
         repeat_key = 0;

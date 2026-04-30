@@ -103,10 +103,15 @@ static void write_ready_marker(const char *runtime_dir, const char *socket) {
 
 int main(void) {
     /* Ignore SIGPIPE — writing to a disconnected client must not kill
-     * the compositor.  This is standard practice for Wayland compositors. */
+     * the compositor.  This is standard practice for Wayland compositors.
+     * Also auto-reap children: the menubar's "New Terminal" / Edit /
+     * Tasks entries fork via compositor_launch_*; without SIGCHLD
+     * SIG_IGN those children pile up as zombies for the compositor's
+     * lifetime (effectively the whole desktop session). */
     struct sigaction sa = {0};
     sa.sa_handler = SIG_IGN;
     sigaction(SIGPIPE, &sa, NULL);
+    sigaction(SIGCHLD, &sa, NULL);
 
     sys_mkdir("/tmp", 0777);
 

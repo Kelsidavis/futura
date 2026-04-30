@@ -12,6 +12,7 @@
 #include <string.h>
 
 #include <futura/compat/posix_shm.h>
+#include <user/signal.h>
 #include <user/stdio.h>
 #include <user/sys.h>
 #include <user/time.h>
@@ -508,6 +509,15 @@ static const struct wl_registry_listener registry_listener = {
 
 int main(void) {
     printf("[PANEL] Starting Futura desktop panel\n");
+
+    /* Auto-reap children so each launcher click doesn't leave a
+     * zombie behind. SIG_IGN on SIGCHLD asks the kernel to reap
+     * exited children — Linux POSIX behavior. */
+    {
+        struct sigaction sa = {0};
+        sa.sa_handler = SIG_IGN;
+        sigaction(SIGCHLD, &sa, NULL);
+    }
 
     struct panel_state state = {0};
     state.running = true;

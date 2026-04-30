@@ -133,10 +133,14 @@ long sys_lstat(const char *path, struct fut_stat *statbuf) {
     struct fut_stat kernel_stat = {0};
     int ret = fut_vfs_lstat(path_buf, &kernel_stat);
     if (ret < 0) {
-        const char *err_desc = (ret == -ENOENT) ? "not found" :
-                               (ret == -EACCES) ? "access denied" :
-                               (ret == -ENOTDIR) ? "not a directory" : "VFS error";
-        fut_printf("[LSTAT] lstat(\"%s\") -> %d (%s)\n", path_buf, ret, err_desc);
+        /* -ENOENT is a normal "file doesn't exist" answer that apps
+         * use for existence probes; logging every miss spams the log
+         * with no diagnostic value. Other errors still get traced. */
+        if (ret != -ENOENT) {
+            const char *err_desc = (ret == -EACCES) ? "access denied" :
+                                   (ret == -ENOTDIR) ? "not a directory" : "VFS error";
+            fut_printf("[LSTAT] lstat(\"%s\") -> %d (%s)\n", path_buf, ret, err_desc);
+        }
         return ret;
     }
 

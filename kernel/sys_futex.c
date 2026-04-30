@@ -1547,8 +1547,10 @@ void exit_robust_list(fut_thread_t *thread) {
     uint32_t new_val = (val & ROBUST_FUTEX_WAITERS) | ROBUST_FUTEX_OWNER_DIED; \
     if (futex_copy_to_user(futex_uaddr, &new_val, sizeof(new_val)) != 0) break;  \
     futex_wake_one(futex_uaddr);                                        \
-    fut_printf("[FUTEX] exit_robust_list: released futex @%p (val 0x%x -> 0x%x)\n", \
-               (void *)futex_uaddr, val, new_val);                      \
+    /* Released-futex log silenced — threaded apps holding many
+     * robust mutexes at exit print one of these per release; the
+     * resulting flood is purely noise on the diagnostic path. */ \
+    (void)val; (void)new_val;                                           \
 } while (0)
 
     /* Walk the list; list terminates when entry == &head->list */

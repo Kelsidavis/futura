@@ -1208,6 +1208,25 @@ void fut_kernel_main(void) {
     } else {
         fut_printf("[INPUT] Keyboard and mouse drivers initialized\n");
     }
+#if defined(__aarch64__)
+    /* ARM64 has no PS/2; the PS/2 init above is a stub. The compositor
+     * looks for /dev/input/kbd0 and /dev/input/mouse0, which only exist
+     * once virtio-input is registered. Without this, every keyboard /
+     * mouse event from QEMU is dropped on the floor and the desktop
+     * appears completely unresponsive. */
+    extern int virtio_input_hw_init(void) __attribute__((weak));
+    if (virtio_input_hw_init) {
+        int vinput_rc = virtio_input_hw_init();
+        if (vinput_rc != 0) {
+            fut_printf("[VINPUT] virtio-input init failed: %d (kbd/mouse will not work)\n",
+                       vinput_rc);
+        } else {
+            fut_printf("[VINPUT] /dev/input/kbd0 + /dev/input/mouse0 registered\n");
+        }
+    } else {
+        fut_printf("[VINPUT] virtio_input_hw_init not linked — no kbd/mouse on ARM64\n");
+    }
+#endif
 #else
     /* For non-interactive builds, allow boot flag to control input */
     __attribute__((unused)) bool input_enabled = boot_flag_enabled("input", false);

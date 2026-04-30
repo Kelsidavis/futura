@@ -467,31 +467,22 @@ static int64_t sys_time_millis_wrapper(uint64_t arg0, uint64_t arg1,
 
 /* sys_clock_gettime - get time
  * x0 = clockid, x1 = timespec*
+ *
+ * Delegate to the main kernel implementation in kernel/sys_time.c so
+ * CLOCK_REALTIME picks up g_realtime_offset_sec (set from PL031 RTC at
+ * boot). The previous local stub just turned cycles into a timespec
+ * and ignored clockid entirely — every userland call to
+ * clock_gettime(CLOCK_REALTIME, …) returned uptime instead of wall
+ * clock, so the wallpaper clock and dock both displayed Jan 1 1970.
  */
+extern long sys_clock_gettime_real(int clock_id, fut_timespec_t *tp)
+    __asm__("sys_clock_gettime");
+
 static int64_t sys_clock_gettime(uint64_t clockid, uint64_t ts_ptr,
                                   uint64_t arg2, uint64_t arg3,
                                   uint64_t arg4, uint64_t arg5) {
     (void)arg2; (void)arg3; (void)arg4; (void)arg5;
-
-    if (ts_ptr == 0 || ts_ptr >= 0xFFFFFF8000000000ULL) {
-        return -EFAULT;
-    }
-
-    /* Get current cycle count */
-    uint64_t cycles = fut_rdtsc();
-    uint64_t ns = fut_cycles_to_ns(cycles);
-
-    /* Build result on kernel stack, then copy to userspace safely */
-    struct timespec kts;
-    kts.tv_sec = ns / 1000000000ULL;
-    kts.tv_nsec = ns % 1000000000ULL;
-
-    if (fut_copy_to_user((void *)ts_ptr, &kts, sizeof(kts)) != 0) {
-        return -EFAULT;
-    }
-
-    (void)clockid;  /* Ignore clockid for now */
-    return 0;
+    return sys_clock_gettime_real((int)clockid, (fut_timespec_t *)ts_ptr);
 }
 
 /* sys_nanosleep - sleep for specified time

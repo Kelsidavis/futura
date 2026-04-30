@@ -11,8 +11,10 @@
  *
  * Controls:
  *   Up/Down     Move selection
- *   Enter       Descend into selected dir (or ".." to ascend)
+ *   Enter       Descend into dir, ".." ascends, file launches wl-edit
  *   Backspace   Ascend to parent
+ *   /           Jump to root (/)
+ *   h           Jump to $HOME (root if HOME unset)
  *   r           Refresh
  *   Ctrl+Q      Quit
  */

@@ -230,7 +230,10 @@ static void redraw_all(struct client_state *state) {
         draw_text(px, w, h, stride, SM_PAD, ty, title, tl,
                   COL_HEADER_FG, COL_HEADER_BG);
 
-        const char *hint = "Enter to apply  •  Up/Down to choose";
+        /* ASCII-only — the bitmap font renders one glyph per byte,
+         * so a UTF-8 bullet (• = E2 80 A2) shows as three garbage
+         * glyphs. Use a plain dot separator instead. */
+        const char *hint = "Enter to apply  -  Up/Down to choose";
         int hl = (int)strlen(hint);
         int hx = w - SM_PAD - hl * FONT_WIDTH;
         draw_text(px, w, h, stride, hx, ty, hint, hl, COL_DIM, COL_HEADER_BG);

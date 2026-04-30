@@ -604,8 +604,13 @@ static void xdg_toplevel_close(void *d, struct xdg_toplevel *t) {
      * silently when the user clicks the close button or hits Alt+F4. */
     static const char close_warn[] = "unsaved changes - close again to confirm";
     if (ed_dirty) {
+        /* Match the Ctrl+Q path: only honour the second click as
+         * confirmation while the warning is still visible. Otherwise
+         * a stale buffer state from minutes ago would silently
+         * accept a single close click. */
         bool armed = (ed_status_msg[0] == close_warn[0] &&
-                      ed_strlen(ed_status_msg) == ed_strlen(close_warn));
+                      ed_strlen(ed_status_msg) == ed_strlen(close_warn) &&
+                      tick_ms < ed_status_expire_ms);
         if (!armed) {
             ed_set_status(close_warn, tick_ms);
             s->needs_redraw = true;

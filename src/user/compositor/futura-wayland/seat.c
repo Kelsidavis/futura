@@ -872,7 +872,6 @@ static void seat_handle_button(struct seat_state *seat,
             }
             seat->comp->dock_all_minimized = any_vis;
         }
-        /* sel == 7: Quit — not implemented, just dismiss */
         comp_damage_add_full(seat->comp);
         seat->comp->needs_repaint = true;
         return;

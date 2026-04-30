@@ -191,6 +191,11 @@ static void refresh_procs(void) {
     int fd = sys_open(cwd, O_RDONLY, 0);
     if (fd < 0) {
         add_entry("(open failed)", 0);
+        /* Reset cursor onto the synthetic row instead of leaving it
+         * pointing past the end (where the previous dir's last entry
+         * used to live). */
+        selected = 0;
+        scroll_off = 0;
         return;
     }
 

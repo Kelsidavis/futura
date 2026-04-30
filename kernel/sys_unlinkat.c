@@ -186,11 +186,14 @@ long sys_unlinkat(int dirfd, const char *pathname, int flags) {
 
     /* Handle errors */
     if (ret < 0) {
+        /* -ENOENT is the routine "rm -f of optional file" answer;
+         * skip the trace to keep the kernel log clean. Other
+         * failure classes still get logged. */
+        if (ret == -ENOENT) {
+            return ret;
+        }
         const char *error_desc;
         switch (ret) {
-            case -ENOENT:
-                error_desc = "file not found";
-                break;
             case -EISDIR:
                 error_desc = "is a directory (use AT_REMOVEDIR flag)";
                 break;
@@ -219,9 +222,8 @@ long sys_unlinkat(int dirfd, const char *pathname, int flags) {
         return ret;
     }
 
-    /* Success */
-    fut_printf("[UNLINKAT] unlinkat(dirfd=%d, pathname='%s' [%s, len=%lu], operation=%s, flags=0x%x) -> 0\n",
-               local_dirfd, path_buf, path_type, (unsigned long)path_len, operation, local_flags);
+    /* Success path is silent (matches sys_unlink) — `rm` and tarball
+     * extraction emit thousands of these per shell session. */
 
     return 0;
 }

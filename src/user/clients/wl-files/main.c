@@ -677,7 +677,7 @@ static const struct wl_registry_listener registry_listener = {
     .global_remove = reg_global_remove,
 };
 
-int main(void) {
+int main(int argc, char **argv) {
     {
         struct sigaction sa = {0};
         sa.sa_handler = SIG_IGN;
@@ -685,10 +685,19 @@ int main(void) {
         (void)sa;
     }
 
-    /* Start in $HOME if it's set and looks like an absolute path —
-     * otherwise stick with "/". Avoids landing the user at root
-     * every launch when the spawner already passed HOME. */
-    {
+    /* argv[1] override: launch directly into a specific directory.
+     * Otherwise start in $HOME (when it's set and looks absolute) and
+     * fall back to "/" — avoids landing at root every launch when the
+     * spawner already passed HOME. */
+    if (argc > 1 && argv[1] && argv[1][0] == '/') {
+        int hi = 0;
+        while (argv[1][hi] && hi < (int)sizeof(cwd) - 1) {
+            cwd[hi] = argv[1][hi];
+            hi++;
+        }
+        cwd[hi] = '\0';
+        if (hi > 1 && cwd[hi - 1] == '/') cwd[hi - 1] = '\0';
+    } else {
         const char *home = getenv("HOME");
         if (home && home[0] == '/' && home[1] != '\0') {
             int hi = 0;
@@ -697,7 +706,6 @@ int main(void) {
                 hi++;
             }
             cwd[hi] = '\0';
-            /* Trim a trailing slash (except when HOME is just "/") */
             if (hi > 1 && cwd[hi - 1] == '/') cwd[hi - 1] = '\0';
         }
     }

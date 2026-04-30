@@ -493,9 +493,8 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
         switch (optname) {
             case SO_TYPE:
             case SO_ERROR:
-                /* Read-only options cannot be set */
-                fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, SOL_SOCKET, optname=%d) -> ENOPROTOOPT (read-only)\n",
-                           sockfd, optname);
+                /* Read-only options cannot be set — silent ENOPROTOOPT
+                 * matches the rest of the unknown/unsupported probes. */
                 return -ENOPROTOOPT;
 
             case SO_REUSEADDR:

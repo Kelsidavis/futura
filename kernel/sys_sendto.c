@@ -244,11 +244,11 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
         }
     }
 
-    /* Handle zero-length send */
+    /* Handle zero-length send — defined as silent zero-byte success
+     * per Linux. Wayland clients commonly issue len=0 sends as a
+     * keepalive probe; logging each one was per-frame spam. */
     if (local_len == 0) {
-        fut_printf("[SENDTO] sendto(sockfd=%d [%s], len=0, pid=%u) -> 0 "
-                   "(zero-length send)\n",
-                   local_sockfd, fd_category, task->pid);
+        (void)fd_category;
         return 0;
     }
 

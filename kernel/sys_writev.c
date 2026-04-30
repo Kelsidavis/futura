@@ -386,9 +386,7 @@ ssize_t sys_writev(int fd, const struct iovec *iov, int iovcnt) {
     }
 
     if (iovcnt == 0) {
-        fut_printf("[WRITEV] writev(fd=%d, iov=%p, iovcnt=0) -> 0 (nothing to write)\n",
-                   fd, iov);
-        return 0;  /* Nothing to write */
+        return 0;  /* Nothing to write — silent per Linux semantics */
     }
 
     /* Validate iov pointer */

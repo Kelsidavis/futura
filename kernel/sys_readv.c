@@ -412,9 +412,7 @@ ssize_t sys_readv(int fd, const struct iovec *iov, int iovcnt) {
     }
 
     if (iovcnt == 0) {
-        fut_printf("[READV] readv(fd=%d, iov=%p, iovcnt=0) -> 0 (nothing to read)\n",
-                   fd, iov);
-        return 0;  /* Nothing to read */
+        return 0;  /* Nothing to read — silent per Linux semantics */
     }
 
     /* Validate iov pointer */

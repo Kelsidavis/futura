@@ -4139,7 +4139,7 @@ void comp_render_frame(struct compositor_state *comp) {
     if (comp->futura_menu_active) {
         #define FM_W       220
         #define FM_ITEM_H  26
-        #define FM_ITEMS   8
+        #define FM_ITEMS   7
         #define FM_SEP_AFTER 2   /* separator after Task Manager (apps group) */
         #define FM_SEP_H   7
         #define FM_PAD     4
@@ -4155,14 +4155,18 @@ void comp_render_frame(struct compositor_state *comp) {
         int32_t fm_y = MENUBAR_HEIGHT;
         fut_rect_t fm_rect = { fm_x, fm_y, FM_W, fm_h };
 
+        /* The "Quit" entry that used to live at index 7 was a no-op
+         * (seat.c silently dismissed it), which made clicking it
+         * indistinguishable from clicking outside the menu. Drop it
+         * until there's a real graceful-shutdown path. */
         const char *fm_labels[] = { "New Terminal", "Text Editor",
                                      "Task Manager", "About Futura",
                                      "Shortcuts", "System Info",
-                                     "Show Desktop", "Quit" };
+                                     "Show Desktop" };
         const char *fm_hints[] = { "Ctrl+Alt+T", NULL,
                                     NULL, NULL,
                                     "Super+/", "Super+I",
-                                    "Super+D", "Ctrl+Alt+Del" };
+                                    "Super+D" };
 
         for (int i = 0; i < damage->count; ++i) {
             fut_rect_t fc;
@@ -4263,8 +4267,6 @@ void comp_render_frame(struct compositor_state *comp) {
                 { 0x18, 0x5A, 0xFF, 0xDB, 0xDB, 0xFF, 0x5A, 0x18 },
                 /* Desktop: monitor */
                 { 0x7E, 0x42, 0x42, 0x42, 0x7E, 0x18, 0x3C, 0x00 },
-                /* Quit: power icon */
-                { 0x18, 0x18, 0x7E, 0xC3, 0xC3, 0xC3, 0x7E, 0x3C },
             };
             for (int item = 0; item < FM_ITEMS; item++) {
                 int y_off = (item > FM_SEP_AFTER) ? FM_SEP_H : 0;

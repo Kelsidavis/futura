@@ -304,6 +304,21 @@ static void pointer_button(void *data, struct wl_pointer *pointer,
                     /* Child: exec the app with wayland envvars so it can
                      * connect to the compositor at /run/wayland-0. */
                     const char *argv[] = { apps[icon_index].path, NULL };
+                    /* Forward TZ_OFFSET_SEC so spawned apps see the
+                     * same wall-clock timezone the shell does. The
+                     * spawner sets it in cli_envp; if for some reason
+                     * we don't have it here, just omit the entry. */
+                    const char *tz = getenv("TZ_OFFSET_SEC");
+                    char tz_kv[40] = "TZ_OFFSET_SEC=";
+                    if (tz && *tz) {
+                        int kpos = 14;
+                        for (int ti = 0; tz[ti] && kpos + 1 < (int)sizeof(tz_kv); ti++) {
+                            tz_kv[kpos++] = tz[ti];
+                        }
+                        tz_kv[kpos] = '\0';
+                    } else {
+                        tz_kv[0] = '\0';
+                    }
                     const char *envp[] = {
                         "PATH=/bin:/sbin",
                         "HOME=/",
@@ -312,6 +327,7 @@ static void pointer_button(void *data, struct wl_pointer *pointer,
                         "HOSTNAME=futura",
                         "WAYLAND_DISPLAY=wayland-0",
                         "XDG_RUNTIME_DIR=/run",
+                        tz_kv[0] ? tz_kv : NULL,
                         NULL,
                     };
                     sys_execve_call(apps[icon_index].path,

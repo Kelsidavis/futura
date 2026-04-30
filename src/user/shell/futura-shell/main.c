@@ -17,6 +17,7 @@
 #include <wayland-client-core.h>
 #include <wayland-client-protocol.h>
 #include "xdg-shell-client-protocol.h"
+#include "font.h"
 
 /* Linux input event codes */
 #define BTN_LEFT 0x110
@@ -117,13 +118,30 @@ static void render_ui(uint32_t *pixels, int32_t width, int32_t height, int32_t s
         int32_t icon_y = TOPBAR_HEIGHT + ICON_PADDING + i * (ICON_SIZE + ICON_PADDING);
         if (icon_y + ICON_SIZE > height) break;
 
-        /* Icon background */
-        fill_rect(pixels, width, height, stride_bytes,
-                  (SIDEBAR_WIDTH - ICON_SIZE) / 2, icon_y, ICON_SIZE, ICON_SIZE, apps[i].color);
+        int32_t icon_x = (SIDEBAR_WIDTH - ICON_SIZE) / 2;
 
-        /* Simple text label (draw a dot for now) */
+        /* Icon background — accented colour */
         fill_rect(pixels, width, height, stride_bytes,
-                  SIDEBAR_WIDTH / 2 - 3, icon_y + ICON_SIZE / 2 - 3, 6, 6, 0xFFFFFFFFu);
+                  icon_x, icon_y, ICON_SIZE, ICON_SIZE, apps[i].color);
+
+        /* Icon label: short text from apps[].label, centred inside the
+         * icon. Truncated to whatever fits at the current font width.
+         * 8x16 glyph cells × ICON_SIZE/8 cap chars = up to 6 glyphs at
+         * 48px wide. Centre horizontally and vertically. */
+        const char *label = apps[i].label ? apps[i].label : "";
+        int label_len = 0;
+        while (label[label_len]) label_len++;
+        int max_glyphs = ICON_SIZE / FONT_WIDTH;
+        if (label_len > max_glyphs) label_len = max_glyphs;
+        int32_t text_w = label_len * FONT_WIDTH;
+        int32_t tx = icon_x + (ICON_SIZE - text_w) / 2;
+        int32_t ty = icon_y + (ICON_SIZE - FONT_HEIGHT) / 2;
+        for (int ci = 0; ci < label_len; ci++) {
+            font_render_char(label[ci], pixels,
+                             tx + ci * FONT_WIDTH, ty,
+                             stride_bytes / 4, width, height,
+                             0xFFFFFFFFu, apps[i].color);
+        }
     }
 
     /* Draw status text in top panel */

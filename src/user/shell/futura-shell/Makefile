@@ -45,6 +45,7 @@ WAYLAND_GEN_HDRS := $(OUT)/client/xdg-shell-client-protocol.h
 
 OBJS := $(SRCS:%.c=$(OBJ_DIR)/%.o)
 OBJS += $(OBJ_DIR)/xdg-shell-protocol.o
+OBJS += $(OBJ_DIR)/font.o
 
 WAYLAND_PREFIX := $(ROOT)/build/third_party/wayland/install-$(PLATFORM)
 WAYLAND_INCLUDEDIR := $(WAYLAND_PREFIX)/include
@@ -73,7 +74,7 @@ CFLAGS := -std=c2x -ffreestanding -nostdlib -fno-builtin -fno-stack-protector
 CFLAGS += -Wall -Wextra -Werror -g -O2 -Wno-attributes
 CFLAGS += $(ARCH_CFLAGS)
 CFLAGS += -I$(ROOT)/include -I$(ROOT)/include/user
-CFLAGS += -I$(OUT)/client $(WAYLAND_CFLAGS)
+CFLAGS += -I$(OUT)/client -I../../clients/wl-term $(WAYLAND_CFLAGS)
 
 ifeq ($(DEBUG_WAYLAND),1)
 CFLAGS += -DDEBUG_WAYLAND
@@ -95,6 +96,10 @@ $(OBJ_DIR)/%.o: %.c $(WAYLAND_GEN_HDRS) | $(OBJ_DIR)
 	@$(CC) $(CFLAGS) -c $< -o $@
 
 $(OBJ_DIR)/xdg-shell-protocol.o: $(OUT)/client/xdg-shell-protocol.c $(WAYLAND_GEN_HDRS) | $(OBJ_DIR)
+	@echo "CC $<"
+	@$(CC) $(CFLAGS) -c $< -o $@
+
+$(OBJ_DIR)/font.o: ../../clients/wl-term/font.c ../../clients/wl-term/font.h $(WAYLAND_GEN_HDRS) | $(OBJ_DIR)
 	@echo "CC $<"
 	@$(CC) $(CFLAGS) -c $< -o $@
 

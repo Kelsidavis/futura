@@ -22,6 +22,7 @@ extern int virtio_input_rust_init(void);
 #include <kernel/chrdev.h>
 #include <kernel/devfs.h>
 #include <kernel/errno.h>
+#include <kernel/fb.h>
 #include <kernel/fut_memory.h>
 #include <kernel/kprintf.h>
 
@@ -210,26 +211,36 @@ void virtio_input_post_event(uint16_t type, uint16_t code, int32_t value)
     if (type == EVTYPE_ABS) {
         /* virtio-tablet reports ABSOLUTE positions in a wide logical range
          * (typically 0..32767), not deltas. Convert to pixel coordinates
-         * (assume 1024x768 framebuffer for now) and emit the per-axis
-         * pixel-level delta. Tracking the last *pixel* position rather
+         * by querying the live framebuffer geometry and emit per-axis
+         * pixel-level deltas. Tracking the last *pixel* position rather
          * than the last raw value means sub-pixel jitter cumulatively
          * still moves the cursor instead of being lost to integer
          * truncation. The first event per axis primes silently. */
         #define ABS_LOGICAL_MAX 32767
-        #define FB_W_PX         1024
-        #define FB_H_PX         768
 
         static int32_t last_px_x = 0;
         static int32_t last_px_y = 0;
         static int have_px_x = 0;
         static int have_px_y = 0;
 
+        /* Query the framebuffer geometry; fall back to the historical
+         * 1024x768 default if the FB layer isn't reporting yet. Without
+         * this, a non-default resolution would clamp the cursor to a
+         * fraction of the screen (or run it off the edge). */
+        struct fut_fb_hwinfo hw = {0};
+        int32_t fb_w_px = 1024;
+        int32_t fb_h_px = 768;
+        if (fb_get_info(&hw) == 0 && hw.info.width && hw.info.height) {
+            fb_w_px = (int32_t)hw.info.width;
+            fb_h_px = (int32_t)hw.info.height;
+        }
+
         int32_t cur_px;
         int32_t delta;
         int16_t out_code;
 
         if (code == 0) {
-            cur_px = (int32_t)((int64_t)value * FB_W_PX / ABS_LOGICAL_MAX);
+            cur_px = (int32_t)((int64_t)value * fb_w_px / ABS_LOGICAL_MAX);
             out_code = FUT_REL_X;
             if (!have_px_x) {
                 last_px_x = cur_px;
@@ -239,7 +250,7 @@ void virtio_input_post_event(uint16_t type, uint16_t code, int32_t value)
             delta = cur_px - last_px_x;
             last_px_x = cur_px;
         } else if (code == 1) {
-            cur_px = (int32_t)((int64_t)value * FB_H_PX / ABS_LOGICAL_MAX);
+            cur_px = (int32_t)((int64_t)value * fb_h_px / ABS_LOGICAL_MAX);
             out_code = FUT_REL_Y;
             if (!have_px_y) {
                 last_px_y = cur_px;

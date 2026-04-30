@@ -426,6 +426,7 @@ static void process_key(struct client_state *s, uint32_t key) {
         scroll_off = m; s->needs_redraw = true; return;
     }
     if (ctrl && key == 16 /* q */) { s->running = false; return; }
+    if (key == 1 /* Escape */) { s->running = false; return; }
     if (key == 19 /* r */) {
         refresh_procs();
         last_refresh_ms = tick_ms;

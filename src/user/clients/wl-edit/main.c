@@ -221,8 +221,16 @@ static void ed_load_file(const char *path) {
                 for (int k = 0; k < 4 && col < ED_MAX_COL; k++) {
                     ed_lines[row][col++] = ' ';
                 }
-            } else if (col < ED_MAX_COL && ch >= 32 && ch < 127) {
-                ed_lines[row][col++] = (char)ch;
+            } else if (ch >= 32 && ch < 127) {
+                if (col < ED_MAX_COL) {
+                    ed_lines[row][col++] = (char)ch;
+                } else {
+                    /* Line longer than ED_MAX_COL — silently dropping
+                     * the tail and letting the user save would chop
+                     * everything past col 128 off the file. Flag it
+                     * the same way as the row overflow. */
+                    truncated = true;
+                }
             } else if (ch == 0) {
                 /* NUL byte — almost certainly a binary file, not text.
                  * Saving the parsed buffer back over a binary would
@@ -254,8 +262,11 @@ static void ed_load_file(const char *path) {
         ed_load_failed = true;
     } else if (truncated) {
         /* Warn the user: saving from this state would silently DROP
-         * the unloaded tail. */
+         * the unloaded tail. Refuse the save too — same reason as
+         * the binary-file path: writing back the partial buffer
+         * would lose data. */
         ed_set_status("file truncated to fit buffer", 0);
+        ed_load_failed = true;
     }
 }
 

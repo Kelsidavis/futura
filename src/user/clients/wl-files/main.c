@@ -10,13 +10,13 @@
  * explorer without much new infrastructure.
  *
  * Controls:
- *   Up/Down     Move selection
- *   Enter       Descend into dir, ".." ascends, file launches wl-edit
- *   Backspace   Ascend to parent
- *   /           Jump to root (/)
- *   h           Jump to $HOME (root if HOME unset)
- *   r           Refresh
- *   Ctrl+Q      Quit
+ *   Up/Down       Move selection
+ *   Enter         Descend into dir, ".." ascends, file launches wl-edit
+ *   Backspace     Ascend to parent
+ *   /             Jump to root (/)
+ *   h             Jump to $HOME (root if HOME unset)
+ *   r             Refresh
+ *   Esc / Ctrl+Q  Close
  */
 
 #include <stdbool.h>

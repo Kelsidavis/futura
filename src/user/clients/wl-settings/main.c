@@ -10,8 +10,8 @@
  * the panel is read-only.
  *
  * Controls:
- *   Up/Down   Scroll
- *   Ctrl+Q    Quit
+ *   Up/Down       Scroll
+ *   Esc / Ctrl+Q  Close
  */
 
 #include <stdbool.h>

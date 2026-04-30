@@ -7,9 +7,9 @@
  * PID / State / RSS / Name that refreshes every ~2 seconds.
  *
  * Controls:
- *   Up/Down   Scroll
- *   Ctrl+Q    Quit
- *   r         Refresh now
+ *   Up/Down       Scroll
+ *   r             Refresh now
+ *   Esc / Ctrl+Q  Close
  */
 
 #include <stdbool.h>

@@ -10,9 +10,10 @@
  * gradient endpoints to match — no compositor restart is needed.
  *
  * Controls:
- *   Up/Down     Move selection
- *   Enter       Apply selected preset
- *   Ctrl+Q      Quit
+ *   Up/Down       Move selection
+ *   Enter         Apply selected preset
+ *   r             Re-read config
+ *   Esc / Ctrl+Q  Close
  */
 
 #include <stdbool.h>

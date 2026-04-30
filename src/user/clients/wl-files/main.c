@@ -521,12 +521,19 @@ static void process_key(struct client_state *s, uint32_t key) {
         } else if (p->type == FT_REG || p->type == FT_LNK) {
             /* Build "<cwd>/<name>" and spawn wl-edit. Forward the
              * same Wayland env the shell hands us so the child can
-             * connect to the compositor. */
-            char path[320];
+             * connect to the compositor. The buffer is capped at 256
+             * to match wl-edit's ed_filename[256] — passing a longer
+             * path would silently truncate on the editor side and
+             * Ctrl+S would write to the wrong file. */
+            char path[256];
             size_t cwdlen = strlen(cwd);
             size_t nlen = strlen(p->name);
             int needs_sep = (cwdlen == 0 || cwd[cwdlen - 1] != '/');
-            if (cwdlen + needs_sep + nlen + 1 > sizeof(path)) return;
+            if (cwdlen + needs_sep + nlen + 1 > sizeof(path)) {
+                /* Path doesn't fit in wl-edit's buffer — refuse to
+                 * launch rather than open a truncated path. */
+                return;
+            }
             for (size_t i = 0; i < cwdlen; i++) path[i] = cwd[i];
             size_t pi = cwdlen;
             if (needs_sep) path[pi++] = '/';

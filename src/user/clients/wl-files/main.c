@@ -642,12 +642,16 @@ static void kb_key(void *d, struct wl_keyboard *k, uint32_t ser, uint32_t t,
      * keys with non-idempotent / expensive side effects:
      *   Enter (28)        descends or spawns wl-edit
      *   r (19)            scans /proc-like dirent listing
+     *   / (53)            jumps to root (refresh_procs)
+     *   h (35)            jumps to $HOME (refresh_procs)
      * Plain navigation keys (Up/Down/Home/End/PgUp/PgDn/Backspace)
      * still repeat. */
     bool ctrl_or_alt = (kbd_mods & 0xCu) != 0;
     if (ctrl_or_alt ||
         key == 28 /* Enter */ ||
         key == 19 /* r refresh */ ||
+        key == 53 /* / root */ ||
+        key == 35 /* h home */ ||
         key == 42 || key == 54 || key == 29 || key == 97 ||
         key == 56 || key == 100) {
         repeat_key = 0;

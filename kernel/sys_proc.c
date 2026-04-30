@@ -412,8 +412,9 @@ long sys_getrlimit(int resource, struct rlimit *rlim) {
      * parameter-domain error.  Same EINVAL-before-EFAULT reorder
      * that just landed for sys_getitimer. */
     if (resource < 0 || resource >= RLIMIT_NLIMITS) {
-        fut_printf("[PROC] getrlimit(resource=%d, rlim=%p) -> EINVAL (unknown resource)\n",
-                   resource, rlim);
+        /* Silent — apps probe rlimit resource numbers to detect
+         * which limit types the kernel supports; the EINVAL return
+         * is the correct answer per POSIX. */
         return -EINVAL;
     }
 
@@ -551,8 +552,7 @@ long sys_setrlimit(int resource, const struct rlimit *rlim) {
             resource_desc = "max real-time CPU time (us)";
             break;
         default:
-            fut_printf("[PROC] setrlimit(resource=%d, rlim=%p) -> EINVAL (unknown resource)\n",
-                       resource, rlim);
+            /* Silent — same probe-style filter as getrlimit. */
             return -EINVAL;
     }
 

@@ -651,8 +651,10 @@ long sys_mincore(void *addr, size_t length, unsigned char *vec) {
         slab_free(kernel_vec);
     }
 
-    fut_printf("[MINCORE] mincore(%p, %zu, %p) -> 0 (%zu pages, PTE walk)\n",
-               local_addr, aligned_len, local_vec, num_pages);
+    /* Success path silent — mmap-aware programs (rsync, cp,
+     * media tools) call mincore in tight loops to check page
+     * residency. Errors above still trace explicitly. */
+    (void)local_addr; (void)aligned_len; (void)local_vec; (void)num_pages;
 
     return 0;
 }

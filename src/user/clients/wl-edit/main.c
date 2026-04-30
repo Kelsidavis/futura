@@ -204,7 +204,7 @@ static void ed_load_file(const char *path) {
                 truncated = true;
                 break;
             }
-            char ch = buf[i];
+            unsigned char ch = (unsigned char)buf[i];
             if (ch == '\n') {
                 ed_lines[row][col] = '\0';
                 ed_line_len[row] = col;
@@ -222,10 +222,18 @@ static void ed_load_file(const char *path) {
                     ed_lines[row][col++] = ' ';
                 }
             } else if (col < ED_MAX_COL && ch >= 32 && ch < 127) {
-                ed_lines[row][col++] = ch;
+                ed_lines[row][col++] = (char)ch;
+            } else if (ch == 0) {
+                /* NUL byte — almost certainly a binary file, not text.
+                 * Saving the parsed buffer back over a binary would
+                 * corrupt it (every NUL/control byte gets dropped on
+                 * load). Flag the load as failed so Ctrl+S refuses. */
+                read_error = true;
+                read_errno = -22 /* -EINVAL */;
+                break;
             }
         }
-        if (truncated) break;
+        if (read_error || truncated) break;
     }
     if (col > 0 || row == 0) {
         ed_lines[row][col] = '\0';
@@ -236,9 +244,10 @@ static void ed_load_file(const char *path) {
     sys_close(fd);
     ed_dirty = false;
     if (read_error) {
-        /* Common case: -EISDIR (-21) when the path is a directory. */
         if (read_errno == -21) {
             ed_set_status("not a regular file", 0);
+        } else if (read_errno == -22) {
+            ed_set_status("binary file - save refused", 0);
         } else {
             ed_set_status("read failed", 0);
         }

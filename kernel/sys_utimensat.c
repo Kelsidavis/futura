@@ -636,11 +636,11 @@ long sys_utimensat(int dirfd, const char *pathname, const fut_timespec_t *times,
             inotify_dispatch_event(dir_path, 0x00000004 /* IN_ATTRIB */, vnode->name, 0);
     }
 
-    /* Success */
-    fut_printf("[UTIMENSAT] utimensat(dirfd=%d [%s], path='%s' [%s, %s, len=%zu], "
-               "vnode_ino=%lu, times=%s, flags=%s, pid=%d) -> 0 (Phase 3: Directory FD resolution + timestamp updates)\n",
-               dirfd, dirfd_desc, path_buf, path_type, path_len_cat, path_len,
-               vnode->ino, time_spec_desc, flags_desc, task->pid);
+    /* Success path silent — `cp -p`, tarball extract, `touch`, and
+     * build systems that touch every output file all flood
+     * utimensat. Errors above still trace explicitly. */
+    (void)dirfd_desc; (void)path_type; (void)path_len_cat; (void)path_len;
+    (void)time_spec_desc; (void)flags_desc;
 
     fut_vnode_unref(vnode);
     return 0;

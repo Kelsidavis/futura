@@ -653,18 +653,11 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
         completion_status = "complete";
     }
 
-    if (zero_len_count > 0) {
-        fut_printf("[PREADV] preadv(fd=%d, iovcnt=%d [%s], offset=%ld, total_requested=%zu bytes) -> %ld bytes "
-                   "(%s, %d/%d iovecs filled, %d zero-len skipped, min=%zu max=%zu, validation & malloc)\n",
-                   fd, iovcnt, io_pattern, offset, total_size, total_read,
-                   completion_status, iovecs_read, iovcnt - zero_len_count, zero_len_count,
-                   min_iov_len, max_iov_len);
-    } else {
-        fut_printf("[PREADV] preadv(fd=%d, iovcnt=%d [%s], offset=%ld, total_requested=%zu bytes) -> %ld bytes "
-                   "(%s, %d/%d iovecs filled, min=%zu max=%zu, validation & malloc)\n",
-                   fd, iovcnt, io_pattern, offset, total_size, total_read,
-                   completion_status, iovecs_read, iovcnt, min_iov_len, max_iov_len);
-    }
+    /* Success path silent — databases (sqlite, postgres) and mmap-
+     * aware tools call preadv heavily. Errors above still trace. */
+    (void)zero_len_count; (void)io_pattern; (void)offset; (void)total_size;
+    (void)total_read; (void)completion_status; (void)iovecs_read;
+    (void)min_iov_len; (void)max_iov_len;
 
     fut_free(kernel_iov);
 

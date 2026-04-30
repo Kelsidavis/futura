@@ -2849,7 +2849,13 @@ void comp_render_frame(struct compositor_state *comp) {
             : 0;
         int dock_content_w = 8 + items_w + 8 + CLOCK_WIDTH_NEW + 4 + DOCK_DSKBTN_W + 4;
         if (dock_content_w < 240) dock_content_w = 240;
-        int dock_w = dock_content_w;
+        /* Cap the dock at the framebuffer width minus a 16px breathing
+         * room so the panel never spills off-screen when many windows
+         * are open. Items overflowing this cap will be clipped at the
+         * right edge — better than negative dock_x. */
+        int dock_w_max = fb_w - 16;
+        if (dock_w_max < 240) dock_w_max = 240;
+        int dock_w = dock_content_w > dock_w_max ? dock_w_max : dock_content_w;
         int dock_x = (fb_w - dock_w) / 2;
         int dock_y = fb_h - DOCK_HEIGHT - 6;
 

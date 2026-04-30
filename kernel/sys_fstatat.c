@@ -374,11 +374,15 @@ long sys_fstatat(int dirfd, const char *pathname, void *statbuf, int flags) {
 
     /* Handle errors */
     if (ret < 0) {
+        /* -ENOENT is an expected answer for shell command lookups
+         * (stat each PATH entry until one hits) and `ls` of a dir
+         * with stale entries; logging it spams the console. Other
+         * failure classes still get printed. */
+        if (ret == -ENOENT) {
+            return ret;
+        }
         const char *error_desc;
         switch (ret) {
-            case -ENOENT:
-                error_desc = "file not found";
-                break;
             case -ENOTDIR:
                 error_desc = "path component not a directory";
                 break;

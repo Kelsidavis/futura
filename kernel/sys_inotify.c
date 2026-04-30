@@ -674,8 +674,9 @@ long sys_inotify_add_watch(int fd, const char *pathname, uint32_t mask) {
 
     fut_spinlock_release(&inst->lock);
 
-    fut_printf("[INOTIFY] inotify_add_watch(fd=%d, path='%s', mask=0x%x) "
-               "-> %d (Phase 3: watch registered)\n", fd, path_buf, mask, wd);
+    /* Success path silent — file managers, IDEs, and reload-on-
+     * change watchers (webpack, nodemon) register watches in
+     * bursts. Errors above still trace explicitly. */
     return wd;
 }
 
@@ -751,7 +752,8 @@ long sys_inotify_rm_watch(int fd, int wd) {
 
     fut_spinlock_release(&inst->lock);
 
-    fut_printf("[INOTIFY] inotify_rm_watch(fd=%d, wd=%d) -> 0 (Phase 3: watch removed)\n", fd, wd);
+    /* Success path silent — paired with the add_watch silencer
+     * above. Errors above still trace. */
     return 0;
 }
 

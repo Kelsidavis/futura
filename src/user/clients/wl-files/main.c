@@ -754,7 +754,11 @@ int main(void) {
     }
 
     /* Refresh interval */
-    const uint64_t REFRESH_MS = 2000;
+    /* 2s auto-refresh was inherited from wl-sysmon, where /proc really
+     * does change that fast. Directory listings change far slower —
+     * 30s is plenty for a file browser, and 'r' is always available
+     * for an immediate refresh. */
+    const uint64_t REFRESH_MS = 30000;
     last_refresh_ms = 0;
 
     while (state.running) {

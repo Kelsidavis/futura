@@ -32,6 +32,7 @@
 #include <wayland-client-protocol.h>
 #include "xdg-shell-client-protocol.h"
 #include "font.h"
+#include <futura/fb_ioctl.h>
 
 #define O_RDONLY    0x0000
 #define O_RDWR      0x0002
@@ -134,9 +135,42 @@ static void refresh_procs(void) {
      * Eventually these become user-toggleable. */
     add_setting("OS Name",        "Futura / Horizon DE");
     add_setting("Version",        "0.9.0");
+#if defined(__aarch64__)
     add_setting("Kernel",         "futura aarch64");
     add_setting("Architecture",   "aarch64 (ARMv8-A)");
-    add_setting("Display",        "1024x768 @ virtio-gpu");
+#elif defined(__x86_64__)
+    add_setting("Kernel",         "futura x86_64");
+    add_setting("Architecture",   "x86_64");
+#else
+    add_setting("Kernel",         "futura");
+    add_setting("Architecture",   "(unknown)");
+#endif
+    /* Read the actual framebuffer geometry instead of hard-coding it.
+     * Falls back to a generic label if /dev/fb0 is unavailable. */
+    {
+        char disp[24] = "(unknown)";
+        int fbfd = sys_open("/dev/fb0", O_RDONLY, 0);
+        if (fbfd >= 0) {
+            struct fut_fb_info fbi = {0};
+            if (sys_call3(SYS_ioctl, fbfd, FBIOGET_INFO, (long)&fbi) == 0 &&
+                fbi.width && fbi.height) {
+                int n = 0;
+                uint32_t w = fbi.width, h = fbi.height;
+                char tmp[12]; int tn = 0;
+                if (w == 0) tmp[tn++] = '0';
+                while (w > 0) { tmp[tn++] = '0' + (w % 10); w /= 10; }
+                while (tn > 0 && n < (int)sizeof(disp) - 1) disp[n++] = tmp[--tn];
+                if (n < (int)sizeof(disp) - 1) disp[n++] = 'x';
+                tn = 0;
+                if (h == 0) tmp[tn++] = '0';
+                while (h > 0) { tmp[tn++] = '0' + (h % 10); h /= 10; }
+                while (tn > 0 && n < (int)sizeof(disp) - 1) disp[n++] = tmp[--tn];
+                disp[n] = '\0';
+            }
+            sys_close(fbfd);
+        }
+        add_setting("Display", disp);
+    }
     add_setting("Compositor",     "futura-wayland");
     add_setting("Hostname",       "futura");
     add_setting("User",           "root");

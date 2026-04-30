@@ -255,7 +255,7 @@ static void redraw_all(struct client_state *state) {
         int pi = scroll_off + vi;
         int ry = col_y + (vi + 1) * SM_ROW_H;
         uint32_t row_bg = (vi & 1) ? COL_ROW_A : COL_ROW_B;
-        bool is_sel = (pi == selected);
+        bool is_sel = (pi == selected) && (pi < proc_count);
         if (is_sel) row_bg = 0xFF313A55u;
         fill_rect(px, stride, SM_PAD - 2, ry, w - 2 * (SM_PAD - 2), SM_ROW_H, row_bg);
         if (pi >= proc_count) continue;

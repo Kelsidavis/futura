@@ -328,7 +328,10 @@ static void redraw_all(struct client_state *state) {
         int pi = scroll_off + vi;
         int ry = col_y + (vi + 1) * SM_ROW_H;
         uint32_t row_bg = (vi & 1) ? COL_ROW_A : COL_ROW_B;
-        if (pi == selected) row_bg = 0xFF313A55u;
+        /* Only highlight rows that actually contain an entry — avoids
+         * a confusing accent strip on an empty directory where pi=0
+         * happens to equal selected=0. */
+        if (pi == selected && pi < proc_count) row_bg = 0xFF313A55u;
         fill_rect(px, stride, SM_PAD - 2, ry, w - 2 * (SM_PAD - 2), SM_ROW_H, row_bg);
         if (pi >= proc_count) continue;
         struct proc_info *p = &procs[pi];

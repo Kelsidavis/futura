@@ -1262,8 +1262,15 @@ static void seat_handle_key_event(struct seat_state *seat,
                 if (count > 0) {
                     bool reverse = (compositor_mods & COMP_MOD_SHIFT) != 0;
                     if (!seat->comp->alt_tab_active) {
-                        /* First press: activate switcher.
-                         * Forward: start at index 1 (next window).
+                        /* First press: activate switcher. Dismiss any
+                         * other modal UI (Futura menu, desktop ctx menu,
+                         * shortcut overlay, about dialog) so only the
+                         * Alt+Tab overlay is visible. */
+                        seat->comp->futura_menu_active = false;
+                        seat->comp->ctx_menu_active = false;
+                        seat->comp->shortcut_overlay_active = false;
+                        seat->comp->about_active = false;
+                        /* Forward: start at index 1 (next window).
                          * Reverse (shift+alt+tab): start at last index. */
                         seat->comp->alt_tab_active = true;
                         seat->comp->alt_tab_count = count;

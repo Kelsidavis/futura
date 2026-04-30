@@ -186,10 +186,21 @@ void virtio_input_post_event(uint16_t type, uint16_t code, int32_t value)
     }
 
     if (type == EVTYPE_REL) {
+        /* Only forward X/Y motion. REL_WHEEL (8) and REL_HWHEEL (6)
+         * would otherwise fall through and be coerced to REL_Y, making
+         * the cursor drift vertically every time the user scrolled. */
+        int16_t out_code;
+        if (code == REL_X) {
+            out_code = FUT_REL_X;
+        } else if (code == REL_Y) {
+            out_code = FUT_REL_Y;
+        } else {
+            return;
+        }
         struct fut_input_event ev = {
             .ts_ns  = fut_input_now_ns(),
             .type   = FUT_EV_MOUSE_MOVE,
-            .code   = (int16_t)(code == REL_X ? FUT_REL_X : FUT_REL_Y),
+            .code   = out_code,
             .value  = value,
         };
         PUSH_MOUSE_EVENT(&ev);

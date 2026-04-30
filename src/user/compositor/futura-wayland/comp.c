@@ -5490,6 +5490,13 @@ int comp_scheduler_start(struct compositor_state *comp) {
 
     comp->timerfd = fd;
     comp->next_tick_ms = (uint64_t)comp_now_msec() + comp->target_ms;
+    /* Prime last_timer_tick_ms so the watchdog at line ~5417 activates
+     * immediately. Otherwise, if the very first timerfd expiration never
+     * arrives (e.g. early-boot timer race), the watchdog's
+     * `last_timer_tick_ms > 0` gate stays false forever and the screen
+     * freezes after the initial draw — exactly the "desktop loads then
+     * everything stops" symptom reported on ARM64. */
+    comp->last_timer_tick_ms = (uint64_t)comp_now_msec();
     if (comp_timer_arm(comp) < 0) {
 #ifdef DEBUG_WAYLAND
         printf("[SCHEDULER-DEBUG] comp_timer_arm failed\n");

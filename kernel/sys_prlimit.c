@@ -288,18 +288,11 @@ long sys_prlimit64(int pid, int resource,
                        local_pid, resource_name);
             return -EFAULT;
         }
-
-        fut_printf("[PRLIMIT] prlimit64(pid=%d, resource=%s) -> old_limit: "
-                   "cur=%llu, max=%llu\n",
-                   local_pid, resource_name,
-                   (unsigned long long)current_limit.rlim_cur,
-                   (unsigned long long)current_limit.rlim_max);
     }
 
-    if (!local_new_limit && !local_old_limit) {
-        fut_printf("[PRLIMIT] prlimit64(pid=%d, resource=%s) -> 0 (no-op)\n",
-                   local_pid, resource_name);
-    }
-
+    /* Both the old-limit-copy success path and the no-op probe (no
+     * new, no old) are silent — every shell command issues prlimit
+     * to inspect RLIMIT_STACK, and the trace was per-command spam.
+     * Errors above still log explicitly. */
     return 0;
 }

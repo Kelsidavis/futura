@@ -283,11 +283,14 @@ long sys_openat(int dirfd, const char *pathname, int flags, int mode) {
             open_task->fd_flags[result] |= FD_CLOEXEC;
     }
 
-    if (result < 0) {
+    if (result < 0 && result != -ENOENT) {
+        /* -ENOENT is a normal "file doesn't exist" answer that apps
+         * use to probe optional configs (e.g. wallpaper.conf, dotfiles
+         * lookup). Logging every such miss spams the kernel console
+         * with no diagnostic value; other errors are still printed. */
         fut_printf("[OPENAT] openat(dirfd=%d [%s], path='%s' [%s], flags=0x%x, mode=0%o) "
                    "-> %d (%s)\n",
                    local_dirfd, dirfd_desc, kpath, path_type, local_flags, local_mode, result,
-                   (result == -ENOENT) ? "not found" :
                    (result == -EACCES) ? "access denied" :
                    (result == -EEXIST) ? "already exists" :
                    (result == -EISDIR) ? "is directory" :

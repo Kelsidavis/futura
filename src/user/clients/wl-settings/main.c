@@ -74,7 +74,6 @@ struct proc_info {
 static struct proc_info procs[SM_MAX_PROCS];
 static int proc_count = 0;
 static int scroll_off = 0;
-static long total_rss_kb = 0;
 static uint64_t last_refresh_ms = 0;
 
 /* Client */
@@ -129,7 +128,6 @@ static void add_setting(const char *label, const char *value) {
 
 static void refresh_procs(void) {
     proc_count = 0;
-    total_rss_kb = 0;
 
     /* Static system-info / preferences. The values are read at panel
      * build time (env vars, sysconf-equivalents) where available.

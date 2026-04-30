@@ -571,7 +571,8 @@ int main(void) {
     wl_display_flush(state.display);
 
     printf("[SHELL] Desktop shell ready (1024x768)\n");
-    printf("[SHELL] Sidebar: left | Top panel: 40px | Apps: 3 available\n");
+    printf("[SHELL] Sidebar: left | Top panel: 40px | Apps: %d available\n",
+           APP_COUNT);
 
     /* Main event loop. Request a fresh frame callback on every
      * commit so wl_display_dispatch wakes up at compositor frame

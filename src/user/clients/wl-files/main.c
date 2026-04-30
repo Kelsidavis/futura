@@ -90,7 +90,6 @@ static struct proc_info procs[SM_MAX_PROCS];
 static int proc_count = 0;
 static int scroll_off = 0;
 static int selected = 0;
-static long total_rss_kb = 0;
 static uint64_t last_refresh_ms = 0;
 
 /* Client */
@@ -188,7 +187,6 @@ static void sort_entries(void) {
 
 static void refresh_procs(void) {
     proc_count = 0;
-    total_rss_kb = 0;
 
     int fd = sys_open(cwd, O_RDONLY, 0);
     if (fd < 0) {

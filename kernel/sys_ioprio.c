@@ -189,9 +189,10 @@ long sys_ioprio_set(int which, int who, int ioprio) {
     task->ioprio_class = class;
     task->ioprio_level = data;
 
-    fut_printf("[IOPRIO] ioprio_set(which=%s, who=%d [%s], class=%s, priority=%d, pid=%d) -> success\n",
-               which_desc, who, who_desc, class_desc, data, task->pid);
-
+    /* Success path is silent — long-running daemons (compositor,
+     * panel) call ioprio_set on startup; logging each one is just
+     * console noise. Errors above still log explicitly. */
+    (void)which_desc; (void)who_desc; (void)class_desc;
     return 0;
 }
 
@@ -270,8 +271,9 @@ long sys_ioprio_get(int which, int who) {
         default:                class_desc = "unknown"; break;
     }
 
-    fut_printf("[IOPRIO] ioprio_get(which=%s, who=%d [%s], pid=%d) -> class=%s, priority=%d\n",
-               which_desc, who, who_desc, task->pid, class_desc, stored_level);
-
+    /* Success path is silent — ioprio_get is a probe call that
+     * status tools issue at a steady cadence; logging each return
+     * is just console noise. Errors above still log explicitly. */
+    (void)which_desc; (void)who_desc; (void)class_desc; (void)stored_level;
     return stored_ioprio;
 }

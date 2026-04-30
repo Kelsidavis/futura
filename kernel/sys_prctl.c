@@ -904,7 +904,9 @@ long sys_prctl(int option, unsigned long arg2, unsigned long arg3,
     }
 
     default:
-        fut_printf("[PRCTL] prctl(option=%d) -> EINVAL (unsupported option)\n", option);
+        /* Silent — apps probe prctl features (PR_SET_NAME, PR_GET_NAME,
+         * PR_SET_DUMPABLE, …) and only fall back to defaults on EINVAL.
+         * Each probe miss shouldn't fill the kernel log. */
         return -EINVAL;
     }
 }

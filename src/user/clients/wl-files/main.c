@@ -502,6 +502,31 @@ static void process_key(struct client_state *s, uint32_t key) {
         last_refresh_ms = tick_ms;
         s->needs_redraw = true; return;
     }
+    /* '/' jumps to root, 'h' jumps to $HOME (or root if HOME isn't
+     * set). Cheap one-key shortcuts that match every common file
+     * manager. */
+    if (key == 53 /* '/' */) {
+        cwd[0] = '/'; cwd[1] = '\0';
+        selected = 0; scroll_off = 0;
+        refresh_procs();
+        s->needs_redraw = true; return;
+    }
+    if (key == 35 /* 'h' */ && !ctrl) {
+        const char *home = getenv("HOME");
+        if (home && home[0] == '/') {
+            int hi = 0;
+            while (home[hi] && hi < (int)sizeof(cwd) - 1) {
+                cwd[hi] = home[hi]; hi++;
+            }
+            cwd[hi] = '\0';
+            if (hi > 1 && cwd[hi - 1] == '/') cwd[hi - 1] = '\0';
+        } else {
+            cwd[0] = '/'; cwd[1] = '\0';
+        }
+        selected = 0; scroll_off = 0;
+        refresh_procs();
+        s->needs_redraw = true; return;
+    }
     if (key == 28 /* Enter */) {
         /* Directories descend; ".." ascends; regular files / symlinks
          * launch wl-edit on the joined path. */

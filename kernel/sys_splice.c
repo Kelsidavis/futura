@@ -833,9 +833,9 @@ long sys_sync_file_range(int fd, int64_t offset, int64_t nbytes, unsigned int fl
                            (local_nbytes < 1048576) ? "medium (<1MB)" :
                            (local_nbytes < 1073741824) ? "large (<1GB)" : "very large (>=1GB)";
 
-    /* Sync request accepted */
-    fut_printf("[SYNC_FILE_RANGE] sync_file_range(fd=%d, offset=%ld, nbytes=%ld [%s], sync=%s, pid=%d) -> 0\n",
-               local_fd, local_offset, local_nbytes, size_desc, sync_desc, task->pid);
-
+    /* Success path silent — databases (sqlite, postgres) call
+     * sync_file_range on every commit for durability. Errors above
+     * still trace explicitly. */
+    (void)size_desc; (void)sync_desc;
     return 0;
 }

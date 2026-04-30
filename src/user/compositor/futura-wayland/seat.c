@@ -782,6 +782,18 @@ static void seat_handle_button(struct seat_state *seat,
                                         &hit_surface,
                                         &edge);
         (void)role; (void)edge;
+        /* Dismiss Futura menu first — without this, opening the desktop
+         * context menu via right-click while the Futura menu was open
+         * left both menus rendered at once (Futura on the left, ctx on
+         * the right). The dismiss handlers below only run for left
+         * clicks or about/shortcut-overlay state, so the Futura menu
+         * would silently survive. */
+        if (seat->comp && seat->comp->futura_menu_active) {
+            seat->comp->futura_menu_active = false;
+            seat->comp->futura_menu_hover = -1;
+            comp_damage_add_full(seat->comp);
+            seat->comp->needs_repaint = true;
+        }
         if (!hit_surface && seat->comp) {
             /* Clamp the menu origin to the screen so the renderer's
              * on-screen clamp and the hover detector's offset math agree.

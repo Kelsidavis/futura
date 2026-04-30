@@ -920,16 +920,24 @@ int main(int argc, char **argv) {
         (void)sa;
     }
 
-    /* Parse filename arg */
+    /* Parse filename arg. If argv[1] is longer than ed_filename can
+     * hold, refuse to load instead of silently truncating — Ctrl+S
+     * would later write to the truncated path. */
     if (argc > 1 && argv[1] && argv[1][0]) {
         int i = 0;
-        while (argv[1][i] && i < (int)sizeof(ed_filename) - 1) {
-            ed_filename[i] = argv[1][i];
-            i++;
+        while (argv[1][i]) i++;
+        if (i >= (int)sizeof(ed_filename)) {
+            ed_filename[0] = '\0';
+            ed_load_failed = true;
+            ed_set_status("path too long", 0);
+        } else {
+            for (int j = 0; j < i; j++) ed_filename[j] = argv[1][j];
+            ed_filename[i] = '\0';
         }
-        ed_filename[i] = '\0';
     }
-    ed_load_file(ed_filename);
+    if (!ed_load_failed) {
+        ed_load_file(ed_filename);
+    }
 
     struct client_state state = {0};
     state.running = true;

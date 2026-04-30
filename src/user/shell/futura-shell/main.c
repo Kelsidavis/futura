@@ -287,11 +287,17 @@ static void pointer_button(void *data, struct wl_pointer *pointer,
     if (button == BTN_LEFT && button_state == WL_POINTER_BUTTON_STATE_PRESSED) {
         state->mouse_pressed = true;
 
-        /* Check if click is in sidebar (app launcher area) */
-        if (state->mouse_x < SIDEBAR_WIDTH && state->mouse_y > TOPBAR_HEIGHT) {
-            int32_t icon_index = (state->mouse_y - TOPBAR_HEIGHT - ICON_PADDING) /
-                                 (ICON_SIZE + ICON_PADDING);
-            if (icon_index >= 0 && icon_index < APP_COUNT) {
+        /* Check if click is in sidebar's icon area. Must match the
+         * hit-test in render_ui: x inside the icon column AND y
+         * inside the icon glyph (not in the inter-icon gap). */
+        int32_t icon_x = (SIDEBAR_WIDTH - ICON_SIZE) / 2;
+        if (state->mouse_x >= icon_x && state->mouse_x < icon_x + ICON_SIZE &&
+            state->mouse_y > TOPBAR_HEIGHT) {
+            int32_t off = state->mouse_y - TOPBAR_HEIGHT - ICON_PADDING;
+            int32_t cell = ICON_SIZE + ICON_PADDING;
+            int32_t icon_index = (off >= 0) ? (off / cell) : -1;
+            int32_t within = (off >= 0) ? (off - icon_index * cell) : 0;
+            if (icon_index >= 0 && icon_index < APP_COUNT && within < ICON_SIZE) {
                 printf("[SHELL] Launching app: %s\n", apps[icon_index].path);
                 long pid = sys_fork_call();
                 if (pid == 0) {

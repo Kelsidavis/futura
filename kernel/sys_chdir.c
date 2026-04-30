@@ -384,10 +384,11 @@ long sys_chdir(const char *pathname) {
     /* Update the task's current working directory */
     task->current_dir_ino = vnode->ino;
 
-    /* Detailed success logging */
-    fut_printf("[CHDIR] chdir(path='%s' [%s], old_dir_ino=%lu, new_dir_ino=%lu) "
-               "-> 0 (cwd changed, path truncation detection)\n",
-               kpath, path_type, old_dir_ino, vnode->ino);
+    /* Success path is silent — shell scripts (`cd dir; cmd; cd ..`),
+     * Makefile target recipes, and tab-completion's transient cd
+     * trial expansions all generate many cd's per second. The error
+     * paths above still log explicitly. */
+    (void)old_dir_ino;
 
     /* Cache canonical directory path by walking vnode->parent chain.
      * This normalizes away any '..' or '.' in the original path so getcwd()

@@ -4554,7 +4554,7 @@ void comp_render_frame(struct compositor_state *comp) {
             struct comp_surface *ws2;
             wl_list_for_each(ws2, &comp->surfaces, link) {
                 if (!ws2->has_backing || ws2->minimized) continue;
-                if (item_idx >= 8) break;
+                if (item_idx >= ALT_TAB_MAX_VISIBLE) break;
 
                 int ix = tab_x + TAB_PAD + item_idx * (TAB_ITEM_W + TAB_ITEM_PAD);
                 int iy = tab_y + TAB_PAD;

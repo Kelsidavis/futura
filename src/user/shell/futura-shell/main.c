@@ -268,6 +268,19 @@ static void pointer_leave(void *data, struct wl_pointer *pointer,
     }
 }
 
+/* Frame callback — fires after each compositor commit. Existence of
+ * this listener is what causes wl_display_dispatch to wake the main
+ * loop at frame cadence even when the user is idle (so the topbar
+ * clock keeps ticking). The done event itself just frees the cb. */
+static void shell_frame_done(void *data, struct wl_callback *cb,
+                             uint32_t time) {
+    (void)data; (void)time;
+    wl_callback_destroy(cb);
+}
+static const struct wl_callback_listener shell_frame_listener = {
+    .done = shell_frame_done,
+};
+
 static void pointer_motion(void *data, struct wl_pointer *pointer,
                            uint32_t time, wl_fixed_t x, wl_fixed_t y) {
     (void)pointer; (void)time;
@@ -560,11 +573,20 @@ int main(void) {
     printf("[SHELL] Desktop shell ready (1024x768)\n");
     printf("[SHELL] Sidebar: left | Top panel: 40px | Apps: 3 available\n");
 
-    /* Main event loop */
+    /* Main event loop. Request a fresh frame callback on every
+     * commit so wl_display_dispatch wakes up at compositor frame
+     * cadence even when the user is idle — without it the topbar
+     * clock would freeze the moment input stopped. */
     while (wl_display_dispatch(state.display) != -1) {
         /* Re-render UI if needed */
         render_ui(&state, state.pixels, SCREEN_WIDTH, SCREEN_HEIGHT, SCREEN_WIDTH * 4);
 
+        /* Frame request: even with a no-op done listener, the
+         * compositor's done event still wakes dispatch above. */
+        struct wl_callback *frame_cb = wl_surface_frame(state.surface);
+        if (frame_cb) {
+            wl_callback_add_listener(frame_cb, &shell_frame_listener, &state);
+        }
         wl_surface_attach(state.surface, buffer, 0, 0);
         wl_surface_damage_buffer(state.surface, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
         wl_surface_commit(state.surface);

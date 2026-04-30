@@ -145,8 +145,22 @@ static int fb_ioctl(void *inode, void *private_data,
         }
 #endif
 
+        /* Route the flush to whichever virtio-gpu transport is actually
+         * active. On QEMU virt (ARM64) the MMIO driver is in use; on
+         * x86_64 the PCI driver is. The PCI flush is a no-op when the
+         * MMIO driver supplied the framebuffer (g_framebuffer_arm is
+         * NULL), so the compositor's commits never reached the display
+         * — the QEMU window stayed on the kernel's text-mode console
+         * even though wayland-0 was up. */
+        extern bool virtio_gpu_mmio_initialized(void) __attribute__((weak));
+        extern void virtio_gpu_flush_display_mmio(void) __attribute__((weak));
         extern void virtio_gpu_flush_display(void);
-        virtio_gpu_flush_display();
+        if (virtio_gpu_mmio_initialized && virtio_gpu_mmio_initialized()
+            && virtio_gpu_flush_display_mmio) {
+            virtio_gpu_flush_display_mmio();
+        } else {
+            virtio_gpu_flush_display();
+        }
         return 0;
     }
     default:

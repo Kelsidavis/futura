@@ -959,7 +959,33 @@ int main(int argc, char **argv) {
     xdg_surface_add_listener(state.xdg_surface, &xdg_surface_listener, &state);
     state.toplevel = xdg_surface_get_toplevel(state.xdg_surface);
     xdg_toplevel_add_listener(state.toplevel, &xdg_toplevel_listener, &state);
-    xdg_toplevel_set_title(state.toplevel, "Text Editor");
+    /* Show the file's basename in the title bar so users can tell
+     * which document a window belongs to when several editors are
+     * open. Falls back to the literal "Text Editor" when no path
+     * is set. */
+    {
+        char title[64];
+        const char *base = ed_filename;
+        for (int i = 0; ed_filename[i]; i++) {
+            if (ed_filename[i] == '/' && ed_filename[i + 1]) {
+                base = &ed_filename[i + 1];
+            }
+        }
+        if (!*base) {
+            xdg_toplevel_set_title(state.toplevel, "Text Editor");
+        } else {
+            int ti = 0;
+            const char *prefix = "Edit: ";  /* ASCII only — the dock's
+                                              * bitmap font renders one
+                                              * glyph per byte. */
+            while (*prefix && ti < (int)sizeof(title) - 1) title[ti++] = *prefix++;
+            for (int i = 0; base[i] && ti < (int)sizeof(title) - 1; i++) {
+                title[ti++] = base[i];
+            }
+            title[ti] = '\0';
+            xdg_toplevel_set_title(state.toplevel, title);
+        }
+    }
     xdg_toplevel_set_app_id(state.toplevel, "wl-edit");
     /* Fixed-size: this client doesn't handle resize. Pinning min == max
      * tells the compositor to suppress resize handles. */

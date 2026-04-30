@@ -1823,7 +1823,8 @@ static void arm64_init_spawner_thread(void *arg) {
             char *wl_envp[] = {"PATH=/sbin:/bin", "HOME=/", "TERM=vt100",
                                "USER=root", "HOSTNAME=futura",
                                "WAYLAND_DISPLAY=wayland-0",
-                               "XDG_RUNTIME_DIR=/run", NULL};
+                               "XDG_RUNTIME_DIR=/run",
+                               "TZ_OFFSET_SEC=-25200", NULL};
             fut_printf("[INIT] Launching futura-wayland compositor\n");
             ret = fut_exec_elf("/sbin/futura-wayland", wl_argv, wl_envp);
             if (ret == 0) {

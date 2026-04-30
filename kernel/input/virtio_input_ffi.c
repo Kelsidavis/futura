@@ -197,12 +197,56 @@ void virtio_input_post_event(uint16_t type, uint16_t code, int32_t value)
     }
 
     if (type == EVTYPE_ABS) {
-        /* Treat absolute position as relative delta (simple tablet support) */
+        /* virtio-tablet reports ABSOLUTE positions in a wide logical range
+         * (typically 0..32767), not deltas. Naively forwarding `value` as
+         * a relative delta jumps the pointer thousands of pixels off-screen
+         * on the very first event, which is why the cursor "isn't being
+         * captured" on QEMU virt. Convert ABS → REL by remembering the
+         * previous value per axis and emitting (current - previous). The
+         * first event per axis primes the baseline silently. */
+        static int32_t last_abs_x = 0;
+        static int32_t last_abs_y = 0;
+        static int have_abs_x = 0;
+        static int have_abs_y = 0;
+
+        int32_t delta;
+        int16_t out_code;
+        if (code == 0) {
+            out_code = FUT_REL_X;
+            if (!have_abs_x) {
+                last_abs_x = value;
+                have_abs_x = 1;
+                return;
+            }
+            delta = value - last_abs_x;
+            last_abs_x = value;
+        } else if (code == 1) {
+            out_code = FUT_REL_Y;
+            if (!have_abs_y) {
+                last_abs_y = value;
+                have_abs_y = 1;
+                return;
+            }
+            delta = value - last_abs_y;
+            last_abs_y = value;
+        } else {
+            return;
+        }
+        if (delta == 0) return;
+
+        /* Scale tablet logical range (~32768) down to screen pixels.
+         * 1024-wide framebuffer ÷ 32768 ≈ /32 — round up so a 1-unit
+         * tablet step still produces a visible pixel motion. */
+        delta /= 32;
+        if (delta == 0) {
+            return;
+        }
+
         struct fut_input_event ev = {
             .ts_ns  = fut_input_now_ns(),
             .type   = FUT_EV_MOUSE_MOVE,
-            .code   = (int16_t)(code == 0 ? FUT_REL_X : FUT_REL_Y),
-            .value  = value,
+            .code   = out_code,
+            .value  = delta,
         };
         PUSH_MOUSE_EVENT(&ev);
         return;

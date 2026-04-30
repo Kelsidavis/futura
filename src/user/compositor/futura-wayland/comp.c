@@ -16,6 +16,7 @@
 #include <wayland-server-protocol.h>
 #include <wayland-util.h>
 
+#include <user/stdlib.h>
 #include <user/sys.h>
 #include <user/libfutura.h>
 
@@ -35,6 +36,32 @@ static inline void *safe_memcpy(void *dest, const void *src, size_t n) {
     return memcpy(dest, src, n);
 }
 #define memcpy safe_memcpy
+
+/* Cached TZ_OFFSET_SEC env value. The kernel CLOCK_REALTIME source is UTC
+ * epoch from the PL031 RTC, so wall-clock displays need a local offset.
+ * Initialized lazily on first call so the env table is ready by then. */
+static long comp_tz_offset_sec(void) {
+    static long cached = 0;
+    static int initialized = 0;
+    if (!initialized) {
+        const char *tz = getenv("TZ_OFFSET_SEC");
+        long v = 0;
+        int neg = 0;
+        if (tz && *tz) {
+            const char *p = tz;
+            if (*p == '-') { neg = 1; p++; }
+            else if (*p == '+') { p++; }
+            while (*p >= '0' && *p <= '9') {
+                v = v * 10 + (*p - '0');
+                p++;
+            }
+            if (neg) v = -v;
+        }
+        cached = v;
+        initialized = 1;
+    }
+    return cached;
+}
 
 #define NS_PER_MS 1000000ULL
 
@@ -2026,8 +2053,8 @@ void comp_render_frame(struct compositor_state *comp) {
         struct { long tv_sec; long tv_nsec; } wc_ts = {0, 0};
         extern long sys_call2(long nr, long a, long b);
         sys_call2(SYS_clock_gettime, 0, (long)&wc_ts);
-        long wc_secs = wc_ts.tv_sec;
-        long wc_daytime = wc_secs % 86400;
+        long wc_secs = wc_ts.tv_sec + comp_tz_offset_sec();
+        long wc_daytime = ((wc_secs % 86400) + 86400) % 86400;
         int wc_hr = (int)(wc_daytime / 3600);
         int wc_min = (int)((wc_daytime % 3600) / 60);
         int wc_sec = (int)(wc_daytime % 60);
@@ -2473,8 +2500,8 @@ void comp_render_frame(struct compositor_state *comp) {
             struct { long tv_sec; long tv_nsec; } mb_ts = {0, 0};
             extern long sys_call2(long nr, long a, long b);
             sys_call2(SYS_clock_gettime, 0, (long)&mb_ts);
-            long mb_secs = mb_ts.tv_sec;
-            long mb_daytime = mb_secs % 86400;
+            long mb_secs = mb_ts.tv_sec + comp_tz_offset_sec();
+            long mb_daytime = ((mb_secs % 86400) + 86400) % 86400;
             int mb_hr = (int)(mb_daytime / 3600);
             int mb_min = (int)((mb_daytime % 3600) / 60);
             int mb_sec = (int)(mb_daytime % 60);
@@ -2668,8 +2695,8 @@ void comp_render_frame(struct compositor_state *comp) {
         struct { long tv_sec; long tv_nsec; } clock_ts = {0, 0};
         extern long sys_call2(long nr, long a, long b);
         sys_call2(SYS_clock_gettime, 0, (long)&clock_ts);  /* SYS_clock_gettime(CLOCK_REALTIME, &ts) */
-        long total_secs = clock_ts.tv_sec;
-        long daytime = total_secs % 86400;
+        long total_secs = clock_ts.tv_sec + comp_tz_offset_sec();
+        long daytime = ((total_secs % 86400) + 86400) % 86400;
         int clock_hr = (int)(daytime / 3600);
         int clock_min = (int)((daytime % 3600) / 60);
         int clock_sec = (int)(daytime % 60);
@@ -5187,8 +5214,9 @@ static void comp_handle_timer_tick(struct compositor_state *comp, uint64_t expir
         struct { long tv_sec; long tv_nsec; } cts = {0, 0};
         extern long sys_call2(long nr, long a, long b);
         sys_call2(SYS_clock_gettime, 0, (long)&cts);  /* SYS_clock_gettime(CLOCK_REALTIME) */
-        int cur_sec = (int)(cts.tv_sec % 60);
-        int cur_min = (int)((cts.tv_sec % 3600) / 60);
+        long cts_local = cts.tv_sec + comp_tz_offset_sec();
+        int cur_sec = (int)(((cts_local % 60) + 60) % 60);
+        int cur_min = (int)(((cts_local % 3600) + 3600) % 3600 / 60);
         /* Per-second: damage ONLY menubar and dock clock text areas.
          * The desktop clock (center of screen) is NOT damaged per-second
          * because it overlaps windows and causes visible flashing

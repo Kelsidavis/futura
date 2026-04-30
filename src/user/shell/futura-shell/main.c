@@ -13,6 +13,7 @@
 #include <user/stdlib.h>
 #include <user/string.h>
 #include <user/sys.h>
+#include <user/time.h>
 
 #include <wayland-client-core.h>
 #include <wayland-client-protocol.h>
@@ -187,9 +188,61 @@ static void render_ui(struct shell_state *state,
         }
     }
 
-    /* Draw status text in top panel */
-    /* (We'd need a font renderer for actual text) */
-    fill_rect(pixels, width, height, stride_bytes, 10, 10, 20, 20, 0xFF4CAF50u);
+    /* Top panel: brand on the left, clock on the right. Both use the
+     * shared bitmap font now that it's linked into futura-shell. */
+    {
+        int32_t topbar_text_y = (TOPBAR_HEIGHT - FONT_HEIGHT) / 2;
+        const char *brand = "FUTURA";
+        for (int i = 0; brand[i]; i++) {
+            font_render_char(brand[i], pixels,
+                             10 + i * FONT_WIDTH, topbar_text_y,
+                             stride_bytes / 4, width, height,
+                             0xFF8BB4FFu, 0xFF2a2a2au);
+        }
+
+        /* Clock — read CLOCK_REALTIME, apply TZ_OFFSET_SEC if set, render
+         * "HH:MM" right-aligned on the top panel. Cached TZ value: we
+         * read getenv() once across the process lifetime since the env
+         * doesn't mutate. */
+        struct timespec ts = {0};
+        if (clock_gettime(CLOCK_REALTIME, &ts) == 0) {
+            static long tz_off = 0;
+            static int tz_init = 0;
+            if (!tz_init) {
+                const char *tz = getenv("TZ_OFFSET_SEC");
+                long v = 0;
+                int neg = 0;
+                if (tz && *tz) {
+                    const char *p = tz;
+                    if (*p == '-') { neg = 1; p++; }
+                    else if (*p == '+') { p++; }
+                    while (*p >= '0' && *p <= '9') {
+                        v = v * 10 + (*p - '0'); p++;
+                    }
+                    if (neg) v = -v;
+                }
+                tz_off = v;
+                tz_init = 1;
+            }
+            long s = ts.tv_sec + tz_off;
+            long hr = (((s / 3600) % 24) + 24) % 24;
+            long mn = (((s / 60) % 60) + 60) % 60;
+            char tbuf[6] = { (char)('0' + (hr / 10)),
+                             (char)('0' + (hr % 10)),
+                             ':',
+                             (char)('0' + (mn / 10)),
+                             (char)('0' + (mn % 10)),
+                             '\0' };
+            int tlen = 5;
+            int32_t tx = width - 10 - tlen * FONT_WIDTH;
+            for (int i = 0; i < tlen; i++) {
+                font_render_char(tbuf[i], pixels,
+                                 tx + i * FONT_WIDTH, topbar_text_y,
+                                 stride_bytes / 4, width, height,
+                                 0xFFE0E0E0u, 0xFF2a2a2au);
+            }
+        }
+    }
 }
 
 /* Wayland callbacks */

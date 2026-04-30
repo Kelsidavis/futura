@@ -5295,6 +5295,41 @@ static void comp_handle_timer_tick(struct compositor_state *comp, uint64_t expir
             int dock_dmg_x = (fb_w - dock_dmg_w) / 2;
             fut_rect_t dock_damage = { dock_dmg_x, fb_h - 48, dock_dmg_w, 48 };
             comp_damage_add_rect(comp, dock_damage);
+
+            /* Cheap once-a-second poll of the wallpaper config so the
+             * picker's "Apply" takes effect without a compositor restart.
+             * If the file content differs from our cached preset string,
+             * adopt the new value and trigger a full repaint. */
+            int wfd = (int)sys_open("/etc/wallpaper.conf", O_RDONLY, 0);
+            if (wfd < 0) wfd = (int)sys_open("/run/wallpaper.conf", O_RDONLY, 0);
+            if (wfd >= 0) {
+                char wbuf[32];
+                long wn = sys_read(wfd, wbuf, sizeof(wbuf) - 1);
+                sys_close(wfd);
+                while (wn > 0 && (wbuf[wn - 1] == '\n' || wbuf[wn - 1] == '\r' ||
+                                  wbuf[wn - 1] == ' '  || wbuf[wn - 1] == '\t')) {
+                    wn--;
+                }
+                if (wn > 0 && wn < (long)sizeof(comp->wallpaper_preset)) {
+                    char tmp[24];
+                    for (long i = 0; i < wn; i++) tmp[i] = wbuf[i];
+                    tmp[wn] = '\0';
+                    /* strcmp via inline loop — userland is freestanding */
+                    int differs = 0;
+                    for (long i = 0; i <= wn; i++) {
+                        if (tmp[i] != comp->wallpaper_preset[i]) {
+                            differs = 1;
+                            break;
+                        }
+                    }
+                    if (differs) {
+                        for (long i = 0; i <= wn; i++) {
+                            comp->wallpaper_preset[i] = tmp[i];
+                        }
+                        comp_damage_add_full(comp);
+                    }
+                }
+            }
         }
         /* Per-minute: damage desktop clock + shooting star areas,
          * but ONLY if no window covers them. On a single-buffer FB,

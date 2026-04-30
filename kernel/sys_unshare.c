@@ -114,9 +114,10 @@ long sys_unshare(unsigned long flags) {
         CLONE_NEWIPC | CLONE_NEWUSER | CLONE_NEWPID |
         CLONE_NEWNET | CLONE_NEWTIME;
 
-    /* unshare(0) is a defined no-op and should succeed. */
+    /* unshare(0) is a defined no-op and should succeed silently —
+     * tools probe with flags=0 to check the syscall exists, and
+     * logging each probe was just console noise. */
     if (flags == 0) {
-        fut_printf("[UNSHARE] unshare(flags=0x0 [no-op], pid=%d) -> 0\n", task->pid);
         return 0;
     }
 

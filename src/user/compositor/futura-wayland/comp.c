@@ -2277,25 +2277,37 @@ void comp_render_frame(struct compositor_state *comp) {
                     }
                 }
             }
-            /* Shadow layer (offset +2,+2, dark) */
+            /* Pick a contrasting text + shadow colour from the active
+             * wallpaper preset. Light backdrops (solarized-light) use
+             * dark text on a soft white shadow; everything else uses
+             * the original white-on-dark pair. */
+            const char *wpc_clk = comp->wallpaper_preset;
+            bool light_bg = (wpc_clk[0] == 's' && wpc_clk[1] == 'o' &&
+                             wpc_clk[5] == 'l');
+            uint32_t time_shadow = light_bg ? 0x40FFFFFFu : 0x40000000u;
+            uint32_t time_text   = light_bg ? 0xC0202028u : 0xC0FFFFFFu;
+            uint32_t date_shadow = light_bg ? 0x30FFFFFFu : 0x30000000u;
+            uint32_t date_text   = light_bg ? 0x90303040u : 0x90D8D8F0u;
+
+            /* Shadow layer (offset +2,+2) */
             ui_draw_text_scaled(dst->px, dst->pitch,
                                 clock_x + 2, clock_y + 2,
-                                0x40000000u, wc_time, clock_scale,
+                                time_shadow, wc_time, clock_scale,
                                 cc.x, cc.y, cc.w, cc.h);
             /* Main clock text */
             ui_draw_text_scaled(dst->px, dst->pitch,
                                 clock_x, clock_y,
-                                0xC0FFFFFFu, wc_time, clock_scale,
+                                time_text, wc_time, clock_scale,
                                 cc.x, cc.y, cc.w, cc.h);
             /* Date shadow */
             ui_draw_text(dst->px, dst->pitch,
                          date_x + 1, date_y + 1,
-                         0x30000000u, wc_date,
+                         date_shadow, wc_date,
                          cc.x, cc.y, cc.w, cc.h);
             /* Date text */
             ui_draw_text(dst->px, dst->pitch,
                          date_x, date_y,
-                         0x90D8D8F0u, wc_date,
+                         date_text, wc_date,
                          cc.x, cc.y, cc.w, cc.h);
             /* Seconds display (smaller, dimmer) */
             ui_draw_text_scaled(dst->px, dst->pitch,

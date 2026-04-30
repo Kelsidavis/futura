@@ -282,13 +282,32 @@ static void redraw_all(struct client_state *state) {
                   COL_HEADER_FG, COL_HEADER_BG);
 
         /* CWD path right of the title */
+        /* Render the cwd. When the path is too long for the header
+         * row, truncate from the *head* so the deepest component (the
+         * one the user just navigated into) stays visible — the
+         * leading "..." signals truncation. */
         int cwd_len = (int)strlen(cwd);
         int max_path = (w - 2 * SM_PAD - (tl + 2) * FONT_WIDTH) / FONT_WIDTH;
-        if (cwd_len > max_path) cwd_len = max_path;
+        const char *path_str = cwd;
+        char path_buf[128];
+        if (cwd_len > max_path && max_path > 4) {
+            int keep = max_path - 3;
+            int start = cwd_len - keep;
+            int pi = 0;
+            path_buf[pi++] = '.';
+            path_buf[pi++] = '.';
+            path_buf[pi++] = '.';
+            for (int i = 0; i < keep && pi < (int)sizeof(path_buf) - 1; i++) {
+                path_buf[pi++] = cwd[start + i];
+            }
+            path_buf[pi] = '\0';
+            path_str = path_buf;
+            cwd_len = pi;
+        }
         if (cwd_len > 0) {
             draw_text(px, w, h, stride,
                       SM_PAD + (tl + 2) * FONT_WIDTH, ty,
-                      cwd, cwd_len, COL_DIM, COL_HEADER_BG);
+                      path_str, cwd_len, COL_DIM, COL_HEADER_BG);
         }
     }
 

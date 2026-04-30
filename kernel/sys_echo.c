@@ -120,9 +120,9 @@ ssize_t sys_echo(const char *u_in, char *u_out, size_t n) {
         size_category = "large (>4096, clamped)";
     }
 
-    /* Handle zero-length case */
+    /* Handle zero-length case — silent no-op */
     if (n == 0) {
-        fut_printf("[ECHO] echo(n=0 [%s]) -> 0 (no-op, Phase 2)\n", size_category);
+        (void)size_category;
         return 0;
     }
 

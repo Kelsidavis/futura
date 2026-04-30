@@ -246,15 +246,12 @@ long sys_sigaltstack(const struct sigaltstack *ss, struct sigaltstack *old_ss) {
 #endif
         }
 
-        /* Install new stack */
+        /* Install new stack — silent success. libc threading
+         * registers an alt-stack on every thread start; the trace
+         * spammed the console with no diagnostic value. */
         current->sig_altstack = new_stack;
-
-        fut_printf("[SIGALTSTACK] sigaltstack(ss=%p, size=%zu, flags=0x%x) -> 0 (pid=%u)\n",
-                  new_stack.ss_sp, new_stack.ss_size, new_stack.ss_flags, current->pid);
-    } else {
-        fut_printf("[SIGALTSTACK] sigaltstack(NULL, old_ss=%p) -> 0 (query, pid=%u)\n",
-                  old_ss, current->pid);
     }
+    /* The (ss=NULL, old_ss=...) query path is also silent. */
 
     /* Now that ss validation/install has succeeded (or wasn't requested),
      * publish the snapshotted old altstack to userspace. */

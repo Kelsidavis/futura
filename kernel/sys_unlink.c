@@ -139,11 +139,15 @@ long sys_unlink(const char *path) {
 
     /* Phase 2: Handle VFS errors with detailed logging */
     if (ret < 0) {
+        /* -ENOENT is the routine answer when `rm -f` removes
+         * possibly-non-existent paths (build cleanups, makefile
+         * @rm, tarball overwrite shimmies). Skip the trace; other
+         * failure classes still get logged. */
+        if (ret == -ENOENT) {
+            return ret;
+        }
         const char *error_desc;
         switch (ret) {
-            case -ENOENT:
-                error_desc = "file not found or path component missing";
-                break;
             case -EISDIR:
                 error_desc = "is a directory (use rmdir)";
                 break;

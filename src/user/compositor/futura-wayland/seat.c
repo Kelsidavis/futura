@@ -966,9 +966,13 @@ static void seat_handle_button(struct seat_state *seat,
      *   brand_w = 10 (diamond) + 6 * UI_FONT_WIDTH + 10 = 68
      *   brand_rect = { x=4, y=2, w=68, h=MENUBAR_HEIGHT-4 }
      * The click condition was hard-coded to pointer_x < 60, so the right
-     * 12px of the visible "Futura" label silently did nothing. */
+     * 12px of the visible "Futura" label silently did nothing.
+     * Lower bound was missing too, so a click at x=0..3 (left of the
+     * visible label) toggled the menu. Match the renderer's hover
+     * region exactly. */
     if (code == FUT_BTN_LEFT && pressed && seat->comp &&
         seat->comp->pointer_y < 24 /* MENUBAR_HEIGHT */ &&
+        seat->comp->pointer_x >= 4 &&
         seat->comp->pointer_x < 4 + (10 + 6 * 8 + 10)) {
         seat->comp->futura_menu_active = !seat->comp->futura_menu_active;
         seat->comp->futura_menu_hover = -1;

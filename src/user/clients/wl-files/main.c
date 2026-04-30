@@ -503,8 +503,8 @@ static void process_key(struct client_state *s, uint32_t key) {
         s->needs_redraw = true; return;
     }
     if (key == 28 /* Enter */) {
-        /* Descend into selected dir, or ascend if it's "..". Files are
-         * non-fatal — we just don't navigate. */
+        /* Directories descend; ".." ascends; regular files / symlinks
+         * launch wl-edit on the joined path. */
         if (selected < 0 || selected >= proc_count) return;
         struct proc_info *p = &procs[selected];
         if (p->name[0] == '.' && p->name[1] == '.' && p->name[2] == '\0') {
@@ -518,8 +518,53 @@ static void process_key(struct client_state *s, uint32_t key) {
             if (needs_sep) cwd[cwdlen++] = '/';
             for (size_t i = 0; i < nlen; i++) cwd[cwdlen + i] = p->name[i];
             cwd[cwdlen + nlen] = '\0';
+        } else if (p->type == FT_REG || p->type == FT_LNK) {
+            /* Build "<cwd>/<name>" and spawn wl-edit. Forward the
+             * same Wayland env the shell hands us so the child can
+             * connect to the compositor. */
+            char path[320];
+            size_t cwdlen = strlen(cwd);
+            size_t nlen = strlen(p->name);
+            int needs_sep = (cwdlen == 0 || cwd[cwdlen - 1] != '/');
+            if (cwdlen + needs_sep + nlen + 1 > sizeof(path)) return;
+            for (size_t i = 0; i < cwdlen; i++) path[i] = cwd[i];
+            size_t pi = cwdlen;
+            if (needs_sep) path[pi++] = '/';
+            for (size_t i = 0; i < nlen; i++) path[pi + i] = p->name[i];
+            pi += nlen;
+            path[pi] = '\0';
+            long pid = sys_call5(SYS_clone, 17 /*SIGCHLD*/, 0, 0, 0, 0);
+            if (pid == 0) {
+                const char *argv[] = { "/bin/wl-edit", path, NULL };
+                const char *tz = getenv("TZ_OFFSET_SEC");
+                char tz_kv[40] = "TZ_OFFSET_SEC=";
+                if (tz && *tz) {
+                    int kp = 14;
+                    for (int ti = 0; tz[ti] && kp + 1 < (int)sizeof(tz_kv); ti++) {
+                        tz_kv[kp++] = tz[ti];
+                    }
+                    tz_kv[kp] = '\0';
+                } else {
+                    tz_kv[0] = '\0';
+                }
+                const char *envp[] = {
+                    "PATH=/bin:/sbin",
+                    "HOME=/",
+                    "TERM=vt100",
+                    "USER=root",
+                    "HOSTNAME=futura",
+                    "WAYLAND_DISPLAY=wayland-0",
+                    "XDG_RUNTIME_DIR=/run",
+                    tz_kv[0] ? tz_kv : NULL,
+                    NULL,
+                };
+                sys_call3(SYS_execve, (long)"/bin/wl-edit",
+                          (long)argv, (long)envp);
+                sys_call1(SYS_exit, 127);
+            }
+            return;  /* don't refresh / re-render */
         } else {
-            return;  /* Not a dir; don't navigate */
+            return;  /* Other types (FIFO/SOCK/CHR/BLK): no-op */
         }
         selected = 0;
         scroll_off = 0;

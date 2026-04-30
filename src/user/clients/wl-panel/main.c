@@ -328,8 +328,23 @@ static void pointer_button(void *data, struct wl_pointer *pointer, uint32_t seri
          * cli_envp set up by the spawner thread in platform_init. */
         long pid = sys_fork_call();
         if (pid == 0) {
-            /* Child process - launch terminal */
+            /* Child process - launch terminal. Mirror the spawner's
+             * cli_envp and forward TZ_OFFSET_SEC if we received it, so
+             * the terminal child sees the same timezone the panel uses
+             * for its own clock. */
             const char *argv[] = {"/bin/wl-term", NULL};
+            const char *tz = getenv("TZ_OFFSET_SEC");
+            char tz_kv[32] = "TZ_OFFSET_SEC=";
+            if (tz && *tz) {
+                int kpos = 14;
+                int ti = 0;
+                while (tz[ti] && kpos + 1 < (int)sizeof(tz_kv)) {
+                    tz_kv[kpos++] = tz[ti++];
+                }
+                tz_kv[kpos] = '\0';
+            } else {
+                tz_kv[0] = '\0';  /* skip slot */
+            }
             const char *envp[] = {
                 "PATH=/bin:/sbin",
                 "HOME=/",
@@ -338,6 +353,7 @@ static void pointer_button(void *data, struct wl_pointer *pointer, uint32_t seri
                 "HOSTNAME=futura",
                 "WAYLAND_DISPLAY=wayland-0",
                 "XDG_RUNTIME_DIR=/run",
+                tz_kv[0] ? tz_kv : NULL,
                 NULL,
             };
             sys_execve_call("/bin/wl-term", (char *const *)argv, (char *const *)envp);

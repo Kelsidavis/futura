@@ -1085,7 +1085,8 @@ static void compositor_launch_terminal(void) {
          * Hardcoding /tmp here meant children opened /tmp/wayland-0
          * and got ENOENT instead of connecting. */
         char *envp[] = { "WAYLAND_DISPLAY=wayland-0", "XDG_RUNTIME_DIR=/run",
-                         "TERM=xterm-256color", "PATH=/bin:/sbin", (void*)0 };
+                         "TERM=xterm-256color", "PATH=/bin:/sbin",
+                         "TZ_OFFSET_SEC=-25200", (void*)0 };
         sys_execve_call("/bin/wl-term", argv, envp);
         sys_exit(127);
     }
@@ -1097,7 +1098,7 @@ static void compositor_launch_edit(void) {
     if (pid == 0) {
         char *argv[] = { "/bin/wl-edit", (void*)0 };
         char *envp[] = { "WAYLAND_DISPLAY=wayland-0", "XDG_RUNTIME_DIR=/run",
-                         "PATH=/bin:/sbin", (void*)0 };
+                         "PATH=/bin:/sbin", "TZ_OFFSET_SEC=-25200", (void*)0 };
         sys_execve_call("/bin/wl-edit", argv, envp);
         sys_exit(127);
     }
@@ -1109,7 +1110,7 @@ static void compositor_launch_sysmon(void) {
     if (pid == 0) {
         char *argv[] = { "/bin/wl-sysmon", (void*)0 };
         char *envp[] = { "WAYLAND_DISPLAY=wayland-0", "XDG_RUNTIME_DIR=/run",
-                         "PATH=/bin:/sbin", (void*)0 };
+                         "PATH=/bin:/sbin", "TZ_OFFSET_SEC=-25200", (void*)0 };
         sys_execve_call("/bin/wl-sysmon", argv, envp);
         sys_exit(127);
     }

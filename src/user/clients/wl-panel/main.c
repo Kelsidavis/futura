@@ -152,14 +152,41 @@ static void draw_rect(uint32_t *framebuffer, int fb_width, int x, int y, int w, 
     }
 }
 
+/* Read TZ_OFFSET_SEC env var (signed integer) once on first call.
+ * Inherited from the spawner so the panel matches the compositor's
+ * wall-clock display instead of showing UTC. */
+static long panel_tz_offset_sec(void) {
+    static long cached = 0;
+    static int initialized = 0;
+    if (!initialized) {
+        const char *tz = getenv("TZ_OFFSET_SEC");
+        long v = 0;
+        int neg = 0;
+        if (tz && *tz) {
+            const char *p = tz;
+            if (*p == '-') { neg = 1; p++; }
+            else if (*p == '+') { p++; }
+            while (*p >= '0' && *p <= '9') {
+                v = v * 10 + (*p - '0');
+                p++;
+            }
+            if (neg) v = -v;
+        }
+        cached = v;
+        initialized = 1;
+    }
+    return cached;
+}
+
 /* Get current time as HH:MM string */
 static void get_time_string(char *buf) {
     struct timespec ts;
     if (clock_gettime(CLOCK_REALTIME, &ts) == 0) {
-        /* Convert seconds since epoch to hours:minutes (UTC) */
-        long seconds = ts.tv_sec;
-        long hours = (seconds / 3600) % 24;
-        long minutes = (seconds / 60) % 60;
+        long seconds = ts.tv_sec + panel_tz_offset_sec();
+        /* Modulo with wrap-around in case TZ offset pushes us negative
+         * (e.g. just-after-midnight UTC for a negative offset zone). */
+        long hours = (((seconds / 3600) % 24) + 24) % 24;
+        long minutes = (((seconds / 60) % 60) + 60) % 60;
 
         buf[0] = (char)('0' + (hours / 10));
         buf[1] = (char)('0' + (hours % 10));

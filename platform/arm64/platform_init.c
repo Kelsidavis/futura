@@ -1841,7 +1841,8 @@ static void arm64_init_spawner_thread(void *arg) {
                 char *cli_envp[] = {"PATH=/bin:/sbin", "HOME=/", "TERM=vt100",
                                     "USER=root", "HOSTNAME=futura",
                                     "WAYLAND_DISPLAY=wayland-0",
-                                    "XDG_RUNTIME_DIR=/run", NULL};
+                                    "XDG_RUNTIME_DIR=/run",
+                                    "TZ_OFFSET_SEC=-25200", NULL};
 
                 if (wlt_fd >= 0) {
                     fut_vfs_close(wlt_fd);

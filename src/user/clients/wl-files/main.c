@@ -10,8 +10,9 @@
  * explorer without much new infrastructure.
  *
  * Controls:
- *   Up/Down     Scroll
- *   Backspace   Go to parent directory
+ *   Up/Down     Move selection
+ *   Enter       Descend into selected dir (or ".." to ascend)
+ *   Backspace   Ascend to parent
  *   r           Refresh
  *   Ctrl+Q      Quit
  */
@@ -88,6 +89,7 @@ static char cwd[256] = "/";
 static struct proc_info procs[SM_MAX_PROCS];
 static int proc_count = 0;
 static int scroll_off = 0;
+static int selected = 0;
 static long total_rss_kb = 0;
 static uint64_t last_refresh_ms = 0;
 
@@ -307,6 +309,7 @@ static void redraw_all(struct client_state *state) {
         int pi = scroll_off + vi;
         int ry = col_y + (vi + 1) * SM_ROW_H;
         uint32_t row_bg = (vi & 1) ? COL_ROW_A : COL_ROW_B;
+        if (pi == selected) row_bg = 0xFF313A55u;
         fill_rect(px, stride, SM_PAD - 2, ry, w - 2 * (SM_PAD - 2), SM_ROW_H, row_bg);
         if (pi >= proc_count) continue;
         struct proc_info *p = &procs[pi];
@@ -414,59 +417,91 @@ static uint64_t repeat_start_ms = 0;
 #define REPEAT_INTERVAL_MS 60
 #define REPEAT_MAX_MS      2000
 
+/* Ensure the highlighted row is on-screen. */
+static void scroll_into_view(void) {
+    if (selected < 0) selected = 0;
+    if (selected >= proc_count) selected = proc_count - 1;
+    if (selected < scroll_off) scroll_off = selected;
+    if (selected >= scroll_off + SM_VIS_ROWS)
+        scroll_off = selected - SM_VIS_ROWS + 1;
+    int m = proc_count - SM_VIS_ROWS;
+    if (m < 0) m = 0;
+    if (scroll_off > m) scroll_off = m;
+    if (scroll_off < 0) scroll_off = 0;
+}
+
+/* Ascend to parent of `cwd` in place. */
+static void cwd_ascend(void) {
+    size_t cwdlen = strlen(cwd);
+    if (cwdlen <= 1) return;
+    if (cwd[cwdlen - 1] == '/') { cwd[cwdlen - 1] = '\0'; cwdlen--; }
+    size_t i = cwdlen;
+    while (i > 0 && cwd[i - 1] != '/') i--;
+    if (i <= 1) { cwd[0] = '/'; cwd[1] = '\0'; }
+    else        { cwd[i - 1] = '\0'; }
+}
+
 static void process_key(struct client_state *s, uint32_t key) {
     bool ctrl = (kbd_mods & 4) != 0;
-    /* Up/Down: scroll */
-    if (key == 103) { if (scroll_off > 0) scroll_off--; s->needs_redraw = true; return; }
+    /* Up/Down: move selection (scroll viewport with it) */
+    if (key == 103) {
+        if (selected > 0) selected--;
+        scroll_into_view();
+        s->needs_redraw = true; return;
+    }
     if (key == 108) {
-        int m = proc_count - SM_VIS_ROWS;
-        if (m < 0) m = 0;
-        if (scroll_off < m) scroll_off++;
+        if (selected + 1 < proc_count) selected++;
+        scroll_into_view();
         s->needs_redraw = true; return;
     }
     if (key == 104) { /* PageUp */
-        scroll_off -= SM_VIS_ROWS; if (scroll_off < 0) scroll_off = 0;
+        selected -= SM_VIS_ROWS;
+        scroll_into_view();
         s->needs_redraw = true; return;
     }
     if (key == 109) { /* PageDown */
-        int m = proc_count - SM_VIS_ROWS; if (m < 0) m = 0;
-        scroll_off += SM_VIS_ROWS; if (scroll_off > m) scroll_off = m;
+        selected += SM_VIS_ROWS;
+        scroll_into_view();
         s->needs_redraw = true; return;
     }
-    if (key == 102) { scroll_off = 0; s->needs_redraw = true; return; } /* Home */
-    if (key == 107) { /* End */
-        int m = proc_count - SM_VIS_ROWS; if (m < 0) m = 0;
-        scroll_off = m; s->needs_redraw = true; return;
-    }
+    if (key == 102) { selected = 0; scroll_into_view(); s->needs_redraw = true; return; } /* Home */
+    if (key == 107) { selected = proc_count - 1; scroll_into_view(); s->needs_redraw = true; return; } /* End */
     if (ctrl && key == 16 /* q */) { s->running = false; return; }
     if (key == 19 /* r */) {
         refresh_procs();
         last_refresh_ms = tick_ms;
         s->needs_redraw = true; return;
     }
-    if (key == 14 /* Backspace */) {
-        /* Ascend to parent: strip the trailing path component. */
-        size_t cwdlen = strlen(cwd);
-        if (cwdlen > 1) {
-            /* Trim trailing slash if any */
-            if (cwd[cwdlen - 1] == '/') {
-                cwd[cwdlen - 1] = '\0';
-                cwdlen--;
-            }
-            /* Walk back to last '/' */
-            size_t i = cwdlen;
-            while (i > 0 && cwd[i - 1] != '/') i--;
-            if (i <= 1) {
-                cwd[0] = '/';
-                cwd[1] = '\0';
-            } else {
-                cwd[i - 1] = '\0';  /* drop the trailing slash too */
-            }
-            scroll_off = 0;
-            refresh_procs();
-            s->needs_redraw = true;
+    if (key == 28 /* Enter */) {
+        /* Descend into selected dir, or ascend if it's "..". Files are
+         * non-fatal — we just don't navigate. */
+        if (selected < 0 || selected >= proc_count) return;
+        struct proc_info *p = &procs[selected];
+        if (p->name[0] == '.' && p->name[1] == '.' && p->name[2] == '\0') {
+            cwd_ascend();
+        } else if (p->type == FT_DIR) {
+            size_t cwdlen = strlen(cwd);
+            size_t nlen = strlen(p->name);
+            /* "/" + name + NUL  vs.  cwd + "/" + name + NUL */
+            int needs_sep = (cwdlen == 0 || cwd[cwdlen - 1] != '/');
+            if (cwdlen + needs_sep + nlen + 1 >= sizeof(cwd)) return;
+            if (needs_sep) cwd[cwdlen++] = '/';
+            for (size_t i = 0; i < nlen; i++) cwd[cwdlen + i] = p->name[i];
+            cwd[cwdlen + nlen] = '\0';
+        } else {
+            return;  /* Not a dir; don't navigate */
         }
-        return;
+        selected = 0;
+        scroll_off = 0;
+        refresh_procs();
+        s->needs_redraw = true; return;
+    }
+    if (key == 14 /* Backspace */) {
+        cwd_ascend();
+        selected = 0;
+        scroll_off = 0;
+        refresh_procs();
+        s->needs_redraw = true; return;
     }
 }
 

@@ -4486,12 +4486,24 @@ void comp_render_frame(struct compositor_state *comp) {
         wl_list_for_each(ts, &comp->surfaces, link) {
             if (ts->has_backing && !ts->minimized) n_tab++;
         }
-        if (n_tab > 8) n_tab = 8;  /* limit to 8 visible items */
+        if (n_tab > 8) n_tab = 8;  /* hard cap matches ALT_TAB_MAX_VISIBLE */
+        /* On a 1024-wide screen, 8 items × (140+10) + padding overflows
+         * the right side and tab_x goes negative — the overlay visually
+         * spilled off the left edge. Reduce the visible cap to whatever
+         * actually fits, leaving 16px breathing room on each side. */
+        if (n_tab > 1) {
+            int max_fit = (fb_w - 32 - TAB_PAD * 2 + TAB_ITEM_PAD) /
+                          (TAB_ITEM_W + TAB_ITEM_PAD);
+            if (max_fit < 1) max_fit = 1;
+            if (n_tab > max_fit) n_tab = max_fit;
+        }
 
         int total_w = TAB_PAD * 2 + n_tab * TAB_ITEM_W + (n_tab > 1 ? (n_tab - 1) * TAB_ITEM_PAD : 0);
         int total_h = TAB_PAD * 2 + TAB_ITEM_H + TAB_TITLE_H;
         int tab_x = (fb_w - total_w) / 2;
+        if (tab_x < 0) tab_x = 0;
         int tab_y = (fb_h - total_h) / 2;
+        if (tab_y < (int32_t)MENUBAR_HEIGHT) tab_y = (int32_t)MENUBAR_HEIGHT;
         fut_rect_t tab_rect = { tab_x, tab_y, total_w, total_h };
 
         /* Dim background */

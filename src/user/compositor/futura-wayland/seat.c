@@ -1259,10 +1259,20 @@ static void seat_handle_key_event(struct seat_state *seat,
                 }
                 /* Cap to the renderer's visible cap so the highlight ring
                  * stays in sync with what's actually drawn. Cycling past the
-                 * 8th window otherwise advanced the (invisible) selection
-                 * past the overlay; on Alt release the focus jumped to a
-                 * window the user couldn't see was selected. */
+                 * last visible item otherwise advanced an (invisible)
+                 * selection past the overlay; on Alt release the focus
+                 * jumped to a window the user couldn't see was selected.
+                 * The renderer further trims if 8 items don't fit on the
+                 * current display (e.g. 1024-wide); match that here. */
                 if (count > ALT_TAB_MAX_VISIBLE) count = ALT_TAB_MAX_VISIBLE;
+                {
+                    /* Mirror the comp.c renderer: 16px breathing room each
+                     * side, TAB_PAD=16, TAB_ITEM_W=140, TAB_ITEM_PAD=10. */
+                    int32_t fb_w = (int32_t)seat->comp->fb_info.width;
+                    int max_fit = (fb_w - 32 - 32 + 10) / (140 + 10);
+                    if (max_fit < 1) max_fit = 1;
+                    if (count > max_fit) count = max_fit;
+                }
                 if (count > 0) {
                     bool reverse = (compositor_mods & COMP_MOD_SHIFT) != 0;
                     if (!seat->comp->alt_tab_active) {

@@ -322,9 +322,14 @@ static void pointer_motion(void *data, struct wl_pointer *pointer, uint32_t time
 static void pointer_button(void *data, struct wl_pointer *pointer, uint32_t serial,
                           uint32_t time, uint32_t button, uint32_t button_state) {
     struct panel_state *state = data;
-    (void)pointer; (void)serial; (void)time; (void)button;
+    (void)pointer; (void)serial; (void)time;
 
-    if (button_state == WL_POINTER_BUTTON_STATE_PRESSED && state->launcher_hovered) {
+    /* Linux BTN_LEFT (0x110) — only left-clicks launch the terminal.
+     * Without this check, right- or middle-clicking the APPS button also
+     * forked a terminal child, which felt like a stuck launcher. */
+    if (button == 0x110 &&
+        button_state == WL_POINTER_BUTTON_STATE_PRESSED &&
+        state->launcher_hovered) {
         printf("[PANEL] Launcher button clicked - attempting to launch terminal\n");
 
         /* Fork and exec a terminal application. The child must inherit

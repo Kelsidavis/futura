@@ -6606,8 +6606,13 @@ void comp_update_drag(struct compositor_state *comp) {
         comp->snap_preview_rect = (fut_rect_t){ fb_w / 2 + 2, MENUBAR_HEIGHT + 2,
                                                  fb_w / 2 - 4, snap_h - 4 };
     } else if (py <= SNAP_PREVIEW_THRESHOLD + (int32_t)MENUBAR_HEIGHT && !surface->maximized) {
+        /* Preview must match what maximize actually does — it now
+         * respects the menubar (top) and the 48px dock reservation
+         * (bottom), so the preview should too instead of showing a
+         * full-screen rectangle that the drop-snap can't deliver. */
         comp->snap_preview_active = true;
-        comp->snap_preview_rect = (fut_rect_t){ 2, 2, fb_w - 4, fb_h - 4 };
+        comp->snap_preview_rect = (fut_rect_t){ 2, MENUBAR_HEIGHT + 2,
+                                                 fb_w - 4, snap_h - 4 };
     } else {
         comp->snap_preview_active = false;
     }

@@ -4291,10 +4291,6 @@ void comp_render_frame(struct compositor_state *comp) {
                     char *ibase = (char *)dst->px;
                     uint32_t icon_col = (item == comp->futura_menu_hover)
                         ? 0xFFBBCCEEu : 0xB0A0A8C0u;
-                    /* "Quit" item gets red tint */
-                    if (item == FM_ITEMS - 1)
-                        icon_col = (item == comp->futura_menu_hover)
-                            ? 0xFFFF8888u : 0xB0CC6060u;
                     for (int iy = 0; iy < 8; iy++) {
                         int gy = icon_y + iy;
                         if (gy < fc.y || gy >= fc.y + fc.h) continue;

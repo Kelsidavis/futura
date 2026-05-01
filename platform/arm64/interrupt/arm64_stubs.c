@@ -98,6 +98,7 @@ int fut_stage_wl_wallpaper_binary(void)       { return -ENODEV; }
 #endif
 ARM64_STAGE_FN(fut_stage_init_binary,               init,           "/sbin", "/sbin/init")
 ARM64_STAGE_FN(fut_stage_shell_binary,              shell,          "/bin",  "/bin/shell")
+ARM64_STAGE_FN(fut_stage_rust_hello_binary,         rust_hello,     "/bin",  "/bin/rust-hello")
 
 /* Optional / not-yet-staged on ARM64 */
 int fut_stage_wayland_client_binary(void) {

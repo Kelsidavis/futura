@@ -2178,6 +2178,15 @@ void fut_kernel_main(void) {
     } else {
         fut_printf("[INIT] CLI shell staged at /bin/shell\n");
     }
+
+    /* Stage rust-hello (first user-space Rust program) */
+    extern int fut_stage_rust_hello_binary(void);
+    int rust_hello_stage = fut_stage_rust_hello_binary();
+    if (rust_hello_stage != 0) {
+        fut_printf("[WARN] Failed to stage rust-hello binary (error %d)\n", rust_hello_stage);
+    } else {
+        fut_printf("[INIT] rust-hello staged at /bin/rust-hello\n");
+    }
 #else
     /* Even in non-Wayland (test) mode, stage the shell binary at /bin/shell
      * so that execve("/bin/shell", ...) works for external command execution. */

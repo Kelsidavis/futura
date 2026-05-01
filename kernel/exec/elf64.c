@@ -1042,6 +1042,8 @@ extern const uint8_t _binary_build_bin_x86_64_user_init_start[];
 extern const uint8_t _binary_build_bin_x86_64_user_init_end[];
 extern const uint8_t _binary_build_bin_x86_64_user_second_start[];
 extern const uint8_t _binary_build_bin_x86_64_user_second_end[];
+extern const uint8_t _binary_build_bin_x86_64_user_rust_hello_start[];
+extern const uint8_t _binary_build_bin_x86_64_user_rust_hello_end[];
 /* Core Wayland binaries (production) */
 #if ENABLE_WAYLAND
 extern const uint8_t _binary_build_bin_x86_64_user_futura_wayland_start[];
@@ -1164,9 +1166,20 @@ int fut_stage_shell_binary(void) {
                       _binary_build_bin_x86_64_user_shell_end,
                       "/bin/shell");
 }
+
+int fut_stage_rust_hello_binary(void) {
+    (void)fut_vfs_mkdir("/bin", 0755);
+    return stage_blob(_binary_build_bin_x86_64_user_rust_hello_start,
+                      _binary_build_bin_x86_64_user_rust_hello_end,
+                      "/bin/rust-hello");
+}
 #else
 int fut_stage_shell_binary(void) {
     return -ENOSYS;  /* Shell binary not available on macOS host builds */
+}
+
+int fut_stage_rust_hello_binary(void) {
+    return -ENOSYS;  /* rust-hello not available on macOS host builds */
 }
 #endif
 

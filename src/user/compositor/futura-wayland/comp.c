@@ -1750,6 +1750,38 @@ void comp_render_frame(struct compositor_state *comp) {
         }
     }
 
+    /* Pick gradient endpoints from the wallpaper preset once per frame
+     * instead of per-scanline. The preset string is reread once a
+     * second by comp_handle_timer_tick; no need to dispatch on it for
+     * every row of every damage rect we paint this frame. */
+    int wp_top_r = 0x08, wp_top_g = 0x08, wp_top_b = 0x16;
+    int wp_bot_r = 0x1A, wp_bot_g = 0x18, wp_bot_b = 0x34;
+    {
+        const char *wp = comp->wallpaper_preset;
+        if (wp[0] == 'o' && wp[1] == 'c') {                        /* ocean */
+            wp_top_r = 0x00; wp_top_g = 0x10; wp_top_b = 0x28;
+            wp_bot_r = 0x00; wp_bot_g = 0x4F; wp_bot_b = 0x7C;
+        } else if (wp[0] == 'f' && wp[1] == 'o') {                 /* forest */
+            wp_top_r = 0x0A; wp_top_g = 0x1F; wp_top_b = 0x18;
+            wp_bot_r = 0x2D; wp_bot_g = 0x55; wp_bot_b = 0x3A;
+        } else if (wp[0] == 's' && wp[1] == 'u') {                 /* sunset */
+            wp_top_r = 0x42; wp_top_g = 0x10; wp_top_b = 0x10;
+            wp_bot_r = 0xD6; wp_bot_g = 0x60; wp_bot_b = 0x28;
+        } else if (wp[0] == 'l' && wp[1] == 'a') {                 /* lavender */
+            wp_top_r = 0x2C; wp_top_g = 0x1E; wp_top_b = 0x40;
+            wp_bot_r = 0x6B; wp_bot_g = 0x5B; wp_bot_b = 0x95;
+        } else if (wp[0] == 's' && wp[1] == 'l') {                 /* slate */
+            wp_top_r = 0x18; wp_top_g = 0x18; wp_top_b = 0x1A;
+            wp_bot_r = 0x40; wp_bot_g = 0x40; wp_bot_b = 0x44;
+        } else if (wp[0] == 's' && wp[1] == 'o' && wp[5] == 'l') { /* solarl */
+            wp_top_r = 0xEE; wp_top_g = 0xE8; wp_top_b = 0xD5;
+            wp_bot_r = 0xFD; wp_bot_g = 0xF6; wp_bot_b = 0xE3;
+        } else if (wp[0] == 's' && wp[1] == 'o' && wp[5] == 'd') { /* solard */
+            wp_top_r = 0x00; wp_top_g = 0x1F; wp_top_b = 0x28;
+            wp_bot_r = 0x07; wp_bot_g = 0x36; wp_bot_b = 0x42;
+        }
+    }
+
     /* Desktop background: gradient + radial glows + aurora bands + stars */
     for (int i = 0; i < damage->count; ++i) {
         fut_rect_t r = damage->rects[i];
@@ -1797,38 +1829,9 @@ void comp_render_frame(struct compositor_state *comp) {
             }
             if (row_occluded) continue;
             int t = (fb_h > 0) ? (gy * 255 / fb_h) : 0;
-            /* Vertical-gradient endpoints, picked from
-             * comp->wallpaper_preset (set in comp_state_init). The two
-             * triplets are top→bottom RGB; everything else (stars,
-             * moon, aurora) keeps using its current colours. */
-            int top_r = 0x08, top_g = 0x08, top_b = 0x16;
-            int bot_r = 0x1A, bot_g = 0x18, bot_b = 0x34;
-            const char *wp = comp->wallpaper_preset;
-            if (wp[0] == 'o' && wp[1] == 'c') {                 /* ocean */
-                top_r = 0x00; top_g = 0x10; top_b = 0x28;
-                bot_r = 0x00; bot_g = 0x4F; bot_b = 0x7C;
-            } else if (wp[0] == 'f' && wp[1] == 'o') {          /* forest */
-                top_r = 0x0A; top_g = 0x1F; top_b = 0x18;
-                bot_r = 0x2D; bot_g = 0x55; bot_b = 0x3A;
-            } else if (wp[0] == 's' && wp[1] == 'u') {          /* sunset */
-                top_r = 0x42; top_g = 0x10; top_b = 0x10;
-                bot_r = 0xD6; bot_g = 0x60; bot_b = 0x28;
-            } else if (wp[0] == 'l' && wp[1] == 'a') {          /* lavender */
-                top_r = 0x2C; top_g = 0x1E; top_b = 0x40;
-                bot_r = 0x6B; bot_g = 0x5B; bot_b = 0x95;
-            } else if (wp[0] == 's' && wp[1] == 'l') {          /* slate */
-                top_r = 0x18; top_g = 0x18; top_b = 0x1A;
-                bot_r = 0x40; bot_g = 0x40; bot_b = 0x44;
-            } else if (wp[0] == 's' && wp[1] == 'o' && wp[5] == 'l') { /* solarl */
-                top_r = 0xEE; top_g = 0xE8; top_b = 0xD5;
-                bot_r = 0xFD; bot_g = 0xF6; bot_b = 0xE3;
-            } else if (wp[0] == 's' && wp[1] == 'o' && wp[5] == 'd') { /* solard */
-                top_r = 0x00; top_g = 0x1F; top_b = 0x28;
-                bot_r = 0x07; bot_g = 0x36; bot_b = 0x42;
-            }
-            int base_r = top_r + (bot_r - top_r) * t / 255;
-            int base_g = top_g + (bot_g - top_g) * t / 255;
-            int base_b = top_b + (bot_b - top_b) * t / 255;
+            int base_r = wp_top_r + (wp_bot_r - wp_top_r) * t / 255;
+            int base_g = wp_top_g + (wp_bot_g - wp_top_g) * t / 255;
+            int base_b = wp_top_b + (wp_bot_b - wp_top_b) * t / 255;
             int32_t dy = gy - cy;
             int32_t dy2 = gy - cy2;
             /* Aurora Y falloff: Gaussian-ish bell curve */

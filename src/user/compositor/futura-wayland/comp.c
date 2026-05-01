@@ -5488,6 +5488,15 @@ static void comp_handle_timer_tick(struct compositor_state *comp, uint64_t expir
 
     if (comp->frame_damage.count > 0) {
         comp_render_frame(comp);
+    } else {
+        /* No damage this tick, but clients may still have pending
+         * frame callbacks waiting for a presentation event. Fire them
+         * anyway — the timer tick is a presentation boundary
+         * regardless of whether anything was repainted. Without this,
+         * idle clients (panel/shell ticking the clock once a minute)
+         * had to wait for the per-second mbar damage to indirectly
+         * unblock them. */
+        comp_flush_frame_callbacks(comp, comp_now_msec());
     }
 }
 

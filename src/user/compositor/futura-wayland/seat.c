@@ -1894,11 +1894,14 @@ void seat_surface_destroyed(struct seat_state *seat, struct comp_surface *surfac
         seat_keyboard_leave(seat, surface);
         seat->keyboard_focus = NULL;
         seat->comp->focused_surface = NULL;
-        /* Focus next visible window */
+        /* Focus next visible window. Must check has_backing too — a
+         * surface that hasn't committed a buffer yet has nothing to
+         * focus on visually, and every other "find next focus target"
+         * path in this file already gates on both flags. */
         if (!wl_list_empty(&seat->comp->surfaces)) {
             struct comp_surface *other;
             wl_list_for_each_reverse(other, &seat->comp->surfaces, link) {
-                if (other != surface && !other->minimized) {
+                if (other != surface && other->has_backing && !other->minimized) {
                     seat_focus_surface(seat, other);
                     break;
                 }

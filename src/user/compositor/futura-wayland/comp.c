@@ -1314,11 +1314,14 @@ void comp_surface_destroy(struct comp_surface *surface) {
         }
         if (comp->focused_surface == surface) {
             comp->focused_surface = NULL;
-            /* Focus the next visible window */
+            /* Focus the next visible window. has_backing matters too —
+             * a surface that hasn't committed its first buffer has
+             * nothing to draw, so handing focus to it leaves the
+             * desktop with no visible focus indicator. */
             if (!wl_list_empty(&comp->surfaces)) {
                 struct comp_surface *other;
                 wl_list_for_each_reverse(other, &comp->surfaces, link) {
-                    if (other != surface && !other->minimized) {
+                    if (other != surface && other->has_backing && !other->minimized) {
                         comp->focused_surface = other;
                         break;
                     }

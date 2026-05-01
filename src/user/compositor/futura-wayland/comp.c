@@ -325,8 +325,15 @@ static void comp_apply_committed_size(struct compositor_state *comp,
         max_y = 0;
     }
 
+    /* Same min-y rule as comp_update_surface_position — keep title
+     * bars below the menubar so the brand-click hit zone can't eat
+     * close/min/max button clicks. Fullscreen windows still get y=0. */
+    int32_t min_y = surface->fullscreen ? 0 : (int32_t)MENUBAR_HEIGHT;
+    if (max_y < min_y) {
+        max_y = min_y;
+    }
     surface->x = clamp_i32(surface->x, 0, max_x);
-    surface->y = clamp_i32(surface->y, 0, max_y);
+    surface->y = clamp_i32(surface->y, min_y, max_y);
 
     fut_rect_t new_frame = comp_frame_rect(surface);
     /* Pad to cover the focus glow / shadow halo, otherwise resizing a

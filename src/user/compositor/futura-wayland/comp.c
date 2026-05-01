@@ -6310,13 +6310,20 @@ void comp_update_resize(struct compositor_state *comp) {
         }
         new_x = 0;
     }
-    if (new_y < 0) {
+    /* Clamp the top edge to the menubar so resizing the top up doesn't
+     * push the title bar under it (matches the global y-clamp in
+     * comp_update_surface_position / comp_apply_committed_size). When
+     * RSZ_TOP is active, shrink the height by however far we clamped
+     * so the bottom edge stays put. Fullscreen surfaces aren't resized
+     * via this path. */
+    int32_t resize_min_y = surface->fullscreen ? 0 : (int32_t)MENUBAR_HEIGHT;
+    if (new_y < resize_min_y) {
         if (surface->resizing & RSZ_TOP) {
-            int32_t adjust = -new_y;
-            new_total += adjust;
+            int32_t adjust = resize_min_y - new_y;
+            new_total -= adjust;
             new_content_h = new_total - surface->bar_height;
         }
-        new_y = 0;
+        new_y = resize_min_y;
     }
     if (new_x + new_w > fb_w) {
         if (surface->resizing & RSZ_RIGHT) {

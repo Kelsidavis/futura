@@ -2187,6 +2187,15 @@ void fut_kernel_main(void) {
     } else {
         fut_printf("[INIT] rust-hello staged at /bin/rust-hello\n");
     }
+
+    /* Stage rust-uname (Rust uname-style CLI) */
+    extern int fut_stage_rust_uname_binary(void);
+    int rust_uname_stage = fut_stage_rust_uname_binary();
+    if (rust_uname_stage != 0) {
+        fut_printf("[WARN] Failed to stage rust-uname binary (error %d)\n", rust_uname_stage);
+    } else {
+        fut_printf("[INIT] rust-uname staged at /bin/rust-uname\n");
+    }
 #else
     /* Even in non-Wayland (test) mode, stage the shell binary at /bin/shell
      * so that execve("/bin/shell", ...) works for external command execution. */

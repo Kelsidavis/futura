@@ -6393,19 +6393,27 @@ void comp_surface_set_maximized(struct comp_surface *surface, bool maximized) {
         }
         comp_end_drag(comp);
 
+        /* Respect the top menubar and the bottom dock so a maximized
+         * window doesn't overlap either. Without this, the title bar
+         * landed at y=0 directly under the menubar, and the brand
+         * click region (x=4..72) covered the close/min/max buttons —
+         * clicking them toggled the Futura menu instead of acting on
+         * the window. The 48px bottom reservation matches the tile
+         * snap path (snap_h = fb_h - MENUBAR_HEIGHT - 48). */
         int32_t target_w = (int32_t)comp->fb_info.width;
-        int32_t target_h = (int32_t)comp->fb_info.height - surface->bar_height;
+        int32_t target_h = (int32_t)comp->fb_info.height
+                         - (int32_t)MENUBAR_HEIGHT - 48 - surface->bar_height;
         if (target_h < 0) {
             target_h = 0;
         }
 
         surface->pend_x = 0;
-        surface->pend_y = 0;
+        surface->pend_y = (int32_t)MENUBAR_HEIGHT;
         surface->have_pending_pos = true;
 
         uint32_t flags = comp_surface_state_flags(surface) | XDG_CFG_STATE_MAXIMIZED;
         xdg_shell_surface_send_configure(surface, target_w, target_h, flags);
-        comp_update_surface_position(comp, surface, 0, 0);
+        comp_update_surface_position(comp, surface, 0, (int32_t)MENUBAR_HEIGHT);
     } else {
         surface->maximized = false;
         int32_t target_w = surface->have_saved_geom ? surface->saved_w : surface->width;

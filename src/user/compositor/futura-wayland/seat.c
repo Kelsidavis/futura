@@ -537,6 +537,8 @@ static void compositor_launch_terminal(void);
 static void compositor_launch_edit(void);
 static void compositor_launch_sysmon(void);
 static void compositor_launch_files(void);
+static void compositor_launch_wallpaper(void);
+static void compositor_launch_settings(void);
 
 static void seat_handle_button(struct seat_state *seat,
                                uint16_t code,
@@ -852,9 +854,11 @@ static void seat_handle_button(struct seat_state *seat,
         if (sel == 1) compositor_launch_edit();
         if (sel == 2) compositor_launch_sysmon();
         if (sel == 3) compositor_launch_files();
-        if (sel == 4) { seat->comp->about_active = true; }
-        if (sel == 5) { seat->comp->shortcut_overlay_active = true; }
-        if (sel == 6) {
+        if (sel == 4) compositor_launch_wallpaper();
+        if (sel == 5) compositor_launch_settings();
+        if (sel == 6) { seat->comp->about_active = true; }
+        if (sel == 7) { seat->comp->shortcut_overlay_active = true; }
+        if (sel == 8) {
             /* System Info — show toast */
             int32_t w = (int32_t)seat->comp->fb_info.width;
             int32_t h = (int32_t)seat->comp->fb_info.height;
@@ -883,7 +887,7 @@ static void seat_handle_button(struct seat_state *seat,
             info[ci] = '\0';
             comp_show_toast(seat->comp, info);
         }
-        if (sel == 7) {
+        if (sel == 9) {
             /* Show Desktop */
             bool any_vis = false;
             struct comp_surface *s;
@@ -1150,6 +1154,30 @@ static void compositor_launch_files(void) {
         char *envp[] = { "WAYLAND_DISPLAY=wayland-0", "XDG_RUNTIME_DIR=/run",
                          "PATH=/bin:/sbin", "HOME=/", "TZ_OFFSET_SEC=-25200", (void*)0 };
         sys_execve_call("/bin/wl-files", argv, envp);
+        sys_exit(127);
+    }
+}
+
+/* Launch the wallpaper picker */
+static void compositor_launch_wallpaper(void) {
+    long pid = sys_fork_call();
+    if (pid == 0) {
+        char *argv[] = { "/bin/wl-wallpaper", (void*)0 };
+        char *envp[] = { "WAYLAND_DISPLAY=wayland-0", "XDG_RUNTIME_DIR=/run",
+                         "PATH=/bin:/sbin", "TZ_OFFSET_SEC=-25200", (void*)0 };
+        sys_execve_call("/bin/wl-wallpaper", argv, envp);
+        sys_exit(127);
+    }
+}
+
+/* Launch the settings panel */
+static void compositor_launch_settings(void) {
+    long pid = sys_fork_call();
+    if (pid == 0) {
+        char *argv[] = { "/bin/wl-settings", (void*)0 };
+        char *envp[] = { "WAYLAND_DISPLAY=wayland-0", "XDG_RUNTIME_DIR=/run",
+                         "PATH=/bin:/sbin", "TZ_OFFSET_SEC=-25200", (void*)0 };
+        sys_execve_call("/bin/wl-settings", argv, envp);
         sys_exit(127);
     }
 }

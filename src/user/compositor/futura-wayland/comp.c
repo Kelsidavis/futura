@@ -1643,15 +1643,27 @@ static int comp_flush_frame_callbacks(struct compositor_state *comp, uint64_t no
     int callbacks = 0;
     struct comp_surface *surface;
     wl_list_for_each(surface, &comp->surfaces, link) {
-        if (surface->composed_this_tick && surface->has_backing) {
+        /* Wayland spec: frame callbacks fire when the next frame is
+         * presented. The compositor's render tick IS that presentation
+         * boundary, regardless of whether this particular surface had
+         * fresh content composed. The earlier "composed_this_tick"-only
+         * gate caused clients that committed frame callbacks without
+         * fresh damage (idle desktop, panel/shell waking once a minute
+         * to tick the clock) to never get their done event — the
+         * compositor only fires when the surface intersects some
+         * damage rect, but those clients commit *because* nothing
+         * changed. Result: frozen UI when nothing was changing. */
+        if (surface->has_backing && !surface->minimized) {
             struct comp_frame_callback *cb, *tmp;
             wl_list_for_each_safe(cb, tmp, &surface->frame_callbacks, link) {
                 wl_callback_send_done(cb->resource, now_msec);
                 wl_resource_destroy(cb->resource);
                 ++callbacks;
             }
-            surface->had_new_buffer = false;
-            surface->damage_since_present = false;
+            if (surface->composed_this_tick) {
+                surface->had_new_buffer = false;
+                surface->damage_since_present = false;
+            }
         }
         surface->composed_this_tick = false;
     }

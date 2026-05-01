@@ -6164,8 +6164,18 @@ void comp_update_surface_position(struct compositor_state *comp,
         max_y = 0;
     }
 
+    /* Pin the top edge below the menubar for normal windows so the
+     * title bar's close/min/max buttons are never hidden behind the
+     * menubar — the brand-click hit zone (x=4..72) covers exactly the
+     * area where those buttons land if the window's y reaches 0.
+     * Fullscreen windows get y=0 because they intentionally cover the
+     * whole screen. */
+    int32_t min_y = surface->fullscreen ? 0 : (int32_t)MENUBAR_HEIGHT;
+    if (max_y < min_y) {
+        max_y = min_y;
+    }
     int32_t clamped_x = clamp_i32(new_x, 0, max_x);
-    int32_t clamped_y = clamp_i32(new_y, 0, max_y);
+    int32_t clamped_y = clamp_i32(new_y, min_y, max_y);
     if (clamped_x != new_x || clamped_y != new_y) {
 #ifdef DEBUG_WAYLAND
         WLOG("[WAYLAND] clamp win=%p -> x=%d y=%d\n",

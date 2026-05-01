@@ -594,49 +594,13 @@ int main(void) {
     /* Main event loop. Request a fresh frame callback on every
      * commit so wl_display_dispatch wakes up at compositor frame
      * cadence even when the user is idle — without it the topbar
-     * clock would freeze the moment input stopped.
-     *
-     * Re-rendering and re-committing the full 1024×768 buffer at
-     * every frame.done was burning ~60 fps of CPU just to redraw
-     * a clock that ticks once a minute. Track the visible state
-     * (last-rendered minute, hover index, mouse-pressed) and only
-     * commit a new frame when something actually changed. */
-    int32_t last_min = -1;
-    int32_t last_hover_x = -2;
-    int32_t last_hover_y = -2;
-    bool    last_pressed = false;
+     * clock would freeze the moment input stopped. */
     while (wl_display_dispatch(state.display) != -1) {
-        /* Compute current minute. clock_gettime drift is fine —
-         * the clock cell is ~5px wide, sub-second resolution is
-         * invisible. */
-        struct timespec now_ts = {0};
-        int32_t cur_min = -1;
-        if (clock_gettime(CLOCK_REALTIME, &now_ts) == 0) {
-            cur_min = (int32_t)((now_ts.tv_sec / 60) & 0x7fffffff);
-        }
-        bool changed = (cur_min != last_min) ||
-                       (state.mouse_x != last_hover_x) ||
-                       (state.mouse_y != last_hover_y) ||
-                       (state.mouse_pressed != last_pressed);
-        if (!changed) {
-            /* Re-arm a frame callback so dispatch keeps waking us;
-             * skip the buffer commit so the compositor isn't damaged
-             * unnecessarily. */
-            struct wl_callback *idle_cb = wl_surface_frame(state.surface);
-            if (idle_cb) {
-                wl_callback_add_listener(idle_cb, &shell_frame_listener, &state);
-            }
-            wl_surface_commit(state.surface);
-            wl_display_flush(state.display);
-            continue;
-        }
-        last_min = cur_min;
-        last_hover_x = state.mouse_x;
-        last_hover_y = state.mouse_y;
-        last_pressed = state.mouse_pressed;
-
+        /* Re-render UI if needed */
         render_ui(&state, state.pixels, SCREEN_WIDTH, SCREEN_HEIGHT, SCREEN_WIDTH * 4);
 
+        /* Frame request: even with a no-op done listener, the
+         * compositor's done event still wakes dispatch above. */
         struct wl_callback *frame_cb = wl_surface_frame(state.surface);
         if (frame_cb) {
             wl_callback_add_listener(frame_cb, &shell_frame_listener, &state);

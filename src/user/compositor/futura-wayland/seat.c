@@ -1692,9 +1692,26 @@ static void seat_resource_destroy(struct wl_resource *resource) {
         client->seat->keyboard_focus->surface_resource &&
         wl_resource_get_client(client->seat->keyboard_focus->surface_resource) ==
             wl_resource_get_client(resource)) {
-        seat_keyboard_leave(client->seat, client->seat->keyboard_focus);
+        struct comp_surface *leaving = client->seat->keyboard_focus;
+        seat_keyboard_leave(client->seat, leaving);
         client->seat->keyboard_focus = NULL;
         client->seat->comp->focused_surface = NULL;
+        /* Hand focus to the next visible window. Without this, if
+         * libwayland tears down the seat resource before the per-
+         * surface destroy listeners run, focus stays NULL and the
+         * desktop ends up with no keyboard target even though other
+         * windows are still visible. seat_surface_destroyed has the
+         * same fallback for the symmetric case where surfaces are
+         * destroyed first. */
+        if (!wl_list_empty(&client->seat->comp->surfaces)) {
+            struct comp_surface *other;
+            wl_list_for_each_reverse(other, &client->seat->comp->surfaces, link) {
+                if (other != leaving && other->has_backing && !other->minimized) {
+                    seat_focus_surface(client->seat, other);
+                    break;
+                }
+            }
+        }
     }
 
     seat_client_destroy(client);

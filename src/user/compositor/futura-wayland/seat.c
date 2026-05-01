@@ -809,7 +809,11 @@ static void seat_handle_button(struct seat_state *seat,
             if (mx + SEAT_CTX_MENU_W > fb_w) mx = fb_w - SEAT_CTX_MENU_W;
             if (my + SEAT_CTX_MENU_H > fb_h) my = fb_h - SEAT_CTX_MENU_H;
             if (mx < 0) mx = 0;
-            if (my < 0) my = 0;
+            /* Don't let the menu overlap the top menubar — same reservation
+             * the window y-clamp uses. The hover detector subtracts
+             * ctx_menu_y from pointer_y, so as long as both renderer and
+             * hit-test see the same clamped origin, hovering still works. */
+            if (my < (int32_t)24 /* MENUBAR_HEIGHT */) my = 24;
             #undef SEAT_CTX_MENU_W
             #undef SEAT_CTX_MENU_H
             seat->comp->ctx_menu_active = true;

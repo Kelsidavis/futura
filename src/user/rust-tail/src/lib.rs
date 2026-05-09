@@ -427,7 +427,13 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
     }
 
     // Static — both for arena footprint and to avoid a too-deep stack.
-    static mut TAIL: Tail = Tail::new(DEFAULT_LINES);
+    // Initialize with limit=0 so the entire struct is zero-valued and the
+    // linker emits it into .bss instead of .data; we set TAIL.limit
+    // (and reset the rest) below before tail_fd() reads anything.
+    // Without this, the [u8; 64K] arena carried 64 KiB of explicit
+    // zero bytes in the binary image (the `limit: 10` field made the
+    // initializer non-trivial).
+    static mut TAIL: Tail = Tail::new(0);
     let mut scratch = [0u8; READ_BUF];
     let mut had_error = false;
 

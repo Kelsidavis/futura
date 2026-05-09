@@ -225,6 +225,21 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, envp: *const *const u8
         if arg_eq(p, b"-n") { name_only = true; idx += 1; continue; }
         if arg_eq(p, b"-r") { idx += 1; continue; } // real == effective on Futura
         if arg_eq(p, b"--") { break; }
+        if arg_eq(p, b"--help") {
+            let help: &[u8] = b"\
+Usage: rust-id [OPTION]
+Print user and group IDs.
+
+  -u            print only the effective UID
+  -g            print only the effective GID
+  -n            print name instead of number (with -u or -g)
+  -r            use real instead of effective IDs (same on Futura)
+      --help        show this help and exit
+\0";
+            let len = help.len() - 1;
+            unsafe { let _ = syscall3(sysn::WRITE, 1, help.as_ptr() as u64, len as u64); }
+            return 0;
+        }
         write_str(STDERR, b"rust-id: unsupported option (use -u / -g / -n / -r)\n");
         return 1;
     }

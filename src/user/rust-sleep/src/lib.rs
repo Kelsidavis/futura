@@ -242,6 +242,36 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
     let mut total_ns: u64 = 0;
     let mut idx: usize = 1;
     let mut had_arg = false;
+    // Top-level --help short-circuit (single-arg form: `sleep --help`).
+    if argc == 2 {
+        let first = unsafe { *argv.add(1) };
+        if !first.is_null() && (first as usize) >= 0x10000 {
+            let want = b"--help";
+            let n = cstr_len(first);
+            if n == want.len() {
+                let mut ok = true;
+                for i in 0..want.len() {
+                    if unsafe { *first.add(i) } != want[i] { ok = false; break; }
+                }
+                if ok {
+                    let help: &[u8] = b"\
+Usage: rust-sleep [DURATION...]
+Pause for DURATION seconds. Multiple DURATIONs are summed.
+
+  DURATION   integer or fractional seconds with optional unit suffix:
+             s (seconds, default), m (minutes), h (hours), d (days)
+             e.g. 0.5  /  5s  /  1m  /  1.5h  /  2d
+      --help     show this help and exit
+
+With no DURATION, sleep 1 second.
+\0";
+                    let len = help.len() - 1;
+                    unsafe { let _ = syscall3(sysn::WRITE, 1, help.as_ptr() as u64, len as u64); }
+                    return 0;
+                }
+            }
+        }
+    }
     while let Some(p) = argv_get(argc, argv, idx) {
         idx += 1;
         had_arg = true;

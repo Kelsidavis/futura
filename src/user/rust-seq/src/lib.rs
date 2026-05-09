@@ -222,6 +222,24 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             continue;
         }
         if arg_eq(p, b"--") { idx += 1; break; }
+        if arg_eq(p, b"--help") {
+            let help: &[u8] = b"\
+Usage: rust-seq [-s SEP] [FIRST [STEP]] LAST
+Print integer sequences.
+
+  rust-seq LAST              1..=LAST
+  rust-seq FIRST LAST        FIRST..=LAST (step 1)
+  rust-seq FIRST STEP LAST   FIRST, FIRST+STEP, ... bounded by LAST
+  -s SEP                     join numbers with SEP (default newline)
+      --help                     show this help and exit
+
+STEP may be negative for descending sequences.
+\0";
+            let len = help.len() - 1;
+            unsafe { let _ = syscall3(sysn::WRITE, STDOUT as u64,
+                                       help.as_ptr() as u64, len as u64); }
+            return 0;
+        }
         break;
     }
 

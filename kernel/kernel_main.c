@@ -2232,6 +2232,15 @@ void fut_kernel_main(void) {
     } else {
         fut_printf("[INIT] rust-touch staged at /bin/rust-touch\n");
     }
+
+    /* Stage rust-rm (Rust rm-style CLI) */
+    extern int fut_stage_rust_rm_binary(void);
+    int rust_rm_stage = fut_stage_rust_rm_binary();
+    if (rust_rm_stage != 0) {
+        fut_printf("[WARN] Failed to stage rust-rm binary (error %d)\n", rust_rm_stage);
+    } else {
+        fut_printf("[INIT] rust-rm staged at /bin/rust-rm\n");
+    }
 #else
     /* Even in non-Wayland (test) mode, stage the shell binary at /bin/shell
      * so that execve("/bin/shell", ...) works for external command execution. */

@@ -1056,6 +1056,8 @@ extern const uint8_t _binary_build_bin_x86_64_user_rust_mkdir_start[];
 extern const uint8_t _binary_build_bin_x86_64_user_rust_mkdir_end[];
 extern const uint8_t _binary_build_bin_x86_64_user_rust_touch_start[];
 extern const uint8_t _binary_build_bin_x86_64_user_rust_touch_end[];
+extern const uint8_t _binary_build_bin_x86_64_user_rust_rm_start[];
+extern const uint8_t _binary_build_bin_x86_64_user_rust_rm_end[];
 extern const uint8_t _binary_build_bin_x86_64_user_futura_wayland_start[];
 extern const uint8_t _binary_build_bin_x86_64_user_futura_wayland_end[];
 extern const uint8_t _binary_build_bin_x86_64_user_futura_shell_start[];
@@ -1219,6 +1221,13 @@ int fut_stage_rust_touch_binary(void) {
                       _binary_build_bin_x86_64_user_rust_touch_end,
                       "/bin/rust-touch");
 }
+
+int fut_stage_rust_rm_binary(void) {
+    (void)fut_vfs_mkdir("/bin", 0755);
+    return stage_blob(_binary_build_bin_x86_64_user_rust_rm_start,
+                      _binary_build_bin_x86_64_user_rust_rm_end,
+                      "/bin/rust-rm");
+}
 #else
 int fut_stage_rust_hello_binary(void) { return -ENOSYS; }
 int fut_stage_rust_uname_binary(void) { return -ENOSYS; }
@@ -1226,6 +1235,7 @@ int fut_stage_rust_pwd_binary(void)   { return -ENOSYS; }
 int fut_stage_rust_ls_binary(void)    { return -ENOSYS; }
 int fut_stage_rust_mkdir_binary(void) { return -ENOSYS; }
 int fut_stage_rust_touch_binary(void) { return -ENOSYS; }
+int fut_stage_rust_rm_binary(void)    { return -ENOSYS; }
 #endif
 #else
 int fut_stage_shell_binary(void) {
@@ -1254,6 +1264,10 @@ int fut_stage_rust_mkdir_binary(void) {
 
 int fut_stage_rust_touch_binary(void) {
     return -ENOSYS;  /* rust-touch not available on macOS host builds */
+}
+
+int fut_stage_rust_rm_binary(void) {
+    return -ENOSYS;  /* rust-rm not available on macOS host builds */
 }
 #endif
 

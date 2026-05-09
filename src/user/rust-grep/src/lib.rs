@@ -344,6 +344,7 @@ struct Opts {
     list_no_match: bool,// -L   print "<file>" only if NO line matched
     quiet: bool,        // -q   no output at all, exit on first match
     max_count: u64,     // -m N (0 = unlimited)
+    only_matching: bool,// -o   emit only the matched portion(s)
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -353,7 +354,7 @@ enum ShowName {
     Never,  // -h
 }
 
-fn emit_match(name: Option<&[u8]>, lineno: u64, line: &[u8], opts: &Opts) {
+fn emit_prefix(name: Option<&[u8]>, lineno: u64, opts: &Opts) {
     let prefix_name = match opts.show_name {
         ShowName::Always => name,
         ShowName::Never => None,
@@ -369,10 +370,56 @@ fn emit_match(name: Option<&[u8]>, lineno: u64, line: &[u8], opts: &Opts) {
         write_all(STDOUT, &buf[..len]);
         write_all(STDOUT, b":");
     }
+}
+
+fn emit_match(name: Option<&[u8]>, lineno: u64, line: &[u8], opts: &Opts) {
+    emit_prefix(name, lineno, opts);
     write_all(STDOUT, line);
     if line.last().copied() != Some(b'\n') {
         write_all(STDOUT, b"\n");
     }
+}
+
+// Scan `line` for every non-overlapping fixed-string match of `pat`
+// (honoring -i and -w boundaries) and emit each matched span on its
+// own output line — the GNU grep -o shape. Returns the number of
+// matches emitted, used by -m N to bound per-file output.
+fn emit_matches_only(name: Option<&[u8]>, lineno: u64, line: &[u8],
+                      pat: &[u8], opts: &Opts) -> u64 {
+    if pat.is_empty() { return 0; }
+    // Trim a single trailing newline so it never leaks into a -o emit.
+    let body: &[u8] = if line.last() == Some(&b'\n') {
+        &line[..line.len() - 1]
+    } else {
+        line
+    };
+    if pat.len() > body.len() { return 0; }
+    let mut emitted: u64 = 0;
+    let mut i = 0usize;
+    while i + pat.len() <= body.len() {
+        let mut ok = true;
+        for j in 0..pat.len() {
+            let a = if opts.icase { to_lower(body[i + j]) } else { body[i + j] };
+            let b = if opts.icase { to_lower(pat[j]) } else { pat[j] };
+            if a != b { ok = false; break; }
+        }
+        if ok && opts.word {
+            let left_ok = i == 0 || !is_word_byte(body[i - 1]);
+            let right_ok = i + pat.len() >= body.len()
+                || !is_word_byte(body[i + pat.len()]);
+            if !(left_ok && right_ok) { ok = false; }
+        }
+        if ok {
+            emit_prefix(name, lineno, opts);
+            write_all(STDOUT, &body[i..i + pat.len()]);
+            write_all(STDOUT, b"\n");
+            emitted += 1;
+            i += pat.len();   // non-overlapping
+        } else {
+            i += 1;
+        }
+    }
+    emitted
 }
 
 fn grep_fd(
@@ -423,7 +470,11 @@ fn grep_fd(
                     let m = line_matches(body, pat, opts.icase, opts.word, opts.line_match);
                     if m != opts.invert {
                         if !suppress_lines {
-                            emit_match(name, lineno, body, opts);
+                            if opts.only_matching && !opts.invert {
+                                let _ = emit_matches_only(name, lineno, body, pat, opts);
+                            } else {
+                                emit_match(name, lineno, body, opts);
+                            }
                         }
                         count += 1;
                         if stop_after_first { return Ok(count); }
@@ -444,7 +495,11 @@ fn grep_fd(
         let m = line_matches(body, pat, opts.icase, opts.word, opts.line_match);
         if m != opts.invert {
             if !suppress_lines {
-                emit_match(name, lineno, body, opts);
+                if opts.only_matching && !opts.invert {
+                    let _ = emit_matches_only(name, lineno, body, pat, opts);
+                } else {
+                    emit_match(name, lineno, body, opts);
+                }
             }
             count += 1;
         }
@@ -639,6 +694,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         list_no_match: false,
         quiet: false,
         max_count: 0,
+        only_matching: false,
     };
 
     let mut e_pattern: Option<*const u8> = None;
@@ -657,6 +713,9 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             idx += 1;
         } else if arg_is(p, b"-x") || arg_is(p, b"--line-regexp") {
             opts.line_match = true;
+            idx += 1;
+        } else if arg_is(p, b"-o") || arg_is(p, b"--only-matching") {
+            opts.only_matching = true;
             idx += 1;
         } else if arg_is(p, b"-r") || arg_is(p, b"-R") || arg_is(p, b"--recursive") {
             opts.recursive = true;

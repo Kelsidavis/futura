@@ -185,7 +185,8 @@ static void refresh_procs(void) {
         }
     }
 
-    add_setting("User",           "root");
+    const char *user_env = getenv("USER");
+    add_setting("User",           user_env && *user_env ? user_env : "root");
 
     const char *tz = getenv("TZ_OFFSET_SEC");
     add_setting("Timezone Offset", tz && *tz ? tz : "(unset, UTC)");
@@ -193,9 +194,16 @@ static void refresh_procs(void) {
     const char *path_env = getenv("PATH");
     add_setting("PATH",           path_env && *path_env ? path_env : "(unset)");
 
-    add_setting("Home",           "/");
-    add_setting("Wayland Display","wayland-0");
-    add_setting("Runtime Dir",    "/run");
+    /* Read HOME from the environment instead of hard-coding "/", which
+     * stopped matching reality once /etc/profile started exporting
+     * HOME=/root for the system shell. Falling back keeps the row
+     * sensible if HOME ever ends up unset. */
+    const char *home_env = getenv("HOME");
+    add_setting("Home",           home_env && *home_env ? home_env : "/root");
+    const char *wd = getenv("WAYLAND_DISPLAY");
+    add_setting("Wayland Display", wd && *wd ? wd : "wayland-0");
+    const char *xdgr = getenv("XDG_RUNTIME_DIR");
+    add_setting("Runtime Dir",    xdgr && *xdgr ? xdgr : "/run");
 
     /* Clamp scroll */
     int max_scroll = proc_count - SM_VIS_ROWS;

@@ -240,16 +240,23 @@ fn arg_eq(p: *const u8, want: &[u8]) -> bool {
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
     let mut no_clobber = false;
+    let mut verbose = false;
     let mut idx: i32 = 1;
-    if idx < argc {
+    while idx < argc {
         let p = unsafe { *argv.add(idx as usize) };
-        if !p.is_null() && (p as usize) >= 0x10000 && arg_eq(p, b"-n") {
-            no_clobber = true;
-            idx += 1;
+        if p.is_null() || (p as usize) < 0x10000 { break; }
+        if arg_eq(p, b"-n") { no_clobber = true; idx += 1; continue; }
+        if arg_eq(p, b"-v") || arg_eq(p, b"--verbose") {
+            verbose = true; idx += 1; continue;
         }
+        if arg_eq(p, b"-nv") || arg_eq(p, b"-vn") {
+            no_clobber = true; verbose = true; idx += 1; continue;
+        }
+        if arg_eq(p, b"--") { idx += 1; break; }
+        break;
     }
     if argc - idx != 2 {
-        write_str(STDERR, b"usage: rust-mv [-n] <src> <dst>\n");
+        write_str(STDERR, b"usage: rust-mv [-nv] <src> <dst>\n");
         return 1;
     }
     let src = unsafe { *argv.add(idx as usize) };
@@ -350,6 +357,20 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             write_str(STDERR, b"rust-mv: renameat failed\n");
         }
         return 1;
+    }
+    if verbose {
+        // GNU mv -v: "renamed 'src' -> 'dst'\n" with the resolved dst.
+        let mut dlen = 0usize;
+        unsafe { while *dst.add(dlen) != 0 { dlen += 1; } }
+        let mut slen = 0usize;
+        unsafe { while *src.add(slen) != 0 { slen += 1; } }
+        unsafe {
+            let _ = syscall3(sysn::WRITE, 1, b"renamed '".as_ptr() as u64, 9);
+            let _ = syscall3(sysn::WRITE, 1, src as u64, slen as u64);
+            let _ = syscall3(sysn::WRITE, 1, b"' -> '".as_ptr() as u64, 6);
+            let _ = syscall3(sysn::WRITE, 1, dst as u64, dlen as u64);
+            let _ = syscall3(sysn::WRITE, 1, b"'\n".as_ptr() as u64, 2);
+        }
     }
     0
 }

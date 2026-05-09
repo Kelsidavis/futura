@@ -260,16 +260,23 @@ fn copy_loop(src_fd: i32, dst_fd: i32) -> bool {
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
     let mut no_clobber = false;
+    let mut verbose = false;
     let mut idx: i32 = 1;
-    if idx < argc {
+    while idx < argc {
         let p = unsafe { *argv.add(idx as usize) };
-        if !p.is_null() && (p as usize) >= 0x10000 && arg_is(p, b"-n") {
-            no_clobber = true;
-            idx += 1;
+        if p.is_null() || (p as usize) < 0x10000 { break; }
+        if arg_is(p, b"-n") { no_clobber = true; idx += 1; continue; }
+        if arg_is(p, b"-v") || arg_is(p, b"--verbose") {
+            verbose = true; idx += 1; continue;
         }
+        if arg_is(p, b"-nv") || arg_is(p, b"-vn") {
+            no_clobber = true; verbose = true; idx += 1; continue;
+        }
+        if arg_is(p, b"--") { idx += 1; break; }
+        break;
     }
     if argc - idx != 2 {
-        write_str(STDERR, b"usage: rust-cp [-n] <src> <dst>\n");
+        write_str(STDERR, b"usage: rust-cp [-nv] <src> <dst>\n");
         return 1;
     }
     let src = unsafe { *argv.add(idx as usize) };
@@ -349,6 +356,20 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         write_str(STDERR, b"rust-cp: copy failed\n");
         return 1;
     }
-    let _ = STDOUT;
+    if verbose {
+        // GNU cp -v: "'src' -> 'dst'\n" using the resolved dst path.
+        let dst_used = dst_open_path;
+        let mut dlen = 0usize;
+        unsafe { while *dst_used.add(dlen) != 0 { dlen += 1; } }
+        let mut slen = 0usize;
+        unsafe { while *src.add(slen) != 0 { slen += 1; } }
+        unsafe {
+            let _ = syscall3(sysn::WRITE, STDOUT as u64, b"'".as_ptr() as u64, 1);
+            let _ = syscall3(sysn::WRITE, STDOUT as u64, src as u64, slen as u64);
+            let _ = syscall3(sysn::WRITE, STDOUT as u64, b"' -> '".as_ptr() as u64, 6);
+            let _ = syscall3(sysn::WRITE, STDOUT as u64, dst_used as u64, dlen as u64);
+            let _ = syscall3(sysn::WRITE, STDOUT as u64, b"'\n".as_ptr() as u64, 2);
+        }
+    }
     0
 }

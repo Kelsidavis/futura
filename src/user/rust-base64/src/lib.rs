@@ -211,11 +211,10 @@ fn encode() -> i32 {
         }
         if filled == 0 { break; }
 
-        // If we hit EOF mid-buffer, we treat what's left as the
-        // final partial. Otherwise we encode in 3-byte multiples
-        // and carry any remainder to the next round.
-        let process_len = if filled == ENC_IN_CHUNK { filled } else { filled };
-        let n_out = encode_block(&buf[..process_len], &mut out);
+        // ENC_IN_CHUNK is a multiple of 3, so a fully-filled buffer
+        // produces 0 trailing pads. A partial fill (the EOF case)
+        // produces 1 or 2 pads from encode_block's tail handling.
+        let n_out = encode_block(&buf[..filled], &mut out);
 
         // Wrap output at 76 columns.
         let mut written = 0usize;

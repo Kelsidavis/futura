@@ -285,10 +285,26 @@ pub extern "C" fn main(_argc: i32, _argv: *const *const u8, _envp: *const *const
     let mins = (secs % 3600) / 60;
     let s = secs % 60;
     write_str(STDOUT, b"up ");
-    write_field(days, b'd');
-    write_field(hours, b'h');
-    write_field(mins, b'm');
-    // Last field — print without trailing space.
+
+    // Skip leading zero fields so a 5-second uptime prints as
+    // "up 5s" instead of "up 0d 0h 0m 5s". The seconds field is
+    // always printed (otherwise an exact-minute uptime would show
+    // "up 1m" with no trailing zero, which is closer to GNU uptime's
+    // narrow-window format anyway). Largest non-zero field decides
+    // where output starts.
+    let mut started = false;
+    if days > 0 {
+        write_field(days, b'd');
+        started = true;
+    }
+    if started || hours > 0 {
+        write_field(hours, b'h');
+        started = true;
+    }
+    if started || mins > 0 {
+        write_field(mins, b'm');
+    }
+    // Final field — seconds — always printed without trailing space.
     let mut buf = [0u8; 24];
     let mut i = buf.len();
     let mut v = s;

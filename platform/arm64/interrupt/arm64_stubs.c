@@ -141,6 +141,7 @@ ARM64_STAGE_FN(fut_stage_rust_chmod_binary,         rust_chmod,     "/bin",  "/b
 ARM64_STAGE_FN(fut_stage_rust_hostname_binary,      rust_hostname,  "/bin",  "/bin/rust-hostname")
 ARM64_STAGE_FN(fut_stage_rust_arch_binary,          rust_arch,      "/bin",  "/bin/rust-arch")
 ARM64_STAGE_FN(fut_stage_rust_kill_binary,          rust_kill,      "/bin",  "/bin/rust-kill")
+ARM64_STAGE_FN(fut_stage_rust_rmdir_binary,         rust_rmdir,     "/bin",  "/bin/rust-rmdir")
 #else
 int fut_stage_rust_hello_binary(void)         { return -ENODEV; }
 int fut_stage_rust_uname_binary(void)         { return -ENODEV; }
@@ -185,6 +186,7 @@ int fut_stage_rust_chmod_binary(void)         { return -ENODEV; }
 int fut_stage_rust_hostname_binary(void)      { return -ENODEV; }
 int fut_stage_rust_arch_binary(void)          { return -ENODEV; }
 int fut_stage_rust_kill_binary(void)          { return -ENODEV; }
+int fut_stage_rust_rmdir_binary(void)         { return -ENODEV; }
 #endif
 ARM64_STAGE_FN(fut_stage_init_binary,               init,           "/sbin", "/sbin/init")
 ARM64_STAGE_FN(fut_stage_shell_binary,              shell,          "/bin",  "/bin/shell")

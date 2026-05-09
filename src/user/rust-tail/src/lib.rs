@@ -332,6 +332,45 @@ impl Tail {
     }
 }
 
+// Byte-mode tail: keep the last `n_bytes` bytes (capped at the
+// supplied arena's capacity) and emit them. Reuses the line-mode
+// arena as a circular byte buffer to avoid a second 64 KiB static.
+fn tail_fd_bytes(fd: i32, n_bytes: usize, arena: &mut [u8], scratch: &mut [u8])
+    -> Result<(), ()>
+{
+    let cap = n_bytes.min(arena.len());
+    let mut head = 0usize;
+    let mut filled = 0usize;
+    loop {
+        let n = unsafe {
+            syscall3(sysn::READ, fd as u64,
+                     scratch.as_mut_ptr() as u64, scratch.len() as u64)
+        };
+        if n == 0 { break; }
+        if n < 0  { return Err(()); }
+        if cap == 0 { continue; }    // -c 0: drain input, emit nothing
+        let chunk = &scratch[..n as usize];
+        for &b in chunk {
+            arena[head] = b;
+            head = (head + 1) % cap;
+            if filled < cap { filled += 1; }
+        }
+    }
+    if filled == 0 { return Ok(()); }
+    // Where's the oldest byte? When filled < cap it's at index 0;
+    // otherwise it's at `head` (next-write-position == oldest after
+    // a full wrap).
+    let start = if filled < cap { 0 } else { head };
+    if start + filled <= cap {
+        if !write_all(STDOUT, &arena[start..start + filled]) { return Err(()); }
+    } else {
+        if !write_all(STDOUT, &arena[start..cap]) { return Err(()); }
+        let rest = filled - (cap - start);
+        if !write_all(STDOUT, &arena[..rest]) { return Err(()); }
+    }
+    Ok(())
+}
+
 fn tail_fd(fd: i32, tail: &mut Tail, scratch: &mut [u8]) -> Result<(), ()> {
     let mut line_buf = [0u8; 4096];
     let mut line_len = 0usize;
@@ -378,6 +417,7 @@ enum HeaderMode { Auto, Quiet, Verbose }
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
     let mut idx: usize = 1;
     let mut limit: usize = DEFAULT_LINES;
+    let mut byte_limit: Option<usize> = None;
     let mut hmode = HeaderMode::Auto;
 
     while let Some(p) = argv_get(argc, argv, idx) {
@@ -386,6 +426,23 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         }
         if arg_is(p, b"-v") || arg_is(p, b"--verbose") {
             hmode = HeaderMode::Verbose; idx += 1; continue;
+        }
+        if arg_is(p, b"-c") {
+            idx += 1;
+            match argv_get(argc, argv, idx) {
+                Some(np) => match parse_usize(np) {
+                    Some(v) => { byte_limit = Some(v); idx += 1; }
+                    None => {
+                        write_str(STDERR, b"rust-tail: -c needs a non-negative integer\n");
+                        return 1;
+                    }
+                },
+                None => {
+                    write_str(STDERR, b"rust-tail: -c needs an argument\n");
+                    return 1;
+                }
+            }
+            continue;
         }
         if arg_is(p, b"-n") {
             idx += 1;
@@ -451,9 +508,17 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
 
     if (idx as i32) >= argc {
         unsafe {
-            TAIL = Tail::new(limit);
-            if tail_fd(STDIN, &mut *core::ptr::addr_of_mut!(TAIL), &mut scratch).is_err() {
-                had_error = true;
+            if let Some(b) = byte_limit {
+                let tail_ref: &mut Tail = &mut *core::ptr::addr_of_mut!(TAIL);
+                let arena: &mut [u8] = &mut tail_ref.arena[..];
+                if tail_fd_bytes(STDIN, b, arena, &mut scratch).is_err() {
+                    had_error = true;
+                }
+            } else {
+                TAIL = Tail::new(limit);
+                if tail_fd(STDIN, &mut *core::ptr::addr_of_mut!(TAIL), &mut scratch).is_err() {
+                    had_error = true;
+                }
             }
         }
     } else {
@@ -502,9 +567,17 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             }
             first = false;
             unsafe {
-                TAIL = Tail::new(limit);
-                if tail_fd(fd, &mut *core::ptr::addr_of_mut!(TAIL), &mut scratch).is_err() {
-                    had_error = true;
+                if let Some(b) = byte_limit {
+                    let tail_ref: &mut Tail = &mut *core::ptr::addr_of_mut!(TAIL);
+                let arena: &mut [u8] = &mut tail_ref.arena[..];
+                    if tail_fd_bytes(fd, b, arena, &mut scratch).is_err() {
+                        had_error = true;
+                    }
+                } else {
+                    TAIL = Tail::new(limit);
+                    if tail_fd(fd, &mut *core::ptr::addr_of_mut!(TAIL), &mut scratch).is_err() {
+                        had_error = true;
+                    }
                 }
                 if opened_owned {
                     let _ = syscall1(sysn::CLOSE, fd as u64);

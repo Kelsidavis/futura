@@ -1461,20 +1461,6 @@ void fut_kernel_main(void) {
                   "# freestanding crt0, syscall path, and shell exec_external are\n"
                   "# all wired up end-to-end.\n"
                   "/bin/rust-hello\n");
-        /* TODO(shell): /etc/profile sourcing aborts after the first
-         * external-command exec because the shell's sys_waitpid on
-         * the just-exited child never returns. Instrumented the
-         * kernel: task_mark_exit IS called on the rust-hello child
-         * exit, parent pointer matches the shell, and
-         * fut_waitq_wake_all is invoked on parent->child_waiters —
-         * but parent->child_waiters.head is 0x0 (empty) at wake
-         * time, so the wake_all is a no-op. The parent shell
-         * doesn't see the wake and stays blocked forever. This is
-         * a classic lost-wakeup race: the parent's check ran *after*
-         * the child marked ZOMBIE but *before* the parent enqueued
-         * itself on the waitq, so the wake_all hit an empty queue.
-         * Fix needs fut_waitq_sleep_locked to atomically check the
-         * sleep precondition under the waitq lock. */
         ETC_WRITE("/etc/motd",
                   "\n"
                   "  \033[1;36mFutura OS 0.9.0\033[0m\n"

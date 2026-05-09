@@ -78,8 +78,6 @@ void fut_waitq_sleep_locked(fut_waitq_t *q, fut_spinlock_t *released_lock,
     if (state == FUT_THREAD_RUNNING) {
         state = FUT_THREAD_BLOCKED;
     }
-    thread->state = state;
-    thread->blocked_waitq = q;
 
     int lock_already_held = (released_lock == &q->lock);
 
@@ -87,7 +85,19 @@ void fut_waitq_sleep_locked(fut_waitq_t *q, fut_spinlock_t *released_lock,
     if (!lock_already_held) {
         fut_spinlock_acquire(&q->lock);
     }
+    /* Enqueue + state transition must be atomic under the waitq lock,
+     * otherwise a concurrent fut_signal_send (which races on
+     * thread->state == BLOCKED && thread->blocked_waitq) can fire
+     * between "state = BLOCKED" and the actual enqueue, find the
+     * thread off the queue, give up on waking it, and leave us
+     * sleeping forever. Visible symptom: shell's waitpid never
+     * returns when an exec'd child exits, because task_mark_exit's
+     * SIGCHLD signal_send hits an empty waitq and the subsequent
+     * fut_waitq_wake_all also sees an empty queue (parent enqueued
+     * itself a few cycles too late). */
     fut_waitq_enqueue(q, thread);
+    thread->blocked_waitq = q;
+    thread->state = state;
     if (!lock_already_held) {
         fut_spinlock_release(&q->lock);
     }

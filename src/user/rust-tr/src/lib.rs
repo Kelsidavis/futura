@@ -212,6 +212,7 @@ fn expand_set(p: *const u8, out: &mut [u8; 1024]) -> Option<usize> {
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
     let mut delete = false;
+    let mut squeeze = false;
     let mut idx: i32 = 1;
     while idx < argc {
         let p = unsafe { *argv.add(idx as usize) };
@@ -219,16 +220,42 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             idx += 1;
             continue;
         }
-        if cstr_eq(p, b"-d") {
-            delete = true;
-            idx += 1;
-        } else {
-            break;
+        if cstr_eq(p, b"-d") { delete = true; idx += 1; continue; }
+        if cstr_eq(p, b"-s") { squeeze = true; idx += 1; continue; }
+        if cstr_eq(p, b"-ds") || cstr_eq(p, b"-sd") {
+            delete = true; squeeze = true; idx += 1; continue;
         }
+        if cstr_eq(p, b"--help") {
+            let help: &[u8] = b"\
+Usage: rust-tr [OPTION]... SET1 [SET2]
+Translate, squeeze, and/or delete bytes from stdin to stdout.
+
+  -d        delete bytes in SET1 (no translation)
+  -s        squeeze runs of bytes in the last set to one byte each
+      --help    show this help and exit
+
+Sets accept literal bytes, 'a-z' style ranges, and '\\n' '\\t' '\\r'
+'\\0' '\\\\' escapes.
+\0";
+            let len = help.len() - 1;
+            unsafe { let _ = syscall3(sysn::WRITE, 1, help.as_ptr() as u64, len as u64); }
+            return 0;
+        }
+        break;
     }
-    let need = if delete { 1 } else { 2 };
-    if argc - idx != need {
-        write_str(STDERR, b"usage: rust-tr SET1 SET2  |  rust-tr -d SET1\n");
+    // -d alone needs SET1; -d -s needs SET1 (the squeeze set falls
+    // back to SET2-style empty); without -d we want SET1+SET2 unless
+    // -s is set, in which case SET2 is optional.
+    let pos_args = argc - idx;
+    let valid = if delete {
+        pos_args == 1 || (squeeze && pos_args == 2)
+    } else if squeeze {
+        pos_args == 1 || pos_args == 2
+    } else {
+        pos_args == 2
+    };
+    if !valid {
+        write_str(STDERR, b"usage: rust-tr [-d] [-s] SET1 [SET2]\n");
         return 1;
     }
     let s1_p = unsafe { *argv.add(idx as usize) };
@@ -245,15 +272,14 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
     let mut tbl: [u8; 256] = [0; 256];
     for i in 0..256 { tbl[i] = i as u8; }
     let mut delmap: [bool; 256] = [false; 256];
+    let mut squeezemap: [bool; 256] = [false; 256];
 
-    if delete {
-        for i in 0..s1_n {
-            delmap[s1[i] as usize] = true;
-        }
-    } else {
+    let mut s2_buf = [0u8; 1024];
+    let mut s2_n = 0usize;
+    let mut have_s2 = false;
+    if !delete && pos_args == 2 {
         let s2_p = unsafe { *argv.add((idx + 1) as usize) };
-        let mut s2 = [0u8; 1024];
-        let s2_n = match expand_set(s2_p, &mut s2) {
+        s2_n = match expand_set(s2_p, &mut s2_buf) {
             Some(n) => n,
             None => {
                 write_str(STDERR, b"rust-tr: SET2 too large\n");
@@ -265,15 +291,40 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             return 1;
         }
         for i in 0..s1_n {
-            // GNU: if SET2 is shorter, last byte repeats for the remainder of SET1.
-            let mapped = if i < s2_n { s2[i] } else { s2[s2_n - 1] };
+            let mapped = if i < s2_n { s2_buf[i] } else { s2_buf[s2_n - 1] };
             tbl[s1[i] as usize] = mapped;
+        }
+        have_s2 = true;
+    } else if delete && pos_args == 2 {
+        // -d -s SET1 SET2: delete SET1, squeeze SET2 in output.
+        let s2_p = unsafe { *argv.add((idx + 1) as usize) };
+        s2_n = match expand_set(s2_p, &mut s2_buf) {
+            Some(n) => n,
+            None => {
+                write_str(STDERR, b"rust-tr: SET2 too large\n");
+                return 1;
+            }
+        };
+        have_s2 = true;
+    }
+    if delete {
+        for i in 0..s1_n {
+            delmap[s1[i] as usize] = true;
+        }
+    }
+    if squeeze {
+        // The squeeze set is SET2 if it's present, else SET1.
+        if have_s2 {
+            for i in 0..s2_n { squeezemap[s2_buf[i] as usize] = true; }
+        } else {
+            for i in 0..s1_n { squeezemap[s1[i] as usize] = true; }
         }
     }
 
     let mut buf = [0u8; READ_BUF];
     let mut out = [0u8; READ_BUF];
     let mut had_error = false;
+    let mut last_emitted: i32 = -1;  // -1 = "no previous byte yet"
     loop {
         let n = unsafe {
             syscall3(sysn::READ, STDIN as u64, buf.as_mut_ptr() as u64, buf.len() as u64)
@@ -288,15 +339,17 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         let chunk = &buf[..n as usize];
         let mut w = 0usize;
         for &c in chunk {
-            if delete {
-                if !delmap[c as usize] {
-                    out[w] = c;
-                    w += 1;
-                }
-            } else {
-                out[w] = tbl[c as usize];
-                w += 1;
+            if delete && delmap[c as usize] { continue; }
+            let mapped: u8 = if delete { c } else { tbl[c as usize] };
+            // -s: skip a byte that's in the squeeze set AND matches
+            // the previous emitted byte.
+            if squeeze && squeezemap[mapped as usize]
+                && last_emitted as i32 == mapped as i32 {
+                continue;
             }
+            out[w] = mapped;
+            w += 1;
+            last_emitted = mapped as i32;
             // out is at least READ_BUF, same length as buf in non-delete
             // mode; in delete mode w <= chunk len. Always fits.
         }

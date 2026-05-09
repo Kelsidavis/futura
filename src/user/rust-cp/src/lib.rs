@@ -3,6 +3,8 @@
 // rust-cp — copy a single regular file.
 //
 //   rust-cp [-n] <src> <dst>
+//   rust-cp [-n] <src> <dst-dir>/   (DST treated as directory →
+//                                    copy goes to <dst-dir>/<basename>)
 //
 // Reads SRC and writes DST in 4 KiB chunks. Creates DST with mode
 // 0644:
@@ -10,9 +12,9 @@
 //   -n:      O_WRONLY|O_CREAT|O_EXCL   (no-clobber — refuse to
 //                                       overwrite an existing DST)
 //
-// Single-file only — no recursive directory copy, no preserve flags,
-// no DST-as-directory inference. Errors are written to stderr with
-// a short prefix and exit code 1.
+// If DST is an existing directory, the copy lands at DST/<basename>
+// (matches POSIX cp behavior). No recursive copy, no preserve flags.
+// Errors are written to stderr with a short prefix and exit code 1.
 
 #![no_std]
 #![forbid(unsafe_op_in_unsafe_fn)]
@@ -43,6 +45,8 @@ const O_WRONLY: u64 = 1;
 const O_CREAT: u64 = 0o100;
 const O_EXCL: u64 = 0o200;
 const O_TRUNC: u64 = 0o1000;
+// Linux generic O_DIRECTORY value; matches the kernel's flag bit.
+const O_DIRECTORY: u64 = 0o200_000;
 
 const STDOUT: i32 = 1;
 const STDERR: i32 = 2;
@@ -280,7 +284,53 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         write_str(STDERR, b"rust-cp: cannot open source\n");
         return 1;
     }
-    let dst_fd = open_write(dst, no_clobber);
+
+    // If DST is an existing directory, the actual write target is
+    // "<dst>/<basename(src)>". Detect by trying to open it with
+    // O_DIRECTORY — succeeds only for a real directory. Fall back to
+    // treating DST as a literal path otherwise.
+    let mut composed = [0u8; 1024];
+    let mut composed_len = 0usize;
+    let dst_open_path: *const u8 = {
+        let dir_probe = unsafe {
+            syscall4(sysn::OPENAT, AT_FDCWD as u64, dst as u64,
+                     O_RDONLY | O_DIRECTORY, 0)
+        };
+        if dir_probe >= 0 {
+            close_fd(dir_probe as i32);
+            // Compose <dst>/<basename(src)>.
+            let mut dlen = 0usize;
+            unsafe { while *dst.add(dlen) != 0 { dlen += 1; } }
+            let mut slen = 0usize;
+            unsafe { while *src.add(slen) != 0 { slen += 1; } }
+            let mut bstart = slen;
+            while bstart > 0 && unsafe { *src.add(bstart - 1) } != b'/' {
+                bstart -= 1;
+            }
+            let basename_len = slen - bstart;
+            let need_sep = dlen > 0 && unsafe { *dst.add(dlen - 1) } != b'/';
+            let total = dlen + (if need_sep { 1 } else { 0 }) + basename_len;
+            if total + 1 > composed.len() || basename_len == 0 {
+                close_fd(src_fd);
+                write_str(STDERR, b"rust-cp: composed path too long or basename empty\n");
+                return 1;
+            }
+            for i in 0..dlen { composed[i] = unsafe { *dst.add(i) }; }
+            let mut pos = dlen;
+            if need_sep { composed[pos] = b'/'; pos += 1; }
+            for i in 0..basename_len {
+                composed[pos + i] = unsafe { *src.add(bstart + i) };
+            }
+            composed[pos + basename_len] = 0;
+            composed_len = pos + basename_len;
+            composed.as_ptr()
+        } else {
+            dst
+        }
+    };
+    let _ = composed_len;
+
+    let dst_fd = open_write(dst_open_path, no_clobber);
     if dst_fd < 0 {
         close_fd(src_fd);
         if no_clobber {

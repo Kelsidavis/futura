@@ -7,7 +7,7 @@
 //                              of readlink per hop.
 //
 // Limited to the FINAL component, not full canonicalization. That
-// covers the common case (/bin/cat → /bin/rust-cat → ...) and matches
+// covers the common case (a single-hop symlink target) and matches
 // what `readlink -f` does for the immediate target. Fully canonical
 // path resolution would need per-component resolution, getcwd, and
 // dot-component squashing — a future iteration if/when ENOSYS bites.

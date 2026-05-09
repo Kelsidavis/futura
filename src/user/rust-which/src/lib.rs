@@ -261,66 +261,72 @@ fn try_path(dir: &[u8], name: &[u8]) -> bool {
     false
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn main(argc: i32, argv: *const *const u8, envp: *const *const u8) -> i32 {
-    if argc < 2 {
-        write_str(STDERR, b"usage: rust-which <name>\n");
-        return 2;
-    }
-    let name_p = unsafe { *argv.add(1) };
-    if name_p.is_null() || (name_p as usize) < 0x10000 {
-        write_str(STDERR, b"rust-which: invalid argument\n");
-        return 2;
-    }
-    let name_n = cstr_len(name_p);
-    let name = unsafe { core::slice::from_raw_parts(name_p, name_n) };
-
+// Look up a single name. Returns true on success (path printed).
+fn lookup_one(name_p: *const u8, name: &[u8], path_slice: &[u8]) -> bool {
     // If the name itself contains a slash, treat it as a literal path —
     // POSIX which(1) does the same.
     let mut has_slash = false;
     for &b in name {
-        if b == b'/' {
-            has_slash = true;
-            break;
-        }
+        if b == b'/' { has_slash = true; break; }
     }
     if has_slash {
         let fd = unsafe {
             syscall4(sysn::OPENAT, AT_FDCWD as u64, name_p as u64, O_RDONLY, 0) as i32
         };
         if fd >= 0 {
-            unsafe {
-                let _ = syscall1(sysn::CLOSE, fd as u64);
-            }
+            unsafe { let _ = syscall1(sysn::CLOSE, fd as u64); }
             write_str(STDOUT, name);
             write_str(STDOUT, b"\n");
-            return 0;
+            return true;
         }
-        return 1;
+        return false;
     }
 
-    // Resolve PATH (default "/bin:/sbin").
-    let path_ptr = env_lookup_path(envp);
-    let default_path: &[u8] = b"/bin:/sbin";
-    let (path_slice, _path_n) = match path_ptr {
-        Some(p) => {
-            let n = cstr_len(p);
-            (unsafe { core::slice::from_raw_parts(p, n) }, n)
-        }
-        None => (default_path, default_path.len()),
-    };
-
-    // Walk the colon-separated list.
+    // Walk the colon-separated PATH.
     let mut start = 0usize;
     for i in 0..=path_slice.len() {
         let at_end = i == path_slice.len();
         if at_end || path_slice[i] == b':' {
             let dir = &path_slice[start..i];
-            if try_path(dir, name) {
-                return 0;
-            }
+            if try_path(dir, name) { return true; }
             start = i + 1;
         }
     }
-    1
+    false
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn main(argc: i32, argv: *const *const u8, envp: *const *const u8) -> i32 {
+    if argc < 2 {
+        write_str(STDERR, b"usage: rust-which <name> [<name>...]\n");
+        return 2;
+    }
+
+    // Resolve PATH once; default to "/bin:/sbin" if unset.
+    let path_ptr = env_lookup_path(envp);
+    let default_path: &[u8] = b"/bin:/sbin";
+    let path_slice: &[u8] = match path_ptr {
+        Some(p) => {
+            let n = cstr_len(p);
+            unsafe { core::slice::from_raw_parts(p, n) }
+        }
+        None => default_path,
+    };
+
+    let mut not_found = 0i32;
+    for ai in 1..argc {
+        let p = unsafe { *argv.add(ai as usize) };
+        if p.is_null() || (p as usize) < 0x10000 {
+            not_found += 1;
+            continue;
+        }
+        let n = cstr_len(p);
+        let name = unsafe { core::slice::from_raw_parts(p, n) };
+        if !lookup_one(p, name, path_slice) {
+            not_found += 1;
+        }
+    }
+    // GNU which exits with the count of names that weren't found
+    // (clamped to 0/1/2: 0=all found, otherwise 1).
+    if not_found == 0 { 0 } else { 1 }
 }

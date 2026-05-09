@@ -44,32 +44,31 @@ const AT_FDCWD: i64 = -100;
 const STDOUT: i32 = 1;
 const STDERR: i32 = 2;
 
-// Linux x86_64 struct stat (size 144). aarch64's struct stat from the
-// generic UAPI is the same shape for everything we look at; we read
-// 144 bytes either way and only touch fields whose offsets match on
-// both archs.
+// Matches the kernel's struct fut_stat (kernel/include/kernel/fut_vfs.h).
+// Both the aarch64 newfstatat path and the x86_64 stat path write
+// this layout, so we don't need per-arch shapes here.
 #[repr(C)]
 #[derive(Default, Copy, Clone)]
 struct StatBuf {
     st_dev:     u64,   //   0
     st_ino:     u64,   //   8
-    st_nlink:   u64,   //  16  (x86_64) — aarch64 places nlink at +16 in newfstatat too
-    st_mode:    u32,   //  24
-    st_uid:     u32,   //  28
-    st_gid:     u32,   //  32
-    _pad0:      u32,   //  36
-    st_rdev:    u64,   //  40
-    st_size:    i64,   //  48
-    st_blksize: i64,   //  56
-    st_blocks:  i64,   //  64
-    st_atime:   i64,   //  72
-    _atime_ns:  u64,   //  80
-    st_mtime:   i64,   //  88
-    _mtime_ns:  u64,   //  96
-    st_ctime:   i64,   // 104
-    _ctime_ns:  u64,   // 112
-    _unused:    [i64; 3],  // 120..144
-}
+    st_mode:    u32,   //  16
+    st_nlink:   u32,   //  20
+    st_uid:     u32,   //  24
+    st_gid:     u32,   //  28
+    st_size:    u64,   //  32
+    st_blksize: u64,   //  40
+    st_blocks:  u64,   //  48
+    st_atime:   u64,   //  56
+    _atime_ns:  u32,   //  64
+    _atime_pad: u32,   //  68
+    st_mtime:   u64,   //  72
+    _mtime_ns:  u32,   //  80
+    _mtime_pad: u32,   //  84
+    st_ctime:   u64,   //  88
+    _ctime_ns:  u32,   //  96
+    _ctime_pad: u32,   // 100
+}                       // total 104 bytes
 
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
@@ -204,23 +203,6 @@ fn fmt_u64(mut n: u64, buf: &mut [u8; 24]) -> &[u8] {
     &buf[i..]
 }
 
-fn fmt_i64(n: i64, buf: &mut [u8; 24]) -> &[u8] {
-    if n >= 0 {
-        return fmt_u64(n as u64, buf);
-    }
-    // Render negatives via the unsigned magnitude.
-    let mag = (n as i128).unsigned_abs() as u64;
-    let mut i = buf.len();
-    let mut v = mag;
-    if v == 0 { i -= 1; buf[i] = b'0'; }
-    while v > 0 && i > 0 {
-        i -= 1;
-        buf[i] = b'0' + (v % 10) as u8;
-        v /= 10;
-    }
-    if i > 0 { i -= 1; buf[i] = b'-'; }
-    &buf[i..]
-}
 
 // Render mode as 4-char octal padded ("0644").
 fn fmt_octal_mode(mode: u32, buf: &mut [u8; 6]) -> &[u8] {
@@ -292,11 +274,11 @@ fn do_stat(path: *const u8) -> bool {
     write_str(STDOUT, b"\n");
 
     write_str(STDOUT, b"  Size: ");
-    write_str(STDOUT, fmt_i64(st.st_size, &mut nb));
+    write_str(STDOUT, fmt_u64(st.st_size, &mut nb));
     write_str(STDOUT, b"\tBlocks: ");
-    write_str(STDOUT, fmt_i64(st.st_blocks, &mut nb));
+    write_str(STDOUT, fmt_u64(st.st_blocks, &mut nb));
     write_str(STDOUT, b"\tIO Block: ");
-    write_str(STDOUT, fmt_i64(st.st_blksize, &mut nb));
+    write_str(STDOUT, fmt_u64(st.st_blksize, &mut nb));
     write_str(STDOUT, b"\t");
     write_str(STDOUT, type_name(st.st_mode));
     write_str(STDOUT, b"\n");
@@ -306,7 +288,7 @@ fn do_stat(path: *const u8) -> bool {
     write_str(STDOUT, b"\tInode: ");
     write_str(STDOUT, fmt_u64(st.st_ino, &mut nb));
     write_str(STDOUT, b"\tLinks: ");
-    write_str(STDOUT, fmt_u64(st.st_nlink, &mut nb));
+    write_str(STDOUT, fmt_u64(st.st_nlink as u64, &mut nb));
     write_str(STDOUT, b"\n");
 
     write_str(STDOUT, b"Access: (");
@@ -320,7 +302,7 @@ fn do_stat(path: *const u8) -> bool {
     write_str(STDOUT, b"\n");
 
     write_str(STDOUT, b"Modify: ");
-    write_str(STDOUT, fmt_i64(st.st_mtime, &mut nb));
+    write_str(STDOUT, fmt_u64(st.st_mtime, &mut nb));
     write_str(STDOUT, b"\n");
     true
 }

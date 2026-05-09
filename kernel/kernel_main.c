@@ -1469,6 +1469,7 @@ void fut_kernel_main(void) {
                   "/bin/id; /bin/whoami\n"
                   "/bin/arch; /bin/hostname\n"
                   "/bin/uptime\n"
+                  "/bin/stat /etc/profile\n"
                   "/bin/tree /etc\n"
                   "/bin/rust-wallpaper --get\n"
                   "/bin/rust-settings\n"

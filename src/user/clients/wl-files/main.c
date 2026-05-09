@@ -295,8 +295,33 @@ static void redraw_all(struct client_state *state) {
 
     /* Title + path */
     {
-        const char *title = "Files";
-        int tl = (int)strlen(title);
+        /* Title shows item count and a "·" when hidden entries are
+         * being included — gives the user a visible cue that Ctrl-H
+         * just changed something even when the dir has no dot files. */
+        char title_buf[40];
+        int tl = 0;
+        const char *base = "Files";
+        for (int i = 0; base[i] && tl < (int)sizeof(title_buf) - 1; i++) {
+            title_buf[tl++] = base[i];
+        }
+        if (proc_count >= 0) {
+            title_buf[tl++] = ' '; title_buf[tl++] = '(';
+            char num[12]; int ni = 0;
+            int v = proc_count;
+            if (v == 0) num[ni++] = '0';
+            else { char rev[12]; int ri = 0;
+                   while (v > 0 && ri < 11) { rev[ri++] = '0' + (v % 10); v /= 10; }
+                   while (ri > 0) num[ni++] = rev[--ri]; }
+            for (int i = 0; i < ni && tl < (int)sizeof(title_buf) - 2; i++) {
+                title_buf[tl++] = num[i];
+            }
+            title_buf[tl++] = ')';
+        }
+        if (show_hidden && tl < (int)sizeof(title_buf) - 2) {
+            title_buf[tl++] = ' ';
+            title_buf[tl++] = '.';
+        }
+        const char *title = title_buf;
         int ty = (SM_HEADER_H - FONT_HEIGHT) / 2;
         draw_text(px, w, h, stride, SM_PAD, ty, title, tl,
                   COL_HEADER_FG, COL_HEADER_BG);

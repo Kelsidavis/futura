@@ -387,21 +387,29 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             start += 1;
         }
 
+        let stdin_label: &[u8] = b"-";  // GNU wc keeps the literal "-" in its label
         while let Some(p) = argv_get(argc, argv, idx) {
             let n = cstr_len(p);
-            let fd = unsafe { sys_open_ro(p) };
-            if fd < 0 {
-                write_str(STDERR, b"rust-wc: cannot open '");
-                unsafe {
-                    let _ = syscall3(sysn::WRITE, STDERR as u64, p as u64, n as u64);
+            // "-" reads stdin and is labelled as such in the per-line
+            // output (matches GNU wc).
+            let is_dash = n == 1 && unsafe { *p } == b'-';
+            let (fd, opened_owned, name): (i32, bool, &[u8]) = if is_dash {
+                (STDIN, false, stdin_label)
+            } else {
+                let f = unsafe { sys_open_ro(p) };
+                if f < 0 {
+                    write_str(STDERR, b"rust-wc: cannot open '");
+                    unsafe {
+                        let _ = syscall3(sysn::WRITE, STDERR as u64, p as u64, n as u64);
+                    }
+                    write_str(STDERR, b"'\n");
+                    had_error = true;
+                    idx += 1;
+                    continue;
                 }
-                write_str(STDERR, b"'\n");
-                had_error = true;
-                idx += 1;
-                continue;
-            }
-            let name = unsafe { core::slice::from_raw_parts(p, n) };
-            match count_fd(fd as i32, &mut buf) {
+                (f as i32, true, unsafe { core::slice::from_raw_parts(p, n) })
+            };
+            match count_fd(fd, &mut buf) {
                 Ok(c) => {
                     total.lines += c.lines;
                     total.words += c.words;
@@ -413,8 +421,8 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
                     had_error = true;
                 }
             }
-            unsafe {
-                let _ = syscall1(sysn::CLOSE, fd as u64);
+            if opened_owned {
+                unsafe { let _ = syscall1(sysn::CLOSE, fd as u64); }
             }
             idx += 1;
         }

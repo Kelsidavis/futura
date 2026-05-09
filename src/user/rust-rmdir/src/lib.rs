@@ -2,7 +2,8 @@
 //
 // rust-rmdir — remove an EMPTY directory (POSIX rmdir(1)).
 //
-//   rust-rmdir <dir> [<dir>...]
+//   rust-rmdir <dir> [<dir>...]      remove each leaf directory
+//   rust-rmdir -p <dir> [<dir>...]   also remove empty parent dirs
 //
 // Per-arch syscall:
 //   aarch64 -> unlinkat(AT_FDCWD, dir, AT_REMOVEDIR=0x200) (SYS=35)
@@ -136,25 +137,58 @@ fn panic(_info: &PanicInfo) -> ! {
     }
 }
 
+// Try to remove a single directory by NUL-terminated path. Returns
+// the kernel's negative errno (or 0 on success).
+fn try_rmdir(path: *const u8) -> i64 {
+    #[cfg(target_arch = "aarch64")]
+    unsafe { syscall3(sysn::UNLINKAT, AT_FDCWD as u64, path as u64, AT_REMOVEDIR) }
+    #[cfg(target_arch = "x86_64")]
+    unsafe { syscall1(sysn::RMDIR, path as u64) }
+}
+
+const PATH_MAX: usize = 1024;
+
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
-    if argc < 2 {
-        write_str(STDERR, b"usage: rust-rmdir <dir> [<dir>...]\n");
+    let mut idx: i32 = 1;
+    let mut parents = false;
+    while idx < argc {
+        let p = unsafe { *argv.add(idx as usize) };
+        if p.is_null() || (p as usize) < 0x10000 { break; }
+        // Hand-rolled compare to avoid pulling in libcore slice eq.
+        let mut is_p = unsafe { *p } == b'-' && unsafe { *p.add(1) } == b'p'
+                       && unsafe { *p.add(2) } == 0;
+        // --parents long form
+        if !is_p {
+            let want = b"--parents";
+            let mut i = 0;
+            let mut ok = true;
+            while i < want.len() {
+                if unsafe { *p.add(i) } != want[i] { ok = false; break; }
+                i += 1;
+            }
+            if ok && unsafe { *p.add(want.len()) } == 0 { is_p = true; }
+        }
+        if is_p { parents = true; idx += 1; continue; }
+        if unsafe { *p } == b'-' && unsafe { *p.add(1) } == b'-'
+           && unsafe { *p.add(2) } == 0 {
+            idx += 1; break;  // bare "--" terminator
+        }
+        break;
+    }
+
+    if idx >= argc {
+        write_str(STDERR, b"usage: rust-rmdir [-p] <dir> [<dir>...]\n");
         return 1;
     }
     let mut had_error = false;
-    for ai in 1..argc {
+    for ai in idx..argc {
         let p = unsafe { *argv.add(ai as usize) };
         if p.is_null() || (p as usize) < 0x10000 {
             had_error = true;
             continue;
         }
-        #[cfg(target_arch = "aarch64")]
-        let r = unsafe {
-            syscall3(sysn::UNLINKAT, AT_FDCWD as u64, p as u64, AT_REMOVEDIR)
-        };
-        #[cfg(target_arch = "x86_64")]
-        let r = unsafe { syscall1(sysn::RMDIR, p as u64) };
+        let r = try_rmdir(p);
         if r < 0 {
             write_str(STDERR, b"rust-rmdir: cannot remove '");
             let mut n = 0usize;
@@ -164,6 +198,38 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             }
             write_str(STDERR, b"'\n");
             had_error = true;
+            continue;
+        }
+        // -p: also remove each parent component until something fails
+        // (typically ENOTEMPTY when the parent has other entries) or
+        // we reach the path's first component. Errors on parents are
+        // not treated as user-visible failures since the leaf removal
+        // already succeeded.
+        if parents {
+            let mut buf = [0u8; PATH_MAX];
+            let mut len = 0usize;
+            unsafe {
+                while *p.add(len) != 0 && len < PATH_MAX - 1 {
+                    buf[len] = *p.add(len);
+                    len += 1;
+                }
+            }
+            buf[len] = 0;
+            // Strip any trailing slash (treat "a/b/" same as "a/b").
+            while len > 1 && buf[len - 1] == b'/' { len -= 1; buf[len] = 0; }
+            // Walk back, lopping off the last component each time.
+            loop {
+                let mut cut = len;
+                while cut > 0 && buf[cut - 1] != b'/' { cut -= 1; }
+                if cut == 0 { break; }      // no parent component left
+                while cut > 1 && buf[cut - 1] == b'/' { cut -= 1; }
+                if cut == 0 { break; }      // path was rooted at "/"
+                // Truncate buf to `cut` bytes and try to rmdir it.
+                buf[cut] = 0;
+                len = cut;
+                let pr = try_rmdir(buf.as_ptr());
+                if pr < 0 { break; }
+            }
         }
     }
     if had_error { 1 } else { 0 }

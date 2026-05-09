@@ -1050,6 +1050,8 @@ extern const uint8_t _binary_build_bin_x86_64_user_rust_uname_start[];
 extern const uint8_t _binary_build_bin_x86_64_user_rust_uname_end[];
 extern const uint8_t _binary_build_bin_x86_64_user_rust_pwd_start[];
 extern const uint8_t _binary_build_bin_x86_64_user_rust_pwd_end[];
+extern const uint8_t _binary_build_bin_x86_64_user_rust_ls_start[];
+extern const uint8_t _binary_build_bin_x86_64_user_rust_ls_end[];
 extern const uint8_t _binary_build_bin_x86_64_user_futura_wayland_start[];
 extern const uint8_t _binary_build_bin_x86_64_user_futura_wayland_end[];
 extern const uint8_t _binary_build_bin_x86_64_user_futura_shell_start[];
@@ -1192,10 +1194,18 @@ int fut_stage_rust_pwd_binary(void) {
                       _binary_build_bin_x86_64_user_rust_pwd_end,
                       "/bin/rust-pwd");
 }
+
+int fut_stage_rust_ls_binary(void) {
+    (void)fut_vfs_mkdir("/bin", 0755);
+    return stage_blob(_binary_build_bin_x86_64_user_rust_ls_start,
+                      _binary_build_bin_x86_64_user_rust_ls_end,
+                      "/bin/rust-ls");
+}
 #else
 int fut_stage_rust_hello_binary(void) { return -ENOSYS; }
 int fut_stage_rust_uname_binary(void) { return -ENOSYS; }
 int fut_stage_rust_pwd_binary(void)   { return -ENOSYS; }
+int fut_stage_rust_ls_binary(void)    { return -ENOSYS; }
 #endif
 #else
 int fut_stage_shell_binary(void) {
@@ -1212,6 +1222,10 @@ int fut_stage_rust_uname_binary(void) {
 
 int fut_stage_rust_pwd_binary(void) {
     return -ENOSYS;  /* rust-pwd not available on macOS host builds */
+}
+
+int fut_stage_rust_ls_binary(void) {
+    return -ENOSYS;  /* rust-ls not available on macOS host builds */
 }
 #endif
 

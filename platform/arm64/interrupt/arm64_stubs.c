@@ -88,6 +88,7 @@ ARM64_STAGE_FN(fut_stage_wl_wallpaper_binary,       wl_wallpaper,   "/bin",  "/b
 ARM64_STAGE_FN(fut_stage_rust_hello_binary,         rust_hello,     "/bin",  "/bin/rust-hello")
 ARM64_STAGE_FN(fut_stage_rust_uname_binary,         rust_uname,     "/bin",  "/bin/rust-uname")
 ARM64_STAGE_FN(fut_stage_rust_pwd_binary,           rust_pwd,       "/bin",  "/bin/rust-pwd")
+ARM64_STAGE_FN(fut_stage_rust_ls_binary,            rust_ls,        "/bin",  "/bin/rust-ls")
 #else
 int fut_stage_wayland_compositor_binary(void) { return -ENODEV; }
 int fut_stage_futura_shell_binary(void)       { return -ENODEV; }
@@ -101,6 +102,7 @@ int fut_stage_wl_wallpaper_binary(void)       { return -ENODEV; }
 int fut_stage_rust_hello_binary(void)         { return -ENODEV; }
 int fut_stage_rust_uname_binary(void)         { return -ENODEV; }
 int fut_stage_rust_pwd_binary(void)           { return -ENODEV; }
+int fut_stage_rust_ls_binary(void)            { return -ENODEV; }
 #endif
 ARM64_STAGE_FN(fut_stage_init_binary,               init,           "/sbin", "/sbin/init")
 ARM64_STAGE_FN(fut_stage_shell_binary,              shell,          "/bin",  "/bin/shell")

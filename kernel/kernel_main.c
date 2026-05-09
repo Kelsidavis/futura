@@ -2279,6 +2279,7 @@ void fut_kernel_main(void) {
         extern int fut_stage_rust_strings_binary(void);
         extern int fut_stage_rust_cut_binary(void);
         extern int fut_stage_rust_seq_binary(void);
+        extern int fut_stage_rust_tr_binary(void);
         struct { const char *name; int (*fn)(void); } rust_bins[] = {
             {"rust-hello",  fut_stage_rust_hello_binary},
             {"rust-uname",  fut_stage_rust_uname_binary},
@@ -2330,6 +2331,7 @@ void fut_kernel_main(void) {
             {"rust-strings", fut_stage_rust_strings_binary},
             {"rust-cut",    fut_stage_rust_cut_binary},
             {"rust-seq",    fut_stage_rust_seq_binary},
+            {"rust-tr",     fut_stage_rust_tr_binary},
         };
         for (size_t i = 0; i < sizeof(rust_bins)/sizeof(rust_bins[0]); i++) {
             int rc = rust_bins[i].fn();
@@ -2403,6 +2405,7 @@ void fut_kernel_main(void) {
                 { "/bin/rust-strings",   "/bin/strings" },
                 { "/bin/rust-cut",       "/bin/cut"     },
                 { "/bin/rust-seq",       "/bin/seq"     },
+                { "/bin/rust-tr",        "/bin/tr"      },
             };
             for (size_t i = 0; i < sizeof(aliases)/sizeof(aliases[0]); i++) {
                 sys_symlink(aliases[i][0], aliases[i][1]);

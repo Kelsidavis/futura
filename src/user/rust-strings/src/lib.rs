@@ -305,7 +305,6 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
                     // strings on a 4 KiB-bounded reader.
                     if !write_all(STDOUT, &run[..run_len]) { had_error = true; break 'outer; }
                     if !write_all(STDOUT, b"\n") { had_error = true; break 'outer; }
-                    run_len = 0;
                     run[0] = c;
                     run_len = 1;
                 }

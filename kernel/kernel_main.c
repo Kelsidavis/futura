@@ -1460,10 +1460,13 @@ void fut_kernel_main(void) {
                   "# If you see 'Hello from Rust user-space on Futura' below, the\n"
                   "# freestanding crt0, syscall path, and shell exec_external are\n"
                   "# all wired up end-to-end.\n"
+                  "# Show off the Rust user-space toolchain (now that fork+exec\n"
+                  "# correctly cycles the child task through ZOMBIE on execve).\n"
+                  "echo --- rust user-space ---\n"
                   "/bin/rust-hello\n"
-                  "echo MIDDLE\n"
                   "/bin/rust-uname\n"
-                  "echo AFTER\n");
+                  "/bin/rust-pwd\n"
+                  "echo --- end rust ---\n");
         ETC_WRITE("/etc/motd",
                   "\n"
                   "  \033[1;36mFutura OS 0.9.0\033[0m\n"

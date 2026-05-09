@@ -147,9 +147,33 @@ fn env_lookup(envp: *const *const u8, name: &[u8]) -> Option<(*const u8, usize)>
     }
 }
 
+fn arg_eq(p: *const u8, want: &[u8]) -> bool {
+    for (i, &b) in want.iter().enumerate() {
+        if unsafe { *p.add(i) } != b { return false; }
+    }
+    unsafe { *p.add(want.len()) == 0 }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, envp: *const *const u8) -> i32 {
-    if argc < 2 {
+    // Parse leading flags. -0 / --null switches the separator from
+    // '\n' to '\0' so output can feed `xargs -0`-style consumers
+    // without ambiguity over names containing newlines.
+    let mut sep: u8 = b'\n';
+    let mut idx: i32 = 1;
+    while idx < argc {
+        let p = unsafe { *argv.add(idx as usize) };
+        if p.is_null() || (p as usize) < 0x10000 { break; }
+        if arg_eq(p, b"-0") || arg_eq(p, b"--null") {
+            sep = 0;
+            idx += 1;
+            continue;
+        }
+        if arg_eq(p, b"--") { idx += 1; break; }
+        break;
+    }
+
+    if idx >= argc {
         // Dump every entry.
         if envp.is_null() {
             return 0;
@@ -167,7 +191,10 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, envp: *const *const u8
             unsafe {
                 let _ = syscall3(sysn::WRITE, STDOUT as u64, e as u64, n as u64);
             }
-            write_str(STDOUT, b"\n");
+            let term = [sep];
+            unsafe {
+                let _ = syscall3(sysn::WRITE, STDOUT as u64, term.as_ptr() as u64, 1);
+            }
             i += 1;
         }
         return 0;
@@ -175,7 +202,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, envp: *const *const u8
 
     // Print value of each named var. Exit 1 if any are unset.
     let mut had_missing = false;
-    for ai in 1..argc {
+    for ai in idx..argc {
         let p = unsafe { *argv.add(ai as usize) };
         if p.is_null() || (p as usize) < 0x10000 {
             had_missing = true;
@@ -188,7 +215,10 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, envp: *const *const u8
                 unsafe {
                     let _ = syscall3(sysn::WRITE, STDOUT as u64, vp as u64, vn as u64);
                 }
-                write_str(STDOUT, b"\n");
+                let term = [sep];
+                unsafe {
+                    let _ = syscall3(sysn::WRITE, STDOUT as u64, term.as_ptr() as u64, 1);
+                }
             }
             None => {
                 had_missing = true;

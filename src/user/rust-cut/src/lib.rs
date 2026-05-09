@@ -7,7 +7,8 @@
 //
 // <delim> is a single byte (e.g. ',', ':', '\t' via -d $'\t').
 // <list> is a comma-separated set of 1-based field numbers, e.g.
-// "1,3,5". Ranges (1-3) are TBD.
+// "1,3,5". Range forms supported: "1-3", "-3" (1..=3), "5-"
+// (5..=MAX_FIELDS). Mixed lists like "1,3-5,8-" all work.
 //
 // Reads stdin if no FILE args; otherwise processes each FILE in turn,
 // matching `cut -d , -f 1 a b c`. Lines
@@ -220,6 +221,21 @@ fn parse_fields(p: *const u8, out: &mut [u32; MAX_FIELDS]) -> Option<usize> {
     if s.is_empty() {
         return None;
     }
+    // Parse one decimal token; returns None on failure. Empty input
+    // is allowed at this layer so the caller can interpret "" / "-"
+    // / "5-" as open-ended ranges.
+    fn parse_one(tok: &[u8]) -> Option<u32> {
+        if tok.is_empty() { return None; }
+        let mut v: u64 = 0;
+        for &c in tok {
+            if !(b'0'..=b'9').contains(&c) { return None; }
+            v = v * 10 + (c - b'0') as u64;
+            if v > u32::MAX as u64 { return None; }
+        }
+        if v == 0 { return None; }   // 1-based
+        Some(v as u32)
+    }
+
     let mut count = 0usize;
     let mut start = 0usize;
     for i in 0..=s.len() {
@@ -229,24 +245,41 @@ fn parse_fields(p: *const u8, out: &mut [u32; MAX_FIELDS]) -> Option<usize> {
             if tok.is_empty() {
                 return None;
             }
-            let mut v: u64 = 0;
-            for &c in tok {
-                if !(b'0'..=b'9').contains(&c) {
-                    return None;
+            // Range form: "A-B", "A-" (open right), "-B" (open left,
+            // i.e. starting from 1).
+            let mut dash = tok.len();
+            for k in 0..tok.len() {
+                if tok[k] == b'-' { dash = k; break; }
+            }
+            if dash < tok.len() {
+                let lo_tok = &tok[..dash];
+                let hi_tok = &tok[dash + 1..];
+                let lo: u32 = if lo_tok.is_empty() { 1 } else {
+                    match parse_one(lo_tok) { Some(v) => v, None => return None }
+                };
+                // Open-right "5-" expands to lo..=MAX_FIELDS — not
+                // unbounded since we have a fixed-size out[] buffer.
+                // GNU cut allows it but our static window is bounded.
+                let hi: u32 = if hi_tok.is_empty() {
+                    MAX_FIELDS as u32
+                } else {
+                    match parse_one(hi_tok) { Some(v) => v, None => return None }
+                };
+                if hi < lo { return None; }
+                let mut v = lo;
+                while v <= hi {
+                    if count >= MAX_FIELDS { return None; }
+                    out[count] = v;
+                    count += 1;
+                    if v == u32::MAX { break; }
+                    v += 1;
                 }
-                v = v * 10 + (c - b'0') as u64;
-                if v > u32::MAX as u64 {
-                    return None;
-                }
+            } else {
+                let v = match parse_one(tok) { Some(v) => v, None => return None };
+                if count >= MAX_FIELDS { return None; }
+                out[count] = v;
+                count += 1;
             }
-            if v == 0 {
-                return None; // 1-based
-            }
-            if count >= MAX_FIELDS {
-                return None;
-            }
-            out[count] = v as u32;
-            count += 1;
             start = i + 1;
         }
     }
@@ -335,7 +368,8 @@ Usage: rust-cut -d DELIM -f LIST [-s] [FILE]...
 Print selected fields from each line.
 
   -d DELIM   single-byte field delimiter (required)
-  -f LIST    1-based, comma-separated field numbers (e.g. 1,3,5)
+  -f LIST    1-based field list, supports comma + range forms:
+             1,3,5  /  1-3  /  -3 (1..=3)  /  5- (5 to MAX)
   -s         suppress lines that contain no DELIM
       --help     show this help and exit
 

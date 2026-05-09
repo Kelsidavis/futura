@@ -177,9 +177,9 @@ fn arg_is(p: *const u8, want: &[u8]) -> bool {
 // Make a single component (no recursion). Treats EEXIST as success
 // only when the caller asked for -p semantics; otherwise EEXIST is
 // reported as an error like classic mkdir(1).
-fn make_one(path_buf: &[u8], permissive: bool) -> bool {
+fn make_one(path_buf: &[u8], permissive: bool, mode: u32) -> bool {
     // Path buffer must be NUL-terminated by the caller.
-    let rc = unsafe { sys_mkdir_at(path_buf.as_ptr(), 0o755) };
+    let rc = unsafe { sys_mkdir_at(path_buf.as_ptr(), mode) };
     if rc == 0 {
         true
     } else if permissive && rc == EEXIST {
@@ -199,8 +199,12 @@ fn make_one(path_buf: &[u8], permissive: bool) -> bool {
 
 // Walk the supplied path component-by-component, creating each
 // intermediate directory. The buffer must be at least `path.len + 1`
-// bytes so we can NUL-terminate after every prefix slice.
-fn make_recursive(path: &[u8], buf: &mut [u8]) -> bool {
+// bytes so we can NUL-terminate after every prefix slice. Intermediate
+// dirs are always created with 0o755 (matches GNU mkdir -p): the
+// user-supplied -m only applies to the final component, otherwise a
+// restrictive mode like 0700 on the leaf would also lock us out of
+// every parent we just made.
+fn make_recursive(path: &[u8], buf: &mut [u8], leaf_mode: u32) -> bool {
     if path.is_empty() {
         return true;
     }
@@ -227,7 +231,9 @@ fn make_recursive(path: &[u8], buf: &mut [u8]) -> bool {
             buf[i] = 0;
             // Don't treat root or the trailing slash as a target.
             if !(buf[..i].iter().all(|&c| c == b'/')) {
-                if !make_one(&buf[..=i], true) {
+                let is_leaf = i == path.len();
+                let mode = if is_leaf { leaf_mode } else { 0o755 };
+                if !make_one(&buf[..=i], true, mode) {
                     ok = false;
                     break;
                 }
@@ -242,16 +248,54 @@ fn make_recursive(path: &[u8], buf: &mut [u8]) -> bool {
     ok
 }
 
+// Parse a 1-4 digit octal mode string (e.g. "755", "0700"). Returns
+// None on a non-octal character. Symbolic modes (u+x, etc.) are not
+// supported here.
+fn parse_octal_mode(p: *const u8) -> Option<u32> {
+    let mut n = 0usize;
+    unsafe { while *p.add(n) != 0 { n += 1; } }
+    if n == 0 || n > 5 { return None; }
+    let mut v: u32 = 0;
+    for i in 0..n {
+        let c = unsafe { *p.add(i) };
+        // Allow a leading '0' but otherwise require octal digits.
+        if !(b'0'..=b'7').contains(&c) { return None; }
+        v = v.checked_mul(8)?.checked_add((c - b'0') as u32)?;
+        if v > 0o7777 { return None; }
+    }
+    Some(v)
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
     let mut idx: usize = 1;
     let mut p_flag = false;
+    let mut mode: u32 = 0o755;
 
-    // Parse the optional -p flag (no other GNU-style flags supported).
+    // Parse the optional -p / -m flags.
     while let Some(p) = argv_get(argc, argv, idx) {
         if arg_is(p, b"-p") {
             p_flag = true;
             idx += 1;
+        } else if arg_is(p, b"-m") {
+            // -m <mode> takes a separate token (we don't support
+            // -m<mode> glued without a space, like coreutils does;
+            // adding it would mean reparsing -m... which is rarely
+            // used and adds complexity for little gain).
+            idx += 1;
+            match argv_get(argc, argv, idx) {
+                Some(mp) => match parse_octal_mode(mp) {
+                    Some(v) => { mode = v; idx += 1; }
+                    None => {
+                        write_str(STDERR, b"rust-mkdir: -m needs an octal mode (e.g. 755)\n");
+                        return 1;
+                    }
+                },
+                None => {
+                    write_str(STDERR, b"rust-mkdir: -m needs an argument\n");
+                    return 1;
+                }
+            }
         } else if arg_is(p, b"--") {
             idx += 1;
             break;
@@ -261,7 +305,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
     }
 
     if (idx as i32) >= argc {
-        write_str(STDERR, b"usage: rust-mkdir [-p] DIR [DIR...]\n");
+        write_str(STDERR, b"usage: rust-mkdir [-p] [-m <mode>] DIR [DIR...]\n");
         return 1;
     }
 
@@ -286,9 +330,9 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         path[n] = 0;
 
         let ok = if p_flag {
-            make_recursive(&path[..n], &mut buf)
+            make_recursive(&path[..n], &mut buf, mode)
         } else {
-            make_one(&path[..=n], false)
+            make_one(&path[..=n], false, mode)
         };
 
         if !ok {

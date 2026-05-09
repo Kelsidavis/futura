@@ -418,6 +418,19 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         } else if arg_is(p, b"--") {
             idx += 1;
             break;
+        } else if arg_is(p, b"--help") {
+            let help: &[u8] = b"\
+Usage: rust-rm [OPTION]... FILE [FILE...]
+Remove each FILE.
+
+  -f                   ignore missing files; do not prompt
+  -r, -R, --recursive  walk directories and remove their contents
+  -v, --verbose        emit \"removed '<path>'\" for each removal
+      --help           show this help and exit
+\0";
+            let len = help.len() - 1;
+            unsafe { let _ = syscall3(sysn::WRITE, 1, help.as_ptr() as u64, len as u64); }
+            return 0;
         } else {
             break;
         }

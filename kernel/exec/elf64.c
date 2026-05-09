@@ -1070,6 +1070,8 @@ extern const uint8_t _binary_build_bin_x86_64_user_rust_env_start[];
 extern const uint8_t _binary_build_bin_x86_64_user_rust_env_end[];
 extern const uint8_t _binary_build_bin_x86_64_user_rust_head_start[];
 extern const uint8_t _binary_build_bin_x86_64_user_rust_head_end[];
+extern const uint8_t _binary_build_bin_x86_64_user_rust_tail_start[];
+extern const uint8_t _binary_build_bin_x86_64_user_rust_tail_end[];
 #endif
 /* Core Wayland binaries (production) */
 #if ENABLE_WAYLAND
@@ -1285,6 +1287,13 @@ int fut_stage_rust_head_binary(void) {
                       _binary_build_bin_x86_64_user_rust_head_end,
                       "/bin/rust-head");
 }
+
+int fut_stage_rust_tail_binary(void) {
+    (void)fut_vfs_mkdir("/bin", 0755);
+    return stage_blob(_binary_build_bin_x86_64_user_rust_tail_start,
+                      _binary_build_bin_x86_64_user_rust_tail_end,
+                      "/bin/rust-tail");
+}
 #else
 int fut_stage_rust_hello_binary(void) { return -ENOSYS; }
 int fut_stage_rust_uname_binary(void) { return -ENOSYS; }
@@ -1299,6 +1308,7 @@ int fut_stage_rust_true_binary(void)  { return -ENOSYS; }
 int fut_stage_rust_false_binary(void) { return -ENOSYS; }
 int fut_stage_rust_env_binary(void)   { return -ENOSYS; }
 int fut_stage_rust_head_binary(void)  { return -ENOSYS; }
+int fut_stage_rust_tail_binary(void)  { return -ENOSYS; }
 #endif
 #else
 int fut_stage_shell_binary(void) {
@@ -1355,6 +1365,10 @@ int fut_stage_rust_env_binary(void) {
 
 int fut_stage_rust_head_binary(void) {
     return -ENOSYS;  /* rust-head not available on macOS host builds */
+}
+
+int fut_stage_rust_tail_binary(void) {
+    return -ENOSYS;  /* rust-tail not available on macOS host builds */
 }
 #endif
 

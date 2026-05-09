@@ -421,6 +421,25 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
     let mut hmode = HeaderMode::Auto;
 
     while let Some(p) = argv_get(argc, argv, idx) {
+        if arg_is(p, b"--help") {
+            let help: &[u8] = b"\
+Usage: rust-tail [OPTION]... [FILE]...
+Print the last 10 lines of each FILE to standard output. With more
+than one FILE, precede each with a header. With no FILE, read stdin.
+
+  -c, --bytes=NUM        print the last NUM bytes (capped at 64K arena)
+  -n, --lines=NUM        print the last NUM lines (default: 10)
+  -q, --quiet, --silent  never print headers
+  -v, --verbose          always print headers
+      --help             show this help and exit
+
+A single '-' in the FILE list means standard input.
+\0";
+            let len = help.len() - 1;
+            unsafe { let _ = syscall3(sysn::WRITE, STDOUT as u64,
+                                       help.as_ptr() as u64, len as u64); }
+            return 0;
+        }
         if arg_is(p, b"-q") || arg_is(p, b"--quiet") || arg_is(p, b"--silent") {
             hmode = HeaderMode::Quiet; idx += 1; continue;
         }

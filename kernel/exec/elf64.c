@@ -1116,6 +1116,8 @@ extern const uint8_t _binary_build_bin_x86_64_user_rust_rev_start[];
 extern const uint8_t _binary_build_bin_x86_64_user_rust_rev_end[];
 extern const uint8_t _binary_build_bin_x86_64_user_rust_od_start[];
 extern const uint8_t _binary_build_bin_x86_64_user_rust_od_end[];
+extern const uint8_t _binary_build_bin_x86_64_user_rust_printenv_start[];
+extern const uint8_t _binary_build_bin_x86_64_user_rust_printenv_end[];
 #endif
 /* Core Wayland binaries (production) */
 #if ENABLE_WAYLAND
@@ -1492,6 +1494,13 @@ int fut_stage_rust_od_binary(void) {
                       _binary_build_bin_x86_64_user_rust_od_end,
                       "/bin/rust-od");
 }
+
+int fut_stage_rust_printenv_binary(void) {
+    (void)fut_vfs_mkdir("/bin", 0755);
+    return stage_blob(_binary_build_bin_x86_64_user_rust_printenv_start,
+                      _binary_build_bin_x86_64_user_rust_printenv_end,
+                      "/bin/rust-printenv");
+}
 #else
 int fut_stage_rust_hello_binary(void) { return -ENOSYS; }
 int fut_stage_rust_uname_binary(void) { return -ENOSYS; }
@@ -1529,6 +1538,7 @@ int fut_stage_rust_cmp_binary(void)       { return -ENOSYS; }
 int fut_stage_rust_nl_binary(void)        { return -ENOSYS; }
 int fut_stage_rust_rev_binary(void)       { return -ENOSYS; }
 int fut_stage_rust_od_binary(void)        { return -ENOSYS; }
+int fut_stage_rust_printenv_binary(void)  { return -ENOSYS; }
 #endif
 #else
 int fut_stage_shell_binary(void) {
@@ -1677,6 +1687,10 @@ int fut_stage_rust_rev_binary(void) {
 
 int fut_stage_rust_od_binary(void) {
     return -ENOSYS;  /* rust-od not available on macOS host builds */
+}
+
+int fut_stage_rust_printenv_binary(void) {
+    return -ENOSYS;  /* rust-printenv not available on macOS host builds */
 }
 #endif
 

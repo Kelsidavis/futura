@@ -174,6 +174,30 @@ fn read_one(p: *const u8) -> bool {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
+    if argc == 2 {
+        let first = unsafe { *argv.add(1) };
+        if !first.is_null() && (first as usize) >= 0x10000 {
+            let want = b"--help";
+            let mut n = 0; unsafe { while *first.add(n) != 0 { n += 1; } }
+            if n == want.len() {
+                let mut ok = true;
+                for i in 0..want.len() {
+                    if unsafe { *first.add(i) } != want[i] { ok = false; break; }
+                }
+                if ok {
+                    let help: &[u8] = b"\
+Usage: rust-readlink LINK [LINK...]
+Print each LINK's symbolic-link target.
+
+  --help    show this help and exit
+\0";
+                    let len = help.len() - 1;
+                    unsafe { let _ = syscall3(sysn::WRITE, 1, help.as_ptr() as u64, len as u64); }
+                    return 0;
+                }
+            }
+        }
+    }
     if argc < 2 {
         write_str(STDERR, b"usage: rust-readlink <link> [<link>...]\n");
         return 1;

@@ -1466,6 +1466,7 @@ void fut_kernel_main(void) {
                   "/bin/rust-date\n"
                   "/bin/rust-hello; /bin/rust-uname\n"
                   "/bin/rust-pwd; /bin/rust-ls /bin\n"
+                  "/bin/rust-id; /bin/rust-whoami\n"
                   "/bin/rust-tree /etc\n"
                   "/bin/rust-wallpaper --get\n"
                   "/bin/rust-settings\n"

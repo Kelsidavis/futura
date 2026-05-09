@@ -114,9 +114,28 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
     if argc >= 2 {
         let p = unsafe { *argv.add(1) };
         if !p.is_null() && (p as usize) >= 0x10000 {
-            // Compare against b"-x". Walk the bytes one at a time so we
-            // bail at the NUL — a blanket *p.add(1)/*p.add(2) read on a
-            // 0- or 1-byte argv runs past its NUL terminator.
+            // --help short-circuit (length 6: '--help').
+            let mut n = 0usize;
+            unsafe { while *p.add(n) != 0 && n < 16 { n += 1; } }
+            if n == 6
+                && unsafe { *p == b'-' && *p.add(1) == b'-' && *p.add(2) == b'h'
+                    && *p.add(3) == b'e' && *p.add(4) == b'l' && *p.add(5) == b'p' }
+            {
+                let help: &[u8] = b"\
+Usage: rust-clear [-x]
+Clear the terminal.
+
+  -x        keep the scrollback buffer (only clear the visible screen)
+      --help    show this help and exit
+\0";
+                let len = help.len() - 1;
+                unsafe { let _ = syscall3(sysn::WRITE, STDOUT as u64,
+                                          help.as_ptr() as u64, len as u64); }
+                return 0;
+            }
+            // -x compare. Walk the bytes one at a time so we bail at
+            // the NUL — a blanket *p.add(1)/*p.add(2) read on a 0- or
+            // 1-byte argv runs past its NUL terminator.
             let b0 = unsafe { *p };
             if b0 == b'-' {
                 let b1 = unsafe { *p.add(1) };

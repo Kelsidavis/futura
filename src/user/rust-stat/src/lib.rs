@@ -242,6 +242,19 @@ fn type_name(mode: u32) -> &'static [u8] {
     }
 }
 
+// First char of the perm-string (GNU `ls -l` / `stat` style).
+fn type_char(mode: u32) -> u8 {
+    match mode & 0o170_000 {
+        0o040_000 => b'd',
+        0o020_000 => b'c',
+        0o060_000 => b'b',
+        0o120_000 => b'l',
+        0o010_000 => b'p',
+        0o140_000 => b's',
+        _         => b'-',  // regular file or unknown
+    }
+}
+
 fn do_stat(path: *const u8) -> bool {
     let st = StatBuf::default();
     let stp = &st as *const StatBuf as u64;
@@ -293,7 +306,9 @@ fn do_stat(path: *const u8) -> bool {
 
     write_str(STDOUT, b"Access: (");
     write_str(STDOUT, fmt_octal_mode(st.st_mode, &mut mb));
-    write_str(STDOUT, b"/-");
+    write_str(STDOUT, b"/");
+    let tc = [type_char(st.st_mode)];
+    write_str(STDOUT, &tc);
     write_str(STDOUT, fmt_perms(st.st_mode, &mut pb));
     write_str(STDOUT, b")\tUid: ");
     write_str(STDOUT, fmt_u64(st.st_uid as u64, &mut nb));

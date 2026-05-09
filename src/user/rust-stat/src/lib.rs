@@ -2,7 +2,12 @@
 //
 // rust-stat — print file metadata via newfstatat(2) (POSIX `stat`).
 //
-//   rust-stat <path> [<path>...]
+//   rust-stat <path> [<path>...]      stat each path (lstat: do NOT
+//                                     follow a terminal symlink)
+//   rust-stat -L <path> [<path>...]   follow terminal symlinks
+//
+// Default is lstat-style (matches GNU stat with no -L), so a symlink
+// shows as type "symbolic link" rather than the target's type.
 //
 // Output format mirrors a compact `stat` summary:
 //
@@ -37,10 +42,13 @@ mod sysn {
     pub const WRITE: u64 = 1;
     pub const EXIT: u64 = 60;
     pub const STAT: u64 = 4;
+    pub const LSTAT: u64 = 6;
 }
 
 #[cfg(target_arch = "aarch64")]
 const AT_FDCWD: i64 = -100;
+#[cfg(target_arch = "aarch64")]
+const AT_SYMLINK_NOFOLLOW: u64 = 0x100;
 const STDOUT: i32 = 1;
 const STDERR: i32 = 2;
 
@@ -255,17 +263,19 @@ fn type_char(mode: u32) -> u8 {
     }
 }
 
-fn do_stat(path: *const u8) -> bool {
+fn do_stat(path: *const u8, follow: bool) -> bool {
     let st = StatBuf::default();
     let stp = &st as *const StatBuf as u64;
     let r;
     #[cfg(target_arch = "aarch64")]
     {
-        r = unsafe { syscall4(sysn::NEWFSTATAT, AT_FDCWD as u64, path as u64, stp, 0) };
+        let flags = if follow { 0 } else { AT_SYMLINK_NOFOLLOW };
+        r = unsafe { syscall4(sysn::NEWFSTATAT, AT_FDCWD as u64, path as u64, stp, flags) };
     }
     #[cfg(target_arch = "x86_64")]
     {
-        r = unsafe { syscall2(sysn::STAT, path as u64, stp) };
+        let nr = if follow { sysn::STAT } else { sysn::LSTAT };
+        r = unsafe { syscall2(nr, path as u64, stp) };
     }
     if r < 0 {
         write_str(STDERR, b"rust-stat: cannot stat '");
@@ -322,20 +332,39 @@ fn do_stat(path: *const u8) -> bool {
     true
 }
 
+fn arg_eq(p: *const u8, want: &[u8]) -> bool {
+    for (i, &b) in want.iter().enumerate() {
+        if unsafe { *p.add(i) } != b { return false; }
+    }
+    unsafe { *p.add(want.len()) == 0 }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
-    if argc < 2 {
-        write_str(STDERR, b"usage: rust-stat <path> [<path>...]\n");
+    let mut follow = false;
+    let mut idx: i32 = 1;
+    while idx < argc {
+        let p = unsafe { *argv.add(idx as usize) };
+        if p.is_null() || (p as usize) < 0x10000 { break; }
+        if arg_eq(p, b"-L") || arg_eq(p, b"--dereference") {
+            follow = true; idx += 1; continue;
+        }
+        if arg_eq(p, b"--") { idx += 1; break; }
+        break;
+    }
+
+    if idx >= argc {
+        write_str(STDERR, b"usage: rust-stat [-L] <path> [<path>...]\n");
         return 1;
     }
     let mut had_error = false;
-    for ai in 1..argc {
+    for ai in idx..argc {
         let p = unsafe { *argv.add(ai as usize) };
         if p.is_null() || (p as usize) < 0x10000 {
             had_error = true;
             continue;
         }
-        if !do_stat(p) { had_error = true; }
+        if !do_stat(p, follow) { had_error = true; }
     }
     if had_error { 1 } else { 0 }
 }

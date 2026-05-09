@@ -301,6 +301,17 @@ fn parse_fields(p: *const u8, out: &mut [u32; MAX_FIELDS]) -> Option<usize> {
     Some(w)
 }
 
+// Emit selected byte positions from `line` (1-based). Positions past
+// the line length are silently skipped. Used by -c / -b mode.
+fn emit_chars(line: &[u8], positions: &[u32]) -> bool {
+    for &pos in positions {
+        let i = pos as usize;
+        if i == 0 || i > line.len() { continue; }
+        if !write_all(STDOUT, &line[i - 1..i]) { return false; }
+    }
+    write_all(STDOUT, b"\n")
+}
+
 // Emit selected fields from `line`, splitting on `delim`, joining with
 // `delim` between emitted fields. With `suppress_no_delim`, lines that
 // contain no delimiter are silently skipped (matches GNU cut -s).
@@ -354,6 +365,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
     let mut fields = [0u32; MAX_FIELDS];
     let mut nfields = 0usize;
     let mut suppress = false;
+    let mut chars_mode = false;
     let mut idx: i32 = 1;
 
     while idx < argc {
@@ -367,10 +379,12 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
 Usage: rust-cut -d DELIM -f LIST [-s] [FILE]...
 Print selected fields from each line.
 
-  -d DELIM   single-byte field delimiter (required)
+  -d DELIM   single-byte field delimiter (use with -f)
   -f LIST    1-based field list, supports comma + range forms:
              1,3,5  /  1-3  /  -3 (1..=3)  /  5- (5 to MAX)
-  -s         suppress lines that contain no DELIM
+  -c LIST    1-based byte-position list (-b is an alias)
+  -b LIST    same as -c
+  -s         suppress lines that contain no DELIM (with -f)
       --help     show this help and exit
 
 A '-' in the FILE list means standard input.
@@ -383,6 +397,29 @@ A '-' in the FILE list means standard input.
         if cstr_eq(p, b"-s") {
             suppress = true;
             idx += 1;
+            continue;
+        }
+        if cstr_eq(p, b"-c") || cstr_eq(p, b"-b") {
+            // -c LIST / -b LIST: byte-position cut. Same payload as -f
+            // but applied to raw positions instead of delim-separated
+            // fields. (-c and -b are identical for ASCII inputs.)
+            if idx + 1 >= argc {
+                write_str(STDERR, b"rust-cut: -c / -b needs a list\n");
+                return 2;
+            }
+            let arg = unsafe { *argv.add((idx + 1) as usize) };
+            if arg.is_null() || (arg as usize) < 0x10000 {
+                return 2;
+            }
+            match parse_fields(arg, &mut fields) {
+                Some(n) => nfields = n,
+                None => {
+                    write_str(STDERR, b"rust-cut: invalid -c / -b list\n");
+                    return 2;
+                }
+            }
+            chars_mode = true;
+            idx += 2;
             continue;
         }
         if cstr_eq(p, b"-d") {
@@ -426,21 +463,25 @@ A '-' in the FILE list means standard input.
             break;
         }
     }
-    let delim = match delim {
-        Some(d) => d,
-        None => {
-            write_str(STDERR, b"rust-cut: -d <delim> required\n");
-            return 2;
-        }
-    };
     if nfields == 0 {
-        write_str(STDERR, b"rust-cut: -f <list> required\n");
+        write_str(STDERR, b"rust-cut: -c / -b LIST or -f LIST required\n");
         return 2;
     }
+    let mode = if chars_mode {
+        CutMode::Chars
+    } else {
+        match delim {
+            Some(d) => CutMode::Fields { delim: d, suppress },
+            None => {
+                write_str(STDERR, b"rust-cut: -d <delim> required when using -f\n");
+                return 2;
+            }
+        }
+    };
     let fields_slice = &fields[..nfields];
 
     if idx >= argc {
-        return if cut_fd(STDIN, delim, fields_slice, suppress) { 0 } else { 1 };
+        return if cut_fd(STDIN, mode, fields_slice) { 0 } else { 1 };
     }
     let mut had_error = false;
     while idx < argc {
@@ -454,7 +495,7 @@ A '-' in the FILE list means standard input.
         unsafe { while *p.add(nlen) != 0 { nlen += 1; } }
         let is_dash = nlen == 1 && unsafe { *p } == b'-';
         if is_dash {
-            if !cut_fd(STDIN, delim, fields_slice, suppress) { had_error = true; }
+            if !cut_fd(STDIN, mode, fields_slice) { had_error = true; }
             continue;
         }
         let fd = unsafe {
@@ -467,17 +508,27 @@ A '-' in the FILE list means standard input.
             had_error = true;
             continue;
         }
-        if !cut_fd(fd, delim, fields_slice, suppress) { had_error = true; }
+        if !cut_fd(fd, mode, fields_slice) { had_error = true; }
         unsafe { let _ = syscall1(sysn::CLOSE, fd as u64); }
     }
     if had_error { 1 } else { 0 }
 }
 
-fn cut_fd(fd: i32, delim: u8, fields_slice: &[u32], suppress: bool) -> bool {
+// CutMode picks between -f (delim/fields) and -c/-b (raw positions).
+#[derive(Copy, Clone)]
+enum CutMode { Fields { delim: u8, suppress: bool }, Chars }
+
+fn cut_fd(fd: i32, mode: CutMode, list: &[u32]) -> bool {
     let mut rbuf = [0u8; READ_BUF];
     let mut line = [0u8; LINE_BUF];
     let mut len = 0usize;
     let mut had_error = false;
+    let emit = |line: &[u8]| -> bool {
+        match mode {
+            CutMode::Fields { delim, suppress } => emit_line(line, delim, list, suppress),
+            CutMode::Chars => emit_chars(line, list),
+        }
+    };
     'outer: loop {
         let n = unsafe {
             syscall3(sysn::READ, fd as u64, rbuf.as_mut_ptr() as u64, rbuf.len() as u64)
@@ -487,7 +538,7 @@ fn cut_fd(fd: i32, delim: u8, fields_slice: &[u32], suppress: bool) -> bool {
         let chunk = &rbuf[..n as usize];
         for &c in chunk {
             if c == b'\n' {
-                if !emit_line(&line[..len], delim, fields_slice, suppress) {
+                if !emit(&line[..len]) {
                     had_error = true;
                     break 'outer;
                 }
@@ -500,7 +551,7 @@ fn cut_fd(fd: i32, delim: u8, fields_slice: &[u32], suppress: bool) -> bool {
         }
     }
     if !had_error && len > 0 {
-        if !emit_line(&line[..len], delim, fields_slice, suppress) { had_error = true; }
+        if !emit(&line[..len]) { had_error = true; }
     }
     !had_error
 }

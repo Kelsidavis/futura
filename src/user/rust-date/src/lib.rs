@@ -250,8 +250,10 @@ fn write_uint(buf: &mut [u8], pos: &mut usize, n: u64, width: usize) {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, envp: *const *const u8) -> i32 {
-    // Flags: -u/--utc (force UTC, skip TZ_OFFSET_SEC) and --help.
+    // Flags: -u/--utc, --help, and a positional `+FORMAT` per GNU date.
     let mut utc = false;
+    let mut user_format: Option<*const u8> = None;
+    let mut user_format_len = 0usize;
     for ai in 1..argc {
         let p = unsafe { *argv.add(ai as usize) };
         if p.is_null() || (p as usize) < 0x10000 { continue; }
@@ -263,16 +265,25 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, envp: *const *const u8
         }
         if s == b"--help" {
             let help: &[u8] = b"\
-Usage: rust-date [OPTION]
-Print the current date/time as 'YYYY-MM-DD HH:MM:SS'.
+Usage: rust-date [OPTION] [+FORMAT]
+Print the current date/time. Default format is 'YYYY-MM-DD HH:MM:SS'.
 
   -u, --utc, --universal   use UTC (ignore TZ_OFFSET_SEC)
       --help               show this help and exit
+
+Format conversions (with leading +): %Y year, %m month, %d day,
+%H hour, %M minute, %S second, %F = %Y-%m-%d, %T = %H:%M:%S, %s
+Unix epoch seconds, %% literal %.
 \0";
             let len = help.len() - 1;
             unsafe { let _ = syscall3(sysn::WRITE, STDOUT as u64,
                                        help.as_ptr() as u64, len as u64); }
             return 0;
+        }
+        if n > 0 && unsafe { *p } == b'+' {
+            user_format = Some(unsafe { p.add(1) });   // skip the '+'
+            user_format_len = n - 1;
+            continue;
         }
     }
 
@@ -299,6 +310,75 @@ Print the current date/time as 'YYYY-MM-DD HH:MM:SS'.
     let mm = ((day_secs % 3600) / 60) as u64;
     let ss = (day_secs % 60) as u64;
     let (y, mo, d) = civil_from_days(days);
+
+    // GNU `date +FORMAT` path. We render into a small scratch buffer
+    // and stream it out at the end. The format string is bounded by
+    // its argv-cstr length so we can iterate without UB.
+    if let Some(fmt) = user_format {
+        let mut out = [0u8; 256];
+        let mut pos = 0usize;
+        let push = |out: &mut [u8; 256], pos: &mut usize, b: u8| {
+            if *pos < out.len() { out[*pos] = b; *pos += 1; }
+        };
+        let push_uint = |out: &mut [u8; 256], pos: &mut usize, v: u64, w: usize| {
+            let mut tmp = [b'0'; 20];
+            let mut k = tmp.len();
+            let mut x = v;
+            if x == 0 { k -= 1; tmp[k] = b'0'; }
+            while x > 0 && k > 0 { k -= 1; tmp[k] = b'0' + (x % 10) as u8; x /= 10; }
+            let n = tmp.len() - k;
+            // Pad with leading zeros to width w (no truncation).
+            if n < w {
+                for _ in 0..(w - n) { push(out, pos, b'0'); }
+            }
+            for i in 0..n { push(out, pos, tmp[k + i]); }
+        };
+        let mut i = 0usize;
+        while i < user_format_len {
+            let c = unsafe { *fmt.add(i) };
+            if c == b'%' && i + 1 < user_format_len {
+                let spec = unsafe { *fmt.add(i + 1) };
+                i += 2;
+                match spec {
+                    b'Y' => push_uint(&mut out, &mut pos, y as u64, 4),
+                    b'm' => push_uint(&mut out, &mut pos, mo as u64, 2),
+                    b'd' => push_uint(&mut out, &mut pos, d as u64, 2),
+                    b'H' => push_uint(&mut out, &mut pos, hh, 2),
+                    b'M' => push_uint(&mut out, &mut pos, mm, 2),
+                    b'S' => push_uint(&mut out, &mut pos, ss, 2),
+                    b's' => push_uint(&mut out, &mut pos, ts.tv_sec as u64, 1),
+                    b'F' => {
+                        push_uint(&mut out, &mut pos, y as u64, 4);
+                        push(&mut out, &mut pos, b'-');
+                        push_uint(&mut out, &mut pos, mo as u64, 2);
+                        push(&mut out, &mut pos, b'-');
+                        push_uint(&mut out, &mut pos, d as u64, 2);
+                    }
+                    b'T' => {
+                        push_uint(&mut out, &mut pos, hh, 2);
+                        push(&mut out, &mut pos, b':');
+                        push_uint(&mut out, &mut pos, mm, 2);
+                        push(&mut out, &mut pos, b':');
+                        push_uint(&mut out, &mut pos, ss, 2);
+                    }
+                    b'n' => push(&mut out, &mut pos, b'\n'),
+                    b't' => push(&mut out, &mut pos, b'\t'),
+                    b'%' => push(&mut out, &mut pos, b'%'),
+                    other => {
+                        // Unknown: emit verbatim like GNU date.
+                        push(&mut out, &mut pos, b'%');
+                        push(&mut out, &mut pos, other);
+                    }
+                }
+                continue;
+            }
+            push(&mut out, &mut pos, c);
+            i += 1;
+        }
+        push(&mut out, &mut pos, b'\n');
+        write_str(STDOUT, &out[..pos]);
+        return 0;
+    }
 
     let mut out = [0u8; 64];
     let mut pos = 0usize;

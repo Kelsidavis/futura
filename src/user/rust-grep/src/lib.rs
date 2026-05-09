@@ -302,6 +302,12 @@ struct Opts {
     icase: bool,
     invert: bool,
     show_name: ShowName,
+    // Output-mode flags. At most one of count/list/quiet should be set;
+    // if multiple are given, precedence is quiet > list > count to match
+    // GNU grep ("-q wins over -l wins over -c").
+    count: bool,    // -c   print "<file>:<count>" per file
+    list: bool,     // -l   print "<file>" if any match, then stop file
+    quiet: bool,    // -q   no output at all, exit on first match
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -339,12 +345,17 @@ fn grep_fd(
     pat: &[u8],
     opts: &Opts,
     scratch: &mut [u8],
-) -> Result<bool, ()> {
+) -> Result<u64, ()> {
     let mut line = [0u8; LINE_BUF];
     let mut line_len = 0usize;
     let mut lineno: u64 = 0;
-    let mut any = false;
+    let mut count: u64 = 0;
     let mut overflow = false;
+    // -q / -l only need to know "did anything match yet"; once we've
+    // proven that, more reads add nothing. Short-circuit by returning
+    // early so a multi-GB log file isn't rescanned for nothing.
+    let stop_after_first = opts.quiet || opts.list;
+    let suppress_lines = opts.quiet || opts.list || opts.count;
     loop {
         let n = unsafe {
             syscall3(
@@ -375,8 +386,11 @@ fn grep_fd(
                     let body = &line[..line_len];
                     let m = line_matches(body, pat, opts.icase);
                     if m != opts.invert {
-                        emit_match(name, lineno, body, opts);
-                        any = true;
+                        if !suppress_lines {
+                            emit_match(name, lineno, body, opts);
+                        }
+                        count += 1;
+                        if stop_after_first { return Ok(count); }
                     }
                 }
                 line_len = 0;
@@ -390,11 +404,13 @@ fn grep_fd(
         let body = &line[..line_len];
         let m = line_matches(body, pat, opts.icase);
         if m != opts.invert {
-            emit_match(name, lineno, body, opts);
-            any = true;
+            if !suppress_lines {
+                emit_match(name, lineno, body, opts);
+            }
+            count += 1;
         }
     }
-    Ok(any)
+    Ok(count)
 }
 
 #[unsafe(no_mangle)]
@@ -405,6 +421,9 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         icase: false,
         invert: false,
         show_name: ShowName::Auto,
+        count: false,
+        list: false,
+        quiet: false,
     };
 
     while let Some(p) = argv_get(argc, argv, idx) {
@@ -423,6 +442,15 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         } else if arg_is(p, b"-h") {
             opts.show_name = ShowName::Never;
             idx += 1;
+        } else if arg_is(p, b"-c") {
+            opts.count = true;
+            idx += 1;
+        } else if arg_is(p, b"-l") {
+            opts.list = true;
+            idx += 1;
+        } else if arg_is(p, b"-q") || arg_is(p, b"--quiet") || arg_is(p, b"--silent") {
+            opts.quiet = true;
+            idx += 1;
         } else if arg_is(p, b"--") {
             idx += 1;
             break;
@@ -434,7 +462,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
     let pat_ptr = match argv_get(argc, argv, idx) {
         Some(p) => p,
         None => {
-            write_str(STDERR, b"usage: rust-grep [-niHvh] PATTERN [FILE...]\n");
+            write_str(STDERR, b"usage: rust-grep [-niHhvclq] PATTERN [FILE...]\n");
             return 2;
         }
     };
@@ -446,9 +474,29 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
     let mut had_match = false;
     let mut had_error = false;
 
+    let emit_count_line = |name: Option<&[u8]>, count: u64, show_name: bool| {
+        if let Some(n) = name { if show_name {
+            write_all(STDOUT, n);
+            write_all(STDOUT, b":");
+        }}
+        let mut buf = [0u8; 24];
+        let len = fmt_u64(count, &mut buf);
+        write_all(STDOUT, &buf[..len]);
+        write_all(STDOUT, b"\n");
+    };
+
     if (idx as i32) >= argc {
         match grep_fd(STDIN, None, pat, &opts, &mut scratch) {
-            Ok(any) => had_match |= any,
+            Ok(c) => {
+                if c > 0 { had_match = true; }
+                if !opts.quiet {
+                    if opts.list {
+                        if c > 0 { write_all(STDOUT, b"(standard input)\n"); }
+                    } else if opts.count {
+                        emit_count_line(None, c, false);
+                    }
+                }
+            }
             Err(_) => had_error = true,
         }
     } else {
@@ -466,6 +514,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         } else {
             opts.show_name
         };
+        let show_name_count = effective == ShowName::Always;
         let opts2 = Opts { show_name: effective, ..opts };
 
         while let Some(p) = argv_get(argc, argv, idx) {
@@ -483,13 +532,27 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             }
             let name = unsafe { core::slice::from_raw_parts(p, n) };
             match grep_fd(fd as i32, Some(name), pat, &opts2, &mut scratch) {
-                Ok(any) => had_match |= any,
+                Ok(c) => {
+                    if c > 0 { had_match = true; }
+                    if !opts.quiet {
+                        if opts.list {
+                            if c > 0 {
+                                write_all(STDOUT, name);
+                                write_all(STDOUT, b"\n");
+                            }
+                        } else if opts.count {
+                            emit_count_line(Some(name), c, show_name_count);
+                        }
+                    }
+                }
                 Err(_) => had_error = true,
             }
             unsafe {
                 let _ = syscall1(sysn::CLOSE, fd as u64);
             }
             idx += 1;
+            // Quiet mode: bail as soon as anything has matched anywhere.
+            if opts.quiet && had_match { break; }
         }
     }
 

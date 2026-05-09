@@ -42,6 +42,7 @@
 #define O_RDWR      0x0002
 #define O_CREAT     0x0040
 #define O_TRUNC     0x0200
+#define O_DIRECTORY 0x10000
 #define PROT_READ   0x0001
 #define PROT_WRITE  0x0002
 #define MAP_SHARED  0x0001
@@ -579,9 +580,30 @@ static void process_key(struct client_state *s, uint32_t key) {
          * launch wl-edit on the joined path. */
         if (selected < 0 || selected >= proc_count) return;
         struct proc_info *p = &procs[selected];
+        /* For symlinks, follow before deciding: a symlink targeting a
+         * directory should descend like a real subdir; one targeting a
+         * file should open in wl-edit. We classify by attempting an
+         * O_RDONLY|O_DIRECTORY open of the joined path — succeeds only
+         * if the target is (or resolves to) a directory. */
+        bool dir_like = (p->type == FT_DIR);
+        if (p->type == FT_LNK) {
+            char probe[256];
+            size_t cwdlen = strlen(cwd);
+            size_t nlen = strlen(p->name);
+            int needs_sep = (cwdlen == 0 || cwd[cwdlen - 1] != '/');
+            if (cwdlen + needs_sep + nlen + 1 <= sizeof(probe)) {
+                size_t pi = 0;
+                for (size_t i = 0; i < cwdlen; i++) probe[pi++] = cwd[i];
+                if (needs_sep) probe[pi++] = '/';
+                for (size_t i = 0; i < nlen; i++) probe[pi++] = p->name[i];
+                probe[pi] = '\0';
+                int dfd = sys_open(probe, O_RDONLY | O_DIRECTORY, 0);
+                if (dfd >= 0) { sys_close(dfd); dir_like = true; }
+            }
+        }
         if (p->name[0] == '.' && p->name[1] == '.' && p->name[2] == '\0') {
             cwd_ascend();
-        } else if (p->type == FT_DIR) {
+        } else if (dir_like) {
             size_t cwdlen = strlen(cwd);
             size_t nlen = strlen(p->name);
             /* "/" + name + NUL  vs.  cwd + "/" + name + NUL */

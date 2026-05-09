@@ -244,6 +244,22 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         } else if arg_is(p, b"-A") {
             mode = DotMode::ShowAlmostAll;
             idx += 1;
+        } else if arg_is(p, b"--help") {
+            let help: &[u8] = b"\
+Usage: rust-ls [OPTION]... [PATH]...
+List directory contents.
+
+  -a, --all              do not ignore entries starting with .
+  -A, --almost-all       like -a but skip '.' and '..'
+      --help             show this help and exit
+
+With no PATH, list the current directory. Multiple PATHs are listed
+each in turn with a \"<path>:\" header.
+\0";
+            let len = help.len() - 1;
+            unsafe { let _ = syscall3(sysn::WRITE, STDOUT as u64,
+                                       help.as_ptr() as u64, len as u64); }
+            return 0;
         } else {
             break;
         }

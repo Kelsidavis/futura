@@ -92,8 +92,15 @@ sync_exception_entry:
      * - ALL registers x0-x30 contain values that MUST BE PRESERVED!
      */
 
-    /* DEBUG: Read ELR_EL1 immediately to check if it's already corrupted */
-    mrs     x18, elr_el1         /* Save ELR_EL1 in x18 (callee-saved, won't be clobbered) */
+    /* IMPORTANT: do NOT clobber x18 here. The earlier debug write
+     * `mrs x18, elr_el1` made user x18 useless across every syscall,
+     * which corrupted compiler-allocated values that happened to
+     * live in x18 (most visible: the cmd_cat show_numbers register
+     * picked up the userland ELR address, causing /etc/motd to
+     * print with bogus line numbers like 4299964 → 4299974). The
+     * frame allocation below saves the live user x18 unmodified;
+     * ELR_EL1 is read again at the proper save site a few lines
+     * down (mrs x1, elr_el1 → str into frame->pc). */
 
     /* Allocate space for fut_interrupt_frame_t on kernel stack
      * We'll use sub/add directly on SP to avoid clobbering any registers

@@ -13,7 +13,8 @@
 //   -b   number only non-blank output lines (overrides -n on blanks)
 //   -s   squeeze consecutive blank lines into one
 //   -E   show '$' at end of every line
-//   -A   shorthand for -E (show non-printables would be future work)
+//   -T   render tab characters as '^I'
+//   -A   equivalent to -ET (rendering non-printables is TBD)
 
 #![no_std]
 #![forbid(unsafe_op_in_unsafe_fn)]
@@ -293,6 +294,7 @@ struct CatOpts {
     number_nonblank: bool, // -b (implies -n behavior, skips blank lines)
     squeeze: bool,       // -s
     show_ends: bool,     // -E
+    show_tabs: bool,     // -T (renders '\t' as ^I)
 }
 
 // Slow path: line-buffered pump that honors number/squeeze/ends flags.
@@ -368,7 +370,25 @@ fn emit_line(s: &mut LineState, opts: &CatOpts, has_newline: bool) -> bool {
         let plen = fmt_lineno(&mut prefix, s.line_no);
         if !write_all(STDOUT, &prefix[..plen]) { return false; }
     }
-    if !write_all(STDOUT, body) { return false; }
+    if opts.show_tabs {
+        // Replace every tab with the GNU "^I" rendering. Slow path
+        // (one byte at a time) but only used when -T/-A is requested.
+        let mut start = 0usize;
+        for i in 0..body.len() {
+            if body[i] == b'\t' {
+                if start < i {
+                    if !write_all(STDOUT, &body[start..i]) { return false; }
+                }
+                if !write_all(STDOUT, b"^I") { return false; }
+                start = i + 1;
+            }
+        }
+        if start < body.len() {
+            if !write_all(STDOUT, &body[start..]) { return false; }
+        }
+    } else {
+        if !write_all(STDOUT, body) { return false; }
+    }
     if opts.show_ends {
         if !write_all(STDOUT, b"$") { return false; }
     }
@@ -402,6 +422,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         number_nonblank: false,
         squeeze: false,
         show_ends: false,
+        show_tabs: false,
     };
 
     // Parse leading flags. Stops at first non-flag arg, '-', or '--'.
@@ -413,8 +434,14 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         if arg_is(p, b"-b") { opts.number_nonblank = true; idx += 1; continue; }
         if arg_is(p, b"-s") { opts.squeeze = true; idx += 1; continue; }
         if arg_is(p, b"-E") { opts.show_ends = true; idx += 1; continue; }
-        if arg_is(p, b"-A") { opts.show_ends = true; idx += 1; continue; }
-        // Combined short flags like -nE / -bs / -ns: walk the chars.
+        if arg_is(p, b"-T") { opts.show_tabs = true; idx += 1; continue; }
+        if arg_is(p, b"-A") {
+            opts.show_ends = true;
+            opts.show_tabs = true;
+            idx += 1;
+            continue;
+        }
+        // Combined short flags like -nE / -bs / -nsT: walk the chars.
         let n = cstr_len(p);
         if n >= 2 && unsafe { *p } == b'-' && unsafe { *p.add(1) } != b'-' {
             let mut all_ok = true;
@@ -423,7 +450,9 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
                     b'n' => opts.number = true,
                     b'b' => opts.number_nonblank = true,
                     b's' => opts.squeeze = true,
-                    b'E' | b'A' => opts.show_ends = true,
+                    b'E' => opts.show_ends = true,
+                    b'T' => opts.show_tabs = true,
+                    b'A' => { opts.show_ends = true; opts.show_tabs = true; }
                     _ => { all_ok = false; break; }
                 }
             }
@@ -433,7 +462,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
     }
 
     let any_format = opts.number || opts.number_nonblank
-        || opts.squeeze || opts.show_ends;
+        || opts.squeeze || opts.show_ends || opts.show_tabs;
 
     let pump_fd = |fd: i32, buf: &mut [u8]| -> bool {
         if any_format {

@@ -41,20 +41,7 @@ const AT_FDCWD: i64 = -100;
 const AT_REMOVEDIR: u64 = 0x200;
 const STDERR: i32 = 2;
 
-#[cfg(target_arch = "aarch64")]
-#[inline(always)]
-unsafe fn syscall1(nr: u64, a: u64) -> i64 {
-    let mut ret: i64;
-    unsafe {
-        core::arch::asm!(
-            "svc #0",
-            in("x8") nr,
-            inout("x0") a => ret,
-            options(nostack),
-        );
-    }
-    ret
-}
+// aarch64 path uses syscall3 (unlinkat) only — no syscall1 wrapper needed.
 
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]

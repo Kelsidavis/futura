@@ -343,6 +343,7 @@ struct Opts {
     list: bool,         // -l   print "<file>" if any match, then stop file
     list_no_match: bool,// -L   print "<file>" only if NO line matched
     quiet: bool,        // -q   no output at all, exit on first match
+    max_count: u64,     // -m N (0 = unlimited)
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -426,6 +427,9 @@ fn grep_fd(
                         }
                         count += 1;
                         if stop_after_first { return Ok(count); }
+                        if opts.max_count > 0 && count >= opts.max_count {
+                            return Ok(count);
+                        }
                     }
                 }
                 line_len = 0;
@@ -634,6 +638,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         list: false,
         list_no_match: false,
         quiet: false,
+        max_count: 0,
     };
 
     let mut e_pattern: Option<*const u8> = None;
@@ -677,6 +682,38 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         } else if arg_is(p, b"-L") || arg_is(p, b"--files-without-match") {
             opts.list_no_match = true;
             idx += 1;
+        } else if arg_is(p, b"-m") || arg_is(p, b"--max-count") {
+            // -m N: stop after N matches per file. 0 disables.
+            idx += 1;
+            match argv_get(argc, argv, idx) {
+                Some(np) => {
+                    let n = cstr_len(np);
+                    if n == 0 {
+                        write_str(STDERR, b"rust-grep: -m needs a non-negative integer\n");
+                        return 2;
+                    }
+                    let mut v: u64 = 0;
+                    let mut ok = true;
+                    for k in 0..n {
+                        let c = unsafe { *np.add(k) };
+                        if !(b'0'..=b'9').contains(&c) { ok = false; break; }
+                        v = match v.checked_mul(10).and_then(|x| x.checked_add((c - b'0') as u64)) {
+                            Some(x) => x,
+                            None => { ok = false; break; }
+                        };
+                    }
+                    if !ok {
+                        write_str(STDERR, b"rust-grep: invalid -m value\n");
+                        return 2;
+                    }
+                    opts.max_count = v;
+                    idx += 1;
+                }
+                None => {
+                    write_str(STDERR, b"rust-grep: -m needs an argument\n");
+                    return 2;
+                }
+            }
         } else if arg_is(p, b"-q") || arg_is(p, b"--quiet") || arg_is(p, b"--silent") {
             opts.quiet = true;
             idx += 1;

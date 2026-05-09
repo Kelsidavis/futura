@@ -207,7 +207,7 @@ static mut BUF: [u8; MAX_INPUT] = [0; MAX_INPUT];
 
 fn slurp(fd: i32) -> usize {
     let mut filled = 0usize;
-    let buf_ptr = unsafe { core::ptr::addr_of_mut!(BUF) as *mut u8 };
+    let buf_ptr = core::ptr::addr_of_mut!(BUF) as *mut u8;
     while filled < MAX_INPUT {
         let n = unsafe {
             syscall3(
@@ -261,7 +261,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
     let mut tail = n;
     // If the final byte isn't a newline, emit the trailing partial line
     // first (without a newline) — matches GNU tac on non-terminated input.
-    let mut had_trailing_partial = buf[n - 1] != b'\n';
+    let had_trailing_partial = buf[n - 1] != b'\n';
     if had_trailing_partial {
         let mut start = n;
         while start > 0 && buf[start - 1] != b'\n' {
@@ -287,7 +287,6 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         }
         end = start;
     }
-
-    let _ = had_trailing_partial;
+    let _ = had_trailing_partial; // already consumed above; silence dead-store
     0
 }

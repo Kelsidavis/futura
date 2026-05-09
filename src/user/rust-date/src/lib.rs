@@ -249,7 +249,33 @@ fn write_uint(buf: &mut [u8], pos: &mut usize, n: u64, width: usize) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn main(_argc: i32, _argv: *const *const u8, envp: *const *const u8) -> i32 {
+pub extern "C" fn main(argc: i32, argv: *const *const u8, envp: *const *const u8) -> i32 {
+    // Flags: -u/--utc (force UTC, skip TZ_OFFSET_SEC) and --help.
+    let mut utc = false;
+    for ai in 1..argc {
+        let p = unsafe { *argv.add(ai as usize) };
+        if p.is_null() || (p as usize) < 0x10000 { continue; }
+        let mut n = 0; unsafe { while *p.add(n) != 0 { n += 1; } }
+        let s = unsafe { core::slice::from_raw_parts(p, n) };
+        if s == b"-u" || s == b"--utc" || s == b"--universal" {
+            utc = true;
+            continue;
+        }
+        if s == b"--help" {
+            let help: &[u8] = b"\
+Usage: rust-date [OPTION]
+Print the current date/time as 'YYYY-MM-DD HH:MM:SS'.
+
+  -u, --utc, --universal   use UTC (ignore TZ_OFFSET_SEC)
+      --help               show this help and exit
+\0";
+            let len = help.len() - 1;
+            unsafe { let _ = syscall3(sysn::WRITE, STDOUT as u64,
+                                       help.as_ptr() as u64, len as u64); }
+            return 0;
+        }
+    }
+
     let ts = Timespec { tv_sec: 0, tv_nsec: 0 };
     let rc = unsafe {
         syscall2(
@@ -263,7 +289,7 @@ pub extern "C" fn main(_argc: i32, _argv: *const *const u8, envp: *const *const 
         return 1;
     }
 
-    let tz_off = read_tz_offset(envp);
+    let tz_off = if utc { 0 } else { read_tz_offset(envp) };
     let secs = ts.tv_sec.saturating_add(tz_off);
 
     // secs is signed seconds since epoch in the local zone.

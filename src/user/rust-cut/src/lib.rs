@@ -9,7 +9,8 @@
 // <list> is a comma-separated set of 1-based field numbers, e.g.
 // "1,3,5". Ranges (1-3) are TBD.
 //
-// Reads stdin only — file-arg support is a future iteration. Lines
+// Reads stdin if no FILE args; otherwise processes each FILE in turn,
+// matching `cut -d , -f 1 a b c`. Lines
 // without the delimiter are passed through unchanged (matching
 // GNU cut's default unless -s is given; -s isn't implemented yet).
 
@@ -23,6 +24,8 @@ mod sysn {
     pub const READ: u64 = 63;
     pub const WRITE: u64 = 64;
     pub const EXIT: u64 = 93;
+    pub const OPENAT: u64 = 56;
+    pub const CLOSE: u64 = 57;
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -30,7 +33,12 @@ mod sysn {
     pub const READ: u64 = 0;
     pub const WRITE: u64 = 1;
     pub const EXIT: u64 = 60;
+    pub const OPENAT: u64 = 257;
+    pub const CLOSE: u64 = 3;
 }
+
+const AT_FDCWD: i64 = -100;
+const O_RDONLY: u64 = 0;
 
 const STDIN: i32 = 0;
 const STDOUT: i32 = 1;
@@ -38,6 +46,39 @@ const STDERR: i32 = 2;
 const READ_BUF: usize = 4096;
 const LINE_BUF: usize = 8192;
 const MAX_FIELDS: usize = 32;
+
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+unsafe fn syscall1(nr: u64, a: u64) -> i64 {
+    let mut ret: i64;
+    unsafe {
+        core::arch::asm!(
+            "svc #0",
+            in("x8") nr,
+            inout("x0") a => ret,
+            options(nostack),
+        );
+    }
+    ret
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+unsafe fn syscall4(nr: u64, a: u64, b: u64, c: u64, d: u64) -> i64 {
+    let mut ret: i64;
+    unsafe {
+        core::arch::asm!(
+            "svc #0",
+            in("x8") nr,
+            inout("x0") a => ret,
+            in("x1") b,
+            in("x2") c,
+            in("x3") d,
+            options(nostack),
+        );
+    }
+    ret
+}
 
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
@@ -67,6 +108,43 @@ unsafe fn sys_exit(code: u64) -> ! {
             options(nostack, noreturn),
         );
     }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+unsafe fn syscall1(nr: u64, a: u64) -> i64 {
+    let mut ret: i64;
+    unsafe {
+        core::arch::asm!(
+            "syscall",
+            inout("rax") nr => ret,
+            in("rdi") a,
+            lateout("rcx") _,
+            lateout("r11") _,
+            options(nostack),
+        );
+    }
+    ret
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+unsafe fn syscall4(nr: u64, a: u64, b: u64, c: u64, d: u64) -> i64 {
+    let mut ret: i64;
+    unsafe {
+        core::arch::asm!(
+            "syscall",
+            inout("rax") nr => ret,
+            in("rdi") a,
+            in("rsi") b,
+            in("rdx") c,
+            in("r10") d,
+            lateout("rcx") _,
+            lateout("r11") _,
+            options(nostack),
+        );
+    }
+    ret
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -274,9 +352,12 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
                 }
             }
             idx += 2;
+        } else if cstr_eq(p, b"--") {
+            idx += 1;
+            break;
         } else {
-            write_str(STDERR, b"rust-cut: unsupported argument (use -d <delim> -f <list>)\n");
-            return 2;
+            // First non-flag token starts the FILE list.
+            break;
         }
     }
     let delim = match delim {
@@ -292,22 +373,51 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
     }
     let fields_slice = &fields[..nfields];
 
-    // Stream stdin, accumulate lines in a fixed buffer.
+    if idx >= argc {
+        return if cut_fd(STDIN, delim, fields_slice) { 0 } else { 1 };
+    }
+    let mut had_error = false;
+    while idx < argc {
+        let p = unsafe { *argv.add(idx as usize) };
+        idx += 1;
+        if p.is_null() || (p as usize) < 0x10000 {
+            had_error = true;
+            continue;
+        }
+        let mut nlen = 0usize;
+        unsafe { while *p.add(nlen) != 0 { nlen += 1; } }
+        let is_dash = nlen == 1 && unsafe { *p } == b'-';
+        if is_dash {
+            if !cut_fd(STDIN, delim, fields_slice) { had_error = true; }
+            continue;
+        }
+        let fd = unsafe {
+            syscall4(sysn::OPENAT, AT_FDCWD as u64, p as u64, O_RDONLY, 0) as i32
+        };
+        if fd < 0 {
+            write_str(STDERR, b"rust-cut: cannot open '");
+            unsafe { let _ = syscall3(sysn::WRITE, STDERR as u64, p as u64, nlen as u64); }
+            write_str(STDERR, b"'\n");
+            had_error = true;
+            continue;
+        }
+        if !cut_fd(fd, delim, fields_slice) { had_error = true; }
+        unsafe { let _ = syscall1(sysn::CLOSE, fd as u64); }
+    }
+    if had_error { 1 } else { 0 }
+}
+
+fn cut_fd(fd: i32, delim: u8, fields_slice: &[u32]) -> bool {
     let mut rbuf = [0u8; READ_BUF];
     let mut line = [0u8; LINE_BUF];
     let mut len = 0usize;
     let mut had_error = false;
     'outer: loop {
         let n = unsafe {
-            syscall3(sysn::READ, STDIN as u64, rbuf.as_mut_ptr() as u64, rbuf.len() as u64)
+            syscall3(sysn::READ, fd as u64, rbuf.as_mut_ptr() as u64, rbuf.len() as u64)
         };
-        if n < 0 {
-            had_error = true;
-            break;
-        }
-        if n == 0 {
-            break;
-        }
+        if n < 0 { had_error = true; break; }
+        if n == 0 { break; }
         let chunk = &rbuf[..n as usize];
         for &c in chunk {
             if c == b'\n' {
@@ -324,9 +434,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         }
     }
     if !had_error && len > 0 {
-        if !emit_line(&line[..len], delim, fields_slice) {
-            had_error = true;
-        }
+        if !emit_line(&line[..len], delim, fields_slice) { had_error = true; }
     }
-    if had_error { 1 } else { 0 }
+    !had_error
 }

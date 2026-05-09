@@ -206,24 +206,8 @@ fn panic(_info: &PanicInfo) -> ! {
     }
 }
 
-// libcore's slice equality lowering emits calls to bcmp on aarch64
-// even when the user code never compares slices — `Location::eq`,
-// `StrSearcher::new`, and friends in the prebuilt libcore drag the
-// reference in. Provide a tiny in-crate definition so the freestanding
-// link stays self-contained.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn bcmp(a: *const u8, b: *const u8, n: usize) -> i32 {
-    let mut i = 0;
-    while i < n {
-        let av = unsafe { *a.add(i) };
-        let bv = unsafe { *b.add(i) };
-        if av != bv {
-            return (av as i32) - (bv as i32);
-        }
-        i += 1;
-    }
-    0
-}
+// bcmp(3) is provided by libfutura — required because libcore's
+// slice-equality lowering on aarch64 emits direct calls to it.
 
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {

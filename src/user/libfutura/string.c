@@ -331,6 +331,15 @@ int memcmp(const void *s1, const void *s2, size_t n) {
     return 0;
 }
 
+/* bcmp(3) — byte compare, BSD-origin. libcore's slice-equality lowering
+ * on aarch64 emits direct calls to bcmp (Location::eq, StrSearcher,
+ * Big32x40 PartialEq), so freestanding Rust user binaries link against
+ * this symbol even when their own code never compares slices. Returns
+ * 0 iff the buffers are equal — sign of the result is unspecified. */
+int bcmp(const void *s1, const void *s2, size_t n) {
+    return memcmp(s1, s2, n);
+}
+
 /**
  * Move memory (handles overlapping regions).
  */

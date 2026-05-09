@@ -37,6 +37,7 @@ mod sysn {
 
 const AT_FDCWD: i64 = -100;
 const O_RDONLY: u64 = 0;
+const STDIN: i32 = 0;
 const STDOUT: i32 = 1;
 const STDERR: i32 = 2;
 const BUF: usize = 4096;
@@ -270,29 +271,50 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         return 2;
     }
 
-    let fd1 = open_read(p1);
-    if fd1 < 0 {
-        if !silent { write_str(STDERR, b"rust-cmp: cannot open first file\n"); }
-        return 2;
-    }
-    let fd2 = open_read(p2);
-    if fd2 < 0 {
-        close_fd(fd1);
-        if !silent { write_str(STDERR, b"rust-cmp: cannot open second file\n"); }
+    // GNU cmp accepts "-" for either file (at most one of the two,
+    // since you can't read stdin twice). Pre-resolve each path to its
+    // fd up front so the diff-message names stay correct even when
+    // one side is stdin.
+    let mut n1 = 0usize;
+    while unsafe { *p1.add(n1) } != 0 { n1 += 1; }
+    let mut n2 = 0usize;
+    while unsafe { *p2.add(n2) } != 0 { n2 += 1; }
+    let p1_is_dash = n1 == 1 && unsafe { *p1 } == b'-';
+    let p2_is_dash = n2 == 1 && unsafe { *p2 } == b'-';
+    if p1_is_dash && p2_is_dash {
+        if !silent { write_str(STDERR, b"rust-cmp: cannot use - for both files\n"); }
         return 2;
     }
 
-    // Names as slices for the diff message — re-derive length from C strings.
-    let mut n1 = 0usize;
-    while unsafe { *p1.add(n1) } != 0 {
-        n1 += 1;
-    }
-    let name1 = unsafe { core::slice::from_raw_parts(p1, n1) };
-    let mut n2 = 0usize;
-    while unsafe { *p2.add(n2) } != 0 {
-        n2 += 1;
-    }
-    let name2 = unsafe { core::slice::from_raw_parts(p2, n2) };
+    let (fd1, owned1) = if p1_is_dash {
+        (STDIN, false)
+    } else {
+        let f = open_read(p1);
+        if f < 0 {
+            if !silent { write_str(STDERR, b"rust-cmp: cannot open first file\n"); }
+            return 2;
+        }
+        (f, true)
+    };
+    let (fd2, owned2) = if p2_is_dash {
+        (STDIN, false)
+    } else {
+        let f = open_read(p2);
+        if f < 0 {
+            if owned1 { close_fd(fd1); }
+            if !silent { write_str(STDERR, b"rust-cmp: cannot open second file\n"); }
+            return 2;
+        }
+        (f, true)
+    };
+
+    let stdin_label: &[u8] = b"-";
+    let name1: &[u8] = if p1_is_dash { stdin_label } else {
+        unsafe { core::slice::from_raw_parts(p1, n1) }
+    };
+    let name2: &[u8] = if p2_is_dash { stdin_label } else {
+        unsafe { core::slice::from_raw_parts(p2, n2) }
+    };
 
     let mut buf1 = [0u8; BUF];
     let mut buf2 = [0u8; BUF];
@@ -318,8 +340,8 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             if buf1[i] != buf2[i] {
                 if !silent { print_diff(name1, name2, byte_pos + i as u64 + 1); }
                 rc = 1;
-                close_fd(fd1);
-                close_fd(fd2);
+                if owned1 { close_fd(fd1); }
+                if owned2 { close_fd(fd2); }
                 return rc;
             }
         }
@@ -339,7 +361,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         // Both reads were full and equal-length; loop reads more.
     }
 
-    close_fd(fd1);
-    close_fd(fd2);
+    if owned1 { close_fd(fd1); }
+    if owned2 { close_fd(fd2); }
     rc
 }

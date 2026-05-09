@@ -698,6 +698,38 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         } else if arg_is(p, b"--") {
             idx += 1;
             break;
+        } else if arg_is(p, b"--help") {
+            // GNU grep --help text, trimmed to flags we actually
+            // implement. Stdout, exit 0 — matches conventional --help.
+            let help: &[u8] = b"\
+Usage: rust-grep [OPTION]... PATTERN [FILE]...
+Search for PATTERN in each FILE (or standard input).
+
+Pattern selection and interpretation:
+  -e, --pattern PAT     use PAT as the pattern
+  -F, --fixed-strings   PATTERN is a fixed string (default; accepted as no-op)
+  -i, --ignore-case     case-insensitive match
+  -w, --word-regexp     match only whole words
+  -x, --line-regexp     match only whole lines
+  -v, --invert-match    select non-matching lines
+
+Output control:
+  -n, --line-number     prefix each line with its 1-based line number
+  -c, --count           print only a count of matching lines per FILE
+  -l, --files-with-matches    print only names of FILEs containing matches
+  -L, --files-without-match   print only names of FILEs containing no match
+  -q, --quiet, --silent       suppress output, exit 0 on first match
+  -h, --no-filename     never prefix lines with filename
+  -H, --with-filename   always prefix lines with filename
+  -r, -R, --recursive   recurse into directories
+      --help            show this help and exit
+\0";
+            let len = help.len() - 1;  // strip the trailing NUL
+            unsafe {
+                let _ = syscall3(sysn::WRITE, STDOUT as u64,
+                                 help.as_ptr() as u64, len as u64);
+            }
+            return 0;
         } else {
             break;
         }

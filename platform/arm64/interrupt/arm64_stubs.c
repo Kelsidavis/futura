@@ -92,6 +92,7 @@ ARM64_STAGE_FN(fut_stage_rust_ls_binary,            rust_ls,        "/bin",  "/b
 ARM64_STAGE_FN(fut_stage_rust_mkdir_binary,         rust_mkdir,     "/bin",  "/bin/rust-mkdir")
 ARM64_STAGE_FN(fut_stage_rust_touch_binary,         rust_touch,     "/bin",  "/bin/rust-touch")
 ARM64_STAGE_FN(fut_stage_rust_rm_binary,            rust_rm,        "/bin",  "/bin/rust-rm")
+ARM64_STAGE_FN(fut_stage_rust_cat_binary,           rust_cat,       "/bin",  "/bin/rust-cat")
 #else
 int fut_stage_wayland_compositor_binary(void) { return -ENODEV; }
 int fut_stage_futura_shell_binary(void)       { return -ENODEV; }
@@ -109,6 +110,7 @@ int fut_stage_rust_ls_binary(void)            { return -ENODEV; }
 int fut_stage_rust_mkdir_binary(void)         { return -ENODEV; }
 int fut_stage_rust_touch_binary(void)         { return -ENODEV; }
 int fut_stage_rust_rm_binary(void)            { return -ENODEV; }
+int fut_stage_rust_cat_binary(void)           { return -ENODEV; }
 #endif
 ARM64_STAGE_FN(fut_stage_init_binary,               init,           "/sbin", "/sbin/init")
 ARM64_STAGE_FN(fut_stage_shell_binary,              shell,          "/bin",  "/bin/shell")

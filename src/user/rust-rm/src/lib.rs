@@ -264,17 +264,27 @@ fn close_fd(fd: i32) {
 
 const PATH_BUF: usize = 1024;
 
+fn report_removed(path_buf: &[u8], path_len: usize) {
+    // GNU rm -v format: "removed '<path>'\n".
+    write_str(1, b"removed '");
+    write_str(1, &path_buf[..path_len]);
+    write_str(1, b"'\n");
+}
+
 // Depth-first remove rooted at `path` (NUL-terminated). The caller's
 // path buffer is reused for each child by appending "/<name>" and
 // rewinding the length on return — this keeps memory bounded at one
 // PATH_BUF for the whole tree.
-fn rm_tree(path_buf: &mut [u8; PATH_BUF], path_len: usize, depth: usize, force: bool) -> bool {
+fn rm_tree(path_buf: &mut [u8; PATH_BUF], path_len: usize, depth: usize, force: bool, verbose: bool) -> bool {
     // Try unlink first — covers the common case where the entry is a
     // regular file or symlink. ENOENT under -f is silent success;
     // EISDIR / EPERM (x86_64 returns EPERM here) means "it's a dir,
     // recurse".
     let r = unsafe { sys_unlink(path_buf.as_ptr()) };
-    if r == 0 { return true; }
+    if r == 0 {
+        if verbose { report_removed(path_buf, path_len); }
+        return true;
+    }
     if force && r == ENOENT { return true; }
     let is_dir_err = r == EISDIR || r == EPERM;
     if !is_dir_err {
@@ -343,7 +353,7 @@ fn rm_tree(path_buf: &mut [u8; PATH_BUF], path_len: usize, depth: usize, force: 
                 path_buf[pos + nlen] = 0;
                 let child_len = pos + nlen;
                 let _ = dtype;  // hint only; rm_tree re-checks via sys_unlink return
-                if !rm_tree(path_buf, child_len, depth + 1, force) {
+                if !rm_tree(path_buf, child_len, depth + 1, force, verbose) {
                     had_error = true;
                 }
                 // Restore parent path (NUL-terminate at original len).
@@ -362,6 +372,7 @@ fn rm_tree(path_buf: &mut [u8; PATH_BUF], path_len: usize, depth: usize, force: 
         write_str(STDERR, b"'\n");
         return false;
     }
+    if verbose && r2 == 0 { report_removed(path_buf, path_len); }
     true
 }
 
@@ -370,6 +381,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
     let mut idx: usize = 1;
     let mut force = false;
     let mut recursive = false;
+    let mut verbose = false;
 
     while let Some(p) = argv_get(argc, argv, idx) {
         if arg_is(p, b"-f") {
@@ -380,11 +392,28 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         {
             recursive = true;
             idx += 1;
+        } else if arg_is(p, b"-v") || arg_is(p, b"--verbose") {
+            verbose = true;
+            idx += 1;
         } else if arg_is(p, b"-rf") || arg_is(p, b"-fr")
             || arg_is(p, b"-Rf") || arg_is(p, b"-fR")
         {
             recursive = true;
             force = true;
+            idx += 1;
+        } else if arg_is(p, b"-rv") || arg_is(p, b"-vr")
+            || arg_is(p, b"-Rv") || arg_is(p, b"-vR")
+        {
+            recursive = true;
+            verbose = true;
+            idx += 1;
+        } else if arg_is(p, b"-rfv") || arg_is(p, b"-rvf")
+            || arg_is(p, b"-frv") || arg_is(p, b"-fvr")
+            || arg_is(p, b"-vfr") || arg_is(p, b"-vrf")
+        {
+            recursive = true;
+            force = true;
+            verbose = true;
             idx += 1;
         } else if arg_is(p, b"--") {
             idx += 1;
@@ -420,7 +449,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             }
             for i in 0..n { path_buf[i] = unsafe { *p.add(i) }; }
             path_buf[n] = 0;
-            if !rm_tree(&mut path_buf, n, 0, force) {
+            if !rm_tree(&mut path_buf, n, 0, force, verbose) {
                 had_error = true;
             }
         } else {
@@ -436,6 +465,10 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
                     write_str(STDERR, b"'\n");
                     had_error = true;
                 }
+            } else if verbose {
+                write_str(1, b"removed '");
+                unsafe { let _ = syscall3(sysn::WRITE, 1, p as u64, n as u64); }
+                write_str(1, b"'\n");
             }
         }
         idx += 1;

@@ -2,13 +2,16 @@
 //
 // rust-readlink — print a symlink's target.
 //
-//   rust-readlink <link>     -> link's target string, or exit 1
+//   rust-readlink <link> [<link>...]  -> each link's target, or exit 1
 //
 // Wraps readlinkat(AT_FDCWD, link, buf, len). Truncates at the
 // 1023-byte buffer boundary; symbolic-link targets longer than that
 // produce a "(truncated)" suffix on stderr but still exit 0 with the
 // truncated target on stdout, mirroring GNU readlink's quiet mode.
 // readlinkat does NOT NUL-terminate; we use the returned length.
+//
+// Multiple args: each is resolved in order; exit status is 1 if any
+// argument failed (target unreadable / not a symlink).
 
 #![no_std]
 #![forbid(unsafe_op_in_unsafe_fn)]
@@ -130,17 +133,8 @@ fn panic(_info: &PanicInfo) -> ! {
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
-    if argc < 2 {
-        write_str(STDERR, b"usage: rust-readlink <link>\n");
-        return 1;
-    }
-    let p = unsafe { *argv.add(1) };
-    if p.is_null() || (p as usize) < 0x10000 {
-        write_str(STDERR, b"rust-readlink: invalid argument\n");
-        return 1;
-    }
+// Resolve one link, return true on success.
+fn read_one(p: *const u8) -> bool {
     let mut buf = [0u8; BUF];
 
     #[cfg(target_arch = "aarch64")]
@@ -166,7 +160,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
 
     if n <= 0 {
         write_str(STDERR, b"rust-readlink: not a symbolic link or unreadable\n");
-        return 1;
+        return false;
     }
     let n = n as usize;
     write_str(STDOUT, &buf[..n]);
@@ -175,5 +169,26 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
     if n >= buf.len() - 1 {
         write_str(STDERR, b"rust-readlink: target truncated to fit buffer\n");
     }
-    0
+    true
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
+    if argc < 2 {
+        write_str(STDERR, b"usage: rust-readlink <link> [<link>...]\n");
+        return 1;
+    }
+    let mut had_error = false;
+    for ai in 1..argc {
+        let p = unsafe { *argv.add(ai as usize) };
+        if p.is_null() || (p as usize) < 0x10000 {
+            write_str(STDERR, b"rust-readlink: invalid argument\n");
+            had_error = true;
+            continue;
+        }
+        if !read_one(p) {
+            had_error = true;
+        }
+    }
+    if had_error { 1 } else { 0 }
 }

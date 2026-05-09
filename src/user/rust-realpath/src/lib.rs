@@ -176,24 +176,14 @@ fn try_readlink(cur: &[u8], out: &mut [u8]) -> Option<usize> {
     Some(n as usize)
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
-    if argc < 2 {
-        write_str(STDERR, b"usage: rust-realpath <path>\n");
-        return 1;
-    }
-    let p = unsafe { *argv.add(1) };
-    if p.is_null() || (p as usize) < 0x10000 {
-        write_str(STDERR, b"rust-realpath: invalid argument\n");
-        return 1;
-    }
-
+// Resolve one path's terminal symlink, printing the (possibly chased)
+// result. Returns false on hard failures (only "argument unusable" —
+// non-symlink paths just echo back as-is, like `readlink -f` does).
+fn resolve_one(p: *const u8) -> bool {
     // Working buffer: NUL-terminated path we feed to readlinkat each hop.
     let mut cur = [0u8; PATH_MAX];
     let n = cstr_len(p).min(PATH_MAX - 1);
-    for i in 0..n {
-        cur[i] = unsafe { *p.add(i) };
-    }
+    for i in 0..n { cur[i] = unsafe { *p.add(i) }; }
     let mut cur_len = n;
     cur[cur_len] = 0;
 
@@ -204,13 +194,9 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             Some(l) => l,
             None => break, // not a symlink (or can't read) — print what we have
         };
-        // If target is absolute, replace cur entirely. If relative, splice
-        // it under the dirname of cur (everything before the last '/').
         let absolute = target_len > 0 && tmp[0] == b'/';
         if absolute {
-            if target_len >= PATH_MAX - 1 {
-                break;
-            }
+            if target_len >= PATH_MAX - 1 { break; }
             cur[..target_len].copy_from_slice(&tmp[..target_len]);
             cur_len = target_len;
             cur[cur_len] = 0;
@@ -218,23 +204,15 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             // Find last slash in cur[..cur_len] for dirname.
             let mut dir_end = 0usize;
             for i in (0..cur_len).rev() {
-                if cur[i] == b'/' {
-                    dir_end = i + 1;
-                    break;
-                }
+                if cur[i] == b'/' { dir_end = i + 1; break; }
             }
-            // If no slash: relative target replaces cur entirely.
             if dir_end == 0 {
-                if target_len >= PATH_MAX - 1 {
-                    break;
-                }
+                if target_len >= PATH_MAX - 1 { break; }
                 cur[..target_len].copy_from_slice(&tmp[..target_len]);
                 cur_len = target_len;
             } else {
                 let new_len = dir_end + target_len;
-                if new_len >= PATH_MAX - 1 {
-                    break;
-                }
+                if new_len >= PATH_MAX - 1 { break; }
                 cur[dir_end..new_len].copy_from_slice(&tmp[..target_len]);
                 cur_len = new_len;
             }
@@ -244,5 +222,26 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
 
     write_str(STDOUT, &cur[..cur_len]);
     write_str(STDOUT, b"\n");
-    0
+    true
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
+    if argc < 2 {
+        write_str(STDERR, b"usage: rust-realpath <path> [<path>...]\n");
+        return 1;
+    }
+    let mut had_error = false;
+    for ai in 1..argc {
+        let p = unsafe { *argv.add(ai as usize) };
+        if p.is_null() || (p as usize) < 0x10000 {
+            write_str(STDERR, b"rust-realpath: invalid argument\n");
+            had_error = true;
+            continue;
+        }
+        if !resolve_one(p) {
+            had_error = true;
+        }
+    }
+    if had_error { 1 } else { 0 }
 }

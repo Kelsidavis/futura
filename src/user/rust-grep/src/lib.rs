@@ -528,12 +528,31 @@ fn grep_walk_dir(
             let child_len = pos + nlen;
 
             // Linux dirent d_type: 4=DIR, 8=REG, 10=LNK, others ignored.
-            if dtype == 4 {
+            // For symlinks (and DT_UNKNOWN, since some filesystems
+            // don't fill d_type), probe with O_DIRECTORY to decide
+            // whether to descend or treat as file. Without this, a
+            // symlink-to-directory would be opened as a regular file
+            // and grep_fd would error on -EISDIR.
+            let mut walk_as_dir = dtype == 4;
+            let mut grep_as_file = dtype == 8;
+            if dtype == 10 || dtype == 0 {
+                let probe = unsafe {
+                    syscall4(sysn::OPENAT, AT_FDCWD as u64, path_buf.as_ptr() as u64,
+                             O_RDONLY | O_DIRECTORY, 0)
+                };
+                if probe >= 0 {
+                    unsafe { let _ = syscall1(sysn::CLOSE, probe as u64); }
+                    walk_as_dir = true;
+                } else {
+                    grep_as_file = true;
+                }
+            }
+            if walk_as_dir {
                 let (m, e) = grep_walk_dir(path_buf, child_len, depth + 1,
                                             pat, opts, scratch, show_name_count);
                 if m { had_match = true; }
                 if e { had_error = true; }
-            } else if dtype == 8 || dtype == 10 || dtype == 0 /* unknown */ {
+            } else if grep_as_file {
                 let (m, e) = grep_one_file(path_buf, child_len, pat, opts,
                                             scratch, show_name_count);
                 if m { had_match = true; }

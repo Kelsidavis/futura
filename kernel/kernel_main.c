@@ -2302,6 +2302,54 @@ void fut_kernel_main(void) {
                            rust_bins[i].name, rust_bins[i].name);
             }
         }
+        /* POSIX-style aliases so common shebang and bare-name lookups
+         * actually resolve. /usr/bin/env is the most-cited one
+         * (#!/usr/bin/env <interpreter>). Plain /bin/env / /bin/cat / …
+         * pick up the rust-* implementations under their unprefixed
+         * names so user scripts written against coreutils paths Just
+         * Work. The rust binaries treat argv[0] as freeform, so the
+         * symlink doesn't change semantics.
+         *
+         * /usr/bin and /bin already exist by the time we get here
+         * (created earlier in the standard-directory loop). */
+        {
+            extern long sys_symlink(const char *, const char *);
+            const char *aliases[][2] = {
+                /* { target,             linkpath } */
+                { "/bin/rust-env",       "/usr/bin/env" },
+                { "/bin/rust-env",       "/bin/env"     },
+                { "/bin/rust-cat",       "/bin/cat"     },
+                { "/bin/rust-ls",        "/bin/ls"      },
+                { "/bin/rust-pwd",       "/bin/pwd"     },
+                { "/bin/rust-uname",     "/bin/uname"   },
+                { "/bin/rust-date",      "/bin/date"    },
+                { "/bin/rust-true",      "/bin/true"    },
+                { "/bin/rust-false",     "/bin/false"   },
+                { "/bin/rust-mkdir",     "/bin/mkdir"   },
+                { "/bin/rust-touch",     "/bin/touch"   },
+                { "/bin/rust-rm",        "/bin/rm"      },
+                { "/bin/rust-cp",        "/bin/cp"      },
+                { "/bin/rust-mv",        "/bin/mv"      },
+                { "/bin/rust-ln",        "/bin/ln"      },
+                { "/bin/rust-wc",        "/bin/wc"      },
+                { "/bin/rust-head",      "/bin/head"    },
+                { "/bin/rust-tail",      "/bin/tail"    },
+                { "/bin/rust-grep",      "/bin/grep"    },
+                { "/bin/rust-sleep",     "/bin/sleep"   },
+                { "/bin/rust-tree",      "/bin/tree"    },
+                { "/bin/rust-tee",       "/bin/tee"     },
+                { "/bin/rust-yes",       "/bin/yes"     },
+                { "/bin/rust-uniq",      "/bin/uniq"    },
+                { "/bin/rust-clear",     "/bin/clear"   },
+                { "/bin/rust-which",     "/bin/which"   },
+                { "/bin/rust-readlink",  "/bin/readlink"},
+                { "/bin/rust-basename",  "/bin/basename"},
+                { "/bin/rust-dirname",   "/bin/dirname" },
+            };
+            for (size_t i = 0; i < sizeof(aliases)/sizeof(aliases[0]); i++) {
+                sys_symlink(aliases[i][0], aliases[i][1]);
+            }
+        }
     }
 #endif
 

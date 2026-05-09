@@ -2,8 +2,10 @@
 //
 // rust-fold — wrap each input line at COLS columns.
 //
-//   rust-fold              wrap at 80 columns
-//   rust-fold -w <cols>    wrap at <cols> columns
+//   rust-fold                       wrap stdin at 80 columns
+//   rust-fold -w <cols>             wrap stdin at <cols> columns
+//   rust-fold [-w <cols>] FILE…     wrap each FILE in turn
+//   rust-fold ... -                 wrap stdin (in any position)
 //
 // Stream-style: emits a '\n' every <cols> bytes within a logical
 // input line and resets the column count on each newline. Doesn't
@@ -22,6 +24,8 @@ mod sysn {
     pub const READ: u64 = 63;
     pub const WRITE: u64 = 64;
     pub const EXIT: u64 = 93;
+    pub const OPENAT: u64 = 56;
+    pub const CLOSE: u64 = 57;
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -29,13 +33,51 @@ mod sysn {
     pub const READ: u64 = 0;
     pub const WRITE: u64 = 1;
     pub const EXIT: u64 = 60;
+    pub const OPENAT: u64 = 257;
+    pub const CLOSE: u64 = 3;
 }
+
+const AT_FDCWD: i64 = -100;
+const O_RDONLY: u64 = 0;
 
 const STDIN: i32 = 0;
 const STDOUT: i32 = 1;
 const STDERR: i32 = 2;
 const READ_BUF: usize = 4096;
 const DEFAULT_COLS: u32 = 80;
+
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+unsafe fn syscall1(nr: u64, a: u64) -> i64 {
+    let mut ret: i64;
+    unsafe {
+        core::arch::asm!(
+            "svc #0",
+            in("x8") nr,
+            inout("x0") a => ret,
+            options(nostack),
+        );
+    }
+    ret
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+unsafe fn syscall4(nr: u64, a: u64, b: u64, c: u64, d: u64) -> i64 {
+    let mut ret: i64;
+    unsafe {
+        core::arch::asm!(
+            "svc #0",
+            in("x8") nr,
+            inout("x0") a => ret,
+            in("x1") b,
+            in("x2") c,
+            in("x3") d,
+            options(nostack),
+        );
+    }
+    ret
+}
 
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
@@ -65,6 +107,43 @@ unsafe fn sys_exit(code: u64) -> ! {
             options(nostack, noreturn),
         );
     }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+unsafe fn syscall1(nr: u64, a: u64) -> i64 {
+    let mut ret: i64;
+    unsafe {
+        core::arch::asm!(
+            "syscall",
+            inout("rax") nr => ret,
+            in("rdi") a,
+            lateout("rcx") _,
+            lateout("r11") _,
+            options(nostack),
+        );
+    }
+    ret
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+unsafe fn syscall4(nr: u64, a: u64, b: u64, c: u64, d: u64) -> i64 {
+    let mut ret: i64;
+    unsafe {
+        core::arch::asm!(
+            "syscall",
+            inout("rax") nr => ret,
+            in("rdi") a,
+            in("rsi") b,
+            in("rdx") c,
+            in("r10") d,
+            lateout("rcx") _,
+            lateout("r11") _,
+            options(nostack),
+        );
+    }
+    ret
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -151,9 +230,52 @@ fn parse_u32(p: *const u8) -> Option<u32> {
     Some(v as u32)
 }
 
+// Process one fd. Each call resets the column counter so wrap state
+// doesn't leak between files. Returns true on success.
+fn fold_fd(fd: i32, cols: u32) -> bool {
+    let mut buf = [0u8; READ_BUF];
+    let mut col: u32 = 0;
+    loop {
+        let n = unsafe {
+            syscall3(sysn::READ, fd as u64, buf.as_mut_ptr() as u64, buf.len() as u64)
+        };
+        if n < 0 { return false; }
+        if n == 0 { return true; }
+        let chunk = &buf[..n as usize];
+        let mut start = 0usize;
+        for i in 0..chunk.len() {
+            let c = chunk[i];
+            if c == b'\n' {
+                if !write_all(STDOUT, &chunk[start..=i]) { return false; }
+                col = 0;
+                start = i + 1;
+            } else {
+                if col == cols {
+                    if !write_all(STDOUT, &chunk[start..i]) { return false; }
+                    if !write_all(STDOUT, b"\n") { return false; }
+                    col = 0;
+                    start = i;
+                }
+                col += 1;
+            }
+        }
+        if start < chunk.len() {
+            if !write_all(STDOUT, &chunk[start..]) { return false; }
+        }
+    }
+}
+
+fn cstr_len(p: *const u8) -> usize {
+    let mut n = 0;
+    unsafe { while *p.add(n) != 0 { n += 1; } }
+    n
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
     let mut cols: u32 = DEFAULT_COLS;
+    // First pass: skip just the leading flag(s) so the file list starts
+    // after them. Files are processed in the second pass.
     let mut idx: i32 = 1;
     while idx < argc {
         let p = unsafe { *argv.add(idx as usize) };
@@ -178,50 +300,42 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
                 }
             }
             idx += 2;
-        } else {
-            // Future iteration: file arguments. For now stdin only.
-            write_str(STDERR, b"rust-fold: unexpected argument\n");
-            return 2;
+            continue;
         }
+        if cstr_eq(p, b"--") { idx += 1; break; }
+        break;  // first non-flag arg starts the file list
     }
 
-    let mut buf = [0u8; READ_BUF];
-    let mut col: u32 = 0;
-    loop {
-        let n = unsafe {
-            syscall3(sysn::READ, STDIN as u64, buf.as_mut_ptr() as u64, buf.len() as u64)
-        };
-        if n < 0 {
-            return 1;
-        }
-        if n == 0 {
-            break;
-        }
-        let chunk = &buf[..n as usize];
-        // Walk byte-by-byte so we can inject '\n' at column boundaries.
-        // Defer flushing so we still write large stretches in one syscall.
-        let mut start = 0usize;
-        for i in 0..chunk.len() {
-            let c = chunk[i];
-            if c == b'\n' {
-                // Emit through and reset column.
-                if !write_all(STDOUT, &chunk[start..=i]) { return 1; }
-                col = 0;
-                start = i + 1;
-            } else {
-                if col == cols {
-                    // Force-wrap before this byte.
-                    if !write_all(STDOUT, &chunk[start..i]) { return 1; }
-                    if !write_all(STDOUT, b"\n") { return 1; }
-                    col = 0;
-                    start = i;
-                }
-                col += 1;
-            }
-        }
-        if start < chunk.len() {
-            if !write_all(STDOUT, &chunk[start..]) { return 1; }
-        }
+    if idx >= argc {
+        return if fold_fd(STDIN, cols) { 0 } else { 1 };
     }
-    0
+
+    let mut had_error = false;
+    while idx < argc {
+        let p = unsafe { *argv.add(idx as usize) };
+        idx += 1;
+        if p.is_null() || (p as usize) < 0x10000 {
+            had_error = true;
+            continue;
+        }
+        let nlen = cstr_len(p);
+        let is_dash = nlen == 1 && unsafe { *p } == b'-';
+        if is_dash {
+            if !fold_fd(STDIN, cols) { had_error = true; }
+            continue;
+        }
+        let fd = unsafe {
+            syscall4(sysn::OPENAT, AT_FDCWD as u64, p as u64, O_RDONLY, 0) as i32
+        };
+        if fd < 0 {
+            write_str(STDERR, b"rust-fold: cannot open '");
+            unsafe { let _ = syscall3(sysn::WRITE, STDERR as u64, p as u64, nlen as u64); }
+            write_str(STDERR, b"'\n");
+            had_error = true;
+            continue;
+        }
+        if !fold_fd(fd, cols) { had_error = true; }
+        unsafe { let _ = syscall1(sysn::CLOSE, fd as u64); }
+    }
+    if had_error { 1 } else { 0 }
 }

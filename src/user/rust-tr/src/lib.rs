@@ -213,6 +213,7 @@ fn expand_set(p: *const u8, out: &mut [u8; 1024]) -> Option<usize> {
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
     let mut delete = false;
     let mut squeeze = false;
+    let mut complement = false;
     let mut idx: i32 = 1;
     while idx < argc {
         let p = unsafe { *argv.add(idx as usize) };
@@ -222,8 +223,21 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         }
         if cstr_eq(p, b"-d") { delete = true; idx += 1; continue; }
         if cstr_eq(p, b"-s") { squeeze = true; idx += 1; continue; }
+        if cstr_eq(p, b"-c") || cstr_eq(p, b"-C") || cstr_eq(p, b"--complement") {
+            complement = true; idx += 1; continue;
+        }
         if cstr_eq(p, b"-ds") || cstr_eq(p, b"-sd") {
             delete = true; squeeze = true; idx += 1; continue;
+        }
+        if cstr_eq(p, b"-cd") || cstr_eq(p, b"-dc") {
+            delete = true; complement = true; idx += 1; continue;
+        }
+        if cstr_eq(p, b"-cs") || cstr_eq(p, b"-sc") {
+            squeeze = true; complement = true; idx += 1; continue;
+        }
+        if cstr_eq(p, b"-cds") || cstr_eq(p, b"-csd") || cstr_eq(p, b"-dcs")
+            || cstr_eq(p, b"-dsc") || cstr_eq(p, b"-scd") || cstr_eq(p, b"-sdc") {
+            delete = true; squeeze = true; complement = true; idx += 1; continue;
         }
         if cstr_eq(p, b"--help") {
             let help: &[u8] = b"\
@@ -232,6 +246,8 @@ Translate, squeeze, and/or delete bytes from stdin to stdout.
 
   -d        delete bytes in SET1 (no translation)
   -s        squeeze runs of bytes in the last set to one byte each
+  -c, -C, --complement   use the complement of SET1 wherever SET1
+                         membership is consulted
       --help    show this help and exit
 
 Sets accept literal bytes, 'a-z' style ranges, and '\\n' '\\t' '\\r'
@@ -273,6 +289,10 @@ Sets accept literal bytes, 'a-z' style ranges, and '\\n' '\\t' '\\r'
     for i in 0..256 { tbl[i] = i as u8; }
     let mut delmap: [bool; 256] = [false; 256];
     let mut squeezemap: [bool; 256] = [false; 256];
+    // Direct SET1 membership map — needed for complement-aware tbl
+    // construction (every byte NOT in SET1 maps to SET2[last]).
+    let mut s1_member: [bool; 256] = [false; 256];
+    for i in 0..s1_n { s1_member[s1[i] as usize] = true; }
 
     let mut s2_buf = [0u8; 1024];
     let mut s2_n = 0usize;
@@ -290,9 +310,18 @@ Sets accept literal bytes, 'a-z' style ranges, and '\\n' '\\t' '\\r'
             write_str(STDERR, b"rust-tr: SET2 must be non-empty\n");
             return 1;
         }
-        for i in 0..s1_n {
-            let mapped = if i < s2_n { s2_buf[i] } else { s2_buf[s2_n - 1] };
-            tbl[s1[i] as usize] = mapped;
+        if complement {
+            // Map every byte NOT in SET1 to SET2's last byte (GNU
+            // semantics for `tr -c SET1 SET2`).
+            let last = s2_buf[s2_n - 1];
+            for c in 0..256 {
+                if !s1_member[c] { tbl[c] = last; }
+            }
+        } else {
+            for i in 0..s1_n {
+                let mapped = if i < s2_n { s2_buf[i] } else { s2_buf[s2_n - 1] };
+                tbl[s1[i] as usize] = mapped;
+            }
         }
         have_s2 = true;
     } else if delete && pos_args == 2 {
@@ -308,16 +337,22 @@ Sets accept literal bytes, 'a-z' style ranges, and '\\n' '\\t' '\\r'
         have_s2 = true;
     }
     if delete {
-        for i in 0..s1_n {
-            delmap[s1[i] as usize] = true;
+        // -d: delete bytes in SET1 (or NOT in SET1 with -c).
+        for c in 0..256 {
+            let in_s1 = s1_member[c];
+            delmap[c] = if complement { !in_s1 } else { in_s1 };
         }
     }
     if squeeze {
-        // The squeeze set is SET2 if it's present, else SET1.
+        // The squeeze set is SET2 if it's present, else SET1. -c only
+        // applies to the SET1 fallback (GNU tr's documented rule).
         if have_s2 {
             for i in 0..s2_n { squeezemap[s2_buf[i] as usize] = true; }
         } else {
-            for i in 0..s1_n { squeezemap[s1[i] as usize] = true; }
+            for c in 0..256 {
+                let in_s1 = s1_member[c];
+                squeezemap[c] = if complement { !in_s1 } else { in_s1 };
+            }
         }
     }
 

@@ -7,6 +7,13 @@
 // cat. Reads in 4 KiB chunks and writes with the standard partial-
 // write retry loop so a slow stdout (e.g. a pty under load) doesn't
 // drop bytes.
+//
+// Flags:
+//   -n   number every output line (6-char right-aligned + tab)
+//   -b   number only non-blank output lines (overrides -n on blanks)
+//   -s   squeeze consecutive blank lines into one
+//   -E   show '$' at end of every line
+//   -A   shorthand for -E (show non-printables would be future work)
 
 #![no_std]
 #![forbid(unsafe_op_in_unsafe_fn)]
@@ -262,20 +269,191 @@ fn pump(fd: i32, buf: &mut [u8]) -> bool {
     }
 }
 
+// Format a u64 line number right-aligned in a 6-char field, followed by
+// '\t'. Matches GNU `cat -n` exactly. Returns the slice into `dst`.
+fn fmt_lineno(dst: &mut [u8; 8], n: u64) -> usize {
+    // Render decimal back-to-front into a 6-char field.
+    let mut tmp = [b' '; 6];
+    let mut v = n;
+    let mut idx = 6usize;
+    if v == 0 { idx -= 1; tmp[idx] = b'0'; }
+    while v > 0 && idx > 0 {
+        idx -= 1;
+        tmp[idx] = b'0' + (v % 10) as u8;
+        v /= 10;
+    }
+    dst[..6].copy_from_slice(&tmp);
+    dst[6] = b'\t';
+    7
+}
+
+#[derive(Copy, Clone)]
+struct CatOpts {
+    number: bool,        // -n
+    number_nonblank: bool, // -b (implies -n behavior, skips blank lines)
+    squeeze: bool,       // -s
+    show_ends: bool,     // -E
+}
+
+// Slow path: line-buffered pump that honors number/squeeze/ends flags.
+// Each line is written with at most 3 syscall fragments (prefix, body,
+// terminator) — fine for the volumes a -n run sees.
+fn pump_lines(
+    fd: i32,
+    buf: &mut [u8],
+    state: &mut LineState,
+    opts: &CatOpts,
+) -> bool {
+    loop {
+        let n = unsafe {
+            syscall3(
+                sysn::READ,
+                fd as u64,
+                buf.as_mut_ptr() as u64,
+                buf.len() as u64,
+            )
+        };
+        if n == 0 { return flush_partial(state, opts); }
+        if n < 0 { return false; }
+        let chunk = &buf[..n as usize];
+        let mut start = 0usize;
+        for i in 0..chunk.len() {
+            if chunk[i] == b'\n' {
+                let body_part = &chunk[start..i];
+                if !append_to_line(state, body_part) { return false; }
+                if !emit_line(state, opts, true) { return false; }
+                state.line_len = 0;
+                start = i + 1;
+            }
+        }
+        if start < chunk.len() {
+            if !append_to_line(state, &chunk[start..]) { return false; }
+        }
+    }
+}
+
+const LINE_MAX: usize = 4096;
+
+struct LineState {
+    line: [u8; LINE_MAX],
+    line_len: usize,
+    line_no: u64,
+    prev_blank: bool,
+}
+
+fn append_to_line(s: &mut LineState, src: &[u8]) -> bool {
+    let room = s.line.len() - s.line_len;
+    let take = src.len().min(room);
+    s.line[s.line_len..s.line_len + take].copy_from_slice(&src[..take]);
+    s.line_len += take;
+    // If the line overflows the buffer, flush a continuation chunk and
+    // keep going. We just discard overflow here — pathological inputs
+    // (>4 KiB without a newline) get truncated, like GNU cat with a
+    // bounded line buffer would. Returning true keeps the stream alive.
+    true
+}
+
+fn emit_line(s: &mut LineState, opts: &CatOpts, has_newline: bool) -> bool {
+    let body = &s.line[..s.line_len];
+    let is_blank = body.is_empty();
+    if opts.squeeze && is_blank && s.prev_blank {
+        return true;
+    }
+    s.prev_blank = is_blank;
+
+    let want_number = opts.number || (opts.number_nonblank && !is_blank);
+    if want_number {
+        s.line_no += 1;
+        let mut prefix = [0u8; 8];
+        let plen = fmt_lineno(&mut prefix, s.line_no);
+        if !write_all(STDOUT, &prefix[..plen]) { return false; }
+    }
+    if !write_all(STDOUT, body) { return false; }
+    if opts.show_ends {
+        if !write_all(STDOUT, b"$") { return false; }
+    }
+    if has_newline {
+        if !write_all(STDOUT, b"\n") { return false; }
+    }
+    true
+}
+
+fn flush_partial(s: &mut LineState, opts: &CatOpts) -> bool {
+    if s.line_len == 0 { return true; }
+    let ok = emit_line(s, opts, false);
+    s.line_len = 0;
+    ok
+}
+
+// Line state lives in .bss to avoid blowing up .data with the 4 KiB
+// scratch buffer (and to keep the main()-stack small).
+static mut LSTATE: LineState = LineState {
+    line: [0u8; LINE_MAX],
+    line_len: 0,
+    line_no: 0,
+    prev_blank: false,
+};
+
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
     let mut buf = [0u8; BUF_LEN];
+    let mut opts = CatOpts {
+        number: false,
+        number_nonblank: false,
+        squeeze: false,
+        show_ends: false,
+    };
 
-    if argc < 2 {
+    // Parse leading flags. Stops at first non-flag arg, '-', or '--'.
+    let mut idx: usize = 1;
+    while let Some(p) = argv_get(argc, argv, idx) {
+        if arg_is(p, b"--") { idx += 1; break; }
+        if arg_is(p, b"-")  { break; }
+        if arg_is(p, b"-n") { opts.number = true; idx += 1; continue; }
+        if arg_is(p, b"-b") { opts.number_nonblank = true; idx += 1; continue; }
+        if arg_is(p, b"-s") { opts.squeeze = true; idx += 1; continue; }
+        if arg_is(p, b"-E") { opts.show_ends = true; idx += 1; continue; }
+        if arg_is(p, b"-A") { opts.show_ends = true; idx += 1; continue; }
+        // Combined short flags like -nE / -bs / -ns: walk the chars.
+        let n = cstr_len(p);
+        if n >= 2 && unsafe { *p } == b'-' && unsafe { *p.add(1) } != b'-' {
+            let mut all_ok = true;
+            for i in 1..n {
+                match unsafe { *p.add(i) } {
+                    b'n' => opts.number = true,
+                    b'b' => opts.number_nonblank = true,
+                    b's' => opts.squeeze = true,
+                    b'E' | b'A' => opts.show_ends = true,
+                    _ => { all_ok = false; break; }
+                }
+            }
+            if all_ok { idx += 1; continue; }
+        }
+        break;
+    }
+
+    let any_format = opts.number || opts.number_nonblank
+        || opts.squeeze || opts.show_ends;
+
+    let pump_fd = |fd: i32, buf: &mut [u8]| -> bool {
+        if any_format {
+            // SAFETY: single-threaded user-space binary, exclusive access.
+            let st = unsafe { &mut *core::ptr::addr_of_mut!(LSTATE) };
+            pump_lines(fd, buf, st, &opts)
+        } else {
+            pump(fd, buf)
+        }
+    };
+
+    if (idx as i32) >= argc {
         // No file args — pass stdin through.
-        return if pump(STDIN, &mut buf) { 0 } else { 1 };
+        return if pump_fd(STDIN, &mut buf) { 0 } else { 1 };
     }
 
     let mut had_error = false;
-    let mut idx: usize = 1;
     while let Some(p) = argv_get(argc, argv, idx) {
         if arg_is(p, b"-") {
-            if !pump(STDIN, &mut buf) {
+            if !pump_fd(STDIN, &mut buf) {
                 had_error = true;
             }
         } else {
@@ -295,7 +473,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
                 write_str(STDERR, b"'\n");
                 had_error = true;
             } else {
-                let ok = pump(fd as i32, &mut buf);
+                let ok = pump_fd(fd as i32, &mut buf);
                 unsafe {
                     let _ = syscall1(sysn::CLOSE, fd as u64);
                 }

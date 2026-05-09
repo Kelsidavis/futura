@@ -173,6 +173,23 @@ fn parse_u64(p: *const u8) -> Option<u64> {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
+    // --help is a leading flag; check before the strict argc/-s logic.
+    if argc >= 2 {
+        let p = unsafe { *argv.add(1) };
+        if !p.is_null() && (p as usize) >= 0x10000 && cstr_eq(p, b"--help") {
+            let help: &[u8] = b"\
+Usage: rust-truncate -s NUM FILE [FILE...]
+Set the size of each FILE to exactly NUM bytes (truncating or
+extending with zeros as needed).
+
+  -s NUM   target size in bytes
+      --help    show this help and exit
+\0";
+            let len = help.len() - 1;
+            unsafe { let _ = syscall3(sysn::WRITE, 1, help.as_ptr() as u64, len as u64); }
+            return 0;
+        }
+    }
     if argc < 4 {
         write_str(STDERR, b"usage: rust-truncate -s <bytes> <file> [<file>...]\n");
         return 1;

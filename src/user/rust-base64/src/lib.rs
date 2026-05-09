@@ -463,6 +463,22 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
                 }
             }
             idx += 2;
+        } else if cstr_eq(p, b"--help") {
+            let help: &[u8] = b"\
+Usage: rust-base64 [OPTION]... [FILE]
+Encode FILE (or stdin) to base64, or decode with -d.
+
+  -d, --decode             decode instead of encode
+  -i, --ignore-garbage     when decoding, skip non-alphabet bytes
+  -w, --wrap COLS          wrap encoded output every COLS chars (0 disables)
+      --help               show this help and exit
+
+A '-' as FILE means standard input.
+\0";
+            let len = help.len() - 1;
+            unsafe { let _ = syscall3(sysn::WRITE, STDOUT as u64,
+                                       help.as_ptr() as u64, len as u64); }
+            return 0;
         } else if cstr_eq(p, b"--") {
             idx += 1;
             if idx < argc {

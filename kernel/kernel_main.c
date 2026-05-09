@@ -2179,77 +2179,6 @@ void fut_kernel_main(void) {
         fut_printf("[INIT] CLI shell staged at /bin/shell\n");
     }
 
-    /* Stage rust-hello (first user-space Rust program) */
-    extern int fut_stage_rust_hello_binary(void);
-    int rust_hello_stage = fut_stage_rust_hello_binary();
-    if (rust_hello_stage != 0) {
-        fut_printf("[WARN] Failed to stage rust-hello binary (error %d)\n", rust_hello_stage);
-    } else {
-        fut_printf("[INIT] rust-hello staged at /bin/rust-hello\n");
-    }
-
-    /* Stage rust-uname (Rust uname-style CLI) */
-    extern int fut_stage_rust_uname_binary(void);
-    int rust_uname_stage = fut_stage_rust_uname_binary();
-    if (rust_uname_stage != 0) {
-        fut_printf("[WARN] Failed to stage rust-uname binary (error %d)\n", rust_uname_stage);
-    } else {
-        fut_printf("[INIT] rust-uname staged at /bin/rust-uname\n");
-    }
-
-    /* Stage rust-pwd (Rust pwd-style CLI) */
-    extern int fut_stage_rust_pwd_binary(void);
-    int rust_pwd_stage = fut_stage_rust_pwd_binary();
-    if (rust_pwd_stage != 0) {
-        fut_printf("[WARN] Failed to stage rust-pwd binary (error %d)\n", rust_pwd_stage);
-    } else {
-        fut_printf("[INIT] rust-pwd staged at /bin/rust-pwd\n");
-    }
-
-    /* Stage rust-ls (Rust ls-style CLI) */
-    extern int fut_stage_rust_ls_binary(void);
-    int rust_ls_stage = fut_stage_rust_ls_binary();
-    if (rust_ls_stage != 0) {
-        fut_printf("[WARN] Failed to stage rust-ls binary (error %d)\n", rust_ls_stage);
-    } else {
-        fut_printf("[INIT] rust-ls staged at /bin/rust-ls\n");
-    }
-
-    /* Stage rust-mkdir (Rust mkdir-style CLI) */
-    extern int fut_stage_rust_mkdir_binary(void);
-    int rust_mkdir_stage = fut_stage_rust_mkdir_binary();
-    if (rust_mkdir_stage != 0) {
-        fut_printf("[WARN] Failed to stage rust-mkdir binary (error %d)\n", rust_mkdir_stage);
-    } else {
-        fut_printf("[INIT] rust-mkdir staged at /bin/rust-mkdir\n");
-    }
-
-    /* Stage rust-touch (Rust touch-style CLI) */
-    extern int fut_stage_rust_touch_binary(void);
-    int rust_touch_stage = fut_stage_rust_touch_binary();
-    if (rust_touch_stage != 0) {
-        fut_printf("[WARN] Failed to stage rust-touch binary (error %d)\n", rust_touch_stage);
-    } else {
-        fut_printf("[INIT] rust-touch staged at /bin/rust-touch\n");
-    }
-
-    /* Stage rust-rm (Rust rm-style CLI) */
-    extern int fut_stage_rust_rm_binary(void);
-    int rust_rm_stage = fut_stage_rust_rm_binary();
-    if (rust_rm_stage != 0) {
-        fut_printf("[WARN] Failed to stage rust-rm binary (error %d)\n", rust_rm_stage);
-    } else {
-        fut_printf("[INIT] rust-rm staged at /bin/rust-rm\n");
-    }
-
-    /* Stage rust-cat (Rust cat-style CLI) */
-    extern int fut_stage_rust_cat_binary(void);
-    int rust_cat_stage = fut_stage_rust_cat_binary();
-    if (rust_cat_stage != 0) {
-        fut_printf("[WARN] Failed to stage rust-cat binary (error %d)\n", rust_cat_stage);
-    } else {
-        fut_printf("[INIT] rust-cat staged at /bin/rust-cat\n");
-    }
 #else
     /* Even in non-Wayland (test) mode, stage the shell binary at /bin/shell
      * so that execve("/bin/shell", ...) works for external command execution. */
@@ -2258,6 +2187,43 @@ void fut_kernel_main(void) {
         int shell_rc = fut_stage_shell_binary();
         if (shell_rc == 0) {
             fut_printf("[INIT] ✓ Shell binary staged at /bin/shell\n");
+        }
+    }
+#endif
+
+#if ENABLE_RUST_USERLAND
+    /* ========================================
+     *   Stage Rust user-space CLIs
+     *   (independent of Wayland — these are plain TUI utilities)
+     * ======================================== */
+    {
+        extern int fut_stage_rust_hello_binary(void);
+        extern int fut_stage_rust_uname_binary(void);
+        extern int fut_stage_rust_pwd_binary(void);
+        extern int fut_stage_rust_ls_binary(void);
+        extern int fut_stage_rust_mkdir_binary(void);
+        extern int fut_stage_rust_touch_binary(void);
+        extern int fut_stage_rust_rm_binary(void);
+        extern int fut_stage_rust_cat_binary(void);
+        struct { const char *name; int (*fn)(void); } rust_bins[] = {
+            {"rust-hello",  fut_stage_rust_hello_binary},
+            {"rust-uname",  fut_stage_rust_uname_binary},
+            {"rust-pwd",    fut_stage_rust_pwd_binary},
+            {"rust-ls",     fut_stage_rust_ls_binary},
+            {"rust-mkdir",  fut_stage_rust_mkdir_binary},
+            {"rust-touch",  fut_stage_rust_touch_binary},
+            {"rust-rm",     fut_stage_rust_rm_binary},
+            {"rust-cat",    fut_stage_rust_cat_binary},
+        };
+        for (size_t i = 0; i < sizeof(rust_bins)/sizeof(rust_bins[0]); i++) {
+            int rc = rust_bins[i].fn();
+            if (rc != 0) {
+                fut_printf("[WARN] Failed to stage %s binary (error %d)\n",
+                           rust_bins[i].name, rc);
+            } else {
+                fut_printf("[INIT] %s staged at /bin/%s\n",
+                           rust_bins[i].name, rust_bins[i].name);
+            }
         }
     }
 #endif

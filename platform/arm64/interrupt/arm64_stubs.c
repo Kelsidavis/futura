@@ -85,14 +85,6 @@ ARM64_STAGE_FN(fut_stage_wl_sysmon_binary,          wl_sysmon,      "/bin",  "/b
 ARM64_STAGE_FN(fut_stage_wl_settings_binary,        wl_settings,    "/bin",  "/bin/wl-settings")
 ARM64_STAGE_FN(fut_stage_wl_files_binary,           wl_files,       "/bin",  "/bin/wl-files")
 ARM64_STAGE_FN(fut_stage_wl_wallpaper_binary,       wl_wallpaper,   "/bin",  "/bin/wl-wallpaper")
-ARM64_STAGE_FN(fut_stage_rust_hello_binary,         rust_hello,     "/bin",  "/bin/rust-hello")
-ARM64_STAGE_FN(fut_stage_rust_uname_binary,         rust_uname,     "/bin",  "/bin/rust-uname")
-ARM64_STAGE_FN(fut_stage_rust_pwd_binary,           rust_pwd,       "/bin",  "/bin/rust-pwd")
-ARM64_STAGE_FN(fut_stage_rust_ls_binary,            rust_ls,        "/bin",  "/bin/rust-ls")
-ARM64_STAGE_FN(fut_stage_rust_mkdir_binary,         rust_mkdir,     "/bin",  "/bin/rust-mkdir")
-ARM64_STAGE_FN(fut_stage_rust_touch_binary,         rust_touch,     "/bin",  "/bin/rust-touch")
-ARM64_STAGE_FN(fut_stage_rust_rm_binary,            rust_rm,        "/bin",  "/bin/rust-rm")
-ARM64_STAGE_FN(fut_stage_rust_cat_binary,           rust_cat,       "/bin",  "/bin/rust-cat")
 #else
 int fut_stage_wayland_compositor_binary(void) { return -ENODEV; }
 int fut_stage_futura_shell_binary(void)       { return -ENODEV; }
@@ -103,6 +95,18 @@ int fut_stage_wl_sysmon_binary(void)          { return -ENODEV; }
 int fut_stage_wl_settings_binary(void)        { return -ENODEV; }
 int fut_stage_wl_files_binary(void)           { return -ENODEV; }
 int fut_stage_wl_wallpaper_binary(void)       { return -ENODEV; }
+#endif
+
+#if defined(ENABLE_RUST_USERLAND) && ENABLE_RUST_USERLAND
+ARM64_STAGE_FN(fut_stage_rust_hello_binary,         rust_hello,     "/bin",  "/bin/rust-hello")
+ARM64_STAGE_FN(fut_stage_rust_uname_binary,         rust_uname,     "/bin",  "/bin/rust-uname")
+ARM64_STAGE_FN(fut_stage_rust_pwd_binary,           rust_pwd,       "/bin",  "/bin/rust-pwd")
+ARM64_STAGE_FN(fut_stage_rust_ls_binary,            rust_ls,        "/bin",  "/bin/rust-ls")
+ARM64_STAGE_FN(fut_stage_rust_mkdir_binary,         rust_mkdir,     "/bin",  "/bin/rust-mkdir")
+ARM64_STAGE_FN(fut_stage_rust_touch_binary,         rust_touch,     "/bin",  "/bin/rust-touch")
+ARM64_STAGE_FN(fut_stage_rust_rm_binary,            rust_rm,        "/bin",  "/bin/rust-rm")
+ARM64_STAGE_FN(fut_stage_rust_cat_binary,           rust_cat,       "/bin",  "/bin/rust-cat")
+#else
 int fut_stage_rust_hello_binary(void)         { return -ENODEV; }
 int fut_stage_rust_uname_binary(void)         { return -ENODEV; }
 int fut_stage_rust_pwd_binary(void)           { return -ENODEV; }

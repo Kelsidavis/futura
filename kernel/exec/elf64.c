@@ -1134,6 +1134,8 @@ extern const uint8_t _binary_build_bin_x86_64_user_rust_rmdir_start[];
 extern const uint8_t _binary_build_bin_x86_64_user_rust_rmdir_end[];
 extern const uint8_t _binary_build_bin_x86_64_user_rust_sync_start[];
 extern const uint8_t _binary_build_bin_x86_64_user_rust_sync_end[];
+extern const uint8_t _binary_build_bin_x86_64_user_rust_fold_start[];
+extern const uint8_t _binary_build_bin_x86_64_user_rust_fold_end[];
 #endif
 /* Core Wayland binaries (production) */
 #if ENABLE_WAYLAND
@@ -1573,6 +1575,13 @@ int fut_stage_rust_sync_binary(void) {
                       _binary_build_bin_x86_64_user_rust_sync_end,
                       "/bin/rust-sync");
 }
+
+int fut_stage_rust_fold_binary(void) {
+    (void)fut_vfs_mkdir("/bin", 0755);
+    return stage_blob(_binary_build_bin_x86_64_user_rust_fold_start,
+                      _binary_build_bin_x86_64_user_rust_fold_end,
+                      "/bin/rust-fold");
+}
 #else
 int fut_stage_rust_hello_binary(void) { return -ENOSYS; }
 int fut_stage_rust_uname_binary(void) { return -ENOSYS; }
@@ -1619,6 +1628,7 @@ int fut_stage_rust_arch_binary(void)      { return -ENOSYS; }
 int fut_stage_rust_kill_binary(void)      { return -ENOSYS; }
 int fut_stage_rust_rmdir_binary(void)     { return -ENOSYS; }
 int fut_stage_rust_sync_binary(void)      { return -ENOSYS; }
+int fut_stage_rust_fold_binary(void)      { return -ENOSYS; }
 #endif
 #else
 int fut_stage_shell_binary(void) {
@@ -1803,6 +1813,10 @@ int fut_stage_rust_rmdir_binary(void) {
 
 int fut_stage_rust_sync_binary(void) {
     return -ENOSYS;  /* rust-sync not available on macOS host builds */
+}
+
+int fut_stage_rust_fold_binary(void) {
+    return -ENOSYS;  /* rust-fold not available on macOS host builds */
 }
 #endif
 

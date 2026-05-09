@@ -1076,6 +1076,8 @@ extern const uint8_t _binary_build_bin_x86_64_user_rust_grep_start[];
 extern const uint8_t _binary_build_bin_x86_64_user_rust_grep_end[];
 extern const uint8_t _binary_build_bin_x86_64_user_rust_sleep_start[];
 extern const uint8_t _binary_build_bin_x86_64_user_rust_sleep_end[];
+extern const uint8_t _binary_build_bin_x86_64_user_rust_date_start[];
+extern const uint8_t _binary_build_bin_x86_64_user_rust_date_end[];
 #endif
 /* Core Wayland binaries (production) */
 #if ENABLE_WAYLAND
@@ -1312,6 +1314,13 @@ int fut_stage_rust_sleep_binary(void) {
                       _binary_build_bin_x86_64_user_rust_sleep_end,
                       "/bin/rust-sleep");
 }
+
+int fut_stage_rust_date_binary(void) {
+    (void)fut_vfs_mkdir("/bin", 0755);
+    return stage_blob(_binary_build_bin_x86_64_user_rust_date_start,
+                      _binary_build_bin_x86_64_user_rust_date_end,
+                      "/bin/rust-date");
+}
 #else
 int fut_stage_rust_hello_binary(void) { return -ENOSYS; }
 int fut_stage_rust_uname_binary(void) { return -ENOSYS; }
@@ -1329,6 +1338,7 @@ int fut_stage_rust_head_binary(void)  { return -ENOSYS; }
 int fut_stage_rust_tail_binary(void)  { return -ENOSYS; }
 int fut_stage_rust_grep_binary(void)  { return -ENOSYS; }
 int fut_stage_rust_sleep_binary(void) { return -ENOSYS; }
+int fut_stage_rust_date_binary(void)  { return -ENOSYS; }
 #endif
 #else
 int fut_stage_shell_binary(void) {
@@ -1397,6 +1407,10 @@ int fut_stage_rust_grep_binary(void) {
 
 int fut_stage_rust_sleep_binary(void) {
     return -ENOSYS;  /* rust-sleep not available on macOS host builds */
+}
+
+int fut_stage_rust_date_binary(void) {
+    return -ENOSYS;  /* rust-date not available on macOS host builds */
 }
 #endif
 

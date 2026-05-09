@@ -1463,6 +1463,7 @@ void fut_kernel_main(void) {
                   "# Show off the Rust user-space toolchain (now that fork+exec\n"
                   "# correctly cycles the child task through ZOMBIE on execve).\n"
                   "echo --- rust user-space ---\n"
+                  "/bin/rust-date\n"
                   "/bin/rust-hello; /bin/rust-uname\n"
                   "/bin/rust-pwd; /bin/rust-ls /bin\n"
                   "echo --- end rust ---\n");
@@ -2223,6 +2224,7 @@ void fut_kernel_main(void) {
         extern int fut_stage_rust_tail_binary(void);
         extern int fut_stage_rust_grep_binary(void);
         extern int fut_stage_rust_sleep_binary(void);
+        extern int fut_stage_rust_date_binary(void);
         struct { const char *name; int (*fn)(void); } rust_bins[] = {
             {"rust-hello",  fut_stage_rust_hello_binary},
             {"rust-uname",  fut_stage_rust_uname_binary},
@@ -2240,6 +2242,7 @@ void fut_kernel_main(void) {
             {"rust-tail",   fut_stage_rust_tail_binary},
             {"rust-grep",   fut_stage_rust_grep_binary},
             {"rust-sleep",  fut_stage_rust_sleep_binary},
+            {"rust-date",   fut_stage_rust_date_binary},
         };
         for (size_t i = 0; i < sizeof(rust_bins)/sizeof(rust_bins[0]); i++) {
             int rc = rust_bins[i].fn();

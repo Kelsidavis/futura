@@ -1192,13 +1192,17 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
 
     /*
      * fut_exec_elf returns 0 on success (new process created), or negative error.
-     * On success, the current thread must exit to let the new process run.
-     * This is the correct POSIX execve() semantics: the calling process is replaced.
+     * On success, the calling task must terminate cleanly so any waitpid()
+     * on its PID returns. fut_thread_exit() only tears down the thread —
+     * the task struct stays around and never becomes ZOMBIE, so a parent
+     * shell waiting on the original child PID after fork+exec will block
+     * forever even though the new exec'd image has already exited. Use
+     * fut_task_exit_current() so task_mark_exit + child_waiters wakeup
+     * fire and the parent sees its child reaped.
      */
     if (ret == 0) {
-        /* Success - exit the current thread, the new process will run */
-        extern void fut_thread_exit(void) __attribute__((noreturn));
-        fut_thread_exit();
+        extern void fut_task_exit_current(int status) __attribute__((noreturn));
+        fut_task_exit_current(0);
         /* Should not reach here */
     }
 

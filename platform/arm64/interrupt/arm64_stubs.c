@@ -113,6 +113,7 @@ ARM64_STAGE_FN(fut_stage_rust_env_binary,           rust_env,       "/bin",  "/b
 ARM64_STAGE_FN(fut_stage_rust_head_binary,          rust_head,      "/bin",  "/bin/rust-head")
 ARM64_STAGE_FN(fut_stage_rust_tail_binary,          rust_tail,      "/bin",  "/bin/rust-tail")
 ARM64_STAGE_FN(fut_stage_rust_grep_binary,          rust_grep,      "/bin",  "/bin/rust-grep")
+ARM64_STAGE_FN(fut_stage_rust_sleep_binary,         rust_sleep,     "/bin",  "/bin/rust-sleep")
 #else
 int fut_stage_rust_hello_binary(void)         { return -ENODEV; }
 int fut_stage_rust_uname_binary(void)         { return -ENODEV; }
@@ -129,6 +130,7 @@ int fut_stage_rust_env_binary(void)           { return -ENODEV; }
 int fut_stage_rust_head_binary(void)          { return -ENODEV; }
 int fut_stage_rust_tail_binary(void)          { return -ENODEV; }
 int fut_stage_rust_grep_binary(void)          { return -ENODEV; }
+int fut_stage_rust_sleep_binary(void)         { return -ENODEV; }
 #endif
 ARM64_STAGE_FN(fut_stage_init_binary,               init,           "/sbin", "/sbin/init")
 ARM64_STAGE_FN(fut_stage_shell_binary,              shell,          "/bin",  "/bin/shell")

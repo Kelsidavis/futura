@@ -585,7 +585,7 @@ static void process_key(struct client_state *s, uint32_t key) {
                 const char *envp[] = {
                     "PATH=/bin:/sbin",
                     "HOME=/root",
-                    "TERM=vt100",
+                    "TERM=xterm-256color",
                     "USER=root",
                     "HOSTNAME=futura",
                     "WAYLAND_DISPLAY=wayland-0",

@@ -1435,7 +1435,7 @@ void fut_kernel_main(void) {
                   "# Futura OS system profile\n"
                   "export PATH=/bin:/sbin:/bin/user\n"
                   "export HOME=/root\n"
-                  "export TERM=vt100\n"
+                  "export TERM=xterm-256color\n"
                   "export LANG=C.UTF-8\n"
                   "export LC_ALL=C.UTF-8\n"
                   "export SHELL=/bin/shell\n"

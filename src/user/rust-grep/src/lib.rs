@@ -340,8 +340,9 @@ struct Opts {
     // if multiple are given, precedence is quiet > list > count to match
     // GNU grep ("-q wins over -l wins over -c").
     count: bool,    // -c   print "<file>:<count>" per file
-    list: bool,     // -l   print "<file>" if any match, then stop file
-    quiet: bool,    // -q   no output at all, exit on first match
+    list: bool,         // -l   print "<file>" if any match, then stop file
+    list_no_match: bool,// -L   print "<file>" only if NO line matched
+    quiet: bool,        // -q   no output at all, exit on first match
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -388,8 +389,8 @@ fn grep_fd(
     // -q / -l only need to know "did anything match yet"; once we've
     // proven that, more reads add nothing. Short-circuit by returning
     // early so a multi-GB log file isn't rescanned for nothing.
-    let stop_after_first = opts.quiet || opts.list;
-    let suppress_lines = opts.quiet || opts.list || opts.count;
+    let stop_after_first = opts.quiet || opts.list || opts.list_no_match;
+    let suppress_lines = opts.quiet || opts.list || opts.list_no_match || opts.count;
     loop {
         let n = unsafe {
             syscall3(
@@ -583,6 +584,11 @@ fn grep_one_file(
                         write_all(STDOUT, name);
                         write_all(STDOUT, b"\n");
                     }
+                } else if opts.list_no_match {
+                    if c == 0 {
+                        write_all(STDOUT, name);
+                        write_all(STDOUT, b"\n");
+                    }
                 } else if opts.count {
                     emit_count_line(Some(name), c, show_name_count);
                 }
@@ -607,6 +613,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         show_name: ShowName::Auto,
         count: false,
         list: false,
+        list_no_match: false,
         quiet: false,
     };
 
@@ -645,8 +652,11 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         } else if arg_is(p, b"-c") {
             opts.count = true;
             idx += 1;
-        } else if arg_is(p, b"-l") {
+        } else if arg_is(p, b"-l") || arg_is(p, b"--files-with-matches") {
             opts.list = true;
+            idx += 1;
+        } else if arg_is(p, b"-L") || arg_is(p, b"--files-without-match") {
+            opts.list_no_match = true;
             idx += 1;
         } else if arg_is(p, b"-q") || arg_is(p, b"--quiet") || arg_is(p, b"--silent") {
             opts.quiet = true;
@@ -703,6 +713,8 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
                 if !opts.quiet {
                     if opts.list {
                         if c > 0 { write_all(STDOUT, b"(standard input)\n"); }
+                    } else if opts.list_no_match {
+                        if c == 0 { write_all(STDOUT, b"(standard input)\n"); }
                     } else if opts.count {
                         emit_count_line(None, c, false);
                     }
@@ -784,6 +796,11 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
                     if !opts.quiet {
                         if opts.list {
                             if c > 0 {
+                                write_all(STDOUT, name);
+                                write_all(STDOUT, b"\n");
+                            }
+                        } else if opts.list_no_match {
+                            if c == 0 {
                                 write_all(STDOUT, name);
                                 write_all(STDOUT, b"\n");
                             }

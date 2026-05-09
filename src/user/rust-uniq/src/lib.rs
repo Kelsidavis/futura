@@ -23,6 +23,8 @@ mod sysn {
     pub const READ: u64 = 63;
     pub const WRITE: u64 = 64;
     pub const EXIT: u64 = 93;
+    pub const OPENAT: u64 = 56;
+    pub const CLOSE: u64 = 57;
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -30,7 +32,12 @@ mod sysn {
     pub const READ: u64 = 0;
     pub const WRITE: u64 = 1;
     pub const EXIT: u64 = 60;
+    pub const OPENAT: u64 = 257;
+    pub const CLOSE: u64 = 3;
 }
+
+const AT_FDCWD: i64 = -100;
+const O_RDONLY: u64 = 0;
 
 const STDIN: i32 = 0;
 const STDOUT: i32 = 1;
@@ -38,6 +45,39 @@ const STDERR: i32 = 2;
 
 const MAX_LINE: usize = 4096;
 const READ_BUF: usize = 4096;
+
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+unsafe fn syscall1(nr: u64, a: u64) -> i64 {
+    let mut ret: i64;
+    unsafe {
+        core::arch::asm!(
+            "svc #0",
+            in("x8") nr,
+            inout("x0") a => ret,
+            options(nostack),
+        );
+    }
+    ret
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+unsafe fn syscall4(nr: u64, a: u64, b: u64, c: u64, d: u64) -> i64 {
+    let mut ret: i64;
+    unsafe {
+        core::arch::asm!(
+            "svc #0",
+            in("x8") nr,
+            inout("x0") a => ret,
+            in("x1") b,
+            in("x2") c,
+            in("x3") d,
+            options(nostack),
+        );
+    }
+    ret
+}
 
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
@@ -67,6 +107,43 @@ unsafe fn sys_exit(code: u64) -> ! {
             options(nostack, noreturn),
         );
     }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+unsafe fn syscall1(nr: u64, a: u64) -> i64 {
+    let mut ret: i64;
+    unsafe {
+        core::arch::asm!(
+            "syscall",
+            inout("rax") nr => ret,
+            in("rdi") a,
+            lateout("rcx") _,
+            lateout("r11") _,
+            options(nostack),
+        );
+    }
+    ret
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+unsafe fn syscall4(nr: u64, a: u64, b: u64, c: u64, d: u64) -> i64 {
+    let mut ret: i64;
+    unsafe {
+        core::arch::asm!(
+            "syscall",
+            inout("rax") nr => ret,
+            in("rdi") a,
+            in("rsi") b,
+            in("rdx") c,
+            in("r10") d,
+            lateout("rcx") _,
+            lateout("r11") _,
+            options(nostack),
+        );
+    }
+    ret
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -209,9 +286,13 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         only_uniq: false,
         icase: false,
     };
-    for i in 1..argc {
+    let mut input_fd: i32 = STDIN;
+    let mut input_path: Option<*const u8> = None;
+    let mut i = 1;
+    while i < argc {
         let p = unsafe { *argv.add(i as usize) };
         if p.is_null() || (p as usize) < 0x10000 {
+            i += 1;
             continue;
         }
         if cstr_eq(p, b"-c") {
@@ -222,14 +303,47 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             mode.only_uniq = true;
         } else if cstr_eq(p, b"-i") {
             mode.icase = true;
+        } else if cstr_eq(p, b"--") {
+            i += 1;
+            // Next non-null token is the INPUT file (if any).
+            if i < argc {
+                let q = unsafe { *argv.add(i as usize) };
+                if !q.is_null() && (q as usize) >= 0x10000 {
+                    input_path = Some(q);
+                }
+            }
+            break;
         } else {
-            write_str(STDERR, b"rust-uniq: unsupported argument (use -c / -d / -u / -i)\n");
-            return 2;
+            // First non-flag token is the INPUT file. GNU uniq accepts
+            // [INPUT [OUTPUT]]; we only honour INPUT for now (OUTPUT
+            // would need O_WRONLY/O_CREAT plumbing for marginal benefit).
+            input_path = Some(p);
+            break;
         }
+        i += 1;
     }
     if mode.only_dups && mode.only_uniq {
         // GNU uniq treats -d -u as "print nothing" (each line falls
         // foul of one of the two filters). Mirror that.
+    }
+
+    if let Some(p) = input_path {
+        // "-" still means stdin (matches GNU uniq).
+        let mut nlen = 0usize;
+        unsafe { while *p.add(nlen) != 0 { nlen += 1; } }
+        let is_dash = nlen == 1 && unsafe { *p } == b'-';
+        if !is_dash {
+            let f = unsafe {
+                syscall4(sysn::OPENAT, AT_FDCWD as u64, p as u64, O_RDONLY, 0) as i32
+            };
+            if f < 0 {
+                write_str(STDERR, b"rust-uniq: cannot open '");
+                unsafe { let _ = syscall3(sysn::WRITE, STDERR as u64, p as u64, nlen as u64); }
+                write_str(STDERR, b"'\n");
+                return 1;
+            }
+            input_fd = f;
+        }
     }
 
     // State for the running line.
@@ -247,7 +361,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
 
     'outer: loop {
         let n = unsafe {
-            syscall3(sysn::READ, STDIN as u64, rbuf.as_mut_ptr() as u64, rbuf.len() as u64)
+            syscall3(sysn::READ, input_fd as u64, rbuf.as_mut_ptr() as u64, rbuf.len() as u64)
         };
         if n < 0 {
             had_error = true;
@@ -330,5 +444,8 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         }
     }
 
+    if input_fd != STDIN {
+        unsafe { let _ = syscall1(sysn::CLOSE, input_fd as u64); }
+    }
     if had_error { 1 } else { 0 }
 }

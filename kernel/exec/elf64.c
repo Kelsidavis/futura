@@ -1094,6 +1094,8 @@ extern const uint8_t _binary_build_bin_x86_64_user_rust_dirname_start[];
 extern const uint8_t _binary_build_bin_x86_64_user_rust_dirname_end[];
 extern const uint8_t _binary_build_bin_x86_64_user_rust_clear_start[];
 extern const uint8_t _binary_build_bin_x86_64_user_rust_clear_end[];
+extern const uint8_t _binary_build_bin_x86_64_user_rust_which_start[];
+extern const uint8_t _binary_build_bin_x86_64_user_rust_which_end[];
 #endif
 /* Core Wayland binaries (production) */
 #if ENABLE_WAYLAND
@@ -1393,6 +1395,13 @@ int fut_stage_rust_clear_binary(void) {
                       _binary_build_bin_x86_64_user_rust_clear_end,
                       "/bin/rust-clear");
 }
+
+int fut_stage_rust_which_binary(void) {
+    (void)fut_vfs_mkdir("/bin", 0755);
+    return stage_blob(_binary_build_bin_x86_64_user_rust_which_start,
+                      _binary_build_bin_x86_64_user_rust_which_end,
+                      "/bin/rust-which");
+}
 #else
 int fut_stage_rust_hello_binary(void) { return -ENOSYS; }
 int fut_stage_rust_uname_binary(void) { return -ENOSYS; }
@@ -1419,6 +1428,7 @@ int fut_stage_rust_mv_binary(void)        { return -ENOSYS; }
 int fut_stage_rust_basename_binary(void)  { return -ENOSYS; }
 int fut_stage_rust_dirname_binary(void)   { return -ENOSYS; }
 int fut_stage_rust_clear_binary(void)     { return -ENOSYS; }
+int fut_stage_rust_which_binary(void)     { return -ENOSYS; }
 #endif
 #else
 int fut_stage_shell_binary(void) {
@@ -1523,6 +1533,10 @@ int fut_stage_rust_dirname_binary(void) {
 
 int fut_stage_rust_clear_binary(void) {
     return -ENOSYS;  /* rust-clear not available on macOS host builds */
+}
+
+int fut_stage_rust_which_binary(void) {
+    return -ENOSYS;  /* rust-which not available on macOS host builds */
 }
 #endif
 

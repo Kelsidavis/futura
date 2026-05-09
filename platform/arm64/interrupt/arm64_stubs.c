@@ -123,6 +123,7 @@ ARM64_STAGE_FN(fut_stage_rust_mv_binary,            rust_mv,        "/bin",  "/b
 ARM64_STAGE_FN(fut_stage_rust_basename_binary,      rust_basename,  "/bin",  "/bin/rust-basename")
 ARM64_STAGE_FN(fut_stage_rust_dirname_binary,       rust_dirname,   "/bin",  "/bin/rust-dirname")
 ARM64_STAGE_FN(fut_stage_rust_clear_binary,         rust_clear,     "/bin",  "/bin/rust-clear")
+ARM64_STAGE_FN(fut_stage_rust_which_binary,         rust_which,     "/bin",  "/bin/rust-which")
 #else
 int fut_stage_rust_hello_binary(void)         { return -ENODEV; }
 int fut_stage_rust_uname_binary(void)         { return -ENODEV; }
@@ -149,6 +150,7 @@ int fut_stage_rust_mv_binary(void)            { return -ENODEV; }
 int fut_stage_rust_basename_binary(void)      { return -ENODEV; }
 int fut_stage_rust_dirname_binary(void)       { return -ENODEV; }
 int fut_stage_rust_clear_binary(void)         { return -ENODEV; }
+int fut_stage_rust_which_binary(void)         { return -ENODEV; }
 #endif
 ARM64_STAGE_FN(fut_stage_init_binary,               init,           "/sbin", "/sbin/init")
 ARM64_STAGE_FN(fut_stage_shell_binary,              shell,          "/bin",  "/bin/shell")

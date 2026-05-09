@@ -241,7 +241,11 @@ fn to_lower(b: u8) -> u8 {
     if b.is_ascii_uppercase() { b + 32 } else { b }
 }
 
-fn line_matches(line: &[u8], pat: &[u8], icase: bool) -> bool {
+fn is_word_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
+}
+
+fn line_matches(line: &[u8], pat: &[u8], icase: bool, word: bool) -> bool {
     if pat.is_empty() {
         return true;
     }
@@ -259,9 +263,15 @@ fn line_matches(line: &[u8], pat: &[u8], icase: bool) -> bool {
                 break;
             }
         }
-        if ok {
-            return true;
+        if !ok { continue; }
+        if word {
+            // Boundaries on both sides must NOT be word-bytes.
+            let left_ok = i == 0 || !is_word_byte(line[i - 1]);
+            let right_ok = i + pat.len() >= line.len()
+                || !is_word_byte(line[i + pat.len()]);
+            if !(left_ok && right_ok) { continue; }
         }
+        return true;
     }
     false
 }
@@ -301,6 +311,7 @@ struct Opts {
     show_lineno: bool,
     icase: bool,
     invert: bool,
+    word: bool,
     show_name: ShowName,
     // Output-mode flags. At most one of count/list/quiet should be set;
     // if multiple are given, precedence is quiet > list > count to match
@@ -384,7 +395,7 @@ fn grep_fd(
                 lineno += 1;
                 if !overflow {
                     let body = &line[..line_len];
-                    let m = line_matches(body, pat, opts.icase);
+                    let m = line_matches(body, pat, opts.icase, opts.word);
                     if m != opts.invert {
                         if !suppress_lines {
                             emit_match(name, lineno, body, opts);
@@ -402,7 +413,7 @@ fn grep_fd(
     if line_len > 0 {
         lineno += 1;
         let body = &line[..line_len];
-        let m = line_matches(body, pat, opts.icase);
+        let m = line_matches(body, pat, opts.icase, opts.word);
         if m != opts.invert {
             if !suppress_lines {
                 emit_match(name, lineno, body, opts);
@@ -420,6 +431,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         show_lineno: false,
         icase: false,
         invert: false,
+        word: false,
         show_name: ShowName::Auto,
         count: false,
         list: false,
@@ -436,6 +448,9 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             idx += 1;
         } else if arg_is(p, b"-v") {
             opts.invert = true;
+            idx += 1;
+        } else if arg_is(p, b"-w") || arg_is(p, b"--word-regexp") {
+            opts.word = true;
             idx += 1;
         } else if arg_is(p, b"-H") {
             opts.show_name = ShowName::Always;

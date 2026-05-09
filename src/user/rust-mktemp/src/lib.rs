@@ -324,6 +324,20 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         }
         if cstr_eq(p, b"-d") {
             want_dir = true;
+        } else if cstr_eq(p, b"--help") {
+            let help: &[u8] = b"\
+Usage: rust-mktemp [-d] [TEMPLATE]
+Create a unique file (or directory with -d) and print its path.
+
+  -d            create a directory (mode 0700) instead of a file
+  TEMPLATE      path template; trailing X's are replaced with random
+                ALPHA-36 chars (default /tmp/tmp.XXXXXXXX)
+      --help    show this help and exit
+\0";
+            let len = help.len() - 1;
+            unsafe { let _ = syscall3(sysn::WRITE, STDOUT as u64,
+                                       help.as_ptr() as u64, len as u64); }
+            return 0;
         } else if user_template.is_none() {
             user_template = Some(p);
         } else {

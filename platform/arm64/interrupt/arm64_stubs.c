@@ -127,6 +127,7 @@ ARM64_STAGE_FN(fut_stage_rust_which_binary,         rust_which,     "/bin",  "/b
 ARM64_STAGE_FN(fut_stage_rust_readlink_binary,      rust_readlink,  "/bin",  "/bin/rust-readlink")
 ARM64_STAGE_FN(fut_stage_rust_ln_binary,            rust_ln,        "/bin",  "/bin/rust-ln")
 ARM64_STAGE_FN(fut_stage_rust_tee_binary,           rust_tee,       "/bin",  "/bin/rust-tee")
+ARM64_STAGE_FN(fut_stage_rust_yes_binary,           rust_yes,       "/bin",  "/bin/rust-yes")
 #else
 int fut_stage_rust_hello_binary(void)         { return -ENODEV; }
 int fut_stage_rust_uname_binary(void)         { return -ENODEV; }
@@ -157,6 +158,7 @@ int fut_stage_rust_which_binary(void)         { return -ENODEV; }
 int fut_stage_rust_readlink_binary(void)      { return -ENODEV; }
 int fut_stage_rust_ln_binary(void)            { return -ENODEV; }
 int fut_stage_rust_tee_binary(void)           { return -ENODEV; }
+int fut_stage_rust_yes_binary(void)           { return -ENODEV; }
 #endif
 ARM64_STAGE_FN(fut_stage_init_binary,               init,           "/sbin", "/sbin/init")
 ARM64_STAGE_FN(fut_stage_shell_binary,              shell,          "/bin",  "/bin/shell")

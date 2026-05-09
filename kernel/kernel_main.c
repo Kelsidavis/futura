@@ -2286,6 +2286,7 @@ void fut_kernel_main(void) {
         extern int fut_stage_rust_mktemp_binary(void);
         extern int fut_stage_rust_uptime_binary(void);
         extern int fut_stage_rust_truncate_binary(void);
+        extern int fut_stage_rust_stat_binary(void);
         /* The displayed name doubles as the "/bin/<name>" path in the
          * INIT log line below, so it must match the actual staged
          * path baked into elf64.c / arm64_stubs.c. The standard
@@ -2348,6 +2349,7 @@ void fut_kernel_main(void) {
             {"mktemp",      fut_stage_rust_mktemp_binary},
             {"uptime",      fut_stage_rust_uptime_binary},
             {"truncate",    fut_stage_rust_truncate_binary},
+            {"stat",        fut_stage_rust_stat_binary},
         };
         for (size_t i = 0; i < sizeof(rust_bins)/sizeof(rust_bins[0]); i++) {
             int rc = rust_bins[i].fn();

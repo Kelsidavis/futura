@@ -93,6 +93,10 @@ static int proc_count = 0;
 static int scroll_off = 0;
 static int selected = 0;
 static uint64_t last_refresh_ms = 0;
+/* Hidden-file visibility — toggled by Ctrl-H, default off (hidden).
+ * Earlier versions implicitly showed every dot-file which surprised
+ * anyone navigating to /etc and seeing internal state files. */
+static int show_hidden = 0;
 
 /* Client */
 struct client_state {
@@ -212,15 +216,21 @@ static void refresh_procs(void) {
             unsigned char dtype = (unsigned char)dirent_buf[pos + 18];
             char *name = dirent_buf + pos + 19;
 
-            /* Hide "." but keep ".." (so the user can navigate up). */
-            if (!(name[0] == '.' && name[1] == '\0')) {
-                /* Skip ".." if we're already at root. */
-                int is_dotdot = (name[0] == '.' && name[1] == '.' &&
-                                 name[2] == '\0');
-                int at_root = (cwd[0] == '/' && cwd[1] == '\0');
-                if (!(is_dotdot && at_root)) {
-                    add_entry(name, dtype);
-                }
+            /* Always hide "." (no useful navigation target).
+             * ".." is kept so the user can ascend, but skipped at
+             * root (nothing above to go to).
+             * Other dot-prefixed entries are shown only when
+             * show_hidden is on (toggled with Ctrl-H). */
+            int is_dot = (name[0] == '.' && name[1] == '\0');
+            int is_dotdot = (name[0] == '.' && name[1] == '.' &&
+                             name[2] == '\0');
+            int starts_with_dot = (name[0] == '.');
+            int at_root = (cwd[0] == '/' && cwd[1] == '\0');
+            int hide = is_dot
+                    || (is_dotdot && at_root)
+                    || (!show_hidden && starts_with_dot && !is_dotdot);
+            if (!hide) {
+                add_entry(name, dtype);
             }
             if (reclen == 0) break;
             pos += reclen;
@@ -501,6 +511,15 @@ static void process_key(struct client_state *s, uint32_t key) {
     if (ctrl && key == 16 /* q */) { s->running = false; return; }
     if (key == 1 /* Escape */) { s->running = false; return; }
     if (key == 19 /* r */) {
+        refresh_procs();
+        last_refresh_ms = tick_ms;
+        s->needs_redraw = true; return;
+    }
+    /* Ctrl-H toggles dot-prefixed entries on/off. Plain 'h' is taken
+     * (jumps to HOME), so the shift modifier is required. */
+    if (ctrl && key == 35 /* 'h' */) {
+        show_hidden = !show_hidden;
+        selected = 0; scroll_off = 0;
         refresh_procs();
         last_refresh_ms = tick_ms;
         s->needs_redraw = true; return;

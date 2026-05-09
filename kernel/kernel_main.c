@@ -2214,6 +2214,15 @@ void fut_kernel_main(void) {
     } else {
         fut_printf("[INIT] rust-ls staged at /bin/rust-ls\n");
     }
+
+    /* Stage rust-mkdir (Rust mkdir-style CLI) */
+    extern int fut_stage_rust_mkdir_binary(void);
+    int rust_mkdir_stage = fut_stage_rust_mkdir_binary();
+    if (rust_mkdir_stage != 0) {
+        fut_printf("[WARN] Failed to stage rust-mkdir binary (error %d)\n", rust_mkdir_stage);
+    } else {
+        fut_printf("[INIT] rust-mkdir staged at /bin/rust-mkdir\n");
+    }
 #else
     /* Even in non-Wayland (test) mode, stage the shell binary at /bin/shell
      * so that execve("/bin/shell", ...) works for external command execution. */

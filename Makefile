@@ -1188,6 +1188,8 @@ RUST_PWD_BIN := $(BIN_DIR)/$(PLATFORM)/user/rust-pwd
 RUST_PWD_BLOB := $(OBJ_DIR)/kernel/blobs/rust_pwd_blob.o
 RUST_LS_BIN := $(BIN_DIR)/$(PLATFORM)/user/rust-ls
 RUST_LS_BLOB := $(OBJ_DIR)/kernel/blobs/rust_ls_blob.o
+RUST_MKDIR_BIN := $(BIN_DIR)/$(PLATFORM)/user/rust-mkdir
+RUST_MKDIR_BLOB := $(OBJ_DIR)/kernel/blobs/rust_mkdir_blob.o
 
 # ARM64 userland binaries
 ARM64_INIT_BIN := $(BIN_DIR)/arm64/user/init
@@ -1230,6 +1232,8 @@ ARM64_RUST_PWD_BIN            := $(BIN_DIR)/arm64/user/rust-pwd
 ARM64_RUST_PWD_BLOB           := $(OBJ_DIR)/kernel/blobs/arm64_rust_pwd_blob.o
 ARM64_RUST_LS_BIN             := $(BIN_DIR)/arm64/user/rust-ls
 ARM64_RUST_LS_BLOB            := $(OBJ_DIR)/kernel/blobs/arm64_rust_ls_blob.o
+ARM64_RUST_MKDIR_BIN          := $(BIN_DIR)/arm64/user/rust-mkdir
+ARM64_RUST_MKDIR_BLOB         := $(OBJ_DIR)/kernel/blobs/arm64_rust_mkdir_blob.o
 
 ifeq ($(PLATFORM),x86_64)
 # Skip shell blob on macOS (uses GNU nested functions not supported by clang)
@@ -1244,7 +1248,7 @@ endif
 # Core Wayland binaries (production) - only when ENABLE_WAYLAND=1 on Linux
 ifeq ($(ENABLE_WAYLAND),1)
 ifneq ($(shell uname -s),Darwin)
-OBJECTS += $(WAYLAND_COMPOSITOR_BLOB) $(WAYLAND_SHELL_BLOB) $(WL_TERM_BLOB) $(WL_PANEL_BLOB) $(WL_EDIT_BLOB) $(WL_SYSMON_BLOB) $(WL_SETTINGS_BLOB) $(WL_FILES_BLOB) $(WL_WALLPAPER_BLOB) $(RUST_HELLO_BLOB) $(RUST_UNAME_BLOB) $(RUST_PWD_BLOB) $(RUST_LS_BLOB)
+OBJECTS += $(WAYLAND_COMPOSITOR_BLOB) $(WAYLAND_SHELL_BLOB) $(WL_TERM_BLOB) $(WL_PANEL_BLOB) $(WL_EDIT_BLOB) $(WL_SYSMON_BLOB) $(WL_SETTINGS_BLOB) $(WL_FILES_BLOB) $(WL_WALLPAPER_BLOB) $(RUST_HELLO_BLOB) $(RUST_UNAME_BLOB) $(RUST_PWD_BLOB) $(RUST_LS_BLOB) $(RUST_MKDIR_BLOB)
 ifeq ($(ENABLE_WAYLAND_TEST_CLIENTS),1)
 OBJECTS += $(WAYLAND_CLIENT_BLOB) $(WAYLAND_COLOR_BLOB)
 endif
@@ -1257,7 +1261,7 @@ OBJECTS += $(ARM64_INIT_BLOB) $(ARM64_UIDEMO_BLOB) $(ARM64_SHELL_BLOB) $(ARM64_F
 # cross-built for arm64-elf via the per-platform Makefiles under
 # src/user/{compositor,clients,shell}/.
 ifeq ($(ENABLE_WAYLAND),1)
-OBJECTS += $(ARM64_WAYLAND_COMPOSITOR_BLOB) $(ARM64_WAYLAND_SHELL_BLOB) $(ARM64_WL_TERM_BLOB) $(ARM64_WL_PANEL_BLOB) $(ARM64_WL_EDIT_BLOB) $(ARM64_WL_SYSMON_BLOB) $(ARM64_WL_SETTINGS_BLOB) $(ARM64_WL_FILES_BLOB) $(ARM64_WL_WALLPAPER_BLOB) $(ARM64_RUST_HELLO_BLOB) $(ARM64_RUST_UNAME_BLOB) $(ARM64_RUST_PWD_BLOB) $(ARM64_RUST_LS_BLOB)
+OBJECTS += $(ARM64_WAYLAND_COMPOSITOR_BLOB) $(ARM64_WAYLAND_SHELL_BLOB) $(ARM64_WL_TERM_BLOB) $(ARM64_WL_PANEL_BLOB) $(ARM64_WL_EDIT_BLOB) $(ARM64_WL_SYSMON_BLOB) $(ARM64_WL_SETTINGS_BLOB) $(ARM64_WL_FILES_BLOB) $(ARM64_WL_WALLPAPER_BLOB) $(ARM64_RUST_HELLO_BLOB) $(ARM64_RUST_UNAME_BLOB) $(ARM64_RUST_PWD_BLOB) $(ARM64_RUST_LS_BLOB) $(ARM64_RUST_MKDIR_BLOB)
 endif
 endif
 
@@ -1715,6 +1719,17 @@ $(RUST_LS_BLOB): $(RUST_LS_BIN) | $(OBJ_DIR)/kernel/blobs
 	@echo "OBJCOPY $@"
 	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
 
+# rust-mkdir (Rust user-space CLI) — same gating pattern as rust-hello.
+ifneq ($(PLATFORM),arm64)
+$(RUST_MKDIR_BIN):
+	@echo "Building $(PLATFORM) rust-mkdir..."
+	@$(MAKE) -C src/user/rust-mkdir PLATFORM=$(PLATFORM) all
+endif
+
+$(RUST_MKDIR_BLOB): $(RUST_MKDIR_BIN) | $(OBJ_DIR)/kernel/blobs
+	@echo "OBJCOPY $@"
+	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
+
 # ARM64 userland binaries and blobs
 # Note: These cross-compilation rules only apply when building x86_64
 # When PLATFORM=arm64, the generic SHELL_BIN/FBTEST_BIN rules handle
@@ -1845,6 +1860,10 @@ $(ARM64_RUST_PWD_BIN): arm64-libfutura
 $(ARM64_RUST_LS_BIN): arm64-libfutura
 	@echo "Building ARM64 rust-ls..."
 	@$(MAKE) -C src/user/rust-ls PLATFORM=arm64 all
+
+$(ARM64_RUST_MKDIR_BIN): arm64-libfutura
+	@echo "Building ARM64 rust-mkdir..."
+	@$(MAKE) -C src/user/rust-mkdir PLATFORM=arm64 all
 endif
 
 # Strip + objcopy each wayland binary into a kernel-embeddable blob.
@@ -1897,6 +1916,10 @@ $(ARM64_RUST_PWD_BLOB): $(ARM64_RUST_PWD_BIN) | $(OBJ_DIR)/kernel/blobs
 	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
 
 $(ARM64_RUST_LS_BLOB): $(ARM64_RUST_LS_BIN) | $(OBJ_DIR)/kernel/blobs
+	@$(OBJCOPY) --strip-debug $< $<.tmp && mv $<.tmp $<
+	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
+
+$(ARM64_RUST_MKDIR_BLOB): $(ARM64_RUST_MKDIR_BIN) | $(OBJ_DIR)/kernel/blobs
 	@$(OBJCOPY) --strip-debug $< $<.tmp && mv $<.tmp $<
 	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
 

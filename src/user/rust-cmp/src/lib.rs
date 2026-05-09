@@ -243,6 +243,7 @@ fn arg_eq(p: *const u8, want: &[u8]) -> bool {
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
     // Parse leading flags.
     let mut silent = false;
+    let mut verbose = false;
     let mut byte_limit: Option<u64> = None;
     let mut idx: i32 = 1;
     while idx < argc {
@@ -250,6 +251,11 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         if p.is_null() || (p as usize) < 0x10000 { break; }
         if arg_eq(p, b"-s") || arg_eq(p, b"--quiet") || arg_eq(p, b"--silent") {
             silent = true;
+            idx += 1;
+            continue;
+        }
+        if arg_eq(p, b"-l") || arg_eq(p, b"--verbose") {
+            verbose = true;
             idx += 1;
             continue;
         }
@@ -295,6 +301,7 @@ Usage: rust-cmp [OPTION]... FILE1 FILE2
 Compare two files byte by byte.
 
   -s, --quiet, --silent  suppress all output, exit status only
+  -l, --verbose          list every differing byte (POS OCT1 OCT2)
   -n NUM                  compare at most NUM bytes
       --help              show this help and exit
 
@@ -401,6 +408,29 @@ Exit status: 0 identical, 1 differ, 2 trouble.
         }
         for i in 0..common {
             if buf1[i] != buf2[i] {
+                if verbose && !silent {
+                    // GNU cmp -l format: "<pos> <octal-a> <octal-b>".
+                    let pos = byte_pos + i as u64 + 1;
+                    let mut nb = [0u8; 24];
+                    let mut k = nb.len();
+                    let mut v = pos;
+                    if v == 0 { k -= 1; nb[k] = b'0'; }
+                    while v > 0 && k > 0 { k -= 1; nb[k] = b'0' + (v % 10) as u8; v /= 10; }
+                    write_str(STDOUT, &nb[k..]);
+                    let emit_oct = |c: u8| {
+                        let mut o = [b' ', b'0', b'0', b'0'];
+                        o[1] = b'0' + ((c >> 6) & 0o7);
+                        o[2] = b'0' + ((c >> 3) & 0o7);
+                        o[3] = b'0' + (c & 0o7);
+                        write_str(STDOUT, &o);
+                    };
+                    emit_oct(buf1[i]);
+                    emit_oct(buf2[i]);
+                    write_str(STDOUT, b"\n");
+                    rc = 1;
+                    // -l keeps going to enumerate every difference.
+                    continue;
+                }
                 if !silent { print_diff(name1, name2, byte_pos + i as u64 + 1); }
                 rc = 1;
                 if owned1 { close_fd(fd1); }

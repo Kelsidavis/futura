@@ -2268,6 +2268,7 @@ void fut_kernel_main(void) {
         extern int fut_stage_rust_whoami_binary(void);
         extern int fut_stage_rust_id_binary(void);
         extern int fut_stage_rust_chmod_binary(void);
+        extern int fut_stage_rust_hostname_binary(void);
         struct { const char *name; int (*fn)(void); } rust_bins[] = {
             {"rust-hello",  fut_stage_rust_hello_binary},
             {"rust-uname",  fut_stage_rust_uname_binary},
@@ -2309,6 +2310,7 @@ void fut_kernel_main(void) {
             {"rust-whoami", fut_stage_rust_whoami_binary},
             {"rust-id",     fut_stage_rust_id_binary},
             {"rust-chmod",  fut_stage_rust_chmod_binary},
+            {"rust-hostname", fut_stage_rust_hostname_binary},
         };
         for (size_t i = 0; i < sizeof(rust_bins)/sizeof(rust_bins[0]); i++) {
             int rc = rust_bins[i].fn();
@@ -2372,6 +2374,7 @@ void fut_kernel_main(void) {
                 { "/bin/rust-whoami",    "/bin/whoami"  },
                 { "/bin/rust-id",        "/bin/id"      },
                 { "/bin/rust-chmod",     "/bin/chmod"   },
+                { "/bin/rust-hostname",  "/bin/hostname"},
             };
             for (size_t i = 0; i < sizeof(aliases)/sizeof(aliases[0]); i++) {
                 sys_symlink(aliases[i][0], aliases[i][1]);

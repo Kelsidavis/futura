@@ -303,11 +303,25 @@ fn parse_fields(p: *const u8, out: &mut [u32; MAX_FIELDS]) -> Option<usize> {
 
 // Emit selected byte positions from `line` (1-based). Positions past
 // the line length are silently skipped. Used by -c / -b mode.
-fn emit_chars(line: &[u8], positions: &[u32]) -> bool {
-    for &pos in positions {
-        let i = pos as usize;
-        if i == 0 || i > line.len() { continue; }
-        if !write_all(STDOUT, &line[i - 1..i]) { return false; }
+// With complement = true, emits positions NOT in the list instead.
+fn emit_chars(line: &[u8], positions: &[u32], complement: bool) -> bool {
+    if !complement {
+        for &pos in positions {
+            let i = pos as usize;
+            if i == 0 || i > line.len() { continue; }
+            if !write_all(STDOUT, &line[i - 1..i]) { return false; }
+        }
+    } else {
+        // Walk every byte; emit those whose 1-based position is NOT in
+        // the positions list.
+        for i in 1..=line.len() {
+            let p = i as u32;
+            let mut hit = false;
+            for &q in positions { if q == p { hit = true; break; } }
+            if !hit {
+                if !write_all(STDOUT, &line[i - 1..i]) { return false; }
+            }
+        }
     }
     write_all(STDOUT, b"\n")
 }
@@ -315,27 +329,28 @@ fn emit_chars(line: &[u8], positions: &[u32]) -> bool {
 // Emit selected fields from `line`, splitting on `delim`, joining with
 // `delim` between emitted fields. With `suppress_no_delim`, lines that
 // contain no delimiter are silently skipped (matches GNU cut -s).
-fn emit_line(line: &[u8], delim: u8, fields: &[u32], suppress_no_delim: bool) -> bool {
-    if fields.is_empty() {
+fn emit_line(line: &[u8], delim: u8, fields: &[u32],
+             suppress_no_delim: bool, complement: bool) -> bool {
+    if fields.is_empty() && !complement {
         return write_all(STDOUT, b"\n");
     }
-    // Walk the line and collect [start..end) for each field.
+    let want = |idx: u32| -> bool {
+        let in_list = fields.contains(&idx);
+        if complement { !in_list } else { in_list }
+    };
     let mut idx_field: u32 = 1;
     let mut field_start = 0usize;
     let mut printed_any = false;
     let mut field_present = false;
-    // Pre-scan to know whether ANY delim is in the line — needed by -s
-    // to make the "skip undelimited lines" decision before we emit
-    // anything.
     if suppress_no_delim {
         let mut has = false;
         for &b in line { if b == delim { has = true; break; } }
-        if !has { return true; }   // silently skip
+        if !has { return true; }
     }
     for (i, &b) in line.iter().enumerate() {
         if b == delim {
             field_present = true;
-            if fields.contains(&idx_field) {
+            if want(idx_field) {
                 if printed_any {
                     if !write_all(STDOUT, &[delim]) { return false; }
                 }
@@ -346,11 +361,9 @@ fn emit_line(line: &[u8], delim: u8, fields: &[u32], suppress_no_delim: bool) ->
             field_start = i + 1;
         }
     }
-    // Last field (after the last delim, or the whole line if no delim).
     if !field_present {
-        // No delim in line: GNU cut default emits the whole line.
         if !write_all(STDOUT, line) { return false; }
-    } else if fields.contains(&idx_field) {
+    } else if want(idx_field) {
         if printed_any {
             if !write_all(STDOUT, &[delim]) { return false; }
         }
@@ -366,6 +379,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
     let mut nfields = 0usize;
     let mut suppress = false;
     let mut chars_mode = false;
+    let mut complement = false;
     let mut idx: i32 = 1;
 
     while idx < argc {
@@ -385,6 +399,7 @@ Print selected fields from each line.
   -c LIST    1-based byte-position list (-b is an alias)
   -b LIST    same as -c
   -s         suppress lines that contain no DELIM (with -f)
+      --complement   invert the LIST: emit positions/fields not in it
       --help     show this help and exit
 
 A '-' in the FILE list means standard input.
@@ -396,6 +411,11 @@ A '-' in the FILE list means standard input.
         }
         if cstr_eq(p, b"-s") {
             suppress = true;
+            idx += 1;
+            continue;
+        }
+        if cstr_eq(p, b"--complement") {
+            complement = true;
             idx += 1;
             continue;
         }
@@ -481,7 +501,7 @@ A '-' in the FILE list means standard input.
     let fields_slice = &fields[..nfields];
 
     if idx >= argc {
-        return if cut_fd(STDIN, mode, fields_slice) { 0 } else { 1 };
+        return if cut_fd(STDIN, mode, fields_slice, complement) { 0 } else { 1 };
     }
     let mut had_error = false;
     while idx < argc {
@@ -495,7 +515,7 @@ A '-' in the FILE list means standard input.
         unsafe { while *p.add(nlen) != 0 { nlen += 1; } }
         let is_dash = nlen == 1 && unsafe { *p } == b'-';
         if is_dash {
-            if !cut_fd(STDIN, mode, fields_slice) { had_error = true; }
+            if !cut_fd(STDIN, mode, fields_slice, complement) { had_error = true; }
             continue;
         }
         let fd = unsafe {
@@ -508,7 +528,7 @@ A '-' in the FILE list means standard input.
             had_error = true;
             continue;
         }
-        if !cut_fd(fd, mode, fields_slice) { had_error = true; }
+        if !cut_fd(fd, mode, fields_slice, complement) { had_error = true; }
         unsafe { let _ = syscall1(sysn::CLOSE, fd as u64); }
     }
     if had_error { 1 } else { 0 }
@@ -518,15 +538,16 @@ A '-' in the FILE list means standard input.
 #[derive(Copy, Clone)]
 enum CutMode { Fields { delim: u8, suppress: bool }, Chars }
 
-fn cut_fd(fd: i32, mode: CutMode, list: &[u32]) -> bool {
+fn cut_fd(fd: i32, mode: CutMode, list: &[u32], complement: bool) -> bool {
     let mut rbuf = [0u8; READ_BUF];
     let mut line = [0u8; LINE_BUF];
     let mut len = 0usize;
     let mut had_error = false;
     let emit = |line: &[u8]| -> bool {
         match mode {
-            CutMode::Fields { delim, suppress } => emit_line(line, delim, list, suppress),
-            CutMode::Chars => emit_chars(line, list),
+            CutMode::Fields { delim, suppress } =>
+                emit_line(line, delim, list, suppress, complement),
+            CutMode::Chars => emit_chars(line, list, complement),
         }
     };
     'outer: loop {

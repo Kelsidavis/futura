@@ -2,12 +2,14 @@
 //
 // rust-tee — duplicate stdin to stdout and to each named file.
 //
-//   rust-tee <file1> [file2] ...
+//   rust-tee [-a] <file1> [file2] ...
 //
 // Reads stdin in 4 KiB chunks, writes each chunk to stdout and to
-// every output file. Files are created with O_WRONLY|O_CREAT|O_TRUNC
-// (mode 0644) — i.e. truncating tee, not append. Up to MAX_FILES
-// targets so the fd table on the stack is fixed-size.
+// every output file. Files are created with mode 0644:
+//   default: O_WRONLY|O_CREAT|O_TRUNC  (truncate existing content)
+//   -a:      O_WRONLY|O_CREAT|O_APPEND (append to existing content,
+//            matching GNU `tee -a`)
+// Up to MAX_FILES targets so the fd table on the stack is fixed-size.
 //
 // Returns 0 on clean EOF, 1 if any read or write failed (we keep
 // going past per-file write errors so a single ENOSPC on one
@@ -40,6 +42,7 @@ const AT_FDCWD: i64 = -100;
 const O_WRONLY: u64 = 1;
 const O_CREAT: u64 = 0o100;
 const O_TRUNC: u64 = 0o1000;
+const O_APPEND: u64 = 0o2000;
 const STDIN: i32 = 0;
 const STDOUT: i32 = 1;
 const STDERR: i32 = 2;
@@ -205,9 +208,32 @@ fn write_all(fd: i32, mut s: &[u8]) -> bool {
     true
 }
 
+fn arg_is(p: *const u8, s: &[u8]) -> bool {
+    for (i, &b) in s.iter().enumerate() {
+        if unsafe { *p.add(i) } != b {
+            return false;
+        }
+    }
+    unsafe { *p.add(s.len()) == 0 }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
-    if argc < 2 {
+    // -a (append) flag is parsed up-front; remaining argv is files.
+    let mut append = false;
+    let mut start_idx: i32 = 1;
+    while start_idx < argc {
+        let p = unsafe { *argv.add(start_idx as usize) };
+        if !p.is_null() && (p as usize) >= 0x10000 && arg_is(p, b"-a") {
+            append = true;
+            start_idx += 1;
+        } else {
+            break;
+        }
+    }
+    let nargs = argc - start_idx;
+
+    if nargs <= 0 {
         // No files — degrade to plain cat (stdin → stdout) so pipelines
         // that pipe through `tee` with no targets still work.
         let mut buf = [0u8; BUF];
@@ -222,11 +248,12 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
     }
 
     let mut fds = [-1i32; MAX_FILES];
-    let nfiles = ((argc - 1) as usize).min(MAX_FILES);
+    let nfiles = (nargs as usize).min(MAX_FILES);
+    let trunc_or_append = if append { O_APPEND } else { O_TRUNC };
 
     let mut had_open_error = false;
     for i in 0..nfiles {
-        let p = unsafe { *argv.add(1 + i) };
+        let p = unsafe { *argv.add((start_idx as usize) + i) };
         if p.is_null() || (p as usize) < 0x10000 {
             had_open_error = true;
             continue;
@@ -236,7 +263,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
                 sysn::OPENAT,
                 AT_FDCWD as u64,
                 p as u64,
-                O_WRONLY | O_CREAT | O_TRUNC,
+                O_WRONLY | O_CREAT | trunc_or_append,
                 0o644,
             ) as i32
         };

@@ -281,6 +281,33 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
     };
     let mut had_error = false;
 
+    // Top-level --help short-circuits before any input processing.
+    if argc >= 2 {
+        let first = unsafe { *argv.add(1) };
+        if !first.is_null() && (first as usize) >= 0x10000 {
+            let want = b"--help";
+            let mut ok = true;
+            for i in 0..want.len() {
+                if unsafe { *first.add(i) } != want[i] { ok = false; break; }
+            }
+            if ok && unsafe { *first.add(want.len()) } == 0 {
+                let help: &[u8] = b"\
+Usage: rust-nl [FILE]...
+Number text lines (cat -n shape). Blank lines pass through with no
+prefix; non-blank lines get a 6-char right-aligned line number plus
+a tab. Multiple FILEs share a single running counter.
+
+  --help    show this help and exit
+
+A '-' in the FILE list means standard input.
+\0";
+                let len = help.len() - 1;
+                unsafe { let _ = syscall3(sysn::WRITE, STDOUT as u64,
+                                          help.as_ptr() as u64, len as u64); }
+                return 0;
+            }
+        }
+    }
     if argc < 2 {
         if !nl_fd(STDIN, &mut st) { had_error = true; }
     } else {

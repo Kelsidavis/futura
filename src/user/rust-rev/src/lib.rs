@@ -264,6 +264,29 @@ fn rev_fd(fd: i32) -> bool {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
+    // --help short-circuit before any reads.
+    if argc >= 2 {
+        let first = unsafe { *argv.add(1) };
+        if !first.is_null() && (first as usize) >= 0x10000 {
+            let n = cstr_len(first);
+            if n == 6 && unsafe {
+                *first == b'-' && *first.add(1) == b'-' &&
+                *first.add(2) == b'h' && *first.add(3) == b'e' &&
+                *first.add(4) == b'l' && *first.add(5) == b'p'
+            } {
+                let help: &[u8] = b"\
+Usage: rust-rev [FILE]...
+Reverse each line of input. With no FILE (or FILE = '-') reads stdin.
+
+  --help    show this help and exit
+\0";
+                let len = help.len() - 1;
+                unsafe { let _ = syscall3(sysn::WRITE, STDOUT as u64,
+                                          help.as_ptr() as u64, len as u64); }
+                return 0;
+            }
+        }
+    }
     if argc < 2 {
         return if rev_fd(STDIN) { 0 } else { 1 };
     }

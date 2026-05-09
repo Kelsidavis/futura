@@ -1290,112 +1290,112 @@ int fut_stage_rust_uname_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_uname_start,
                       _binary_build_bin_x86_64_user_rust_uname_end,
-                      "/bin/rust-uname");
+                      "/bin/uname");
 }
 
 int fut_stage_rust_pwd_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_pwd_start,
                       _binary_build_bin_x86_64_user_rust_pwd_end,
-                      "/bin/rust-pwd");
+                      "/bin/pwd");
 }
 
 int fut_stage_rust_ls_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_ls_start,
                       _binary_build_bin_x86_64_user_rust_ls_end,
-                      "/bin/rust-ls");
+                      "/bin/ls");
 }
 
 int fut_stage_rust_mkdir_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_mkdir_start,
                       _binary_build_bin_x86_64_user_rust_mkdir_end,
-                      "/bin/rust-mkdir");
+                      "/bin/mkdir");
 }
 
 int fut_stage_rust_touch_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_touch_start,
                       _binary_build_bin_x86_64_user_rust_touch_end,
-                      "/bin/rust-touch");
+                      "/bin/touch");
 }
 
 int fut_stage_rust_rm_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_rm_start,
                       _binary_build_bin_x86_64_user_rust_rm_end,
-                      "/bin/rust-rm");
+                      "/bin/rm");
 }
 
 int fut_stage_rust_cat_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_cat_start,
                       _binary_build_bin_x86_64_user_rust_cat_end,
-                      "/bin/rust-cat");
+                      "/bin/cat");
 }
 
 int fut_stage_rust_wc_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_wc_start,
                       _binary_build_bin_x86_64_user_rust_wc_end,
-                      "/bin/rust-wc");
+                      "/bin/wc");
 }
 
 int fut_stage_rust_true_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_true_start,
                       _binary_build_bin_x86_64_user_rust_true_end,
-                      "/bin/rust-true");
+                      "/bin/true");
 }
 
 int fut_stage_rust_false_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_false_start,
                       _binary_build_bin_x86_64_user_rust_false_end,
-                      "/bin/rust-false");
+                      "/bin/false");
 }
 
 int fut_stage_rust_env_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_env_start,
                       _binary_build_bin_x86_64_user_rust_env_end,
-                      "/bin/rust-env");
+                      "/bin/env");
 }
 
 int fut_stage_rust_head_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_head_start,
                       _binary_build_bin_x86_64_user_rust_head_end,
-                      "/bin/rust-head");
+                      "/bin/head");
 }
 
 int fut_stage_rust_tail_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_tail_start,
                       _binary_build_bin_x86_64_user_rust_tail_end,
-                      "/bin/rust-tail");
+                      "/bin/tail");
 }
 
 int fut_stage_rust_grep_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_grep_start,
                       _binary_build_bin_x86_64_user_rust_grep_end,
-                      "/bin/rust-grep");
+                      "/bin/grep");
 }
 
 int fut_stage_rust_sleep_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_sleep_start,
                       _binary_build_bin_x86_64_user_rust_sleep_end,
-                      "/bin/rust-sleep");
+                      "/bin/sleep");
 }
 
 int fut_stage_rust_date_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_date_start,
                       _binary_build_bin_x86_64_user_rust_date_end,
-                      "/bin/rust-date");
+                      "/bin/date");
 }
 
 int fut_stage_rust_settings_binary(void) {
@@ -1409,7 +1409,7 @@ int fut_stage_rust_tree_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_tree_start,
                       _binary_build_bin_x86_64_user_rust_tree_end,
-                      "/bin/rust-tree");
+                      "/bin/tree");
 }
 
 int fut_stage_rust_wallpaper_binary(void) {
@@ -1423,245 +1423,245 @@ int fut_stage_rust_cp_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_cp_start,
                       _binary_build_bin_x86_64_user_rust_cp_end,
-                      "/bin/rust-cp");
+                      "/bin/cp");
 }
 
 int fut_stage_rust_mv_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_mv_start,
                       _binary_build_bin_x86_64_user_rust_mv_end,
-                      "/bin/rust-mv");
+                      "/bin/mv");
 }
 
 int fut_stage_rust_basename_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_basename_start,
                       _binary_build_bin_x86_64_user_rust_basename_end,
-                      "/bin/rust-basename");
+                      "/bin/basename");
 }
 
 int fut_stage_rust_dirname_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_dirname_start,
                       _binary_build_bin_x86_64_user_rust_dirname_end,
-                      "/bin/rust-dirname");
+                      "/bin/dirname");
 }
 
 int fut_stage_rust_clear_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_clear_start,
                       _binary_build_bin_x86_64_user_rust_clear_end,
-                      "/bin/rust-clear");
+                      "/bin/clear");
 }
 
 int fut_stage_rust_which_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_which_start,
                       _binary_build_bin_x86_64_user_rust_which_end,
-                      "/bin/rust-which");
+                      "/bin/which");
 }
 
 int fut_stage_rust_readlink_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_readlink_start,
                       _binary_build_bin_x86_64_user_rust_readlink_end,
-                      "/bin/rust-readlink");
+                      "/bin/readlink");
 }
 
 int fut_stage_rust_ln_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_ln_start,
                       _binary_build_bin_x86_64_user_rust_ln_end,
-                      "/bin/rust-ln");
+                      "/bin/ln");
 }
 
 int fut_stage_rust_tee_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_tee_start,
                       _binary_build_bin_x86_64_user_rust_tee_end,
-                      "/bin/rust-tee");
+                      "/bin/tee");
 }
 
 int fut_stage_rust_yes_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_yes_start,
                       _binary_build_bin_x86_64_user_rust_yes_end,
-                      "/bin/rust-yes");
+                      "/bin/yes");
 }
 
 int fut_stage_rust_uniq_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_uniq_start,
                       _binary_build_bin_x86_64_user_rust_uniq_end,
-                      "/bin/rust-uniq");
+                      "/bin/uniq");
 }
 
 int fut_stage_rust_realpath_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_realpath_start,
                       _binary_build_bin_x86_64_user_rust_realpath_end,
-                      "/bin/rust-realpath");
+                      "/bin/realpath");
 }
 
 int fut_stage_rust_cmp_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_cmp_start,
                       _binary_build_bin_x86_64_user_rust_cmp_end,
-                      "/bin/rust-cmp");
+                      "/bin/cmp");
 }
 
 int fut_stage_rust_nl_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_nl_start,
                       _binary_build_bin_x86_64_user_rust_nl_end,
-                      "/bin/rust-nl");
+                      "/bin/nl");
 }
 
 int fut_stage_rust_rev_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_rev_start,
                       _binary_build_bin_x86_64_user_rust_rev_end,
-                      "/bin/rust-rev");
+                      "/bin/rev");
 }
 
 int fut_stage_rust_od_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_od_start,
                       _binary_build_bin_x86_64_user_rust_od_end,
-                      "/bin/rust-od");
+                      "/bin/od");
 }
 
 int fut_stage_rust_printenv_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_printenv_start,
                       _binary_build_bin_x86_64_user_rust_printenv_end,
-                      "/bin/rust-printenv");
+                      "/bin/printenv");
 }
 
 int fut_stage_rust_whoami_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_whoami_start,
                       _binary_build_bin_x86_64_user_rust_whoami_end,
-                      "/bin/rust-whoami");
+                      "/bin/whoami");
 }
 
 int fut_stage_rust_id_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_id_start,
                       _binary_build_bin_x86_64_user_rust_id_end,
-                      "/bin/rust-id");
+                      "/bin/id");
 }
 
 int fut_stage_rust_chmod_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_chmod_start,
                       _binary_build_bin_x86_64_user_rust_chmod_end,
-                      "/bin/rust-chmod");
+                      "/bin/chmod");
 }
 
 int fut_stage_rust_hostname_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_hostname_start,
                       _binary_build_bin_x86_64_user_rust_hostname_end,
-                      "/bin/rust-hostname");
+                      "/bin/hostname");
 }
 
 int fut_stage_rust_arch_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_arch_start,
                       _binary_build_bin_x86_64_user_rust_arch_end,
-                      "/bin/rust-arch");
+                      "/bin/arch");
 }
 
 int fut_stage_rust_kill_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_kill_start,
                       _binary_build_bin_x86_64_user_rust_kill_end,
-                      "/bin/rust-kill");
+                      "/bin/kill");
 }
 
 int fut_stage_rust_rmdir_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_rmdir_start,
                       _binary_build_bin_x86_64_user_rust_rmdir_end,
-                      "/bin/rust-rmdir");
+                      "/bin/rmdir");
 }
 
 int fut_stage_rust_sync_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_sync_start,
                       _binary_build_bin_x86_64_user_rust_sync_end,
-                      "/bin/rust-sync");
+                      "/bin/sync");
 }
 
 int fut_stage_rust_fold_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_fold_start,
                       _binary_build_bin_x86_64_user_rust_fold_end,
-                      "/bin/rust-fold");
+                      "/bin/fold");
 }
 
 int fut_stage_rust_tac_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_tac_start,
                       _binary_build_bin_x86_64_user_rust_tac_end,
-                      "/bin/rust-tac");
+                      "/bin/tac");
 }
 
 int fut_stage_rust_strings_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_strings_start,
                       _binary_build_bin_x86_64_user_rust_strings_end,
-                      "/bin/rust-strings");
+                      "/bin/strings");
 }
 
 int fut_stage_rust_cut_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_cut_start,
                       _binary_build_bin_x86_64_user_rust_cut_end,
-                      "/bin/rust-cut");
+                      "/bin/cut");
 }
 
 int fut_stage_rust_seq_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_seq_start,
                       _binary_build_bin_x86_64_user_rust_seq_end,
-                      "/bin/rust-seq");
+                      "/bin/seq");
 }
 
 int fut_stage_rust_tr_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_tr_start,
                       _binary_build_bin_x86_64_user_rust_tr_end,
-                      "/bin/rust-tr");
+                      "/bin/tr");
 }
 
 int fut_stage_rust_base64_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_base64_start,
                       _binary_build_bin_x86_64_user_rust_base64_end,
-                      "/bin/rust-base64");
+                      "/bin/base64");
 }
 
 int fut_stage_rust_mktemp_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_mktemp_start,
                       _binary_build_bin_x86_64_user_rust_mktemp_end,
-                      "/bin/rust-mktemp");
+                      "/bin/mktemp");
 }
 
 int fut_stage_rust_uptime_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_uptime_start,
                       _binary_build_bin_x86_64_user_rust_uptime_end,
-                      "/bin/rust-uptime");
+                      "/bin/uptime");
 }
 
 int fut_stage_rust_truncate_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_truncate_start,
                       _binary_build_bin_x86_64_user_rust_truncate_end,
-                      "/bin/rust-truncate");
+                      "/bin/truncate");
 }
 #else
 int fut_stage_rust_hello_binary(void) { return -ENOSYS; }

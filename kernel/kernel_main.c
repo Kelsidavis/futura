@@ -1463,13 +1463,13 @@ void fut_kernel_main(void) {
                   "# Show off the Rust user-space toolchain (now that fork+exec\n"
                   "# correctly cycles the child task through ZOMBIE on execve).\n"
                   "echo --- rust user-space ---\n"
-                  "/bin/rust-date\n"
-                  "/bin/rust-hello; /bin/rust-uname\n"
-                  "/bin/rust-pwd; /bin/rust-ls /bin\n"
-                  "/bin/rust-id; /bin/rust-whoami\n"
-                  "/bin/rust-arch; /bin/rust-hostname\n"
-                  "/bin/rust-uptime\n"
-                  "/bin/rust-tree /etc\n"
+                  "/bin/date\n"
+                  "/bin/rust-hello; /bin/uname\n"
+                  "/bin/pwd; /bin/ls /bin\n"
+                  "/bin/id; /bin/whoami\n"
+                  "/bin/arch; /bin/hostname\n"
+                  "/bin/uptime\n"
+                  "/bin/tree /etc\n"
                   "/bin/rust-wallpaper --get\n"
                   "/bin/rust-settings\n"
                   "echo --- end rust ---\n");
@@ -2286,62 +2286,68 @@ void fut_kernel_main(void) {
         extern int fut_stage_rust_mktemp_binary(void);
         extern int fut_stage_rust_uptime_binary(void);
         extern int fut_stage_rust_truncate_binary(void);
+        /* The displayed name doubles as the "/bin/<name>" path in the
+         * INIT log line below, so it must match the actual staged
+         * path baked into elf64.c / arm64_stubs.c. The standard
+         * coreutils replacements stage as their canonical names; only
+         * the three non-coreutils binaries (hello/settings/wallpaper)
+         * keep their rust- prefix. */
         struct { const char *name; int (*fn)(void); } rust_bins[] = {
             {"rust-hello",  fut_stage_rust_hello_binary},
-            {"rust-uname",  fut_stage_rust_uname_binary},
-            {"rust-pwd",    fut_stage_rust_pwd_binary},
-            {"rust-ls",     fut_stage_rust_ls_binary},
-            {"rust-mkdir",  fut_stage_rust_mkdir_binary},
-            {"rust-touch",  fut_stage_rust_touch_binary},
-            {"rust-rm",     fut_stage_rust_rm_binary},
-            {"rust-cat",    fut_stage_rust_cat_binary},
-            {"rust-wc",     fut_stage_rust_wc_binary},
-            {"rust-true",   fut_stage_rust_true_binary},
-            {"rust-false",  fut_stage_rust_false_binary},
-            {"rust-env",    fut_stage_rust_env_binary},
-            {"rust-head",   fut_stage_rust_head_binary},
-            {"rust-tail",   fut_stage_rust_tail_binary},
-            {"rust-grep",   fut_stage_rust_grep_binary},
-            {"rust-sleep",  fut_stage_rust_sleep_binary},
-            {"rust-date",   fut_stage_rust_date_binary},
+            {"uname",       fut_stage_rust_uname_binary},
+            {"pwd",         fut_stage_rust_pwd_binary},
+            {"ls",          fut_stage_rust_ls_binary},
+            {"mkdir",       fut_stage_rust_mkdir_binary},
+            {"touch",       fut_stage_rust_touch_binary},
+            {"rm",          fut_stage_rust_rm_binary},
+            {"cat",         fut_stage_rust_cat_binary},
+            {"wc",          fut_stage_rust_wc_binary},
+            {"true",        fut_stage_rust_true_binary},
+            {"false",       fut_stage_rust_false_binary},
+            {"env",         fut_stage_rust_env_binary},
+            {"head",        fut_stage_rust_head_binary},
+            {"tail",        fut_stage_rust_tail_binary},
+            {"grep",        fut_stage_rust_grep_binary},
+            {"sleep",       fut_stage_rust_sleep_binary},
+            {"date",        fut_stage_rust_date_binary},
             {"rust-settings", fut_stage_rust_settings_binary},
-            {"rust-tree",   fut_stage_rust_tree_binary},
+            {"tree",        fut_stage_rust_tree_binary},
             {"rust-wallpaper", fut_stage_rust_wallpaper_binary},
-            {"rust-cp",     fut_stage_rust_cp_binary},
-            {"rust-mv",     fut_stage_rust_mv_binary},
-            {"rust-basename", fut_stage_rust_basename_binary},
-            {"rust-dirname", fut_stage_rust_dirname_binary},
-            {"rust-clear",  fut_stage_rust_clear_binary},
-            {"rust-which",  fut_stage_rust_which_binary},
-            {"rust-readlink", fut_stage_rust_readlink_binary},
-            {"rust-ln",     fut_stage_rust_ln_binary},
-            {"rust-tee",    fut_stage_rust_tee_binary},
-            {"rust-yes",    fut_stage_rust_yes_binary},
-            {"rust-uniq",   fut_stage_rust_uniq_binary},
-            {"rust-realpath", fut_stage_rust_realpath_binary},
-            {"rust-cmp",    fut_stage_rust_cmp_binary},
-            {"rust-nl",     fut_stage_rust_nl_binary},
-            {"rust-rev",    fut_stage_rust_rev_binary},
-            {"rust-od",     fut_stage_rust_od_binary},
-            {"rust-printenv", fut_stage_rust_printenv_binary},
-            {"rust-whoami", fut_stage_rust_whoami_binary},
-            {"rust-id",     fut_stage_rust_id_binary},
-            {"rust-chmod",  fut_stage_rust_chmod_binary},
-            {"rust-hostname", fut_stage_rust_hostname_binary},
-            {"rust-arch",   fut_stage_rust_arch_binary},
-            {"rust-kill",   fut_stage_rust_kill_binary},
-            {"rust-rmdir",  fut_stage_rust_rmdir_binary},
-            {"rust-sync",   fut_stage_rust_sync_binary},
-            {"rust-fold",   fut_stage_rust_fold_binary},
-            {"rust-tac",    fut_stage_rust_tac_binary},
-            {"rust-strings", fut_stage_rust_strings_binary},
-            {"rust-cut",    fut_stage_rust_cut_binary},
-            {"rust-seq",    fut_stage_rust_seq_binary},
-            {"rust-tr",     fut_stage_rust_tr_binary},
-            {"rust-base64", fut_stage_rust_base64_binary},
-            {"rust-mktemp", fut_stage_rust_mktemp_binary},
-            {"rust-uptime", fut_stage_rust_uptime_binary},
-            {"rust-truncate", fut_stage_rust_truncate_binary},
+            {"cp",          fut_stage_rust_cp_binary},
+            {"mv",          fut_stage_rust_mv_binary},
+            {"basename",    fut_stage_rust_basename_binary},
+            {"dirname",     fut_stage_rust_dirname_binary},
+            {"clear",       fut_stage_rust_clear_binary},
+            {"which",       fut_stage_rust_which_binary},
+            {"readlink",    fut_stage_rust_readlink_binary},
+            {"ln",          fut_stage_rust_ln_binary},
+            {"tee",         fut_stage_rust_tee_binary},
+            {"yes",         fut_stage_rust_yes_binary},
+            {"uniq",        fut_stage_rust_uniq_binary},
+            {"realpath",    fut_stage_rust_realpath_binary},
+            {"cmp",         fut_stage_rust_cmp_binary},
+            {"nl",          fut_stage_rust_nl_binary},
+            {"rev",         fut_stage_rust_rev_binary},
+            {"od",          fut_stage_rust_od_binary},
+            {"printenv",    fut_stage_rust_printenv_binary},
+            {"whoami",      fut_stage_rust_whoami_binary},
+            {"id",          fut_stage_rust_id_binary},
+            {"chmod",       fut_stage_rust_chmod_binary},
+            {"hostname",    fut_stage_rust_hostname_binary},
+            {"arch",        fut_stage_rust_arch_binary},
+            {"kill",        fut_stage_rust_kill_binary},
+            {"rmdir",       fut_stage_rust_rmdir_binary},
+            {"sync",        fut_stage_rust_sync_binary},
+            {"fold",        fut_stage_rust_fold_binary},
+            {"tac",         fut_stage_rust_tac_binary},
+            {"strings",     fut_stage_rust_strings_binary},
+            {"cut",         fut_stage_rust_cut_binary},
+            {"seq",         fut_stage_rust_seq_binary},
+            {"tr",          fut_stage_rust_tr_binary},
+            {"base64",      fut_stage_rust_base64_binary},
+            {"mktemp",      fut_stage_rust_mktemp_binary},
+            {"uptime",      fut_stage_rust_uptime_binary},
+            {"truncate",    fut_stage_rust_truncate_binary},
         };
         for (size_t i = 0; i < sizeof(rust_bins)/sizeof(rust_bins[0]); i++) {
             int rc = rust_bins[i].fn();
@@ -2353,77 +2359,14 @@ void fut_kernel_main(void) {
                            rust_bins[i].name, rust_bins[i].name);
             }
         }
-        /* POSIX-style aliases so common shebang and bare-name lookups
-         * actually resolve. /usr/bin/env is the most-cited one
-         * (#!/usr/bin/env <interpreter>). Plain /bin/env / /bin/cat / …
-         * pick up the rust-* implementations under their unprefixed
-         * names so user scripts written against coreutils paths Just
-         * Work. The rust binaries treat argv[0] as freeform, so the
-         * symlink doesn't change semantics.
-         *
-         * /usr/bin and /bin already exist by the time we get here
-         * (created earlier in the standard-directory loop). */
+        /* The rust coreutils now stage directly under their canonical
+         * names (/bin/cat, /bin/ls, …) so the previous "rust-*"-to-bare
+         * symlink fan-out is unnecessary. Only the /usr/bin/env shebang
+         * convention still needs an explicit symlink — every shebang
+         * line "#!/usr/bin/env <interp>" expects that exact path. */
         {
             extern long sys_symlink(const char *, const char *);
-            const char *aliases[][2] = {
-                /* { target,             linkpath } */
-                { "/bin/rust-env",       "/usr/bin/env" },
-                { "/bin/rust-env",       "/bin/env"     },
-                { "/bin/rust-cat",       "/bin/cat"     },
-                { "/bin/rust-ls",        "/bin/ls"      },
-                { "/bin/rust-pwd",       "/bin/pwd"     },
-                { "/bin/rust-uname",     "/bin/uname"   },
-                { "/bin/rust-date",      "/bin/date"    },
-                { "/bin/rust-true",      "/bin/true"    },
-                { "/bin/rust-false",     "/bin/false"   },
-                { "/bin/rust-mkdir",     "/bin/mkdir"   },
-                { "/bin/rust-touch",     "/bin/touch"   },
-                { "/bin/rust-rm",        "/bin/rm"      },
-                { "/bin/rust-cp",        "/bin/cp"      },
-                { "/bin/rust-mv",        "/bin/mv"      },
-                { "/bin/rust-ln",        "/bin/ln"      },
-                { "/bin/rust-wc",        "/bin/wc"      },
-                { "/bin/rust-head",      "/bin/head"    },
-                { "/bin/rust-tail",      "/bin/tail"    },
-                { "/bin/rust-grep",      "/bin/grep"    },
-                { "/bin/rust-sleep",     "/bin/sleep"   },
-                { "/bin/rust-tree",      "/bin/tree"    },
-                { "/bin/rust-tee",       "/bin/tee"     },
-                { "/bin/rust-yes",       "/bin/yes"     },
-                { "/bin/rust-uniq",      "/bin/uniq"    },
-                { "/bin/rust-clear",     "/bin/clear"   },
-                { "/bin/rust-which",     "/bin/which"   },
-                { "/bin/rust-readlink",  "/bin/readlink"},
-                { "/bin/rust-basename",  "/bin/basename"},
-                { "/bin/rust-dirname",   "/bin/dirname" },
-                { "/bin/rust-realpath",  "/bin/realpath"},
-                { "/bin/rust-cmp",       "/bin/cmp"     },
-                { "/bin/rust-nl",        "/bin/nl"      },
-                { "/bin/rust-rev",       "/bin/rev"     },
-                { "/bin/rust-od",        "/bin/od"      },
-                { "/bin/rust-printenv",  "/bin/printenv"},
-                { "/bin/rust-whoami",    "/bin/whoami"  },
-                { "/bin/rust-id",        "/bin/id"      },
-                { "/bin/rust-chmod",     "/bin/chmod"   },
-                { "/bin/rust-hostname",  "/bin/hostname"},
-                { "/bin/rust-arch",      "/bin/arch"    },
-                { "/bin/rust-kill",      "/bin/kill"    },
-                { "/bin/rust-rmdir",     "/bin/rmdir"   },
-                { "/bin/rust-sync",      "/bin/sync"    },
-                { "/bin/rust-fold",      "/bin/fold"    },
-                { "/bin/rust-tac",       "/bin/tac"     },
-                { "/bin/rust-strings",   "/bin/strings" },
-                { "/bin/rust-cut",       "/bin/cut"     },
-                { "/bin/rust-seq",       "/bin/seq"     },
-                { "/bin/rust-tr",        "/bin/tr"      },
-                { "/bin/rust-base64",    "/bin/base64"  },
-                { "/bin/rust-mktemp",    "/bin/mktemp"  },
-                { "/bin/rust-uptime",    "/bin/uptime"  },
-                { "/bin/rust-truncate",  "/bin/truncate"},
-            };
-            for (size_t i = 0; i < sizeof(aliases)/sizeof(aliases[0]); i++) {
-                sys_symlink(aliases[i][0], aliases[i][1]);
-            }
+            sys_symlink("/bin/env", "/usr/bin/env");
         }
     }
 #endif

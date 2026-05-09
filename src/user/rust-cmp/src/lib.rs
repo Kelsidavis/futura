@@ -289,6 +289,23 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             continue;
         }
         if arg_eq(p, b"--") { idx += 1; break; }
+        if arg_eq(p, b"--help") {
+            let help: &[u8] = b"\
+Usage: rust-cmp [OPTION]... FILE1 FILE2
+Compare two files byte by byte.
+
+  -s, --quiet, --silent  suppress all output, exit status only
+  -n NUM                  compare at most NUM bytes
+      --help              show this help and exit
+
+A '-' for either FILE means standard input (not for both).
+Exit status: 0 identical, 1 differ, 2 trouble.
+\0";
+            let len = help.len() - 1;
+            unsafe { let _ = syscall3(sysn::WRITE, STDOUT as u64,
+                                       help.as_ptr() as u64, len as u64); }
+            return 0;
+        }
         break;
     }
 

@@ -359,6 +359,23 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         } else if arg_is(p, b"--") {
             idx += 1;
             break;
+        } else if arg_is(p, b"--help") {
+            let help: &[u8] = b"\
+Usage: rust-wc [OPTION]... [FILE]...
+Print newline, word, and byte counts for each FILE. Without -l/-w/-c
+all three are shown. With multiple FILEs, also print a total.
+
+  -l        count lines (newlines)
+  -w        count whitespace-separated words
+  -c        count bytes
+      --help    show this help and exit
+
+A single '-' in the FILE list means standard input.
+\0";
+            let len = help.len() - 1;
+            unsafe { let _ = syscall3(sysn::WRITE, STDOUT as u64,
+                                       help.as_ptr() as u64, len as u64); }
+            return 0;
         } else {
             break;
         }

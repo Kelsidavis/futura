@@ -265,6 +265,22 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
     if !first.is_null() && (first as usize) >= 0x10000 {
         let n = cstr_len(first);
         let bytes = unsafe { core::slice::from_raw_parts(first, n) };
+        if n == 6 && bytes == b"--help" {
+            let help: &[u8] = b"\
+Usage: rust-kill [-l] [-s SIG | -SIG] PID [PID...]
+Send a signal to one or more processes.
+
+  -l           list known signal names and numbers
+  -s SIG       SIG by name (TERM, HUP, ...) or number
+  -SIG         shorthand for -s SIG
+      --help       show this help and exit
+
+Default signal is TERM (15).
+\0";
+            let len = help.len() - 1;
+            unsafe { let _ = syscall3(sysn::WRITE, 1, help.as_ptr() as u64, len as u64); }
+            return 0;
+        }
         if n == 2 && bytes[0] == b'-' && bytes[1] == b'l' {
             list_signals();
             return 0;

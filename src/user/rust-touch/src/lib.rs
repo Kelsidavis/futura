@@ -227,6 +227,18 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             continue;
         }
         if arg_is(p, b"--") { idx += 1; break; }
+        if arg_is(p, b"--help") {
+            let help: &[u8] = b"\
+Usage: rust-touch [-c] FILE [FILE...]
+Create each FILE if it doesn't exist (timestamp updates are TBD).
+
+  -c, --no-create   skip files that don't exist (no error)
+      --help            show this help and exit
+\0";
+            let len = help.len() - 1;
+            unsafe { let _ = syscall3(sysn::WRITE, 1, help.as_ptr() as u64, len as u64); }
+            return 0;
+        }
         break;
     }
 

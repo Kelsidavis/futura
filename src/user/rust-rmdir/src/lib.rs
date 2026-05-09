@@ -173,6 +173,20 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             parents = true; verbose = true; idx += 1; continue;
         }
         if arg_eq(p, b"--") { idx += 1; break; }
+        if arg_eq(p, b"--help") {
+            let help: &[u8] = b"\
+Usage: rust-rmdir [-pv] DIR [DIR...]
+Remove each empty DIR.
+
+  -p, --parents   also remove each empty ancestor directory
+  -v, --verbose   emit a message per directory removed
+      --help          show this help and exit
+\0";
+            let len = help.len() - 1;
+            unsafe { let _ = syscall3(sysn::WRITE, STDOUT as u64,
+                                       help.as_ptr() as u64, len as u64); }
+            return 0;
+        }
         break;
     }
 

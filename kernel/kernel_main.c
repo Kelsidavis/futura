@@ -2243,6 +2243,7 @@ void fut_kernel_main(void) {
         extern int fut_stage_rust_cp_binary(void);
         extern int fut_stage_rust_mv_binary(void);
         extern int fut_stage_rust_basename_binary(void);
+        extern int fut_stage_rust_dirname_binary(void);
         struct { const char *name; int (*fn)(void); } rust_bins[] = {
             {"rust-hello",  fut_stage_rust_hello_binary},
             {"rust-uname",  fut_stage_rust_uname_binary},
@@ -2267,6 +2268,7 @@ void fut_kernel_main(void) {
             {"rust-cp",     fut_stage_rust_cp_binary},
             {"rust-mv",     fut_stage_rust_mv_binary},
             {"rust-basename", fut_stage_rust_basename_binary},
+            {"rust-dirname", fut_stage_rust_dirname_binary},
         };
         for (size_t i = 0; i < sizeof(rust_bins)/sizeof(rust_bins[0]); i++) {
             int rc = rust_bins[i].fn();

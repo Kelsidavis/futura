@@ -1462,15 +1462,17 @@ void fut_kernel_main(void) {
                   "# all wired up end-to-end.\n"
                   "/bin/rust-hello\n");
         /* TODO(shell): /etc/profile sourcing aborts after the first
-         * external-command exec. The first /bin/rust-hello prints fine
-         * (proving fork+exec+wait works end-to-end), but a second
-         * external command — even another /bin/rust-hello on the next
-         * line — never runs, and even subsequent shell builtins like
-         * `echo MIDDLE` go silent. The shell exits without a fault
-         * print, so this is most likely a parent-side state issue
-         * after fork+wait (perhaps execute_script_buffer's loop or
-         * waitpid path) rather than a kernel fault. Investigate
-         * separately. */
+         * external-command exec because the parent shell's
+         * sys_waitpid(specific_pid, ...) on the just-exited child
+         * never returns — confirmed by a 'pre-wait'/'post-wait'
+         * trace around the wait call. The shell sits in waitpid
+         * forever, so the kernel respawn loop reaps forktest first
+         * and logs an unrelated "Shell process exited" line. The
+         * kernel side (fut_task_waitpid) looks correct on inspection;
+         * suspect a missing wakeup of parent->child_waiters when an
+         * exec'd child exits via the SYS_exit (93) path on arm64.
+         * Need to instrument task_mark_exit / fut_waitq_wake_all
+         * to confirm. */
         ETC_WRITE("/etc/motd",
                   "\n"
                   "  \033[1;36mFutura OS 0.9.0\033[0m\n"

@@ -228,65 +228,64 @@ fn slurp(fd: i32) -> usize {
     filled
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
-    let fd: i32 = if argc < 2 {
-        STDIN
-    } else {
-        let p = unsafe { *argv.add(1) };
-        if p.is_null() || (p as usize) < 0x10000 {
-            write_str(STDERR, b"rust-tac: invalid argument\n");
-            return 1;
-        }
-        let f = unsafe {
-            syscall4(sysn::OPENAT, AT_FDCWD as u64, p as u64, O_RDONLY, 0) as i32
-        };
-        if f < 0 {
-            write_str(STDERR, b"rust-tac: cannot open file\n");
-            return 1;
-        }
-        f
-    };
+// Slurp `fd` into the static BUF, then emit lines in reverse order.
+// Returns true on success (clean read + writes), false on any error.
+fn tac_fd(fd: i32) -> bool {
     let n = slurp(fd);
-    if fd != STDIN {
-        unsafe { let _ = syscall1(sysn::CLOSE, fd as u64); }
-    }
-    if n == 0 {
-        return 0;
-    }
+    if n == 0 { return true; }
 
-    // Walk the buffer backward, emitting each line ending in '\n'.
-    // The very last byte may or may not be '\n'.
     let buf = unsafe { core::slice::from_raw_parts(core::ptr::addr_of!(BUF) as *const u8, n) };
     let mut tail = n;
-    // If the final byte isn't a newline, emit the trailing partial line
-    // first (without a newline) — matches GNU tac on non-terminated input.
     let had_trailing_partial = buf[n - 1] != b'\n';
     if had_trailing_partial {
         let mut start = n;
-        while start > 0 && buf[start - 1] != b'\n' {
-            start -= 1;
-        }
-        if !write_all(STDOUT, &buf[start..n]) {
-            return 1;
-        }
+        while start > 0 && buf[start - 1] != b'\n' { start -= 1; }
+        if !write_all(STDOUT, &buf[start..n]) { return false; }
         tail = start;
     }
-    // Now tail points just past a '\n' (or to 0). Walk backward,
-    // splitting at each '\n'.
     let mut end = tail;
     while end > 0 {
-        // The '\n' terminating the previous block is at buf[end - 1].
         let mut start = end - 1;
-        while start > 0 && buf[start - 1] != b'\n' {
-            start -= 1;
-        }
-        // Line bytes: buf[start..end] (includes trailing '\n').
-        if !write_all(STDOUT, &buf[start..end]) {
-            return 1;
-        }
+        while start > 0 && buf[start - 1] != b'\n' { start -= 1; }
+        if !write_all(STDOUT, &buf[start..end]) { return false; }
         end = start;
     }
-    let _ = had_trailing_partial; // already consumed above; silence dead-store
-    0
+    let _ = had_trailing_partial;
+    true
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
+    if argc < 2 {
+        return if tac_fd(STDIN) { 0 } else { 1 };
+    }
+    let mut had_error = false;
+    for ai in 1..argc {
+        let p = unsafe { *argv.add(ai as usize) };
+        if p.is_null() || (p as usize) < 0x10000 {
+            had_error = true;
+            continue;
+        }
+        // "-" reads stdin, like GNU tac.
+        let mut nlen = 0usize;
+        unsafe { while *p.add(nlen) != 0 { nlen += 1; } }
+        let is_dash = nlen == 1 && unsafe { *p } == b'-';
+        if is_dash {
+            if !tac_fd(STDIN) { had_error = true; }
+            continue;
+        }
+        let fd = unsafe {
+            syscall4(sysn::OPENAT, AT_FDCWD as u64, p as u64, O_RDONLY, 0) as i32
+        };
+        if fd < 0 {
+            write_str(STDERR, b"rust-tac: cannot open '");
+            unsafe { let _ = syscall3(sysn::WRITE, STDERR as u64, p as u64, nlen as u64); }
+            write_str(STDERR, b"'\n");
+            had_error = true;
+            continue;
+        }
+        if !tac_fd(fd) { had_error = true; }
+        unsafe { let _ = syscall1(sysn::CLOSE, fd as u64); }
+    }
+    if had_error { 1 } else { 0 }
 }

@@ -208,6 +208,21 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             changes_only = true; verbose = true; idx += 1; continue;
         }
         if arg_eq(p, b"--") { idx += 1; break; }
+        if arg_eq(p, b"--help") {
+            let help: &[u8] = b"\
+Usage: rust-chmod [-v] OCTAL_MODE FILE [FILE...]
+Change each FILE's mode.
+
+  -v, --verbose   emit \"mode of '<path>' changed to NNNN\"
+  -c, --changes   alias for -v (no stat-before optimization yet)
+      --help          show this help and exit
+
+Only octal modes are accepted (e.g. 0644). Symbolic modes are TBD.
+\0";
+            let len = help.len() - 1;
+            unsafe { let _ = syscall3(sysn::WRITE, 1, help.as_ptr() as u64, len as u64); }
+            return 0;
+        }
         break;
     }
     let _ = changes_only;

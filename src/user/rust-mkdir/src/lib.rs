@@ -307,6 +307,20 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         } else if arg_is(p, b"--") {
             idx += 1;
             break;
+        } else if arg_is(p, b"--help") {
+            let help: &[u8] = b"\
+Usage: rust-mkdir [-pv] [-m MODE] DIR [DIR...]
+Create each DIR.
+
+  -p           create parent directories as needed (no error if exists)
+  -m MODE      set the leaf mode (octal, e.g. 700)
+  -v           emit \"created directory '<dir>'\" for each new dir
+      --help       show this help and exit
+\0";
+            let len = help.len() - 1;
+            unsafe { let _ = syscall3(sysn::WRITE, STDOUT as u64,
+                                       help.as_ptr() as u64, len as u64); }
+            return 0;
         } else {
             break;
         }

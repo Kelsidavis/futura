@@ -35,29 +35,26 @@ _start:
     /* Save argc in a callee-saved register (rbx) for use after __libc_init_environ */
     mov %rdi, %rbx
 
-    /* Find envp (skip past argv array until we hit NULL) */
-    mov %rsi, %rdx          /* Start with argv */
-    mov %rbx, %rcx          /* argc counter (rbx has saved argc from line 45) */
-    inc %rcx                /* +1 for the NULL terminator */
-    shl $3, %rcx            /* multiply by 8 (pointer size) */
-    add %rcx, %rdx          /* rdx now points to envp */
+    /* Compute envp = &argv[argc + 1] and stash it in r12 (callee-
+     * saved). r13 holds argv across the call to __libc_init_environ;
+     * r12 keeps envp safe so we can pass it as main's third argument
+     * without re-reading caller-saved %rdx after the call. */
+    mov %rsi, %r13          /* r13 = argv (callee-saved) */
+    lea 8(%rsi, %rbx, 8), %r12  /* r12 = argv + (argc + 1) * 8 = envp */
 
     /* Align stack to 16 bytes (required by x86-64 ABI) */
     and $-16, %rsp
 
-    /* Save argv to a callee-saved register before calling __libc_init_environ */
-    mov %rsi, %r13          /* r13 = argv (callee-saved, preserved across calls) */
-
-    /* Call __libc_init_environ(envp) to initialize the environ global */
-    /* envp is in %rdx, so move it to %rdi (first argument) */
-    mov %rdx, %rdi
+    /* Call __libc_init_environ(envp). r12/r13 stay valid across it. */
+    mov %r12, %rdi
     call __libc_init_environ
 
-    /* Restore argc and argv for main call */
-    mov %rbx, %rdi          /* argc (from rbx, saved earlier) */
-    mov %r13, %rsi          /* argv (from r13, saved above) */
+    /* Set up argc, argv, envp for main call */
+    mov %rbx, %rdi          /* argc */
+    mov %r13, %rsi          /* argv */
+    mov %r12, %rdx          /* envp (preserved across call) */
 
-    /* Call main(argc, argv) */
+    /* Call main(argc, argv, envp) */
     call main
 
     /* main() returned, %rax contains exit code */

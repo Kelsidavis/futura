@@ -32,29 +32,29 @@ _start:
     /* Calculate argv pointer (sp + 8) and save to x20 (callee-saved) */
     add x20, sp, #8
 
-    /* Find envp (skip past argv array until we hit NULL)
-     * x1 = argv pointer
-     * x2 = argc counter
-     * x3 = temporary for envp calculation
-     */
+    /* Compute envp = &argv[argc + 1] and stash it in x21 (callee-
+     * saved). x3 used to hold this, but `bl __libc_init_environ`
+     * clobbers caller-saved registers including x3 — the subsequent
+     * `mov x2, x3` then passed garbage to main as envp, and main()
+     * dereferenced it on the first envp[0] load (typically 0x11 or
+     * similar small junk). Keeping envp in x21 across the call
+     * fixes the user-mode segfault that masked the shell at boot. */
     mov x1, x20                 /* x1 = argv */
     mov x2, x19                 /* x2 = argc */
     add x2, x2, #1              /* +1 for the NULL terminator */
-    lsl x3, x2, #3              /* multiply by 8 (pointer size) */
-    add x3, x1, x3              /* x3 now points to envp */
+    lsl x21, x2, #3             /* x21 = (argc + 1) * 8 */
+    add x21, x1, x21            /* x21 = envp (callee-saved) */
 
     /* Stack is already 16-byte aligned by kernel (elf64.c:1305) */
 
-    /* Call __libc_init_environ(envp) to initialize the environ global
-     * envp is in x3, move it to x0 (first argument)
-     */
-    mov x0, x3
+    /* Call __libc_init_environ(envp). x21 stays valid across the bl. */
+    mov x0, x21
     bl __libc_init_environ
 
-    /* Restore argc, argv, and envp for main call */
+    /* Set up argc, argv, envp for main call */
     mov x0, x19                 /* argc in x0 */
     mov x1, x20                 /* argv in x1 */
-    mov x2, x3                  /* envp in x2 (calculated above) */
+    mov x2, x21                 /* envp in x2 (preserved across call) */
 
     /* Call main(argc, argv, envp) */
     bl main

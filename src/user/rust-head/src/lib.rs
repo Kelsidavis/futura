@@ -297,6 +297,23 @@ fn head_fd(fd: i32, limit: u64, buf: &mut [u8]) -> Result<(), ()> {
     Ok(())
 }
 
+// Byte-mode equivalent of head_fd: pump up to `limit` bytes total to
+// stdout. Used by `head -c N`.
+fn head_fd_bytes(fd: i32, limit: u64, buf: &mut [u8]) -> Result<(), ()> {
+    let mut sent: u64 = 0;
+    while sent < limit {
+        let want = (limit - sent).min(buf.len() as u64) as usize;
+        let n = unsafe {
+            syscall3(sysn::READ, fd as u64, buf.as_mut_ptr() as u64, want as u64)
+        };
+        if n == 0 { return Ok(()); }
+        if n < 0  { return Err(()); }
+        if !write_all(STDOUT, &buf[..n as usize]) { return Err(()); }
+        sent += n as u64;
+    }
+    Ok(())
+}
+
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum HeaderMode { Auto, Quiet, Verbose }
 
@@ -304,9 +321,10 @@ enum HeaderMode { Auto, Quiet, Verbose }
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
     let mut idx: usize = 1;
     let mut limit: u64 = DEFAULT_LINES;
+    let mut byte_limit: Option<u64> = None;
     let mut hmode = HeaderMode::Auto;
 
-    // Parse `-n N` and `-N` (GNU shorthand).
+    // Parse `-n N`, `-c N`, and `-N` (GNU shorthand).
     while let Some(p) = argv_get(argc, argv, idx) {
         if arg_is(p, b"-q") || arg_is(p, b"--quiet") || arg_is(p, b"--silent") {
             hmode = HeaderMode::Quiet;
@@ -316,6 +334,26 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         if arg_is(p, b"-v") || arg_is(p, b"--verbose") {
             hmode = HeaderMode::Verbose;
             idx += 1;
+            continue;
+        }
+        if arg_is(p, b"-c") {
+            idx += 1;
+            match argv_get(argc, argv, idx) {
+                Some(np) => match parse_u64(np) {
+                    Some(v) => {
+                        byte_limit = Some(v);
+                        idx += 1;
+                    }
+                    None => {
+                        write_str(STDERR, b"rust-head: -c needs a non-negative integer\n");
+                        return 1;
+                    }
+                },
+                None => {
+                    write_str(STDERR, b"rust-head: -c needs an argument\n");
+                    return 1;
+                }
+            }
             continue;
         }
         if arg_is(p, b"-n") {
@@ -375,8 +413,15 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
     let mut buf = [0u8; BUF_LEN];
     let mut had_error = false;
 
+    let run = |fd: i32, buf: &mut [u8]| -> Result<(), ()> {
+        match byte_limit {
+            Some(b) => head_fd_bytes(fd, b, buf),
+            None    => head_fd(fd, limit, buf),
+        }
+    };
+
     if (idx as i32) >= argc {
-        if head_fd(STDIN, limit, &mut buf).is_err() {
+        if run(STDIN, &mut buf).is_err() {
             had_error = true;
         }
     } else {
@@ -427,7 +472,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
                 write_str(STDOUT, b" <==\n");
             }
             first = false;
-            if head_fd(fd, limit, &mut buf).is_err() {
+            if run(fd, &mut buf).is_err() {
                 had_error = true;
             }
             if opened_owned {

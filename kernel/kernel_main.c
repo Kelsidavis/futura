@@ -1461,6 +1461,16 @@ void fut_kernel_main(void) {
                   "# freestanding crt0, syscall path, and shell exec_external are\n"
                   "# all wired up end-to-end.\n"
                   "/bin/rust-hello\n");
+        /* TODO(shell): /etc/profile sourcing aborts after the first
+         * external-command exec. The first /bin/rust-hello prints fine
+         * (proving fork+exec+wait works end-to-end), but a second
+         * external command — even another /bin/rust-hello on the next
+         * line — never runs, and even subsequent shell builtins like
+         * `echo MIDDLE` go silent. The shell exits without a fault
+         * print, so this is most likely a parent-side state issue
+         * after fork+wait (perhaps execute_script_buffer's loop or
+         * waitpid path) rather than a kernel fault. Investigate
+         * separately. */
         ETC_WRITE("/etc/motd",
                   "\n"
                   "  \033[1;36mFutura OS 0.9.0\033[0m\n"

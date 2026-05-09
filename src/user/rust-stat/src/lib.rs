@@ -311,7 +311,23 @@ fn render_format(format: &[u8], path: &[u8], st: &StatBuf) -> bool {
                     if !write_all(STDOUT, fmt_perms(st.st_mode, &mut pb)) { return false; }
                 }
                 b'u' => { if !write_all(STDOUT, fmt_u64(st.st_uid as u64, &mut nb)) { return false; } }
+                b'U' => {
+                    // No getpwuid wired up — render "root" for uid 0
+                    // and fall back to the numeric form otherwise.
+                    if st.st_uid == 0 {
+                        if !write_all(STDOUT, b"root") { return false; }
+                    } else if !write_all(STDOUT, fmt_u64(st.st_uid as u64, &mut nb)) {
+                        return false;
+                    }
+                }
                 b'g' => { if !write_all(STDOUT, fmt_u64(st.st_gid as u64, &mut nb)) { return false; } }
+                b'G' => {
+                    if st.st_gid == 0 {
+                        if !write_all(STDOUT, b"root") { return false; }
+                    } else if !write_all(STDOUT, fmt_u64(st.st_gid as u64, &mut nb)) {
+                        return false;
+                    }
+                }
                 b'i' => { if !write_all(STDOUT, fmt_u64(st.st_ino, &mut nb))        { return false; } }
                 b'h' => { if !write_all(STDOUT, fmt_u64(st.st_nlink as u64, &mut nb)) { return false; } }
                 b'F' => { if !write_all(STDOUT, type_name(st.st_mode))              { return false; } }
@@ -472,8 +488,9 @@ Display file metadata.
       --help          show this help and exit
 
 Format conversions: %n name, %s size, %a octal mode, %A rwx perms,
-%u uid, %g gid, %i inode, %h links, %F type-name, %d device,
-%b blocks, %B blksize, %X atime, %Y mtime, %Z ctime, %% literal %.
+%u uid, %U user-name, %g gid, %G group-name, %i inode, %h links,
+%F type-name, %d device, %b blocks, %B blksize, %X atime, %Y mtime,
+%Z ctime, %% literal %.
 \0";
             let len = help.len() - 1;
             unsafe { let _ = syscall3(sysn::WRITE, STDOUT as u64,

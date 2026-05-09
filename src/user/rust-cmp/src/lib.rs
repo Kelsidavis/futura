@@ -241,10 +241,9 @@ fn arg_eq(p: *const u8, want: &[u8]) -> bool {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
-    // Parse leading flags. Currently only -s/--quiet/--silent
-    // (suppress all output, exit status only — matches GNU cmp -s
-    // which is the form scripts overwhelmingly use).
+    // Parse leading flags.
     let mut silent = false;
+    let mut byte_limit: Option<u64> = None;
     let mut idx: i32 = 1;
     while idx < argc {
         let p = unsafe { *argv.add(idx as usize) };
@@ -254,13 +253,48 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             idx += 1;
             continue;
         }
+        if arg_eq(p, b"-n") {
+            // -n NUM: compare at most NUM bytes from each input.
+            if idx + 1 >= argc {
+                if !silent { write_str(STDERR, b"rust-cmp: -n needs a non-negative integer\n"); }
+                return 2;
+            }
+            let np = unsafe { *argv.add((idx + 1) as usize) };
+            if np.is_null() || (np as usize) < 0x10000 {
+                return 2;
+            }
+            // Inline u64 parse — small enough not to warrant a helper.
+            let mut nn = 0usize;
+            unsafe { while *np.add(nn) != 0 { nn += 1; } }
+            if nn == 0 {
+                if !silent { write_str(STDERR, b"rust-cmp: invalid -n value\n"); }
+                return 2;
+            }
+            let mut v: u64 = 0;
+            let mut ok = true;
+            for i in 0..nn {
+                let c = unsafe { *np.add(i) };
+                if !(b'0'..=b'9').contains(&c) { ok = false; break; }
+                v = match v.checked_mul(10).and_then(|x| x.checked_add((c - b'0') as u64)) {
+                    Some(x) => x,
+                    None => { ok = false; break; }
+                };
+            }
+            if !ok {
+                if !silent { write_str(STDERR, b"rust-cmp: invalid -n value\n"); }
+                return 2;
+            }
+            byte_limit = Some(v);
+            idx += 2;
+            continue;
+        }
         if arg_eq(p, b"--") { idx += 1; break; }
         break;
     }
 
     if argc - idx < 2 {
         if !silent {
-            write_str(STDERR, b"usage: rust-cmp [-s] <file1> <file2>\n");
+            write_str(STDERR, b"usage: rust-cmp [-s] [-n NUM] <file1> <file2>\n");
         }
         return 2;
     }
@@ -322,6 +356,11 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
     let mut rc: i32 = 0;
 
     loop {
+        // Under -n, stop once we've already compared `byte_limit` bytes
+        // — anything past that is "equal" by fiat (matches GNU cmp -n).
+        if let Some(lim) = byte_limit {
+            if byte_pos >= lim { break; }
+        }
         let r1 = read_full(fd1, &mut buf1);
         let r2 = read_full(fd2, &mut buf2);
         let (n1r, n2r) = match (r1, r2) {
@@ -335,7 +374,14 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         if n1r == 0 && n2r == 0 {
             break; // identical
         }
-        let common = n1r.min(n2r);
+        let mut common = n1r.min(n2r);
+        // Honor -n by clamping the comparable window.
+        if let Some(lim) = byte_limit {
+            let remaining = lim - byte_pos;
+            if (common as u64) > remaining {
+                common = remaining as usize;
+            }
+        }
         for i in 0..common {
             if buf1[i] != buf2[i] {
                 if !silent { print_diff(name1, name2, byte_pos + i as u64 + 1); }
@@ -346,6 +392,9 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             }
         }
         byte_pos += common as u64;
+        if let Some(lim) = byte_limit {
+            if byte_pos >= lim { break; }  // -n satisfied; stop comparing.
+        }
         if n1r != n2r {
             // One file ended; the other has more bytes. GNU cmp writes
             // the EOF notice to stderr (not stdout) — match that so

@@ -199,8 +199,40 @@ fn write_dec(n: u64) {
     write_str(STDOUT, &buf[i..]);
 }
 
+fn arg_eq(p: *const u8, want: &[u8]) -> bool {
+    for (i, &b) in want.iter().enumerate() {
+        if unsafe { *p.add(i) } != b { return false; }
+    }
+    unsafe { *p.add(want.len()) == 0 }
+}
+
+#[derive(Copy, Clone)]
+enum Mode { Default, OnlyUid, OnlyGid }
+
 #[unsafe(no_mangle)]
-pub extern "C" fn main(_argc: i32, _argv: *const *const u8, envp: *const *const u8) -> i32 {
+pub extern "C" fn main(argc: i32, argv: *const *const u8, envp: *const *const u8) -> i32 {
+    // Flags: -u (uid only), -g (gid only), -n (print name not number),
+    // -r (use real ids — same as effective on Futura). -n requires
+    // either -u or -g, matching GNU id.
+    let mut mode = Mode::Default;
+    let mut name_only = false;
+    let mut idx: i32 = 1;
+    while idx < argc {
+        let p = unsafe { *argv.add(idx as usize) };
+        if p.is_null() || (p as usize) < 0x10000 { idx += 1; continue; }
+        if arg_eq(p, b"-u") { mode = Mode::OnlyUid; idx += 1; continue; }
+        if arg_eq(p, b"-g") { mode = Mode::OnlyGid; idx += 1; continue; }
+        if arg_eq(p, b"-n") { name_only = true; idx += 1; continue; }
+        if arg_eq(p, b"-r") { idx += 1; continue; } // real == effective on Futura
+        if arg_eq(p, b"--") { break; }
+        write_str(STDERR, b"rust-id: unsupported option (use -u / -g / -n / -r)\n");
+        return 1;
+    }
+    if name_only && matches!(mode, Mode::Default) {
+        write_str(STDERR, b"rust-id: -n requires -u or -g\n");
+        return 1;
+    }
+
     let uid = unsafe { syscall0(sysn::GETUID) } as u64;
     let _euid = unsafe { syscall0(sysn::GETEUID) } as u64;
     let gid = unsafe { syscall0(sysn::GETGID) } as u64;
@@ -220,6 +252,36 @@ pub extern "C" fn main(_argc: i32, _argv: *const *const u8, envp: *const *const 
     // Group name: same heuristic — root for gid 0, else fall back to
     // the user name (Futura uses primary-group-equals-user).
     let group_slice: &[u8] = if gid == 0 { b"root" } else { user_slice };
+
+    match mode {
+        Mode::OnlyUid => {
+            if name_only {
+                if user_slice.is_empty() {
+                    write_dec(uid);
+                } else {
+                    write_str(STDOUT, user_slice);
+                }
+            } else {
+                write_dec(uid);
+            }
+            write_str(STDOUT, b"\n");
+            return 0;
+        }
+        Mode::OnlyGid => {
+            if name_only {
+                if group_slice.is_empty() {
+                    write_dec(gid);
+                } else {
+                    write_str(STDOUT, group_slice);
+                }
+            } else {
+                write_dec(gid);
+            }
+            write_str(STDOUT, b"\n");
+            return 0;
+        }
+        Mode::Default => {}
+    }
 
     write_str(STDOUT, b"uid=");
     write_dec(uid);

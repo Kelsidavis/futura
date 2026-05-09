@@ -258,6 +258,20 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
                 }
             }
             idx += 2;
+        } else if cstr_eq(p, b"--help") {
+            let help: &[u8] = b"\
+Usage: rust-strings [-n MIN] [FILE]...
+Print runs of MIN-or-more printable bytes from each FILE (or stdin).
+
+  -n MIN    minimum run length to emit (default 4)
+      --help    show this help and exit
+
+A '-' in the FILE list means standard input.
+\0";
+            let len = help.len() - 1;
+            unsafe { let _ = syscall3(sysn::WRITE, STDOUT as u64,
+                                       help.as_ptr() as u64, len as u64); }
+            return 0;
         } else {
             break; // first non-flag arg is the file
         }

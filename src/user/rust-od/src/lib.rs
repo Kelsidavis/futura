@@ -294,6 +294,30 @@ fn finalize(st: &mut OdState) -> bool {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
+    if argc >= 2 {
+        let first = unsafe { *argv.add(1) };
+        if !first.is_null() && (first as usize) >= 0x10000 {
+            let want = b"--help";
+            let mut ok = true;
+            for i in 0..want.len() {
+                if unsafe { *first.add(i) } != want[i] { ok = false; break; }
+            }
+            if ok && unsafe { *first.add(want.len()) } == 0 {
+                let help: &[u8] = b"\
+Usage: rust-od [FILE]...
+Dump each FILE as 16-byte hex rows with a 7-digit hex offset. With
+multiple FILEs the offset is continuous (concatenated-stream view).
+With no FILE (or FILE = '-') reads stdin.
+
+  --help    show this help and exit
+\0";
+                let len = help.len() - 1;
+                unsafe { let _ = syscall3(sysn::WRITE, STDOUT as u64,
+                                          help.as_ptr() as u64, len as u64); }
+                return 0;
+            }
+        }
+    }
     let mut st = OdState { row: [0u8; COL], row_len: 0, offset: 0 };
     let mut had_error = false;
 

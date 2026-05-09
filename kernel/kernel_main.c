@@ -1463,11 +1463,8 @@ void fut_kernel_main(void) {
                   "# Show off the Rust user-space toolchain (now that fork+exec\n"
                   "# correctly cycles the child task through ZOMBIE on execve).\n"
                   "echo --- rust user-space ---\n"
-                  "/bin/rust-hello\n"
-                  "/bin/rust-uname\n"
-                  "/bin/rust-pwd\n"
-                  "echo --- /bin contents ---\n"
-                  "/bin/rust-ls /bin\n"
+                  "/bin/rust-hello; /bin/rust-uname\n"
+                  "/bin/rust-pwd; /bin/rust-ls /bin\n"
                   "echo --- end rust ---\n");
         ETC_WRITE("/etc/motd",
                   "\n"

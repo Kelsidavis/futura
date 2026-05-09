@@ -21853,8 +21853,48 @@ int main(int argc, char **argv, char **envp) {
 
 /* Execute a single line with full shell semantics (aliases, variables,
  * for/while/if constructs, command chains). Used by source and profile. */
+/* Forward decl — _segment is the per-segment helper after we split on ';'. */
+static int execute_full_line_segment(char *line);
+
+/* POSIX shells treat ';' as a sequential command separator
+ * (`echo a; echo b` runs both). Walk the line left-to-right,
+ * skipping ';' inside single/double quotes, and dispatch each
+ * segment to execute_full_line_segment. The previous version
+ * handed the entire line to execute_command_chain, which only
+ * understands &&/||/| — so a leading `echo foo` would consume
+ * the rest of the line as an extra argv. Visible symptom: a
+ * `cmd1; cmd2` script line ran cmd1 with "; cmd2" tacked onto
+ * argv and never executed cmd2. */
 static int execute_full_line(char *line) {
-    if (!line || !line[0] || line[0] == '#') return 0;
+    if (!line || !line[0]) return 0;
+
+    int last = 0;
+    char *seg = line;
+    char *p = line;
+    int sq = 0, dq = 0;
+    while (*p) {
+        if (!dq && *p == '\'') sq = !sq;
+        else if (!sq && *p == '"') dq = !dq;
+        else if (!sq && !dq && *p == ';') {
+            *p = '\0';
+            last = execute_full_line_segment(seg);
+            *p = ';';
+            seg = p + 1;
+        }
+        p++;
+    }
+    if (seg < p) {
+        last = execute_full_line_segment(seg);
+    }
+    return last;
+}
+
+static int execute_full_line_segment(char *line) {
+    /* Skip leading whitespace so '; cmd' (which becomes ' cmd' after
+     * the split's NUL terminator) isn't classified as comment/empty
+     * by the leading-byte checks below. */
+    while (*line == ' ' || *line == '\t') line++;
+    if (!line[0] || line[0] == '#') return 0;
 
     /* Variable assignment */
     char vn[MAX_VAR_NAME], vv[MAX_VAR_VALUE];

@@ -25,6 +25,8 @@ mod sysn {
     pub const EXIT: u64 = 93;
     pub const RENAMEAT: u64 = 38;
     pub const RENAMEAT2: u64 = 276;
+    pub const OPENAT: u64 = 56;
+    pub const CLOSE: u64 = 57;
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -39,8 +41,8 @@ mod sysn {
 }
 
 const AT_FDCWD: i64 = -100;
-#[cfg(target_arch = "x86_64")]
 const O_RDONLY: u64 = 0;
+const O_DIRECTORY: u64 = 0o200_000;
 #[cfg(target_arch = "aarch64")]
 const RENAME_NOREPLACE: u64 = 1;
 const STDERR: i32 = 2;
@@ -74,6 +76,21 @@ unsafe fn syscall4(nr: u64, a: u64, b: u64, c: u64, d: u64) -> i64 {
             in("x1") b,
             in("x2") c,
             in("x3") d,
+            options(nostack),
+        );
+    }
+    ret
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+unsafe fn syscall1(nr: u64, a: u64) -> i64 {
+    let mut ret: i64;
+    unsafe {
+        core::arch::asm!(
+            "svc #0",
+            in("x8") nr,
+            inout("x0") a => ret,
             options(nostack),
         );
     }
@@ -236,11 +253,50 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         return 1;
     }
     let src = unsafe { *argv.add(idx as usize) };
-    let dst = unsafe { *argv.add((idx + 1) as usize) };
-    if src.is_null() || (src as usize) < 0x10000 || dst.is_null() || (dst as usize) < 0x10000 {
+    let dst_arg = unsafe { *argv.add((idx + 1) as usize) };
+    if src.is_null() || (src as usize) < 0x10000 ||
+       dst_arg.is_null() || (dst_arg as usize) < 0x10000 {
         write_str(STDERR, b"rust-mv: invalid arguments\n");
         return 1;
     }
+
+    // If DST is an existing directory, the rename target is
+    // "<dst>/<basename(src)>" (POSIX mv into a directory).
+    let mut composed = [0u8; 1024];
+    let dst: *const u8 = {
+        let probe = unsafe {
+            syscall4(sysn::OPENAT, AT_FDCWD as u64, dst_arg as u64,
+                     O_RDONLY | O_DIRECTORY, 0)
+        };
+        if probe >= 0 {
+            unsafe { let _ = syscall1(sysn::CLOSE, probe as u64); }
+            let mut dlen = 0usize;
+            unsafe { while *dst_arg.add(dlen) != 0 { dlen += 1; } }
+            let mut slen = 0usize;
+            unsafe { while *src.add(slen) != 0 { slen += 1; } }
+            let mut bstart = slen;
+            while bstart > 0 && unsafe { *src.add(bstart - 1) } != b'/' {
+                bstart -= 1;
+            }
+            let basename_len = slen - bstart;
+            let need_sep = dlen > 0 && unsafe { *dst_arg.add(dlen - 1) } != b'/';
+            let total = dlen + (if need_sep { 1 } else { 0 }) + basename_len;
+            if basename_len == 0 || total + 1 > composed.len() {
+                write_str(STDERR, b"rust-mv: composed path too long or basename empty\n");
+                return 1;
+            }
+            for i in 0..dlen { composed[i] = unsafe { *dst_arg.add(i) }; }
+            let mut pos = dlen;
+            if need_sep { composed[pos] = b'/'; pos += 1; }
+            for i in 0..basename_len {
+                composed[pos + i] = unsafe { *src.add(bstart + i) };
+            }
+            composed[pos + basename_len] = 0;
+            composed.as_ptr()
+        } else {
+            dst_arg
+        }
+    };
 
     let r: i64;
 

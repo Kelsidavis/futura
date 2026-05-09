@@ -174,7 +174,7 @@ fn parse_u64(p: *const u8) -> Option<u64> {
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
     if argc < 4 {
-        write_str(STDERR, b"usage: rust-truncate -s <bytes> <file>\n");
+        write_str(STDERR, b"usage: rust-truncate -s <bytes> <file> [<file>...]\n");
         return 1;
     }
     let flag = unsafe { *argv.add(1) };
@@ -183,10 +183,8 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         return 1;
     }
     let size_p = unsafe { *argv.add(2) };
-    let path = unsafe { *argv.add(3) };
-    if size_p.is_null() || (size_p as usize) < 0x10000 ||
-       path.is_null() || (path as usize) < 0x10000 {
-        write_str(STDERR, b"rust-truncate: invalid arguments\n");
+    if size_p.is_null() || (size_p as usize) < 0x10000 {
+        write_str(STDERR, b"rust-truncate: invalid size argument\n");
         return 1;
     }
     let size = match parse_u64(size_p) {
@@ -197,10 +195,22 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         }
     };
 
-    let r = unsafe { syscall2(sysn::TRUNCATE, path as u64, size) };
-    if r < 0 {
-        write_str(STDERR, b"rust-truncate: truncate failed\n");
-        return 1;
+    let mut had_error = false;
+    for ai in 3..argc {
+        let path = unsafe { *argv.add(ai as usize) };
+        if path.is_null() || (path as usize) < 0x10000 {
+            had_error = true;
+            continue;
+        }
+        let r = unsafe { syscall2(sysn::TRUNCATE, path as u64, size) };
+        if r < 0 {
+            write_str(STDERR, b"rust-truncate: cannot truncate '");
+            let mut n = 0usize;
+            unsafe { while *path.add(n) != 0 { n += 1; } }
+            unsafe { let _ = syscall3(sysn::WRITE, STDERR as u64, path as u64, n as u64); }
+            write_str(STDERR, b"'\n");
+            had_error = true;
+        }
     }
-    0
+    if had_error { 1 } else { 0 }
 }

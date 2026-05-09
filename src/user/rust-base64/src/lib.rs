@@ -325,7 +325,7 @@ fn encode(fd: i32, wrap: u32) -> i32 {
     0
 }
 
-fn decode(fd: i32) -> i32 {
+fn decode(fd: i32, ignore_garbage: bool) -> i32 {
     let mut buf = [0u8; DEC_IN_CHUNK];
     let mut out = [0u8; DEC_OUT_CHUNK];
     // 4-byte accumulator across read boundaries.
@@ -358,12 +358,16 @@ fn decode(fd: i32) -> i32 {
                         q_len += 1;
                     }
                     None => {
+                        if ignore_garbage { continue; }
                         write_str(STDERR, b"rust-base64: invalid input byte\n");
                         return 1;
                     }
                 }
             } else {
-                // Non-pad byte after pad — invalid.
+                // Non-pad byte after pad: with -i silently skip; without it,
+                // bail because data continuing past padding indicates a
+                // corrupted stream.
+                if ignore_garbage { continue; }
                 write_str(STDERR, b"rust-base64: data after padding\n");
                 return 1;
             }
@@ -426,6 +430,7 @@ fn parse_u32_small(p: *const u8) -> Option<u32> {
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
     let mut do_decode = false;
+    let mut ignore_garbage = false;
     let mut wrap: u32 = 76;  // GNU default
     let mut input_path: Option<*const u8> = None;
     let mut idx: i32 = 1;
@@ -437,6 +442,9 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         }
         if cstr_eq(p, b"-d") || cstr_eq(p, b"--decode") {
             do_decode = true;
+            idx += 1;
+        } else if cstr_eq(p, b"-i") || cstr_eq(p, b"--ignore-garbage") {
+            ignore_garbage = true;
             idx += 1;
         } else if cstr_eq(p, b"-w") || cstr_eq(p, b"--wrap") {
             if idx + 1 >= argc {
@@ -491,7 +499,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         }
     }
 
-    let rc = if do_decode { decode(fd) } else { encode(fd, wrap) };
+    let rc = if do_decode { decode(fd, ignore_garbage) } else { encode(fd, wrap) };
     if fd != STDIN {
         unsafe { let _ = syscall1(sysn::CLOSE, fd as u64); }
     }

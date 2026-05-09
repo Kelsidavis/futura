@@ -117,6 +117,7 @@ ARM64_STAGE_FN(fut_stage_rust_sleep_binary,         rust_sleep,     "/bin",  "/b
 ARM64_STAGE_FN(fut_stage_rust_date_binary,          rust_date,      "/bin",  "/bin/rust-date")
 ARM64_STAGE_FN(fut_stage_rust_settings_binary,      rust_settings,  "/bin",  "/bin/rust-settings")
 ARM64_STAGE_FN(fut_stage_rust_tree_binary,          rust_tree,      "/bin",  "/bin/rust-tree")
+ARM64_STAGE_FN(fut_stage_rust_wallpaper_binary,     rust_wallpaper, "/bin",  "/bin/rust-wallpaper")
 #else
 int fut_stage_rust_hello_binary(void)         { return -ENODEV; }
 int fut_stage_rust_uname_binary(void)         { return -ENODEV; }
@@ -137,6 +138,7 @@ int fut_stage_rust_sleep_binary(void)         { return -ENODEV; }
 int fut_stage_rust_date_binary(void)          { return -ENODEV; }
 int fut_stage_rust_settings_binary(void)      { return -ENODEV; }
 int fut_stage_rust_tree_binary(void)          { return -ENODEV; }
+int fut_stage_rust_wallpaper_binary(void)     { return -ENODEV; }
 #endif
 ARM64_STAGE_FN(fut_stage_init_binary,               init,           "/sbin", "/sbin/init")
 ARM64_STAGE_FN(fut_stage_shell_binary,              shell,          "/bin",  "/bin/shell")

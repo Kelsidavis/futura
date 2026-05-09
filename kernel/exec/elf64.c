@@ -1126,6 +1126,8 @@ extern const uint8_t _binary_build_bin_x86_64_user_rust_chmod_start[];
 extern const uint8_t _binary_build_bin_x86_64_user_rust_chmod_end[];
 extern const uint8_t _binary_build_bin_x86_64_user_rust_hostname_start[];
 extern const uint8_t _binary_build_bin_x86_64_user_rust_hostname_end[];
+extern const uint8_t _binary_build_bin_x86_64_user_rust_arch_start[];
+extern const uint8_t _binary_build_bin_x86_64_user_rust_arch_end[];
 #endif
 /* Core Wayland binaries (production) */
 #if ENABLE_WAYLAND
@@ -1537,6 +1539,13 @@ int fut_stage_rust_hostname_binary(void) {
                       _binary_build_bin_x86_64_user_rust_hostname_end,
                       "/bin/rust-hostname");
 }
+
+int fut_stage_rust_arch_binary(void) {
+    (void)fut_vfs_mkdir("/bin", 0755);
+    return stage_blob(_binary_build_bin_x86_64_user_rust_arch_start,
+                      _binary_build_bin_x86_64_user_rust_arch_end,
+                      "/bin/rust-arch");
+}
 #else
 int fut_stage_rust_hello_binary(void) { return -ENOSYS; }
 int fut_stage_rust_uname_binary(void) { return -ENOSYS; }
@@ -1579,6 +1588,7 @@ int fut_stage_rust_whoami_binary(void)    { return -ENOSYS; }
 int fut_stage_rust_id_binary(void)        { return -ENOSYS; }
 int fut_stage_rust_chmod_binary(void)     { return -ENOSYS; }
 int fut_stage_rust_hostname_binary(void)  { return -ENOSYS; }
+int fut_stage_rust_arch_binary(void)      { return -ENOSYS; }
 #endif
 #else
 int fut_stage_shell_binary(void) {
@@ -1747,6 +1757,10 @@ int fut_stage_rust_chmod_binary(void) {
 
 int fut_stage_rust_hostname_binary(void) {
     return -ENOSYS;  /* rust-hostname not available on macOS host builds */
+}
+
+int fut_stage_rust_arch_binary(void) {
+    return -ENOSYS;  /* rust-arch not available on macOS host builds */
 }
 #endif
 

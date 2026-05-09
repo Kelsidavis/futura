@@ -8,6 +8,7 @@
  * Controls:
  *   Arrows / PgUp / PgDn   Navigate
  *   Home / End             Jump to line start / end
+ *   Ctrl+Home / Ctrl+End   Jump to top / bottom of file
  *   Backspace / Delete     Edit
  *   Enter                  Split line
  *   Ctrl+S                 Save
@@ -769,8 +770,22 @@ static void process_key(struct client_state *s, uint32_t key) {
     if (key == 106) { if (ed_cursor_col < ed_line_len[ed_cursor_row]) ed_cursor_col++;
         else if (ed_cursor_row < ed_line_count - 1) { ed_cursor_row++; ed_cursor_col = 0; }
         ed_ensure_visible(); s->needs_redraw = true; return; }
-    if (key == 102) { ed_cursor_col = 0; ed_ensure_visible(); s->needs_redraw = true; return; }
-    if (key == 107) { ed_cursor_col = ed_line_len[ed_cursor_row]; ed_ensure_visible(); s->needs_redraw = true; return; }
+    if (key == 102) {
+        /* Ctrl+Home jumps to the very top of the file; plain Home
+         * jumps to the start of the current line. */
+        if (ctrl) ed_cursor_row = 0;
+        ed_cursor_col = 0;
+        ed_ensure_visible(); s->needs_redraw = true; return;
+    }
+    if (key == 107) {
+        /* Ctrl+End jumps to the very bottom of the file; plain End
+         * jumps to the end of the current line. */
+        if (ctrl) {
+            ed_cursor_row = (ed_line_count > 0) ? ed_line_count - 1 : 0;
+        }
+        ed_cursor_col = ed_line_len[ed_cursor_row];
+        ed_ensure_visible(); s->needs_redraw = true; return;
+    }
     if (key == 104) {
         ed_cursor_row -= ED_VIS_ROWS - 1;
         if (ed_cursor_row < 0) ed_cursor_row = 0;

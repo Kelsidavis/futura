@@ -209,11 +209,49 @@ fn panic(_info: &PanicInfo) -> ! {
 // bcmp(3) is provided by libfutura — required because libcore's
 // slice-equality lowering on aarch64 emits direct calls to it.
 
+// Hide-policy for dot-prefixed entries.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum DotMode { HideAll, ShowAlmostAll, ShowAll }
+
+fn arg_is(p: *const u8, s: &[u8]) -> bool {
+    for (i, &b) in s.iter().enumerate() {
+        if unsafe { *p.add(i) } != b {
+            return false;
+        }
+    }
+    unsafe { *p.add(s.len()) == 0 }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
-    // Pick a directory to list. argv[1] if provided, else NUL-terminated ".".
+    // Parse leading flags. Match GNU ls's default:
+    //   no flag   ->  HideAll        (skip every dot-prefixed entry)
+    //   -a        ->  ShowAll        (include '.' and '..')
+    //   -A        ->  ShowAlmostAll  (include other dot-files but skip '.' and '..')
+    // Earlier versions implicitly behaved like -A which surprised
+    // anyone running 'ls /etc' and seeing hidden state files.
+    let mut mode = DotMode::HideAll;
+    let mut idx: i32 = 1;
+    while idx < argc {
+        let p = unsafe { *argv.add(idx as usize) };
+        if p.is_null() || (p as usize) < 0x10000 {
+            idx += 1;
+            continue;
+        }
+        if arg_is(p, b"-a") {
+            mode = DotMode::ShowAll;
+            idx += 1;
+        } else if arg_is(p, b"-A") {
+            mode = DotMode::ShowAlmostAll;
+            idx += 1;
+        } else {
+            break;
+        }
+    }
+
+    // Pick a directory to list. First non-flag argv if provided, else ".".
     let dot: [u8; 2] = [b'.', 0];
-    let path_ptr: *const u8 = match argv_get(argc, argv, 1) {
+    let path_ptr: *const u8 = match argv_get(argc, argv, idx as usize) {
         Some(p) => p,
         None => dot.as_ptr(),
     };
@@ -275,12 +313,18 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
                 name_end += 1;
             }
             let name = &buf[name_start..name_end];
-            // Skip "." and ".." like default `ls`. Hand-rolled to avoid
+            // Apply the dot-mode policy. Hand-rolled compares to avoid
             // pulling in libcore's slice equality (which would land on
             // an undefined `bcmp` in this freestanding link).
             let nlen = name.len();
-            let skip = (nlen == 1 && name[0] == b'.')
-                || (nlen == 2 && name[0] == b'.' && name[1] == b'.');
+            let is_dot = nlen == 1 && name[0] == b'.';
+            let is_dotdot = nlen == 2 && name[0] == b'.' && name[1] == b'.';
+            let starts_with_dot = nlen > 0 && name[0] == b'.';
+            let skip = match mode {
+                DotMode::HideAll => starts_with_dot,
+                DotMode::ShowAlmostAll => is_dot || is_dotdot,
+                DotMode::ShowAll => false,
+            };
             if !skip && nlen > 0 {
                 if !write_all(STDOUT, name) {
                     had_error = true;

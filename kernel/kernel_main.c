@@ -2200,6 +2200,12 @@ void fut_kernel_main(void) {
         fut_printf("[WARN] Failed to stage CLI shell binary (error %d)\n", cli_shell_stage);
     } else {
         fut_printf("[INIT] CLI shell staged at /bin/shell\n");
+        /* /etc/shells advertises both /bin/shell and /bin/sh, and POSIX
+         * code paths (#!/bin/sh shebangs, execve("/bin/sh", ...) from
+         * configure scripts and ports) expect /bin/sh to exist. Symlink
+         * it to /bin/shell so the advertised path actually resolves. */
+        extern long sys_symlink(const char *, const char *);
+        sys_symlink("/bin/shell", "/bin/sh");
     }
 
 #else
@@ -2210,6 +2216,8 @@ void fut_kernel_main(void) {
         int shell_rc = fut_stage_shell_binary();
         if (shell_rc == 0) {
             fut_printf("[INIT] ✓ Shell binary staged at /bin/shell\n");
+            extern long sys_symlink(const char *, const char *);
+            sys_symlink("/bin/shell", "/bin/sh");
         }
     }
 #endif

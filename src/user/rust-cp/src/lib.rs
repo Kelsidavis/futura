@@ -30,6 +30,8 @@ mod sysn {
     pub const READ: u64 = 63;
     pub const GETDENTS64: u64 = 61;
     pub const MKDIRAT: u64 = 34;
+    pub const NEWFSTATAT: u64 = 79;
+    pub const FCHMODAT: u64 = 53;
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -41,6 +43,8 @@ mod sysn {
     pub const READ: u64 = 0;
     pub const GETDENTS64: u64 = 217;
     pub const MKDIR: u64 = 83;
+    pub const STAT: u64 = 4;
+    pub const CHMOD: u64 = 90;
 }
 
 const AT_FDCWD: i64 = -100;
@@ -226,6 +230,53 @@ fn open_dir(path: *const u8) -> i64 {
                       O_RDONLY | O_DIRECTORY, 0) }
 }
 
+// Layout of the kernel's `struct fut_stat` — only the fields we read.
+#[repr(C)]
+#[derive(Default, Copy, Clone)]
+struct StatBuf {
+    st_dev:     u64,
+    st_ino:     u64,
+    st_mode:    u32,
+    st_nlink:   u32,
+    st_uid:     u32,
+    st_gid:     u32,
+    st_size:    u64,
+    st_blksize: u64,
+    st_blocks:  u64,
+    st_atime:   u64, _atime_ns: u32, _atime_pad: u32,
+    st_mtime:   u64, _mtime_ns: u32, _mtime_pad: u32,
+    st_ctime:   u64, _ctime_ns: u32, _ctime_pad: u32,
+}
+
+// Fetch st_mode for `path` (returns None on stat failure).
+fn stat_mode(path: *const u8) -> Option<u32> {
+    let st = StatBuf::default();
+    let stp = &st as *const StatBuf as u64;
+    let r;
+    #[cfg(target_arch = "aarch64")]
+    {
+        r = unsafe { syscall4(sysn::NEWFSTATAT, AT_FDCWD as u64, path as u64, stp, 0) };
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
+        // SYS_stat takes (path, statbuf); third syscall3 arg goes into
+        // rdx but the kernel only reads two — passing 0 is safe.
+        r = unsafe { syscall3(sysn::STAT, path as u64, stp, 0) };
+    }
+    if r < 0 { None } else { Some(st.st_mode) }
+}
+
+fn chmod_path(path: *const u8, mode: u32) -> i64 {
+    #[cfg(target_arch = "aarch64")]
+    {
+        unsafe { syscall4(sysn::FCHMODAT, AT_FDCWD as u64, path as u64, mode as u64, 0) }
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
+        unsafe { syscall3(sysn::CHMOD, path as u64, mode as u64, 0) }
+    }
+}
+
 const PATH_MAX: usize = 1024;
 const CP_MAX_DEPTH: usize = 32;
 
@@ -289,7 +340,7 @@ fn cp_tree(
     src_buf: &mut [u8; PATH_MAX], src_len: usize,
     dst_buf: &mut [u8; PATH_MAX], dst_len: usize,
     depth: usize,
-    no_clobber: bool, verbose: bool,
+    no_clobber: bool, verbose: bool, preserve_mode: bool,
 ) -> bool {
     if depth >= CP_MAX_DEPTH {
         write_str(STDERR, b"rust-cp: tree too deep at '");
@@ -324,6 +375,11 @@ fn cp_tree(
         let ok = copy_loop(src_fd, dst_fd);
         close_fd(src_fd);
         close_fd(dst_fd);
+        if ok && preserve_mode {
+            if let Some(m) = stat_mode(src_buf.as_ptr()) {
+                let _ = chmod_path(dst_buf.as_ptr(), m & 0o7777);
+            }
+        }
         if ok && verbose {
             unsafe {
                 let _ = syscall3(sysn::WRITE, STDOUT as u64, b"'".as_ptr() as u64, 1);
@@ -390,7 +446,7 @@ fn cp_tree(
                 let d_child = dp + nlen;
 
                 if !cp_tree(src_buf, s_child, dst_buf, d_child,
-                            depth + 1, no_clobber, verbose) {
+                            depth + 1, no_clobber, verbose, preserve_mode) {
                     had_error = true;
                 }
 
@@ -410,6 +466,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
     let mut no_clobber = false;
     let mut verbose = false;
     let mut recursive = false;
+    let mut preserve_mode = false;
     let mut idx: i32 = 1;
     while idx < argc {
         let p = unsafe { *argv.add(idx as usize) };
@@ -421,12 +478,21 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         if arg_is(p, b"-r") || arg_is(p, b"-R") || arg_is(p, b"--recursive") {
             recursive = true; idx += 1; continue;
         }
+        if arg_is(p, b"-p") || arg_is(p, b"--preserve") {
+            preserve_mode = true; idx += 1; continue;
+        }
         if arg_is(p, b"-nv") || arg_is(p, b"-vn") {
             no_clobber = true; verbose = true; idx += 1; continue;
         }
         if arg_is(p, b"-rv") || arg_is(p, b"-vr")
             || arg_is(p, b"-Rv") || arg_is(p, b"-vR") {
             recursive = true; verbose = true; idx += 1; continue;
+        }
+        if arg_is(p, b"-pv") || arg_is(p, b"-vp") {
+            preserve_mode = true; verbose = true; idx += 1; continue;
+        }
+        if arg_is(p, b"-rp") || arg_is(p, b"-pr") {
+            recursive = true; preserve_mode = true; idx += 1; continue;
         }
         if arg_is(p, b"--") { idx += 1; break; }
         if arg_is(p, b"--help") {
@@ -436,6 +502,7 @@ Copy SRC to DEST. If DEST is a directory, the file is copied to
 DEST/basename(SRC).
 
   -n, --no-clobber      do not overwrite an existing file
+  -p, --preserve        preserve source mode bits (chmod after copy)
   -r, -R, --recursive   copy directories recursively
   -v, --verbose         emit \"'src' -> 'dst'\" for each copy
       --help            show this help and exit
@@ -498,7 +565,7 @@ DEST/basename(SRC).
         dst_buf[d_n] = 0;
 
         let ok = cp_tree(&mut src_buf, s_n, &mut dst_buf, d_n,
-                         0, no_clobber, verbose);
+                         0, no_clobber, verbose, preserve_mode);
         return if ok { 0 } else { 1 };
     }
 
@@ -571,6 +638,12 @@ DEST/basename(SRC).
     if !ok {
         write_str(STDERR, b"rust-cp: copy failed\n");
         return 1;
+    }
+    // -p: replicate source mode bits onto the freshly-written dest.
+    if preserve_mode {
+        if let Some(m) = stat_mode(src) {
+            let _ = chmod_path(dst_open_path, m & 0o7777);
+        }
     }
     if verbose {
         // GNU cp -v: "'src' -> 'dst'\n" using the resolved dst path.

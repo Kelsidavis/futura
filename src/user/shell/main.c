@@ -22792,7 +22792,7 @@ static int screen_spawn_window(struct screen_window *win) {
         if (sfd > 2) sys_close(sfd);
 
         char *av[] = { "/bin/shell", (void *)0 };
-        char *ev[] = { "TERM=screen", "HOME=/root", (void *)0 };
+        char *ev[] = { "TERM=xterm-256color", "HOME=/root", (void *)0 };
         sys_execve_call("/bin/shell", av, ev);
         sys_exit(127);
     }

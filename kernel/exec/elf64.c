@@ -1122,6 +1122,8 @@ extern const uint8_t _binary_build_bin_x86_64_user_rust_whoami_start[];
 extern const uint8_t _binary_build_bin_x86_64_user_rust_whoami_end[];
 extern const uint8_t _binary_build_bin_x86_64_user_rust_id_start[];
 extern const uint8_t _binary_build_bin_x86_64_user_rust_id_end[];
+extern const uint8_t _binary_build_bin_x86_64_user_rust_chmod_start[];
+extern const uint8_t _binary_build_bin_x86_64_user_rust_chmod_end[];
 #endif
 /* Core Wayland binaries (production) */
 #if ENABLE_WAYLAND
@@ -1519,6 +1521,13 @@ int fut_stage_rust_id_binary(void) {
                       _binary_build_bin_x86_64_user_rust_id_end,
                       "/bin/rust-id");
 }
+
+int fut_stage_rust_chmod_binary(void) {
+    (void)fut_vfs_mkdir("/bin", 0755);
+    return stage_blob(_binary_build_bin_x86_64_user_rust_chmod_start,
+                      _binary_build_bin_x86_64_user_rust_chmod_end,
+                      "/bin/rust-chmod");
+}
 #else
 int fut_stage_rust_hello_binary(void) { return -ENOSYS; }
 int fut_stage_rust_uname_binary(void) { return -ENOSYS; }
@@ -1559,6 +1568,7 @@ int fut_stage_rust_od_binary(void)        { return -ENOSYS; }
 int fut_stage_rust_printenv_binary(void)  { return -ENOSYS; }
 int fut_stage_rust_whoami_binary(void)    { return -ENOSYS; }
 int fut_stage_rust_id_binary(void)        { return -ENOSYS; }
+int fut_stage_rust_chmod_binary(void)     { return -ENOSYS; }
 #endif
 #else
 int fut_stage_shell_binary(void) {
@@ -1719,6 +1729,10 @@ int fut_stage_rust_whoami_binary(void) {
 
 int fut_stage_rust_id_binary(void) {
     return -ENOSYS;  /* rust-id not available on macOS host builds */
+}
+
+int fut_stage_rust_chmod_binary(void) {
+    return -ENOSYS;  /* rust-chmod not available on macOS host builds */
 }
 #endif
 

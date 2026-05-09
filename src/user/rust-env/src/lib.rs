@@ -276,6 +276,36 @@ fn try_exec_path(dir: &[u8], name: &[u8],
 
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, envp: *const *const u8) -> i32 {
+    // --help intercept before the env-as-launcher branch — without
+    // this, `env --help` would try to exec a binary literally named
+    // "--help".
+    if argc == 2 {
+        let first = unsafe { *argv.add(1) };
+        if !first.is_null() && (first as usize) >= 0x10000 {
+            let want = b"--help";
+            let n = cstr_len(first);
+            if n == want.len() {
+                let mut ok = true;
+                for i in 0..want.len() {
+                    if unsafe { *first.add(i) } != want[i] { ok = false; break; }
+                }
+                if ok {
+                    let help: &[u8] = b"\
+Usage: rust-env [COMMAND [ARG...]]
+With no COMMAND, dump the environment one VAR=VALUE per line.
+With COMMAND, execve it (PATH-walked if it has no slash) using the
+current environment - the standard /usr/bin/env shebang shape.
+
+  --help    show this help and exit
+\0";
+                    let len = help.len() - 1;
+                    unsafe { let _ = syscall3(sysn::WRITE, STDOUT as u64,
+                                              help.as_ptr() as u64, len as u64); }
+                    return 0;
+                }
+            }
+        }
+    }
     // env <cmd> [args...]: execve cmd with the current envp; PATH
     // walk if cmd has no slash. Without this branch, /usr/bin/env
     // shebangs would dump env and exit instead of running their

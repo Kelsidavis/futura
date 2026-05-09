@@ -119,6 +119,31 @@ fn cstr_len(p: *const u8) -> usize {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
+    // --help short-circuit (single-arg form).
+    if argc == 2 {
+        let first = unsafe { *argv.add(1) };
+        if !first.is_null() && (first as usize) >= 0x10000 {
+            let want = b"--help";
+            let n = cstr_len(first);
+            if n == want.len() {
+                let mut ok = true;
+                for i in 0..want.len() {
+                    if unsafe { *first.add(i) } != want[i] { ok = false; break; }
+                }
+                if ok {
+                    let help: &[u8] = b"\
+Usage: rust-yes [STRING...]
+Repeatedly print STRING (or 'y' if absent) followed by '\\n'.
+
+  --help    show this help and exit
+\0";
+                    let len = help.len() - 1;
+                    unsafe { let _ = syscall3(sysn::WRITE, 1, help.as_ptr() as u64, len as u64); }
+                    return 0;
+                }
+            }
+        }
+    }
     // Build the line in a fixed buffer; truncate rather than fail if it
     // doesn't fit. coreutils' yes also does best-effort truncation.
     let mut buf = [0u8; 256];

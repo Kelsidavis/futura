@@ -1456,6 +1456,16 @@ void fut_kernel_main(void) {
                   "alias q='exit'\n"
                   "# Display motd\n"
                   "cat /etc/motd\n");
+        /* TODO(rust-userland): Adding `/bin/rust-hello` (or any other
+         * staged rust-* binary) to /etc/profile reproducibly faults
+         * inside libfutura's set_pair() at offset ~0x25c shortly after
+         * exec on arm64. The fault is a permission-fault on a write
+         * past the env-array allocation that __libc_init_environ
+         * indirectly grows. The rust binaries themselves run fine in
+         * isolation; the trigger is the C shell's exec_external path
+         * staging environ for the child. Investigation continues —
+         * leaving rust-* exec'able by hand from a real terminal but
+         * not by /etc/profile sourcing for now. */
         ETC_WRITE("/etc/motd",
                   "\n"
                   "  \033[1;36mFutura OS 0.9.0\033[0m\n"

@@ -249,99 +249,140 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         }
     }
 
-    // Pick a directory to list. First non-flag argv if provided, else ".".
-    let dot: [u8; 2] = [b'.', 0];
-    let path_ptr: *const u8 = match argv_get(argc, argv, idx as usize) {
-        Some(p) => p,
-        None => dot.as_ptr(),
-    };
-
-    let fd = unsafe {
-        syscall4(
-            sysn::OPENAT,
-            AT_FDCWD as u64,
-            path_ptr as u64,
-            O_RDONLY | O_DIRECTORY,
-            0,
-        )
-    };
-    if fd < 0 {
-        write_str(STDERR, b"rust-ls: cannot open directory\n");
-        return 1;
-    }
-    let fd = fd as i32;
-
-    // getdents64 loop. Each record is variable-length:
-    //   u64 d_ino, i64 d_off, u16 d_reclen, u8 d_type, char d_name[]
-    let mut buf = [0u8; BUF_LEN];
+    // Collect every non-flag argv into the path list. Multiple paths
+    // each get listed in turn; if the path isn't a directory (e.g. a
+    // regular file), GNU ls just echoes the name and that's what we
+    // do here too. Without this, `rust-ls /bin/cat` previously failed
+    // with "cannot open directory".
     let mut had_error = false;
-    loop {
-        let n = unsafe {
-            syscall3(
-                sysn::GETDENTS64,
-                fd as u64,
-                buf.as_mut_ptr() as u64,
-                buf.len() as u64,
+    let mut paths_seen: i32 = 0;
+    // Count first so we can decide whether to emit "<path>:" headers.
+    let mut probe = idx as usize;
+    while argv_get(argc, argv, probe).is_some() {
+        paths_seen += 1;
+        probe += 1;
+    }
+
+    let mut buf = [0u8; BUF_LEN];
+
+    let list_one = |path_ptr: *const u8,
+                    path_len: usize,
+                    label_with_header: bool,
+                    not_first: bool,
+                    buf: &mut [u8; BUF_LEN]| -> bool {
+        let fd = unsafe {
+            syscall4(
+                sysn::OPENAT,
+                AT_FDCWD as u64,
+                path_ptr as u64,
+                O_RDONLY | O_DIRECTORY,
+                0,
             )
         };
-        if n < 0 {
-            had_error = true;
-            break;
-        }
-        if n == 0 {
-            break;
-        }
-        let bytes = n as usize;
-        let mut off = 0usize;
-        while off < bytes {
-            // Defensive: ensure header fits before reading d_reclen.
-            if off + 19 > bytes {
-                break;
-            }
-            // d_reclen at offset 16 (after u64 + i64).
-            let lo = buf[off + 16] as usize;
-            let hi = buf[off + 17] as usize;
-            let reclen = lo | (hi << 8);
-            if reclen < 19 || off + reclen > bytes {
-                break;
-            }
-            // d_name starts at offset 19 (after d_type byte).
-            let name_start = off + 19;
-            // Walk to NUL within the record.
-            let mut name_end = name_start;
-            while name_end < off + reclen && buf[name_end] != 0 {
-                name_end += 1;
-            }
-            let name = &buf[name_start..name_end];
-            // Apply the dot-mode policy. Hand-rolled compares to avoid
-            // pulling in libcore's slice equality (which would land on
-            // an undefined `bcmp` in this freestanding link).
-            let nlen = name.len();
-            let is_dot = nlen == 1 && name[0] == b'.';
-            let is_dotdot = nlen == 2 && name[0] == b'.' && name[1] == b'.';
-            let starts_with_dot = nlen > 0 && name[0] == b'.';
-            let skip = match mode {
-                DotMode::HideAll => starts_with_dot,
-                DotMode::ShowAlmostAll => is_dot || is_dotdot,
-                DotMode::ShowAll => false,
+        if fd < 0 {
+            // Not a directory? Try opening without O_DIRECTORY to see
+            // if it's a regular file. If so, just echo the name —
+            // matches `ls` on a non-dir argv.
+            let plain = unsafe {
+                syscall4(sysn::OPENAT, AT_FDCWD as u64, path_ptr as u64, O_RDONLY, 0)
             };
-            if !skip && nlen > 0 {
-                if !write_all(STDOUT, name) {
-                    had_error = true;
-                    break;
+            if plain >= 0 {
+                let _ = unsafe { syscall1(sysn::CLOSE, plain as u64) };
+                if path_len > 0 {
+                    if !write_all(STDOUT, unsafe {
+                        core::slice::from_raw_parts(path_ptr, path_len)
+                    }) {
+                        return false;
+                    }
+                    if !write_all(STDOUT, b"\n") { return false; }
                 }
-                if !write_all(STDOUT, b"\n") {
-                    had_error = true;
-                    break;
-                }
+                return true;
             }
-            off += reclen;
+            write_str(STDERR, b"rust-ls: cannot open '");
+            unsafe {
+                let _ = syscall3(sysn::WRITE, STDERR as u64, path_ptr as u64, path_len as u64);
+            }
+            write_str(STDERR, b"'\n");
+            return false;
         }
-        if had_error {
-            break;
+        let fd = fd as i32;
+        if label_with_header {
+            if not_first { write_str(STDOUT, b"\n"); }
+            unsafe {
+                let _ = syscall3(sysn::WRITE, STDOUT as u64, path_ptr as u64, path_len as u64);
+            }
+            write_str(STDOUT, b":\n");
+        }
+
+        let mut local_err = false;
+        loop {
+            let n = unsafe {
+                syscall3(
+                    sysn::GETDENTS64,
+                    fd as u64,
+                    buf.as_mut_ptr() as u64,
+                    buf.len() as u64,
+                )
+            };
+            if n < 0 { local_err = true; break; }
+            if n == 0 { break; }
+            let bytes = n as usize;
+            let mut off = 0usize;
+            while off < bytes {
+                if off + 19 > bytes { break; }
+                let lo = buf[off + 16] as usize;
+                let hi = buf[off + 17] as usize;
+                let reclen = lo | (hi << 8);
+                if reclen < 19 || off + reclen > bytes { break; }
+                let name_start = off + 19;
+                let mut name_end = name_start;
+                while name_end < off + reclen && buf[name_end] != 0 {
+                    name_end += 1;
+                }
+                let name = &buf[name_start..name_end];
+                let nlen = name.len();
+                let is_dot = nlen == 1 && name[0] == b'.';
+                let is_dotdot = nlen == 2 && name[0] == b'.' && name[1] == b'.';
+                let starts_with_dot = nlen > 0 && name[0] == b'.';
+                let skip = match mode {
+                    DotMode::HideAll => starts_with_dot,
+                    DotMode::ShowAlmostAll => is_dot || is_dotdot,
+                    DotMode::ShowAll => false,
+                };
+                if !skip && nlen > 0 {
+                    if !write_all(STDOUT, name) { local_err = true; break; }
+                    if !write_all(STDOUT, b"\n") { local_err = true; break; }
+                }
+                off += reclen;
+            }
+            if local_err { break; }
+        }
+
+        let _ = unsafe { syscall1(sysn::CLOSE, fd as u64) };
+        !local_err
+    };
+
+    if paths_seen == 0 {
+        let dot: [u8; 2] = [b'.', 0];
+        if !list_one(dot.as_ptr(), 1, false, false, &mut buf) {
+            had_error = true;
+        }
+    } else {
+        let multi = paths_seen > 1;
+        let mut printed = 0i32;
+        let mut walk = idx as usize;
+        while let Some(p) = argv_get(argc, argv, walk) {
+            // Skip null/garbage argv entries defensively.
+            if (p as usize) < 0x10000 { walk += 1; continue; }
+            let mut plen = 0usize;
+            unsafe { while *p.add(plen) != 0 { plen += 1; } }
+            if !list_one(p, plen, multi, printed > 0, &mut buf) {
+                had_error = true;
+            }
+            printed += 1;
+            walk += 1;
         }
     }
 
-    let _ = unsafe { syscall1(sysn::CLOSE, fd as u64) };
     if had_error { 1 } else { 0 }
 }

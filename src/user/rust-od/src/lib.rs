@@ -247,39 +247,46 @@ fn emit_row(offset: u64, row: &[u8]) -> bool {
     true
 }
 
-fn dump_fd(fd: i32) -> bool {
+// Pump an fd into the running-offset/row state. Multiple files share
+// the same state so the offsets line up as one concatenated stream
+// (matching GNU od's `od file1 file2`).
+struct OdState {
+    row: [u8; COL],
+    row_len: usize,
+    offset: u64,
+}
+
+fn dump_fd(fd: i32, st: &mut OdState) -> bool {
     let mut buf = [0u8; READ_BUF];
-    let mut row = [0u8; COL];
-    let mut row_len = 0usize;
-    let mut offset: u64 = 0;
     loop {
         let n = unsafe {
             syscall3(sysn::READ, fd as u64, buf.as_mut_ptr() as u64, buf.len() as u64)
         };
-        if n < 0 {
-            return false;
-        }
-        if n == 0 {
-            break;
-        }
+        if n < 0 { return false; }
+        if n == 0 { break; }
         let chunk = &buf[..n as usize];
         for &b in chunk {
-            row[row_len] = b;
-            row_len += 1;
-            if row_len == COL {
-                if !emit_row(offset, &row[..row_len]) { return false; }
-                offset += COL as u64;
-                row_len = 0;
+            st.row[st.row_len] = b;
+            st.row_len += 1;
+            if st.row_len == COL {
+                if !emit_row(st.offset, &st.row[..st.row_len]) { return false; }
+                st.offset += COL as u64;
+                st.row_len = 0;
             }
         }
     }
-    if row_len > 0 {
-        if !emit_row(offset, &row[..row_len]) { return false; }
-        offset += row_len as u64;
+    true
+}
+
+fn finalize(st: &mut OdState) -> bool {
+    if st.row_len > 0 {
+        if !emit_row(st.offset, &st.row[..st.row_len]) { return false; }
+        st.offset += st.row_len as u64;
+        st.row_len = 0;
     }
     // Final "next offset" line mirrors GNU od's terminating address.
     let mut off_buf = [0u8; 7];
-    fmt_off(offset, &mut off_buf);
+    fmt_off(st.offset, &mut off_buf);
     if !write_all(STDOUT, &off_buf) { return false; }
     if !write_all(STDOUT, b"\n") { return false; }
     true
@@ -287,26 +294,41 @@ fn dump_fd(fd: i32) -> bool {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
-    let fd: i32 = if argc < 2 {
-        STDIN
+    let mut st = OdState { row: [0u8; COL], row_len: 0, offset: 0 };
+    let mut had_error = false;
+
+    if argc < 2 {
+        if !dump_fd(STDIN, &mut st) { had_error = true; }
     } else {
-        let p = unsafe { *argv.add(1) };
-        if p.is_null() || (p as usize) < 0x10000 {
-            write_str(STDERR, b"rust-od: invalid argument\n");
-            return 1;
+        for ai in 1..argc {
+            let p = unsafe { *argv.add(ai as usize) };
+            if p.is_null() || (p as usize) < 0x10000 {
+                had_error = true;
+                continue;
+            }
+            // "-" reads stdin (matches GNU od convention).
+            let mut nlen = 0usize;
+            unsafe { while *p.add(nlen) != 0 { nlen += 1; } }
+            let is_dash = nlen == 1 && unsafe { *p } == b'-';
+            if is_dash {
+                if !dump_fd(STDIN, &mut st) { had_error = true; }
+                continue;
+            }
+            let fd = unsafe {
+                syscall4(sysn::OPENAT, AT_FDCWD as u64, p as u64, O_RDONLY, 0) as i32
+            };
+            if fd < 0 {
+                write_str(STDERR, b"rust-od: cannot open '");
+                unsafe { let _ = syscall3(sysn::WRITE, STDERR as u64, p as u64, nlen as u64); }
+                write_str(STDERR, b"'\n");
+                had_error = true;
+                continue;
+            }
+            if !dump_fd(fd, &mut st) { had_error = true; }
+            unsafe { let _ = syscall1(sysn::CLOSE, fd as u64); }
         }
-        let fd = unsafe {
-            syscall4(sysn::OPENAT, AT_FDCWD as u64, p as u64, O_RDONLY, 0) as i32
-        };
-        if fd < 0 {
-            write_str(STDERR, b"rust-od: cannot open file\n");
-            return 1;
-        }
-        fd
-    };
-    let ok = dump_fd(fd);
-    if fd != STDIN {
-        unsafe { let _ = syscall1(sysn::CLOSE, fd as u64); }
     }
-    if ok { 0 } else { 1 }
+
+    if !finalize(&mut st) { had_error = true; }
+    if had_error { 1 } else { 0 }
 }

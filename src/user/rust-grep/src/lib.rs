@@ -426,6 +426,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         quiet: false,
     };
 
+    let mut e_pattern: Option<*const u8> = None;
     while let Some(p) = argv_get(argc, argv, idx) {
         if arg_is(p, b"-n") {
             opts.show_lineno = true;
@@ -451,6 +452,21 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         } else if arg_is(p, b"-q") || arg_is(p, b"--quiet") || arg_is(p, b"--silent") {
             opts.quiet = true;
             idx += 1;
+        } else if arg_is(p, b"-F") || arg_is(p, b"--fixed-strings") {
+            // Already fixed-string by default; accept the flag for
+            // GNU-script portability (no behaviour change).
+            idx += 1;
+        } else if arg_is(p, b"-e") {
+            // -e PATTERN — useful when PATTERN starts with `-`. Only
+            // the last -e wins for now (single-pattern grep).
+            idx += 1;
+            match argv_get(argc, argv, idx) {
+                Some(pp) => { e_pattern = Some(pp); idx += 1; }
+                None => {
+                    write_str(STDERR, b"rust-grep: -e needs a pattern\n");
+                    return 2;
+                }
+            }
         } else if arg_is(p, b"--") {
             idx += 1;
             break;
@@ -459,16 +475,20 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         }
     }
 
-    let pat_ptr = match argv_get(argc, argv, idx) {
+    // -e PATTERN takes precedence over a positional one; without -e
+    // the next positional is the pattern.
+    let pat_ptr = match e_pattern {
         Some(p) => p,
-        None => {
-            write_str(STDERR, b"usage: rust-grep [-niHhvclq] PATTERN [FILE...]\n");
-            return 2;
-        }
+        None => match argv_get(argc, argv, idx) {
+            Some(p) => { idx += 1; p }
+            None => {
+                write_str(STDERR, b"usage: rust-grep [-niHhvclqF] [-e PAT] PATTERN [FILE...]\n");
+                return 2;
+            }
+        },
     };
     let pat_len = cstr_len(pat_ptr);
     let pat = unsafe { core::slice::from_raw_parts(pat_ptr, pat_len) };
-    idx += 1;
 
     let mut scratch = [0u8; READ_BUF];
     let mut had_match = false;

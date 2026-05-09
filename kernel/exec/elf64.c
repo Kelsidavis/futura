@@ -1106,6 +1106,8 @@ extern const uint8_t _binary_build_bin_x86_64_user_rust_yes_start[];
 extern const uint8_t _binary_build_bin_x86_64_user_rust_yes_end[];
 extern const uint8_t _binary_build_bin_x86_64_user_rust_uniq_start[];
 extern const uint8_t _binary_build_bin_x86_64_user_rust_uniq_end[];
+extern const uint8_t _binary_build_bin_x86_64_user_rust_realpath_start[];
+extern const uint8_t _binary_build_bin_x86_64_user_rust_realpath_end[];
 #endif
 /* Core Wayland binaries (production) */
 #if ENABLE_WAYLAND
@@ -1447,6 +1449,13 @@ int fut_stage_rust_uniq_binary(void) {
                       _binary_build_bin_x86_64_user_rust_uniq_end,
                       "/bin/rust-uniq");
 }
+
+int fut_stage_rust_realpath_binary(void) {
+    (void)fut_vfs_mkdir("/bin", 0755);
+    return stage_blob(_binary_build_bin_x86_64_user_rust_realpath_start,
+                      _binary_build_bin_x86_64_user_rust_realpath_end,
+                      "/bin/rust-realpath");
+}
 #else
 int fut_stage_rust_hello_binary(void) { return -ENOSYS; }
 int fut_stage_rust_uname_binary(void) { return -ENOSYS; }
@@ -1479,6 +1488,7 @@ int fut_stage_rust_ln_binary(void)        { return -ENOSYS; }
 int fut_stage_rust_tee_binary(void)       { return -ENOSYS; }
 int fut_stage_rust_yes_binary(void)       { return -ENOSYS; }
 int fut_stage_rust_uniq_binary(void)      { return -ENOSYS; }
+int fut_stage_rust_realpath_binary(void)  { return -ENOSYS; }
 #endif
 #else
 int fut_stage_shell_binary(void) {
@@ -1607,6 +1617,10 @@ int fut_stage_rust_yes_binary(void) {
 
 int fut_stage_rust_uniq_binary(void) {
     return -ENOSYS;  /* rust-uniq not available on macOS host builds */
+}
+
+int fut_stage_rust_realpath_binary(void) {
+    return -ENOSYS;  /* rust-realpath not available on macOS host builds */
 }
 #endif
 

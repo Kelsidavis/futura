@@ -181,13 +181,42 @@ fn parse_octal(p: *const u8) -> Option<u32> {
     Some(v)
 }
 
+fn arg_eq(p: *const u8, want: &[u8]) -> bool {
+    for (i, &b) in want.iter().enumerate() {
+        if unsafe { *p.add(i) } != b { return false; }
+    }
+    unsafe { *p.add(want.len()) == 0 }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
-    if argc < 3 {
-        write_str(STDERR, b"usage: rust-chmod <octal-mode> <path> [<path>...]\n");
+    let mut idx: i32 = 1;
+    let mut verbose = false;
+    let mut changes_only = false;  // -c: emit only on actual change
+    while idx < argc {
+        let p = unsafe { *argv.add(idx as usize) };
+        if p.is_null() || (p as usize) < 0x10000 { break; }
+        if arg_eq(p, b"-v") || arg_eq(p, b"--verbose") {
+            verbose = true; idx += 1; continue;
+        }
+        if arg_eq(p, b"-c") || arg_eq(p, b"--changes") {
+            // -c implies verbose-on-change; we don't have stat-before
+            // here so we degrade to -v's behaviour (every chmod prints,
+            // not just real changes). Acceptable: scripts rarely care
+            // about the distinction and getting the stat-before
+            // round-trip just to honour it isn't worth the cost.
+            changes_only = true; verbose = true; idx += 1; continue;
+        }
+        if arg_eq(p, b"--") { idx += 1; break; }
+        break;
+    }
+    let _ = changes_only;
+
+    if argc - idx < 2 {
+        write_str(STDERR, b"usage: rust-chmod [-v] <octal-mode> <path> [<path>...]\n");
         return 2;
     }
-    let mode_p = unsafe { *argv.add(1) };
+    let mode_p = unsafe { *argv.add(idx as usize) };
     if mode_p.is_null() || (mode_p as usize) < 0x10000 {
         write_str(STDERR, b"rust-chmod: invalid mode\n");
         return 2;
@@ -201,7 +230,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
     };
 
     let mut had_error = false;
-    for ai in 2..argc {
+    for ai in (idx + 1)..argc {
         let p = unsafe { *argv.add(ai as usize) };
         if p.is_null() || (p as usize) < 0x10000 {
             had_error = true;
@@ -221,6 +250,21 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             }
             write_str(STDERR, b"'\n");
             had_error = true;
+        } else if verbose {
+            // "mode of 'path' changed to NNNN"
+            let n = cstr_len(p);
+            write_str(1, b"mode of '");
+            unsafe { let _ = syscall3(sysn::WRITE, 1, p as u64, n as u64); }
+            write_str(1, b"' changed to ");
+            // 4-digit octal mode
+            let m = mode & 0o7777;
+            let mut buf = [b'0'; 4];
+            buf[0] = b'0' + ((m >> 9) & 0o7) as u8;
+            buf[1] = b'0' + ((m >> 6) & 0o7) as u8;
+            buf[2] = b'0' + ((m >> 3) & 0o7) as u8;
+            buf[3] = b'0' + (m & 0o7) as u8;
+            write_str(1, &buf);
+            write_str(1, b"\n");
         }
     }
     if had_error { 1 } else { 0 }

@@ -161,16 +161,23 @@ fn cstr_eq(p: *const u8, s: &[u8]) -> bool {
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
     let mut symbolic = false;
+    let mut verbose = false;
     let mut idx: i32 = 1;
-    if idx < argc {
+    while idx < argc {
         let p = unsafe { *argv.add(idx as usize) };
-        if !p.is_null() && (p as usize) >= 0x10000 && cstr_eq(p, b"-s") {
-            symbolic = true;
-            idx += 1;
+        if p.is_null() || (p as usize) < 0x10000 { break; }
+        if cstr_eq(p, b"-s") { symbolic = true; idx += 1; continue; }
+        if cstr_eq(p, b"-v") || cstr_eq(p, b"--verbose") {
+            verbose = true; idx += 1; continue;
         }
+        if cstr_eq(p, b"-sv") || cstr_eq(p, b"-vs") {
+            symbolic = true; verbose = true; idx += 1; continue;
+        }
+        if cstr_eq(p, b"--") { idx += 1; break; }
+        break;
     }
     if argc - idx != 2 {
-        write_str(STDERR, b"usage: rust-ln [-s] <target> <linkpath>\n");
+        write_str(STDERR, b"usage: rust-ln [-sv] <target> <linkpath>\n");
         return 1;
     }
     let target = unsafe { *argv.add(idx as usize) };
@@ -212,6 +219,20 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             write_str(STDERR, b"rust-ln: hard link failed (target may not exist or fs may not support it)\n");
         }
         return 1;
+    }
+    if verbose {
+        // GNU ln -v: "'<linkpath>' -> '<target>'\n".
+        let mut tlen = 0usize;
+        unsafe { while *target.add(tlen) != 0 { tlen += 1; } }
+        let mut llen = 0usize;
+        unsafe { while *linkpath.add(llen) != 0 { llen += 1; } }
+        unsafe {
+            let _ = syscall3(sysn::WRITE, 1, b"'".as_ptr() as u64, 1);
+            let _ = syscall3(sysn::WRITE, 1, linkpath as u64, llen as u64);
+            let _ = syscall3(sysn::WRITE, 1, b"' -> '".as_ptr() as u64, 6);
+            let _ = syscall3(sysn::WRITE, 1, target as u64, tlen as u64);
+            let _ = syscall3(sysn::WRITE, 1, b"'\n".as_ptr() as u64, 2);
+        }
     }
     0
 }

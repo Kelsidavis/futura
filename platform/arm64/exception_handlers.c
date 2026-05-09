@@ -183,15 +183,11 @@ static void handle_unknown(fut_interrupt_frame_t *frame) {
     }
     fut_serial_putc('\n');
 
-    /* DEBUG: Print early ELR_EL1 captured in x18 at exception entry */
-    fut_serial_puts("[EXCEPTION] Early ELR_EL1 (from x18): ");
-    uint64_t early_elr = frame->x[18];
-    for (int i = 60; i >= 0; i -= 4) {
-        uint8_t nibble = (early_elr >> i) & 0xF;
-        char c = nibble < 10 ? '0' + nibble : 'a' + (nibble - 10);
-        fut_serial_putc(c);
-    }
-    fut_serial_putc('\n');
+    /* (The previous "Early ELR_EL1 (from x18)" line was tied to a
+     * stray `mrs x18, elr_el1` at the top of the exception entry
+     * stub. That hack was removed because it overwrote userland x18
+     * across every syscall. frame->x[18] is now the genuine user x18,
+     * not ELR_EL1 — read frame->pc instead for the exception PC.) */
 
     /* DEBUG: Print raw frame structure bytes around PC field */
     fut_serial_puts("[EXCEPTION] DEBUG: Raw frame bytes (offset 240-280):\n");

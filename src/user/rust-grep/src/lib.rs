@@ -519,19 +519,32 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
 
         while let Some(p) = argv_get(argc, argv, idx) {
             let n = cstr_len(p);
-            let fd = unsafe { sys_open_ro(p) };
-            if fd < 0 {
-                write_str(STDERR, b"rust-grep: cannot open '");
-                unsafe {
-                    let _ = syscall3(sysn::WRITE, STDERR as u64, p as u64, n as u64);
+            // "-" reads stdin; the conventional GNU label in headers/
+            // counts is "(standard input)".
+            let is_dash = n == 1 && unsafe { *p } == b'-';
+            let (fd_i32, opened_owned) = if is_dash {
+                (STDIN, false)
+            } else {
+                let f = unsafe { sys_open_ro(p) };
+                if f < 0 {
+                    write_str(STDERR, b"rust-grep: cannot open '");
+                    unsafe {
+                        let _ = syscall3(sysn::WRITE, STDERR as u64, p as u64, n as u64);
+                    }
+                    write_str(STDERR, b"'\n");
+                    had_error = true;
+                    idx += 1;
+                    continue;
                 }
-                write_str(STDERR, b"'\n");
-                had_error = true;
-                idx += 1;
-                continue;
-            }
-            let name = unsafe { core::slice::from_raw_parts(p, n) };
-            match grep_fd(fd as i32, Some(name), pat, &opts2, &mut scratch) {
+                (f as i32, true)
+            };
+            let stdin_name: &[u8] = b"(standard input)";
+            let name: &[u8] = if is_dash {
+                stdin_name
+            } else {
+                unsafe { core::slice::from_raw_parts(p, n) }
+            };
+            match grep_fd(fd_i32, Some(name), pat, &opts2, &mut scratch) {
                 Ok(c) => {
                     if c > 0 { had_match = true; }
                     if !opts.quiet {
@@ -547,8 +560,8 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
                 }
                 Err(_) => had_error = true,
             }
-            unsafe {
-                let _ = syscall1(sysn::CLOSE, fd as u64);
+            if opened_owned {
+                unsafe { let _ = syscall1(sysn::CLOSE, fd_i32 as u64); }
             }
             idx += 1;
             // Quiet mode: bail as soon as anything has matched anywhere.

@@ -436,12 +436,16 @@ fn arg_eq(p: *const u8, want: &[u8]) -> bool {
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
     let mut follow = false;
     let mut format_ptr: Option<*const u8> = None;
+    let mut terse = false;
     let mut idx: i32 = 1;
     while idx < argc {
         let p = unsafe { *argv.add(idx as usize) };
         if p.is_null() || (p as usize) < 0x10000 { break; }
         if arg_eq(p, b"-L") || arg_eq(p, b"--dereference") {
             follow = true; idx += 1; continue;
+        }
+        if arg_eq(p, b"-t") || arg_eq(p, b"--terse") {
+            terse = true; idx += 1; continue;
         }
         if arg_eq(p, b"-c") || arg_eq(p, b"--format") {
             if idx + 1 >= argc {
@@ -458,6 +462,13 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         }
         if arg_eq(p, b"--") { idx += 1; break; }
         break;
+    }
+    // -t is a built-in shorthand for a fixed format string; -c overrides
+    // -t if both are given (matches GNU stat). The literal needs a
+    // NUL terminator so cstr_len downstream finds the end.
+    let terse_fmt: &[u8] = b"%n %s %b %a %u %g %d %i %h %X %Y %Z %B\0";
+    if terse && format_ptr.is_none() {
+        format_ptr = Some(terse_fmt.as_ptr());
     }
 
     if idx >= argc {

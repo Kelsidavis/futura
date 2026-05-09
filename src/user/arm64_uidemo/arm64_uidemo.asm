@@ -11,13 +11,13 @@ Disassembly of section .text:
   40000c:	aa1403e1 	mov	x1, x20
   400010:	aa1303e2 	mov	x2, x19
   400014:	91000442 	add	x2, x2, #0x1
-  400018:	d37df043 	lsl	x3, x2, #3
-  40001c:	8b030023 	add	x3, x1, x3
-  400020:	aa0303e0 	mov	x0, x3
+  400018:	d37df055 	lsl	x21, x2, #3
+  40001c:	8b150035 	add	x21, x1, x21
+  400020:	aa1503e0 	mov	x0, x21
   400024:	9400013f 	bl	400520 <__libc_init_environ>
   400028:	aa1303e0 	mov	x0, x19
   40002c:	aa1403e1 	mov	x1, x20
-  400030:	aa0303e2 	mov	x2, x3
+  400030:	aa1503e2 	mov	x2, x21
   400034:	9400000b 	bl	400060 <main>
   400038:	94000002 	bl	400040 <exit>
   40003c:	d4200000 	brk	#0x0
@@ -153,7 +153,7 @@ Disassembly of section .text:
   400234:	940002d3 	bl	400d80 <strchr>
   400238:	b5001500 	cbnz	x0, 4004d8 <set_pair+0x2d8>
   40023c:	f10002ff 	cmp	x23, #0x0
-  400240:	d0000000 	adrp	x0, 402000 <memmove+0xbf0>
+  400240:	d0000000 	adrp	x0, 402000 <memmove+0xbe0>
   400244:	91002000 	add	x0, x0, #0x8
   400248:	a9046bf9 	stp	x25, x26, [sp, #64]
   40024c:	9a970017 	csel	x23, x0, x23, eq	// eq = none
@@ -277,7 +277,7 @@ Disassembly of section .text:
   400424:	91000260 	add	x0, x19, #0x0
   400428:	39408004 	ldrb	w4, [x0, #32]
   40042c:	370004a4 	tbnz	w4, #0, 4004c0 <set_pair+0x2c0>
-  400430:	d0000004 	adrp	x4, 402000 <memmove+0xbf0>
+  400430:	d0000004 	adrp	x4, 402000 <memmove+0xbe0>
   400434:	f9400c84 	ldr	x4, [x4, #24]
   400438:	91000260 	add	x0, x19, #0x0
   40043c:	52800021 	mov	w1, #0x1                   	// #1
@@ -386,7 +386,7 @@ Disassembly of section .text:
   4005d0:	54fffe01 	b.ne	400590 <__libc_init_environ+0x70>  // b.any
   4005d4:	91000320 	add	x0, x25, #0x0
   4005d8:	f9000336 	str	x22, [x25]
-  4005dc:	d0000002 	adrp	x2, 402000 <memmove+0xbf0>
+  4005dc:	d0000002 	adrp	x2, 402000 <memmove+0xbe0>
   4005e0:	f9400c42 	ldr	x2, [x2, #24]
   4005e4:	f9400401 	ldr	x1, [x0, #8]
   4005e8:	f9402bfb 	ldr	x27, [sp, #80]
@@ -401,7 +401,7 @@ Disassembly of section .text:
   40060c:	a9446bf9 	ldp	x25, x26, [sp, #64]
   400610:	a8c67bfd 	ldp	x29, x30, [sp], #96
   400614:	d65f03c0 	ret
-  400618:	d0000002 	adrp	x2, 402000 <memmove+0xbf0>
+  400618:	d0000002 	adrp	x2, 402000 <memmove+0xbe0>
   40061c:	f9400c42 	ldr	x2, [x2, #24]
   400620:	f0000001 	adrp	x1, 403000 <g_env_count>
   400624:	91000020 	add	x0, x1, #0x0
@@ -410,7 +410,7 @@ Disassembly of section .text:
   400630:	f900041f 	str	xzr, [x0, #8]
   400634:	f9000c1f 	str	xzr, [x0, #24]
   400638:	d65f03c0 	ret
-  40063c:	d0000000 	adrp	x0, 402000 <memmove+0xbf0>
+  40063c:	d0000000 	adrp	x0, 402000 <memmove+0xbe0>
   400640:	f9400c00 	ldr	x0, [x0, #24]
   400644:	f9000f1f 	str	xzr, [x24, #24]
   400648:	3900831f 	strb	wzr, [x24, #32]
@@ -615,7 +615,7 @@ Disassembly of section .text:
   40092c:	f9400660 	ldr	x0, [x19, #8]
   400930:	94000044 	bl	400a40 <free>
   400934:	f90002df 	str	xzr, [x22]
-  400938:	d0000000 	adrp	x0, 402000 <memmove+0xbf0>
+  400938:	d0000000 	adrp	x0, 402000 <memmove+0xbe0>
   40093c:	f9400c00 	ldr	x0, [x0, #24]
   400940:	f900067f 	str	xzr, [x19, #8]
   400944:	f9000e7f 	str	xzr, [x19, #24]
@@ -1353,27 +1353,33 @@ Disassembly of section .text:
   401408:	d503201f 	nop
   40140c:	d503201f 	nop
 
-0000000000401410 <memmove>:
-  401410:	f100001f 	cmp	x0, #0x0
-  401414:	fa401824 	ccmp	x1, #0x0, #0x4, ne	// ne = any
-  401418:	540001e0 	b.eq	401454 <memmove+0x44>  // b.none
-  40141c:	d29fffe3 	mov	x3, #0xffff                	// #65535
-  401420:	eb03001f 	cmp	x0, x3
-  401424:	fa438020 	ccmp	x1, x3, #0x0, hi	// hi = pmore
-  401428:	54000169 	b.ls	401454 <memmove+0x44>  // b.plast
-  40142c:	eb01001f 	cmp	x0, x1
-  401430:	54000142 	b.cs	401458 <memmove+0x48>  // b.hs, b.nlast
-  401434:	b4000102 	cbz	x2, 401454 <memmove+0x44>
-  401438:	d2800003 	mov	x3, #0x0                   	// #0
-  40143c:	d503201f 	nop
-  401440:	38636824 	ldrb	w4, [x1, x3]
-  401444:	38236804 	strb	w4, [x0, x3]
-  401448:	91000463 	add	x3, x3, #0x1
-  40144c:	eb03005f 	cmp	x2, x3
-  401450:	54ffff81 	b.ne	401440 <memmove+0x30>  // b.any
-  401454:	d65f03c0 	ret
-  401458:	b4ffffe2 	cbz	x2, 401454 <memmove+0x44>
-  40145c:	d1000442 	sub	x2, x2, #0x1
-  401460:	38626823 	ldrb	w3, [x1, x2]
-  401464:	38226803 	strb	w3, [x0, x2]
-  401468:	17fffffc 	b	401458 <memmove+0x48>
+0000000000401410 <bcmp>:
+  401410:	17ffffec 	b	4013c0 <memcmp>
+  401414:	d503201f 	nop
+  401418:	d503201f 	nop
+  40141c:	d503201f 	nop
+
+0000000000401420 <memmove>:
+  401420:	f100001f 	cmp	x0, #0x0
+  401424:	fa401824 	ccmp	x1, #0x0, #0x4, ne	// ne = any
+  401428:	540001e0 	b.eq	401464 <memmove+0x44>  // b.none
+  40142c:	d29fffe3 	mov	x3, #0xffff                	// #65535
+  401430:	eb03001f 	cmp	x0, x3
+  401434:	fa438020 	ccmp	x1, x3, #0x0, hi	// hi = pmore
+  401438:	54000169 	b.ls	401464 <memmove+0x44>  // b.plast
+  40143c:	eb01001f 	cmp	x0, x1
+  401440:	54000142 	b.cs	401468 <memmove+0x48>  // b.hs, b.nlast
+  401444:	b4000102 	cbz	x2, 401464 <memmove+0x44>
+  401448:	d2800003 	mov	x3, #0x0                   	// #0
+  40144c:	d503201f 	nop
+  401450:	38636824 	ldrb	w4, [x1, x3]
+  401454:	38236804 	strb	w4, [x0, x3]
+  401458:	91000463 	add	x3, x3, #0x1
+  40145c:	eb03005f 	cmp	x2, x3
+  401460:	54ffff81 	b.ne	401450 <memmove+0x30>  // b.any
+  401464:	d65f03c0 	ret
+  401468:	b4ffffe2 	cbz	x2, 401464 <memmove+0x44>
+  40146c:	d1000442 	sub	x2, x2, #0x1
+  401470:	38626823 	ldrb	w3, [x1, x2]
+  401474:	38226803 	strb	w3, [x0, x2]
+  401478:	17fffffc 	b	401468 <memmove+0x48>

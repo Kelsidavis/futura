@@ -105,9 +105,31 @@ fn panic(_info: &PanicInfo) -> ! {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn main(_argc: i32, _argv: *const *const u8, _envp: *const *const u8) -> i32 {
-    // ESC [ 2 J  → clear entire screen
-    // ESC [ H    → move cursor to (1,1)
-    write_str(STDOUT, b"\x1b[2J\x1b[H");
+pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
+    // -x flag: skip the scrollback wipe, only clear the visible screen.
+    // Mirrors GNU `clear -x`. Default behaviour also resets scrollback
+    // so a wallclock screen-full of past output doesn't reappear when
+    // the user scrolls up.
+    let mut keep_scrollback = false;
+    if argc >= 2 {
+        let p = unsafe { *argv.add(1) };
+        if !p.is_null() && (p as usize) >= 0x10000 {
+            // Compare against b"-x"
+            let b0 = unsafe { *p };
+            let b1 = unsafe { *p.add(1) };
+            let b2 = unsafe { *p.add(2) };
+            if b0 == b'-' && b1 == b'x' && b2 == 0 {
+                keep_scrollback = true;
+            }
+        }
+    }
+    if keep_scrollback {
+        write_str(STDOUT, b"\x1b[H\x1b[2J");
+    } else {
+        // ESC [ 3 J  → clear scrollback buffer (xterm extension, widely supported)
+        // ESC [ H    → cursor home
+        // ESC [ 2 J  → clear visible screen
+        write_str(STDOUT, b"\x1b[3J\x1b[H\x1b[2J");
+    }
     0
 }

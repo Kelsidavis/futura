@@ -22,6 +22,8 @@ mod sysn {
     pub const READ: u64 = 63;
     pub const WRITE: u64 = 64;
     pub const EXIT: u64 = 93;
+    pub const OPENAT: u64 = 56;
+    pub const CLOSE: u64 = 57;
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -29,7 +31,12 @@ mod sysn {
     pub const READ: u64 = 0;
     pub const WRITE: u64 = 1;
     pub const EXIT: u64 = 60;
+    pub const OPENAT: u64 = 257;
+    pub const CLOSE: u64 = 3;
 }
+
+const AT_FDCWD: i64 = -100;
+const O_RDONLY: u64 = 0;
 
 const STDIN: i32 = 0;
 const STDOUT: i32 = 1;
@@ -39,6 +46,39 @@ const ENC_IN_CHUNK: usize = 3 * 1024;
 const ENC_OUT_CHUNK: usize = 4 * 1024;
 const DEC_IN_CHUNK: usize = 4096;
 const DEC_OUT_CHUNK: usize = 4096; // worst case = 3/4 of in
+
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+unsafe fn syscall1(nr: u64, a: u64) -> i64 {
+    let mut ret: i64;
+    unsafe {
+        core::arch::asm!(
+            "svc #0",
+            in("x8") nr,
+            inout("x0") a => ret,
+            options(nostack),
+        );
+    }
+    ret
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+unsafe fn syscall4(nr: u64, a: u64, b: u64, c: u64, d: u64) -> i64 {
+    let mut ret: i64;
+    unsafe {
+        core::arch::asm!(
+            "svc #0",
+            in("x8") nr,
+            inout("x0") a => ret,
+            in("x1") b,
+            in("x2") c,
+            in("x3") d,
+            options(nostack),
+        );
+    }
+    ret
+}
 
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
@@ -68,6 +108,43 @@ unsafe fn sys_exit(code: u64) -> ! {
             options(nostack, noreturn),
         );
     }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+unsafe fn syscall1(nr: u64, a: u64) -> i64 {
+    let mut ret: i64;
+    unsafe {
+        core::arch::asm!(
+            "syscall",
+            inout("rax") nr => ret,
+            in("rdi") a,
+            lateout("rcx") _,
+            lateout("r11") _,
+            options(nostack),
+        );
+    }
+    ret
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+unsafe fn syscall4(nr: u64, a: u64, b: u64, c: u64, d: u64) -> i64 {
+    let mut ret: i64;
+    unsafe {
+        core::arch::asm!(
+            "syscall",
+            inout("rax") nr => ret,
+            in("rdi") a,
+            in("rsi") b,
+            in("rdx") c,
+            in("r10") d,
+            lateout("rcx") _,
+            lateout("r11") _,
+            options(nostack),
+        );
+    }
+    ret
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -188,7 +265,7 @@ fn alphabet_index(c: u8) -> Option<u32> {
     }
 }
 
-fn encode() -> i32 {
+fn encode(fd: i32) -> i32 {
     let mut buf = [0u8; ENC_IN_CHUNK];
     let mut out = [0u8; ENC_OUT_CHUNK];
     let mut col: u32 = 0;
@@ -200,7 +277,7 @@ fn encode() -> i32 {
             let n = unsafe {
                 syscall3(
                     sysn::READ,
-                    STDIN as u64,
+                    fd as u64,
                     buf.as_mut_ptr().add(filled) as u64,
                     (ENC_IN_CHUNK - filled) as u64,
                 )
@@ -237,7 +314,7 @@ fn encode() -> i32 {
     0
 }
 
-fn decode() -> i32 {
+fn decode(fd: i32) -> i32 {
     let mut buf = [0u8; DEC_IN_CHUNK];
     let mut out = [0u8; DEC_OUT_CHUNK];
     // 4-byte accumulator across read boundaries.
@@ -246,7 +323,7 @@ fn decode() -> i32 {
     let mut had_pad = false;
     loop {
         let n = unsafe {
-            syscall3(sysn::READ, STDIN as u64, buf.as_mut_ptr() as u64, buf.len() as u64)
+            syscall3(sysn::READ, fd as u64, buf.as_mut_ptr() as u64, buf.len() as u64)
         };
         if n < 0 { return 1; }
         if n == 0 { break; }
@@ -322,6 +399,7 @@ fn pad_count_for(quad: [u32; 4]) -> usize {
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
     let mut do_decode = false;
+    let mut input_path: Option<*const u8> = None;
     let mut idx: i32 = 1;
     while idx < argc {
         let p = unsafe { *argv.add(idx as usize) };
@@ -332,10 +410,45 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         if cstr_eq(p, b"-d") || cstr_eq(p, b"--decode") {
             do_decode = true;
             idx += 1;
+        } else if cstr_eq(p, b"--") {
+            idx += 1;
+            if idx < argc {
+                let q = unsafe { *argv.add(idx as usize) };
+                if !q.is_null() && (q as usize) >= 0x10000 {
+                    input_path = Some(q);
+                }
+            }
+            break;
         } else {
-            write_str(STDERR, b"rust-base64: unsupported argument (use -d to decode)\n");
-            return 1;
+            // First non-flag positional arg is the FILE (matches GNU
+            // base64's `[FILE]` shape).
+            input_path = Some(p);
+            break;
         }
     }
-    if do_decode { decode() } else { encode() }
+
+    let mut fd: i32 = STDIN;
+    if let Some(p) = input_path {
+        let mut nlen = 0usize;
+        unsafe { while *p.add(nlen) != 0 { nlen += 1; } }
+        let is_dash = nlen == 1 && unsafe { *p } == b'-';
+        if !is_dash {
+            let f = unsafe {
+                syscall4(sysn::OPENAT, AT_FDCWD as u64, p as u64, O_RDONLY, 0) as i32
+            };
+            if f < 0 {
+                write_str(STDERR, b"rust-base64: cannot open '");
+                unsafe { let _ = syscall3(sysn::WRITE, STDERR as u64, p as u64, nlen as u64); }
+                write_str(STDERR, b"'\n");
+                return 1;
+            }
+            fd = f;
+        }
+    }
+
+    let rc = if do_decode { decode(fd) } else { encode(fd) };
+    if fd != STDIN {
+        unsafe { let _ = syscall1(sysn::CLOSE, fd as u64); }
+    }
+    rc
 }

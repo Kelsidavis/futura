@@ -245,18 +245,36 @@ fn is_word_byte(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_'
 }
 
-fn line_matches(line: &[u8], pat: &[u8], icase: bool, word: bool) -> bool {
+fn line_matches(line: &[u8], pat: &[u8], icase: bool, word: bool, line_match: bool) -> bool {
+    // Strip a single trailing '\n' from the body for `-x`'s
+    // "whole-line" comparison — newline is part of the line in our
+    // accumulator but isn't part of what the user types as the
+    // pattern.
+    let body: &[u8] = if line_match && line.last() == Some(&b'\n') {
+        &line[..line.len() - 1]
+    } else {
+        line
+    };
+    if line_match {
+        if pat.len() != body.len() { return false; }
+        for j in 0..pat.len() {
+            let a = if icase { to_lower(body[j]) } else { body[j] };
+            let b = if icase { to_lower(pat[j]) } else { pat[j] };
+            if a != b { return false; }
+        }
+        return true;
+    }
     if pat.is_empty() {
         return true;
     }
-    if pat.len() > line.len() {
+    if pat.len() > body.len() {
         return false;
     }
-    let last = line.len() - pat.len();
+    let last = body.len() - pat.len();
     for i in 0..=last {
         let mut ok = true;
         for j in 0..pat.len() {
-            let a = if icase { to_lower(line[i + j]) } else { line[i + j] };
+            let a = if icase { to_lower(body[i + j]) } else { body[i + j] };
             let b = if icase { to_lower(pat[j]) } else { pat[j] };
             if a != b {
                 ok = false;
@@ -266,9 +284,9 @@ fn line_matches(line: &[u8], pat: &[u8], icase: bool, word: bool) -> bool {
         if !ok { continue; }
         if word {
             // Boundaries on both sides must NOT be word-bytes.
-            let left_ok = i == 0 || !is_word_byte(line[i - 1]);
-            let right_ok = i + pat.len() >= line.len()
-                || !is_word_byte(line[i + pat.len()]);
+            let left_ok = i == 0 || !is_word_byte(body[i - 1]);
+            let right_ok = i + pat.len() >= body.len()
+                || !is_word_byte(body[i + pat.len()]);
             if !(left_ok && right_ok) { continue; }
         }
         return true;
@@ -312,6 +330,7 @@ struct Opts {
     icase: bool,
     invert: bool,
     word: bool,
+    line_match: bool,   // -x: pattern must match the whole line
     show_name: ShowName,
     // Output-mode flags. At most one of count/list/quiet should be set;
     // if multiple are given, precedence is quiet > list > count to match
@@ -395,7 +414,7 @@ fn grep_fd(
                 lineno += 1;
                 if !overflow {
                     let body = &line[..line_len];
-                    let m = line_matches(body, pat, opts.icase, opts.word);
+                    let m = line_matches(body, pat, opts.icase, opts.word, opts.line_match);
                     if m != opts.invert {
                         if !suppress_lines {
                             emit_match(name, lineno, body, opts);
@@ -413,7 +432,7 @@ fn grep_fd(
     if line_len > 0 {
         lineno += 1;
         let body = &line[..line_len];
-        let m = line_matches(body, pat, opts.icase, opts.word);
+        let m = line_matches(body, pat, opts.icase, opts.word, opts.line_match);
         if m != opts.invert {
             if !suppress_lines {
                 emit_match(name, lineno, body, opts);
@@ -432,6 +451,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         icase: false,
         invert: false,
         word: false,
+        line_match: false,
         show_name: ShowName::Auto,
         count: false,
         list: false,
@@ -451,6 +471,9 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             idx += 1;
         } else if arg_is(p, b"-w") || arg_is(p, b"--word-regexp") {
             opts.word = true;
+            idx += 1;
+        } else if arg_is(p, b"-x") || arg_is(p, b"--line-regexp") {
+            opts.line_match = true;
             idx += 1;
         } else if arg_is(p, b"-H") {
             opts.show_name = ShowName::Always;

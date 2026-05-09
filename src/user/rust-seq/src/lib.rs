@@ -5,11 +5,16 @@
 //   rust-seq <last>                1..=last  (start=1, step=1)
 //   rust-seq <first> <last>        first..=last (step=1)
 //   rust-seq <first> <step> <last> first, first+step, … bounded by last
+//   rust-seq -s SEP …              join with SEP instead of '\n'
 //
 // Integer-only — no float support yet (-f format / decimal step).
 // Step may be negative for descending sequences. Empty sequence
 // (first > last with positive step, or first < last with negative
 // step) emits nothing and exits 0.
+//
+// `-s SEP` follows the GNU seq convention: the separator is placed
+// between numbers and a single trailing newline is added at the end
+// (so `seq -s , 1 3` prints "1,2,3\n", not "1,2,3,").
 
 #![no_std]
 #![forbid(unsafe_op_in_unsafe_fn)]
@@ -180,16 +185,54 @@ fn write_num(n: i64) -> bool {
     r > 0
 }
 
+fn arg_eq(p: *const u8, want: &[u8]) -> bool {
+    for (i, &b) in want.iter().enumerate() {
+        if unsafe { *p.add(i) } != b { return false; }
+    }
+    unsafe { *p.add(want.len()) == 0 }
+}
+
+const SEP_BUF: usize = 16;
+
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
-    if argc < 2 || argc > 4 {
-        write_str(STDERR, b"usage: rust-seq [<first> [<step>]] <last>\n");
+    // Parse leading flags. -s SEP overrides the line separator. We
+    // copy the SEP bytes into a local buffer so the borrow checker
+    // doesn't complain about reading argv pointers later.
+    let mut idx: i32 = 1;
+    let mut sep_buf = [0u8; SEP_BUF];
+    let mut sep_len: usize = 1;
+    sep_buf[0] = b'\n';
+    while idx < argc {
+        let p = unsafe { *argv.add(idx as usize) };
+        if p.is_null() || (p as usize) < 0x10000 { break; }
+        if arg_eq(p, b"-s") {
+            if idx + 1 >= argc {
+                write_str(STDERR, b"rust-seq: -s needs a separator\n");
+                return 1;
+            }
+            let sp = unsafe { *argv.add((idx + 1) as usize) };
+            if sp.is_null() || (sp as usize) < 0x10000 {
+                return 1;
+            }
+            let sn = cstr_len(sp).min(SEP_BUF);
+            for i in 0..sn { sep_buf[i] = unsafe { *sp.add(i) }; }
+            sep_len = sn;
+            idx += 2;
+            continue;
+        }
+        if arg_eq(p, b"--") { idx += 1; break; }
+        break;
+    }
+
+    let nargs = argc - idx;
+    if nargs < 1 || nargs > 3 {
+        write_str(STDERR, b"usage: rust-seq [-s SEP] [<first> [<step>]] <last>\n");
         return 1;
     }
     let mut nums = [0i64; 3];
-    let n = (argc - 1) as usize;
-    for i in 0..n {
-        let p = unsafe { *argv.add(i + 1) };
+    for i in 0..nargs as usize {
+        let p = unsafe { *argv.add(idx as usize + i) };
         if p.is_null() || (p as usize) < 0x10000 {
             write_str(STDERR, b"rust-seq: invalid argument\n");
             return 1;
@@ -202,7 +245,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             }
         }
     }
-    let (first, step, last) = match n {
+    let (first, step, last) = match nargs {
         1 => (1i64, 1i64, nums[0]),
         2 => (nums[0], 1i64, nums[1]),
         3 => (nums[0], nums[1], nums[2]),
@@ -214,15 +257,23 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
     }
     let ascending = step > 0;
     let mut cur = first;
+    let mut first_printed = true;
     loop {
         if ascending && cur > last { break; }
         if !ascending && cur < last { break; }
+        if !first_printed {
+            write_str(STDOUT, &sep_buf[..sep_len]);
+        }
         if !write_num(cur) { return 1; }
-        write_str(STDOUT, b"\n");
+        first_printed = false;
         cur = match cur.checked_add(step) {
             Some(v) => v,
             None => break,
         };
+    }
+    // GNU seq always ends with a newline, even with a custom -s SEP.
+    if !first_printed {
+        write_str(STDOUT, b"\n");
     }
     0
 }

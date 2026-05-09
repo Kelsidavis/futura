@@ -345,6 +345,7 @@ struct Opts {
     quiet: bool,        // -q   no output at all, exit on first match
     max_count: u64,     // -m N (0 = unlimited)
     only_matching: bool,// -o   emit only the matched portion(s)
+    after_ctx: u32,     // -A N: print N lines after each match
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -374,6 +375,30 @@ fn emit_prefix(name: Option<&[u8]>, lineno: u64, opts: &Opts) {
 
 fn emit_match(name: Option<&[u8]>, lineno: u64, line: &[u8], opts: &Opts) {
     emit_prefix(name, lineno, opts);
+    write_all(STDOUT, line);
+    if line.last().copied() != Some(b'\n') {
+        write_all(STDOUT, b"\n");
+    }
+}
+
+// Like emit_match but uses '-' instead of ':' between name/lineno —
+// the GNU grep convention for -A/-B/-C context lines.
+fn emit_context(name: Option<&[u8]>, lineno: u64, line: &[u8], opts: &Opts) {
+    let prefix_name = match opts.show_name {
+        ShowName::Always => name,
+        ShowName::Never => None,
+        ShowName::Auto => name,
+    };
+    if let Some(n) = prefix_name {
+        write_all(STDOUT, n);
+        write_all(STDOUT, b"-");
+    }
+    if opts.show_lineno {
+        let mut buf = [0u8; 24];
+        let len = fmt_u64(lineno, &mut buf);
+        write_all(STDOUT, &buf[..len]);
+        write_all(STDOUT, b"-");
+    }
     write_all(STDOUT, line);
     if line.last().copied() != Some(b'\n') {
         write_all(STDOUT, b"\n");
@@ -434,6 +459,8 @@ fn grep_fd(
     let mut lineno: u64 = 0;
     let mut count: u64 = 0;
     let mut overflow = false;
+    // -A NUM: lines remaining to emit as after-context.
+    let mut after_remaining: u32 = 0;
     // -q / -l only need to know "did anything match yet"; once we've
     // proven that, more reads add nothing. Short-circuit by returning
     // early so a multi-GB log file isn't rescanned for nothing.
@@ -468,7 +495,8 @@ fn grep_fd(
                 if !overflow {
                     let body = &line[..line_len];
                     let m = line_matches(body, pat, opts.icase, opts.word, opts.line_match);
-                    if m != opts.invert {
+                    let is_match = m != opts.invert;
+                    if is_match {
                         if !suppress_lines {
                             if opts.only_matching && !opts.invert {
                                 let _ = emit_matches_only(name, lineno, body, pat, opts);
@@ -477,10 +505,18 @@ fn grep_fd(
                             }
                         }
                         count += 1;
+                        // Reset the after-context window on every match
+                        // so consecutive matches keep extending it.
+                        after_remaining = opts.after_ctx;
                         if stop_after_first { return Ok(count); }
                         if opts.max_count > 0 && count >= opts.max_count {
                             return Ok(count);
                         }
+                    } else if after_remaining > 0 && !suppress_lines {
+                        // Inside the -A window: emit as context, with
+                        // the GNU '-' separator instead of ':'.
+                        emit_context(name, lineno, body, opts);
+                        after_remaining -= 1;
                     }
                 }
                 line_len = 0;
@@ -695,6 +731,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         quiet: false,
         max_count: 0,
         only_matching: false,
+        after_ctx: 0,
     };
 
     let mut e_pattern: Option<*const u8> = None;
@@ -741,6 +778,33 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         } else if arg_is(p, b"-L") || arg_is(p, b"--files-without-match") {
             opts.list_no_match = true;
             idx += 1;
+        } else if arg_is(p, b"-A") || arg_is(p, b"--after-context") {
+            idx += 1;
+            match argv_get(argc, argv, idx) {
+                Some(np) => {
+                    let n = cstr_len(np);
+                    let mut v: u32 = 0;
+                    let mut ok = n > 0;
+                    for k in 0..n {
+                        let c = unsafe { *np.add(k) };
+                        if !(b'0'..=b'9').contains(&c) { ok = false; break; }
+                        v = match v.checked_mul(10).and_then(|x| x.checked_add((c - b'0') as u32)) {
+                            Some(x) => x,
+                            None => { ok = false; break; }
+                        };
+                    }
+                    if !ok {
+                        write_str(STDERR, b"rust-grep: invalid -A value\n");
+                        return 2;
+                    }
+                    opts.after_ctx = v;
+                    idx += 1;
+                }
+                None => {
+                    write_str(STDERR, b"rust-grep: -A needs an argument\n");
+                    return 2;
+                }
+            }
         } else if arg_is(p, b"-m") || arg_is(p, b"--max-count") {
             // -m N: stop after N matches per file. 0 disables.
             idx += 1;
@@ -818,6 +882,9 @@ Output control:
   -h, --no-filename     never prefix lines with filename
   -H, --with-filename   always prefix lines with filename
   -r, -R, --recursive   recurse into directories
+  -A, --after-context NUM   print NUM lines of trailing context
+  -m, --max-count NUM   stop after NUM matches per file
+  -o, --only-matching   print only the matched portion of each line
       --help            show this help and exit
 \0";
             let len = help.len() - 1;  // strip the trailing NUL

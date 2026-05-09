@@ -40,6 +40,7 @@ mod sysn {
 const AT_FDCWD: i64 = -100;
 #[cfg(target_arch = "aarch64")]
 const AT_REMOVEDIR: u64 = 0x200;
+const STDOUT: i32 = 1;
 const STDERR: i32 = 2;
 
 // aarch64 path uses syscall3 (unlinkat) only — no syscall1 wrapper needed.
@@ -152,28 +153,26 @@ const PATH_MAX: usize = 1024;
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
     let mut idx: i32 = 1;
     let mut parents = false;
+    let mut verbose = false;
+    let arg_eq = |p: *const u8, want: &[u8]| -> bool {
+        for (i, &b) in want.iter().enumerate() {
+            if unsafe { *p.add(i) } != b { return false; }
+        }
+        unsafe { *p.add(want.len()) == 0 }
+    };
     while idx < argc {
         let p = unsafe { *argv.add(idx as usize) };
         if p.is_null() || (p as usize) < 0x10000 { break; }
-        // Hand-rolled compare to avoid pulling in libcore slice eq.
-        let mut is_p = unsafe { *p } == b'-' && unsafe { *p.add(1) } == b'p'
-                       && unsafe { *p.add(2) } == 0;
-        // --parents long form
-        if !is_p {
-            let want = b"--parents";
-            let mut i = 0;
-            let mut ok = true;
-            while i < want.len() {
-                if unsafe { *p.add(i) } != want[i] { ok = false; break; }
-                i += 1;
-            }
-            if ok && unsafe { *p.add(want.len()) } == 0 { is_p = true; }
+        if arg_eq(p, b"-p") || arg_eq(p, b"--parents") {
+            parents = true; idx += 1; continue;
         }
-        if is_p { parents = true; idx += 1; continue; }
-        if unsafe { *p } == b'-' && unsafe { *p.add(1) } == b'-'
-           && unsafe { *p.add(2) } == 0 {
-            idx += 1; break;  // bare "--" terminator
+        if arg_eq(p, b"-v") || arg_eq(p, b"--verbose") {
+            verbose = true; idx += 1; continue;
         }
+        if arg_eq(p, b"-pv") || arg_eq(p, b"-vp") {
+            parents = true; verbose = true; idx += 1; continue;
+        }
+        if arg_eq(p, b"--") { idx += 1; break; }
         break;
     }
 
@@ -199,6 +198,13 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             write_str(STDERR, b"'\n");
             had_error = true;
             continue;
+        }
+        if verbose {
+            let mut n = 0usize;
+            unsafe { while *p.add(n) != 0 { n += 1; } }
+            write_str(STDOUT, b"rmdir: removing directory, '");
+            unsafe { let _ = syscall3(sysn::WRITE, STDOUT as u64, p as u64, n as u64); }
+            write_str(STDOUT, b"'\n");
         }
         // -p: also remove each parent component until something fails
         // (typically ENOTEMPTY when the parent has other entries) or
@@ -229,6 +235,11 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
                 len = cut;
                 let pr = try_rmdir(buf.as_ptr());
                 if pr < 0 { break; }
+                if verbose {
+                    write_str(STDOUT, b"rmdir: removing directory, '");
+                    unsafe { let _ = syscall3(sysn::WRITE, STDOUT as u64, buf.as_ptr() as u64, len as u64); }
+                    write_str(STDOUT, b"'\n");
+                }
             }
         }
     }

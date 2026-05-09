@@ -270,12 +270,20 @@ fn parse_octal_mode(p: *const u8) -> Option<u32> {
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
     let mut idx: usize = 1;
     let mut p_flag = false;
+    let mut verbose = false;
     let mut mode: u32 = 0o755;
 
-    // Parse the optional -p / -m flags.
+    // Parse the optional -p / -m / -v flags.
     while let Some(p) = argv_get(argc, argv, idx) {
         if arg_is(p, b"-p") {
             p_flag = true;
+            idx += 1;
+        } else if arg_is(p, b"-v") || arg_is(p, b"--verbose") {
+            verbose = true;
+            idx += 1;
+        } else if arg_is(p, b"-pv") || arg_is(p, b"-vp") {
+            p_flag = true;
+            verbose = true;
             idx += 1;
         } else if arg_is(p, b"-m") {
             // -m <mode> takes a separate token (we don't support
@@ -305,7 +313,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
     }
 
     if (idx as i32) >= argc {
-        write_str(STDERR, b"usage: rust-mkdir [-p] [-m <mode>] DIR [DIR...]\n");
+        write_str(STDERR, b"usage: rust-mkdir [-pv] [-m <mode>] DIR [DIR...]\n");
         return 1;
     }
 
@@ -337,6 +345,13 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
 
         if !ok {
             had_error = true;
+        } else if verbose {
+            // GNU mkdir -v: "mkdir: created directory '<path>'\n".
+            write_str(STDOUT, b"mkdir: created directory '");
+            unsafe {
+                let _ = syscall3(sysn::WRITE, STDOUT as u64, p as u64, n as u64);
+            }
+            write_str(STDOUT, b"'\n");
         }
         idx += 1;
     }

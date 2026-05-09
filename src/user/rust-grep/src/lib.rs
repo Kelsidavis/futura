@@ -346,7 +346,11 @@ struct Opts {
     max_count: u64,     // -m N (0 = unlimited)
     only_matching: bool,// -o   emit only the matched portion(s)
     after_ctx: u32,     // -A N: print N lines after each match
+    before_ctx: u32,    // -B N: print N lines before each match (capped)
 }
+
+const CTX_CAP: usize = 16;        // max before-context lines
+const CTX_LINE: usize = 1024;     // max bytes captured per context line
 
 #[derive(Clone, Copy, PartialEq)]
 enum ShowName {
@@ -461,6 +465,16 @@ fn grep_fd(
     let mut overflow = false;
     // -A NUM: lines remaining to emit as after-context.
     let mut after_remaining: u32 = 0;
+    // -B NUM: ring buffer of the last `before_ctx` non-matching lines.
+    // Each slot stores up to CTX_LINE bytes (longer lines are truncated
+    // for the context display only — the matched line itself uses the
+    // full LINE_BUF emit path).
+    let mut before_ring: [[u8; CTX_LINE]; CTX_CAP] = [[0u8; CTX_LINE]; CTX_CAP];
+    let mut before_lens: [usize; CTX_CAP] = [0; CTX_CAP];
+    let mut before_lns:  [u64; CTX_CAP]   = [0; CTX_CAP];
+    let mut before_filled: usize = 0;
+    let mut before_head:   usize = 0;
+    let bcap = (opts.before_ctx as usize).min(CTX_CAP);
     // -q / -l only need to know "did anything match yet"; once we've
     // proven that, more reads add nothing. Short-circuit by returning
     // early so a multi-GB log file isn't rescanned for nothing.
@@ -497,6 +511,22 @@ fn grep_fd(
                     let m = line_matches(body, pat, opts.icase, opts.word, opts.line_match);
                     let is_match = m != opts.invert;
                     if is_match {
+                        // Flush the before-context ring oldest-first.
+                        if !suppress_lines && before_filled > 0 {
+                            let start_slot = if before_filled < bcap {
+                                0
+                            } else {
+                                before_head
+                            };
+                            for k in 0..before_filled {
+                                let slot = (start_slot + k) % bcap.max(1);
+                                let len = before_lens[slot];
+                                let ln = before_lns[slot];
+                                emit_context(name, ln, &before_ring[slot][..len], opts);
+                            }
+                            before_filled = 0;
+                            before_head = 0;
+                        }
                         if !suppress_lines {
                             if opts.only_matching && !opts.invert {
                                 let _ = emit_matches_only(name, lineno, body, pat, opts);
@@ -505,18 +535,25 @@ fn grep_fd(
                             }
                         }
                         count += 1;
-                        // Reset the after-context window on every match
-                        // so consecutive matches keep extending it.
                         after_remaining = opts.after_ctx;
                         if stop_after_first { return Ok(count); }
                         if opts.max_count > 0 && count >= opts.max_count {
                             return Ok(count);
                         }
                     } else if after_remaining > 0 && !suppress_lines {
-                        // Inside the -A window: emit as context, with
-                        // the GNU '-' separator instead of ':'.
                         emit_context(name, lineno, body, opts);
                         after_remaining -= 1;
+                    } else if bcap > 0 {
+                        // Push into the before-context ring (truncated
+                        // to CTX_LINE bytes for the snapshot — matched
+                        // lines themselves still use the full path).
+                        let slot = before_head;
+                        let take = body.len().min(CTX_LINE);
+                        before_ring[slot][..take].copy_from_slice(&body[..take]);
+                        before_lens[slot] = take;
+                        before_lns[slot] = lineno;
+                        before_head = (slot + 1) % bcap;
+                        if before_filled < bcap { before_filled += 1; }
                     }
                 }
                 line_len = 0;
@@ -732,6 +769,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         max_count: 0,
         only_matching: false,
         after_ctx: 0,
+        before_ctx: 0,
     };
 
     let mut e_pattern: Option<*const u8> = None;
@@ -778,7 +816,14 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         } else if arg_is(p, b"-L") || arg_is(p, b"--files-without-match") {
             opts.list_no_match = true;
             idx += 1;
-        } else if arg_is(p, b"-A") || arg_is(p, b"--after-context") {
+        } else if arg_is(p, b"-A") || arg_is(p, b"--after-context")
+                  || arg_is(p, b"-B") || arg_is(p, b"--before-context")
+                  || arg_is(p, b"-C") || arg_is(p, b"--context") {
+            // -A/-B/-C all take a non-negative integer; record which
+            // flag we matched so we can dispatch below.
+            let kind: u8 = if arg_is(p, b"-A") || arg_is(p, b"--after-context") { b'A' }
+                else if arg_is(p, b"-B") || arg_is(p, b"--before-context") { b'B' }
+                else { b'C' };
             idx += 1;
             match argv_get(argc, argv, idx) {
                 Some(np) => {
@@ -794,14 +839,18 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
                         };
                     }
                     if !ok {
-                        write_str(STDERR, b"rust-grep: invalid -A value\n");
+                        write_str(STDERR, b"rust-grep: invalid context value\n");
                         return 2;
                     }
-                    opts.after_ctx = v;
+                    match kind {
+                        b'A' => opts.after_ctx = v,
+                        b'B' => opts.before_ctx = v,
+                        _    => { opts.after_ctx = v; opts.before_ctx = v; }
+                    }
                     idx += 1;
                 }
                 None => {
-                    write_str(STDERR, b"rust-grep: -A needs an argument\n");
+                    write_str(STDERR, b"rust-grep: context flag needs an argument\n");
                     return 2;
                 }
             }
@@ -883,6 +932,8 @@ Output control:
   -H, --with-filename   always prefix lines with filename
   -r, -R, --recursive   recurse into directories
   -A, --after-context NUM   print NUM lines of trailing context
+  -B, --before-context NUM  print NUM lines of leading context (capped at 16)
+  -C, --context NUM         shorthand for -A NUM -B NUM
   -m, --max-count NUM   stop after NUM matches per file
   -o, --only-matching   print only the matched portion of each line
       --help            show this help and exit

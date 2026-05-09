@@ -8585,6 +8585,17 @@ static void cmd_cat(int argc, char *argv[]) {
         cat_process_fd(0);  /* stdin */
     } else {
         for (int i = arg_start; i < argc; i++) {
+            /* Reject obviously-corrupt argv pointers before they cause a
+             * SIGSEGV in the error reporter. Userspace strings live in
+             * mapped pages above 0x10000 on both arches; small integers
+             * masquerading as pointers (e.g. 0x7300746163 = the bytes
+             * "cat\0s..." accidentally treated as an address) hit the
+             * unmapped low half of the address space and translation-
+             * fault on the very first ldrb in write_str. */
+            if (!argv[i] || (uintptr_t)argv[i] < 0x10000) {
+                write_str(2, "cat: (invalid argv): cannot open file\n");
+                continue;
+            }
             int fd = sys_open(argv[i], O_RDONLY, 0);
             if (fd < 0) {
                 write_str(2, "cat: ");

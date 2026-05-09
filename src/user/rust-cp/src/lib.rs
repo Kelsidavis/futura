@@ -2,12 +2,17 @@
 //
 // rust-cp — copy a single regular file.
 //
-//   rust-cp <src> <dst>
+//   rust-cp [-n] <src> <dst>
 //
-// Reads SRC and writes DST in 4 KiB chunks. Creates DST with mode 0644
-// (truncating any existing content). Single-file only — no recursive
-// directory copy, no preserve flags, no DST-as-directory inference.
-// Errors are written to stderr with a short prefix and exit code 1.
+// Reads SRC and writes DST in 4 KiB chunks. Creates DST with mode
+// 0644:
+//   default: O_WRONLY|O_CREAT|O_TRUNC  (truncate existing content)
+//   -n:      O_WRONLY|O_CREAT|O_EXCL   (no-clobber — refuse to
+//                                       overwrite an existing DST)
+//
+// Single-file only — no recursive directory copy, no preserve flags,
+// no DST-as-directory inference. Errors are written to stderr with
+// a short prefix and exit code 1.
 
 #![no_std]
 #![forbid(unsafe_op_in_unsafe_fn)]
@@ -36,6 +41,7 @@ const AT_FDCWD: i64 = -100;
 const O_RDONLY: u64 = 0;
 const O_WRONLY: u64 = 1;
 const O_CREAT: u64 = 0o100;
+const O_EXCL: u64 = 0o200;
 const O_TRUNC: u64 = 0o1000;
 
 const STDOUT: i32 = 1;
@@ -193,16 +199,22 @@ fn open_read(path: *const u8) -> i32 {
     unsafe { syscall4(sysn::OPENAT, AT_FDCWD as u64, path as u64, O_RDONLY, 0) as i32 }
 }
 
-fn open_write(path: *const u8) -> i32 {
-    unsafe {
-        syscall4(
-            sysn::OPENAT,
-            AT_FDCWD as u64,
-            path as u64,
-            O_WRONLY | O_CREAT | O_TRUNC,
-            0o644,
-        ) as i32
+fn open_write(path: *const u8, no_clobber: bool) -> i32 {
+    let flags = if no_clobber {
+        O_WRONLY | O_CREAT | O_EXCL
+    } else {
+        O_WRONLY | O_CREAT | O_TRUNC
+    };
+    unsafe { syscall4(sysn::OPENAT, AT_FDCWD as u64, path as u64, flags, 0o644) as i32 }
+}
+
+fn arg_is(p: *const u8, s: &[u8]) -> bool {
+    for (i, &b) in s.iter().enumerate() {
+        if unsafe { *p.add(i) } != b {
+            return false;
+        }
     }
+    unsafe { *p.add(s.len()) == 0 }
 }
 
 fn close_fd(fd: i32) {
@@ -243,12 +255,21 @@ fn copy_loop(src_fd: i32, dst_fd: i32) -> bool {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
-    if argc < 3 {
-        write_str(STDERR, b"usage: rust-cp <src> <dst>\n");
+    let mut no_clobber = false;
+    let mut idx: i32 = 1;
+    if idx < argc {
+        let p = unsafe { *argv.add(idx as usize) };
+        if !p.is_null() && (p as usize) >= 0x10000 && arg_is(p, b"-n") {
+            no_clobber = true;
+            idx += 1;
+        }
+    }
+    if argc - idx != 2 {
+        write_str(STDERR, b"usage: rust-cp [-n] <src> <dst>\n");
         return 1;
     }
-    let src = unsafe { *argv.add(1) };
-    let dst = unsafe { *argv.add(2) };
+    let src = unsafe { *argv.add(idx as usize) };
+    let dst = unsafe { *argv.add((idx + 1) as usize) };
     if src.is_null() || (src as usize) < 0x10000 || dst.is_null() || (dst as usize) < 0x10000 {
         write_str(STDERR, b"rust-cp: invalid arguments\n");
         return 1;
@@ -259,10 +280,14 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         write_str(STDERR, b"rust-cp: cannot open source\n");
         return 1;
     }
-    let dst_fd = open_write(dst);
+    let dst_fd = open_write(dst, no_clobber);
     if dst_fd < 0 {
         close_fd(src_fd);
-        write_str(STDERR, b"rust-cp: cannot create destination\n");
+        if no_clobber {
+            write_str(STDERR, b"rust-cp: destination exists (use without -n to overwrite)\n");
+        } else {
+            write_str(STDERR, b"rust-cp: cannot create destination\n");
+        }
         return 1;
     }
 

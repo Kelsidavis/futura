@@ -182,6 +182,19 @@ fn write_str(fd: i32, s: &[u8]) {
     }
 }
 
+// Write the whole slice, retrying on partial writes. Returns false on
+// any short/error return, so format renderers can bail early.
+fn write_all(fd: i32, mut s: &[u8]) -> bool {
+    while !s.is_empty() {
+        let n = unsafe {
+            syscall3(sysn::WRITE, fd as u64, s.as_ptr() as u64, s.len() as u64)
+        };
+        if n <= 0 { return false; }
+        s = &s[n as usize..];
+    }
+    true
+}
+
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
     write_str(STDERR, b"[rust-stat] panic\n");
@@ -263,7 +276,83 @@ fn type_char(mode: u32) -> u8 {
     }
 }
 
-fn do_stat(path: *const u8, follow: bool) -> bool {
+// Render `st` according to `format`. Conversions:
+//   %n name     %s size     %a octal mode (no leading 0)
+//   %A rwx perms (drwx...)   %u uid       %g gid
+//   %i inode    %h links     %F type-name (e.g. "directory")
+//   %Y mtime    %X atime     %Z ctime     %d device
+//   %b blocks   %B blksize   %% literal %
+// Backslash escapes: \n \t \\
+fn render_format(format: &[u8], path: &[u8], st: &StatBuf) -> bool {
+    let mut nb = [0u8; 24];
+    let mut mb = [0u8; 6];
+    let mut pb = [0u8; 10];
+    let mut i = 0usize;
+    while i < format.len() {
+        let c = format[i];
+        if c == b'%' && i + 1 < format.len() {
+            let spec = format[i + 1];
+            i += 2;
+            match spec {
+                b'n' => { if !write_all(STDOUT, path) { return false; } }
+                b's' => { if !write_all(STDOUT, fmt_u64(st.st_size, &mut nb))     { return false; } }
+                b'a' => {
+                    // GNU: octal mode without leading 0.
+                    let s = fmt_octal_mode(st.st_mode, &mut mb);
+                    if s.first() == Some(&b'0') && s.len() > 1 {
+                        if !write_all(STDOUT, &s[1..]) { return false; }
+                    } else {
+                        if !write_all(STDOUT, s) { return false; }
+                    }
+                }
+                b'A' => {
+                    let tc = [type_char(st.st_mode)];
+                    if !write_all(STDOUT, &tc) { return false; }
+                    if !write_all(STDOUT, fmt_perms(st.st_mode, &mut pb)) { return false; }
+                }
+                b'u' => { if !write_all(STDOUT, fmt_u64(st.st_uid as u64, &mut nb)) { return false; } }
+                b'g' => { if !write_all(STDOUT, fmt_u64(st.st_gid as u64, &mut nb)) { return false; } }
+                b'i' => { if !write_all(STDOUT, fmt_u64(st.st_ino, &mut nb))        { return false; } }
+                b'h' => { if !write_all(STDOUT, fmt_u64(st.st_nlink as u64, &mut nb)) { return false; } }
+                b'F' => { if !write_all(STDOUT, type_name(st.st_mode))              { return false; } }
+                b'Y' => { if !write_all(STDOUT, fmt_u64(st.st_mtime, &mut nb))      { return false; } }
+                b'X' => { if !write_all(STDOUT, fmt_u64(st.st_atime, &mut nb))      { return false; } }
+                b'Z' => { if !write_all(STDOUT, fmt_u64(st.st_ctime, &mut nb))      { return false; } }
+                b'd' => { if !write_all(STDOUT, fmt_u64(st.st_dev, &mut nb))        { return false; } }
+                b'b' => { if !write_all(STDOUT, fmt_u64(st.st_blocks, &mut nb))     { return false; } }
+                b'B' => { if !write_all(STDOUT, fmt_u64(st.st_blksize, &mut nb))    { return false; } }
+                b'%' => { if !write_all(STDOUT, b"%") { return false; } }
+                other => {
+                    // Unknown conversion — emit verbatim like GNU stat.
+                    if !write_all(STDOUT, b"%") { return false; }
+                    let one = [other];
+                    if !write_all(STDOUT, &one) { return false; }
+                }
+            }
+            continue;
+        }
+        if c == b'\\' && i + 1 < format.len() {
+            let esc = format[i + 1];
+            i += 2;
+            let out: u8 = match esc {
+                b'n' => b'\n',
+                b't' => b'\t',
+                b'\\' => b'\\',
+                b'r' => b'\r',
+                other => other,
+            };
+            let one = [out];
+            if !write_all(STDOUT, &one) { return false; }
+            continue;
+        }
+        let one = [c];
+        if !write_all(STDOUT, &one) { return false; }
+        i += 1;
+    }
+    true
+}
+
+fn do_stat(path: *const u8, follow: bool, format: Option<&[u8]>) -> bool {
     let st = StatBuf::default();
     let stp = &st as *const StatBuf as u64;
     let r;
@@ -287,6 +376,10 @@ fn do_stat(path: *const u8, follow: bool) -> bool {
 
     let n = cstr_len(path);
     let path_slice = unsafe { core::slice::from_raw_parts(path, n) };
+
+    if let Some(f) = format {
+        return render_format(f, path_slice, &st);
+    }
 
     let mut nb = [0u8; 24];
     let mut mb = [0u8; 6];
@@ -342,6 +435,7 @@ fn arg_eq(p: *const u8, want: &[u8]) -> bool {
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
     let mut follow = false;
+    let mut format_ptr: Option<*const u8> = None;
     let mut idx: i32 = 1;
     while idx < argc {
         let p = unsafe { *argv.add(idx as usize) };
@@ -349,22 +443,44 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         if arg_eq(p, b"-L") || arg_eq(p, b"--dereference") {
             follow = true; idx += 1; continue;
         }
+        if arg_eq(p, b"-c") || arg_eq(p, b"--format") {
+            if idx + 1 >= argc {
+                write_str(STDERR, b"rust-stat: -c needs a format string\n");
+                return 1;
+            }
+            let fp = unsafe { *argv.add((idx + 1) as usize) };
+            if fp.is_null() || (fp as usize) < 0x10000 {
+                return 1;
+            }
+            format_ptr = Some(fp);
+            idx += 2;
+            continue;
+        }
         if arg_eq(p, b"--") { idx += 1; break; }
         break;
     }
 
     if idx >= argc {
-        write_str(STDERR, b"usage: rust-stat [-L] <path> [<path>...]\n");
+        write_str(STDERR, b"usage: rust-stat [-L] [-c FORMAT] <path> [<path>...]\n");
         return 1;
     }
+    // GNU stat with -c emits a newline after each path's render, so we
+    // splice one in ourselves rather than requiring the user to add \n.
     let mut had_error = false;
+    let format_slice = format_ptr.map(|p| {
+        let n = cstr_len(p);
+        unsafe { core::slice::from_raw_parts(p, n) }
+    });
     for ai in idx..argc {
         let p = unsafe { *argv.add(ai as usize) };
         if p.is_null() || (p as usize) < 0x10000 {
             had_error = true;
             continue;
         }
-        if !do_stat(p, follow) { had_error = true; }
+        if !do_stat(p, follow, format_slice) { had_error = true; }
+        if format_slice.is_some() {
+            let _ = write_all(STDOUT, b"\n");
+        }
     }
     if had_error { 1 } else { 0 }
 }

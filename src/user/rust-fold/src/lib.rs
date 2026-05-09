@@ -232,7 +232,13 @@ fn parse_u32(p: *const u8) -> Option<u32> {
 
 // Process one fd. Each call resets the column counter so wrap state
 // doesn't leak between files. Returns true on success.
-fn fold_fd(fd: i32, cols: u32) -> bool {
+//
+// With `break_at_space`, when a wrap fires we look backwards within
+// the current chunk window for the last whitespace and break there
+// instead of mid-word. If no whitespace is in the window, we fall
+// back to a hard break (matches GNU fold -s on impossibly long
+// no-space stretches).
+fn fold_fd(fd: i32, cols: u32, break_at_space: bool) -> bool {
     let mut buf = [0u8; READ_BUF];
     let mut col: u32 = 0;
     loop {
@@ -251,10 +257,21 @@ fn fold_fd(fd: i32, cols: u32) -> bool {
                 start = i + 1;
             } else {
                 if col == cols {
-                    if !write_all(STDOUT, &chunk[start..i]) { return false; }
+                    let mut break_at = i;   // default = hard break
+                    if break_at_space && i > start {
+                        for k in (start..i).rev() {
+                            if chunk[k] == b' ' || chunk[k] == b'\t' {
+                                break_at = k + 1; // emit through the space
+                                break;
+                            }
+                        }
+                    }
+                    if break_at > start {
+                        if !write_all(STDOUT, &chunk[start..break_at]) { return false; }
+                    }
                     if !write_all(STDOUT, b"\n") { return false; }
-                    col = 0;
-                    start = i;
+                    col = (i - break_at) as u32;
+                    start = break_at;
                 }
                 col += 1;
             }
@@ -274,12 +291,18 @@ fn cstr_len(p: *const u8) -> usize {
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
     let mut cols: u32 = DEFAULT_COLS;
+    let mut break_at_space = false;
     // First pass: skip just the leading flag(s) so the file list starts
     // after them. Files are processed in the second pass.
     let mut idx: i32 = 1;
     while idx < argc {
         let p = unsafe { *argv.add(idx as usize) };
         if p.is_null() || (p as usize) < 0x10000 {
+            idx += 1;
+            continue;
+        }
+        if cstr_eq(p, b"-s") || cstr_eq(p, b"--spaces") {
+            break_at_space = true;
             idx += 1;
             continue;
         }
@@ -309,7 +332,8 @@ Usage: rust-fold [-w COLS] [FILE]...
 Wrap each input line at COLS columns (default 80). Each byte counts
 as one column; tabs and backspace get no special treatment.
 
-  -w COLS    wrap width
+  -w COLS    wrap width (default 80)
+  -s, --spaces   break at the last whitespace before the wrap point
       --help     show this help and exit
 
 A '-' in the FILE list means standard input.
@@ -323,7 +347,7 @@ A '-' in the FILE list means standard input.
     }
 
     if idx >= argc {
-        return if fold_fd(STDIN, cols) { 0 } else { 1 };
+        return if fold_fd(STDIN, cols, break_at_space) { 0 } else { 1 };
     }
 
     let mut had_error = false;
@@ -337,7 +361,7 @@ A '-' in the FILE list means standard input.
         let nlen = cstr_len(p);
         let is_dash = nlen == 1 && unsafe { *p } == b'-';
         if is_dash {
-            if !fold_fd(STDIN, cols) { had_error = true; }
+            if !fold_fd(STDIN, cols, break_at_space) { had_error = true; }
             continue;
         }
         let fd = unsafe {
@@ -350,7 +374,7 @@ A '-' in the FILE list means standard input.
             had_error = true;
             continue;
         }
-        if !fold_fd(fd, cols) { had_error = true; }
+        if !fold_fd(fd, cols, break_at_space) { had_error = true; }
         unsafe { let _ = syscall1(sysn::CLOSE, fd as u64); }
     }
     if had_error { 1 } else { 0 }

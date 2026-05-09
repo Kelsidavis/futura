@@ -1466,6 +1466,8 @@ void fut_kernel_main(void) {
                   "/bin/rust-hello\n"
                   "/bin/rust-uname\n"
                   "/bin/rust-pwd\n"
+                  "echo --- /bin contents ---\n"
+                  "/bin/rust-ls /bin\n"
                   "echo --- end rust ---\n");
         ETC_WRITE("/etc/motd",
                   "\n"

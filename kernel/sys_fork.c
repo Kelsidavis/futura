@@ -1396,9 +1396,23 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
      * Writable pages (.data, .bss) must still be copied since they lack VMAs
      * and the COW fault handler requires VMA tracking. */
 
-    /* Scan the program region (typically 0x400000-0x500000) */
+    /* Scan the program region. Static-PIE/ET_EXEC binaries map segments
+     * starting at 0x400000; the upper bound MUST cover the parent's
+     * actual program image including .text/.rodata/.data/.bss. The
+     * exec path doesn't create explicit VMAs for those segments (only
+     * for stack), so the VMA-based COW loop further down would miss
+     * them — leaving the child with no writable BSS pages and a
+     * permission fault on the first write to a global. The shell
+     * binary alone reaches ~9 MiB; bump the ceiling well past that
+     * to cover any reasonable freestanding C user program. The loop
+     * skips pages that aren't mapped, so over-scanning is cheap. */
     #define CLONE_SCAN_START 0x400000ULL
-    #define CLONE_SCAN_END   0x500000ULL
+    uint64_t clone_scan_end = parent_mm->heap_mapped_end;
+    if (clone_scan_end < CLONE_SCAN_START + (16ULL << 20)) {
+        clone_scan_end = CLONE_SCAN_START + (16ULL << 20);  /* 16 MiB floor */
+    }
+    /* Compatibility alias for the existing skip-region check below. */
+    #define CLONE_SCAN_END (clone_scan_end)
 
     int code_pages_shared = 0;
     int code_pages_copied = 0;

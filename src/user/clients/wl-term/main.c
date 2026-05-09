@@ -761,7 +761,7 @@ static int spawn_shell(struct terminal *term) {
 
         /* Set TERM environment variable */
         char *argv[] = { "/bin/shell", (void*)0 };
-        char *envp[] = { "TERM=xterm-256color", "HOME=/", (void*)0 };
+        char *envp[] = { "TERM=xterm-256color", "HOME=/root", (void*)0 };
         sys_execve_call("/bin/shell", argv, envp);
         sys_exit(127);
     }

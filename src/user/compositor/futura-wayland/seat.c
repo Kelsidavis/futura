@@ -1152,7 +1152,7 @@ static void compositor_launch_files(void) {
     if (pid == 0) {
         char *argv[] = { "/bin/wl-files", (void*)0 };
         char *envp[] = { "WAYLAND_DISPLAY=wayland-0", "XDG_RUNTIME_DIR=/run",
-                         "PATH=/bin:/sbin", "HOME=/", "TZ_OFFSET_SEC=-25200", (void*)0 };
+                         "PATH=/bin:/sbin", "HOME=/root", "TZ_OFFSET_SEC=-25200", (void*)0 };
         sys_execve_call("/bin/wl-files", argv, envp);
         sys_exit(127);
     }

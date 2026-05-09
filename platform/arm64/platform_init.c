@@ -1888,7 +1888,7 @@ static void arm64_init_spawner_thread(void *arg) {
         if (fd >= 0) {
             fut_vfs_close(fd);
             char *wl_argv[] = {"/sbin/futura-wayland", NULL};
-            char *wl_envp[] = {"PATH=/sbin:/bin", "HOME=/", "TERM=vt100",
+            char *wl_envp[] = {"PATH=/sbin:/bin", "HOME=/root", "TERM=vt100",
                                "USER=root", "HOSTNAME=futura",
                                "WAYLAND_DISPLAY=wayland-0",
                                "XDG_RUNTIME_DIR=/run",
@@ -1906,7 +1906,7 @@ static void arm64_init_spawner_thread(void *arg) {
 
                 int wlt_fd = fut_vfs_open("/bin/wl-term", 0 /* O_RDONLY */, 0);
                 /* Common env for compositor clients */
-                char *cli_envp[] = {"PATH=/bin:/sbin", "HOME=/", "TERM=vt100",
+                char *cli_envp[] = {"PATH=/bin:/sbin", "HOME=/root", "TERM=vt100",
                                     "USER=root", "HOSTNAME=futura",
                                     "WAYLAND_DISPLAY=wayland-0",
                                     "XDG_RUNTIME_DIR=/run",
@@ -1962,7 +1962,7 @@ static void arm64_init_spawner_thread(void *arg) {
 
     /* Launch shell — restart if it exits */
     char *shell_argv[] = {"/bin/shell", NULL};
-    char *shell_envp[] = {"PATH=/bin:/sbin", "HOME=/", "TERM=vt100",
+    char *shell_envp[] = {"PATH=/bin:/sbin", "HOME=/root", "TERM=vt100",
                           "USER=root", "HOSTNAME=futura", "SHELL=/bin/shell", NULL};
     int shell_attempts = 0;
     while (shell_attempts < 5) {

@@ -358,7 +358,7 @@ static void pointer_button(void *data, struct wl_pointer *pointer, uint32_t seri
             }
             const char *envp[] = {
                 "PATH=/bin:/sbin",
-                "HOME=/",
+                "HOME=/root",
                 "TERM=vt100",
                 "USER=root",
                 "HOSTNAME=futura",

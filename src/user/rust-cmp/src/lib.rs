@@ -230,28 +230,55 @@ fn print_diff(name1: &[u8], name2: &[u8], byte_pos: u64) {
     write_str(STDOUT, b"\n");
 }
 
+// Match a NUL-terminated argv string against a literal byte slice.
+fn arg_eq(p: *const u8, want: &[u8]) -> bool {
+    for (i, &b) in want.iter().enumerate() {
+        if unsafe { *p.add(i) } != b { return false; }
+    }
+    unsafe { *p.add(want.len()) == 0 }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
-    if argc < 3 {
-        write_str(STDERR, b"usage: rust-cmp <file1> <file2>\n");
+    // Parse leading flags. Currently only -s/--quiet/--silent
+    // (suppress all output, exit status only — matches GNU cmp -s
+    // which is the form scripts overwhelmingly use).
+    let mut silent = false;
+    let mut idx: i32 = 1;
+    while idx < argc {
+        let p = unsafe { *argv.add(idx as usize) };
+        if p.is_null() || (p as usize) < 0x10000 { break; }
+        if arg_eq(p, b"-s") || arg_eq(p, b"--quiet") || arg_eq(p, b"--silent") {
+            silent = true;
+            idx += 1;
+            continue;
+        }
+        if arg_eq(p, b"--") { idx += 1; break; }
+        break;
+    }
+
+    if argc - idx < 2 {
+        if !silent {
+            write_str(STDERR, b"usage: rust-cmp [-s] <file1> <file2>\n");
+        }
         return 2;
     }
-    let p1 = unsafe { *argv.add(1) };
-    let p2 = unsafe { *argv.add(2) };
+    let p1 = unsafe { *argv.add(idx as usize) };
+    let p2 = unsafe { *argv.add((idx + 1) as usize) };
     if p1.is_null() || (p1 as usize) < 0x10000 || p2.is_null() || (p2 as usize) < 0x10000 {
-        write_str(STDERR, b"rust-cmp: invalid arguments\n");
+        if !silent { write_str(STDERR, b"rust-cmp: invalid arguments\n"); }
         return 2;
     }
 
     let fd1 = open_read(p1);
     if fd1 < 0 {
-        write_str(STDERR, b"rust-cmp: cannot open first file\n");
+        if !silent { write_str(STDERR, b"rust-cmp: cannot open first file\n"); }
         return 2;
     }
     let fd2 = open_read(p2);
     if fd2 < 0 {
         close_fd(fd1);
-        write_str(STDERR, b"rust-cmp: cannot open second file\n");
+        if !silent { write_str(STDERR, b"rust-cmp: cannot open second file\n"); }
         return 2;
     }
 
@@ -278,7 +305,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         let (n1r, n2r) = match (r1, r2) {
             (Some(a), Some(b)) => (a, b),
             _ => {
-                write_str(STDERR, b"rust-cmp: read error\n");
+                if !silent { write_str(STDERR, b"rust-cmp: read error\n"); }
                 rc = 2;
                 break;
             }
@@ -289,7 +316,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         let common = n1r.min(n2r);
         for i in 0..common {
             if buf1[i] != buf2[i] {
-                print_diff(name1, name2, byte_pos + i as u64 + 1);
+                if !silent { print_diff(name1, name2, byte_pos + i as u64 + 1); }
                 rc = 1;
                 close_fd(fd1);
                 close_fd(fd2);
@@ -301,9 +328,11 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             // One file ended; the other has more bytes. GNU cmp writes
             // the EOF notice to stderr (not stdout) — match that so
             // shell pipelines that grep stdout don't see this line.
-            write_str(STDERR, b"rust-cmp: EOF on ");
-            write_str(STDERR, if n1r < n2r { name1 } else { name2 });
-            write_str(STDERR, b"\n");
+            if !silent {
+                write_str(STDERR, b"rust-cmp: EOF on ");
+                write_str(STDERR, if n1r < n2r { name1 } else { name2 });
+                write_str(STDERR, b"\n");
+            }
             rc = 1;
             break;
         }

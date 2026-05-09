@@ -263,20 +263,43 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         }
     }
 
-    let fd: i32 = if idx >= argc {
-        STDIN
-    } else {
+    if idx >= argc {
+        return if scan_fd(STDIN, min) { 0 } else { 1 };
+    }
+    let mut had_error = false;
+    while idx < argc {
         let p = unsafe { *argv.add(idx as usize) };
+        idx += 1;
+        if p.is_null() || (p as usize) < 0x10000 {
+            had_error = true;
+            continue;
+        }
+        let mut nlen = 0usize;
+        unsafe { while *p.add(nlen) != 0 { nlen += 1; } }
+        let is_dash = nlen == 1 && unsafe { *p } == b'-';
+        if is_dash {
+            if !scan_fd(STDIN, min) { had_error = true; }
+            continue;
+        }
         let f = unsafe {
             syscall4(sysn::OPENAT, AT_FDCWD as u64, p as u64, O_RDONLY, 0) as i32
         };
         if f < 0 {
-            write_str(STDERR, b"rust-strings: cannot open file\n");
-            return 1;
+            write_str(STDERR, b"rust-strings: cannot open '");
+            unsafe { let _ = syscall3(sysn::WRITE, STDERR as u64, p as u64, nlen as u64); }
+            write_str(STDERR, b"'\n");
+            had_error = true;
+            continue;
         }
-        f
-    };
+        if !scan_fd(f, min) { had_error = true; }
+        unsafe { let _ = syscall1(sysn::CLOSE, f as u64); }
+    }
+    if had_error { 1 } else { 0 }
+}
 
+// Scan one fd for runs of printable bytes >= min and emit each on its
+// own line. Returns true on success.
+fn scan_fd(fd: i32, min: usize) -> bool {
     let mut buf = [0u8; READ_BUF];
     let mut run = [0u8; RUN_BUF];
     let mut run_len = 0usize;
@@ -286,13 +309,8 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         let n = unsafe {
             syscall3(sysn::READ, fd as u64, buf.as_mut_ptr() as u64, buf.len() as u64)
         };
-        if n < 0 {
-            had_error = true;
-            break;
-        }
-        if n == 0 {
-            break;
-        }
+        if n < 0 { had_error = true; break; }
+        if n == 0 { break; }
         let chunk = &buf[..n as usize];
         for &c in chunk {
             if is_print(c) {
@@ -300,9 +318,6 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
                     run[run_len] = c;
                     run_len += 1;
                 } else {
-                    // Run too long for our buffer — flush what we have
-                    // and start fresh; same fallback behaviour as GNU
-                    // strings on a 4 KiB-bounded reader.
                     if !write_all(STDOUT, &run[..run_len]) { had_error = true; break 'outer; }
                     if !write_all(STDOUT, b"\n") { had_error = true; break 'outer; }
                     run[0] = c;
@@ -317,14 +332,9 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             }
         }
     }
-    // Trailing run still pending.
     if !had_error && run_len >= min {
         if !write_all(STDOUT, &run[..run_len]) { had_error = true; }
         else if !write_all(STDOUT, b"\n") { had_error = true; }
     }
-
-    if fd != STDIN {
-        unsafe { let _ = syscall1(sysn::CLOSE, fd as u64); }
-    }
-    if had_error { 1 } else { 0 }
+    !had_error
 }

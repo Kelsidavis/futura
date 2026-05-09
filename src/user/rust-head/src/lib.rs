@@ -341,12 +341,16 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             break;
         } else {
             // -<NUM> shorthand: GNU `head -5` means head -n 5.
-            let first = unsafe { *p.add(0) };
-            let second = unsafe { *p.add(1) };
-            if first == b'-' && (b'0'..=b'9').contains(&second) {
+            // Bounds-check: must be at least 2 bytes (`-` + a digit) and
+            // start with `-` followed by a digit. Without the explicit
+            // length check, an empty argv string lets us read past its
+            // NUL terminator into adjacent memory.
+            let n = cstr_len(p);
+            if n >= 2 && unsafe { *p } == b'-'
+                && (b'0'..=b'9').contains(&unsafe { *p.add(1) })
+            {
                 // Skip the leading '-' for parse_u64.
                 let mut tmp = [0u8; 32];
-                let n = cstr_len(p);
                 if n - 1 >= tmp.len() {
                     write_str(STDERR, b"rust-head: numeric arg too long\n");
                     return 1;

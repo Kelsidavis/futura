@@ -409,12 +409,14 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             idx += 1;
             break;
         } else {
-            // -<NUM> shorthand.
-            let first = unsafe { *p.add(0) };
-            let second = unsafe { *p.add(1) };
-            if first == b'-' && (b'0'..=b'9').contains(&second) {
+            // -<NUM> shorthand. Bounds-check before reading p[1] so an
+            // empty argv string can't trick us into reading past its
+            // NUL into adjacent argv memory.
+            let n = cstr_len(p);
+            if n >= 2 && unsafe { *p } == b'-'
+                && (b'0'..=b'9').contains(&unsafe { *p.add(1) })
+            {
                 let mut tmp = [0u8; 16];
-                let n = cstr_len(p);
                 if n - 1 >= tmp.len() {
                     write_str(STDERR, b"rust-tail: numeric arg too long\n");
                     return 1;

@@ -1496,6 +1496,7 @@ static void arm64_init_spawner_thread(void *arg) {
     extern int fut_stage_rust_wc_binary(void);
     extern int fut_stage_rust_true_binary(void);
     extern int fut_stage_rust_false_binary(void);
+    extern int fut_stage_rust_env_binary(void);
     if (fut_stage_wayland_compositor_binary() == 0) staged++;
     if (fut_stage_futura_shell_binary() == 0)        staged++;
     if (fut_stage_wl_term_binary() == 0)             staged++;
@@ -1516,6 +1517,7 @@ static void arm64_init_spawner_thread(void *arg) {
     if (fut_stage_rust_wc_binary() == 0)              staged++;
     if (fut_stage_rust_true_binary() == 0)            staged++;
     if (fut_stage_rust_false_binary() == 0)           staged++;
+    if (fut_stage_rust_env_binary() == 0)             staged++;
 
     fut_printf("[INIT] Staged %d userland binaries to ramfs\n", staged);
 

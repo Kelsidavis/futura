@@ -1203,6 +1203,8 @@ RUST_TRUE_BIN := $(BIN_DIR)/$(PLATFORM)/user/rust-true
 RUST_TRUE_BLOB := $(OBJ_DIR)/kernel/blobs/rust_true_blob.o
 RUST_FALSE_BIN := $(BIN_DIR)/$(PLATFORM)/user/rust-false
 RUST_FALSE_BLOB := $(OBJ_DIR)/kernel/blobs/rust_false_blob.o
+RUST_ENV_BIN := $(BIN_DIR)/$(PLATFORM)/user/rust-env
+RUST_ENV_BLOB := $(OBJ_DIR)/kernel/blobs/rust_env_blob.o
 
 # ARM64 userland binaries
 ARM64_INIT_BIN := $(BIN_DIR)/arm64/user/init
@@ -1259,6 +1261,8 @@ ARM64_RUST_TRUE_BIN           := $(BIN_DIR)/arm64/user/rust-true
 ARM64_RUST_TRUE_BLOB          := $(OBJ_DIR)/kernel/blobs/arm64_rust_true_blob.o
 ARM64_RUST_FALSE_BIN          := $(BIN_DIR)/arm64/user/rust-false
 ARM64_RUST_FALSE_BLOB         := $(OBJ_DIR)/kernel/blobs/arm64_rust_false_blob.o
+ARM64_RUST_ENV_BIN            := $(BIN_DIR)/arm64/user/rust-env
+ARM64_RUST_ENV_BLOB           := $(OBJ_DIR)/kernel/blobs/arm64_rust_env_blob.o
 
 ifeq ($(PLATFORM),x86_64)
 # Skip shell blob on macOS (uses GNU nested functions not supported by clang)
@@ -1283,7 +1287,7 @@ endif
 # working Rust toolchain so CI hosts without rustup don't break.
 ifeq ($(RUST_AVAILABLE),yes)
 ifneq ($(shell uname -s),Darwin)
-OBJECTS += $(RUST_HELLO_BLOB) $(RUST_UNAME_BLOB) $(RUST_PWD_BLOB) $(RUST_LS_BLOB) $(RUST_MKDIR_BLOB) $(RUST_TOUCH_BLOB) $(RUST_RM_BLOB) $(RUST_CAT_BLOB) $(RUST_WC_BLOB) $(RUST_TRUE_BLOB) $(RUST_FALSE_BLOB)
+OBJECTS += $(RUST_HELLO_BLOB) $(RUST_UNAME_BLOB) $(RUST_PWD_BLOB) $(RUST_LS_BLOB) $(RUST_MKDIR_BLOB) $(RUST_TOUCH_BLOB) $(RUST_RM_BLOB) $(RUST_CAT_BLOB) $(RUST_WC_BLOB) $(RUST_TRUE_BLOB) $(RUST_FALSE_BLOB) $(RUST_ENV_BLOB)
 endif
 endif
 else ifeq ($(PLATFORM),arm64)
@@ -1297,7 +1301,7 @@ OBJECTS += $(ARM64_WAYLAND_COMPOSITOR_BLOB) $(ARM64_WAYLAND_SHELL_BLOB) $(ARM64_
 endif
 # Rust user-space CLIs — staged regardless of Wayland.
 ifeq ($(RUST_AVAILABLE),yes)
-OBJECTS += $(ARM64_RUST_HELLO_BLOB) $(ARM64_RUST_UNAME_BLOB) $(ARM64_RUST_PWD_BLOB) $(ARM64_RUST_LS_BLOB) $(ARM64_RUST_MKDIR_BLOB) $(ARM64_RUST_TOUCH_BLOB) $(ARM64_RUST_RM_BLOB) $(ARM64_RUST_CAT_BLOB) $(ARM64_RUST_WC_BLOB) $(ARM64_RUST_TRUE_BLOB) $(ARM64_RUST_FALSE_BLOB)
+OBJECTS += $(ARM64_RUST_HELLO_BLOB) $(ARM64_RUST_UNAME_BLOB) $(ARM64_RUST_PWD_BLOB) $(ARM64_RUST_LS_BLOB) $(ARM64_RUST_MKDIR_BLOB) $(ARM64_RUST_TOUCH_BLOB) $(ARM64_RUST_RM_BLOB) $(ARM64_RUST_CAT_BLOB) $(ARM64_RUST_WC_BLOB) $(ARM64_RUST_TRUE_BLOB) $(ARM64_RUST_FALSE_BLOB) $(ARM64_RUST_ENV_BLOB)
 endif
 endif
 
@@ -1818,12 +1822,18 @@ $(RUST_TRUE_BIN):
 $(RUST_FALSE_BIN):
 	@echo "Building $(PLATFORM) rust-false..."
 	@$(MAKE) -C src/user/rust-false PLATFORM=$(PLATFORM) all
+$(RUST_ENV_BIN):
+	@echo "Building $(PLATFORM) rust-env..."
+	@$(MAKE) -C src/user/rust-env PLATFORM=$(PLATFORM) all
 endif
 
 $(RUST_TRUE_BLOB): $(RUST_TRUE_BIN) | $(OBJ_DIR)/kernel/blobs
 	@echo "OBJCOPY $@"
 	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
 $(RUST_FALSE_BLOB): $(RUST_FALSE_BIN) | $(OBJ_DIR)/kernel/blobs
+	@echo "OBJCOPY $@"
+	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
+$(RUST_ENV_BLOB): $(RUST_ENV_BIN) | $(OBJ_DIR)/kernel/blobs
 	@echo "OBJCOPY $@"
 	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
 
@@ -1985,6 +1995,10 @@ $(ARM64_RUST_TRUE_BIN): arm64-libfutura
 $(ARM64_RUST_FALSE_BIN): arm64-libfutura
 	@echo "Building ARM64 rust-false..."
 	@$(MAKE) -C src/user/rust-false PLATFORM=arm64 all
+
+$(ARM64_RUST_ENV_BIN): arm64-libfutura
+	@echo "Building ARM64 rust-env..."
+	@$(MAKE) -C src/user/rust-env PLATFORM=arm64 all
 endif
 
 # Strip + objcopy each wayland binary into a kernel-embeddable blob.
@@ -2065,6 +2079,10 @@ $(ARM64_RUST_TRUE_BLOB): $(ARM64_RUST_TRUE_BIN) | $(OBJ_DIR)/kernel/blobs
 	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
 
 $(ARM64_RUST_FALSE_BLOB): $(ARM64_RUST_FALSE_BIN) | $(OBJ_DIR)/kernel/blobs
+	@$(OBJCOPY) --strip-debug $< $<.tmp && mv $<.tmp $<
+	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
+
+$(ARM64_RUST_ENV_BLOB): $(ARM64_RUST_ENV_BIN) | $(OBJ_DIR)/kernel/blobs
 	@$(OBJCOPY) --strip-debug $< $<.tmp && mv $<.tmp $<
 	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
 

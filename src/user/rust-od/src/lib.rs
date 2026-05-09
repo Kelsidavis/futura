@@ -214,19 +214,24 @@ fn emit_row(offset: u64, row: &[u8]) -> bool {
     if !write_all(STDOUT, &off_buf) { return false; }
     if !write_all(STDOUT, b" ") { return false; }
 
-    // 16 hex pairs, space-separated, with an extra space between bytes 8 and 9.
-    let mut hex_buf = [b' '; COL * 3];
+    // 16 hex pairs, space-separated, with an extra space between bytes
+    // 7 and 8 to match GNU od's two-half-rows layout. Each pair takes
+    // 3 chars (XX + space); the gutter at index 24 gets one extra
+    // space pushed in by `extra`. Total len = COL*3 + 1 = 49.
+    let mut hex_buf = [b' '; COL * 3 + 1];
     for i in 0..COL {
+        let extra = if i >= COL / 2 { 1 } else { 0 };
+        let off = i * 3 + extra;
         if i < row.len() {
-            hex_buf[i * 3] = HEX[(row[i] >> 4) as usize];
-            hex_buf[i * 3 + 1] = HEX[(row[i] & 0xF) as usize];
+            hex_buf[off] = HEX[(row[i] >> 4) as usize];
+            hex_buf[off + 1] = HEX[(row[i] & 0xF) as usize];
         } else {
             // pad missing bytes with two spaces — keeps the ASCII column
             // aligned even when the final row is short.
-            hex_buf[i * 3] = b' ';
-            hex_buf[i * 3 + 1] = b' ';
+            hex_buf[off] = b' ';
+            hex_buf[off + 1] = b' ';
         }
-        hex_buf[i * 3 + 2] = b' ';
+        hex_buf[off + 2] = b' ';
     }
     if !write_all(STDOUT, &hex_buf) { return false; }
 

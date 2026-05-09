@@ -269,8 +269,9 @@ fn parse_fields(p: *const u8, out: &mut [u32; MAX_FIELDS]) -> Option<usize> {
 }
 
 // Emit selected fields from `line`, splitting on `delim`, joining with
-// `delim` between emitted fields.
-fn emit_line(line: &[u8], delim: u8, fields: &[u32]) -> bool {
+// `delim` between emitted fields. With `suppress_no_delim`, lines that
+// contain no delimiter are silently skipped (matches GNU cut -s).
+fn emit_line(line: &[u8], delim: u8, fields: &[u32], suppress_no_delim: bool) -> bool {
     if fields.is_empty() {
         return write_all(STDOUT, b"\n");
     }
@@ -279,6 +280,14 @@ fn emit_line(line: &[u8], delim: u8, fields: &[u32]) -> bool {
     let mut field_start = 0usize;
     let mut printed_any = false;
     let mut field_present = false;
+    // Pre-scan to know whether ANY delim is in the line — needed by -s
+    // to make the "skip undelimited lines" decision before we emit
+    // anything.
+    if suppress_no_delim {
+        let mut has = false;
+        for &b in line { if b == delim { has = true; break; } }
+        if !has { return true; }   // silently skip
+    }
     for (i, &b) in line.iter().enumerate() {
         if b == delim {
             field_present = true;
@@ -311,11 +320,34 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
     let mut delim: Option<u8> = None;
     let mut fields = [0u32; MAX_FIELDS];
     let mut nfields = 0usize;
+    let mut suppress = false;
     let mut idx: i32 = 1;
 
     while idx < argc {
         let p = unsafe { *argv.add(idx as usize) };
         if p.is_null() || (p as usize) < 0x10000 {
+            idx += 1;
+            continue;
+        }
+        if cstr_eq(p, b"--help") {
+            let help: &[u8] = b"\
+Usage: rust-cut -d DELIM -f LIST [-s] [FILE]...
+Print selected fields from each line.
+
+  -d DELIM   single-byte field delimiter (required)
+  -f LIST    1-based, comma-separated field numbers (e.g. 1,3,5)
+  -s         suppress lines that contain no DELIM
+      --help     show this help and exit
+
+A '-' in the FILE list means standard input.
+\0";
+            let len = help.len() - 1;
+            unsafe { let _ = syscall3(sysn::WRITE, STDOUT as u64,
+                                       help.as_ptr() as u64, len as u64); }
+            return 0;
+        }
+        if cstr_eq(p, b"-s") {
+            suppress = true;
             idx += 1;
             continue;
         }
@@ -374,7 +406,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
     let fields_slice = &fields[..nfields];
 
     if idx >= argc {
-        return if cut_fd(STDIN, delim, fields_slice) { 0 } else { 1 };
+        return if cut_fd(STDIN, delim, fields_slice, suppress) { 0 } else { 1 };
     }
     let mut had_error = false;
     while idx < argc {
@@ -388,7 +420,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         unsafe { while *p.add(nlen) != 0 { nlen += 1; } }
         let is_dash = nlen == 1 && unsafe { *p } == b'-';
         if is_dash {
-            if !cut_fd(STDIN, delim, fields_slice) { had_error = true; }
+            if !cut_fd(STDIN, delim, fields_slice, suppress) { had_error = true; }
             continue;
         }
         let fd = unsafe {
@@ -401,13 +433,13 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             had_error = true;
             continue;
         }
-        if !cut_fd(fd, delim, fields_slice) { had_error = true; }
+        if !cut_fd(fd, delim, fields_slice, suppress) { had_error = true; }
         unsafe { let _ = syscall1(sysn::CLOSE, fd as u64); }
     }
     if had_error { 1 } else { 0 }
 }
 
-fn cut_fd(fd: i32, delim: u8, fields_slice: &[u32]) -> bool {
+fn cut_fd(fd: i32, delim: u8, fields_slice: &[u32], suppress: bool) -> bool {
     let mut rbuf = [0u8; READ_BUF];
     let mut line = [0u8; LINE_BUF];
     let mut len = 0usize;
@@ -421,7 +453,7 @@ fn cut_fd(fd: i32, delim: u8, fields_slice: &[u32]) -> bool {
         let chunk = &rbuf[..n as usize];
         for &c in chunk {
             if c == b'\n' {
-                if !emit_line(&line[..len], delim, fields_slice) {
+                if !emit_line(&line[..len], delim, fields_slice, suppress) {
                     had_error = true;
                     break 'outer;
                 }
@@ -434,7 +466,7 @@ fn cut_fd(fd: i32, delim: u8, fields_slice: &[u32]) -> bool {
         }
     }
     if !had_error && len > 0 {
-        if !emit_line(&line[..len], delim, fields_slice) { had_error = true; }
+        if !emit_line(&line[..len], delim, fields_slice, suppress) { had_error = true; }
     }
     !had_error
 }

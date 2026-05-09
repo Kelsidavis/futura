@@ -351,6 +351,25 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             else            { mode.cmp_chars = Some(v); }
             i += 2;
             continue;
+        } else if cstr_eq(p, b"--help") {
+            let help: &[u8] = b"\
+Usage: rust-uniq [OPTION]... [INPUT]
+Filter adjacent matching lines from INPUT (or standard input).
+
+  -c          prefix lines with their occurrence count
+  -d          show only duplicated lines
+  -u          show only unique lines
+  -i          ignore case while comparing
+  -s N        skip first N chars before comparing
+  -w N        compare at most N chars (after -s skip)
+      --help  show this help and exit
+
+A '-' as INPUT means standard input.
+\0";
+            let len = help.len() - 1;
+            unsafe { let _ = syscall3(sysn::WRITE, STDOUT as u64,
+                                       help.as_ptr() as u64, len as u64); }
+            return 0;
         } else if cstr_eq(p, b"--") {
             i += 1;
             // Next non-null token is the INPUT file (if any).

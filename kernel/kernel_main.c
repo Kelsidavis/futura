@@ -1456,6 +1456,10 @@ void fut_kernel_main(void) {
                   "alias q='exit'\n"
                   "# Display motd\n"
                   "cat /etc/motd\n"
+                  "# Smoke-test the rust user-space toolchain at every login.\n"
+                  "# If you see 'Hello from Rust user-space on Futura' below, the\n"
+                  "# freestanding crt0, syscall path, and shell exec_external are\n"
+                  "# all wired up end-to-end.\n"
                   "/bin/rust-hello\n");
         ETC_WRITE("/etc/motd",
                   "\n"

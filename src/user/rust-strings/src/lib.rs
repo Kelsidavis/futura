@@ -234,12 +234,33 @@ fn is_print(b: u8) -> bool {
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
     let mut min: usize = 4;
+    let mut radix: Option<u8> = None;
     let mut idx: i32 = 1;
     while idx < argc {
         let p = unsafe { *argv.add(idx as usize) };
         if p.is_null() || (p as usize) < 0x10000 {
             idx += 1;
             continue;
+        }
+        if cstr_eq(p, b"-t") {
+            if idx + 1 >= argc {
+                write_str(STDERR, b"rust-strings: -t needs d / x / o\n");
+                return 2;
+            }
+            let arg = unsafe { *argv.add((idx + 1) as usize) };
+            if arg.is_null() || (arg as usize) < 0x10000 {
+                return 2;
+            }
+            let mut n = 0usize;
+            unsafe { while *arg.add(n) != 0 { n += 1; } }
+            let r = if n == 1 { unsafe { *arg } } else { 0 };
+            if r == b'd' || r == b'x' || r == b'o' {
+                radix = Some(r);
+                idx += 2;
+                continue;
+            }
+            write_str(STDERR, b"rust-strings: -t expects d / x / o\n");
+            return 2;
         }
         if cstr_eq(p, b"-n") {
             if idx + 1 >= argc {
@@ -264,6 +285,7 @@ Usage: rust-strings [-n MIN] [FILE]...
 Print runs of MIN-or-more printable bytes from each FILE (or stdin).
 
   -n MIN    minimum run length to emit (default 4)
+  -t RADIX  prefix each run with its byte offset (RADIX = d / x / o)
       --help    show this help and exit
 
 A '-' in the FILE list means standard input.
@@ -278,7 +300,7 @@ A '-' in the FILE list means standard input.
     }
 
     if idx >= argc {
-        return if scan_fd(STDIN, min) { 0 } else { 1 };
+        return if scan_fd(STDIN, min, radix) { 0 } else { 1 };
     }
     let mut had_error = false;
     while idx < argc {
@@ -292,7 +314,7 @@ A '-' in the FILE list means standard input.
         unsafe { while *p.add(nlen) != 0 { nlen += 1; } }
         let is_dash = nlen == 1 && unsafe { *p } == b'-';
         if is_dash {
-            if !scan_fd(STDIN, min) { had_error = true; }
+            if !scan_fd(STDIN, min, radix) { had_error = true; }
             continue;
         }
         let f = unsafe {
@@ -305,19 +327,42 @@ A '-' in the FILE list means standard input.
             had_error = true;
             continue;
         }
-        if !scan_fd(f, min) { had_error = true; }
+        if !scan_fd(f, min, radix) { had_error = true; }
         unsafe { let _ = syscall1(sysn::CLOSE, f as u64); }
     }
     if had_error { 1 } else { 0 }
 }
 
 // Scan one fd for runs of printable bytes >= min and emit each on its
-// own line. Returns true on success.
-fn scan_fd(fd: i32, min: usize) -> bool {
+// own line. With `radix` set, prefix each emitted run with the input
+// offset where the run starts. Returns true on success.
+fn scan_fd(fd: i32, min: usize, radix: Option<u8>) -> bool {
     let mut buf = [0u8; READ_BUF];
     let mut run = [0u8; RUN_BUF];
     let mut run_len = 0usize;
     let mut had_error = false;
+    let mut input_off: u64 = 0;
+    let mut run_start: u64 = 0;
+
+    let emit_offset = |off: u64, radix: u8| {
+        let mut tmp = [0u8; 24];
+        let mut k = tmp.len();
+        let base: u64 = match radix { b'x' => 16, b'o' => 8, _ => 10 };
+        let mut v = off;
+        if v == 0 { k -= 1; tmp[k] = b'0'; }
+        while v > 0 && k > 0 {
+            k -= 1;
+            let dig = (v % base) as u8;
+            tmp[k] = if dig < 10 { b'0' + dig } else { b'a' + (dig - 10) };
+            v /= base;
+        }
+        // 7-char right-padded field, then a space — same as GNU strings.
+        let want = 7;
+        let n = tmp.len() - k;
+        if n < want { for _ in 0..(want - n) { write_str(STDOUT, b" "); } }
+        write_str(STDOUT, &tmp[k..]);
+        write_str(STDOUT, b" ");
+    };
 
     'outer: loop {
         let n = unsafe {
@@ -326,27 +371,35 @@ fn scan_fd(fd: i32, min: usize) -> bool {
         if n < 0 { had_error = true; break; }
         if n == 0 { break; }
         let chunk = &buf[..n as usize];
-        for &c in chunk {
+        for (i, &c) in chunk.iter().enumerate() {
             if is_print(c) {
+                if run_len == 0 {
+                    run_start = input_off + i as u64;
+                }
                 if run_len < RUN_BUF {
                     run[run_len] = c;
                     run_len += 1;
                 } else {
+                    if let Some(r) = radix { emit_offset(run_start, r); }
                     if !write_all(STDOUT, &run[..run_len]) { had_error = true; break 'outer; }
                     if !write_all(STDOUT, b"\n") { had_error = true; break 'outer; }
                     run[0] = c;
                     run_len = 1;
+                    run_start = input_off + i as u64;
                 }
             } else {
                 if run_len >= min {
+                    if let Some(r) = radix { emit_offset(run_start, r); }
                     if !write_all(STDOUT, &run[..run_len]) { had_error = true; break 'outer; }
                     if !write_all(STDOUT, b"\n") { had_error = true; break 'outer; }
                 }
                 run_len = 0;
             }
         }
+        input_off += n as u64;
     }
     if !had_error && run_len >= min {
+        if let Some(r) = radix { emit_offset(run_start, r); }
         if !write_all(STDOUT, &run[..run_len]) { had_error = true; }
         else if !write_all(STDOUT, b"\n") { had_error = true; }
     }

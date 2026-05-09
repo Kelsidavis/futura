@@ -461,6 +461,25 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             continue;
         }
         if arg_eq(p, b"--") { idx += 1; break; }
+        if arg_eq(p, b"--help") {
+            let help: &[u8] = b"\
+Usage: rust-stat [OPTION]... FILE [FILE...]
+Display file metadata.
+
+  -L, --dereference   follow links (default is lstat-style)
+  -c, --format FMT    use FMT instead of the default summary
+  -t, --terse          shorthand for -c '%n %s %b %a %u %g %d %i %h %X %Y %Z %B'
+      --help          show this help and exit
+
+Format conversions: %n name, %s size, %a octal mode, %A rwx perms,
+%u uid, %g gid, %i inode, %h links, %F type-name, %d device,
+%b blocks, %B blksize, %X atime, %Y mtime, %Z ctime, %% literal %.
+\0";
+            let len = help.len() - 1;
+            unsafe { let _ = syscall3(sysn::WRITE, STDOUT as u64,
+                                       help.as_ptr() as u64, len as u64); }
+            return 0;
+        }
         break;
     }
     // -t is a built-in shorthand for a fixed format string; -c overrides

@@ -1104,19 +1104,35 @@ static void seat_send_current_modifiers(struct seat_state *seat) {
     }
 }
 
+/* Common baseline env for every menu-launched compositor client.
+ * Previously each launch helper had its own ad-hoc envp — wl-files
+ * was the only one that set HOME, wl-term was the only one that set
+ * TERM, none of them set USER / HOSTNAME — so wl-settings rendered
+ * blank rows for "User" and "Hostname" when launched from the menu
+ * but rendered them correctly when launched from a shell. Fix by
+ * giving every menu launch the same baseline the spawner already
+ * hands to wl-term/wl-panel via platform_init's cli_envp.
+ *
+ * XDG_RUNTIME_DIR must match the dir the compositor actually bound
+ * the wayland-0 socket in (platform_init: /run). Hardcoding /tmp
+ * here once meant children opened /tmp/wayland-0 and got ENOENT
+ * instead of connecting. */
+#define CLIENT_BASELINE_ENVP                          \
+    "WAYLAND_DISPLAY=wayland-0",                      \
+    "XDG_RUNTIME_DIR=/run",                           \
+    "PATH=/bin:/sbin",                                \
+    "HOME=/root",                                     \
+    "USER=root",                                      \
+    "HOSTNAME=futura",                                \
+    "TERM=xterm-256color",                            \
+    "TZ_OFFSET_SEC=-25200"
+
 /* Launch a new terminal instance */
 static void compositor_launch_terminal(void) {
     long pid = sys_fork_call();
     if (pid == 0) {
-        /* Child: exec wl-term */
         char *argv[] = { "/bin/wl-term", (void*)0 };
-        /* XDG_RUNTIME_DIR must match the dir the compositor actually
-         * bound the wayland-0 socket in (set by platform_init: /run).
-         * Hardcoding /tmp here meant children opened /tmp/wayland-0
-         * and got ENOENT instead of connecting. */
-        char *envp[] = { "WAYLAND_DISPLAY=wayland-0", "XDG_RUNTIME_DIR=/run",
-                         "TERM=xterm-256color", "PATH=/bin:/sbin",
-                         "TZ_OFFSET_SEC=-25200", (void*)0 };
+        char *envp[] = { CLIENT_BASELINE_ENVP, (void*)0 };
         sys_execve_call("/bin/wl-term", argv, envp);
         sys_exit(127);
     }
@@ -1127,8 +1143,7 @@ static void compositor_launch_edit(void) {
     long pid = sys_fork_call();
     if (pid == 0) {
         char *argv[] = { "/bin/wl-edit", (void*)0 };
-        char *envp[] = { "WAYLAND_DISPLAY=wayland-0", "XDG_RUNTIME_DIR=/run",
-                         "PATH=/bin:/sbin", "TZ_OFFSET_SEC=-25200", (void*)0 };
+        char *envp[] = { CLIENT_BASELINE_ENVP, (void*)0 };
         sys_execve_call("/bin/wl-edit", argv, envp);
         sys_exit(127);
     }
@@ -1139,8 +1154,7 @@ static void compositor_launch_sysmon(void) {
     long pid = sys_fork_call();
     if (pid == 0) {
         char *argv[] = { "/bin/wl-sysmon", (void*)0 };
-        char *envp[] = { "WAYLAND_DISPLAY=wayland-0", "XDG_RUNTIME_DIR=/run",
-                         "PATH=/bin:/sbin", "TZ_OFFSET_SEC=-25200", (void*)0 };
+        char *envp[] = { CLIENT_BASELINE_ENVP, (void*)0 };
         sys_execve_call("/bin/wl-sysmon", argv, envp);
         sys_exit(127);
     }
@@ -1151,8 +1165,7 @@ static void compositor_launch_files(void) {
     long pid = sys_fork_call();
     if (pid == 0) {
         char *argv[] = { "/bin/wl-files", (void*)0 };
-        char *envp[] = { "WAYLAND_DISPLAY=wayland-0", "XDG_RUNTIME_DIR=/run",
-                         "PATH=/bin:/sbin", "HOME=/root", "TZ_OFFSET_SEC=-25200", (void*)0 };
+        char *envp[] = { CLIENT_BASELINE_ENVP, (void*)0 };
         sys_execve_call("/bin/wl-files", argv, envp);
         sys_exit(127);
     }
@@ -1163,8 +1176,7 @@ static void compositor_launch_wallpaper(void) {
     long pid = sys_fork_call();
     if (pid == 0) {
         char *argv[] = { "/bin/wl-wallpaper", (void*)0 };
-        char *envp[] = { "WAYLAND_DISPLAY=wayland-0", "XDG_RUNTIME_DIR=/run",
-                         "PATH=/bin:/sbin", "TZ_OFFSET_SEC=-25200", (void*)0 };
+        char *envp[] = { CLIENT_BASELINE_ENVP, (void*)0 };
         sys_execve_call("/bin/wl-wallpaper", argv, envp);
         sys_exit(127);
     }
@@ -1175,8 +1187,7 @@ static void compositor_launch_settings(void) {
     long pid = sys_fork_call();
     if (pid == 0) {
         char *argv[] = { "/bin/wl-settings", (void*)0 };
-        char *envp[] = { "WAYLAND_DISPLAY=wayland-0", "XDG_RUNTIME_DIR=/run",
-                         "PATH=/bin:/sbin", "TZ_OFFSET_SEC=-25200", (void*)0 };
+        char *envp[] = { CLIENT_BASELINE_ENVP, (void*)0 };
         sys_execve_call("/bin/wl-settings", argv, envp);
         sys_exit(127);
     }

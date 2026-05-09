@@ -252,7 +252,20 @@ fn print_indent(depth: usize) {
 
 // Walk one directory: print its children, recursing into subdirectories
 // up to depth+1 < MAX_DEPTH.
-fn walk(dir_fd: i32, depth: usize) {
+fn arg_is(p: *const u8, s: &[u8]) -> bool {
+    for (i, &b) in s.iter().enumerate() {
+        if unsafe { *p.add(i) } != b {
+            return false;
+        }
+    }
+    unsafe { *p.add(s.len()) == 0 }
+}
+
+// Hide-policy for dot-prefixed entries (mirrors rust-ls).
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum DotMode { HideAll, ShowAll }
+
+fn walk(dir_fd: i32, depth: usize, mode: DotMode) {
     let mut buf = [0u8; BUF_LEN];
     loop {
         let n = unsafe {
@@ -287,9 +300,15 @@ fn walk(dir_fd: i32, depth: usize) {
             }
             let name = &buf[name_start..name_end];
             let nlen = name.len();
+            // Always skip '.' and '..'; with HideAll skip every other
+            // dot-prefixed entry too (matches GNU tree's default).
+            let is_dot = nlen == 1 && name[0] == b'.';
+            let is_dotdot = nlen == 2 && name[0] == b'.' && name[1] == b'.';
+            let starts_with_dot = nlen > 0 && name[0] == b'.';
             let skip = nlen == 0
-                || (nlen == 1 && name[0] == b'.')
-                || (nlen == 2 && name[0] == b'.' && name[1] == b'.');
+                || is_dot
+                || is_dotdot
+                || (mode == DotMode::HideAll && starts_with_dot);
             if !skip {
                 print_indent(depth);
                 write_all(STDOUT, name);
@@ -300,7 +319,7 @@ fn walk(dir_fd: i32, depth: usize) {
                         // don't have to re-construct path strings.
                         let child = open_dir_at(dir_fd, name);
                         if child >= 0 {
-                            walk(child, depth + 1);
+                            walk(child, depth + 1, mode);
                             close_fd(child);
                         }
                     } else {
@@ -318,10 +337,25 @@ fn walk(dir_fd: i32, depth: usize) {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
-    // Pick a root: argv[1] if given, else ".".
+    // -a includes dot-prefixed entries (excluding '.' and '..' which
+    // are always skipped to avoid cycles). Default hides them, matching
+    // GNU tree.
+    let mut mode = DotMode::HideAll;
+    let mut idx: i32 = 1;
+    while idx < argc {
+        let p = unsafe { *argv.add(idx as usize) };
+        if !p.is_null() && (p as usize) >= 0x10000 && arg_is(p, b"-a") {
+            mode = DotMode::ShowAll;
+            idx += 1;
+        } else {
+            break;
+        }
+    }
+
+    // Pick a root: first non-flag argv if given, else ".".
     let dot: [u8; 2] = [b'.', 0];
-    let path: *const u8 = if argc >= 2 {
-        let p = unsafe { *argv.add(1) };
+    let path: *const u8 = if idx < argc {
+        let p = unsafe { *argv.add(idx as usize) };
         if p.is_null() || (p as usize) < 0x10000 {
             dot.as_ptr()
         } else {
@@ -342,7 +376,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         write_all(STDERR, b"rust-tree: cannot open directory\n");
         return 1;
     }
-    walk(fd, 1);
+    walk(fd, 1, mode);
     close_fd(fd);
     0
 }

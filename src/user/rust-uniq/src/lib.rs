@@ -145,11 +145,25 @@ fn slice_eq(a: &[u8], b: &[u8]) -> bool {
     true
 }
 
+#[inline(always)]
+fn to_lower(b: u8) -> u8 {
+    if b >= b'A' && b <= b'Z' { b + 32 } else { b }
+}
+
+fn slice_eq_icase(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() { return false; }
+    for i in 0..a.len() {
+        if to_lower(a[i]) != to_lower(b[i]) { return false; }
+    }
+    true
+}
+
 #[derive(Copy, Clone)]
 struct Mode {
     show_count: bool,
     only_dups: bool,
     only_uniq: bool,
+    icase: bool,
 }
 
 // Print one accumulated line according to mode.
@@ -193,6 +207,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         show_count: false,
         only_dups: false,
         only_uniq: false,
+        icase: false,
     };
     for i in 1..argc {
         let p = unsafe { *argv.add(i as usize) };
@@ -205,8 +220,10 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             mode.only_dups = true;
         } else if cstr_eq(p, b"-u") {
             mode.only_uniq = true;
+        } else if cstr_eq(p, b"-i") {
+            mode.icase = true;
         } else {
-            write_str(STDERR, b"rust-uniq: unsupported argument (use -c / -d / -u)\n");
+            write_str(STDERR, b"rust-uniq: unsupported argument (use -c / -d / -u / -i)\n");
             return 2;
         }
     }
@@ -249,7 +266,12 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
                 cur[cur_len..cur_len + copy].copy_from_slice(&chunk[start..start + copy]);
                 cur_len += copy;
                 let line = &cur[..cur_len];
-                if prev_valid && slice_eq(line, &prev[..prev_len]) {
+                let same = if mode.icase {
+                    slice_eq_icase(line, &prev[..prev_len])
+                } else {
+                    slice_eq(line, &prev[..prev_len])
+                };
+                if prev_valid && same {
                     count += 1;
                 } else {
                     if prev_valid {
@@ -281,7 +303,12 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
     // the final line).
     if cur_len > 0 {
         let line = &cur[..cur_len];
-        if prev_valid && slice_eq(line, &prev[..prev_len]) {
+        let same = if mode.icase {
+            slice_eq_icase(line, &prev[..prev_len])
+        } else {
+            slice_eq(line, &prev[..prev_len])
+        };
+        if prev_valid && same {
             count += 1;
         } else {
             if prev_valid {

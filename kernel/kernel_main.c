@@ -1533,6 +1533,15 @@ void fut_kernel_main(void) {
         ETC_WRITE("/etc/shells",
                   "/bin/shell\n"
                   "/bin/sh\n");
+        /* Default wallpaper preset. Both wl-wallpaper (GUI) and
+         * rust-wallpaper (CLI) overwrite this file when the user picks
+         * a different preset; the compositor's once-per-second poller
+         * adopts the change. Seeding with "nightsky" means the very
+         * first frame painted at boot already matches the default
+         * preset key, so rust-wallpaper --get prints the same key
+         * the compositor is actually rendering instead of "(default)". */
+        ETC_WRITE("/etc/wallpaper.conf",
+                  "nightsky\n");
         ETC_WRITE("/etc/ld.so.conf",
                   "# Multilib support\n"
                   "/lib\n"

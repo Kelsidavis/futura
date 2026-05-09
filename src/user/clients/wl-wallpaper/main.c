@@ -397,6 +397,20 @@ static void process_key(struct client_state *s, uint32_t key) {
         int m = proc_count - SM_VIS_ROWS; if (m < 0) m = 0;
         scroll_off = m; s->needs_redraw = true; return;
     }
+    if (key == 104) { /* PageUp */
+        selected -= SM_VIS_ROWS;
+        if (selected < 0) selected = 0;
+        if (selected < scroll_off) scroll_off = selected;
+        s->needs_redraw = true; return;
+    }
+    if (key == 109) { /* PageDown */
+        selected += SM_VIS_ROWS;
+        if (selected >= proc_count) selected = proc_count - 1;
+        if (selected < 0) selected = 0;
+        if (selected >= scroll_off + SM_VIS_ROWS)
+            scroll_off = selected - SM_VIS_ROWS + 1;
+        s->needs_redraw = true; return;
+    }
     if (key == 28 /* Enter */) {
         apply_preset(selected);
         s->needs_redraw = true; return;

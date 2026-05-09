@@ -298,10 +298,12 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         }
         byte_pos += common as u64;
         if n1r != n2r {
-            // One file ended; the other has more bytes.
-            write_str(STDOUT, b"rust-cmp: EOF on ");
-            write_str(STDOUT, if n1r < n2r { name1 } else { name2 });
-            write_str(STDOUT, b"\n");
+            // One file ended; the other has more bytes. GNU cmp writes
+            // the EOF notice to stderr (not stdout) — match that so
+            // shell pipelines that grep stdout don't see this line.
+            write_str(STDERR, b"rust-cmp: EOF on ");
+            write_str(STDERR, if n1r < n2r { name1 } else { name2 });
+            write_str(STDERR, b"\n");
             rc = 1;
             break;
         }

@@ -1084,6 +1084,8 @@ extern const uint8_t _binary_build_bin_x86_64_user_rust_tree_start[];
 extern const uint8_t _binary_build_bin_x86_64_user_rust_tree_end[];
 extern const uint8_t _binary_build_bin_x86_64_user_rust_wallpaper_start[];
 extern const uint8_t _binary_build_bin_x86_64_user_rust_wallpaper_end[];
+extern const uint8_t _binary_build_bin_x86_64_user_rust_cp_start[];
+extern const uint8_t _binary_build_bin_x86_64_user_rust_cp_end[];
 #endif
 /* Core Wayland binaries (production) */
 #if ENABLE_WAYLAND
@@ -1348,6 +1350,13 @@ int fut_stage_rust_wallpaper_binary(void) {
                       _binary_build_bin_x86_64_user_rust_wallpaper_end,
                       "/bin/rust-wallpaper");
 }
+
+int fut_stage_rust_cp_binary(void) {
+    (void)fut_vfs_mkdir("/bin", 0755);
+    return stage_blob(_binary_build_bin_x86_64_user_rust_cp_start,
+                      _binary_build_bin_x86_64_user_rust_cp_end,
+                      "/bin/rust-cp");
+}
 #else
 int fut_stage_rust_hello_binary(void) { return -ENOSYS; }
 int fut_stage_rust_uname_binary(void) { return -ENOSYS; }
@@ -1369,6 +1378,7 @@ int fut_stage_rust_date_binary(void)  { return -ENOSYS; }
 int fut_stage_rust_settings_binary(void) { return -ENOSYS; }
 int fut_stage_rust_tree_binary(void)     { return -ENOSYS; }
 int fut_stage_rust_wallpaper_binary(void) { return -ENOSYS; }
+int fut_stage_rust_cp_binary(void)        { return -ENOSYS; }
 #endif
 #else
 int fut_stage_shell_binary(void) {
@@ -1453,6 +1463,10 @@ int fut_stage_rust_tree_binary(void) {
 
 int fut_stage_rust_wallpaper_binary(void) {
     return -ENOSYS;  /* rust-wallpaper not available on macOS host builds */
+}
+
+int fut_stage_rust_cp_binary(void) {
+    return -ENOSYS;  /* rust-cp not available on macOS host builds */
 }
 #endif
 

@@ -265,7 +265,9 @@ fn alphabet_index(c: u8) -> Option<u32> {
     }
 }
 
-fn encode(fd: i32) -> i32 {
+// `wrap` of 0 disables wrapping entirely (GNU base64 -w 0). Otherwise
+// a newline is inserted every `wrap` output bytes.
+fn encode(fd: i32, wrap: u32) -> i32 {
     let mut buf = [0u8; ENC_IN_CHUNK];
     let mut out = [0u8; ENC_OUT_CHUNK];
     let mut col: u32 = 0;
@@ -293,22 +295,31 @@ fn encode(fd: i32) -> i32 {
         // produces 1 or 2 pads from encode_block's tail handling.
         let n_out = encode_block(&buf[..filled], &mut out);
 
-        // Wrap output at 76 columns.
-        let mut written = 0usize;
-        while written < n_out {
-            let avail = (76 - col) as usize;
-            let take = avail.min(n_out - written);
-            if !write_all(STDOUT, &out[written..written + take]) { return 1; }
-            col += take as u32;
-            written += take;
-            if col == 76 {
-                if !write_all(STDOUT, b"\n") { return 1; }
-                col = 0;
+        if wrap == 0 {
+            if !write_all(STDOUT, &out[..n_out]) { return 1; }
+        } else {
+            // Wrap output at `wrap` columns.
+            let mut written = 0usize;
+            while written < n_out {
+                let avail = (wrap - col) as usize;
+                let take = avail.min(n_out - written);
+                if !write_all(STDOUT, &out[written..written + take]) { return 1; }
+                col += take as u32;
+                written += take;
+                if col == wrap {
+                    if !write_all(STDOUT, b"\n") { return 1; }
+                    col = 0;
+                }
             }
         }
         if filled < ENC_IN_CHUNK { break; }
     }
-    if col != 0 {
+    // Flush a trailing partial line on wrapped output. With wrap == 0
+    // we never started a "line" — but we still want a final newline
+    // so the output ends cleanly the way GNU base64 does.
+    if wrap == 0 {
+        if !write_all(STDOUT, b"\n") { return 1; }
+    } else if col != 0 {
         if !write_all(STDOUT, b"\n") { return 1; }
     }
     0
@@ -396,9 +407,26 @@ fn pad_count_for(quad: [u32; 4]) -> usize {
     pads
 }
 
+// Parse a small decimal u32 (0..=10000 range covers reasonable wrap
+// widths). Returns None on a non-digit or overflow.
+fn parse_u32_small(p: *const u8) -> Option<u32> {
+    let mut n = 0usize;
+    unsafe { while *p.add(n) != 0 { n += 1; } }
+    if n == 0 { return None; }
+    let mut v: u32 = 0;
+    for i in 0..n {
+        let c = unsafe { *p.add(i) };
+        if !(b'0'..=b'9').contains(&c) { return None; }
+        v = v.checked_mul(10)?.checked_add((c - b'0') as u32)?;
+        if v > 10_000 { return None; }
+    }
+    Some(v)
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
     let mut do_decode = false;
+    let mut wrap: u32 = 76;  // GNU default
     let mut input_path: Option<*const u8> = None;
     let mut idx: i32 = 1;
     while idx < argc {
@@ -410,6 +438,23 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         if cstr_eq(p, b"-d") || cstr_eq(p, b"--decode") {
             do_decode = true;
             idx += 1;
+        } else if cstr_eq(p, b"-w") || cstr_eq(p, b"--wrap") {
+            if idx + 1 >= argc {
+                write_str(STDERR, b"rust-base64: -w needs a column count (0 disables wrapping)\n");
+                return 1;
+            }
+            let wp = unsafe { *argv.add((idx + 1) as usize) };
+            if wp.is_null() || (wp as usize) < 0x10000 {
+                return 1;
+            }
+            match parse_u32_small(wp) {
+                Some(v) => wrap = v,
+                None => {
+                    write_str(STDERR, b"rust-base64: invalid -w value\n");
+                    return 1;
+                }
+            }
+            idx += 2;
         } else if cstr_eq(p, b"--") {
             idx += 1;
             if idx < argc {
@@ -446,7 +491,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         }
     }
 
-    let rc = if do_decode { decode(fd) } else { encode(fd) };
+    let rc = if do_decode { decode(fd) } else { encode(fd, wrap) };
     if fd != STDIN {
         unsafe { let _ = syscall1(sysn::CLOSE, fd as u64); }
     }

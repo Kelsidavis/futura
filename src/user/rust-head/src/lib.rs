@@ -389,19 +389,28 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         }
 
         let mut first = true;
+        let stdin_label: &[u8] = b"standard input";
         while let Some(p) = argv_get(argc, argv, idx) {
             let n = cstr_len(p);
-            let fd = unsafe { sys_open_ro(p) };
-            if fd < 0 {
-                write_str(STDERR, b"rust-head: cannot open '");
-                unsafe {
-                    let _ = syscall3(sysn::WRITE, STDERR as u64, p as u64, n as u64);
+            // "-" reads stdin; the header label is the conventional
+            // "==> standard input <==".
+            let is_dash = n == 1 && unsafe { *p } == b'-';
+            let (fd, opened_owned, header_ptr, header_len) = if is_dash {
+                (STDIN, false, stdin_label.as_ptr(), stdin_label.len())
+            } else {
+                let f = unsafe { sys_open_ro(p) };
+                if f < 0 {
+                    write_str(STDERR, b"rust-head: cannot open '");
+                    unsafe {
+                        let _ = syscall3(sysn::WRITE, STDERR as u64, p as u64, n as u64);
+                    }
+                    write_str(STDERR, b"'\n");
+                    had_error = true;
+                    idx += 1;
+                    continue;
                 }
-                write_str(STDERR, b"'\n");
-                had_error = true;
-                idx += 1;
-                continue;
-            }
+                (f as i32, true, p, n)
+            };
             let show_header = match hmode {
                 HeaderMode::Quiet => false,
                 HeaderMode::Verbose => true,
@@ -413,16 +422,16 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
                 }
                 write_str(STDOUT, b"==> ");
                 unsafe {
-                    let _ = syscall3(sysn::WRITE, STDOUT as u64, p as u64, n as u64);
+                    let _ = syscall3(sysn::WRITE, STDOUT as u64, header_ptr as u64, header_len as u64);
                 }
                 write_str(STDOUT, b" <==\n");
             }
             first = false;
-            if head_fd(fd as i32, limit, &mut buf).is_err() {
+            if head_fd(fd, limit, &mut buf).is_err() {
                 had_error = true;
             }
-            unsafe {
-                let _ = syscall1(sysn::CLOSE, fd as u64);
+            if opened_owned {
+                unsafe { let _ = syscall1(sysn::CLOSE, fd as u64); }
             }
             idx += 1;
         }

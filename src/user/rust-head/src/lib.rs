@@ -6,6 +6,10 @@
 // Default is 10 lines like GNU head. Pass `-n NUM` to override.
 // Reads in 4 KiB chunks and counts '\n' bytes; once N have been
 // emitted on the current file, the rest of that file is skipped.
+//
+// Header printing for multiple files defaults to "auto" (only when
+// >1 file). `-q` (or `--quiet`/`--silent`) suppresses headers always;
+// `-v` (`--verbose`) forces them on even for a single file.
 
 #![no_std]
 #![forbid(unsafe_op_in_unsafe_fn)]
@@ -293,13 +297,27 @@ fn head_fd(fd: i32, limit: u64, buf: &mut [u8]) -> Result<(), ()> {
     Ok(())
 }
 
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum HeaderMode { Auto, Quiet, Verbose }
+
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
     let mut idx: usize = 1;
     let mut limit: u64 = DEFAULT_LINES;
+    let mut hmode = HeaderMode::Auto;
 
     // Parse `-n N` and `-N` (GNU shorthand).
     while let Some(p) = argv_get(argc, argv, idx) {
+        if arg_is(p, b"-q") || arg_is(p, b"--quiet") || arg_is(p, b"--silent") {
+            hmode = HeaderMode::Quiet;
+            idx += 1;
+            continue;
+        }
+        if arg_is(p, b"-v") || arg_is(p, b"--verbose") {
+            hmode = HeaderMode::Verbose;
+            idx += 1;
+            continue;
+        }
         if arg_is(p, b"-n") {
             idx += 1;
             match argv_get(argc, argv, idx) {
@@ -380,7 +398,12 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
                 idx += 1;
                 continue;
             }
-            if file_count > 1 {
+            let show_header = match hmode {
+                HeaderMode::Quiet => false,
+                HeaderMode::Verbose => true,
+                HeaderMode::Auto => file_count > 1,
+            };
+            if show_header {
                 if !first {
                     write_str(STDOUT, b"\n");
                 }

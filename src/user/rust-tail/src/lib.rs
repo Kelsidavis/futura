@@ -371,12 +371,22 @@ fn tail_fd(fd: i32, tail: &mut Tail, scratch: &mut [u8]) -> Result<(), ()> {
     Ok(())
 }
 
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum HeaderMode { Auto, Quiet, Verbose }
+
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
     let mut idx: usize = 1;
     let mut limit: usize = DEFAULT_LINES;
+    let mut hmode = HeaderMode::Auto;
 
     while let Some(p) = argv_get(argc, argv, idx) {
+        if arg_is(p, b"-q") || arg_is(p, b"--quiet") || arg_is(p, b"--silent") {
+            hmode = HeaderMode::Quiet; idx += 1; continue;
+        }
+        if arg_is(p, b"-v") || arg_is(p, b"--verbose") {
+            hmode = HeaderMode::Verbose; idx += 1; continue;
+        }
         if arg_is(p, b"-n") {
             idx += 1;
             match argv_get(argc, argv, idx) {
@@ -466,7 +476,12 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
                 idx += 1;
                 continue;
             }
-            if file_count > 1 {
+            let show_header = match hmode {
+                HeaderMode::Quiet => false,
+                HeaderMode::Verbose => true,
+                HeaderMode::Auto => file_count > 1,
+            };
+            if show_header {
                 if !first {
                     write_str(STDOUT, b"\n");
                 }

@@ -114,12 +114,18 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
     if argc >= 2 {
         let p = unsafe { *argv.add(1) };
         if !p.is_null() && (p as usize) >= 0x10000 {
-            // Compare against b"-x"
+            // Compare against b"-x". Walk the bytes one at a time so we
+            // bail at the NUL — a blanket *p.add(1)/*p.add(2) read on a
+            // 0- or 1-byte argv runs past its NUL terminator.
             let b0 = unsafe { *p };
-            let b1 = unsafe { *p.add(1) };
-            let b2 = unsafe { *p.add(2) };
-            if b0 == b'-' && b1 == b'x' && b2 == 0 {
-                keep_scrollback = true;
+            if b0 == b'-' {
+                let b1 = unsafe { *p.add(1) };
+                if b1 == b'x' {
+                    let b2 = unsafe { *p.add(2) };
+                    if b2 == 0 {
+                        keep_scrollback = true;
+                    }
+                }
             }
         }
     }

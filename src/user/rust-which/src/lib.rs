@@ -261,8 +261,9 @@ fn try_path(dir: &[u8], name: &[u8]) -> bool {
     false
 }
 
-// Look up a single name. Returns true on success (path printed).
-fn lookup_one(name_p: *const u8, name: &[u8], path_slice: &[u8]) -> bool {
+// Look up a single name. Returns true if at least one match was
+// printed. With `find_all`, walks the entire PATH and prints every hit.
+fn lookup_one(name_p: *const u8, name: &[u8], path_slice: &[u8], find_all: bool) -> bool {
     // If the name itself contains a slash, treat it as a literal path —
     // POSIX which(1) does the same.
     let mut has_slash = false;
@@ -282,48 +283,86 @@ fn lookup_one(name_p: *const u8, name: &[u8], path_slice: &[u8]) -> bool {
         return false;
     }
 
-    // Walk the colon-separated PATH.
+    // Walk the colon-separated PATH. With find_all, keep walking after
+    // the first hit so every match in PATH is printed.
     let mut start = 0usize;
+    let mut any = false;
     for i in 0..=path_slice.len() {
         let at_end = i == path_slice.len();
         if at_end || path_slice[i] == b':' {
             let dir = &path_slice[start..i];
-            if try_path(dir, name) { return true; }
+            if try_path(dir, name) {
+                any = true;
+                if !find_all { return true; }
+            }
             start = i + 1;
         }
     }
-    false
+    any
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, envp: *const *const u8) -> i32 {
-    if argc == 2 {
-        let first = unsafe { *argv.add(1) };
-        if !first.is_null() && (first as usize) >= 0x10000 {
+    let mut find_all = false;
+    let mut quiet = false;
+    let mut idx: i32 = 1;
+    while idx < argc {
+        let p = unsafe { *argv.add(idx as usize) };
+        if p.is_null() || (p as usize) < 0x10000 { break; }
+        let n = cstr_len(p);
+        // --help
+        if n == 6 {
             let want = b"--help";
-            let n = cstr_len(first);
-            if n == want.len() {
-                let mut ok = true;
-                for i in 0..want.len() {
-                    if unsafe { *first.add(i) } != want[i] { ok = false; break; }
-                }
-                if ok {
-                    let help: &[u8] = b"\
-Usage: rust-which NAME [NAME...]
+            let mut ok = true;
+            for i in 0..want.len() {
+                if unsafe { *p.add(i) } != want[i] { ok = false; break; }
+            }
+            if ok {
+                let help: &[u8] = b"\
+Usage: rust-which [-a] [-s] NAME [NAME...]
 Print the resolved path of each NAME found in $PATH.
 
-  --help    show this help and exit
+  -a, --all      print every match in PATH (not just the first)
+  -s, --silent   no output; exit status reflects whether all NAMEs were found
+      --help     show this help and exit
 \0";
-                    let len = help.len() - 1;
-                    unsafe { let _ = syscall3(sysn::WRITE, STDOUT as u64,
-                                              help.as_ptr() as u64, len as u64); }
-                    return 0;
-                }
+                let hlen = help.len() - 1;
+                unsafe { let _ = syscall3(sysn::WRITE, STDOUT as u64,
+                                          help.as_ptr() as u64, hlen as u64); }
+                return 0;
             }
         }
+        // -a / --all
+        let is_a = n == 2 && unsafe { *p == b'-' && *p.add(1) == b'a' };
+        let is_all = n == 5 && {
+            let want = b"--all";
+            let mut ok = true;
+            for i in 0..want.len() {
+                if unsafe { *p.add(i) } != want[i] { ok = false; break; }
+            }
+            ok
+        };
+        if is_a || is_all { find_all = true; idx += 1; continue; }
+        // -s / --silent
+        let is_s = n == 2 && unsafe { *p == b'-' && *p.add(1) == b's' };
+        let is_silent = n == 8 && {
+            let want = b"--silent";
+            let mut ok = true;
+            for i in 0..want.len() {
+                if unsafe { *p.add(i) } != want[i] { ok = false; break; }
+            }
+            ok
+        };
+        if is_s || is_silent { quiet = true; idx += 1; continue; }
+        // -- ends options
+        if n == 2 && unsafe { *p == b'-' && *p.add(1) == b'-' } {
+            idx += 1;
+            break;
+        }
+        break;
     }
-    if argc < 2 {
-        write_str(STDERR, b"usage: rust-which <name> [<name>...]\n");
+    if idx >= argc {
+        write_str(STDERR, b"usage: rust-which [-a] [-s] <name> [<name>...]\n");
         return 2;
     }
 
@@ -338,8 +377,12 @@ Print the resolved path of each NAME found in $PATH.
         None => default_path,
     };
 
+    // -s redirects stdout to /dev/null by stuffing a sentinel: the
+    // simpler approach is to just skip the writes inside try_path. We
+    // implement quiet by funneling lookup through a wrapper that
+    // captures hit/miss without printing.
     let mut not_found = 0i32;
-    for ai in 1..argc {
+    for ai in idx..argc {
         let p = unsafe { *argv.add(ai as usize) };
         if p.is_null() || (p as usize) < 0x10000 {
             not_found += 1;
@@ -347,11 +390,61 @@ Print the resolved path of each NAME found in $PATH.
         }
         let n = cstr_len(p);
         let name = unsafe { core::slice::from_raw_parts(p, n) };
-        if !lookup_one(p, name, path_slice) {
-            not_found += 1;
+        let hit = if quiet {
+            silent_lookup(name, path_slice)
+        } else {
+            lookup_one(p, name, path_slice, find_all)
+        };
+        if !hit { not_found += 1; }
+    }
+    if not_found == 0 { 0 } else { 1 }
+}
+
+// Quiet lookup: same PATH walk as try_path, but with no stdout.
+// Used by -s/--silent so the caller only has to inspect the exit status.
+fn silent_lookup(name: &[u8], path_slice: &[u8]) -> bool {
+    let mut has_slash = false;
+    for &b in name {
+        if b == b'/' { has_slash = true; break; }
+    }
+    let mut buf = [0u8; 1024];
+    if has_slash {
+        if name.len() + 1 > buf.len() { return false; }
+        for (i, &b) in name.iter().enumerate() { buf[i] = b; }
+        buf[name.len()] = 0;
+        let fd = unsafe {
+            syscall4(sysn::OPENAT, AT_FDCWD as u64, buf.as_ptr() as u64, O_RDONLY, 0) as i32
+        };
+        if fd >= 0 {
+            unsafe { let _ = syscall1(sysn::CLOSE, fd as u64); }
+            return true;
+        }
+        return false;
+    }
+    let mut start = 0usize;
+    for i in 0..=path_slice.len() {
+        let at_end = i == path_slice.len();
+        if at_end || path_slice[i] == b':' {
+            let dir = &path_slice[start..i];
+            let dir_use: &[u8] = if dir.is_empty() { b"." } else { dir };
+            if dir_use.len() + 1 + name.len() + 1 > buf.len() {
+                start = i + 1;
+                continue;
+            }
+            let mut n = 0usize;
+            for &b in dir_use { buf[n] = b; n += 1; }
+            if n == 0 || buf[n - 1] != b'/' { buf[n] = b'/'; n += 1; }
+            for &b in name { buf[n] = b; n += 1; }
+            buf[n] = 0;
+            let fd = unsafe {
+                syscall4(sysn::OPENAT, AT_FDCWD as u64, buf.as_ptr() as u64, O_RDONLY, 0) as i32
+            };
+            if fd >= 0 {
+                unsafe { let _ = syscall1(sysn::CLOSE, fd as u64); }
+                return true;
+            }
+            start = i + 1;
         }
     }
-    // GNU which exits with the count of names that weren't found
-    // (clamped to 0/1/2: 0=all found, otherwise 1).
-    if not_found == 0 { 0 } else { 1 }
+    false
 }

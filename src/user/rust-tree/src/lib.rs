@@ -415,6 +415,24 @@ Recursively list PATH (or '.') with indent prefixes per depth.
                                        help.as_ptr() as u64, len as u64); }
             return 0;
         } else {
+            // Combined short flags like -ad, -da. (-L takes a value so
+            // it can't combine.) Refuse on unknown letters.
+            let n = {
+                let mut k = 0usize;
+                unsafe { while *p.add(k) != 0 { k += 1; } }
+                k
+            };
+            if n >= 2 && unsafe { *p } == b'-' && unsafe { *p.add(1) } != b'-' {
+                let mut all_ok = true;
+                for i in 1..n {
+                    match unsafe { *p.add(i) } {
+                        b'a' => mode = DotMode::ShowAll,
+                        b'd' => dirs_only = true,
+                        _ => { all_ok = false; break; }
+                    }
+                }
+                if all_ok { idx += 1; continue; }
+            }
             break;
         }
     }

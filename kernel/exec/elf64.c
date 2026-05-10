@@ -39,7 +39,10 @@
 #include <kernel/debug_config.h>
 
 /* ELF debugging disabled for clean boot */
-#define ELF_LOG(...) do {} while(0)
+/* Re-enabled while we're diagnosing the bare-metal init-launch hang.
+ * Originally a no-op for performance. Once exec works on bare metal,
+ * gate behind a CONFIG flag rather than leaving on permanently. */
+#define ELF_LOG(...) fut_printf(__VA_ARGS__)
 
 /* TLS block address - placed below stack in user address space */
 #define USER_TLS_BASE   0x00007FFE000000ULL
@@ -2972,7 +2975,10 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
 
 /* Logging macros disabled for clean boot */
 #undef ELF_LOG
-#define ELF_LOG(...) do {} while(0)
+/* Re-enabled while we're diagnosing the bare-metal init-launch hang.
+ * Originally a no-op for performance. Once exec works on bare metal,
+ * gate behind a CONFIG flag rather than leaving on permanently. */
+#define ELF_LOG(...) fut_printf(__VA_ARGS__)
 #define stack_printf(...) do {} while(0)
 
 /* ELF metadata for auxiliary vector (also defined in x86_64 section) */

@@ -229,24 +229,25 @@ fn slurp(fd: i32) -> usize {
 }
 
 // Slurp `fd` into the static BUF, then emit lines in reverse order.
+// `sep` is the line terminator — '\n' by default, NUL with -z.
 // Returns true on success (clean read + writes), false on any error.
-fn tac_fd(fd: i32) -> bool {
+fn tac_fd(fd: i32, sep: u8) -> bool {
     let n = slurp(fd);
     if n == 0 { return true; }
 
     let buf = unsafe { core::slice::from_raw_parts(core::ptr::addr_of!(BUF) as *const u8, n) };
     let mut tail = n;
-    let had_trailing_partial = buf[n - 1] != b'\n';
+    let had_trailing_partial = buf[n - 1] != sep;
     if had_trailing_partial {
         let mut start = n;
-        while start > 0 && buf[start - 1] != b'\n' { start -= 1; }
+        while start > 0 && buf[start - 1] != sep { start -= 1; }
         if !write_all(STDOUT, &buf[start..n]) { return false; }
         tail = start;
     }
     let mut end = tail;
     while end > 0 {
         let mut start = end - 1;
-        while start > 0 && buf[start - 1] != b'\n' { start -= 1; }
+        while start > 0 && buf[start - 1] != sep { start -= 1; }
         if !write_all(STDOUT, &buf[start..end]) { return false; }
         end = start;
     }
@@ -256,35 +257,57 @@ fn tac_fd(fd: i32) -> bool {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
-    if argc >= 2 {
-        let first = unsafe { *argv.add(1) };
-        if !first.is_null() && (first as usize) >= 0x10000 {
-            let want = b"--help";
-            let mut ok = true;
-            for i in 0..want.len() {
-                if unsafe { *first.add(i) } != want[i] { ok = false; break; }
-            }
-            if ok && unsafe { *first.add(want.len()) } == 0 {
-                let help: &[u8] = b"\
-Usage: rust-tac [FILE]...
+    // Parse leading flags: --help, -z/--zero-terminated.
+    let mut sep: u8 = b'\n';
+    let mut idx: i32 = 1;
+    while idx < argc {
+        let p = unsafe { *argv.add(idx as usize) };
+        if p.is_null() || (p as usize) < 0x10000 { break; }
+        let want_h = b"--help";
+        let mut h_ok = true;
+        for i in 0..want_h.len() {
+            if unsafe { *p.add(i) } != want_h[i] { h_ok = false; break; }
+        }
+        if h_ok && unsafe { *p.add(want_h.len()) } == 0 {
+            let help: &[u8] = b"\
+Usage: rust-tac [-z] [FILE]...
 Concatenate FILEs and print them in reverse line order. Each FILE is
 slurped into a static buffer, then emitted last-line-first. With no
 FILE (or FILE = '-') reads stdin.
 
-  --help    show this help and exit
+  -z, --zero-terminated  line delimiter is NUL, not newline
+      --help             show this help and exit
 \0";
-                let len = help.len() - 1;
-                unsafe { let _ = syscall3(sysn::WRITE, STDOUT as u64,
-                                          help.as_ptr() as u64, len as u64); }
-                return 0;
-            }
+            let len = help.len() - 1;
+            unsafe { let _ = syscall3(sysn::WRITE, STDOUT as u64,
+                                      help.as_ptr() as u64, len as u64); }
+            return 0;
         }
+        // -z
+        let is_z = unsafe { *p == b'-' && *p.add(1) == b'z' && *p.add(2) == 0 };
+        let want_zl = b"--zero-terminated";
+        let mut zl_ok = true;
+        for i in 0..want_zl.len() {
+            if unsafe { *p.add(i) } != want_zl[i] { zl_ok = false; break; }
+        }
+        let is_zlong = zl_ok && unsafe { *p.add(want_zl.len()) } == 0;
+        if is_z || is_zlong {
+            sep = 0;
+            idx += 1;
+            continue;
+        }
+        // -- ends options
+        if unsafe { *p == b'-' && *p.add(1) == b'-' && *p.add(2) == 0 } {
+            idx += 1;
+            break;
+        }
+        break;
     }
-    if argc < 2 {
-        return if tac_fd(STDIN) { 0 } else { 1 };
+    if idx >= argc {
+        return if tac_fd(STDIN, sep) { 0 } else { 1 };
     }
     let mut had_error = false;
-    for ai in 1..argc {
+    for ai in idx..argc {
         let p = unsafe { *argv.add(ai as usize) };
         if p.is_null() || (p as usize) < 0x10000 {
             had_error = true;
@@ -295,7 +318,7 @@ FILE (or FILE = '-') reads stdin.
         unsafe { while *p.add(nlen) != 0 { nlen += 1; } }
         let is_dash = nlen == 1 && unsafe { *p } == b'-';
         if is_dash {
-            if !tac_fd(STDIN) { had_error = true; }
+            if !tac_fd(STDIN, sep) { had_error = true; }
             continue;
         }
         let fd = unsafe {
@@ -308,7 +331,7 @@ FILE (or FILE = '-') reads stdin.
             had_error = true;
             continue;
         }
-        if !tac_fd(fd) { had_error = true; }
+        if !tac_fd(fd, sep) { had_error = true; }
         unsafe { let _ = syscall1(sysn::CLOSE, fd as u64); }
     }
     if had_error { 1 } else { 0 }

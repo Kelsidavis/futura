@@ -208,10 +208,11 @@ enum BodyStyle { All, NonBlank, None }
 struct NlOpts {
     style: BodyStyle,
     width: u32,         // -w
-    sep: [u8; 16],      // -s SEP
+    sep: [u8; 16],      // -s SEP (between number and line)
     sep_len: u32,
     increment: u64,     // -i
     start: u64,         // -v
+    line_sep: u8,       // -z: NUL line terminator instead of '\n'
 }
 
 // Format a u64 right-aligned into `width` chars, then append `sep`.
@@ -260,7 +261,7 @@ fn nl_fd(fd: i32, st: &mut NlState, opts: &NlOpts) -> bool {
         let mut start = 0usize;
         for i in 0..chunk.len() {
             let c = chunk[i];
-            if c == b'\n' {
+            if c == opts.line_sep {
                 let seg = &chunk[start..i + 1];
                 let want_number = match opts.style {
                     BodyStyle::None => false,
@@ -321,6 +322,7 @@ fn parse_u64_arg(p: *const u8) -> Option<u64> {
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
     let mut opts = NlOpts {
+        line_sep: b'\n',
         style: BodyStyle::NonBlank,
         width: 6,
         sep: [0; 16],
@@ -353,6 +355,7 @@ Number text lines.
   -s SEP     separator between number and line (default TAB)
   -v N       initial line number (default 1)
   -i N       line-number increment (default 1)
+  -z, --zero-terminated  line delimiter is NUL, not newline
       --help     show this help and exit
 
 A '-' in the FILE list means standard input.
@@ -363,6 +366,19 @@ A '-' in the FILE list means standard input.
             return 0;
         }
 
+        // -z / --zero-terminated
+        if (nlen == 2 && unsafe { *p == b'-' && *p.add(1) == b'z' })
+            || (nlen == 17 && unsafe {
+                let want = b"--zero-terminated";
+                let mut ok = true;
+                for j in 0..want.len() { if *p.add(j) != want[j] { ok = false; break; } }
+                ok
+            })
+        {
+            opts.line_sep = 0;
+            idx += 1;
+            continue;
+        }
         // -b STYLE
         if nlen == 2 && unsafe { *p == b'-' && *p.add(1) == b'b' } {
             if idx + 1 >= argc {

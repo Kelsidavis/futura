@@ -241,13 +241,22 @@ fn arg_eq(p: *const u8, want: &[u8]) -> bool {
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
     let mut no_clobber = false;
     let mut verbose = false;
+    let mut no_target_dir = false;
     let mut idx: i32 = 1;
     while idx < argc {
         let p = unsafe { *argv.add(idx as usize) };
         if p.is_null() || (p as usize) < 0x10000 { break; }
-        if arg_eq(p, b"-n") { no_clobber = true; idx += 1; continue; }
+        if arg_eq(p, b"-n") || arg_eq(p, b"--no-clobber") {
+            no_clobber = true; idx += 1; continue;
+        }
         if arg_eq(p, b"-v") || arg_eq(p, b"--verbose") {
             verbose = true; idx += 1; continue;
+        }
+        if arg_eq(p, b"-T") || arg_eq(p, b"--no-target-directory") {
+            // -T: never treat DEST as a directory, even if it is one.
+            // Useful when renaming a directory itself (mv -T olddir
+            // newdir treats newdir as the renamed name, not a parent).
+            no_target_dir = true; idx += 1; continue;
         }
         if arg_eq(p, b"-f") || arg_eq(p, b"--force") {
             // Default mv overwrites; -f is a no-op kept for portability
@@ -269,6 +278,8 @@ SRC is renamed to DEST/basename(SRC).
 
   -n, --no-clobber  refuse to overwrite an existing destination
   -f, --force       always overwrite (default; clears any prior -n)
+  -T, --no-target-directory
+                    never treat DEST as a directory (rename DEST itself)
   -v, --verbose     emit \"renamed 'src' -> 'dst'\" on success
       --help        show this help and exit
 \0";
@@ -291,13 +302,15 @@ SRC is renamed to DEST/basename(SRC).
     }
 
     // If DST is an existing directory, the rename target is
-    // "<dst>/<basename(src)>" (POSIX mv into a directory).
+    // "<dst>/<basename(src)>" (POSIX mv into a directory). With -T the
+    // user has asserted DEST is *not* a target directory, so skip the
+    // probe entirely and use the raw arg.
     let mut composed = [0u8; 1024];
     let dst: *const u8 = {
-        let probe = unsafe {
+        let probe = if no_target_dir { -1i64 } else { unsafe {
             syscall4(sysn::OPENAT, AT_FDCWD as u64, dst_arg as u64,
                      O_RDONLY | O_DIRECTORY, 0)
-        };
+        }};
         if probe >= 0 {
             unsafe { let _ = syscall1(sysn::CLOSE, probe as u64); }
             let mut dlen = 0usize;

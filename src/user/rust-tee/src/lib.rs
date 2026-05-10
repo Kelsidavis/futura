@@ -224,7 +224,8 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
     let mut start_idx: i32 = 1;
     while start_idx < argc {
         let p = unsafe { *argv.add(start_idx as usize) };
-        if !p.is_null() && (p as usize) >= 0x10000 && arg_is(p, b"-a") {
+        if !p.is_null() && (p as usize) >= 0x10000
+            && (arg_is(p, b"-a") || arg_is(p, b"--append")) {
             append = true;
             start_idx += 1;
         } else if !p.is_null() && (p as usize) >= 0x10000 && arg_is(p, b"--help") {

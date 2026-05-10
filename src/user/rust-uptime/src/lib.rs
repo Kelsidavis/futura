@@ -277,39 +277,100 @@ fn write_field(n: u64, unit: u8) {
     write_str(STDOUT, &suffix);
 }
 
+// Render `n unit_singular[s]` followed by `tail` (e.g. ", " or "\n").
+// Pluralizes by appending 's' when n != 1. Used by -p mode.
+fn write_pretty_field(n: u64, unit: &[u8], tail: &[u8]) {
+    let mut buf = [0u8; 24];
+    let mut i = buf.len();
+    let mut v = n;
+    if v == 0 {
+        i -= 1;
+        buf[i] = b'0';
+    } else {
+        while v > 0 {
+            i -= 1;
+            buf[i] = b'0' + (v % 10) as u8;
+            v /= 10;
+        }
+    }
+    write_str(STDOUT, &buf[i..]);
+    write_str(STDOUT, b" ");
+    write_str(STDOUT, unit);
+    if n != 1 { write_str(STDOUT, b"s"); }
+    write_str(STDOUT, tail);
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
-    if argc == 2 {
-        let p = unsafe { *argv.add(1) };
-        if !p.is_null() && (p as usize) >= 0x10000 {
+    let mut pretty = false;
+    let mut idx: i32 = 1;
+    while idx < argc {
+        let p = unsafe { *argv.add(idx as usize) };
+        if p.is_null() || (p as usize) < 0x10000 { break; }
+        let mut n = 0; unsafe { while *p.add(n) != 0 { n += 1; } }
+        // --help
+        if n == 6 && unsafe {
             let want = b"--help";
-            let mut n = 0; unsafe { while *p.add(n) != 0 { n += 1; } }
-            if n == want.len() {
-                let mut ok = true;
-                for i in 0..want.len() {
-                    if unsafe { *p.add(i) } != want[i] { ok = false; break; }
-                }
-                if ok {
-                    let help: &[u8] = b"\
-Usage: rust-uptime
+            let mut ok = true;
+            for i in 0..want.len() { if *p.add(i) != want[i] { ok = false; break; } }
+            ok
+        } {
+            let help: &[u8] = b"\
+Usage: rust-uptime [-p]
 Print system uptime as 'up Xd Yh Zm Ws' with leading zero fields
 omitted.
 
-  --help    show this help and exit
+  -p, --pretty    print uptime in English (\"up 5 minutes, 32 seconds\")
+      --help      show this help and exit
 \0";
-                    let len = help.len() - 1;
-                    unsafe { let _ = syscall3(sysn::WRITE, STDOUT as u64,
-                                              help.as_ptr() as u64, len as u64); }
-                    return 0;
-                }
-            }
+            let hlen = help.len() - 1;
+            unsafe { let _ = syscall3(sysn::WRITE, STDOUT as u64,
+                                      help.as_ptr() as u64, hlen as u64); }
+            return 0;
         }
+        let is_p = n == 2 && unsafe { *p == b'-' && *p.add(1) == b'p' };
+        let is_pretty = n == 8 && unsafe {
+            let want = b"--pretty";
+            let mut ok = true;
+            for i in 0..want.len() { if *p.add(i) != want[i] { ok = false; break; } }
+            ok
+        };
+        if is_p || is_pretty { pretty = true; idx += 1; continue; }
+        if n == 2 && unsafe { *p == b'-' && *p.add(1) == b'-' } {
+            break;
+        }
+        break;
     }
+    let _ = idx;
     let secs = read_uptime_secs();
     let days = secs / 86400;
     let hours = (secs % 86400) / 3600;
     let mins = (secs % 3600) / 60;
     let s = secs % 60;
+
+    if pretty {
+        // Match GNU uptime -p shape: "up X minutes, Y seconds".
+        // Suppress smaller leading zero parts (e.g. exact-day uptime
+        // shows "up 3 days" with no minutes/seconds).
+        write_str(STDOUT, b"up ");
+        let mut printed_any = false;
+        let mut emit = |n: u64, unit: &[u8]| {
+            if n == 0 && !printed_any { return; }
+            if printed_any { write_str(STDOUT, b", "); }
+            write_pretty_field(n, unit, b"");
+            printed_any = true;
+        };
+        emit(days, b"day");
+        emit(hours, b"hour");
+        emit(mins, b"minute");
+        emit(s, b"second");
+        if !printed_any {
+            // Sub-second uptime — fall back to "up 0 seconds".
+            write_pretty_field(0, b"second", b"");
+        }
+        write_str(STDOUT, b"\n");
+        return 0;
+    }
     write_str(STDOUT, b"up ");
 
     // Skip leading zero fields so a 5-second uptime prints as

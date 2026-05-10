@@ -35,6 +35,7 @@ mod sysn {
     pub const WRITE: u64 = 64;
     pub const EXIT: u64 = 93;
     pub const NEWFSTATAT: u64 = 79;
+    pub const READLINKAT: u64 = 78;
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -43,6 +44,7 @@ mod sysn {
     pub const EXIT: u64 = 60;
     pub const STAT: u64 = 4;
     pub const LSTAT: u64 = 6;
+    pub const READLINK: u64 = 89;
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -295,6 +297,44 @@ fn render_format(format: &[u8], path: &[u8], st: &StatBuf) -> bool {
             i += 2;
             match spec {
                 b'n' => { if !write_all(STDOUT, path) { return false; } }
+                b'N' => {
+                    // GNU stat %N: shell-quoted file name. For symlinks
+                    // also append ` -> '<target>'`. Quoting here is the
+                    // simple form (single-quotes around the bytes); GNU
+                    // also escapes embedded quotes — left out for now.
+                    if !write_all(STDOUT, b"'")    { return false; }
+                    if !write_all(STDOUT, path)    { return false; }
+                    if !write_all(STDOUT, b"'")    { return false; }
+                    let mode_bits = st.st_mode & 0o170000;
+                    if mode_bits == 0o120000 {
+                        // Read the symlink target. Best-effort — if
+                        // readlinkat fails, just leave the arrow off.
+                        let mut tgt = [0u8; 256];
+                        // Build NUL-terminated path for readlinkat
+                        let mut pbuf = [0u8; 512];
+                        let mut k = 0usize;
+                        while k < path.len() && k + 1 < pbuf.len() {
+                            pbuf[k] = path[k]; k += 1;
+                        }
+                        pbuf[k] = 0;
+                        let r = unsafe {
+                            #[cfg(target_arch = "aarch64")]
+                            { syscall4(sysn::READLINKAT, AT_FDCWD as u64,
+                                       pbuf.as_ptr() as u64, tgt.as_mut_ptr() as u64,
+                                       (tgt.len() - 1) as u64) }
+                            #[cfg(target_arch = "x86_64")]
+                            { syscall3(sysn::READLINK,
+                                       pbuf.as_ptr() as u64, tgt.as_mut_ptr() as u64,
+                                       (tgt.len() - 1) as u64) }
+                        };
+                        if r > 0 {
+                            let n = r as usize;
+                            if !write_all(STDOUT, b" -> '") { return false; }
+                            if !write_all(STDOUT, &tgt[..n]) { return false; }
+                            if !write_all(STDOUT, b"'") { return false; }
+                        }
+                    }
+                }
                 b's' => { if !write_all(STDOUT, fmt_u64(st.st_size, &mut nb))     { return false; } }
                 b'a' => {
                     // GNU: octal mode without leading 0.
@@ -495,7 +535,8 @@ Display file metadata.
   -t, --terse          shorthand for -c '%n %s %b %a %u %g %d %i %h %X %Y %Z %B'
       --help          show this help and exit
 
-Format conversions: %n name, %s size, %a octal mode, %A rwx perms,
+Format conversions: %n name, %N quoted name (with -> target for symlinks),
+%s size, %a octal mode, %A rwx perms,
 %u uid, %U user-name, %g gid, %G group-name, %i inode, %h links,
 %F type-name, %d device, %b blocks, %B blksize, %X atime, %Y mtime,
 %Z ctime, %% literal %.

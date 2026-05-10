@@ -453,6 +453,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
     let mut follow = false;
     let mut format_ptr: Option<*const u8> = None;
     let mut terse = false;
+    let mut printf_mode = false;  // --printf: skip the trailing newline per file
     let mut idx: i32 = 1;
     while idx < argc {
         let p = unsafe { *argv.add(idx as usize) };
@@ -463,9 +464,15 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         if arg_eq(p, b"-t") || arg_eq(p, b"--terse") {
             terse = true; idx += 1; continue;
         }
-        if arg_eq(p, b"-c") || arg_eq(p, b"--format") {
+        if arg_eq(p, b"-c") || arg_eq(p, b"--format") || arg_eq(p, b"--printf") {
+            // --printf is identical to -c except the per-file trailing
+            // newline is suppressed (matches GNU stat). The user's
+            // FORMAT can include \n explicitly if they want one.
+            if arg_eq(p, b"--printf") {
+                printf_mode = true;
+            }
             if idx + 1 >= argc {
-                write_str(STDERR, b"rust-stat: -c needs a format string\n");
+                write_str(STDERR, b"rust-stat: format flag needs an argument\n");
                 return 1;
             }
             let fp = unsafe { *argv.add((idx + 1) as usize) };
@@ -484,6 +491,7 @@ Display file metadata.
 
   -L, --dereference   follow links (default is lstat-style)
   -c, --format FMT    use FMT instead of the default summary
+      --printf FMT    like -c but no trailing newline per file
   -t, --terse          shorthand for -c '%n %s %b %a %u %g %d %i %h %X %Y %Z %B'
       --help          show this help and exit
 
@@ -525,7 +533,7 @@ Format conversions: %n name, %s size, %a octal mode, %A rwx perms,
             continue;
         }
         if !do_stat(p, follow, format_slice) { had_error = true; }
-        if format_slice.is_some() {
+        if format_slice.is_some() && !printf_mode {
             let _ = write_all(STDOUT, b"\n");
         }
     }

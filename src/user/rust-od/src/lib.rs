@@ -199,20 +199,33 @@ fn panic(_info: &PanicInfo) -> ! {
 
 const HEX: &[u8; 16] = b"0123456789abcdef";
 
-// Render `n` as a 7-char zero-padded lowercase hex.
-fn fmt_off(n: u64, out: &mut [u8; 7]) {
+// Render `n` as a 7-char zero-padded value in `radix`. `radix == 0`
+// means "no offset" — emit_row skips the address column entirely.
+fn fmt_off(n: u64, radix: u8, out: &mut [u8; 7]) {
+    let r = match radix {
+        b'x' | 0 => 16u64,
+        b'o'     => 8,
+        b'd'     => 10,
+        _        => 16,
+    };
+    let mut v = n;
     for i in (0..7).rev() {
-        out[i] = HEX[(n >> ((6 - i) * 4) & 0xF) as usize];
+        let d = (v % r) as usize;
+        out[i] = HEX[d];
+        v /= r;
     }
 }
 
 // Render one row given the offset and 1..=16 raw bytes.
-fn emit_row(offset: u64, row: &[u8]) -> bool {
-    // 7-char hex offset + ' '
-    let mut off_buf = [0u8; 7];
-    fmt_off(offset, &mut off_buf);
-    if !write_all(STDOUT, &off_buf) { return false; }
-    if !write_all(STDOUT, b" ") { return false; }
+// `radix` selects the address column format ('x' default, 'd', 'o',
+// or 'n' to suppress entirely).
+fn emit_row(offset: u64, row: &[u8], radix: u8) -> bool {
+    if radix != b'n' {
+        let mut off_buf = [0u8; 7];
+        fmt_off(offset, radix, &mut off_buf);
+        if !write_all(STDOUT, &off_buf) { return false; }
+        if !write_all(STDOUT, b" ") { return false; }
+    }
 
     // 16 hex pairs, space-separated, with an extra space between bytes
     // 7 and 8 to match GNU od's two-half-rows layout. Each pair takes
@@ -254,6 +267,8 @@ struct OdState {
     row: [u8; COL],
     row_len: usize,
     offset: u64,
+    // Address-column radix: 'x' (default), 'd', 'o', or 'n' (suppress).
+    radix: u8,
     // Bytes still to skip (consumed, not emitted). Updated as each
     // file's stream is fed in.
     skip_left: u64,
@@ -286,7 +301,7 @@ fn dump_fd(fd: i32, st: &mut OdState) -> bool {
             st.row[st.row_len] = b;
             st.row_len += 1;
             if st.row_len == COL {
-                if !emit_row(st.offset, &st.row[..st.row_len]) { return false; }
+                if !emit_row(st.offset, &st.row[..st.row_len], st.radix) { return false; }
                 st.offset += COL as u64;
                 st.row_len = 0;
             }
@@ -301,13 +316,15 @@ fn dump_fd(fd: i32, st: &mut OdState) -> bool {
 
 fn finalize(st: &mut OdState) -> bool {
     if st.row_len > 0 {
-        if !emit_row(st.offset, &st.row[..st.row_len]) { return false; }
+        if !emit_row(st.offset, &st.row[..st.row_len], st.radix) { return false; }
         st.offset += st.row_len as u64;
         st.row_len = 0;
     }
     // Final "next offset" line mirrors GNU od's terminating address.
+    // -A n suppresses it entirely.
+    if st.radix == b'n' { return true; }
     let mut off_buf = [0u8; 7];
-    fmt_off(st.offset, &mut off_buf);
+    fmt_off(st.offset, st.radix, &mut off_buf);
     if !write_all(STDOUT, &off_buf) { return false; }
     if !write_all(STDOUT, b"\n") { return false; }
     true
@@ -368,6 +385,7 @@ fn parse_count(p: *const u8) -> Option<u64> {
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
     let mut skip: u64 = 0;
     let mut take: Option<u64> = None;
+    let mut radix: u8 = b'x';
     let mut idx: i32 = 1;
     while idx < argc {
         let p = unsafe { *argv.add(idx as usize) };
@@ -386,12 +404,32 @@ With no FILE (or FILE = '-') reads stdin.
 
   -j SKIP   skip SKIP bytes (decimal, 0x hex, 0 octal; suffix K/M/G/T)
   -N COUNT  dump at most COUNT bytes after the skip (same suffix syntax)
+  -A RADIX  address radix: x (default), d, o, or n (suppress)
   --help    show this help and exit
 \0";
             let len = help.len() - 1;
             unsafe { let _ = syscall3(sysn::WRITE, STDOUT as u64,
                                       help.as_ptr() as u64, len as u64); }
             return 0;
+        }
+        // -A RADIX
+        let is_a_addr = unsafe { *p == b'-' && *p.add(1) == b'A' && *p.add(2) == 0 };
+        if is_a_addr {
+            if idx + 1 >= argc {
+                write_str(STDERR, b"rust-od: -A needs a radix (x/d/o/n)\n");
+                return 1;
+            }
+            let np = unsafe { *argv.add((idx + 1) as usize) };
+            if np.is_null() || (np as usize) < 0x10000 { return 1; }
+            let r = unsafe { *np };
+            // Must be a single character followed by NUL.
+            if unsafe { *np.add(1) } != 0 || !matches!(r, b'x' | b'd' | b'o' | b'n') {
+                write_str(STDERR, b"rust-od: -A expects x / d / o / n\n");
+                return 1;
+            }
+            radix = r;
+            idx += 2;
+            continue;
         }
         // -j N or -j=N
         let is_j = unsafe { *p == b'-' && *p.add(1) == b'j' && *p.add(2) == 0 };
@@ -427,6 +465,7 @@ With no FILE (or FILE = '-') reads stdin.
         row: [0u8; COL],
         row_len: 0,
         offset: skip,
+        radix,
         skip_left: skip,
         take_left: take,
     };

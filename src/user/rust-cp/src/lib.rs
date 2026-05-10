@@ -467,11 +467,17 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
     let mut verbose = false;
     let mut recursive = false;
     let mut preserve_mode = false;
+    let mut no_target_dir = false;
     let mut idx: i32 = 1;
     while idx < argc {
         let p = unsafe { *argv.add(idx as usize) };
         if p.is_null() || (p as usize) < 0x10000 { break; }
-        if arg_is(p, b"-n") { no_clobber = true; idx += 1; continue; }
+        if arg_is(p, b"-n") || arg_is(p, b"--no-clobber") {
+            no_clobber = true; idx += 1; continue;
+        }
+        if arg_is(p, b"-T") || arg_is(p, b"--no-target-directory") {
+            no_target_dir = true; idx += 1; continue;
+        }
         if arg_is(p, b"-v") || arg_is(p, b"--verbose") {
             verbose = true; idx += 1; continue;
         }
@@ -504,6 +510,9 @@ DEST/basename(SRC).
   -n, --no-clobber      do not overwrite an existing file
   -p, --preserve        preserve source mode bits (chmod after copy)
   -r, -R, --recursive   copy directories recursively
+  -T, --no-target-directory
+                        never treat DEST as a directory (DEST is the
+                        new file/dir name itself)
   -v, --verbose         emit \"'src' -> 'dst'\" for each copy
       --help            show this help and exit
 \0";
@@ -536,11 +545,12 @@ DEST/basename(SRC).
         src_buf[s_n] = 0;
 
         // If dst is an existing directory, append basename(src) like
-        // POSIX cp does. Otherwise dst is the new tree root.
-        let dir_probe = unsafe {
+        // POSIX cp does — unless -T was given, in which case the user
+        // wants DST to *be* the destination tree root verbatim.
+        let dir_probe: i64 = if no_target_dir { -1 } else { unsafe {
             syscall4(sysn::OPENAT, AT_FDCWD as u64, dst as u64,
                      O_RDONLY | O_DIRECTORY, 0)
-        };
+        }};
         let mut d_n = 0usize;
         unsafe { while *dst.add(d_n) != 0 && d_n < PATH_MAX - 1 {
             dst_buf[d_n] = *dst.add(d_n); d_n += 1; }
@@ -582,10 +592,10 @@ DEST/basename(SRC).
     let mut composed = [0u8; 1024];
     let mut composed_len = 0usize;
     let dst_open_path: *const u8 = {
-        let dir_probe = unsafe {
+        let dir_probe: i64 = if no_target_dir { -1 } else { unsafe {
             syscall4(sysn::OPENAT, AT_FDCWD as u64, dst as u64,
                      O_RDONLY | O_DIRECTORY, 0)
-        };
+        }};
         if dir_probe >= 0 {
             close_fd(dir_probe as i32);
             // Compose <dst>/<basename(src)>.

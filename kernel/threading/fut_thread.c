@@ -24,18 +24,6 @@
 #include <stdatomic.h>
 #include <kernel/uaccess.h>
 
-/* TC_LOG: gated diagnostic output for fut_thread_create.
- * Off by default; flip CONFIG_DEBUG_THREAD_CREATE=1 to re-enable
- * the per-step trace we added during iter-31 bare-metal bisection. */
-#ifndef CONFIG_DEBUG_THREAD_CREATE
-#define CONFIG_DEBUG_THREAD_CREATE 0
-#endif
-#if CONFIG_DEBUG_THREAD_CREATE
-#define TC_LOG(...) fut_printf(__VA_ARGS__)
-#else
-#define TC_LOG(...) do {} while(0)
-#endif
-
 [[noreturn]] static void fut_thread_trampoline(void (*entry)(void *), void *arg) __attribute__((used));
 
 /* External declarations */
@@ -144,10 +132,7 @@ fut_thread_t *fut_thread_create(
     size_t stack_size,
     int priority
 ) {
-    TC_LOG("[TC] enter task=%p entry=%p stack=%zu prio=%d\n",
-               task, entry, stack_size, priority);
     if (!task || !entry || stack_size == 0) {
-        TC_LOG("[TC] bad args, returning NULL\n");
         return NULL;
     }
 
@@ -172,13 +157,10 @@ fut_thread_t *fut_thread_create(
     // Round up size to multiple of 16 and allocate extra space for alignment
     size_t thread_size = sizeof(fut_thread_t);
     size_t alloc_size = thread_size + 16;  // Extra space for alignment
-    TC_LOG("[TC] mallocing thread struct (%zu B)\n", alloc_size);
     void *raw_thread = fut_malloc(alloc_size);
     if (!raw_thread) {
-        TC_LOG("[TC] thread struct malloc FAILED\n");
         return NULL;
     }
-    TC_LOG("[TC] thread struct=%p\n", raw_thread);
 
     // Align to 16-byte boundary
     uintptr_t thread_addr = (uintptr_t)raw_thread;
@@ -191,14 +173,11 @@ fut_thread_t *fut_thread_create(
 
     // Allocate stack (page-aligned)
     size_t aligned_stack_size = FUT_PAGE_ALIGN(stack_size);
-    TC_LOG("[TC] mallocing stack (%zu B)\n", aligned_stack_size);
     void *stack = fut_malloc(aligned_stack_size);
     if (!stack) {
-        TC_LOG("[TC] stack malloc FAILED\n");
         fut_free(raw_thread);  // Free original pointer, not aligned one
         return NULL;
     }
-    TC_LOG("[TC] stack=%p\n", stack);
 
     // Place guard canary at bottom of stack (lowest address)
     // This helps detect stack overflow during debugging
@@ -253,10 +232,8 @@ fut_thread_t *fut_thread_create(
     /* Pre-allocate IRQ frame storage so fut_switch_context_irq never calls
      * fut_malloc from interrupt context. Calling the allocator from an IRQ
      * while the interrupted thread is mid-allocation corrupts heap metadata. */
-    TC_LOG("[TC] mallocing irq_frame\n");
     thread->irq_frame = fut_malloc(sizeof(fut_interrupt_frame_t));
     if (!thread->irq_frame) {
-        TC_LOG("[TC] irq_frame malloc FAILED\n");
         fut_free(stack);
         fut_free(raw_thread);
         return NULL;
@@ -372,14 +349,11 @@ fut_thread_t *fut_thread_create(
     // FPU state already zeroed by memset above
 #endif
 
-    TC_LOG("[TC] context built, adding to task\n");
     // Add to parent task
     fut_task_add_thread(task, thread);
-    TC_LOG("[TC] added to task, adding to sched\n");
 
     // Add to scheduler ready queue
     fut_sched_add_thread(thread);
-    TC_LOG("[TC] added to sched\n");
 
     // Add to global thread list (uses separate global_next pointer).
     // Serialize the head-of-list update to keep two CPUs creating
@@ -393,7 +367,6 @@ fut_thread_t *fut_thread_create(
     uint64_t new_count = atomic_fetch_add_explicit(&thread_count, 1, memory_order_acq_rel) + 1;
     (void)new_count;  // Avoid unused variable warning
 
-    TC_LOG("[TC] returning %p\n", thread);
     return thread;
 }
 
@@ -839,19 +812,15 @@ __attribute__((used)) static void fut_thread_trampoline_impl(void (*entry)(void 
 
 /* The actual C implementation, called by the assembly wrapper */
 [[noreturn]] __attribute__((optimize("O0"))) static void fut_thread_trampoline_impl(void (*entry)(void *), void *arg) {
-    TC_LOG("[KTRAMP] entry=%p arg=%p\n", entry, arg);
     if (!entry) {
-        TC_LOG("[KTRAMP] entry NULL, exiting\n");
         fut_thread_exit();
     }
 
     /* Check if entry is in kernel space */
     if ((uintptr_t)entry < KERNEL_VIRTUAL_BASE) {
-        TC_LOG("[KTRAMP] entry %p < KVA_BASE, exiting\n", entry);
         fut_thread_exit();
     }
 
-    TC_LOG("[KTRAMP] calling entry()\n");
     /* Call the entry function */
     entry(arg);
 

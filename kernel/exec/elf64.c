@@ -38,27 +38,6 @@
 
 #include <kernel/debug_config.h>
 
-/* ELF debugging disabled for clean boot */
-/* ELF_LOG: gated diagnostic output for the exec path.
- *
- * Set CONFIG_DEBUG_EXEC=1 (e.g. via -DCONFIG_DEBUG_EXEC=1 in the
- * Makefile) to route every ELF_LOG call through fut_printf. Off by
- * default — exec is on the critical boot-time path and the log is
- * very noisy.
- *
- * Was unconditionally on while we bisected the bare-metal init-launch
- * hang in iter-25..iter-35. Now that the symptom is narrowed to the
- * post-STI scheduler context-switch path, the trace points are quiet
- * by default but trivial to flip back on. */
-#ifndef CONFIG_DEBUG_EXEC
-#define CONFIG_DEBUG_EXEC 0
-#endif
-#if CONFIG_DEBUG_EXEC
-#define ELF_LOG(...) fut_printf(__VA_ARGS__)
-#else
-#define ELF_LOG(...) do {} while(0)
-#endif
-
 /* TLS block address - placed below stack in user address space */
 #define USER_TLS_BASE   0x00007FFE000000ULL
 #define TLS_SIZE        PAGE_SIZE
@@ -435,7 +414,6 @@ static int load_elf_interpreter(fut_mm_t *mm, const char *interp_path) {
 
     int ifd = fut_vfs_open(interp_path, 0 /* O_RDONLY */, 0);
     if (ifd < 0) {
-        ELF_LOG("[EXEC-INTERP] Cannot open interpreter '%s': %d\n", interp_path, ifd);
         return 0;  /* Not fatal — fall back to direct execution (static PIE) */
     }
 
@@ -497,7 +475,6 @@ static int load_elf_interpreter(fut_mm_t *mm, const char *interp_path) {
 
         int rc = map_segment(mm, ifd, &iphdrs[i]);
         if (rc != 0) {
-            ELF_LOG("[EXEC-INTERP] Failed to map segment %u: %d\n", i, rc);
             fut_free(iphdrs);
             fut_vfs_close(ifd);
             return rc;
@@ -507,10 +484,6 @@ static int load_elf_interpreter(fut_mm_t *mm, const char *interp_path) {
     g_exec_interp_base = interp_bias + (lowest_vaddr != UINT64_MAX ? lowest_vaddr : 0);
     g_exec_interp_entry = ihdr.e_entry + interp_bias;
 
-    ELF_LOG("[EXEC-INTERP] Loaded '%s' at base=0x%llx entry=0x%llx\n",
-            interp_path,
-            (unsigned long long)g_exec_interp_base,
-            (unsigned long long)g_exec_interp_entry);
 
     fut_free(iphdrs);
     fut_vfs_close(ifd);
@@ -757,7 +730,6 @@ static int build_user_stack(fut_mm_t *mm,
      * Chromebook (no UART) — replace with fut_printf so it shows up
      * on fb_console. We only switch to single-byte serial spew once
      * we actually CLI; doing it before is fine. */
-    ELF_LOG("[USER-TRAMP] entered, arg=%p\n", arg);
 
     /* CRITICAL: Disable interrupts IMMEDIATELY to prevent timer interrupts from
      * corrupting our state during the transition to user mode! */
@@ -981,26 +953,21 @@ static int stage_stack_pages(fut_mm_t *mm, uint64_t *out_stack_top) {
  * @return: 0 on success, negative errno on failure
  */
 static int stage_tls_page(fut_mm_t *mm, uint64_t *out_tls_base) {
-    ELF_LOG("[TLS] enter\n");
     /* Allocate a page for __thread variables (accessed at negative offsets
      * from the TCB). This page is mapped just below USER_TLS_BASE. */
     uint8_t *tls_data_page = fut_pmm_alloc_page();
     if (!tls_data_page) {
-        ELF_LOG("[TLS] tls_data alloc failed\n");
         return -ENOMEM;
     }
-    ELF_LOG("[TLS] tls_data_page=%p\n", tls_data_page);
     memset(tls_data_page, 0, PAGE_SIZE);
 
     /* Allocate a page for the TCB (Thread Control Block) at USER_TLS_BASE.
      * Contains the self-pointer at offset 0 and stack canary at offset 0x28. */
     uint8_t *tcb_page = fut_pmm_alloc_page();
     if (!tcb_page) {
-        ELF_LOG("[TLS] tcb alloc failed\n");
         fut_pmm_free_page(tls_data_page);
         return -ENOMEM;
     }
-    ELF_LOG("[TLS] tcb_page=%p\n", tcb_page);
     memset(tcb_page, 0, PAGE_SIZE);
 
     /* Write TLS self-pointer at offset 0 (x86_64 TLS ABI requirement).
@@ -1016,23 +983,19 @@ static int stage_tls_page(fut_mm_t *mm, uint64_t *out_tls_base) {
     /* Ensure canary has a null byte to help detect string overflows */
     canary &= ~0xFFULL;
     *(uint64_t *)(tcb_page + TLS_STACK_CANARY_OFFSET) = canary;
-    ELF_LOG("[TLS] canary written, mapping data page\n");
 
     /* Map TLS data page at USER_TLS_BASE - PAGE_SIZE (for __thread vars) */
     phys_addr_t tls_data_phys = pmap_virt_to_phys((uintptr_t)tls_data_page);
-    ELF_LOG("[TLS] tls_data_phys=0x%llx\n", (unsigned long long)tls_data_phys);
     int rc = pmap_map_user(mm_context(mm),
                            USER_TLS_BASE - PAGE_SIZE,
                            tls_data_phys,
                            PAGE_SIZE,
                            PTE_PRESENT | PTE_USER | PTE_WRITABLE | PTE_NX);
     if (rc != 0) {
-        ELF_LOG("[TLS] map_user(data) rc=%d\n", rc);
         fut_pmm_free_page(tls_data_page);
         fut_pmm_free_page(tcb_page);
         return rc;
     }
-    ELF_LOG("[TLS] data mapped, mapping TCB\n");
 
     /* Map TCB page at USER_TLS_BASE (self-pointer + canary) */
     phys_addr_t tcb_phys = pmap_virt_to_phys((uintptr_t)tcb_page);
@@ -1042,14 +1005,12 @@ static int stage_tls_page(fut_mm_t *mm, uint64_t *out_tls_base) {
                        PAGE_SIZE,
                        PTE_PRESENT | PTE_USER | PTE_WRITABLE | PTE_NX);
     if (rc != 0) {
-        ELF_LOG("[TLS] map_user(tcb) rc=%d\n", rc);
         fut_pmm_free_page(tls_data_page);
         fut_pmm_free_page(tcb_page);
         return rc;
     }
 
     *out_tls_base = USER_TLS_BASE;
-    ELF_LOG("[TLS] done, base=0x%llx\n", (unsigned long long)USER_TLS_BASE);
     return 0;
 }
 
@@ -2103,7 +2064,6 @@ int fut_stage_wayland_color_client_binary(void) {
 #endif
 
 int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
-    ELF_LOG("[EXEC-ELF] ENTER: path=%s argv=%p envp=%p\n", path ? path : "(null)", argv, envp);
 
     if (!path) {
         return -EINVAL;
@@ -2136,7 +2096,6 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     int kargv_needs_free = 0;  /* Track if we allocated kargv */
     int kenvp_needs_free = 0;  /* Track if we allocated kenvp */
 
-    ELF_LOG("[EXEC-ELF] argv_is_kernel=%d envp_is_kernel=%d\n", argv_is_kernel, envp_is_kernel);
 
     if (argv && !argv_is_kernel) {
         /* SMAP FIX: Count arguments using safe userspace copy */
@@ -2343,7 +2302,6 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
         return fd;
     }
 
-    ELF_LOG("[EXEC-ELF] argc=%zu envc=%zu, about to read ELF header\n", argc, envc);
     fut_vfs_check_root_canary("fut_exec_elf:enter");
 
     /* Helper macro for cleanup - also re-enables interrupts since we
@@ -2668,7 +2626,6 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
                     else break;
                 }
                 fut_vfs_lseek(fd, saved, 0 /* SEEK_SET */);
-                ELF_LOG("[EXEC-ELF] PT_INTERP: '%s'\n", interp_path);
                 break;
             }
         }
@@ -2676,7 +2633,6 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
         if (interp_path[0]) {
             int irc = load_elf_interpreter(mm, interp_path);
             if (irc < 0) {
-                ELF_LOG("[EXEC-ELF] Interpreter load failed: %d (continuing anyway)\n", irc);
             }
         }
     }
@@ -2749,12 +2705,10 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     heap_base += PAGE_SIZE;
     fut_mm_set_heap_base(mm, heap_base, 0);
 
-    ELF_LOG("[EXEC-ELF] About to stage stack pages\n");
     g_stack_exec = stack_exec;  /* Pass PT_GNU_STACK to stage_stack_pages */
     uint64_t stack_top = 0;
     rc = stage_stack_pages(mm, &stack_top);
     if (rc != 0) {
-        ELF_LOG("[EXEC-ELF] stage_stack_pages failed: %d\n", rc);
         fut_mm_release(mm);  /* mm not attached to task yet */
         fut_task_destroy(task);
         fut_free(phdrs);
@@ -2762,13 +2716,11 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
         EXEC_CLEANUP_KARGS();
         return rc;
     }
-    ELF_LOG("[EXEC-ELF] Stack pages staged, top=0x%llx\n", (unsigned long long)stack_top);
 
     /* Set up TLS for stack canary support */
     uint64_t tls_base = 0;
     rc = stage_tls_page(mm, &tls_base);
     if (rc != 0) {
-        ELF_LOG("[EXEC-ELF] stage_tls_page failed: %d\n", rc);
         fut_mm_release(mm);
         fut_task_destroy(task);
         fut_free(phdrs);
@@ -2777,9 +2729,7 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
         return rc;
     }
 
-    ELF_LOG("[EXEC-ELF] post-TLS: vfs canary check\n");
     fut_vfs_check_root_canary("fut_exec_elf:after_stage_stack");
-    ELF_LOG("[EXEC-ELF] vfs canary OK; computing phdr metadata\n");
 
     uint64_t user_rsp = 0;
     uint64_t user_argv = 0;
@@ -2810,9 +2760,7 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     }
 
     /* Use the kernel copies of argv/envp that we made at the start */
-    ELF_LOG("[EXEC-ELF] calling build_user_stack argc=%zu envc=%zu\n", argc, envc);
     rc = build_user_stack(mm, (const char *const *)kargv, argc, (const char *const *)kenvp, envc, &user_rsp, &user_argv, &user_argc);
-    ELF_LOG("[EXEC-ELF] build_user_stack rc=%d user_rsp=0x%llx\n", rc, (unsigned long long)user_rsp);
     if (rc != 0) {
         fut_mm_release(mm);  /* mm not attached to task yet */
         fut_task_destroy(task);
@@ -2830,9 +2778,7 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     }
 
     /* NOW it's safe to attach mm to task - all user pages are mapped */
-    ELF_LOG("[EXEC-ELF] attaching mm to task\n");
     fut_task_set_mm(task, mm);
-    ELF_LOG("[EXEC-ELF] mm attached, inheriting fds\n");
 
     /* Inherit non-CLOEXEC file descriptors from the calling task, then fill
      * any missing stdio fds (0, 1, 2) with /dev/console.  POSIX requires
@@ -2848,86 +2794,59 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
         if (caller_task && caller_task->fd_table && task->fd_table) {
             int max = caller_task->max_fds;
             if (max > (int)task->max_fds) max = (int)task->max_fds;
-            ELF_LOG("[EXEC-ELF] inherit fds: max=%d caller=%p task=%p\n",
-                    max, caller_task, task);
             int inherited = 0;
             for (int i = 0; i < max; i++) {
                 struct fut_file *f = caller_task->fd_table[i];
                 int cloexec = (caller_task->fd_flags && (caller_task->fd_flags[i] & FD_CLOEXEC));
                 if (f && !cloexec) {
-                    ELF_LOG("[EXEC-ELF]   fd %d: refing file %p\n", i, f);
                     vfs_file_ref(f);
                     task->fd_table[i] = f;
                     if (task->fd_flags) task->fd_flags[i] = 0;
                     inherited++;
                 }
             }
-            ELF_LOG("[EXEC-ELF] inherited %d fds\n", inherited);
         } else {
-            ELF_LOG("[EXEC-ELF] inherit fds: skipped (caller=%p caller_fd_table=%p task_fd_table=%p)\n",
-                    caller_task,
-                    caller_task ? caller_task->fd_table : NULL,
-                    task->fd_table);
         }
 
         /* Close epoll instances marked EPOLL_CLOEXEC */
         if (caller_task) {
-            ELF_LOG("[EXEC-ELF] epoll_close_cloexec(pid=%llu)\n",
-                    (unsigned long long)caller_task->pid);
             extern void epoll_close_cloexec(uint64_t pid);
             epoll_close_cloexec(caller_task->pid);
-            ELF_LOG("[EXEC-ELF] epoll_close_cloexec done\n");
         }
 
         /* Open /dev/console only for stdio fds that are still unset */
-        ELF_LOG("[EXEC-ELF] preparing stdio fill: task->fd_table=%p\n",
-                task->fd_table);
         fut_task_t *saved_task = cur ? cur->task : NULL;
         if (cur) cur->task = task;
-        ELF_LOG("[EXEC-ELF] cur->task swapped to new task\n");
 
         for (int stdio_fd = 0; stdio_fd < 3; stdio_fd++) {
-            ELF_LOG("[EXEC-ELF] stdio loop iter %d entering\n", stdio_fd);
             if (!task->fd_table || !task->fd_table[stdio_fd]) {
-                ELF_LOG("[EXEC-ELF] opening /dev/console for stdio_fd=%d\n", stdio_fd);
                 int got = fut_vfs_open("/dev/console", O_RDWR, 0);
-                ELF_LOG("[EXEC-ELF] /dev/console open got=%d\n", got);
                 if (got >= 0 && got != stdio_fd) {
                     fut_printf("[EXEC-X86] WARNING: stdio fd %d opened as %d\n",
                                stdio_fd, got);
                 }
             } else {
-                ELF_LOG("[EXEC-ELF] stdio_fd=%d already set (%p)\n",
-                        stdio_fd, task->fd_table[stdio_fd]);
             }
         }
-        ELF_LOG("[EXEC-ELF] stdio loop done\n");
 
         if (cur) cur->task = saved_task;
-        ELF_LOG("[EXEC-ELF] cur->task restored\n");
     }
 #endif
 
-    ELF_LOG("[EXEC-ELF] allocating user_entry struct\n");
     struct fut_user_entry *entry = fut_malloc(sizeof(*entry));
     if (!entry) {
-        ELF_LOG("[EXEC-ELF] entry alloc FAILED\n");
         fut_task_destroy(task);
         fut_free(phdrs);
         fut_vfs_close(fd);
         EXEC_CLEANUP_KARGS();
         return -ENOMEM;
     }
-    ELF_LOG("[EXEC-ELF] user_entry=%p\n", entry);
 
     /* If interpreter was loaded, start at its entry point instead of main binary's.
      * The interpreter (ld-linux.so) will use AT_ENTRY and AT_PHDR from auxv
      * to find and jump to the main binary after dynamic linking. */
     if (g_exec_interp_entry != 0) {
         entry->entry = g_exec_interp_entry;
-        ELF_LOG("[EXEC-ELF] Using interpreter entry 0x%llx (main entry 0x%llx)\n",
-                (unsigned long long)g_exec_interp_entry,
-                (unsigned long long)(ehdr.e_entry + load_bias));
     } else {
         entry->entry = ehdr.e_entry + load_bias;
     }
@@ -2955,11 +2874,9 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
      *
      * fut_exec_elf does NOT return on success in this mode. The caller
      * (kernel_main) won't see "Init process launched successfully". */
-    ELF_LOG("[EXEC-ELF] direct-trampoline path: bootstrap becomes PID 1\n");
 
     fut_thread_t *cur = fut_thread_current();
     if (!cur) {
-        ELF_LOG("[EXEC-ELF] fut_thread_current() == NULL, bailing\n");
         fut_free(entry);
         fut_task_destroy(task);
         fut_free(phdrs);
@@ -2969,8 +2886,6 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     }
     cur->task = task;
     cur->fs_base = USER_TLS_BASE;
-    ELF_LOG("[EXEC-ELF] cur->task=%p cur->fs_base=0x%llx\n",
-            cur->task, (unsigned long long)cur->fs_base);
 
     /* Free kernel-side allocations now — once IRETQ happens we can't. */
     fut_free(phdrs);
@@ -2986,7 +2901,6 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
 
     fut_vfs_check_root_canary("fut_exec_elf:before_trampoline");
 
-    ELF_LOG("[EXEC-ELF] handing off to fut_user_trampoline (no return)\n");
     fut_user_trampoline(entry);
 
     /* unreachable */
@@ -4051,24 +3965,20 @@ int fut_exec_elf_memory(const void *elf_data, size_t elf_size, char *const argv[
 
 int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
 #ifdef DEBUG_ELF
-    ELF_LOG("[EXEC-ELF] ENTER: path=%s\n", path ? path : "(null)");
 #endif
 
     if (!path) return -EINVAL;
 
     int fd = fut_vfs_open(path, O_RDONLY, 0);
 #ifdef DEBUG_ELF
-    ELF_LOG("[EXEC-ELF] fut_vfs_open returned fd=%d\n", fd);
 #endif
     if (fd < 0) return fd;
 
     elf64_ehdr_t ehdr;
 #ifdef DEBUG_ELF
-    ELF_LOG("[EXEC-ELF] About to read ELF header (%llu bytes)\n", (unsigned long long)sizeof(ehdr));
 #endif
     int rc = read_exact(fd, &ehdr, sizeof(ehdr));
 #ifdef DEBUG_ELF
-    ELF_LOG("[EXEC-ELF] read_exact returned rc=%d\n", rc);
 #endif
     if (rc != 0) {
         fut_vfs_close(fd);
@@ -4076,7 +3986,6 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     }
 
 #ifdef DEBUG_ELF
-    ELF_LOG("[EXEC-ELF] Verifying ELF header...\n");
 #endif
     /* Verify ELF header */
     if (*(uint32_t *)ehdr.e_ident != ELF_MAGIC ||
@@ -4085,20 +3994,17 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
         ehdr.e_machine != 0xB7 ||  /* EM_AARCH64 = 0xB7 */
         (ehdr.e_type != 2 && ehdr.e_type != 3)) {  /* ET_EXEC or ET_DYN */
 #ifdef DEBUG_ELF
-        ELF_LOG("[EXEC-ELF] ELF header invalid\n");
 #endif
         fut_vfs_close(fd);
         return -EINVAL;
     }
 
 #ifdef DEBUG_ELF
-    ELF_LOG("[EXEC-ELF] ELF header valid, phnum=%d\n", ehdr.e_phnum);
 #endif
 
     /* Reject unreasonable e_phnum to prevent excessive allocation */
     if (ehdr.e_phnum > 256) {
 #ifdef DEBUG_ELF
-        ELF_LOG("[EXEC-ELF] Too many program headers (phnum=%d, max=256)\n", ehdr.e_phnum);
 #endif
         fut_vfs_close(fd);
         return -EINVAL;
@@ -4106,11 +4012,9 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
 
     size_t ph_size = (size_t)ehdr.e_phnum * sizeof(elf64_phdr_t);
 #ifdef DEBUG_ELF
-    ELF_LOG("[EXEC-ELF] About to allocate %llu bytes for program headers\n", (unsigned long long)ph_size);
 #endif
     elf64_phdr_t *phdrs = fut_malloc(ph_size);
 #ifdef DEBUG_ELF
-    ELF_LOG("[EXEC-ELF] fut_malloc returned %p\n", phdrs);
 #endif
     if (!phdrs) {
         fut_vfs_close(fd);
@@ -4118,11 +4022,9 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     }
 
 #ifdef DEBUG_ELF
-    ELF_LOG("[EXEC-ELF] About to lseek to phoff=0x%llx\n", (unsigned long long)ehdr.e_phoff);
 #endif
     int64_t seek_rc = fut_vfs_lseek(fd, (int64_t)ehdr.e_phoff, SEEK_SET);
 #ifdef DEBUG_ELF
-    ELF_LOG("[EXEC-ELF] lseek returned %lld\n", (long long)seek_rc);
 #endif
     if (seek_rc < 0) {
         fut_free(phdrs);
@@ -4131,11 +4033,9 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     }
 
 #ifdef DEBUG_ELF
-    ELF_LOG("[EXEC-ELF] About to read %llu bytes of program headers\n", (unsigned long long)ph_size);
 #endif
     rc = read_exact(fd, phdrs, ph_size);
 #ifdef DEBUG_ELF
-    ELF_LOG("[EXEC-ELF] read_exact for phdrs returned rc=%d\n", rc);
 #endif
     if (rc != 0) {
         fut_free(phdrs);
@@ -4145,11 +4045,9 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
 
     /* Create task and memory manager */
 #ifdef DEBUG_ELF
-    ELF_LOG("[EXEC-ELF] About to create task\n");
 #endif
     fut_task_t *task = fut_task_create();
 #ifdef DEBUG_ELF
-    ELF_LOG("[EXEC-ELF] fut_task_create returned %p\n", task);
 #endif
     if (!task) {
         fut_free(phdrs);
@@ -4203,11 +4101,9 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     }
 
 #ifdef DEBUG_ELF
-    ELF_LOG("[EXEC-ELF] About to create mm\n");
 #endif
     fut_mm_t *mm = fut_mm_create();
 #ifdef DEBUG_ELF
-    ELF_LOG("[EXEC-ELF] fut_mm_create returned %p\n", mm);
 #endif
     if (!mm) {
         fut_task_destroy(task);
@@ -4217,11 +4113,9 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     }
 
 #ifdef DEBUG_ELF
-    ELF_LOG("[EXEC-ELF] About to set mm on task\n");
 #endif
     fut_task_set_mm(task, mm);
 #ifdef DEBUG_ELF
-    ELF_LOG("[EXEC-ELF] Task mm set\n");
 #endif
 
 #ifdef __aarch64__
@@ -4232,8 +4126,6 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     if (cur_thread) {
         cur_thread->context.ttbr0_el1 = mm->ctx.ttbr0_el1;
 #ifdef DEBUG_ELF
-        ELF_LOG("[EXEC-ELF] ARM64: Updated cur_thread %p context.ttbr0_el1=0x%llx\n",
-                   cur_thread, (unsigned long long)mm->ctx.ttbr0_el1);
 #endif
 
         /* Load TTBR0 now so map_segment can access user space */
@@ -4243,7 +4135,6 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
         __asm__ volatile("dsb ish" ::: "memory");                /* Data synchronization barrier */
         __asm__ volatile("isb" ::: "memory");                    /* Instruction synchronization barrier */
 #ifdef DEBUG_ELF
-        ELF_LOG("[EXEC-ELF] ARM64: Loaded TTBR0 and invalidated TLB\n");
 #endif
     }
 #endif
@@ -4312,29 +4203,20 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     /* Map LOAD segments */
     uintptr_t heap_base_candidate = 0;
 #ifdef DEBUG_ELF
-    ELF_LOG("[EXEC-ELF] About to map %d program headers\n", ehdr.e_phnum);
 #endif
     for (uint16_t i = 0; i < ehdr.e_phnum; ++i) {
         if (phdrs[i].p_type != PT_LOAD) {
 #ifdef DEBUG_ELF
-            ELF_LOG("[EXEC-ELF] phdr[%d]: type=%d (skipping non-LOAD)\n", i, phdrs[i].p_type);
 #endif
             continue;
         }
 
 #ifdef DEBUG_ELF
-        ELF_LOG("[EXEC-ELF] Mapping segment %d: vaddr=0x%llx memsz=0x%llx filesz=0x%llx offset=0x%llx\n",
-                   i, (unsigned long long)phdrs[i].p_vaddr, (unsigned long long)phdrs[i].p_memsz,
-                   (unsigned long long)phdrs[i].p_filesz, (unsigned long long)phdrs[i].p_offset);
 #else
         /* Always log segment mapping for ARM64 ELF debugging */
-        ELF_LOG("[EXEC-ELF] Mapping segment %d: vaddr=0x%llx memsz=0x%llx filesz=0x%llx offset=0x%llx\n",
-                   i, (unsigned long long)phdrs[i].p_vaddr, (unsigned long long)phdrs[i].p_memsz,
-                   (unsigned long long)phdrs[i].p_filesz, (unsigned long long)phdrs[i].p_offset);
 #endif
         rc = map_segment(mm, fd, &phdrs[i]);
 #ifdef DEBUG_ELF
-        ELF_LOG("[EXEC-ELF] map_segment returned rc=%d\n", rc);
 #endif
         if (rc != 0) {
             fut_task_destroy(task);

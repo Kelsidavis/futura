@@ -376,7 +376,43 @@ A single '-' in the FILE list means standard input.
             idx += 1;
             continue;
         }
-        if arg_is(p, b"-c") {
+        // --bytes=NUM and --lines=NUM long forms (with embedded =)
+        let p_n = cstr_len(p);
+        if p_n >= 8 && unsafe {
+            let want = b"--bytes=";
+            let mut ok = true;
+            for j in 0..want.len() { if *p.add(j) != want[j] { ok = false; break; } }
+            ok
+        } {
+            let arg = unsafe { p.add(8) };
+            match parse_u64(arg) {
+                Some(v) => byte_limit = Some(v),
+                None => {
+                    write_str(STDERR, b"rust-head: invalid --bytes value\n");
+                    return 1;
+                }
+            }
+            idx += 1;
+            continue;
+        }
+        if p_n >= 8 && unsafe {
+            let want = b"--lines=";
+            let mut ok = true;
+            for j in 0..want.len() { if *p.add(j) != want[j] { ok = false; break; } }
+            ok
+        } {
+            let arg = unsafe { p.add(8) };
+            match parse_u64(arg) {
+                Some(v) => limit = v,
+                None => {
+                    write_str(STDERR, b"rust-head: invalid --lines value\n");
+                    return 1;
+                }
+            }
+            idx += 1;
+            continue;
+        }
+        if arg_is(p, b"-c") || arg_is(p, b"--bytes") {
             idx += 1;
             match argv_get(argc, argv, idx) {
                 Some(np) => match parse_u64(np) {
@@ -396,7 +432,7 @@ A single '-' in the FILE list means standard input.
             }
             continue;
         }
-        if arg_is(p, b"-n") {
+        if arg_is(p, b"-n") || arg_is(p, b"--lines") {
             idx += 1;
             match argv_get(argc, argv, idx) {
                 Some(np) => match parse_u64(np) {

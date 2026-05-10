@@ -248,6 +248,18 @@ fn fmt_perms(mode: u32, buf: &mut [u8; 10]) -> &[u8] {
     for (i, &(mask, ch)) in bits.iter().enumerate() {
         buf[i] = if mode & mask != 0 { ch } else { b'-' };
     }
+    // setuid → owner-x: 's' (lowercase if x set, 'S' otherwise)
+    if mode & 0o4000 != 0 {
+        buf[2] = if mode & 0o100 != 0 { b's' } else { b'S' };
+    }
+    // setgid → group-x: 's'/'S'
+    if mode & 0o2000 != 0 {
+        buf[5] = if mode & 0o010 != 0 { b's' } else { b'S' };
+    }
+    // sticky bit → other-x: 't'/'T'
+    if mode & 0o1000 != 0 {
+        buf[8] = if mode & 0o001 != 0 { b't' } else { b'T' };
+    }
     &buf[..9]
 }
 

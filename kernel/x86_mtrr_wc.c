@@ -37,6 +37,12 @@
 #include <stddef.h>
 #include <kernel/kprintf.h>
 
+/* This file is x86_64-only — relies on x86 inline asm (`invlpg`) and
+ * the boot identity-map page tables that only x86_64 sets up. On
+ * other architectures, compile to an empty translation unit so the
+ * unconditional KERNEL_SOURCES list still works under both arches. */
+#ifdef __x86_64__
+
 extern uint64_t boot_pd[512];
 extern uint64_t boot_pd1[512];
 extern uint64_t boot_pd2[512];
@@ -85,3 +91,10 @@ void x86_mark_phys_wc(uint64_t phys, uint64_t size) {
                (unsigned long long)start,
                (int)((end - start) / (1024 * 1024)));
 }
+
+#else  /* not __x86_64__ */
+/* Stub for non-x86 builds — boot identity map and invlpg don't apply. */
+void x86_mark_phys_wc(uint64_t phys, uint64_t size) {
+    (void)phys; (void)size;
+}
+#endif

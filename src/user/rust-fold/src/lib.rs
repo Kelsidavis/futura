@@ -308,6 +308,14 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             idx += 1;
             continue;
         }
+        // -b / --bytes: count bytes rather than display columns. Our
+        // implementation is byte-counting already (we don't expand
+        // tabs to column widths), so -b is a no-op kept for GNU
+        // script portability.
+        if cstr_eq(p, b"-b") || cstr_eq(p, b"--bytes") {
+            idx += 1;
+            continue;
+        }
         if cstr_eq(p, b"-z") || cstr_eq(p, b"--zero-terminated") {
             sep = 0;
             idx += 1;
@@ -341,6 +349,8 @@ as one column; tabs and backspace get no special treatment.
 
   -w, --width COLS       wrap width (default 80)
   -s, --spaces           break at the last whitespace before the wrap point
+  -b, --bytes            count bytes rather than columns (no-op; we never
+                         expand tabs, so -b is the only mode we have)
   -z, --zero-terminated  line delimiter is NUL, not newline
       --help             show this help and exit
 

@@ -2961,8 +2961,14 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
      * The trampoline sets cs/ss/rip/rsp to user values right before IRETQ. */
     thread->fs_base = USER_TLS_BASE;
     __asm__ volatile("" ::: "memory");  /* Ensure store is visible */
+    /* Print BEFORE STI. After we re-enable interrupts a queued timer
+     * tick might fire immediately and the scheduler may pick the new
+     * user-trampoline thread to run on the very next slice — which
+     * means anything we try to log AFTER sti can be preempted away
+     * before it actually flushes to the framebuffer. */
+    ELF_LOG("[EXEC-ELF] fut_thread_create returned %p, fs_base set; about to STI\n", thread);
     __asm__ volatile("sti" ::: "memory");
-    ELF_LOG("[EXEC-ELF] fut_thread_create returned %p, fs_base set\n", thread);
+    ELF_LOG("[EXEC-ELF] STI'd; trampoline thread is now schedulable\n");
     fut_free(phdrs);
     fut_vfs_close(fd);
     ELF_LOG("[EXEC-ELF] phdrs+fd freed; about to free kargv/kenvp\n");

@@ -295,6 +295,8 @@ struct CatOpts {
     squeeze: bool,       // -s
     show_ends: bool,     // -E
     show_tabs: bool,     // -T (renders '\t' as ^I)
+    show_nonprint: bool, // -v (renders bytes <32 except TAB/LF as ^X,
+                         //     bytes 0x80..0xFF as M-X, 0x7F as ^?)
 }
 
 // Slow path: line-buffered pump that honors number/squeeze/ends flags.
@@ -370,18 +372,47 @@ fn emit_line(s: &mut LineState, opts: &CatOpts, has_newline: bool) -> bool {
         let plen = fmt_lineno(&mut prefix, s.line_no);
         if !write_all(STDOUT, &prefix[..plen]) { return false; }
     }
-    if opts.show_tabs {
-        // Replace every tab with the GNU "^I" rendering. Slow path
-        // (one byte at a time) but only used when -T/-A is requested.
+    if opts.show_tabs || opts.show_nonprint {
+        // Slow byte-by-byte path. With -v, render every byte except
+        // TAB and LF using GNU's caret/meta notation:
+        //   0x00..0x1F (excluding 0x09 TAB and 0x0A LF) -> ^@..^_
+        //   0x7F                                         -> ^?
+        //   0x80..0xFF                                   -> M- + (above rule)
+        // -T alone keeps the original behavior (only TAB rendered).
         let mut start = 0usize;
         for i in 0..body.len() {
-            if body[i] == b'\t' {
-                if start < i {
-                    if !write_all(STDOUT, &body[start..i]) { return false; }
-                }
-                if !write_all(STDOUT, b"^I") { return false; }
-                start = i + 1;
+            let b = body[i];
+            let needs_tab = opts.show_tabs && b == b'\t';
+            let needs_v = opts.show_nonprint
+                && b != b'\t' && b != b'\n'
+                && (b < 0x20 || b >= 0x7F);
+            if !needs_tab && !needs_v { continue; }
+            if start < i {
+                if !write_all(STDOUT, &body[start..i]) { return false; }
             }
+            if needs_tab {
+                if !write_all(STDOUT, b"^I") { return false; }
+            } else {
+                let mut high = b;
+                if high >= 0x80 {
+                    if !write_all(STDOUT, b"M-") { return false; }
+                    high &= 0x7F;
+                }
+                if high == 0x7F {
+                    if !write_all(STDOUT, b"^?") { return false; }
+                } else if high < 0x20 {
+                    let buf = [b'^', high + b'@'];
+                    if !write_all(STDOUT, &buf) { return false; }
+                } else {
+                    // Printable byte after stripping the meta bit — emit
+                    // verbatim. This branch fires only with the meta bit
+                    // set (since the unflagged < 0x20 path is handled
+                    // above) so a single-char buf is correct.
+                    let buf = [high];
+                    if !write_all(STDOUT, &buf) { return false; }
+                }
+            }
+            start = i + 1;
         }
         if start < body.len() {
             if !write_all(STDOUT, &body[start..]) { return false; }
@@ -423,6 +454,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         squeeze: false,
         show_ends: false,
         show_tabs: false,
+        show_nonprint: false,
     };
 
     // Parse leading flags. Stops at first non-flag arg, '-', or '--'.
@@ -440,7 +472,10 @@ Concatenate FILE(s) to standard output. With no FILE, read stdin.
   -s          squeeze repeated blank lines
   -E          render '$' at the end of each line
   -T          render tabs as ^I
-  -A          equivalent to -ET
+  -v          render non-printables as ^X / M-X (except TAB/LF)
+  -e          equivalent to -vE
+  -t          equivalent to -vT
+  -A          equivalent to -vET
       --help  show this help and exit
 
 A single '-' in the FILE list means standard input.
@@ -455,7 +490,21 @@ A single '-' in the FILE list means standard input.
         if arg_is(p, b"-s") { opts.squeeze = true; idx += 1; continue; }
         if arg_is(p, b"-E") { opts.show_ends = true; idx += 1; continue; }
         if arg_is(p, b"-T") { opts.show_tabs = true; idx += 1; continue; }
+        if arg_is(p, b"-v") { opts.show_nonprint = true; idx += 1; continue; }
+        if arg_is(p, b"-e") {
+            opts.show_nonprint = true;
+            opts.show_ends = true;
+            idx += 1;
+            continue;
+        }
+        if arg_is(p, b"-t") {
+            opts.show_nonprint = true;
+            opts.show_tabs = true;
+            idx += 1;
+            continue;
+        }
         if arg_is(p, b"-A") {
+            opts.show_nonprint = true;
             opts.show_ends = true;
             opts.show_tabs = true;
             idx += 1;
@@ -472,7 +521,14 @@ A single '-' in the FILE list means standard input.
                     b's' => opts.squeeze = true,
                     b'E' => opts.show_ends = true,
                     b'T' => opts.show_tabs = true,
-                    b'A' => { opts.show_ends = true; opts.show_tabs = true; }
+                    b'v' => opts.show_nonprint = true,
+                    b'e' => { opts.show_nonprint = true; opts.show_ends = true; }
+                    b't' => { opts.show_nonprint = true; opts.show_tabs = true; }
+                    b'A' => {
+                        opts.show_nonprint = true;
+                        opts.show_ends = true;
+                        opts.show_tabs = true;
+                    }
                     _ => { all_ok = false; break; }
                 }
             }
@@ -482,7 +538,8 @@ A single '-' in the FILE list means standard input.
     }
 
     let any_format = opts.number || opts.number_nonblank
-        || opts.squeeze || opts.show_ends || opts.show_tabs;
+        || opts.squeeze || opts.show_ends || opts.show_tabs
+        || opts.show_nonprint;
 
     let pump_fd = |fd: i32, buf: &mut [u8]| -> bool {
         if any_format {

@@ -291,14 +291,16 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, envp: *const *const u8
                 }
                 if ok {
                     let help: &[u8] = b"\
-Usage: rust-env [-0] [COMMAND [ARG...]]
+Usage: rust-env [-0] [-i] [COMMAND [ARG...]]
 With no COMMAND, dump the environment one VAR=VALUE per line.
 With COMMAND, execve it (PATH-walked if it has no slash) using the
 current environment - the standard /usr/bin/env shebang shape.
 
-  -0, --null    end each output line with NUL, not newline
-                (only applies when dumping the environment)
-      --help    show this help and exit
+  -0, --null                end each output line with NUL, not newline
+                            (only applies when dumping the environment)
+  -i, --ignore-environment  start with an empty environment
+                            (no inherited variables)
+      --help                show this help and exit
 \0";
                     let len = help.len() - 1;
                     unsafe { let _ = syscall3(sysn::WRITE, STDOUT as u64,
@@ -308,28 +310,45 @@ current environment - the standard /usr/bin/env shebang shape.
             }
         }
     }
-    // Parse leading flags before deciding dump-vs-exec. Currently:
-    //   -0 / --null  use NUL line separator in dump mode (no effect on exec)
+    // Parse leading flags before deciding dump-vs-exec.
+    //   -0 / --null               NUL line separator in dump mode
+    //   -i / --ignore-environment  start child / dump with empty env
     let mut flag_idx: i32 = 1;
     let mut null_sep = false;
+    let mut ignore_env = false;
     while flag_idx < argc {
         let p = unsafe { *argv.add(flag_idx as usize) };
         if p.is_null() || (p as usize) < 0x10000 { break; }
-        // -0 / --null
         let n = cstr_len(p);
         let m0 = b"-0";
         let mn = b"--null";
+        let mi = b"-i";
+        let mig = b"--ignore-environment";
+        let mdash = b"--";
         let is_zero = n == m0.len()
             && (0..m0.len()).all(|i| unsafe { *p.add(i) } == m0[i]);
         let is_null = n == mn.len()
             && (0..mn.len()).all(|i| unsafe { *p.add(i) } == mn[i]);
-        if is_zero || is_null {
-            null_sep = true;
-            flag_idx += 1;
-            continue;
-        }
+        let is_i = n == mi.len()
+            && (0..mi.len()).all(|i| unsafe { *p.add(i) } == mi[i]);
+        let is_ignore = n == mig.len()
+            && (0..mig.len()).all(|i| unsafe { *p.add(i) } == mig[i]);
+        let is_dashdash = n == mdash.len()
+            && (0..mdash.len()).all(|i| unsafe { *p.add(i) } == mdash[i]);
+        if is_zero || is_null { null_sep = true; flag_idx += 1; continue; }
+        if is_i || is_ignore { ignore_env = true; flag_idx += 1; continue; }
+        if is_dashdash { flag_idx += 1; break; }
         break;
     }
+    // Effective envp after honoring -i. Stack-local empty array gives
+    // us a valid pointer to a NULL-terminated (zero-length) env array
+    // that lives long enough for the execve / dump path below.
+    let empty_envp: [*const u8; 1] = [core::ptr::null()];
+    let effective_envp: *const *const u8 = if ignore_env {
+        empty_envp.as_ptr()
+    } else {
+        envp
+    };
 
     // env <cmd> [args...]: execve cmd with the current envp; PATH
     // walk if cmd has no slash. Without this branch, /usr/bin/env
@@ -353,7 +372,7 @@ current environment - the standard /usr/bin/env shebang shape.
             }
             if has_slash {
                 let _ = unsafe {
-                    syscall3(sysn::EXECVE, cmd_p as u64, child_argv as u64, envp as u64)
+                    syscall3(sysn::EXECVE, cmd_p as u64, child_argv as u64, effective_envp as u64)
                 };
                 write_all(STDERR, b"rust-env: exec failed\n");
                 return 127;
@@ -376,7 +395,7 @@ current environment - the standard /usr/bin/env shebang shape.
                 let at_end = i == path_slice.len();
                 if at_end || path_slice[i] == b':' {
                     let dir = &path_slice[start..i];
-                    if try_exec_path(dir, cmd_slice, child_argv, envp, &mut buf) {
+                    if try_exec_path(dir, cmd_slice, child_argv, effective_envp, &mut buf) {
                         // unreachable on success — execve doesn't return.
                         return 0;
                     }
@@ -388,13 +407,15 @@ current environment - the standard /usr/bin/env shebang shape.
         }
     }
 
-    // No command — dump env and exit.
-    if envp.is_null() {
+    // No command — dump env and exit. With -i the effective envp is
+    // an empty array, so this loop terminates immediately and nothing
+    // is printed.
+    if effective_envp.is_null() {
         return 0;
     }
     let mut i = 0usize;
     loop {
-        let e = unsafe { *envp.add(i) };
+        let e = unsafe { *effective_envp.add(i) };
         if e.is_null() {
             break;
         }

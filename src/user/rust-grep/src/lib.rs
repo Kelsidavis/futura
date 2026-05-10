@@ -1035,7 +1035,8 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             // Already fixed-string by default; accept the flag for
             // GNU-script portability (no behaviour change).
             idx += 1;
-        } else if arg_is(p, b"-e") {
+        } else if arg_is(p, b"-e") || arg_is(p, b"--regexp")
+                  || arg_is(p, b"--pattern") {
             // -e PATTERN — accumulates patterns; ORed at match time.
             // Useful when PATTERN starts with `-`, or for multi-pattern
             // searches like "grep -e foo -e bar".

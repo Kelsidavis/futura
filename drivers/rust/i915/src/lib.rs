@@ -31,10 +31,26 @@
 #![allow(unexpected_cfgs)]
 
 use core::cell::UnsafeCell;
+use core::ffi::c_void;
 use common::{log, map_mmio_region, MMIO_DEFAULT_FLAGS};
 
 unsafe extern "C" {
     fn fut_printf(fmt: *const u8, ...);
+    fn fut_pmm_alloc_page() -> *mut c_void;
+    fn rust_virt_to_phys(vaddr: *const c_void) -> u64;
+}
+
+#[inline]
+fn alloc_page_phys() -> Option<(*mut u8, u64)> {
+    let virt = unsafe { fut_pmm_alloc_page() } as *mut u8;
+    if virt.is_null() {
+        return None;
+    }
+    let phys = unsafe { rust_virt_to_phys(virt as *const c_void) };
+    if phys == 0 {
+        return None;
+    }
+    Some((virt, phys))
 }
 
 // ── PCI configuration space I/O ──
@@ -101,13 +117,25 @@ impl<T> StaticCell<T> {
 #[repr(C)]
 struct I915State {
     pub initialized: bool,
+    pub gtt_initialized: bool,
     pub vendor_id: u16,
     pub device_id: u16,
     pub bar0_phys: u64,
     pub mmio_base: *mut u8,
     /// On Gen9, BAR0 is split: first half is MMIO regs, second half is GTT.
-    /// We map only the MMIO half here; phase 2 will map the GTT separately.
     pub mmio_size: usize,
+    /// GTT (Graphics Translation Table) — upper half of BAR0. Each entry
+    /// is a 64-bit PTE that maps a 4 KiB GPU virtual page to a system
+    /// physical page. Phase 2 maps this region and installs entries.
+    pub gtt_base: *mut u64,
+    pub gtt_size: usize,
+    /// Number of valid GTT entries we've populated (for diagnostics).
+    pub gtt_entries_used: u32,
+    /// GPU virtual address of a 4 KiB scratch page we install during
+    /// phase 2 as a smoke test (and which phase 3 will repurpose for
+    /// the BCS command ring buffer).
+    pub scratch_gpu_va: u64,
+    pub scratch_phys: u64,
 }
 
 unsafe impl Send for I915State {}
@@ -115,11 +143,17 @@ unsafe impl Sync for I915State {}
 
 static STATE: StaticCell<I915State> = StaticCell::new(I915State {
     initialized: false,
+    gtt_initialized: false,
     vendor_id: 0,
     device_id: 0,
     bar0_phys: 0,
     mmio_base: core::ptr::null_mut(),
     mmio_size: 0,
+    gtt_base: core::ptr::null_mut(),
+    gtt_size: 0,
+    gtt_entries_used: 0,
+    scratch_gpu_va: 0,
+    scratch_phys: 0,
 });
 
 #[inline(always)]
@@ -248,4 +282,153 @@ pub extern "C" fn i915_is_initialized() -> bool {
 pub extern "C" fn i915_device_id() -> u16 {
     let st = STATE.get();
     unsafe { (*st).device_id }
+}
+
+// ── Phase 2: GTT (Graphics Translation Table) setup ──
+//
+// On Gen9 LP (Apollo Lake / Gemini Lake) the GTT lives in the upper
+// half of BAR0 (the GTTMMADR). Each entry is a 64-bit PTE:
+//
+//   bit  0       Valid (must be 1 for the entry to translate)
+//   bits 11..1   Cache attributes / reserved (Gen-specific encoding)
+//   bits 47..12  Physical page address (4 KiB-aligned)
+//   bits 63..48  Reserved (zero)
+//
+// For a Gen9 LP GTTMMADR sized 16 MiB:
+//   - Lower 8 MiB = MMIO regs (mapped in phase 1)
+//   - Upper 8 MiB = GTT (1 M entries × 8 B = 8 MiB → 4 GiB GPU VA range)
+//
+// The kernel does not need to manage every GTT slot. Firmware leaves
+// the existing display-engine framebuffer mapped at whatever GTT VA it
+// chose at boot. We carve out an unused range (here the very top of
+// the GTT, working downward) for our own scratch / ring / BLT pages.
+
+const GEN9_GTT_OFFSET_IN_BAR0: u64 = 8 * 1024 * 1024;  /* upper half */
+const GEN9_GTT_SIZE: usize = 8 * 1024 * 1024;          /* 8 MiB */
+const GTT_PTE_SIZE: usize = 8;                          /* 64-bit entries */
+const GTT_NUM_ENTRIES: usize = GEN9_GTT_SIZE / GTT_PTE_SIZE;
+const GTT_PAGE_SIZE: u64 = 4096;
+
+const GTT_PTE_VALID: u64 = 1 << 0;
+const GTT_PTE_LLC:   u64 = 1 << 1;  /* Use LLC for cacheable accesses */
+
+/// Build a Gen9 GTT PTE from a 4-KiB-aligned physical address.
+#[inline]
+fn gtt_make_pte(phys: u64) -> u64 {
+    debug_assert!(phys & 0xFFF == 0);
+    (phys & 0x0000_FFFF_FFFF_F000) | GTT_PTE_VALID | GTT_PTE_LLC
+}
+
+/// Install a single 4-KiB GTT mapping: gpu_va → phys.
+/// gpu_va must be 4 KiB-aligned and within the GTT-addressable range.
+fn gtt_install(gtt_base: *mut u64, gpu_va: u64, phys: u64) {
+    let idx = (gpu_va / GTT_PAGE_SIZE) as usize;
+    if idx >= GTT_NUM_ENTRIES {
+        return;
+    }
+    let pte = gtt_make_pte(phys);
+    unsafe { core::ptr::write_volatile(gtt_base.add(idx), pte) };
+    /* Read the entry back to flush the WC buffer (matches Linux's
+     * i915_ggtt_invalidate hammer; on Gen9 LP a simple readback is
+     * the documented serialization for GTT PTE writes). */
+    let _readback = unsafe { core::ptr::read_volatile(gtt_base.add(idx)) };
+}
+
+/// Phase 2 entry point. Call after i915_init (which mapped BAR0 MMIO).
+/// Maps the GTT half of BAR0, installs a single test entry pointing
+/// at a freshly-allocated 4 KiB scratch page near the top of the GTT
+/// VA range, and reads it back to confirm the write took.
+///
+/// Returns 0 on success, negative on failure.
+#[unsafe(no_mangle)]
+pub extern "C" fn i915_gtt_init() -> i32 {
+    let st = STATE.get();
+    if !unsafe { (*st).initialized } {
+        log("i915_gtt_init: phase 1 not done; skipping");
+        return -1;
+    }
+    if unsafe { (*st).gtt_initialized } {
+        log("i915_gtt_init: already done");
+        return 0;
+    }
+
+    let bar0_phys = unsafe { (*st).bar0_phys };
+    let gtt_phys = bar0_phys + GEN9_GTT_OFFSET_IN_BAR0;
+
+    /* Map GTT range as MMIO. The GTT itself is in device memory backed
+     * by the GPU; writes to it must be uncached/WC and serialized via
+     * a readback (see gtt_install). */
+    let gtt_base = unsafe { map_mmio_region(gtt_phys, GEN9_GTT_SIZE, MMIO_DEFAULT_FLAGS) }
+        as *mut u64;
+    if gtt_base.is_null() {
+        log("i915_gtt_init: GTT MMIO map failed");
+        return -2;
+    }
+
+    unsafe {
+        fut_printf(
+            b"i915: GTT mapped at %p (phys 0x%llx, %u entries / %u GiB GPU VA)\n\0".as_ptr(),
+            gtt_base,
+            gtt_phys,
+            GTT_NUM_ENTRIES as u32,
+            ((GTT_NUM_ENTRIES as u64 * GTT_PAGE_SIZE) / (1u64 << 30)) as u32,
+        );
+    }
+
+    /* Allocate a 4 KiB scratch page in DRAM. Phase 3 will reuse this
+     * (or replace it with a larger ring) for BCS command submission. */
+    let (_scratch_virt, scratch_phys) = match alloc_page_phys() {
+        Some(p) => p,
+        None => {
+            log("i915_gtt_init: PMM alloc for scratch page failed");
+            return -3;
+        }
+    };
+
+    /* Pick a GPU VA near the top of the GTT range, far away from any
+     * pre-existing firmware mappings (which sit at low addresses for
+     * the framebuffer). One page below the very top. */
+    let scratch_gpu_va = (GTT_NUM_ENTRIES as u64 - 1) * GTT_PAGE_SIZE;
+
+    gtt_install(gtt_base, scratch_gpu_va, scratch_phys);
+
+    /* Verify the install by reading the entry back. */
+    let pte_idx = (scratch_gpu_va / GTT_PAGE_SIZE) as usize;
+    let installed = unsafe { core::ptr::read_volatile(gtt_base.add(pte_idx)) };
+    let expected = gtt_make_pte(scratch_phys);
+    if installed != expected {
+        unsafe {
+            fut_printf(
+                b"i915_gtt_init: PTE readback mismatch! wrote 0x%llx read 0x%llx\n\0".as_ptr(),
+                expected, installed,
+            );
+        }
+        return -4;
+    }
+
+    unsafe {
+        fut_printf(
+            b"i915: GTT scratch installed: gpu_va=0x%llx -> phys=0x%llx (PTE 0x%llx)\n\0".as_ptr(),
+            scratch_gpu_va, scratch_phys, installed,
+        );
+    }
+
+    unsafe {
+        (*st).gtt_base = gtt_base;
+        (*st).gtt_size = GEN9_GTT_SIZE;
+        (*st).gtt_entries_used = 1;
+        (*st).scratch_gpu_va = scratch_gpu_va;
+        (*st).scratch_phys = scratch_phys;
+        (*st).gtt_initialized = true;
+    }
+
+    log("i915: phase 2 complete (GTT mapped, scratch installed). Phase 3 (BCS ring) is next.");
+    0
+}
+
+/// Returns true once i915_gtt_init has succeeded.
+#[unsafe(no_mangle)]
+pub extern "C" fn i915_gtt_ready() -> bool {
+    let st = STATE.get();
+    unsafe { (*st).gtt_initialized }
 }

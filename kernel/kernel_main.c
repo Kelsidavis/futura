@@ -1840,6 +1840,7 @@ void fut_kernel_main(void) {
             extern int intel_cnvi_init(void);
             extern int intel_ipu_init(void);
             extern int i915_init(void);
+            extern int i915_gtt_init(void);
 
             intel_vtd_init(0);
             intel_pmc_init();
@@ -1866,6 +1867,10 @@ void fut_kernel_main(void) {
              * fb_console_scroll memcpy. Safe to call now: the function
              * just observes and bails cleanly on any non-Intel-GPU config. */
             i915_init();
+            /* Phase 2: install at least one GTT mapping as a smoke test.
+             * Pre-req for phase 3 (BCS ring buffer) which lives in this
+             * GTT VA range. */
+            i915_gtt_init();
             /* intel_hda_hdmi_init() intentionally NOT called.
              * The Rust function takes (verb_fn: HdaVerbFn, codec_addr: u8)
              * but the C extern was zero-arg, so verb_fn read whatever

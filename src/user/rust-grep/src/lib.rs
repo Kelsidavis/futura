@@ -248,12 +248,13 @@ fn is_word_byte(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_'
 }
 
-fn line_matches(line: &[u8], pat: &[u8], icase: bool, word: bool, line_match: bool) -> bool {
-    // Strip a single trailing '\n' from the body for `-x`'s
-    // "whole-line" comparison — newline is part of the line in our
+fn line_matches(line: &[u8], pat: &[u8], icase: bool, word: bool,
+                line_match: bool, sep: u8) -> bool {
+    // Strip a single trailing line-separator from the body for `-x`'s
+    // "whole-line" comparison — sep is part of the line in our
     // accumulator but isn't part of what the user types as the
     // pattern.
-    let body: &[u8] = if line_match && line.last() == Some(&b'\n') {
+    let body: &[u8] = if line_match && line.last() == Some(&sep) {
         &line[..line.len() - 1]
     } else {
         line
@@ -352,6 +353,7 @@ struct Opts {
     stdin_label: Option<*const u8>,  // --label LABEL: override "(standard input)"
     color: bool,        // --color=always: ANSI-highlight matched substring
     byte_offset: bool,  // -b: print 0-based byte offset before the match
+    sep: u8,            // -z: NUL line separator instead of '\n'
 }
 
 const CTX_CAP: usize = 16;        // max before-context lines
@@ -398,8 +400,8 @@ fn emit_match_at(name: Option<&[u8]>, lineno: u64, byte_off: u64,
                  line: &[u8], opts: &Opts) {
     emit_prefix_at(name, lineno, byte_off, opts);
     write_all(STDOUT, line);
-    if line.last().copied() != Some(b'\n') {
-        write_all(STDOUT, b"\n");
+    if line.last().copied() != Some(opts.sep) {
+        write_all(STDOUT, &[opts.sep]);
     }
 }
 
@@ -410,13 +412,13 @@ fn emit_match_colored(name: Option<&[u8]>, lineno: u64, line: &[u8],
     emit_prefix(name, lineno, opts);
     if pat.is_empty() {
         write_all(STDOUT, line);
-        if line.last().copied() != Some(b'\n') {
-            write_all(STDOUT, b"\n");
+        if line.last().copied() != Some(opts.sep) {
+            write_all(STDOUT, &[opts.sep]);
         }
         return;
     }
-    // Strip a trailing newline so the highlight isn't re-injected after it.
-    let (body, has_nl): (&[u8], bool) = if line.last() == Some(&b'\n') {
+    // Strip a trailing line-separator so the highlight isn't re-injected after it.
+    let (body, has_term): (&[u8], bool) = if line.last() == Some(&opts.sep) {
         (&line[..line.len() - 1], true)
     } else { (line, false) };
     let on:  &[u8] = b"\x1b[01;31m\x1b[K";
@@ -448,8 +450,8 @@ fn emit_match_colored(name: Option<&[u8]>, lineno: u64, line: &[u8],
         }
     }
     if last < body.len() { write_all(STDOUT, &body[last..]); }
-    if has_nl { write_all(STDOUT, b"\n"); }
-    else { write_all(STDOUT, b"\n"); }
+    let _ = has_term;
+    write_all(STDOUT, &[opts.sep]);
 }
 
 // Like emit_match but uses '-' instead of ':' between name/lineno —
@@ -471,8 +473,8 @@ fn emit_context(name: Option<&[u8]>, lineno: u64, line: &[u8], opts: &Opts) {
         write_all(STDOUT, b"-");
     }
     write_all(STDOUT, line);
-    if line.last().copied() != Some(b'\n') {
-        write_all(STDOUT, b"\n");
+    if line.last().copied() != Some(opts.sep) {
+        write_all(STDOUT, &[opts.sep]);
     }
 }
 
@@ -483,8 +485,8 @@ fn emit_context(name: Option<&[u8]>, lineno: u64, line: &[u8], opts: &Opts) {
 fn emit_matches_only(name: Option<&[u8]>, lineno: u64, line: &[u8],
                       pat: &[u8], opts: &Opts) -> u64 {
     if pat.is_empty() { return 0; }
-    // Trim a single trailing newline so it never leaks into a -o emit.
-    let body: &[u8] = if line.last() == Some(&b'\n') {
+    // Trim a single trailing line-sep so it never leaks into a -o emit.
+    let body: &[u8] = if line.last() == Some(&opts.sep) {
         &line[..line.len() - 1]
     } else {
         line
@@ -508,7 +510,7 @@ fn emit_matches_only(name: Option<&[u8]>, lineno: u64, line: &[u8],
         if ok {
             emit_prefix(name, lineno, opts);
             write_all(STDOUT, &body[i..i + pat.len()]);
-            write_all(STDOUT, b"\n");
+            write_all(STDOUT, &[opts.sep]);
             emitted += 1;
             i += pat.len();   // non-overlapping
         } else {
@@ -573,13 +575,13 @@ fn grep_fd(
             } else {
                 overflow = true;
             }
-            if b == b'\n' {
+            if b == opts.sep {
                 lineno += 1;
                 let line_off = cur_line_start;
                 cur_line_start = byte_pos_before_chunk + i as u64 + 1;
                 if !overflow {
                     let body = &line[..line_len];
-                    let m = line_matches(body, pat, opts.icase, opts.word, opts.line_match);
+                    let m = line_matches(body, pat, opts.icase, opts.word, opts.line_match, opts.sep);
                     let is_match = m != opts.invert;
                     if is_match {
                         // Flush the before-context ring oldest-first.
@@ -639,7 +641,7 @@ fn grep_fd(
     if line_len > 0 {
         lineno += 1;
         let body = &line[..line_len];
-        let m = line_matches(body, pat, opts.icase, opts.word, opts.line_match);
+        let m = line_matches(body, pat, opts.icase, opts.word, opts.line_match, opts.sep);
         if m != opts.invert {
             if !suppress_lines {
                 if opts.only_matching && !opts.invert {
@@ -852,6 +854,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         stdin_label: None,
         color: false,
         byte_offset: false,
+        sep: b'\n',
     };
 
     let mut e_pattern: Option<*const u8> = None;
@@ -974,6 +977,13 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         } else if arg_is(p, b"-Z") || arg_is(p, b"--null") {
             opts.null_term = true;
             idx += 1;
+        } else if arg_is(p, b"-z") || arg_is(p, b"--null-data") {
+            // -z makes the input record separator NUL instead of '\n'.
+            // Affects both the line tokenizer and the per-match output
+            // terminator. Filename NUL termination is the separate -Z
+            // flag.
+            opts.sep = 0;
+            idx += 1;
         } else if arg_is(p, b"--label") {
             // --label LABEL: rename the synthetic "(standard input)"
             // header so `grep -H --label=src ...` prefixes lines with
@@ -1060,6 +1070,7 @@ Output control:
       --label LABEL     override the synthetic '(standard input)' header
       --color[=WHEN]    highlight matches; WHEN: always|never|auto
   -b, --byte-offset     print 0-based byte offset of each match line
+  -z, --null-data       input/output use NUL as the line separator
       --help            show this help and exit
 \0";
             let len = help.len() - 1;  // strip the trailing NUL

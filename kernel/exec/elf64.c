@@ -725,11 +725,8 @@ static int build_user_stack(fut_mm_t *mm,
 }
 
 [[noreturn]] __attribute__((optimize("O0"))) static void fut_user_trampoline(void *arg) {
-    /* Print BEFORE CLI so the print path's I/O is unaffected. The asm
-     * COM1 byte writes the trampoline used to do are invisible on a
-     * Chromebook (no UART) — replace with fut_printf so it shows up
-     * on fb_console. We only switch to single-byte serial spew once
-     * we actually CLI; doing it before is fine. */
+    /* Print BEFORE CLI so the print path's I/O is unaffected. */
+    fut_printf("[BISECT-TRAMP] entered, arg=%p\n", arg);
 
     /* CRITICAL: Disable interrupts IMMEDIATELY to prevent timer interrupts from
      * corrupting our state during the transition to user mode! */
@@ -741,8 +738,11 @@ static int build_user_stack(fut_mm_t *mm,
         fut_thread_exit();
     }
 
-    /* Extract values from the user entry structure BEFORE freeing it */
+    /* Extract values from the user entry structure BEFORE freeing it.
+     * fb_console_present's BLT path is MMIO-only (no IRQs), so
+     * fut_printf still works after CLI on the i915-accelerated boot. */
     struct fut_user_entry *info = (struct fut_user_entry *)arg;
+    fut_printf("[BISECT-TRAMP] info=%p\n", (void *)info);
 
 #ifdef DEBUG_USER_TRAMPOLINE
     /* Debug: Print '1' after casting - must use DX form for ports > 255 */
@@ -788,6 +788,11 @@ static int build_user_stack(fut_mm_t *mm,
     __asm__ volatile("movw $0x3F8, %%dx; movb $'5', %%al; outb %%al, %%dx" ::: "al", "dx", "memory");
 #endif
 
+    fut_printf("[BISECT-TRAMP] entry=0x%llx stack=0x%llx argc=%llu argv=0x%llx task=%p mm=%p\n",
+               (unsigned long long)entry, (unsigned long long)stack,
+               (unsigned long long)argc, (unsigned long long)argv_ptr,
+               (void *)task, (void *)mm);
+
     /* Verify we're using the task's CR3, not the kernel CR3 */
     extern uint64_t fut_read_cr3(void);
     uint64_t current_cr3 = fut_read_cr3();
@@ -798,6 +803,9 @@ static int build_user_stack(fut_mm_t *mm,
 #endif
 
     uint64_t expected_cr3 = mm_context(mm)->cr3_value;
+    fut_printf("[BISECT-TRAMP] current_cr3=0x%llx expected_cr3=0x%llx\n",
+               (unsigned long long)current_cr3,
+               (unsigned long long)expected_cr3);
 
 #ifdef DEBUG_USER_TRAMPOLINE
     /* Debug: Print '7' after getting expected_cr3 */
@@ -805,16 +813,13 @@ static int build_user_stack(fut_mm_t *mm,
 #endif
 
     if (current_cr3 != expected_cr3) {
-#ifdef DEBUG_USER_TRAMPOLINE
-        /* Debug: Print '8' before CR3 write */
-        __asm__ volatile("movw $0x3F8, %%dx; movb $'8', %%al; outb %%al, %%dx" ::: "al", "dx", "memory");
-#endif
+        fut_printf("[BISECT-TRAMP] switching CR3 to 0x%llx\n",
+                   (unsigned long long)expected_cr3);
         extern void fut_write_cr3(uint64_t);
         fut_write_cr3(expected_cr3);
-#ifdef DEBUG_USER_TRAMPOLINE
-        /* Debug: Print '9' after CR3 write */
-        __asm__ volatile("movw $0x3F8, %%dx; movb $'9', %%al; outb %%al, %%dx" ::: "al", "dx", "memory");
-#endif
+        fut_printf("[BISECT-TRAMP] CR3 switched\n");
+    } else {
+        fut_printf("[BISECT-TRAMP] CR3 already correct\n");
     }
 
 #ifdef DEBUG_USER_TRAMPOLINE
@@ -822,18 +827,32 @@ static int build_user_stack(fut_mm_t *mm,
     __asm__ volatile("movw $0x3F8, %%dx; movb $'A', %%al; outb %%al, %%dx" ::: "al", "dx", "memory");
 #endif
 
-    /* NO DEBUG OUTPUT ALLOWED HERE - printf triggers CR3 switches that break IRETQ! */
-
-    /* Optionally verify mappings without printf (for debugging with debugger):
-     * uint64_t test_pte = 0;
-     * pmap_probe_pte(mm_context(mm), stack, &test_pte);  // Check stack mapping
-     * pmap_probe_pte(mm_context(mm), entry, &test_pte);  // Check entry mapping
-     */
+    /* Probe the user mappings before IRETQ. If entry/stack pages are
+     * not present + USER + (executable for entry), IRETQ lands in user
+     * mode and immediately page-faults — and the iret-time fault
+     * triple-faults silently if we're not careful with the IDT/TSS.
+     * Catching it here gives a print instead of silence. */
+    {
+        uint64_t entry_pte = 0, stack_pte = 0;
+        extern int pmap_probe_pte(fut_vmem_context_t *,
+                                  uint64_t va, uint64_t *out_pte);
+        int erc = pmap_probe_pte(mm_context(mm), entry, &entry_pte);
+        int src = pmap_probe_pte(mm_context(mm), stack - 8, &stack_pte);
+        fut_printf("[BISECT-TRAMP] entry=0x%llx pte=0x%llx (rc=%d)\n",
+                   (unsigned long long)entry,
+                   (unsigned long long)entry_pte, erc);
+        fut_printf("[BISECT-TRAMP] stack-8=0x%llx pte=0x%llx (rc=%d)\n",
+                   (unsigned long long)(stack - 8),
+                   (unsigned long long)stack_pte, src);
+    }
 
     /* Set FS_BASE for TLS (Thread Local Storage) support
      * Required for stack canary checking in code compiled with -fstack-protector
      * The stack canary is read from %fs:0x28 */
+    fut_printf("[BISECT-TRAMP] writing MSR_FS_BASE=0x%llx\n",
+               (unsigned long long)USER_TLS_BASE);
     wrmsr(MSR_FS_BASE, USER_TLS_BASE);
+    fut_printf("[BISECT-TRAMP] FS_BASE written\n");
 
     /* Store fs_base in thread structure so scheduler can restore it after context switch */
     fut_thread_t *cur_thread = fut_thread_current();
@@ -857,8 +876,14 @@ static int build_user_stack(fut_mm_t *mm,
         cur_thread->context.rflags = 0x202;  /* IF=1, reserved bit 1 set */
     }
 
-    /* Call the pure assembly function to perform IRETQ to userspace
-     * This function never returns - NO printf here, CR3 switches break IRETQ */
+    fut_printf("[BISECT-TRAMP] context updated; calling fut_do_user_iretq\n");
+    fut_printf("[BISECT-TRAMP]   entry=0x%llx stack=0x%llx argc=%llu argv=0x%llx\n",
+               (unsigned long long)entry, (unsigned long long)stack,
+               (unsigned long long)argc, (unsigned long long)argv_ptr);
+
+    /* Call the pure assembly function to perform IRETQ to userspace.
+     * After this point we cannot fut_printf — the IRETQ frame is being
+     * built and any further work would clobber it. */
     fut_do_user_iretq(entry, stack, argc, argv_ptr);
 
     /* Should NEVER reach here */
@@ -2900,6 +2925,17 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     }
 
     fut_vfs_check_root_canary("fut_exec_elf:before_trampoline");
+
+    fut_printf("[BISECT] direct-trampoline: entry=0x%llx stack=0x%llx argc=%u argv=0x%llx\n",
+               (unsigned long long)entry->entry,
+               (unsigned long long)entry->stack,
+               (unsigned)entry->argc,
+               (unsigned long long)entry->argv_ptr);
+    fut_printf("[BISECT] cur_thread=%p cur->task=%p mm=%p fs_base=0x%llx\n",
+               (void *)cur, (void *)cur->task,
+               (void *)(cur->task ? cur->task->mm : NULL),
+               (unsigned long long)cur->fs_base);
+    fut_printf("[BISECT] calling fut_user_trampoline\n");
 
     fut_user_trampoline(entry);
 

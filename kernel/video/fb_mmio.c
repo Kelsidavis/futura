@@ -200,10 +200,15 @@ void *fb_get_virt_addr(void) {
 
 #ifdef __x86_64__
 /* Render the Futura banner + Rory the Ouroboros logo to the framebuffer.
- * Must be called only after fb_console_init has succeeded and g_fb_virt
- * points at a writable framebuffer mapping. Called from both the
- * pmap_map path and the early-boot identity-map fast path. */
+ * Idempotent — fb_boot_splash can run twice (early call from
+ * fut_platform_init, then again from kernel_main). Without this guard
+ * the banner doubles up on screen and the logo gets drawn over itself
+ * with corrupted alpha. */
+static volatile int g_banner_rendered = 0;
 static void fb_boot_render_banner_and_logo(void) {
+    if (__atomic_exchange_n(&g_banner_rendered, 1, __ATOMIC_ACQ_REL) != 0) {
+        return;
+    }
     /* Banner via fut_printf — uses fb_console which is already set up. */
     fut_printf("\n");
     fut_printf("-------------------------------\n");
@@ -237,6 +242,18 @@ static void fb_boot_render_banner_and_logo(void) {
     }
     if (bmp_width == 0 || bmp_height == 0 || bmp_width > 4096 || bmp_height > 4096) {
         fut_printf("[FB] BMP logo dimensions out of range\n");
+        return;
+    }
+
+    /* Skip the logo entirely if the BMP is wider than the screen.
+     * On a Chromebook with a 1366×768 panel and a 1500-pixel-wide logo
+     * BMP, the previous code computed logo_x = 1366 - 20 - 1500 = -154
+     * and produced a left-edge "smear" of partial pixels. Better to
+     * just skip drawing. Also bail if the BMP is taller than the
+     * screen for similar reasons. */
+    if (bmp_width >= w || bmp_height >= h) {
+        fut_printf("[FB] BMP logo (%ux%u) doesn't fit screen (%ux%u) — skipping\n",
+                   bmp_width, bmp_height, w, h);
         return;
     }
 

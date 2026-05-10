@@ -1779,6 +1779,15 @@ void comp_render_frame(struct compositor_state *comp) {
         } else if (wp[0] == 's' && wp[1] == 'o' && wp[5] == 'd') { /* solard */
             wp_top_r = 0x00; wp_top_g = 0x1F; wp_top_b = 0x28;
             wp_bot_r = 0x07; wp_bot_g = 0x36; wp_bot_b = 0x42;
+        } else if (wp[0] == 'c' && wp[1] == 'r') {                 /* crimson */
+            wp_top_r = 0x40; wp_top_g = 0x0D; wp_top_b = 0x0D;
+            wp_bot_r = 0xC4; wp_bot_g = 0x32; wp_bot_b = 0x4E;
+        } else if (wp[0] == 'm' && wp[1] == 'i') {                 /* mint */
+            wp_top_r = 0x0C; wp_top_g = 0x2C; wp_top_b = 0x24;
+            wp_bot_r = 0x6B; wp_bot_g = 0xC4; wp_bot_b = 0x9C;
+        } else if (wp[0] == 'v' && wp[1] == 'i') {                 /* violet */
+            wp_top_r = 0x38; wp_top_g = 0x15; wp_top_b = 0x41;
+            wp_bot_r = 0xB7; wp_bot_g = 0x4C; wp_bot_b = 0xE0;
         }
     }
 

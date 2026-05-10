@@ -145,6 +145,9 @@ static void refresh_procs(void) {
     add_preset("Slate Studio",        "slate",     0xFF2B2B2Bu);
     add_preset("Solarized Light",     "solarl",    0xFFFDF6E3u);
     add_preset("Solarized Dark",      "solard",    0xFF002B36u);
+    add_preset("Crimson Twilight",    "crimson",   0xFF400D0Du);
+    add_preset("Mint Frost",          "mint",      0xFF1F4A3Au);
+    add_preset("Royal Violet",        "violet",    0xFF381541u);
 
     /* Clamp selection */
     if (selected >= proc_count) selected = proc_count - 1;

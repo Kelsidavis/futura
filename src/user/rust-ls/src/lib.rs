@@ -374,6 +374,29 @@ each in turn with a \"<path>:\" header.
                                        help.as_ptr() as u64, len as u64); }
             return 0;
         } else {
+            // Combined short flags like -aF, -ar, -Far, -Fri, -1aFr.
+            let n = {
+                let mut k = 0usize;
+                unsafe { while *p.add(k) != 0 { k += 1; } }
+                k
+            };
+            if n >= 2 && unsafe { *p } == b'-' && unsafe { *p.add(1) } != b'-' {
+                let mut all_ok = true;
+                for i in 1..n {
+                    match unsafe { *p.add(i) } {
+                        b'a' => mode = DotMode::ShowAll,
+                        b'A' => mode = DotMode::ShowAlmostAll,
+                        b'F' => classify = true,
+                        b'r' => reverse = true,
+                        b'f' => { unsorted = true; mode = DotMode::ShowAll; }
+                        b'U' => unsorted = true,
+                        b'i' => show_ino = true,
+                        b'1' => {} // one-per-line is the default; no-op
+                        _ => { all_ok = false; break; }
+                    }
+                }
+                if all_ok { idx += 1; continue; }
+            }
             break;
         }
     }

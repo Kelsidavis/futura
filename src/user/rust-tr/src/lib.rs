@@ -257,6 +257,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
     let mut delete = false;
     let mut squeeze = false;
     let mut complement = false;
+    let mut truncate = false;
     let mut idx: i32 = 1;
     while idx < argc {
         let p = unsafe { *argv.add(idx as usize) };
@@ -278,6 +279,9 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         if cstr_eq(p, b"-cs") || cstr_eq(p, b"-sc") {
             squeeze = true; complement = true; idx += 1; continue;
         }
+        if cstr_eq(p, b"-t") || cstr_eq(p, b"--truncate-set1") {
+            truncate = true; idx += 1; continue;
+        }
         if cstr_eq(p, b"-cds") || cstr_eq(p, b"-csd") || cstr_eq(p, b"-dcs")
             || cstr_eq(p, b"-dsc") || cstr_eq(p, b"-scd") || cstr_eq(p, b"-sdc") {
             delete = true; squeeze = true; complement = true; idx += 1; continue;
@@ -289,6 +293,8 @@ Translate, squeeze, and/or delete bytes from stdin to stdout.
 
   -d        delete bytes in SET1 (no translation)
   -s        squeeze runs of bytes in the last set to one byte each
+  -t, --truncate-set1    truncate SET1 to the length of SET2 (drop the
+                         GNU pad-with-last-char behavior)
   -c, -C, --complement   use the complement of SET1 wherever SET1
                          membership is consulted
       --help    show this help and exit
@@ -363,7 +369,10 @@ Sets accept literal bytes, 'a-z' style ranges, '\\n' '\\t' '\\r' '\\0'
                 if !s1_member[c] { tbl[c] = last; }
             }
         } else {
-            for i in 0..s1_n {
+            // Default GNU: pad SET2 by repeating its last byte.
+            // -t: truncate SET1 — extra bytes pass through unchanged.
+            let map_len = if truncate { s1_n.min(s2_n) } else { s1_n };
+            for i in 0..map_len {
                 let mapped = if i < s2_n { s2_buf[i] } else { s2_buf[s2_n - 1] };
                 tbl[s1[i] as usize] = mapped;
             }

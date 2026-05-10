@@ -605,6 +605,21 @@ static int build_user_stack(fut_mm_t *mm,
     uint64_t platform_addr = sp;
     exec_copy_to_user(mm, sp, platform_str, sizeof(platform_str));
 
+    /* Re-establish 16-byte alignment. sizeof(platform_str) is 7 on
+     * x86_64 ("x86_64\0") which broke the sp & ~0xFULL baseline above.
+     * After this, the only 16-flip risk is the final pushes:
+     *   8 (envp NULL) + 8*envc + 8 (argv NULL) + 8*argc + 8 (argc)
+     * = 24 + 8*(envc+argc), which is a multiple of 16 iff
+     * (envc+argc) is odd (since 24 % 16 == 8). Insert an 8-byte
+     * padding slot when that's not the case so the final RSP at
+     * process entry satisfies RSP % 16 == 0 per the x86_64 psABI. */
+    sp &= ~0xFULL;
+    if (((argc + envc) & 1) == 0) {
+        sp -= 8;
+        uint64_t pad = 0;
+        exec_copy_to_user(mm, sp, &pad, sizeof(pad));
+    }
+
     /* AT_HWCAP: CPU feature flags. On x86_64, use CPUID leaf 1 EDX. */
     uint64_t hwcap_val = 0;
 #ifdef __x86_64__
@@ -839,14 +854,18 @@ static int build_user_stack(fut_mm_t *mm,
     __asm__ volatile("movw $0x3F8, %%dx; movb $'7', %%al; outb %%al, %%dx" ::: "al", "dx", "memory");
 #endif
 
+    /* Log BEFORE the CR3 swap — we have no diagnostic prints between
+     * here and fut_do_user_iretq this round, on purpose: if the boot
+     * still freezes at this last visible line, the cliff is the CR3
+     * write itself; if it advances (or hits a userspace fault), the
+     * cliff was the post-CR3 fb_console / i915 MMIO path that wasn't
+     * propagated into the new mm. */
+    fut_printf("[BISECT-TRAMP] CR3 swap+iretq: cur=0x%llx new=0x%llx (no more prints)\n",
+               (unsigned long long)current_cr3,
+               (unsigned long long)expected_cr3);
     if (current_cr3 != expected_cr3) {
-        fut_printf("[BISECT-TRAMP] switching CR3 to 0x%llx\n",
-                   (unsigned long long)expected_cr3);
         extern void fut_write_cr3(uint64_t);
         fut_write_cr3(expected_cr3);
-        fut_printf("[BISECT-TRAMP] CR3 switched\n");
-    } else {
-        fut_printf("[BISECT-TRAMP] CR3 already correct\n");
     }
 
 #ifdef DEBUG_USER_TRAMPOLINE
@@ -854,32 +873,14 @@ static int build_user_stack(fut_mm_t *mm,
     __asm__ volatile("movw $0x3F8, %%dx; movb $'A', %%al; outb %%al, %%dx" ::: "al", "dx", "memory");
 #endif
 
-    /* Probe the user mappings before IRETQ. If entry/stack pages are
-     * not present + USER + (executable for entry), IRETQ lands in user
-     * mode and immediately page-faults — and the iret-time fault
-     * triple-faults silently if we're not careful with the IDT/TSS.
-     * Catching it here gives a print instead of silence. */
-    {
-        uint64_t entry_pte = 0, stack_pte = 0;
-        extern int pmap_probe_pte(fut_vmem_context_t *,
-                                  uint64_t va, uint64_t *out_pte);
-        int erc = pmap_probe_pte(mm_context(mm), entry, &entry_pte);
-        int src = pmap_probe_pte(mm_context(mm), stack - 8, &stack_pte);
-        fut_printf("[BISECT-TRAMP] entry=0x%llx pte=0x%llx (rc=%d)\n",
-                   (unsigned long long)entry,
-                   (unsigned long long)entry_pte, erc);
-        fut_printf("[BISECT-TRAMP] stack-8=0x%llx pte=0x%llx (rc=%d)\n",
-                   (unsigned long long)(stack - 8),
-                   (unsigned long long)stack_pte, src);
-    }
+    /* (post-CR3 PTE probe removed for this iter — it was a fb_console
+     *  print and so subject to the same possible cliff as the CR3
+     *  follow-up print we removed above.) */
 
     /* Set FS_BASE for TLS (Thread Local Storage) support
      * Required for stack canary checking in code compiled with -fstack-protector
      * The stack canary is read from %fs:0x28 */
-    fut_printf("[BISECT-TRAMP] writing MSR_FS_BASE=0x%llx\n",
-               (unsigned long long)USER_TLS_BASE);
     wrmsr(MSR_FS_BASE, USER_TLS_BASE);
-    fut_printf("[BISECT-TRAMP] FS_BASE written\n");
 
     /* Store fs_base in thread structure so scheduler can restore it after context switch */
     fut_thread_t *cur_thread = fut_thread_current();
@@ -903,14 +904,9 @@ static int build_user_stack(fut_mm_t *mm,
         cur_thread->context.rflags = 0x202;  /* IF=1, reserved bit 1 set */
     }
 
-    fut_printf("[BISECT-TRAMP] context updated; calling fut_do_user_iretq\n");
-    fut_printf("[BISECT-TRAMP]   entry=0x%llx stack=0x%llx argc=%llu argv=0x%llx\n",
-               (unsigned long long)entry, (unsigned long long)stack,
-               (unsigned long long)argc, (unsigned long long)argv_ptr);
-
     /* Call the pure assembly function to perform IRETQ to userspace.
-     * After this point we cannot fut_printf — the IRETQ frame is being
-     * built and any further work would clobber it. */
+     * No prints between fut_write_cr3 above and this call — see comment
+     * above the CR3 swap. */
     fut_do_user_iretq(entry, stack, argc, argv_ptr);
 
     /* Should NEVER reach here */

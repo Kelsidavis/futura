@@ -316,23 +316,31 @@ fn substitute_xs(path: &mut [u8], end: usize, seed: &mut u64) {
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
     let mut want_dir = false;
+    let mut quiet = false;
+    let mut dry_run = false;
     let mut user_template: Option<*const u8> = None;
     for ai in 1..argc {
         let p = unsafe { *argv.add(ai as usize) };
         if p.is_null() || (p as usize) < 0x10000 {
             continue;
         }
-        if cstr_eq(p, b"-d") {
+        if cstr_eq(p, b"-d") || cstr_eq(p, b"--directory") {
             want_dir = true;
+        } else if cstr_eq(p, b"-q") || cstr_eq(p, b"--quiet") {
+            quiet = true;
+        } else if cstr_eq(p, b"-u") || cstr_eq(p, b"--dry-run") {
+            dry_run = true;
         } else if cstr_eq(p, b"--help") {
             let help: &[u8] = b"\
-Usage: rust-mktemp [-d] [TEMPLATE]
+Usage: rust-mktemp [-d] [-q] [-u] [TEMPLATE]
 Create a unique file (or directory with -d) and print its path.
 
-  -d            create a directory (mode 0700) instead of a file
-  TEMPLATE      path template; trailing X's are replaced with random
-                ALPHA-36 chars (default /tmp/tmp.XXXXXXXX)
-      --help    show this help and exit
+  -d, --directory   create a directory (mode 0700) instead of a file
+  -q, --quiet       suppress diagnostics (just exit non-zero on failure)
+  -u, --dry-run     print the proposed path but do not create it
+  TEMPLATE          path template; trailing X's are replaced with random
+                    ALPHA-36 chars (default /tmp/tmp.XXXXXXXX)
+      --help        show this help and exit
 \0";
             let len = help.len() - 1;
             unsafe { let _ = syscall3(sysn::WRITE, STDOUT as u64,
@@ -341,7 +349,9 @@ Create a unique file (or directory with -d) and print its path.
         } else if user_template.is_none() {
             user_template = Some(p);
         } else {
-            write_str(STDERR, b"rust-mktemp: too many arguments\n");
+            if !quiet {
+                write_str(STDERR, b"rust-mktemp: too many arguments\n");
+            }
             return 1;
         }
     }
@@ -353,7 +363,9 @@ Create a unique file (or directory with -d) and print its path.
         Some(p) => {
             let n = cstr_len(p);
             if n + 1 > path.len() {
-                write_str(STDERR, b"rust-mktemp: template too long\n");
+                if !quiet {
+                    write_str(STDERR, b"rust-mktemp: template too long\n");
+                }
                 return 1;
             }
             for i in 0..n {
@@ -374,7 +386,9 @@ Create a unique file (or directory with -d) and print its path.
 
     // Verify there's at least one trailing 'X'.
     if end == 0 || path[end - 1] != b'X' {
-        write_str(STDERR, b"rust-mktemp: template must end with X's\n");
+        if !quiet {
+            write_str(STDERR, b"rust-mktemp: template must end with X's\n");
+        }
         return 1;
     }
 
@@ -387,6 +401,13 @@ Create a unique file (or directory with -d) and print its path.
 
     for _attempt in 0..64 {
         substitute_xs(&mut path, end, &mut seed);
+        // Dry-run: just print one substituted path and exit. Don't
+        // touch the filesystem.
+        if dry_run {
+            write_str(STDOUT, &path[..end]);
+            write_str(STDOUT, b"\n");
+            return 0;
+        }
         let r: i64 = if want_dir {
             unsafe {
                 syscall3(sysn::MKDIRAT, AT_FDCWD as u64, path.as_ptr() as u64, 0o700)
@@ -414,11 +435,15 @@ Create a unique file (or directory with -d) and print its path.
         // EEXIST is -17 on both arches (Linux generic). Any other
         // error means we can't make progress; bail.
         if r != -17 {
-            write_str(STDERR, b"rust-mktemp: cannot create temp\n");
+            if !quiet {
+                write_str(STDERR, b"rust-mktemp: cannot create temp\n");
+            }
             return 1;
         }
         stir(&mut seed);
     }
-    write_str(STDERR, b"rust-mktemp: too many collisions\n");
+    if !quiet {
+        write_str(STDERR, b"rust-mktemp: too many collisions\n");
+    }
     1
 }

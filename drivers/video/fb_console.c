@@ -156,6 +156,8 @@ struct fb_console_state {
     int initialized;                 /* Has been initialized */
     int disabled;                    /* Disabled for GUI mode */
     ansi_state_t ansi;               /* Escape-sequence parser state */
+    uint8_t  utf8_pending;           /* Continuation bytes still expected */
+    uint32_t utf8_codepoint;         /* Codepoint being assembled */
 };
 
 static struct fb_console_state g_fb_console = {0};
@@ -622,6 +624,68 @@ void fb_console_putc(char c) {
 
     if (!cons->initialized || cons->disabled) {
         return;
+    }
+
+    /* UTF-8 mini-decoder. The kernel's printk uses ✓, →, •, ⚠, etc.
+     * in init banners. The 8x8 bitmap font only knows ASCII, so without
+     * this every multibyte sequence got rendered as one '?' per byte
+     * (e.g. "✓" → "???"). We accumulate continuation bytes, then map a
+     * handful of common codepoints to ASCII fallbacks. Anything else
+     * collapses to a single '?'. */
+    unsigned char ub = (unsigned char)c;
+    if (cons->utf8_pending) {
+        if ((ub & 0xC0) == 0x80) {
+            cons->utf8_codepoint = (cons->utf8_codepoint << 6) | (ub & 0x3F);
+            cons->utf8_pending--;
+            if (cons->utf8_pending) return;
+            uint32_t cp = cons->utf8_codepoint;
+            cons->utf8_codepoint = 0;
+            switch (cp) {
+                case 0x2010: case 0x2011: case 0x2012: case 0x2013: case 0x2014:
+                case 0x2015: c = '-'; break;                    /* dashes */
+                case 0x2018: case 0x2019: c = '\''; break;      /* curly ' */
+                case 0x201C: case 0x201D: c = '"';  break;      /* curly " */
+                case 0x2022: case 0x00B7: c = '*';  break;      /* bullet */
+                case 0x2026: c = '.';  break;                   /* ellipsis */
+                case 0x2190: c = '<';  break;
+                case 0x2192: c = '>';  break;
+                case 0x2191: c = '^';  break;
+                case 0x2193: c = 'v';  break;
+                case 0x21D2: c = '>';  break;
+                case 0x2713: case 0x221A: c = '+'; break;       /* check */
+                case 0x2717: case 0x2718: c = 'x'; break;       /* cross */
+                case 0x26A0: case 0x203C: c = '!'; break;       /* warn */
+                case 0x00A9: c = 'C';  break;
+                case 0x00AE: c = 'R';  break;
+                case 0x2122: c = 'T';  break;
+                case 0x00B0: c = 'o';  break;                   /* degree */
+                case 0x00A0: c = ' ';  break;                   /* nbsp */
+                case 0x00B1: c = '~';  break;
+                case 0x00D7: c = 'x';  break;
+                case 0x00F7: c = '/';  break;
+                default:
+                    if (cp < 0x80) c = (char)cp;
+                    else c = '?';
+                    break;
+            }
+            /* fall through to render `c` */
+        } else {
+            /* Bad continuation — abort and render this byte as new start */
+            cons->utf8_pending = 0;
+            cons->utf8_codepoint = 0;
+        }
+    } else if (ub >= 0x80) {
+        if ((ub & 0xE0) == 0xC0) {
+            cons->utf8_pending = 1; cons->utf8_codepoint = ub & 0x1F;
+        } else if ((ub & 0xF0) == 0xE0) {
+            cons->utf8_pending = 2; cons->utf8_codepoint = ub & 0x0F;
+        } else if ((ub & 0xF8) == 0xF0) {
+            cons->utf8_pending = 3; cons->utf8_codepoint = ub & 0x07;
+        } else {
+            /* Stray continuation or 5/6-byte (invalid) — emit '?' */
+            c = '?';
+        }
+        if (cons->utf8_pending) return;
     }
 
     /* Strip ANSI/VT escape sequences. Without this the shell's color

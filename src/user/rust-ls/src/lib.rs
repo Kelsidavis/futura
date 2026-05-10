@@ -222,9 +222,9 @@ const ENTRY_CAP: usize = 1024;
 const NAME_BUF: usize  = 32 * 1024;
 
 #[derive(Copy, Clone)]
-struct Entry { name_off: u32, name_len: u32, d_type: u8 }
+struct Entry { name_off: u32, name_len: u32, d_type: u8, ino: u64 }
 
-static mut ENTRIES: [Entry; ENTRY_CAP] = [Entry { name_off: 0, name_len: 0, d_type: 0 }; ENTRY_CAP];
+static mut ENTRIES: [Entry; ENTRY_CAP] = [Entry { name_off: 0, name_len: 0, d_type: 0, ino: 0 }; ENTRY_CAP];
 static mut ENTRY_COUNT: usize = 0;
 static mut NAMES: [u8; NAME_BUF] = [0; NAME_BUF];
 static mut NAMES_USED: usize = 0;
@@ -236,7 +236,7 @@ fn entries_reset() {
     }
 }
 
-fn entries_push(name: &[u8], d_type: u8) {
+fn entries_push(name: &[u8], d_type: u8, ino: u64) {
     unsafe {
         if ENTRY_COUNT >= ENTRY_CAP { return; }
         if NAMES_USED + name.len() > NAME_BUF { return; }
@@ -249,6 +249,7 @@ fn entries_push(name: &[u8], d_type: u8) {
             name_off: off,
             name_len: name.len() as u32,
             d_type,
+            ino,
         };
         ENTRY_COUNT += 1;
     }
@@ -310,6 +311,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
     let mut classify = false;
     let mut reverse = false;
     let mut unsorted = false;
+    let mut show_ino = false;
     let mut idx: i32 = 1;
     while idx < argc {
         let p = unsafe { *argv.add(idx as usize) };
@@ -335,6 +337,9 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             unsorted = true;
             mode = DotMode::ShowAll;
             idx += 1;
+        } else if arg_is(p, b"-i") || arg_is(p, b"--inode") {
+            show_ino = true;
+            idx += 1;
         } else if arg_is(p, b"-U") {
             // -U: don't sort (no other side effects), GNU extension.
             unsorted = true;
@@ -347,6 +352,7 @@ List directory contents (sorted alphabetically by default).
   -a, --all              do not ignore entries starting with .
   -A, --almost-all       like -a but skip '.' and '..'
   -F, --classify         append entry-type indicator (*/=@|)
+  -i, --inode            print inode number before each name
   -r, --reverse          reverse the sort order
   -f                     do not sort, list raw directory order (implies -a)
   -U                     do not sort, but keep dot-file filtering
@@ -452,6 +458,11 @@ each in turn with a \"<path>:\" header.
                 let hi = buf[off + 17] as usize;
                 let reclen = lo | (hi << 8);
                 if reclen < 19 || off + reclen > bytes { break; }
+                // d_ino lives at offset 0 (8 bytes, little-endian).
+                let mut ino: u64 = 0;
+                for k in 0..8 {
+                    ino |= (buf[off + k] as u64) << (k * 8);
+                }
                 let d_type = buf[off + 18];
                 let name_start = off + 19;
                 let mut name_end = name_start;
@@ -469,7 +480,7 @@ each in turn with a \"<path>:\" header.
                     DotMode::ShowAll => false,
                 };
                 if !skip && nlen > 0 {
-                    entries_push(name, d_type);
+                    entries_push(name, d_type, ino);
                 }
                 off += reclen;
             }
@@ -488,6 +499,23 @@ each in turn with a \"<path>:\" header.
             let idx = if reverse { count - 1 - i } else { i };
             let e = unsafe { ENTRIES[idx] };
             let name = entry_slice(e);
+            if show_ino {
+                let mut numbuf = [0u8; 24];
+                let mut k = numbuf.len();
+                let mut v = e.ino;
+                if v == 0 {
+                    k -= 1;
+                    numbuf[k] = b'0';
+                } else {
+                    while v > 0 {
+                        k -= 1;
+                        numbuf[k] = b'0' + (v % 10) as u8;
+                        v /= 10;
+                    }
+                }
+                if !write_all(STDOUT, &numbuf[k..]) { local_err = true; break; }
+                if !write_all(STDOUT, b" ") { local_err = true; break; }
+            }
             if !write_all(STDOUT, name) { local_err = true; break; }
             if classify {
                 const DT_FIFO: u8 = 1;

@@ -2872,10 +2872,14 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
         }
 
         /* Open /dev/console only for stdio fds that are still unset */
+        ELF_LOG("[EXEC-ELF] preparing stdio fill: task->fd_table=%p\n",
+                task->fd_table);
         fut_task_t *saved_task = cur ? cur->task : NULL;
         if (cur) cur->task = task;
+        ELF_LOG("[EXEC-ELF] cur->task swapped to new task\n");
 
         for (int stdio_fd = 0; stdio_fd < 3; stdio_fd++) {
+            ELF_LOG("[EXEC-ELF] stdio loop iter %d entering\n", stdio_fd);
             if (!task->fd_table || !task->fd_table[stdio_fd]) {
                 ELF_LOG("[EXEC-ELF] opening /dev/console for stdio_fd=%d\n", stdio_fd);
                 int got = fut_vfs_open("/dev/console", O_RDWR, 0);
@@ -2884,10 +2888,15 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
                     fut_printf("[EXEC-X86] WARNING: stdio fd %d opened as %d\n",
                                stdio_fd, got);
                 }
+            } else {
+                ELF_LOG("[EXEC-ELF] stdio_fd=%d already set (%p)\n",
+                        stdio_fd, task->fd_table[stdio_fd]);
             }
         }
+        ELF_LOG("[EXEC-ELF] stdio loop done\n");
 
         if (cur) cur->task = saved_task;
+        ELF_LOG("[EXEC-ELF] cur->task restored\n");
     }
 #endif
 

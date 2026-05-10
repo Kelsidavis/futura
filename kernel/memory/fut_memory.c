@@ -13,6 +13,7 @@
 #include <kernel/errno.h>
 #include <kernel/kprintf.h>
 #include <kernel/fut_sched.h>
+#include <kernel/fut_irq.h>
 
 
 /* ============================================================
@@ -32,26 +33,8 @@ static uint64_t  pmm_reserved_pages = 0;
  * call fut_pmm_alloc_page while the lock is held by mainline code. */
 static fut_spinlock_t pmm_lock = { .locked = 0 };
 
-static inline unsigned long pmm_irqsave(void) {
-    unsigned long flags;
-#if defined(__x86_64__)
-    __asm__ volatile("pushfq; pop %0; cli" : "=r"(flags) :: "memory");
-#elif defined(__aarch64__)
-    __asm__ volatile("mrs %0, daif; msr daifset, #0xF" : "=r"(flags) :: "memory");
-#else
-    flags = 0;
-#endif
-    return flags;
-}
-
-static inline void pmm_irqrestore(unsigned long flags) {
-#if defined(__x86_64__)
-    if (flags & (1UL << 9))  /* IF bit */
-        __asm__ volatile("sti" ::: "memory");
-#elif defined(__aarch64__)
-    __asm__ volatile("msr daif, %0" :: "r"(flags) : "memory");
-#endif
-}
+#define pmm_irqsave    fut_irqsave
+#define pmm_irqrestore fut_irqrestore
 
 /* Bitmap manipulation macros */
 #define BITMAP_SET(b)   (pmm_bitmap[(b)/8u] |=  (1u << ((b)%8u)))

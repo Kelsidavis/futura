@@ -2921,69 +2921,45 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     entry->argv_ptr = user_argv;
     entry->task = task;
 
-    ELF_LOG("[EXEC-ELF] calling fut_thread_create for user trampoline (CLI'd)\n");
+    /* DIRECT TRAMPOLINE PATH (bare-metal bring-up).
+     *
+     * The IRQ-driven thread-switch path silently triple-faults on the
+     * Chromebook somewhere between STI and the new thread reaching its
+     * first print. As a workaround, skip creating a separate kernel
+     * thread for the user-trampoline. Instead repurpose the *bootstrap*
+     * thread (the one that called fut_exec_elf) into PID 1 — which is
+     * how most kernels actually do it.
+     *
+     * Sequence:
+     *   - Re-point cur->task at the new task (mm already attached above).
+     *   - Set fs_base on the current thread for TLS.
+     *   - Free kernel-side parsing allocations (we won't get to free
+     *     them after the IRETQ).
+     *   - Call fut_user_trampoline directly — it does CR3 swap and
+     *     IRETQs to user mode. Never returns.
+     *
+     * fut_exec_elf does NOT return on success in this mode. The caller
+     * (kernel_main) won't see "Init process launched successfully". */
+    ELF_LOG("[EXEC-ELF] direct-trampoline path: bootstrap becomes PID 1\n");
 
-    /* CRITICAL: Disable interrupts to prevent race condition.
-     * fut_thread_create() adds the thread to the scheduler queue with fs_base=0.
-     * If a timer fires before we set fs_base, the scheduler will save MSR=0
-     * back to the thread, permanently corrupting fs_base.
-     * By disabling interrupts, we ensure fs_base is set before any timer fires. */
-    __asm__ volatile("cli" ::: "memory");
-
-    fut_thread_t *thread = fut_thread_create(task,
-                                             fut_user_trampoline,
-                                             entry,
-                                             CONFIG_KERNEL_STACK_SIZE,
-                                             FUT_DEFAULT_PRIORITY);
-    if (!thread) {
-        __asm__ volatile("sti" ::: "memory");
+    fut_thread_t *cur = fut_thread_current();
+    if (!cur) {
+        ELF_LOG("[EXEC-ELF] fut_thread_current() == NULL, bailing\n");
         fut_free(entry);
         fut_task_destroy(task);
         fut_free(phdrs);
         fut_vfs_close(fd);
-        if (kargv && kargv_needs_free) {
-            for (size_t i = 0; i < argc; i++) fut_free(kargv[i]);
-            fut_free(kargv);
-        }
-        if (kenvp && kenvp_needs_free) {
-            for (size_t i = 0; i < envc; i++) fut_free(kenvp[i]);
-            fut_free(kenvp);
-        }
-        return -ENOMEM;
+        EXEC_CLEANUP_KARGS();
+        return -ESRCH;
     }
+    cur->task = task;
+    cur->fs_base = USER_TLS_BASE;
+    ELF_LOG("[EXEC-ELF] cur->task=%p cur->fs_base=0x%llx\n",
+            cur->task, (unsigned long long)cur->fs_base);
 
-    /* Set fs_base for TLS support BEFORE re-enabling interrupts.
-     * This ensures the scheduler will always see the correct fs_base value.
-     *
-     * NOTE: Do NOT set context.cs/ss here! The context.rip points to the kernel
-     * trampoline. If we set cs to user mode, the scheduler would construct a
-     * user-mode return to kernel address, causing SMEP violation.
-     * The trampoline sets cs/ss/rip/rsp to user values right before IRETQ. */
-    thread->fs_base = USER_TLS_BASE;
-    __asm__ volatile("" ::: "memory");  /* Ensure store is visible */
-    /* Print BEFORE STI. After we re-enable interrupts a queued timer
-     * tick might fire immediately and the scheduler may pick the new
-     * user-trampoline thread to run on the very next slice — which
-     * means anything we try to log AFTER sti can be preempted away
-     * before it actually flushes to the framebuffer. */
-    ELF_LOG("[EXEC-ELF] fut_thread_create returned %p, fs_base set; about to STI\n", thread);
-    __asm__ volatile("sti" ::: "memory");
-    /* Diagnostic: a busy loop just so we're definitely not preempted
-     * mid-print. If the kernel is alive after STI we'll see this. */
-    for (volatile int i = 0; i < 1000; i++) { }
-    ELF_LOG("[EXEC-ELF] STI'd successfully (post-busy-loop)\n");
+    /* Free kernel-side allocations now — once IRETQ happens we can't. */
     fut_free(phdrs);
     fut_vfs_close(fd);
-    ELF_LOG("[EXEC-ELF] phdrs+fd freed; about to yield to trampoline\n");
-    /* Voluntarily yield so the scheduler picks the new trampoline thread
-     * deterministically (instead of relying on a queued timer IRQ doing
-     * it post-STI, which we don't seem to be reaching). If the yield
-     * returns, bootstrap got back; if not, trampoline took over. */
-    extern void fut_thread_yield(void);
-    fut_thread_yield();
-    ELF_LOG("[EXEC-ELF] returned from yield (bootstrap rescheduled)\n");
-
-    /* Free the kernel copies of argv/envp - they've been copied to user stack */
     if (kargv && kargv_needs_free) {
         for (size_t i = 0; i < argc; i++) fut_free(kargv[i]);
         fut_free(kargv);
@@ -2993,11 +2969,15 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
         fut_free(kenvp);
     }
 
-    ELF_LOG("[EXEC-ELF] returning 0 (success); user trampoline thread queued\n");
-    fut_vfs_check_root_canary("fut_exec_elf:exit");
+    fut_vfs_check_root_canary("fut_exec_elf:before_trampoline");
 
-    (void)thread;
-    return 0;
+    ELF_LOG("[EXEC-ELF] handing off to fut_user_trampoline (no return)\n");
+    fut_user_trampoline(entry);
+
+    /* unreachable */
+    extern void fut_platform_panic(const char *);
+    fut_platform_panic("fut_user_trampoline returned in direct-trampoline path");
+    while (1) { __asm__ volatile("hlt"); }
 }
 
 #elif defined(__aarch64__)

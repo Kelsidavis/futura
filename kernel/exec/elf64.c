@@ -39,10 +39,25 @@
 #include <kernel/debug_config.h>
 
 /* ELF debugging disabled for clean boot */
-/* Re-enabled while we're diagnosing the bare-metal init-launch hang.
- * Originally a no-op for performance. Once exec works on bare metal,
- * gate behind a CONFIG flag rather than leaving on permanently. */
+/* ELF_LOG: gated diagnostic output for the exec path.
+ *
+ * Set CONFIG_DEBUG_EXEC=1 (e.g. via -DCONFIG_DEBUG_EXEC=1 in the
+ * Makefile) to route every ELF_LOG call through fut_printf. Off by
+ * default — exec is on the critical boot-time path and the log is
+ * very noisy.
+ *
+ * Was unconditionally on while we bisected the bare-metal init-launch
+ * hang in iter-25..iter-35. Now that the symptom is narrowed to the
+ * post-STI scheduler context-switch path, the trace points are quiet
+ * by default but trivial to flip back on. */
+#ifndef CONFIG_DEBUG_EXEC
+#define CONFIG_DEBUG_EXEC 0
+#endif
+#if CONFIG_DEBUG_EXEC
 #define ELF_LOG(...) fut_printf(__VA_ARGS__)
+#else
+#define ELF_LOG(...) do {} while(0)
+#endif
 
 /* TLS block address - placed below stack in user address space */
 #define USER_TLS_BASE   0x00007FFE000000ULL
@@ -742,7 +757,7 @@ static int build_user_stack(fut_mm_t *mm,
      * Chromebook (no UART) — replace with fut_printf so it shows up
      * on fb_console. We only switch to single-byte serial spew once
      * we actually CLI; doing it before is fine. */
-    fut_printf("[USER-TRAMP] entered, arg=%p\n", arg);
+    ELF_LOG("[USER-TRAMP] entered, arg=%p\n", arg);
 
     /* CRITICAL: Disable interrupts IMMEDIATELY to prevent timer interrupts from
      * corrupting our state during the transition to user mode! */
@@ -3007,10 +3022,25 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
 
 /* Logging macros disabled for clean boot */
 #undef ELF_LOG
-/* Re-enabled while we're diagnosing the bare-metal init-launch hang.
- * Originally a no-op for performance. Once exec works on bare metal,
- * gate behind a CONFIG flag rather than leaving on permanently. */
+/* ELF_LOG: gated diagnostic output for the exec path.
+ *
+ * Set CONFIG_DEBUG_EXEC=1 (e.g. via -DCONFIG_DEBUG_EXEC=1 in the
+ * Makefile) to route every ELF_LOG call through fut_printf. Off by
+ * default — exec is on the critical boot-time path and the log is
+ * very noisy.
+ *
+ * Was unconditionally on while we bisected the bare-metal init-launch
+ * hang in iter-25..iter-35. Now that the symptom is narrowed to the
+ * post-STI scheduler context-switch path, the trace points are quiet
+ * by default but trivial to flip back on. */
+#ifndef CONFIG_DEBUG_EXEC
+#define CONFIG_DEBUG_EXEC 0
+#endif
+#if CONFIG_DEBUG_EXEC
 #define ELF_LOG(...) fut_printf(__VA_ARGS__)
+#else
+#define ELF_LOG(...) do {} while(0)
+#endif
 #define stack_printf(...) do {} while(0)
 
 /* ELF metadata for auxiliary vector (also defined in x86_64 section) */

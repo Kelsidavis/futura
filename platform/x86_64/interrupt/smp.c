@@ -102,11 +102,12 @@ void ap_main(uint32_t apic_id) {
     fut_printf("[SMP] AP CPU %u initialized as CPU #%u (total CPUs: %u)\n",
                apic_id, cpu_index, atomic_load_explicit(&cpu_count, memory_order_seq_cst));
 
-    /* Initialize scheduler for this CPU (creates per-CPU idle thread) */
+    /* Initialize scheduler for this CPU (creates per-CPU idle thread).
+     * SMP-DBG bisection prints removed; SMP startup is gated off on
+     * bare metal anyway (acpi_parse_madt skips smp_init), so this code
+     * path isn't currently exercised. */
     extern void fut_sched_init_cpu(void);
-    fut_printf("[SMP-DBG] AP %u: calling fut_sched_init_cpu\n", apic_id);
     fut_sched_init_cpu();
-    fut_printf("[SMP-DBG] AP %u: fut_sched_init_cpu returned\n", apic_id);
 
     /* Set up per-CPU LAPIC timer for preemptive scheduling */
     extern void lapic_timer_periodic(uint32_t initial_count, uint8_t vector);

@@ -403,7 +403,7 @@ void acpi_parse_madt(void) {
     } else {
         fut_printf("[ACPI] Single-processor system\n");
     }
-    fut_printf("[ACPI-DBG] BSP: leaving acpi_parse_madt\n");
+    /* [ACPI-DBG] bisection marker removed. */
 }
 #endif  /* __x86_64__ */
 

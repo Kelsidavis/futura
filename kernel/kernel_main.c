@@ -1078,7 +1078,7 @@ void fut_kernel_main(void) {
     if (acpi_init()) {
         fut_printf("[INIT] Parsing MADT for CPU topology...\n");
         acpi_parse_madt();
-        fut_printf("[INIT-DBG] acpi_parse_madt returned to kernel_main\n");
+        /* [INIT-DBG] bisection marker removed. */
     }
 #else
     /* ARM64: ACPI parsing not yet implemented */

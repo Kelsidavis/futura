@@ -67,8 +67,37 @@ static size_t total_allocated = 0;            /* Total bytes allocated */
  * allocations; without this lock, two CPUs in fut_malloc would corrupt
  * the free-list links or the buddy_split chain. SMP is currently
  * disabled at boot, so contention is zero on uniprocessor — the lock
- * is essentially free in the steady state. */
+ * is essentially free in the steady state.
+ *
+ * IRQ-safe: timer-ISR fut_timer_start() reaches fut_malloc to allocate
+ * timer_event_t structs, so we MUST disable interrupts around the
+ * acquire. Otherwise an IRQ on the same CPU as a mainline thread that
+ * holds buddy_lock would re-enter buddy_malloc and deadlock. Pattern
+ * mirrors the pmm_irqsave wrapper in fut_memory.c. */
 static fut_spinlock_t buddy_lock = { .locked = 0 };
+
+static inline unsigned long buddy_irqsave(void) {
+    unsigned long flags;
+#if defined(__x86_64__)
+    __asm__ volatile("pushfq; pop %0; cli" : "=r"(flags) :: "memory");
+#elif defined(__aarch64__)
+    __asm__ volatile("mrs %0, daif; msr daifset, #0xF" : "=r"(flags) :: "memory");
+#else
+    flags = 0;
+#endif
+    return flags;
+}
+
+static inline void buddy_irqrestore(unsigned long flags) {
+#if defined(__x86_64__)
+    if (flags & (1UL << 9))  /* IF bit */
+        __asm__ volatile("sti" ::: "memory");
+#elif defined(__aarch64__)
+    __asm__ volatile("msr daif, %0" :: "r"(flags) : "memory");
+#else
+    (void)flags;
+#endif
+}
 
 /* ============================================================
  *   Helper Macros and Functions
@@ -731,34 +760,42 @@ static void buddy_free_unlocked(void *ptr) {
  * ============================================================ */
 
 void *buddy_malloc(size_t size) {
+    unsigned long flags = buddy_irqsave();
     fut_spinlock_acquire(&buddy_lock);
     void *p = buddy_malloc_unlocked(size);
     fut_spinlock_release(&buddy_lock);
+    buddy_irqrestore(flags);
     return p;
 }
 
 void buddy_free(void *ptr) {
+    unsigned long flags = buddy_irqsave();
     fut_spinlock_acquire(&buddy_lock);
     buddy_free_unlocked(ptr);
     fut_spinlock_release(&buddy_lock);
+    buddy_irqrestore(flags);
 }
 
 void *buddy_realloc(void *ptr, size_t size) {
+    unsigned long flags = buddy_irqsave();
     fut_spinlock_acquire(&buddy_lock);
     if (ptr == NULL) {
         void *p = buddy_malloc_unlocked(size);
         fut_spinlock_release(&buddy_lock);
+        buddy_irqrestore(flags);
         return p;
     }
     if (size == 0) {
         buddy_free_unlocked(ptr);
         fut_spinlock_release(&buddy_lock);
+        buddy_irqrestore(flags);
         return NULL;
     }
 
     block_hdr_t *hdr = get_block_hdr(ptr);
     if (hdr->magic != BLOCK_MAGIC) {
         fut_spinlock_release(&buddy_lock);
+        buddy_irqrestore(flags);
         return NULL;  /* Invalid pointer */
     }
 
@@ -767,6 +804,7 @@ void *buddy_realloc(void *ptr, size_t size) {
     if (size <= current_size) {
         /* Requested size fits in current block */
         fut_spinlock_release(&buddy_lock);
+        buddy_irqrestore(flags);
         return ptr;
     }
 
@@ -774,6 +812,7 @@ void *buddy_realloc(void *ptr, size_t size) {
     void *new_ptr = buddy_malloc_unlocked(size);
     if (new_ptr == NULL) {
         fut_spinlock_release(&buddy_lock);
+        buddy_irqrestore(flags);
         return NULL;  /* Allocation failed */
     }
 
@@ -784,6 +823,7 @@ void *buddy_realloc(void *ptr, size_t size) {
     buddy_free_unlocked(ptr);
 
     fut_spinlock_release(&buddy_lock);
+    buddy_irqrestore(flags);
     return new_ptr;
 }
 

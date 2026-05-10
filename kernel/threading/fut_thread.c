@@ -51,8 +51,37 @@ fut_thread_t *fut_thread_list = NULL;
  *
  * Lock ordering: thread_list_lock is held only briefly across the
  * pointer-update region. Never call into the scheduler (which takes
- * its per-CPU queue_lock) while holding this lock. */
+ * its per-CPU queue_lock) while holding this lock.
+ *
+ * IRQ-safe: timer-ISR fut_timer_irq() walks the list via
+ * fut_thread_find() to wake sleeping threads. Without IRQ-disable a
+ * same-CPU IRQ that hits a mainline thread mid fut_thread_create /
+ * fut_thread_exit would re-enter the list under the same lock and
+ * self-deadlock. Pattern mirrors pmm_irqsave in fut_memory.c. */
 fut_spinlock_t fut_thread_list_lock = { .locked = 0 };
+
+static inline unsigned long thread_list_irqsave(void) {
+    unsigned long flags;
+#if defined(__x86_64__)
+    __asm__ volatile("pushfq; pop %0; cli" : "=r"(flags) :: "memory");
+#elif defined(__aarch64__)
+    __asm__ volatile("mrs %0, daif; msr daifset, #0xF" : "=r"(flags) :: "memory");
+#else
+    flags = 0;
+#endif
+    return flags;
+}
+
+static inline void thread_list_irqrestore(unsigned long flags) {
+#if defined(__x86_64__)
+    if (flags & (1UL << 9))  /* IF bit */
+        __asm__ volatile("sti" ::: "memory");
+#elif defined(__aarch64__)
+    __asm__ volatile("msr daif, %0" :: "r"(flags) : "memory");
+#else
+    (void)flags;
+#endif
+}
 
 #if defined(__x86_64__)
 /* Clean FPU state template for initializing new threads.
@@ -357,11 +386,14 @@ fut_thread_t *fut_thread_create(
 
     // Add to global thread list (uses separate global_next pointer).
     // Serialize the head-of-list update to keep two CPUs creating
-    // threads concurrently from corrupting the linked list.
+    // threads concurrently from corrupting the linked list. IRQ-safe
+    // because fut_thread_find() runs from the timer ISR.
+    unsigned long _tlflags = thread_list_irqsave();
     fut_spinlock_acquire(&fut_thread_list_lock);
     thread->global_next = fut_thread_list;
     fut_thread_list = thread;
     fut_spinlock_release(&fut_thread_list_lock);
+    thread_list_irqrestore(_tlflags);
 
     // Increment global thread count
     uint64_t new_count = atomic_fetch_add_explicit(&thread_count, 1, memory_order_acq_rel) + 1;
@@ -479,7 +511,8 @@ extern void exit_robust_list(fut_thread_t *thread);
 
     // Remove from global thread list. Walk + unlink under the
     // global lock so concurrent insert/remove from another CPU
-    // can't corrupt the chain.
+    // can't corrupt the chain. IRQ-safe (timer ISR walks this list).
+    unsigned long _tlflags = thread_list_irqsave();
     fut_spinlock_acquire(&fut_thread_list_lock);
     fut_thread_t **prev = &fut_thread_list;
     for (fut_thread_t *t = fut_thread_list; t; t = t->global_next) {
@@ -490,6 +523,7 @@ extern void exit_robust_list(fut_thread_t *thread);
         prev = &t->global_next;
     }
     fut_spinlock_release(&fut_thread_list_lock);
+    thread_list_irqrestore(_tlflags);
     self->wait_next = NULL;
 
     // Decrement global thread count
@@ -717,14 +751,17 @@ void fut_thread_init_bootstrap(void) {
 #endif
 
 fut_thread_t *fut_thread_find(uint64_t tid) {
+    unsigned long _tlflags = thread_list_irqsave();
     fut_spinlock_acquire(&fut_thread_list_lock);
     for (fut_thread_t *t = fut_thread_list; t; t = t->global_next) {
         if (t->tid == tid) {
             fut_spinlock_release(&fut_thread_list_lock);
+            thread_list_irqrestore(_tlflags);
             return t;
         }
     }
     fut_spinlock_release(&fut_thread_list_lock);
+    thread_list_irqrestore(_tlflags);
     return NULL;
 }
 

@@ -41,10 +41,11 @@
  *    scheduler (which takes queue_lock) while holding it. Lock
  *    ordering: thread_list_lock < queue_lock if both are needed,
  *    but the codebase is structured to avoid that combination.
+ *    IRQ-SAFE: timer ISR walks the list via fut_thread_find().
+ *    All acquire sites use thread_list_irqsave/irqrestore.
  *
  *  ── Heap allocators ──
  *    pmm_lock     (fut_memory.c)    guards the physical-frame bitmap.
- *                                   pmm_irqsave wrapper disables IRQs.
  *    buddy_lock   (buddy_allocator) guards free_lists[], block hdrs,
  *                                   total_allocated.
  *    slab_lock    (slab_allocator)  guards slab_caches[], slab->free_list.
@@ -52,6 +53,12 @@
  *    reverse. (slab_create acquires slab_lock then calls buddy_malloc
  *    which acquires buddy_lock, which can call into the buddy heap-
  *    init path that touches pmm_lock during boot only.)
+ *    IRQ-SAFE: all three. Timer ISR fut_timer_start() reaches
+ *    fut_malloc → slab_malloc → maybe-buddy_malloc → maybe-pmm
+ *    on every timer arm, so each lock is wrapped with its own
+ *    irqsave/irqrestore helper (pattern: pushfq+cli on x86_64,
+ *    daifset on aarch64). Without this a same-CPU IRQ during a
+ *    mainline malloc self-deadlocks the spinlock.
  *
  *  ── Atomically-tracked scalar flags ──
  *    scheduler_started      _Atomic bool (this file)

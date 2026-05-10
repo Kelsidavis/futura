@@ -94,8 +94,36 @@ static slab_cache_t slab_caches[NUM_SLAB_SIZES];
  * buddy_malloc/buddy_free (slab_create allocates a backing slab from
  * buddy). buddy_lock is acquired separately inside the buddy entry
  * points, so the order is slab_lock → buddy_lock. Never the reverse:
- * buddy never calls into slab. */
+ * buddy never calls into slab.
+ *
+ * IRQ-safe: timer-ISR fut_timer_start() reaches fut_malloc → slab_malloc.
+ * Without IRQ-disable around the acquire a same-CPU IRQ that hits the
+ * mainline thread mid-slab_malloc would re-enter slab_malloc and self-
+ * deadlock. Pattern mirrors pmm_irqsave in fut_memory.c. */
 static fut_spinlock_t slab_lock = { .locked = 0 };
+
+static inline unsigned long slab_irqsave(void) {
+    unsigned long flags;
+#if defined(__x86_64__)
+    __asm__ volatile("pushfq; pop %0; cli" : "=r"(flags) :: "memory");
+#elif defined(__aarch64__)
+    __asm__ volatile("mrs %0, daif; msr daifset, #0xF" : "=r"(flags) :: "memory");
+#else
+    flags = 0;
+#endif
+    return flags;
+}
+
+static inline void slab_irqrestore(unsigned long flags) {
+#if defined(__x86_64__)
+    if (flags & (1UL << 9))  /* IF bit */
+        __asm__ volatile("sti" ::: "memory");
+#elif defined(__aarch64__)
+    __asm__ volatile("msr daif, %0" :: "r"(flags) : "memory");
+#else
+    (void)flags;
+#endif
+}
 
 /* ============================================================
  *   Helper Functions
@@ -505,16 +533,20 @@ check_buddy:
  * ============================================================ */
 
 void *slab_malloc(size_t size) {
+    unsigned long flags = slab_irqsave();
     fut_spinlock_acquire(&slab_lock);
     void *p = slab_malloc_unlocked(size);
     fut_spinlock_release(&slab_lock);
+    slab_irqrestore(flags);
     return p;
 }
 
 void slab_free(void *ptr) {
+    unsigned long flags = slab_irqsave();
     fut_spinlock_acquire(&slab_lock);
     slab_free_unlocked(ptr);
     fut_spinlock_release(&slab_lock);
+    slab_irqrestore(flags);
 }
 
 void *slab_realloc(void *ptr, size_t new_size) {
@@ -524,6 +556,7 @@ void *slab_realloc(void *ptr, size_t new_size) {
         return NULL;
     }
 
+    unsigned long flags = slab_irqsave();
     fut_spinlock_acquire(&slab_lock);
 
     /* Check if pointer is in any slab cache */
@@ -547,6 +580,7 @@ void *slab_realloc(void *ptr, size_t new_size) {
                 void *new_ptr = slab_malloc_unlocked(new_size);
                 if (!new_ptr) {
                     fut_spinlock_release(&slab_lock);
+                    slab_irqrestore(flags);
                     return NULL;
                 }
 
@@ -555,12 +589,14 @@ void *slab_realloc(void *ptr, size_t new_size) {
 
                 slab_free_unlocked(ptr);
                 fut_spinlock_release(&slab_lock);
+                slab_irqrestore(flags);
                 return new_ptr;
             }
         }
     }
 
     fut_spinlock_release(&slab_lock);
+    slab_irqrestore(flags);
 
     /* Not found in any slab - it must be from buddy allocator
      * Use buddy_realloc directly instead of guessing size. The buddy

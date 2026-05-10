@@ -24,6 +24,7 @@ mod sysn {
     pub const EXIT: u64 = 93;
     pub const OPENAT: u64 = 56;
     pub const CLOSE: u64 = 57;
+    pub const NANOSLEEP: u64 = 101;
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -33,6 +34,7 @@ mod sysn {
     pub const EXIT: u64 = 60;
     pub const OPENAT: u64 = 257;
     pub const CLOSE: u64 = 3;
+    pub const NANOSLEEP: u64 = 35;
 }
 
 const AT_FDCWD: i64 = -100;
@@ -55,6 +57,22 @@ unsafe fn syscall1(nr: u64, a: u64) -> i64 {
             "svc #0",
             in("x8") nr,
             inout("x0") a => ret,
+            options(nostack),
+        );
+    }
+    ret
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+unsafe fn syscall2(nr: u64, a: u64, b: u64) -> i64 {
+    let mut ret: i64;
+    unsafe {
+        core::arch::asm!(
+            "svc #0",
+            in("x8") nr,
+            inout("x0") a => ret,
+            in("x1") b,
             options(nostack),
         );
     }
@@ -124,6 +142,24 @@ unsafe fn syscall1(nr: u64, a: u64) -> i64 {
             "syscall",
             inout("rax") nr => ret,
             in("rdi") a,
+            lateout("rcx") _,
+            lateout("r11") _,
+            options(nostack),
+        );
+    }
+    ret
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+unsafe fn syscall2(nr: u64, a: u64, b: u64) -> i64 {
+    let mut ret: i64;
+    unsafe {
+        core::arch::asm!(
+            "syscall",
+            inout("rax") nr => ret,
+            in("rdi") a,
+            in("rsi") b,
             lateout("rcx") _,
             lateout("r11") _,
             options(nostack),
@@ -347,6 +383,45 @@ impl Tail {
 // Byte-mode tail: keep the last `n_bytes` bytes (capped at the
 // supplied arena's capacity) and emit them. Reuses the line-mode
 // arena as a circular byte buffer to avoid a second 64 KiB static.
+// 8-byte timespec for nanosleep: {tv_sec: i64, tv_nsec: i64}
+#[repr(C)]
+struct Timespec { tv_sec: i64, tv_nsec: i64 }
+
+// Follow mode: keep reading the fd indefinitely, sleeping ~500ms
+// between empty reads, copying any new bytes to stdout. Exits when
+// stdout writes start failing (consumer closed the pipe). Designed
+// for `tail -f` after the initial last-N dump has already been
+// emitted.
+fn follow_fd(fd: i32, scratch: &mut [u8]) {
+    let req = Timespec { tv_sec: 0, tv_nsec: 500_000_000 };
+    let mut rem = Timespec { tv_sec: 0, tv_nsec: 0 };
+    loop {
+        let n = unsafe {
+            syscall3(sysn::READ, fd as u64, scratch.as_mut_ptr() as u64, scratch.len() as u64)
+        };
+        if n > 0 {
+            let bytes = n as usize;
+            let mut s: &[u8] = &scratch[..bytes];
+            while !s.is_empty() {
+                let w = unsafe {
+                    syscall3(sysn::WRITE, STDOUT as u64, s.as_ptr() as u64, s.len() as u64)
+                };
+                if w <= 0 { return; }  // consumer closed; bail
+                s = &s[w as usize..];
+            }
+        }
+        // Whether read returned 0 (EOF: caught up) or >0 (drained
+        // current buffer), sleep so we don't spin. On read error
+        // (negative) we also pause then retry — typical kernel
+        // semantics for non-blocking transient errors.
+        let _ = unsafe {
+            syscall2(sysn::NANOSLEEP,
+                     &req as *const Timespec as u64,
+                     &mut rem as *mut Timespec as u64)
+        };
+    }
+}
+
 fn tail_fd_bytes(fd: i32, n_bytes: usize, arena: &mut [u8], scratch: &mut [u8])
     -> Result<(), ()>
 {
@@ -432,6 +507,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
     let mut byte_limit: Option<usize> = None;
     let mut hmode = HeaderMode::Auto;
     let mut sep_byte: u8 = b'\n';
+    let mut follow = false;
 
     while let Some(p) = argv_get(argc, argv, idx) {
         if arg_is(p, b"--help") {
@@ -446,6 +522,9 @@ than one FILE, precede each with a header. With no FILE, read stdin.
   -q, --quiet, --silent  never print headers
   -v, --verbose          always print headers
   -z, --zero-terminated  line delimiter is NUL, not newline
+  -f, --follow           after the initial dump, keep watching for new
+                         data (sleeps 500 ms between polls; only the
+                         last FILE is followed when multiple are given)
       --help             show this help and exit
 
 A single '-' in the FILE list means standard input.
@@ -463,6 +542,9 @@ A single '-' in the FILE list means standard input.
         }
         if arg_is(p, b"-z") || arg_is(p, b"--zero-terminated") {
             sep_byte = 0; idx += 1; continue;
+        }
+        if arg_is(p, b"-f") || arg_is(p, b"--follow") {
+            follow = true; idx += 1; continue;
         }
         // --bytes=NUM and --lines=NUM long forms with embedded =
         let p_n = cstr_len(p);
@@ -593,6 +675,9 @@ A single '-' in the FILE list means standard input.
                     had_error = true;
                 }
             }
+            if follow {
+                follow_fd(STDIN, &mut scratch);
+            }
         }
     } else {
         let mut file_count: i32 = 0;
@@ -639,6 +724,13 @@ A single '-' in the FILE list means standard input.
                 write_str(STDOUT, b" <==\n");
             }
             first = false;
+            // Track whether this iteration is the last file. With -f
+            // we keep the last file's fd open and enter follow_fd
+            // after dumping the initial tail. Multi-file -f only
+            // follows the final argv slot, like GNU's "deprecated"
+            // single-watch behavior — simpler than spawning a watch
+            // multiplexer.
+            let is_last_file = argv_get(argc, argv, idx + 1).is_none();
             unsafe {
                 if let Some(b) = byte_limit {
                     let tail_ref: &mut Tail = &mut *core::ptr::addr_of_mut!(TAIL);
@@ -651,6 +743,9 @@ A single '-' in the FILE list means standard input.
                     if tail_fd(fd, &mut *core::ptr::addr_of_mut!(TAIL), sep_byte, &mut scratch).is_err() {
                         had_error = true;
                     }
+                }
+                if follow && is_last_file {
+                    follow_fd(fd, &mut scratch);
                 }
                 if opened_owned {
                     let _ = syscall1(sysn::CLOSE, fd as u64);

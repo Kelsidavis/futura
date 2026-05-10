@@ -457,7 +457,70 @@ A '-' in the FILE list means standard input.
             idx += 1;
             continue;
         }
-        if cstr_eq(p, b"-c") || cstr_eq(p, b"-b") {
+        // --bytes=LIST / --characters=LIST (long forms with embedded =)
+        let p_n = {
+            let mut k = 0usize;
+            unsafe { while *p.add(k) != 0 { k += 1; } }
+            k
+        };
+        if (p_n > 8 && unsafe {
+            let want = b"--bytes=";
+            let mut ok = true;
+            for j in 0..want.len() { if *p.add(j) != want[j] { ok = false; break; } }
+            ok
+        }) || (p_n > 13 && unsafe {
+            let want = b"--characters=";
+            let mut ok = true;
+            for j in 0..want.len() { if *p.add(j) != want[j] { ok = false; break; } }
+            ok
+        }) {
+            let off = if p_n > 13 && unsafe { *p.add(2) == b'c' } { 13 } else { 8 };
+            let arg = unsafe { p.add(off) };
+            match parse_fields(arg, &mut fields) {
+                Some(n) => nfields = n,
+                None => {
+                    write_str(STDERR, b"rust-cut: invalid --bytes/--characters list\n");
+                    return 2;
+                }
+            }
+            chars_mode = true;
+            idx += 1;
+            continue;
+        }
+        // --fields=LIST (long form with embedded =)
+        if p_n > 9 && unsafe {
+            let want = b"--fields=";
+            let mut ok = true;
+            for j in 0..want.len() { if *p.add(j) != want[j] { ok = false; break; } }
+            ok
+        } {
+            let arg = unsafe { p.add(9) };
+            match parse_fields(arg, &mut fields) {
+                Some(n) => nfields = n,
+                None => {
+                    write_str(STDERR, b"rust-cut: invalid --fields list\n");
+                    return 2;
+                }
+            }
+            idx += 1;
+            continue;
+        }
+        // --delimiter=DELIM (long form with embedded =)
+        if p_n > 12 && unsafe {
+            let want = b"--delimiter=";
+            let mut ok = true;
+            for j in 0..want.len() { if *p.add(j) != want[j] { ok = false; break; } }
+            ok
+        } {
+            let dp = unsafe { p.add(12) };
+            let b = unsafe { *dp };
+            if b == 0 { return 2; }
+            delim = Some(b);
+            idx += 1;
+            continue;
+        }
+        if cstr_eq(p, b"-c") || cstr_eq(p, b"-b")
+            || cstr_eq(p, b"--characters") || cstr_eq(p, b"--bytes") {
             // -c LIST / -b LIST: byte-position cut. Same payload as -f
             // but applied to raw positions instead of delim-separated
             // fields. (-c and -b are identical for ASCII inputs.)
@@ -480,7 +543,7 @@ A '-' in the FILE list means standard input.
             idx += 2;
             continue;
         }
-        if cstr_eq(p, b"-d") {
+        if cstr_eq(p, b"-d") || cstr_eq(p, b"--delimiter") {
             if idx + 1 >= argc {
                 write_str(STDERR, b"rust-cut: -d needs a delimiter\n");
                 return 2;
@@ -496,7 +559,7 @@ A '-' in the FILE list means standard input.
             }
             delim = Some(b);
             idx += 2;
-        } else if cstr_eq(p, b"-f") {
+        } else if cstr_eq(p, b"-f") || cstr_eq(p, b"--fields") {
             if idx + 1 >= argc {
                 write_str(STDERR, b"rust-cut: -f needs a list\n");
                 return 2;

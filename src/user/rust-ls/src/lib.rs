@@ -340,6 +340,10 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         } else if arg_is(p, b"-i") || arg_is(p, b"--inode") {
             show_ino = true;
             idx += 1;
+        } else if arg_is(p, b"-1") {
+            // One entry per line — already the default. Accept the
+            // flag for portability with scripts that pass it.
+            idx += 1;
         } else if arg_is(p, b"-U") {
             // -U: don't sort (no other side effects), GNU extension.
             unsorted = true;
@@ -353,6 +357,7 @@ List directory contents (sorted alphabetically by default).
   -A, --almost-all       like -a but skip '.' and '..'
   -F, --classify         append entry-type indicator (*/=@|)
   -i, --inode            print inode number before each name
+  -1                     one entry per line (default; accepted for portability)
   -r, --reverse          reverse the sort order
   -f                     do not sort, list raw directory order (implies -a)
   -U                     do not sort, but keep dot-file filtering

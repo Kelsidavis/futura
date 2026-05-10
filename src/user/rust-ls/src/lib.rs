@@ -231,6 +231,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
     // Earlier versions implicitly behaved like -A which surprised
     // anyone running 'ls /etc' and seeing hidden state files.
     let mut mode = DotMode::HideAll;
+    let mut classify = false;
     let mut idx: i32 = 1;
     while idx < argc {
         let p = unsafe { *argv.add(idx as usize) };
@@ -238,11 +239,14 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             idx += 1;
             continue;
         }
-        if arg_is(p, b"-a") {
+        if arg_is(p, b"-a") || arg_is(p, b"--all") {
             mode = DotMode::ShowAll;
             idx += 1;
-        } else if arg_is(p, b"-A") {
+        } else if arg_is(p, b"-A") || arg_is(p, b"--almost-all") {
             mode = DotMode::ShowAlmostAll;
+            idx += 1;
+        } else if arg_is(p, b"-F") || arg_is(p, b"--classify") {
+            classify = true;
             idx += 1;
         } else if arg_is(p, b"--help") {
             let help: &[u8] = b"\
@@ -251,6 +255,7 @@ List directory contents.
 
   -a, --all              do not ignore entries starting with .
   -A, --almost-all       like -a but skip '.' and '..'
+  -F, --classify         append entry-type indicator (*/=@|)
       --help             show this help and exit
 
 With no PATH, list the current directory. Multiple PATHs are listed
@@ -350,6 +355,7 @@ each in turn with a \"<path>:\" header.
                 let hi = buf[off + 17] as usize;
                 let reclen = lo | (hi << 8);
                 if reclen < 19 || off + reclen > bytes { break; }
+                let d_type = buf[off + 18];
                 let name_start = off + 19;
                 let mut name_end = name_start;
                 while name_end < off + reclen && buf[name_end] != 0 {
@@ -367,6 +373,24 @@ each in turn with a \"<path>:\" header.
                 };
                 if !skip && nlen > 0 {
                     if !write_all(STDOUT, name) { local_err = true; break; }
+                    if classify {
+                        // GNU ls -F type indicators driven by dirent's
+                        // d_type. We can't tell a regular file is also
+                        // executable without stat(), so '*' is skipped.
+                        const DT_FIFO: u8 = 1;
+                        const DT_DIR:  u8 = 4;
+                        const DT_LNK:  u8 = 10;
+                        const DT_SOCK: u8 = 12;
+                        let suffix: &[u8] = match d_type {
+                            DT_DIR  => b"/",
+                            DT_LNK  => b"@",
+                            DT_FIFO => b"|",
+                            DT_SOCK => b"=",
+                            _       => b"",
+                        };
+                        if !suffix.is_empty()
+                            && !write_all(STDOUT, suffix) { local_err = true; break; }
+                    }
                     if !write_all(STDOUT, b"\n") { local_err = true; break; }
                 }
                 off += reclen;

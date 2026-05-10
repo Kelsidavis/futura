@@ -302,6 +302,9 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
                 }
             }
             idx += 2;
+        } else if cstr_eq(p, b"--") {
+            idx += 1;
+            break;
         } else if cstr_eq(p, b"--help") {
             let help: &[u8] = b"\
 Usage: rust-strings [-n MIN] [FILE]...

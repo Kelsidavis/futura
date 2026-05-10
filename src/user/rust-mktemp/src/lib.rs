@@ -324,7 +324,18 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         if p.is_null() || (p as usize) < 0x10000 {
             continue;
         }
-        if cstr_eq(p, b"-d") || cstr_eq(p, b"--directory") {
+        if cstr_eq(p, b"--") {
+            // End-of-options sentinel — next non-null arg is the
+            // template, even if it starts with '-'.
+            let next = ai + 1;
+            if next < argc {
+                let q = unsafe { *argv.add(next as usize) };
+                if !q.is_null() && (q as usize) >= 0x10000 {
+                    user_template = Some(q);
+                }
+            }
+            break;
+        } else if cstr_eq(p, b"-d") || cstr_eq(p, b"--directory") {
             want_dir = true;
         } else if cstr_eq(p, b"-q") || cstr_eq(p, b"--quiet") {
             quiet = true;

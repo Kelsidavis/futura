@@ -265,7 +265,18 @@ fn arg_is(p: *const u8, s: &[u8]) -> bool {
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum DotMode { HideAll, ShowAll }
 
-fn walk(dir_fd: i32, depth: usize, mode: DotMode) {
+// Walk parameters that don't change across the recursion. `dirs_only`
+// suppresses non-directory entries; `max_depth` is the user's -L cap
+// (or MAX_DEPTH when -L is unset). Both apply to descent decisions —
+// `dirs_only` also gates the print line.
+#[derive(Copy, Clone)]
+struct WalkOpts {
+    mode: DotMode,
+    dirs_only: bool,
+    max_depth: usize,
+}
+
+fn walk(dir_fd: i32, depth: usize, opts: WalkOpts) {
     let mut buf = [0u8; BUF_LEN];
     loop {
         let n = unsafe {
@@ -308,21 +319,26 @@ fn walk(dir_fd: i32, depth: usize, mode: DotMode) {
             let skip = nlen == 0
                 || is_dot
                 || is_dotdot
-                || (mode == DotMode::HideAll && starts_with_dot);
+                || (opts.mode == DotMode::HideAll && starts_with_dot)
+                || (opts.dirs_only && d_type != DT_DIR);
             if !skip {
                 print_indent(depth);
                 write_all(STDOUT, name);
                 if d_type == DT_DIR {
                     write_all(STDOUT, b"/\n");
-                    if depth + 1 < MAX_DEPTH {
+                    let depth_cap = opts.max_depth.min(MAX_DEPTH);
+                    if depth + 1 < depth_cap {
                         // Open child relative to current dir_fd, so we
                         // don't have to re-construct path strings.
                         let child = open_dir_at(dir_fd, name);
                         if child >= 0 {
-                            walk(child, depth + 1, mode);
+                            walk(child, depth + 1, opts);
                             close_fd(child);
                         }
-                    } else {
+                    } else if depth + 1 < MAX_DEPTH && opts.max_depth >= MAX_DEPTH {
+                        // Hard MAX_DEPTH cap reached without an explicit
+                        // -L — show the truncation marker so the user
+                        // knows there might be more below.
                         print_indent(depth + 1);
                         write_all(STDOUT, b"...\n");
                     }
@@ -341,6 +357,8 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
     // are always skipped to avoid cycles). Default hides them, matching
     // GNU tree.
     let mut mode = DotMode::HideAll;
+    let mut dirs_only = false;
+    let mut max_depth: usize = MAX_DEPTH;
     let mut idx: i32 = 1;
     while idx < argc {
         let p = unsafe { *argv.add(idx as usize) };
@@ -348,12 +366,45 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         if arg_is(p, b"-a") {
             mode = DotMode::ShowAll;
             idx += 1;
+        } else if arg_is(p, b"-d") {
+            dirs_only = true;
+            idx += 1;
+        } else if arg_is(p, b"-L") {
+            if idx + 1 >= argc {
+                write_all(STDERR, b"rust-tree: -L needs a depth\n");
+                return 1;
+            }
+            let np = unsafe { *argv.add((idx + 1) as usize) };
+            if np.is_null() || (np as usize) < 0x10000 {
+                return 1;
+            }
+            let mut v: usize = 0;
+            let mut k = 0usize;
+            let mut ok = false;
+            unsafe {
+                while *np.add(k) != 0 {
+                    let c = *np.add(k);
+                    if !(b'0'..=b'9').contains(&c) { ok = false; break; }
+                    let d = (c - b'0') as usize;
+                    v = v.saturating_mul(10).saturating_add(d);
+                    k += 1;
+                    ok = true;
+                }
+            }
+            if !ok || v == 0 {
+                write_all(STDERR, b"rust-tree: -L needs a positive integer\n");
+                return 1;
+            }
+            max_depth = v;
+            idx += 2;
         } else if arg_is(p, b"--help") {
             let help: &[u8] = b"\
-Usage: rust-tree [-a] [PATH]
+Usage: rust-tree [-a] [-d] [-L LEVEL] [PATH]
 Recursively list PATH (or '.') with indent prefixes per depth.
 
   -a        include dot-prefixed entries (skip only '.' and '..')
+  -d        list directories only
+  -L LEVEL  descend at most LEVEL levels (default: hard cap of 8)
       --help    show this help and exit
 \0";
             let len = help.len() - 1;
@@ -389,7 +440,8 @@ Recursively list PATH (or '.') with indent prefixes per depth.
         write_all(STDERR, b"rust-tree: cannot open directory\n");
         return 1;
     }
-    walk(fd, 1, mode);
+    let opts = WalkOpts { mode, dirs_only, max_depth };
+    walk(fd, 1, opts);
     close_fd(fd);
     0
 }

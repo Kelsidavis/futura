@@ -463,6 +463,26 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
                 }
             }
             idx += 2;
+        } else if {
+            // --wrap=COLS long form with embedded =
+            let mut k = 0usize;
+            unsafe { while *p.add(k) != 0 { k += 1; } }
+            k > 7 && unsafe {
+                let want = b"--wrap=";
+                let mut ok = true;
+                for j in 0..want.len() { if *p.add(j) != want[j] { ok = false; break; } }
+                ok
+            }
+        } {
+            let wp = unsafe { p.add(7) };
+            match parse_u32_small(wp) {
+                Some(v) => wrap = v,
+                None => {
+                    write_str(STDERR, b"rust-base64: invalid --wrap value\n");
+                    return 1;
+                }
+            }
+            idx += 1;
         } else if cstr_eq(p, b"--help") {
             let help: &[u8] = b"\
 Usage: rust-base64 [OPTION]... [FILE]

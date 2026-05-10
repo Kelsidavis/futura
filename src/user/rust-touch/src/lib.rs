@@ -226,13 +226,42 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             idx += 1;
             continue;
         }
+        // GNU portability: accept the time-related flags but treat
+        // them as no-ops, since utimensat isn't plumbed in the kernel
+        // yet. Lets scripts like `touch -am file` succeed instead of
+        // erroring on the unrecognized flag.
+        if arg_is(p, b"-a") || arg_is(p, b"--time=atime")
+            || arg_is(p, b"--time=access") || arg_is(p, b"--time=use")
+            || arg_is(p, b"-m") || arg_is(p, b"--time=mtime")
+            || arg_is(p, b"--time=modify")
+            || arg_is(p, b"-h") || arg_is(p, b"--no-dereference")
+            || arg_is(p, b"-am") || arg_is(p, b"-ma")
+        {
+            idx += 1;
+            continue;
+        }
+        // -t STAMP / -d DATE / -r REF: consume one extra argv slot
+        // each, then move on without applying the timestamp (no
+        // utimensat support yet — see comment above).
+        if arg_is(p, b"-t") || arg_is(p, b"-d") || arg_is(p, b"--date")
+            || arg_is(p, b"-r") || arg_is(p, b"--reference")
+        {
+            if idx + 1 < argc as usize { idx += 2; } else { idx += 1; }
+            continue;
+        }
         if arg_is(p, b"--") { idx += 1; break; }
         if arg_is(p, b"--help") {
             let help: &[u8] = b"\
-Usage: rust-touch [-c] FILE [FILE...]
-Create each FILE if it doesn't exist (timestamp updates are TBD).
+Usage: rust-touch [OPTION]... FILE [FILE...]
+Create each FILE if it doesn't exist (timestamp updates are TBD -
+the kernel doesn't yet expose utimensat, so -a/-m/-t/-d/-r are
+accepted for portability and quietly ignored).
 
   -c, --no-create   skip files that don't exist (no error)
+  -a / -m           change atime / mtime (currently a no-op)
+  -t STAMP          set time to STAMP (currently ignored)
+  -d / -r REF       set time from DATE / REF file (currently ignored)
+  -h, --no-dereference   affect symlink itself (currently a no-op)
       --help            show this help and exit
 \0";
             let len = help.len() - 1;

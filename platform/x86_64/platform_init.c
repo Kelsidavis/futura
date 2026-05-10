@@ -842,7 +842,7 @@ void fut_platform_init(uint32_t multiboot_magic __attribute__((unused)),
     /* BUILD-TAG: tells us at-a-glance if the user is actually running the
      * latest ISO. Bump this string whenever you reflash, so a stale boot
      * is obvious from the screen. */
-    fut_printf("[BUILD-TAG] BARE-METAL-DIAG-ITER-12 (color markers stripped)\n");
+    fut_printf("[BUILD-TAG] BARE-METAL-DIAG-ITER-17 (acpi_thermal: gate AMD MSR on CPUID vendor)\n");
 
     /* Load GDT */
     fut_serial_puts("[INIT] Loading GDT...\n");
@@ -946,6 +946,12 @@ void fut_platform_init(uint32_t multiboot_magic __attribute__((unused)),
     } else {
         fut_printf("[INIT] No framebuffer from Multiboot2 — kernel output will be serial-only\n");
     }
+
+    /* Bring up the cross-reboot persistent log ring buffer. Done after
+     * fb_console so any "recovered previous-boot log" dump is visible.
+     * If the previous boot crashed, this is where we get to see why. */
+    extern void klog_persist_init(void);
+    klog_persist_init();
 
     /* Print Multiboot info */
     fut_serial_puts("[INIT] Multiboot2 magic: 0x");

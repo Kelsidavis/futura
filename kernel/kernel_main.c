@@ -1711,31 +1711,43 @@ void fut_kernel_main(void) {
 
 #ifdef __x86_64__
 #if !defined(DRIVERS_QEMU)
-    /* Early platform — CPU identification, timers, basic I/O */
+    /* Early platform — CPU identification, timers, basic I/O.
+     *
+     * Several of these Rust drivers take real arguments (delay_fn,
+     * base_addr, port, baud) but the C externs were declared zero-arg,
+     * so the Rust side read whatever garbage sat in %rdi/%rsi/etc.
+     * Matching the real signatures here and passing safe defaults
+     * (0 / NULL / known port) lets the drivers no-op or fall back to
+     * their internal defaults instead of using uninitialized values
+     * as function pointers / MMIO addresses. */
     {
         extern int x86_cpuid_init(void);
-        extern int x86_tsc_init(void);
-        extern int hpet_init(void);
+        extern int x86_tsc_init(void *delay_fn);              /* Option<DelayUsFn> */
+        extern int hpet_init(uint64_t base_addr);             /* 0 = use ACPI HPET default */
         extern int cmos_rtc_init(void);
-        extern int uart16550_init(void);
+        extern int uart16550_init(uint16_t port, uint32_t baud); /* 0 = COM1 / 115200 */
         extern int i8042_init(void);
 
         x86_cpuid_init();
-        x86_tsc_init();
-        hpet_init();
+        x86_tsc_init(NULL);          /* No platform delay fn yet — Rust falls back to TSC pause-loop */
+        hpet_init(0);                /* Rust uses HPET_DEFAULT_BASE when 0 */
         cmos_rtc_init();
-        uart16550_init();
+        uart16550_init(0, 0);        /* Rust resolves to COM1 (0x3F8) and 115200 baud */
         i8042_init();
     }
 
     /* PCI infrastructure */
     {
-        extern int pcie_ecam_init(void);
-        extern int pci_msix_init(void);
+        extern int pcie_ecam_init(uint64_t base_phys, uint8_t start_bus, uint8_t end_bus);
+        extern int pci_msix_init(uint8_t bus, uint8_t dev, uint8_t func);
         extern int dma_pool_init(void);
 
-        pcie_ecam_init();
-        pci_msix_init();
+        /* No firmware ECAM base wired up yet — pass 0/0/0 so the driver
+         * fails its own bus-range sanity check and bails cleanly. */
+        pcie_ecam_init(0, 0, 0);
+        /* No specific MSI-X target device yet; driver returns -1 if no
+         * MSI-X cap is found at the probed BDF. */
+        pci_msix_init(0, 0, 0);
         dma_pool_init();
     }
 #endif /* !DRIVERS_QEMU */
@@ -1761,15 +1773,15 @@ void fut_kernel_main(void) {
             extern int amd_df_init(void);
             extern int amd_nbio_init(void);
             extern int amd_smbus_init(void);
-            extern int amd_gpio_init(void);
+            extern int amd_gpio_init(uint64_t acpi_mmio_base);   /* 0 = use Rust default */
             extern int amd_spi_init(void);
-            extern int amd_i2c_init(void);
+            extern int amd_i2c_init(uint32_t controller);        /* 0 = controller index 0 */
             extern int amd_iommu_init(void);
             extern int amd_ccp_init(void);
             extern int amd_psp_init(void);
             extern int amd_sev_init(void);
             extern int amd_pstate_init(void);
-            extern int amd_sbtsi_init(void);
+            extern int amd_sbtsi_init(uint16_t smbus_base);      /* 0 = use Rust default 0x0B00 */
             extern int amd_wdt_init(void);
             extern int amd_mp2_init(void);
             extern int amd_umc_init(void);
@@ -1779,15 +1791,15 @@ void fut_kernel_main(void) {
             amd_df_init();
             amd_nbio_init();
             amd_smbus_init();
-            amd_gpio_init();
+            amd_gpio_init(0);
             amd_spi_init();
-            amd_i2c_init();
+            amd_i2c_init(0);
             amd_iommu_init();
             amd_ccp_init();
             amd_psp_init();
             amd_sev_init();
             amd_pstate_init();
-            amd_sbtsi_init();
+            amd_sbtsi_init(0);
             amd_wdt_init();
             amd_mp2_init();
             amd_umc_init();
@@ -1810,9 +1822,9 @@ void fut_kernel_main(void) {
         if (!is_intel) {
             fut_printf("[INIT] Skipping Intel chipset drivers (CPU is not Intel)\n");
         } else {
-            extern int intel_vtd_init(void);
+            extern int intel_vtd_init(uint64_t mmio_base_phys);    /* 0 = no DMAR */
             extern int intel_pmc_init(void);
-            extern int intel_gpio_init(void);
+            extern int intel_gpio_init(uint64_t base, uint32_t num_pads); /* 0/0 = bail */
             extern int intel_lpss_init(void);
             extern int intel_smbus_init(void);
             extern int intel_spi_init(void);
@@ -1827,11 +1839,10 @@ void fut_kernel_main(void) {
             extern int intel_gna_init(void);
             extern int intel_cnvi_init(void);
             extern int intel_ipu_init(void);
-            extern int intel_hda_hdmi_init(void);
 
-            intel_vtd_init();
+            intel_vtd_init(0);
             intel_pmc_init();
-            intel_gpio_init();
+            intel_gpio_init(0, 0);
             intel_lpss_init();
             intel_smbus_init();
             intel_spi_init();
@@ -1846,7 +1857,15 @@ void fut_kernel_main(void) {
             intel_gna_init();
             intel_cnvi_init();
             intel_ipu_init();
-            intel_hda_hdmi_init();
+            /* intel_hda_hdmi_init() intentionally NOT called.
+             * The Rust function takes (verb_fn: HdaVerbFn, codec_addr: u8)
+             * but the C extern was zero-arg, so verb_fn read whatever
+             * garbage sat in %rdi at the call site. On the Celeron N4120
+             * %rdi was 0x11 → #GP at RIP=0x11 the first time the codec
+             * tried to issue an HDA verb (QEMU happened to have a benign
+             * value there). This is a codec driver — calling it only
+             * makes sense once an HDA controller driver exposes a verb
+             * callback, which doesn't exist yet on bare metal. */
         }
     }
 #endif /* DRIVERS_INTEL || DRIVERS_ALL */
@@ -1898,30 +1917,47 @@ void fut_kernel_main(void) {
     /* Audio */
     {
         extern int hda_init(void);
-        extern int hda_realtek_init(void);
-
+        /* hda_init takes no Rust args, safe to call. It scans PCI for
+         * an HD Audio controller and exits cleanly if none is found
+         * (verified on the Chromebook — "no HD Audio controller found"). */
         hda_init();
-        hda_realtek_init();
+
+        /* hda_realtek_init() intentionally NOT called.
+         * Rust signature: hda_realtek_init(verb_fn: HdaVerbFn, codec_addr: u8)
+         * C extern was zero-arg → garbage RDI was used as verb_fn,
+         * subsequent verb call jumped to a corrupt address and trashed
+         * memory (kernel exception with all-garbage register state).
+         * Codec drivers only make sense once a controller exposes a
+         * working verb function; same pattern as intel_hda_hdmi_init. */
     }
 
-    /* ACPI subsystem drivers */
+    /* ACPI subsystem drivers — Rust signatures take real I/O ports we
+     * don't currently parse out of the FADT. Pass 0s; each driver bails
+     * cleanly on zero (acpi_pm_init / acpi_button_init return -1, the
+     * others use defaults). When we wire ACPI table parsing into the
+     * kernel-side launcher, replace these with real port numbers. */
     {
-        extern int acpi_pm_init(void);
-        extern int acpi_ec_init(void);
-        extern int acpi_thermal_init(void);
-        extern int acpi_button_init(void);
+        extern int acpi_pm_init(uint16_t pm1a_evt, uint16_t pm1a_cnt,
+                                uint16_t pm_tmr,   uint16_t gpe0);
+        extern int acpi_ec_init(uint16_t data_port, uint16_t cmd_port);
+        extern int acpi_thermal_init(void *ec_read);   /* Option<EcReadFn> */
+        extern int acpi_button_init(uint16_t pm1a_evt, uint16_t pm1a_en);
 
-        acpi_pm_init();
-        acpi_ec_init();
-        acpi_thermal_init();
-        acpi_button_init();
+        acpi_pm_init(0, 0, 0, 0);
+        acpi_ec_init(0, 0);
+        acpi_thermal_init(NULL);
+        acpi_button_init(0, 0);
     }
 
     /* Display — VESA framebuffer */
     {
-        extern int vesa_fb_init(void);
+        /* Rust takes a *const FbInfo struct; we don't build one here.
+         * NULL → driver returns -1. fb_console / fb_boot_splash already
+         * brought up a working framebuffer using Multiboot2 info, so
+         * the VESA path is just a no-op slot. */
+        extern int vesa_fb_init(const void *info);
         extern int edid_init(void);
-        vesa_fb_init();
+        vesa_fb_init(NULL);
     }
 #endif /* !DRIVERS_QEMU */
 

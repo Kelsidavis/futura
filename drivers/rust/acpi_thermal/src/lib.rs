@@ -160,11 +160,47 @@ fn rdmsr(msr: u32) -> u64 {
 
 // ── CPU temperature reading ──
 
+/// Detect AMD CPUs via CPUID(0) vendor string. The AMD-specific Tctl
+/// MSR (0xC001_0059) is only valid on AMD; reading it on Intel raises
+/// #GP. Cache the answer in a static so we don't re-issue CPUID each
+/// time read_cpu_temp_msr is called.
+fn cpu_is_amd() -> bool {
+    // rustc reserves rbx as a frame pointer / LLVM scratch on x86_64,
+    // so we can't bind ebx as an asm output directly. Save it manually
+    // and shuffle through rsi for the duration of the cpuid call.
+    let mut ebx: u32;
+    let mut ecx: u32;
+    let mut edx: u32;
+    unsafe {
+        core::arch::asm!(
+            "mov {tmp:r}, rbx",
+            "cpuid",
+            "mov esi, ebx",
+            "mov rbx, {tmp:r}",
+            tmp = out(reg) _,
+            inout("eax") 0u32 => _,
+            lateout("esi") ebx,
+            out("ecx") ecx,
+            out("edx") edx,
+            options(nomem, nostack, preserves_flags),
+        );
+    }
+    // "AuthenticAMD" packed as ebx="Auth" edx="enti" ecx="cAMD"
+    ebx == 0x6874_7541 && edx == 0x6974_6e65 && ecx == 0x444d_4163
+}
+
 /// Read the AMD CPU package temperature from MSR 0xC001_0059.
 ///
 /// Returns temperature in millidegrees Celsius, or negative error if
-/// the reading appears invalid (zero or implausibly high).
+/// the reading appears invalid (zero or implausibly high), or -38
+/// (ENOSYS) if this CPU isn't AMD (the MSR doesn't exist on Intel and
+/// reading it on a Celeron N4120 / other Intel parts raises #GP and
+/// triple-faults the kernel).
 fn read_cpu_temp_msr() -> i32 {
+    if !cpu_is_amd() {
+        return -38; // ENOSYS -- AMD-only MSR, not available on this CPU
+    }
+
     let val = rdmsr(MSR_AMD_CUR_TEMP);
 
     // Bits [31:21] = Tctl in units of 0.125 C.

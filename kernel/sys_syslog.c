@@ -124,8 +124,20 @@ static void klog_put(char c) {
  * Called by kprintf infrastructure (via fut_serial_putc) to record kernel
  * messages.  This is a ring buffer — old data is overwritten when full.
  * Prepends [seconds.microseconds] timestamp at the start of each line.
+ *
+ * Also mirrors to klog_persist_write — a parallel ring buffer at a
+ * fixed physical address that survives warm reboots, so we can recover
+ * the log of a crashed/wedged kernel from the next boot's early init.
  */
 void klog_write(const char *data, size_t len) {
+    /* Mirror raw bytes to the persistent (cross-reboot) ring buffer.
+     * Done before timestamp injection so the persistent log shows the
+     * exact text the kernel emitted, not the timestamp-decorated form.
+     * Safe to call from any context: lockless single-CPU writes (SMP
+     * is disabled on bare metal at the moment). */
+    extern void klog_persist_write(const char *data, size_t len);
+    klog_persist_write(data, len);
+
     for (size_t i = 0; i < len; i++) {
         if (klog_at_line_start && data[i] != '\n') {
             /* Inject timestamp: [secs.usecs] */

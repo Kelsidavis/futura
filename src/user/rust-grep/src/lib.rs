@@ -917,6 +917,86 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         } else if arg_is(p, b"-L") || arg_is(p, b"--files-without-match") {
             opts.list_no_match = true;
             idx += 1;
+        } else if {
+            // --after-context=N / --before-context=N / --context=N
+            // (long forms with embedded =).
+            let n = cstr_len(p);
+            let pairs: [(&[u8], u8); 3] = [
+                (b"--after-context=",  b'A'),
+                (b"--before-context=", b'B'),
+                (b"--context=",        b'C'),
+            ];
+            let mut matched = false;
+            for &(prefix, kind) in &pairs {
+                if n > prefix.len() && unsafe {
+                    let mut ok = true;
+                    for j in 0..prefix.len() {
+                        if *p.add(j) != prefix[j] { ok = false; break; }
+                    }
+                    ok
+                } {
+                    let arg = unsafe { p.add(prefix.len()) };
+                    let mut v: u32 = 0;
+                    let mut k = 0usize;
+                    let mut ok = true;
+                    unsafe {
+                        while *arg.add(k) != 0 {
+                            let c = *arg.add(k);
+                            if !(b'0'..=b'9').contains(&c) { ok = false; break; }
+                            v = match v.checked_mul(10).and_then(|x| x.checked_add((c - b'0') as u32)) {
+                                Some(x) => x,
+                                None => { ok = false; break; }
+                            };
+                            k += 1;
+                        }
+                    }
+                    if !ok || k == 0 {
+                        write_str(STDERR, b"rust-grep: invalid context value\n");
+                        return 2;
+                    }
+                    match kind {
+                        b'A' => opts.after_ctx = v,
+                        b'B' => opts.before_ctx = v,
+                        _    => { opts.after_ctx = v; opts.before_ctx = v; }
+                    }
+                    matched = true;
+                    break;
+                }
+            }
+            matched
+        } {
+            idx += 1;
+        } else if {
+            // --max-count=N (long form with embedded =).
+            let n = cstr_len(p);
+            n > 12 && unsafe {
+                let want = b"--max-count=";
+                let mut ok = true;
+                for j in 0..want.len() { if *p.add(j) != want[j] { ok = false; break; } }
+                ok
+            }
+        } {
+            let arg = unsafe { p.add(12) };
+            let mut v: u64 = 0;
+            let mut k = 0usize;
+            let mut ok = true;
+            unsafe {
+                while *arg.add(k) != 0 {
+                    let c = *arg.add(k);
+                    if !(b'0'..=b'9').contains(&c) { ok = false; break; }
+                    v = match v.checked_mul(10).and_then(|x| x.checked_add((c - b'0') as u64)) {
+                        Some(x) => x,
+                        None => { ok = false; break; }
+                    };
+                    k += 1;
+                }
+            }
+            if !ok || k == 0 {
+                write_str(STDERR, b"rust-grep: invalid --max-count value\n");
+                return 2;
+            }
+            opts.max_count = v;
+            idx += 1;
         } else if arg_is(p, b"-A") || arg_is(p, b"--after-context")
                   || arg_is(p, b"-B") || arg_is(p, b"--before-context")
                   || arg_is(p, b"-C") || arg_is(p, b"--context") {

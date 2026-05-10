@@ -349,6 +349,7 @@ struct Opts {
     before_ctx: u32,    // -B N: print N lines before each match (capped)
     null_term: bool,    // -Z/-z: NUL-terminate filenames in -l / -L output
     no_messages: bool,  // -s/--no-messages: suppress per-file error spew
+    stdin_label: Option<*const u8>,  // --label LABEL: override "(standard input)"
 }
 
 const CTX_CAP: usize = 16;        // max before-context lines
@@ -777,6 +778,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         before_ctx: 0,
         null_term: false,
         no_messages: false,
+        stdin_label: None,
     };
 
     let mut e_pattern: Option<*const u8> = None;
@@ -896,6 +898,18 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         } else if arg_is(p, b"-Z") || arg_is(p, b"--null") {
             opts.null_term = true;
             idx += 1;
+        } else if arg_is(p, b"--label") {
+            // --label LABEL: rename the synthetic "(standard input)"
+            // header so `grep -H --label=src ...` prefixes lines with
+            // the user's chosen tag.
+            idx += 1;
+            match argv_get(argc, argv, idx) {
+                Some(lp) => { opts.stdin_label = Some(lp); idx += 1; }
+                None => {
+                    write_str(STDERR, b"rust-grep: --label needs an argument\n");
+                    return 2;
+                }
+            }
         } else if arg_is(p, b"-s") || arg_is(p, b"--no-messages") {
             // GNU grep's -s suppresses "cannot open" / "no such file"
             // diagnostics. Note this differs from the BSD -q (quiet)
@@ -954,6 +968,7 @@ Output control:
   -o, --only-matching   print only the matched portion of each line
   -Z, --null            NUL-terminate filenames in -l / -L output
   -s, --no-messages     suppress per-file 'cannot open' diagnostics
+      --label LABEL     override the synthetic '(standard input)' header
       --help            show this help and exit
 \0";
             let len = help.len() - 1;  // strip the trailing NUL
@@ -994,15 +1009,24 @@ Output control:
             Ok(c) => {
                 if c > 0 { had_match = true; }
                 if !opts.quiet {
-                    let label: &[u8] = if opts.null_term {
-                        b"(standard input)\0"
-                    } else {
-                        b"(standard input)\n"
+                    let label_body: &[u8] = match opts.stdin_label {
+                        Some(lp) => {
+                            let ln = cstr_len(lp);
+                            unsafe { core::slice::from_raw_parts(lp, ln) }
+                        }
+                        None => b"(standard input)",
                     };
+                    let term: &[u8] = if opts.null_term { b"\0" } else { b"\n" };
                     if opts.list {
-                        if c > 0 { write_all(STDOUT, label); }
+                        if c > 0 {
+                            write_all(STDOUT, label_body);
+                            write_all(STDOUT, term);
+                        }
                     } else if opts.list_no_match {
-                        if c == 0 { write_all(STDOUT, label); }
+                        if c == 0 {
+                            write_all(STDOUT, label_body);
+                            write_all(STDOUT, term);
+                        }
                     } else if opts.count {
                         emit_count_line(None, c, false);
                     }
@@ -1074,9 +1098,15 @@ Output control:
                 }
                 (f as i32, true)
             };
-            let stdin_name: &[u8] = b"(standard input)";
+            let stdin_name_buf: &[u8] = match opts.stdin_label {
+                Some(lp) => {
+                    let ln = cstr_len(lp);
+                    unsafe { core::slice::from_raw_parts(lp, ln) }
+                }
+                None => b"(standard input)",
+            };
             let name: &[u8] = if is_dash {
-                stdin_name
+                stdin_name_buf
             } else {
                 unsafe { core::slice::from_raw_parts(p, n) }
             };

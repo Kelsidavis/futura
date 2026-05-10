@@ -306,8 +306,9 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             idx += 2;
             continue;
         }
-        if arg_eq(p, b"-n") {
+        if arg_eq(p, b"-n") || arg_eq(p, b"--bytes") {
             // -n NUM: compare at most NUM bytes from each input.
+            // NUM accepts an optional binary suffix (K/M/G/T = 1024^N).
             if idx + 1 >= argc {
                 if !silent { write_str(STDERR, b"rust-cmp: -n needs a non-negative integer\n"); }
                 return 2;
@@ -316,22 +317,40 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             if np.is_null() || (np as usize) < 0x10000 {
                 return 2;
             }
-            // Inline u64 parse — small enough not to warrant a helper.
             let mut nn = 0usize;
             unsafe { while *np.add(nn) != 0 { nn += 1; } }
             if nn == 0 {
                 if !silent { write_str(STDERR, b"rust-cmp: invalid -n value\n"); }
                 return 2;
             }
+            let last = unsafe { *np.add(nn - 1) };
+            let (digits_end, mult): (usize, u64) = match last {
+                b'K' | b'k' => (nn - 1, 1024),
+                b'M' | b'm' => (nn - 1, 1024 * 1024),
+                b'G' | b'g' => (nn - 1, 1024 * 1024 * 1024),
+                b'T' | b't' => (nn - 1, 1024u64 * 1024 * 1024 * 1024),
+                b'B' | b'b' => (nn - 1, 1),
+                _ => (nn, 1),
+            };
+            if digits_end == 0 {
+                if !silent { write_str(STDERR, b"rust-cmp: invalid -n value\n"); }
+                return 2;
+            }
             let mut v: u64 = 0;
             let mut ok = true;
-            for i in 0..nn {
+            for i in 0..digits_end {
                 let c = unsafe { *np.add(i) };
                 if !(b'0'..=b'9').contains(&c) { ok = false; break; }
                 v = match v.checked_mul(10).and_then(|x| x.checked_add((c - b'0') as u64)) {
                     Some(x) => x,
                     None => { ok = false; break; }
                 };
+            }
+            if ok {
+                match v.checked_mul(mult) {
+                    Some(x) => v = x,
+                    None => ok = false,
+                }
             }
             if !ok {
                 if !silent { write_str(STDERR, b"rust-cmp: invalid -n value\n"); }
@@ -349,7 +368,7 @@ Compare two files byte by byte.
 
   -s, --quiet, --silent  suppress all output, exit status only
   -l, --verbose          list every differing byte (POS OCT1 OCT2)
-  -n NUM                  compare at most NUM bytes
+  -n, --bytes NUM        compare at most NUM bytes (suffix K/M/G/T = 1024^N)
   -i SKIP[:SKIP2]        skip SKIP bytes from both files
                          (or SKIP from file1 and SKIP2 from file2)
       --help              show this help and exit

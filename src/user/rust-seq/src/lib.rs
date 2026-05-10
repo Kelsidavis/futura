@@ -185,6 +185,41 @@ fn write_num(n: i64) -> bool {
     r > 0
 }
 
+// Render n with leading zeros so the total output is exactly `pad`
+// columns wide. For negative numbers the sign comes first, then zero
+// padding, then digits ("-007"). If the natural form is already at
+// least `pad` chars, falls back to write_num.
+fn write_num_padded(n: i64, pad: usize) -> bool {
+    let mut buf = [0u8; 24];
+    let len = fmt_i64(n, &mut buf);
+    if len >= pad {
+        let off = buf.len() - len;
+        let r = unsafe {
+            syscall3(sysn::WRITE, STDOUT as u64, buf[off..].as_ptr() as u64, len as u64)
+        };
+        return r > 0;
+    }
+    // Build padded form in a fresh buffer.
+    let mut out = [0u8; 32];
+    let total = pad.min(out.len());
+    let off = buf.len() - len;
+    let neg = buf[off] == b'-';
+    let mut o = 0usize;
+    if neg {
+        out[o] = b'-';
+        o += 1;
+    }
+    let zeros = total - len;
+    for _ in 0..zeros { out[o] = b'0'; o += 1; }
+    let digits_off = if neg { off + 1 } else { off };
+    let digits_len = if neg { len - 1 } else { len };
+    for i in 0..digits_len { out[o] = buf[digits_off + i]; o += 1; }
+    let r = unsafe {
+        syscall3(sysn::WRITE, STDOUT as u64, out.as_ptr() as u64, o as u64)
+    };
+    r > 0
+}
+
 fn arg_eq(p: *const u8, want: &[u8]) -> bool {
     for (i, &b) in want.iter().enumerate() {
         if unsafe { *p.add(i) } != b { return false; }
@@ -203,9 +238,15 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
     let mut sep_buf = [0u8; SEP_BUF];
     let mut sep_len: usize = 1;
     sep_buf[0] = b'\n';
+    let mut equal_width = false;
     while idx < argc {
         let p = unsafe { *argv.add(idx as usize) };
         if p.is_null() || (p as usize) < 0x10000 { break; }
+        if arg_eq(p, b"-w") || arg_eq(p, b"--equal-width") {
+            equal_width = true;
+            idx += 1;
+            continue;
+        }
         if arg_eq(p, b"-s") {
             if idx + 1 >= argc {
                 write_str(STDERR, b"rust-seq: -s needs a separator\n");
@@ -231,6 +272,7 @@ Print integer sequences.
   rust-seq FIRST LAST        FIRST..=LAST (step 1)
   rust-seq FIRST STEP LAST   FIRST, FIRST+STEP, ... bounded by LAST
   -s SEP                     join numbers with SEP (default newline)
+  -w, --equal-width          pad numbers with leading zeros to equal width
       --help                     show this help and exit
 
 STEP may be negative for descending sequences.
@@ -274,6 +316,15 @@ STEP may be negative for descending sequences.
         return 1;
     }
     let ascending = step > 0;
+    // For -w, compute pad width from endpoints. Sequence values stay
+    // monotonic, so endpoints have the maximum natural width.
+    let pad: usize = if equal_width {
+        let mut a = [0u8; 24];
+        let mut b = [0u8; 24];
+        let la = fmt_i64(first, &mut a);
+        let lb = fmt_i64(last, &mut b);
+        if la > lb { la } else { lb }
+    } else { 0 };
     let mut cur = first;
     let mut first_printed = true;
     loop {
@@ -282,7 +333,8 @@ STEP may be negative for descending sequences.
         if !first_printed {
             write_str(STDOUT, &sep_buf[..sep_len]);
         }
-        if !write_num(cur) { return 1; }
+        let ok = if equal_width { write_num_padded(cur, pad) } else { write_num(cur) };
+        if !ok { return 1; }
         first_printed = false;
         cur = match cur.checked_add(step) {
             Some(v) => v,

@@ -1156,6 +1156,8 @@ extern const uint8_t _binary_build_bin_x86_64_user_rust_truncate_start[];
 extern const uint8_t _binary_build_bin_x86_64_user_rust_truncate_end[];
 extern const uint8_t _binary_build_bin_x86_64_user_rust_stat_start[];
 extern const uint8_t _binary_build_bin_x86_64_user_rust_stat_end[];
+extern const uint8_t _binary_build_bin_x86_64_user_rust_tty_start[];
+extern const uint8_t _binary_build_bin_x86_64_user_rust_tty_end[];
 #endif
 /* Core Wayland binaries (production) */
 #if ENABLE_WAYLAND
@@ -1672,6 +1674,13 @@ int fut_stage_rust_stat_binary(void) {
                       _binary_build_bin_x86_64_user_rust_stat_end,
                       "/bin/stat");
 }
+
+int fut_stage_rust_tty_binary(void) {
+    (void)fut_vfs_mkdir("/bin", 0755);
+    return stage_blob(_binary_build_bin_x86_64_user_rust_tty_start,
+                      _binary_build_bin_x86_64_user_rust_tty_end,
+                      "/bin/tty");
+}
 #else
 int fut_stage_rust_hello_binary(void) { return -ENOSYS; }
 int fut_stage_rust_uname_binary(void) { return -ENOSYS; }
@@ -1729,6 +1738,7 @@ int fut_stage_rust_mktemp_binary(void)    { return -ENOSYS; }
 int fut_stage_rust_uptime_binary(void)    { return -ENOSYS; }
 int fut_stage_rust_truncate_binary(void)  { return -ENOSYS; }
 int fut_stage_rust_stat_binary(void)      { return -ENOSYS; }
+int fut_stage_rust_tty_binary(void)       { return -ENOSYS; }
 #endif
 #else
 int fut_stage_shell_binary(void) {
@@ -1957,6 +1967,10 @@ int fut_stage_rust_truncate_binary(void) {
 
 int fut_stage_rust_stat_binary(void) {
     return -ENOSYS;  /* rust-stat not available on macOS host builds */
+}
+
+int fut_stage_rust_tty_binary(void) {
+    return -ENOSYS;  /* rust-tty not available on macOS host builds */
 }
 #endif
 

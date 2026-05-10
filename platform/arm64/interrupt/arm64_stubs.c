@@ -154,6 +154,7 @@ ARM64_STAGE_FN(fut_stage_rust_mktemp_binary,        rust_mktemp,    "/bin",  "/b
 ARM64_STAGE_FN(fut_stage_rust_uptime_binary,        rust_uptime,    "/bin",  "/bin/uptime")
 ARM64_STAGE_FN(fut_stage_rust_truncate_binary,      rust_truncate,  "/bin",  "/bin/truncate")
 ARM64_STAGE_FN(fut_stage_rust_stat_binary,          rust_stat,      "/bin",  "/bin/stat")
+ARM64_STAGE_FN(fut_stage_rust_tty_binary,           rust_tty,       "/bin",  "/bin/tty")
 #else
 int fut_stage_rust_hello_binary(void)         { return -ENODEV; }
 int fut_stage_rust_uname_binary(void)         { return -ENODEV; }
@@ -211,6 +212,7 @@ int fut_stage_rust_mktemp_binary(void)        { return -ENODEV; }
 int fut_stage_rust_uptime_binary(void)        { return -ENODEV; }
 int fut_stage_rust_truncate_binary(void)      { return -ENODEV; }
 int fut_stage_rust_stat_binary(void)          { return -ENODEV; }
+int fut_stage_rust_tty_binary(void)           { return -ENODEV; }
 #endif
 ARM64_STAGE_FN(fut_stage_init_binary,               init,           "/sbin", "/sbin/init")
 ARM64_STAGE_FN(fut_stage_shell_binary,              shell,          "/bin",  "/bin/shell")

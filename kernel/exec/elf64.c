@@ -807,6 +807,33 @@ static int build_user_stack(fut_mm_t *mm,
                (unsigned long long)current_cr3,
                (unsigned long long)expected_cr3);
 
+    /* Sanity-check that the new pml4 has the same kernel-half (entry 511)
+     * as the running kernel's pml4. If these differ, copy_kernel_half
+     * didn't run (or ran against a stale source) and the post-CR3-switch
+     * `ret` will fault into nowhere.
+     *
+     * Read pml4[511] from both physical pages via the higher-half
+     * direct mapping (phys + KERNEL_VIRTUAL_BASE). cr3 contains phys
+     * with CR3-flags low bits clear of PCID — mask them off. */
+    {
+        uint64_t cur_pml4_phys  = current_cr3  & ~0xFFFULL;
+        uint64_t new_pml4_phys  = expected_cr3 & ~0xFFFULL;
+        uint64_t *cur_pml4 = (uint64_t *)(cur_pml4_phys  | KERNEL_VIRTUAL_BASE);
+        uint64_t *new_pml4 = (uint64_t *)(new_pml4_phys  | KERNEL_VIRTUAL_BASE);
+        fut_printf("[BISECT-TRAMP] pml4[511] cur=0x%llx new=0x%llx %s\n",
+                   (unsigned long long)cur_pml4[511],
+                   (unsigned long long)new_pml4[511],
+                   cur_pml4[511] == new_pml4[511] ? "(match)" : "(MISMATCH!)");
+        fut_printf("[BISECT-TRAMP] pml4[510] cur=0x%llx new=0x%llx %s\n",
+                   (unsigned long long)cur_pml4[510],
+                   (unsigned long long)new_pml4[510],
+                   cur_pml4[510] == new_pml4[510] ? "(match)" : "(MISMATCH!)");
+        fut_printf("[BISECT-TRAMP] pml4[256] cur=0x%llx new=0x%llx %s\n",
+                   (unsigned long long)cur_pml4[256],
+                   (unsigned long long)new_pml4[256],
+                   cur_pml4[256] == new_pml4[256] ? "(match)" : "(MISMATCH!)");
+    }
+
 #ifdef DEBUG_USER_TRAMPOLINE
     /* Debug: Print '7' after getting expected_cr3 */
     __asm__ volatile("movw $0x3F8, %%dx; movb $'7', %%al; outb %%al, %%dx" ::: "al", "dx", "memory");

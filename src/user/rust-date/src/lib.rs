@@ -250,8 +250,12 @@ fn write_uint(buf: &mut [u8], pos: &mut usize, n: u64, width: usize) {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, envp: *const *const u8) -> i32 {
-    // Flags: -u/--utc, --help, and a positional `+FORMAT` per GNU date.
+    // Flags: -u/--utc, -R/--rfc-2822, -I[FMT]/--iso-8601[=FMT], --help,
+    // and a positional `+FORMAT` per GNU date.
     let mut utc = false;
+    let mut rfc_2822 = false;
+    // ISO precision: 0=off, 1=date, 2=hours, 3=minutes, 4=seconds.
+    let mut iso_prec: u8 = 0;
     let mut user_format: Option<*const u8> = None;
     let mut user_format_len = 0usize;
     for ai in 1..argc {
@@ -263,12 +267,44 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, envp: *const *const u8
             utc = true;
             continue;
         }
+        if s == b"-R" || s == b"--rfc-2822" || s == b"--rfc-email" {
+            rfc_2822 = true;
+            continue;
+        }
+        // -I[FMT] / --iso-8601[=FMT]
+        if s == b"-I" || s == b"--iso-8601" {
+            iso_prec = 1;
+            continue;
+        }
+        if n >= 3 && s[0] == b'-' && s[1] == b'I' {
+            iso_prec = match &s[2..] {
+                b"date"    => 1,
+                b"hours"   => 2,
+                b"minutes" => 3,
+                b"seconds" => 4,
+                _ => 1,
+            };
+            continue;
+        }
+        if n >= 12 && s.starts_with(b"--iso-8601=") {
+            iso_prec = match &s[11..] {
+                b"date"    => 1,
+                b"hours"   => 2,
+                b"minutes" => 3,
+                b"seconds" => 4,
+                _ => 1,
+            };
+            continue;
+        }
         if s == b"--help" {
             let help: &[u8] = b"\
 Usage: rust-date [OPTION] [+FORMAT]
 Print the current date/time. Default format is 'YYYY-MM-DD HH:MM:SS'.
 
   -u, --utc, --universal   use UTC (ignore TZ_OFFSET_SEC)
+  -R, --rfc-2822           output RFC-2822 form: 'Wed, 09 May 2026 12:34:56 +0000'
+  -I[FMT], --iso-8601[=FMT]
+                           output ISO 8601; FMT = date | hours | minutes | seconds
       --help               show this help and exit
 
 Format conversions (with leading +): %Y year, %m month, %d day,
@@ -310,6 +346,30 @@ Unix epoch seconds, %% literal %.
     let mm = ((day_secs % 3600) / 60) as u64;
     let ss = (day_secs % 60) as u64;
     let (y, mo, d) = civil_from_days(days);
+
+    // -R / -I shortcuts get translated into the same +FORMAT path.
+    // We let an explicit +FORMAT win over -R/-I if both are given,
+    // matching GNU date's "last format wins" behavior.
+    let rfc_fmt: &[u8]  = b"%a, %d %b %Y %H:%M:%S +0000";
+    let iso_d_fmt: &[u8] = b"%F";
+    let iso_h_fmt: &[u8] = b"%FT%H+00:00";
+    let iso_m_fmt: &[u8] = b"%FT%H:%M+00:00";
+    let iso_s_fmt: &[u8] = b"%FT%H:%M:%S+00:00";
+    if user_format.is_none() {
+        if rfc_2822 {
+            user_format = Some(rfc_fmt.as_ptr());
+            user_format_len = rfc_fmt.len();
+        } else if iso_prec > 0 {
+            let pick: &[u8] = match iso_prec {
+                1 => iso_d_fmt,
+                2 => iso_h_fmt,
+                3 => iso_m_fmt,
+                _ => iso_s_fmt,
+            };
+            user_format = Some(pick.as_ptr());
+            user_format_len = pick.len();
+        }
+    }
 
     // GNU `date +FORMAT` path. We render into a small scratch buffer
     // and stream it out at the end. The format string is bounded by
@@ -364,6 +424,24 @@ Unix epoch seconds, %% literal %.
                     b'n' => push(&mut out, &mut pos, b'\n'),
                     b't' => push(&mut out, &mut pos, b'\t'),
                     b'%' => push(&mut out, &mut pos, b'%'),
+                    b'a' => {
+                        // Abbreviated weekday name. 1970-01-01 was a Thursday.
+                        let dow = ((days % 7 + 7 + 4) % 7) as usize;
+                        let names: [&[u8]; 7] = [
+                            b"Sun", b"Mon", b"Tue", b"Wed", b"Thu", b"Fri", b"Sat",
+                        ];
+                        for &b in names[dow] { push(&mut out, &mut pos, b); }
+                    }
+                    b'b' => {
+                        // Abbreviated month name (mo is 1-based).
+                        let names: [&[u8]; 13] = [
+                            b"???", b"Jan", b"Feb", b"Mar", b"Apr", b"May",
+                            b"Jun", b"Jul", b"Aug", b"Sep", b"Oct", b"Nov",
+                            b"Dec",
+                        ];
+                        let idx = if (mo as usize) <= 12 { mo as usize } else { 0 };
+                        for &b in names[idx] { push(&mut out, &mut pos, b); }
+                    }
                     other => {
                         // Unknown: emit verbatim like GNU date.
                         push(&mut out, &mut pos, b'%');

@@ -159,32 +159,52 @@ fn field_len(field: &[u8]) -> usize {
     n
 }
 
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum NodeMode { Full, Short, Domain }
+
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
-    if argc == 2 {
-        let p = unsafe { *argv.add(1) };
-        if !p.is_null() && (p as usize) >= 0x10000 {
-            let want = b"--help";
-            let mut n = 0; unsafe { while *p.add(n) != 0 { n += 1; } }
-            if n == want.len() {
-                let mut ok = true;
-                for i in 0..want.len() {
-                    if unsafe { *p.add(i) } != want[i] { ok = false; break; }
-                }
-                if ok {
-                    let help: &[u8] = b"\
-Usage: rust-hostname
+    let mut mode = NodeMode::Full;
+    let mut idx: i32 = 1;
+    while idx < argc {
+        let p = unsafe { *argv.add(idx as usize) };
+        if p.is_null() || (p as usize) < 0x10000 { break; }
+        let mut n = 0; unsafe { while *p.add(n) != 0 { n += 1; } }
+        let s = unsafe { core::slice::from_raw_parts(p, n) };
+        // --help
+        if s == b"--help" {
+            let help: &[u8] = b"\
+Usage: rust-hostname [-s | -d | -f]
 Print the system hostname (uname(2) nodename field).
 
-  --help    show this help and exit
+  -s, --short      strip everything from the first '.' onward
+  -d, --domain     print the domain part (after the first '.')
+  -f, --fqdn, --long
+                   print the full nodename (default)
+      --help       show this help and exit
 \0";
-                    let len = help.len() - 1;
-                    unsafe { let _ = syscall3(sysn::WRITE, STDOUT as u64,
-                                              help.as_ptr() as u64, len as u64); }
-                    return 0;
-                }
-            }
+            let len = help.len() - 1;
+            unsafe { let _ = syscall3(sysn::WRITE, STDOUT as u64,
+                                      help.as_ptr() as u64, len as u64); }
+            return 0;
         }
+        if s == b"-s" || s == b"--short" {
+            mode = NodeMode::Short;
+            idx += 1;
+            continue;
+        }
+        if s == b"-d" || s == b"--domain" {
+            mode = NodeMode::Domain;
+            idx += 1;
+            continue;
+        }
+        if s == b"-f" || s == b"--fqdn" || s == b"--long" {
+            mode = NodeMode::Full;
+            idx += 1;
+            continue;
+        }
+        if s == b"--" { break; }
+        break;
     }
     let mut uts = Utsname {
         sysname: [0; UTS_LEN],
@@ -200,7 +220,29 @@ Print the system hostname (uname(2) nodename field).
         return 1;
     }
     let n = field_len(&uts.nodename);
-    write_str(STDOUT, &uts.nodename[..n]);
+    let node = &uts.nodename[..n];
+    // First-dot index, used by -s / -d to slice the nodename.
+    let mut dot: Option<usize> = None;
+    for i in 0..node.len() {
+        if node[i] == b'.' { dot = Some(i); break; }
+    }
+    match mode {
+        NodeMode::Full => {
+            write_str(STDOUT, node);
+        }
+        NodeMode::Short => {
+            let end = dot.unwrap_or(node.len());
+            write_str(STDOUT, &node[..end]);
+        }
+        NodeMode::Domain => {
+            if let Some(d) = dot {
+                if d + 1 < node.len() {
+                    write_str(STDOUT, &node[d + 1..]);
+                }
+            }
+            // No dot in nodename -> empty domain (just newline).
+        }
+    }
     write_str(STDOUT, b"\n");
     0
 }

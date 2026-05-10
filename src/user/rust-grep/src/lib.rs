@@ -1009,6 +1009,18 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
                     return 2;
                 }
             }
+        } else if {
+            // --label=LABEL (long form with embedded =)
+            let n = cstr_len(p);
+            n >= 8 && unsafe {
+                let want = b"--label=";
+                let mut ok = true;
+                for j in 0..want.len() { if *p.add(j) != want[j] { ok = false; break; } }
+                ok
+            }
+        } {
+            opts.stdin_label = Some(unsafe { p.add(8) });
+            idx += 1;
         } else if arg_is(p, b"-s") || arg_is(p, b"--no-messages") {
             // GNU grep's -s suppresses "cannot open" / "no such file"
             // diagnostics. Note this differs from the BSD -q (quiet)

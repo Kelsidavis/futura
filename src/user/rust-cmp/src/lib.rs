@@ -320,15 +320,38 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             idx += 2;
             continue;
         }
-        if arg_eq(p, b"-n") || arg_eq(p, b"--bytes") {
+        // --bytes=NUM (long form with embedded =)
+        let p_n = {
+            let mut k = 0usize;
+            unsafe { while *p.add(k) != 0 { k += 1; } }
+            k
+        };
+        let mut np_inline: Option<*const u8> = None;
+        if p_n >= 8 && unsafe {
+            let want = b"--bytes=";
+            let mut ok = true;
+            for j in 0..want.len() { if *p.add(j) != want[j] { ok = false; break; } }
+            ok
+        } {
+            np_inline = Some(unsafe { p.add(8) });
+        }
+        if np_inline.is_some() || arg_eq(p, b"-n") || arg_eq(p, b"--bytes") {
             // -n NUM: compare at most NUM bytes from each input.
             // NUM accepts an optional binary suffix (K/M/G/T = 1024^N).
-            if idx + 1 >= argc {
-                if !silent { write_str(STDERR, b"rust-cmp: -n needs a non-negative integer\n"); }
-                return 2;
-            }
-            let np = unsafe { *argv.add((idx + 1) as usize) };
-            if np.is_null() || (np as usize) < 0x10000 {
+            let np = if let Some(p) = np_inline {
+                p
+            } else {
+                if idx + 1 >= argc {
+                    if !silent { write_str(STDERR, b"rust-cmp: -n needs a non-negative integer\n"); }
+                    return 2;
+                }
+                let p = unsafe { *argv.add((idx + 1) as usize) };
+                if p.is_null() || (p as usize) < 0x10000 {
+                    return 2;
+                }
+                p
+            };
+            if np.is_null() {
                 return 2;
             }
             let mut nn = 0usize;
@@ -371,7 +394,9 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
                 return 2;
             }
             byte_limit = Some(v);
-            idx += 2;
+            // --bytes=NUM consumed only one argv slot; the separate-arg
+            // forms consumed two.
+            idx += if np_inline.is_some() { 1 } else { 2 };
             continue;
         }
         if arg_eq(p, b"--") { idx += 1; break; }

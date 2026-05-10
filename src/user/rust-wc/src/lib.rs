@@ -403,10 +403,10 @@ Usage: rust-wc [OPTION]... [FILE]...
 Print newline, word, and byte counts for each FILE. Without -l/-w/-c
 all three are shown. With multiple FILEs, also print a total.
 
-  -l        count lines (newlines)
-  -w        count whitespace-separated words
-  -c        count bytes
-  -m        count chars (same as -c for ASCII inputs)
+  -l, --lines    count lines (newlines)
+  -w, --words    count whitespace-separated words
+  -c, --bytes    count bytes
+  -m, --chars    count chars (same as -c for ASCII inputs)
   -L, --max-line-length   length of the longest line
       --total=MODE        when to print total: auto|always|only|never
                           (auto = only with multiple FILEs)

@@ -295,8 +295,8 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
 Usage: rust-tr [OPTION]... SET1 [SET2]
 Translate, squeeze, and/or delete bytes from stdin to stdout.
 
-  -d        delete bytes in SET1 (no translation)
-  -s        squeeze runs of bytes in the last set to one byte each
+  -d, --delete           delete bytes in SET1 (no translation)
+  -s, --squeeze-repeats  squeeze runs of bytes in the last set
   -t, --truncate-set1    truncate SET1 to the length of SET2 (drop the
                          GNU pad-with-last-char behavior)
   -c, -C, --complement   use the complement of SET1 wherever SET1

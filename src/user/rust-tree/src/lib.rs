@@ -405,8 +405,8 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
 Usage: rust-tree [-a] [-d] [-L LEVEL] [PATH]
 Recursively list PATH (or '.') with indent prefixes per depth.
 
-  -a        include dot-prefixed entries (skip only '.' and '..')
-  -d        list directories only
+  -a, --all     include dot-prefixed entries (skip only '.' and '..')
+  -d, --dirs    list directories only
   -L LEVEL  descend at most LEVEL levels (default: hard cap of 8)
       --help    show this help and exit
 \0";

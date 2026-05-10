@@ -329,7 +329,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
 Usage: rust-mkdir [-pv] [-m MODE] DIR [DIR...]
 Create each DIR.
 
-  -p           create parent directories as needed (no error if exists)
+  -p, --parents    create parent directories as needed (no error if exists)
   -m, --mode MODE  set the leaf mode (octal, e.g. 700)
   -v           emit \"created directory '<dir>'\" for each new dir
       --help       show this help and exit

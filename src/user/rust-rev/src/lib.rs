@@ -221,7 +221,8 @@ fn cstr_len(p: *const u8) -> usize {
 }
 
 // Process a single fd. Returns true on clean EOF, false on read/write error.
-fn rev_fd(fd: i32) -> bool {
+// `sep` is the line terminator — '\n' by default, NUL with -z.
+fn rev_fd(fd: i32, sep: u8) -> bool {
     let mut rbuf = [0u8; READ_BUF];
     let mut line = [0u8; MAX_LINE];
     let mut len = 0usize;
@@ -235,9 +236,10 @@ fn rev_fd(fd: i32) -> bool {
         if n == 0 { break; }
         let chunk = &rbuf[..n as usize];
         for &c in chunk {
-            if c == b'\n' {
+            if c == sep {
                 if !flush_line(&mut line, len) { had_error = true; break; }
-                if !write_all(STDOUT, b"\n") { had_error = true; break; }
+                let term = [sep];
+                if !write_all(STDOUT, &term) { had_error = true; break; }
                 len = 0;
             } else if len < line.len() {
                 line[len] = c;
@@ -264,34 +266,52 @@ fn rev_fd(fd: i32) -> bool {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
-    // --help short-circuit before any reads.
-    if argc >= 2 {
-        let first = unsafe { *argv.add(1) };
-        if !first.is_null() && (first as usize) >= 0x10000 {
-            let n = cstr_len(first);
-            if n == 6 && unsafe {
-                *first == b'-' && *first.add(1) == b'-' &&
-                *first.add(2) == b'h' && *first.add(3) == b'e' &&
-                *first.add(4) == b'l' && *first.add(5) == b'p'
-            } {
-                let help: &[u8] = b"\
-Usage: rust-rev [FILE]...
+    // Parse leading flags: --help, -z/--zero-terminated.
+    let mut sep: u8 = b'\n';
+    let mut idx: i32 = 1;
+    while idx < argc {
+        let p = unsafe { *argv.add(idx as usize) };
+        if p.is_null() || (p as usize) < 0x10000 { break; }
+        let n = cstr_len(p);
+        let is_help = n == 6 && unsafe {
+            *p == b'-' && *p.add(1) == b'-' &&
+            *p.add(2) == b'h' && *p.add(3) == b'e' &&
+            *p.add(4) == b'l' && *p.add(5) == b'p'
+        };
+        if is_help {
+            let help: &[u8] = b"\
+Usage: rust-rev [-z] [FILE]...
 Reverse each line of input. With no FILE (or FILE = '-') reads stdin.
 
-  --help    show this help and exit
+  -z, --zero-terminated  line delimiter is NUL, not newline
+      --help             show this help and exit
 \0";
-                let len = help.len() - 1;
-                unsafe { let _ = syscall3(sysn::WRITE, STDOUT as u64,
-                                          help.as_ptr() as u64, len as u64); }
-                return 0;
-            }
+            let hlen = help.len() - 1;
+            unsafe { let _ = syscall3(sysn::WRITE, STDOUT as u64,
+                                      help.as_ptr() as u64, hlen as u64); }
+            return 0;
         }
+        let is_z = n == 2 && unsafe { *p == b'-' && *p.add(1) == b'z' };
+        let is_zlong = n == 17 && unsafe {
+            let want = b"--zero-terminated";
+            (0..want.len()).all(|i| *p.add(i) == want[i])
+        };
+        if is_z || is_zlong {
+            sep = 0;
+            idx += 1;
+            continue;
+        }
+        if n == 2 && unsafe { *p == b'-' && *p.add(1) == b'-' } {
+            idx += 1;
+            break;
+        }
+        break;
     }
-    if argc < 2 {
-        return if rev_fd(STDIN) { 0 } else { 1 };
+    if idx >= argc {
+        return if rev_fd(STDIN, sep) { 0 } else { 1 };
     }
     let mut had_error = false;
-    for ai in 1..argc {
+    for ai in idx..argc {
         let p = unsafe { *argv.add(ai as usize) };
         if p.is_null() || (p as usize) < 0x10000 {
             had_error = true;
@@ -301,7 +321,7 @@ Reverse each line of input. With no FILE (or FILE = '-') reads stdin.
         let nlen = cstr_len(p);
         let is_dash = nlen == 1 && unsafe { *p } == b'-';
         if is_dash {
-            if !rev_fd(STDIN) { had_error = true; }
+            if !rev_fd(STDIN, sep) { had_error = true; }
             continue;
         }
         let fd = unsafe {
@@ -314,7 +334,7 @@ Reverse each line of input. With no FILE (or FILE = '-') reads stdin.
             had_error = true;
             continue;
         }
-        if !rev_fd(fd as i32) { had_error = true; }
+        if !rev_fd(fd as i32, sep) { had_error = true; }
         unsafe { let _ = syscall1(sysn::CLOSE, fd as u64); }
     }
     if had_error { 1 } else { 0 }

@@ -822,31 +822,49 @@ static int build_user_stack(fut_mm_t *mm,
                (unsigned long long)current_cr3,
                (unsigned long long)expected_cr3);
 
-    /* Sanity-check that the new pml4 has the same kernel-half (entry 511)
-     * as the running kernel's pml4. If these differ, copy_kernel_half
-     * didn't run (or ran against a stale source) and the post-CR3-switch
-     * `ret` will fault into nowhere.
+    /* Sanity-check that the new pml4 has the same kernel-half
+     * (entries 256..511) as the running kernel's pml4. We previously
+     * spot-checked [256], [510], [511] — extend to a full sweep
+     * because copy_kernel_half ran at fut_mm_create time, and any
+     * kernel mapping added to boot_pml4 since then (e.g. dynamically
+     * mapped MMIO, lazy direct-map extensions) would NOT be in the
+     * new mm.
      *
-     * Read pml4[511] from both physical pages via the higher-half
-     * direct mapping (phys + KERNEL_VIRTUAL_BASE). cr3 contains phys
-     * with CR3-flags low bits clear of PCID — mask them off. */
+     * Read each entry via phys+KERNEL_VIRTUAL_BASE direct mapping. */
     {
         uint64_t cur_pml4_phys  = current_cr3  & ~0xFFFULL;
         uint64_t new_pml4_phys  = expected_cr3 & ~0xFFFULL;
         uint64_t *cur_pml4 = (uint64_t *)(cur_pml4_phys  | KERNEL_VIRTUAL_BASE);
         uint64_t *new_pml4 = (uint64_t *)(new_pml4_phys  | KERNEL_VIRTUAL_BASE);
-        fut_printf("[BISECT-TRAMP] pml4[511] cur=0x%llx new=0x%llx %s\n",
-                   (unsigned long long)cur_pml4[511],
-                   (unsigned long long)new_pml4[511],
-                   cur_pml4[511] == new_pml4[511] ? "(match)" : "(MISMATCH!)");
-        fut_printf("[BISECT-TRAMP] pml4[510] cur=0x%llx new=0x%llx %s\n",
-                   (unsigned long long)cur_pml4[510],
-                   (unsigned long long)new_pml4[510],
-                   cur_pml4[510] == new_pml4[510] ? "(match)" : "(MISMATCH!)");
-        fut_printf("[BISECT-TRAMP] pml4[256] cur=0x%llx new=0x%llx %s\n",
-                   (unsigned long long)cur_pml4[256],
-                   (unsigned long long)new_pml4[256],
-                   cur_pml4[256] == new_pml4[256] ? "(match)" : "(MISMATCH!)");
+        int diff_count = 0;
+        for (int i = 256; i < 512; i++) {
+            if (cur_pml4[i] != new_pml4[i]) {
+                fut_printf("[BISECT-TRAMP] pml4[%d] DIFF cur=0x%llx new=0x%llx\n",
+                           i,
+                           (unsigned long long)cur_pml4[i],
+                           (unsigned long long)new_pml4[i]);
+                diff_count++;
+                if (diff_count >= 16) {  /* clamp output */
+                    fut_printf("[BISECT-TRAMP] (stopping after 16 diffs)\n");
+                    break;
+                }
+            }
+        }
+        fut_printf("[BISECT-TRAMP] pml4 kernel-half diff_count=%d\n", diff_count);
+    }
+
+    /* Also report the trampoline's own stack/return-address so we can
+     * confirm both are in pml4[511]'s range (above 0xFFFFFFFF80000000).
+     * If either is in a different kernel-half slot we need to verify
+     * THAT slot matches between cur/new pml4. */
+    {
+        uintptr_t cur_rsp;
+        __asm__ volatile("mov %%rsp, %0" : "=r"(cur_rsp));
+        fut_printf("[BISECT-TRAMP] tramp_fn=0x%lx ret_addr=0x%lx kernel_rsp=0x%lx do_iretq=0x%lx\n",
+                   (unsigned long)(uintptr_t)&fut_user_trampoline,
+                   (unsigned long)(uintptr_t)__builtin_return_address(0),
+                   (unsigned long)cur_rsp,
+                   (unsigned long)(uintptr_t)&fut_do_user_iretq);
     }
 
 #ifdef DEBUG_USER_TRAMPOLINE
@@ -854,12 +872,30 @@ static int build_user_stack(fut_mm_t *mm,
     __asm__ volatile("movw $0x3F8, %%dx; movb $'7', %%al; outb %%al, %%dx" ::: "al", "dx", "memory");
 #endif
 
+    /* Do the per-thread/per-task struct updates BEFORE the CR3 swap.
+     * They touch fut_thread_current()'s percpu access (GS-relative)
+     * and the kernel-heap thread struct — neither should care which
+     * CR3 is live as long as kernel half is mapped, but doing this
+     * pre-CR3 removes them as suspects in the bisection. */
+    {
+        fut_thread_t *cur_thread = fut_thread_current();
+        if (cur_thread) {
+            cur_thread->fs_base = USER_TLS_BASE;
+            cur_thread->context.ds = USER_DATA_SELECTOR;
+            cur_thread->context.es = USER_DATA_SELECTOR;
+            cur_thread->context.fs = USER_DATA_SELECTOR;
+            cur_thread->context.gs = USER_DATA_SELECTOR;
+            cur_thread->context.cs = USER_CODE_SELECTOR;
+            cur_thread->context.ss = USER_DATA_SELECTOR;
+            cur_thread->context.rip = entry;
+            cur_thread->context.rsp = stack;
+            cur_thread->context.rflags = 0x202;
+        }
+    }
+
     /* Log BEFORE the CR3 swap — we have no diagnostic prints between
-     * here and fut_do_user_iretq this round, on purpose: if the boot
-     * still freezes at this last visible line, the cliff is the CR3
-     * write itself; if it advances (or hits a userspace fault), the
-     * cliff was the post-CR3 fb_console / i915 MMIO path that wasn't
-     * propagated into the new mm. */
+     * here and fut_do_user_iretq. Last-visible-line tells us where
+     * in {fut_write_cr3, wrmsr, fut_do_user_iretq} we faulted. */
     fut_printf("[BISECT-TRAMP] CR3 swap+iretq: cur=0x%llx new=0x%llx (no more prints)\n",
                (unsigned long long)current_cr3,
                (unsigned long long)expected_cr3);

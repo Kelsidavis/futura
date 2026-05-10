@@ -350,6 +350,7 @@ struct Opts {
     null_term: bool,    // -Z/-z: NUL-terminate filenames in -l / -L output
     no_messages: bool,  // -s/--no-messages: suppress per-file error spew
     stdin_label: Option<*const u8>,  // --label LABEL: override "(standard input)"
+    color: bool,        // --color=always: ANSI-highlight matched substring
 }
 
 const CTX_CAP: usize = 16;        // max before-context lines
@@ -386,6 +387,55 @@ fn emit_match(name: Option<&[u8]>, lineno: u64, line: &[u8], opts: &Opts) {
     if line.last().copied() != Some(b'\n') {
         write_all(STDOUT, b"\n");
     }
+}
+
+// Like emit_match but wraps each occurrence of `pat` in ANSI red bold
+// so the match jumps out in a terminal. Honors -i/-w match semantics.
+fn emit_match_colored(name: Option<&[u8]>, lineno: u64, line: &[u8],
+                      pat: &[u8], opts: &Opts) {
+    emit_prefix(name, lineno, opts);
+    if pat.is_empty() {
+        write_all(STDOUT, line);
+        if line.last().copied() != Some(b'\n') {
+            write_all(STDOUT, b"\n");
+        }
+        return;
+    }
+    // Strip a trailing newline so the highlight isn't re-injected after it.
+    let (body, has_nl): (&[u8], bool) = if line.last() == Some(&b'\n') {
+        (&line[..line.len() - 1], true)
+    } else { (line, false) };
+    let on:  &[u8] = b"\x1b[01;31m\x1b[K";
+    let off: &[u8] = b"\x1b[m\x1b[K";
+    let mut i = 0usize;
+    let mut last = 0usize;
+    while i + pat.len() <= body.len() {
+        let mut ok = true;
+        for j in 0..pat.len() {
+            let a = if opts.icase { to_lower(body[i + j]) } else { body[i + j] };
+            let b = if opts.icase { to_lower(pat[j])      } else { pat[j]      };
+            if a != b { ok = false; break; }
+        }
+        if ok && opts.word {
+            let left_ok = i == 0 || !is_word_byte(body[i - 1]);
+            let right_ok = i + pat.len() >= body.len()
+                || !is_word_byte(body[i + pat.len()]);
+            if !(left_ok && right_ok) { ok = false; }
+        }
+        if ok {
+            if last < i { write_all(STDOUT, &body[last..i]); }
+            write_all(STDOUT, on);
+            write_all(STDOUT, &body[i..i + pat.len()]);
+            write_all(STDOUT, off);
+            i += pat.len();
+            last = i;
+        } else {
+            i += 1;
+        }
+    }
+    if last < body.len() { write_all(STDOUT, &body[last..]); }
+    if has_nl { write_all(STDOUT, b"\n"); }
+    else { write_all(STDOUT, b"\n"); }
 }
 
 // Like emit_match but uses '-' instead of ':' between name/lineno —
@@ -533,6 +583,8 @@ fn grep_fd(
                         if !suppress_lines {
                             if opts.only_matching && !opts.invert {
                                 let _ = emit_matches_only(name, lineno, body, pat, opts);
+                            } else if opts.color && !opts.invert {
+                                emit_match_colored(name, lineno, body, pat, opts);
                             } else {
                                 emit_match(name, lineno, body, opts);
                             }
@@ -779,6 +831,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         null_term: false,
         no_messages: false,
         stdin_label: None,
+        color: false,
     };
 
     let mut e_pattern: Option<*const u8> = None;
@@ -916,6 +969,19 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             // shorthand we already accept via --quiet.
             opts.no_messages = true;
             idx += 1;
+        } else if arg_is(p, b"--color") || arg_is(p, b"--color=always")
+               || arg_is(p, b"--color=yes") || arg_is(p, b"--color=alway")
+               || arg_is(p, b"--colour") || arg_is(p, b"--colour=always") {
+            // ANSI red-bold around each matched substring. We don't
+            // detect TTY so --color=auto behaves like --color=never;
+            // pass --color or --color=always to opt in.
+            opts.color = true;
+            idx += 1;
+        } else if arg_is(p, b"--color=never") || arg_is(p, b"--color=no")
+               || arg_is(p, b"--color=auto") || arg_is(p, b"--colour=never")
+               || arg_is(p, b"--colour=auto") {
+            opts.color = false;
+            idx += 1;
         } else if arg_is(p, b"-q") || arg_is(p, b"--quiet") || arg_is(p, b"--silent") {
             opts.quiet = true;
             idx += 1;
@@ -969,6 +1035,7 @@ Output control:
   -Z, --null            NUL-terminate filenames in -l / -L output
   -s, --no-messages     suppress per-file 'cannot open' diagnostics
       --label LABEL     override the synthetic '(standard input)' header
+      --color[=WHEN]    highlight matches; WHEN: always|never|auto
       --help            show this help and exit
 \0";
             let len = help.len() - 1;  // strip the trailing NUL

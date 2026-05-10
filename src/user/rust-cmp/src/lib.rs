@@ -275,7 +275,21 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             // Find optional ':' splitter.
             let mut colon = sn;
             for i in 0..sn { if unsafe { *sp.add(i) } == b':' { colon = i; break; } }
-            let parse = |start: usize, end: usize| -> Option<u64> {
+            // Parse digits in [start, end), with an optional trailing
+            // K/M/G/T (1024^N) or B suffix. The suffix can appear at
+            // the very last byte before the colon (or end of string).
+            let parse = |start: usize, mut end: usize| -> Option<u64> {
+                if start >= end { return None; }
+                let mut mult: u64 = 1;
+                let last = unsafe { *sp.add(end - 1) };
+                match last {
+                    b'K' | b'k' => { mult = 1024; end -= 1; }
+                    b'M' | b'm' => { mult = 1024 * 1024; end -= 1; }
+                    b'G' | b'g' => { mult = 1024 * 1024 * 1024; end -= 1; }
+                    b'T' | b't' => { mult = 1024u64 * 1024 * 1024 * 1024; end -= 1; }
+                    b'B' | b'b' => { mult = 1; end -= 1; }
+                    _ => {}
+                }
                 if start >= end { return None; }
                 let mut v: u64 = 0;
                 for i in start..end {
@@ -283,7 +297,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
                     if !(b'0'..=b'9').contains(&c) { return None; }
                     v = v.checked_mul(10)?.checked_add((c - b'0') as u64)?;
                 }
-                Some(v)
+                v.checked_mul(mult)
             };
             match parse(0, colon) {
                 Some(v) => skip1 = v,
@@ -369,7 +383,7 @@ Compare two files byte by byte.
   -s, --quiet, --silent  suppress all output, exit status only
   -l, --verbose          list every differing byte (POS OCT1 OCT2)
   -n, --bytes NUM        compare at most NUM bytes (suffix K/M/G/T = 1024^N)
-  -i SKIP[:SKIP2]        skip SKIP bytes from both files
+  -i SKIP[:SKIP2]        skip SKIP bytes from both files (same suffix syntax)
                          (or SKIP from file1 and SKIP2 from file2)
       --help              show this help and exit
 

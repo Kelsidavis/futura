@@ -262,7 +262,30 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             write_str(STDERR, b"rust-strings: -t expects d / x / o\n");
             return 2;
         }
-        if cstr_eq(p, b"-n") {
+        // --bytes=N (long form with embedded =)
+        let p_n = {
+            let mut k = 0usize;
+            unsafe { while *p.add(k) != 0 { k += 1; } }
+            k
+        };
+        if p_n >= 8 && unsafe {
+            let want = b"--bytes=";
+            let mut ok = true;
+            for j in 0..want.len() { if *p.add(j) != want[j] { ok = false; break; } }
+            ok
+        } {
+            let arg = unsafe { p.add(8) };
+            match parse_usize(arg) {
+                Some(v) if v > 0 => min = v,
+                _ => {
+                    write_str(STDERR, b"rust-strings: invalid --bytes value\n");
+                    return 2;
+                }
+            }
+            idx += 1;
+            continue;
+        }
+        if cstr_eq(p, b"-n") || cstr_eq(p, b"--bytes") {
             if idx + 1 >= argc {
                 write_str(STDERR, b"rust-strings: -n needs an argument\n");
                 return 2;
@@ -284,9 +307,9 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
 Usage: rust-strings [-n MIN] [FILE]...
 Print runs of MIN-or-more printable bytes from each FILE (or stdin).
 
-  -n MIN    minimum run length to emit (default 4)
-  -t RADIX  prefix each run with its byte offset (RADIX = d / x / o)
-      --help    show this help and exit
+  -n, --bytes=MIN    minimum run length to emit (default 4)
+  -t RADIX           prefix each run with its byte offset (RADIX = d / x / o)
+      --help         show this help and exit
 
 A '-' in the FILE list means standard input.
 \0";

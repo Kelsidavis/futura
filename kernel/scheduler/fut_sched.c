@@ -9,6 +9,73 @@
  *   Nice   0 (default):           2 ticks =  20ms
  *   Nice  19 (lowest priority):   1 tick  =  10ms (minimum quantum)
  *   Formula: slice_ticks = max(1, 10 - (nice / 2))
+ *
+ * ──────────────────────────────────────────────────────────────────
+ *  Locking model (kernel-wide, summarized here for the audit trail).
+ * ──────────────────────────────────────────────────────────────────
+ *
+ *  SMP STATUS: APs are intentionally NOT brought up on bare metal
+ *  yet (single-CPU boot — see kernel_main / smp.c). The locks listed
+ *  below exist so that re-enabling SMP is a one-line change rather
+ *  than a series of corruption hunts. Uniprocessor contention is
+ *  zero, so the cost is essentially free.
+ *
+ *  ── Per-CPU scheduler state (fut_percpu_t) ──
+ *    queue_lock         guards: ready_queue_head/tail, ready_count,
+ *                               and the linked-list pointers in
+ *                               every fut_thread_t enqueued on this
+ *                               CPU.
+ *    Acquire pattern:   sched_irqsave() / sched_irqrestore()
+ *                       (spinlock + IRQ disable, since the timer
+ *                       ISR's wake-path also takes queue_lock and
+ *                       would otherwise deadlock against itself).
+ *    Held by:           fut_sched_add_thread, fut_sched_remove_thread,
+ *                       select_next_thread, find_most_loaded_cpu,
+ *                       steal_work_from_cpu.
+ *
+ *  ── Global thread list (fut_thread_list, fut_thread.c) ──
+ *    fut_thread_list_lock  guards: fut_thread_list head pointer and
+ *                                  every global_next link reachable
+ *                                  from it.
+ *    Held briefly across pointer updates only; never call into the
+ *    scheduler (which takes queue_lock) while holding it. Lock
+ *    ordering: thread_list_lock < queue_lock if both are needed,
+ *    but the codebase is structured to avoid that combination.
+ *
+ *  ── Heap allocators ──
+ *    pmm_lock     (fut_memory.c)    guards the physical-frame bitmap.
+ *                                   pmm_irqsave wrapper disables IRQs.
+ *    buddy_lock   (buddy_allocator) guards free_lists[], block hdrs,
+ *                                   total_allocated.
+ *    slab_lock    (slab_allocator)  guards slab_caches[], slab->free_list.
+ *    Lock ordering: slab_lock → buddy_lock → pmm_lock. Never the
+ *    reverse. (slab_create acquires slab_lock then calls buddy_malloc
+ *    which acquires buddy_lock, which can call into the buddy heap-
+ *    init path that touches pmm_lock during boot only.)
+ *
+ *  ── Atomically-tracked scalar flags ──
+ *    scheduler_started      _Atomic bool (this file)
+ *    fut_in_interrupt       _Atomic bool (this file, x86_64)
+ *    percpu_safe            _Atomic bool (fut_thread.c)
+ *    clean_fpu_state_initialized  _Atomic bool (fut_thread.c)
+ *    next_tid, thread_count       _Atomic uint64_t (fut_thread.c)
+ *    All use acquire/release where required for inter-CPU
+ *    visibility; relaxed where the value is only read on the same
+ *    CPU as the writer.
+ *
+ *  ── Known unprotected hot reads (left as-is for now) ──
+ *    pcpu->load_avg_fixed   read across CPUs during load balancing
+ *                           without queue_lock. Stale value is
+ *                           harmless: load balancer makes a slightly
+ *                           worse choice once.
+ *    pcpu->queue_depth, work_steal_count
+ *                           non-atomic stats; lost-update on SMP is
+ *                           cosmetic.
+ *    fut_current_frame      written by IRQ entry, read by scheduler.
+ *                           Architecturally per-CPU in practice (each
+ *                           CPU writes its own frame on its own stack
+ *                           before fut_schedule runs); revisit when
+ *                           re-enabling SMP.
  */
 
 #include "../../include/kernel/fut_sched.h"
@@ -64,8 +131,12 @@ fut_interrupt_frame_t *fut_current_frame = NULL;
 
 /* Tracks whether the scheduler has been explicitly started.
  * This prevents premature context switches during early boot when
- * timer interrupts are already enabled but kernel_main hasn't finished. */
-static volatile bool scheduler_started = false;
+ * timer interrupts are already enabled but kernel_main hasn't finished.
+ *
+ * Atomic so APs see the BSP's release-store via acquire-load. With
+ * plain `volatile` the AP can read a stale cached value and try to
+ * context-switch into a not-yet-initialized ready queue. */
+static _Atomic bool scheduler_started = false;
 
 /* ============================================================
  *   Scheduler State
@@ -283,7 +354,7 @@ void fut_sched_init(void) {
  * Must be called after all kernel initialization is complete.
  */
 void fut_sched_start(void) {
-    scheduler_started = true;
+    atomic_store_explicit(&scheduler_started, true, memory_order_release);
     fut_printf("[SCHED] Scheduler started - preemptive scheduling now enabled\n");
 }
 
@@ -291,7 +362,7 @@ void fut_sched_start(void) {
  * Check if scheduler is started.
  */
 bool fut_sched_is_started(void) {
-    return scheduler_started;
+    return atomic_load_explicit(&scheduler_started, memory_order_acquire);
 }
 
 bool fut_thread_is_idle(fut_thread_t *t) {
@@ -764,7 +835,7 @@ static fut_thread_t *select_next_thread(void) {
  */
 void fut_schedule(void) {
     // Don't allow context switches until scheduler is explicitly started
-    if (!scheduler_started) {
+    if (!atomic_load_explicit(&scheduler_started, memory_order_acquire)) {
         return;
     }
 

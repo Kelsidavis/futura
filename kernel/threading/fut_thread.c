@@ -56,19 +56,37 @@ static _Atomic uint64_t thread_count __attribute__((aligned(8))) = 0;
 /* Global thread list (for stats/debugging) */
 fut_thread_t *fut_thread_list = NULL;
 
+/* Lock guarding the global thread list singly-linked-list pointers.
+ * The list is mutated on thread create (insert at head) and thread
+ * exit (unlink). On SMP these can race from different CPUs, so we
+ * serialize all linked-list ops behind this spinlock.
+ *
+ * Lock ordering: thread_list_lock is held only briefly across the
+ * pointer-update region. Never call into the scheduler (which takes
+ * its per-CPU queue_lock) while holding this lock. */
+fut_spinlock_t fut_thread_list_lock = { .locked = 0 };
+
 #if defined(__x86_64__)
 /* Clean FPU state template for initializing new threads.
  * This is captured once at boot with a valid FPU state (FCW=0x037F, MXCSR=0x1F80).
  * All new threads get a copy of this state instead of zeroed memory. */
 static uint8_t clean_fpu_state[512] __attribute__((aligned(16))) = {0};
-static bool clean_fpu_state_initialized = false;
+/* Atomic so two CPUs racing into init_clean_fpu_state see at-most-one
+ * winner. Using compare-exchange below as a guard. */
+static _Atomic bool clean_fpu_state_initialized = false;
 
 /**
  * Initialize the clean FPU state template.
  * This should be called once during thread subsystem initialization.
  */
 static void init_clean_fpu_state(void) {
-    if (clean_fpu_state_initialized) {
+    /* Acquire-load: any reader that observes `initialized=true` is
+     * synchronized with the publishing release-store below, so the
+     * template is fully visible. Two CPUs racing here may both run
+     * the asm init — that's benign because the template content is a
+     * deterministic function of fxsave64 output. */
+    if (atomic_load_explicit(&clean_fpu_state_initialized,
+                             memory_order_acquire)) {
         return;
     }
 
@@ -107,7 +125,8 @@ static void init_clean_fpu_state(void) {
         *mxcsr_ptr = MXCSR_DEFAULT;
     }
 
-    clean_fpu_state_initialized = true;
+    atomic_store_explicit(&clean_fpu_state_initialized, true,
+                          memory_order_release);
 }
 #endif
 
@@ -362,9 +381,13 @@ fut_thread_t *fut_thread_create(
     fut_sched_add_thread(thread);
     TC_LOG("[TC] added to sched\n");
 
-    // Add to global thread list (uses separate global_next pointer)
+    // Add to global thread list (uses separate global_next pointer).
+    // Serialize the head-of-list update to keep two CPUs creating
+    // threads concurrently from corrupting the linked list.
+    fut_spinlock_acquire(&fut_thread_list_lock);
     thread->global_next = fut_thread_list;
     fut_thread_list = thread;
+    fut_spinlock_release(&fut_thread_list_lock);
 
     // Increment global thread count
     uint64_t new_count = atomic_fetch_add_explicit(&thread_count, 1, memory_order_acq_rel) + 1;
@@ -481,7 +504,10 @@ extern void exit_robust_list(fut_thread_t *thread);
         fut_task_destroy(exiting_task);
     }
 
-    // Remove from global thread list
+    // Remove from global thread list. Walk + unlink under the
+    // global lock so concurrent insert/remove from another CPU
+    // can't corrupt the chain.
+    fut_spinlock_acquire(&fut_thread_list_lock);
     fut_thread_t **prev = &fut_thread_list;
     for (fut_thread_t *t = fut_thread_list; t; t = t->global_next) {
         if (t == self) {
@@ -490,6 +516,7 @@ extern void exit_robust_list(fut_thread_t *thread);
         }
         prev = &t->global_next;
     }
+    fut_spinlock_release(&fut_thread_list_lock);
     self->wait_next = NULL;
 
     // Decrement global thread count
@@ -536,11 +563,13 @@ void fut_thread_sleep(uint64_t millis) {
  *   Thread Queries
  * ============================================================ */
 
-/* Global flag to track if per-CPU data is safe to access */
-static volatile bool percpu_safe = false;
+/* Global flag to track if per-CPU data is safe to access. Atomic so
+ * AP CPUs see the BSP's "safe" publish through proper acquire/release
+ * — `volatile` alone gives no inter-CPU visibility guarantee. */
+static _Atomic bool percpu_safe = false;
 
 void fut_thread_mark_percpu_safe(void) {
-    percpu_safe = true;
+    atomic_store_explicit(&percpu_safe, true, memory_order_release);
 }
 
 /**
@@ -548,8 +577,10 @@ void fut_thread_mark_percpu_safe(void) {
  * Uses per-CPU data accessed via GS segment on x86_64.
  */
 fut_thread_t *fut_thread_current(void) {
-    /* Don't access per-CPU until it's properly initialized */
-    if (!percpu_safe) {
+    /* Don't access per-CPU until it's properly initialized. Acquire
+     * load pairs with the release store in fut_thread_mark_percpu_safe
+     * so AP CPUs see all preceding per-CPU init writes. */
+    if (!atomic_load_explicit(&percpu_safe, memory_order_acquire)) {
         return NULL;
     }
     fut_percpu_t *percpu = fut_percpu_get();
@@ -713,11 +744,14 @@ void fut_thread_init_bootstrap(void) {
 #endif
 
 fut_thread_t *fut_thread_find(uint64_t tid) {
+    fut_spinlock_acquire(&fut_thread_list_lock);
     for (fut_thread_t *t = fut_thread_list; t; t = t->global_next) {
         if (t->tid == tid) {
+            fut_spinlock_release(&fut_thread_list_lock);
             return t;
         }
     }
+    fut_spinlock_release(&fut_thread_list_lock);
     return NULL;
 }
 

@@ -12,6 +12,7 @@
 #include <string.h>
 #include <stdbool.h>
 #include <kernel/kprintf.h>
+#include <kernel/fut_sched.h>  /* fut_spinlock_t */
 
 /* ============================================================
  *   Buddy Allocator Constants and Data Structures
@@ -59,6 +60,15 @@ static free_block_t *free_lists[NUM_ORDERS];  /* Free list for each order */
 static uintptr_t heap_start = 0;              /* Heap base address */
 static uintptr_t heap_end = 0;                /* Heap end address */
 static size_t total_allocated = 0;            /* Total bytes allocated */
+
+/* Single coarse lock guarding all buddy state (free_lists, total_allocated,
+ * block headers reachable through them). The buddy allocator is the
+ * common backing store for the slab allocator and direct large
+ * allocations; without this lock, two CPUs in fut_malloc would corrupt
+ * the free-list links or the buddy_split chain. SMP is currently
+ * disabled at boot, so contention is zero on uniprocessor — the lock
+ * is essentially free in the steady state. */
+static fut_spinlock_t buddy_lock = { .locked = 0 };
 
 /* ============================================================
  *   Helper Macros and Functions
@@ -275,7 +285,9 @@ void buddy_heap_init(uintptr_t start, uintptr_t end) {
     BUDDY_DEBUG_PRINTF("[BUDDY-INIT] Heap initialization complete\n");
 }
 
-void *buddy_malloc(size_t size) {
+/* Lock-free implementation. Public wrapper at bottom of file holds
+ * buddy_lock around the call. */
+static void *buddy_malloc_unlocked(size_t size) {
     if (size == 0) return NULL;
 
     /* Account for block header, with overflow check.
@@ -510,7 +522,9 @@ void *buddy_malloc(size_t size) {
     return NULL;  /* Out of memory */
 }
 
-void buddy_free(void *ptr) {
+/* Lock-free implementation. Public wrapper at bottom of file holds
+ * buddy_lock around the call. */
+static void buddy_free_unlocked(void *ptr) {
     if (ptr == NULL) return;
 
 
@@ -707,15 +721,44 @@ void buddy_free(void *ptr) {
     BUDDY_DEBUG_PRINTF("[BUDDY-FREE] Free complete\n");
 }
 
+/* ============================================================
+ *   Public, locked entry points
+ *
+ * The buddy free-lists, block headers, and total_allocated counter are
+ * all guarded by `buddy_lock`. Wrappers acquire+release around the
+ * lock-free implementations above. SMP is currently disabled at boot,
+ * so contention is zero on uniprocessor.
+ * ============================================================ */
+
+void *buddy_malloc(size_t size) {
+    fut_spinlock_acquire(&buddy_lock);
+    void *p = buddy_malloc_unlocked(size);
+    fut_spinlock_release(&buddy_lock);
+    return p;
+}
+
+void buddy_free(void *ptr) {
+    fut_spinlock_acquire(&buddy_lock);
+    buddy_free_unlocked(ptr);
+    fut_spinlock_release(&buddy_lock);
+}
+
 void *buddy_realloc(void *ptr, size_t size) {
-    if (ptr == NULL) return buddy_malloc(size);
+    fut_spinlock_acquire(&buddy_lock);
+    if (ptr == NULL) {
+        void *p = buddy_malloc_unlocked(size);
+        fut_spinlock_release(&buddy_lock);
+        return p;
+    }
     if (size == 0) {
-        buddy_free(ptr);
+        buddy_free_unlocked(ptr);
+        fut_spinlock_release(&buddy_lock);
         return NULL;
     }
 
     block_hdr_t *hdr = get_block_hdr(ptr);
     if (hdr->magic != BLOCK_MAGIC) {
+        fut_spinlock_release(&buddy_lock);
         return NULL;  /* Invalid pointer */
     }
 
@@ -723,12 +766,14 @@ void *buddy_realloc(void *ptr, size_t size) {
 
     if (size <= current_size) {
         /* Requested size fits in current block */
+        fut_spinlock_release(&buddy_lock);
         return ptr;
     }
 
     /* Need larger block */
-    void *new_ptr = buddy_malloc(size);
+    void *new_ptr = buddy_malloc_unlocked(size);
     if (new_ptr == NULL) {
+        fut_spinlock_release(&buddy_lock);
         return NULL;  /* Allocation failed */
     }
 
@@ -736,8 +781,9 @@ void *buddy_realloc(void *ptr, size_t size) {
     memcpy(new_ptr, ptr, current_size);
 
     /* Free old block */
-    buddy_free(ptr);
+    buddy_free_unlocked(ptr);
 
+    fut_spinlock_release(&buddy_lock);
     return new_ptr;
 }
 

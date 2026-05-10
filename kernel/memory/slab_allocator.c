@@ -13,6 +13,7 @@
 #include <string.h>
 #include <stdbool.h>
 #include <kernel/kprintf.h>
+#include <kernel/fut_sched.h>  /* fut_spinlock_t */
 #include "../../include/kernel/buddy_allocator.h"
 #include <kernel/debug_config.h>
 
@@ -81,6 +82,20 @@ typedef struct slab_cache {
  * ============================================================ */
 
 static slab_cache_t slab_caches[NUM_SLAB_SIZES];
+
+/* Single coarse lock guarding the slab caches (cache->slabs lists,
+ * each slab's free_list, allocation/freed counters). slab_malloc and
+ * slab_free walk these structures and mutate links; without a lock,
+ * two CPUs in fut_malloc would corrupt the per-cache slab list. SMP
+ * is currently disabled at boot, so contention is zero on
+ * uniprocessor — the lock is essentially free in steady state.
+ *
+ * Lock ordering: slab_lock is held while we may call into
+ * buddy_malloc/buddy_free (slab_create allocates a backing slab from
+ * buddy). buddy_lock is acquired separately inside the buddy entry
+ * points, so the order is slab_lock → buddy_lock. Never the reverse:
+ * buddy never calls into slab. */
+static fut_spinlock_t slab_lock = { .locked = 0 };
 
 /* ============================================================
  *   Helper Functions
@@ -229,7 +244,9 @@ static int slab_is_valid(slab_t *slab) {
     return 1;
 }
 
-void *slab_malloc(size_t size) {
+/* Lock-free implementation. Public wrapper at bottom of file holds
+ * slab_lock around the call. */
+static void *slab_malloc_unlocked(size_t size) {
     if (size == 0) return NULL;
 
     extern uintptr_t fut_heap_get_base(void);
@@ -389,7 +406,9 @@ void *slab_malloc(size_t size) {
     return result;
 }
 
-void slab_free(void *ptr) {
+/* Lock-free implementation. Public wrapper at bottom of file holds
+ * slab_lock around the call. */
+static void slab_free_unlocked(void *ptr) {
     if (!ptr) return;
 
     extern uintptr_t fut_heap_get_base(void);
@@ -481,12 +500,31 @@ check_buddy:
     buddy_free(ptr);
 }
 
+/* ============================================================
+ *   Public, locked entry points
+ * ============================================================ */
+
+void *slab_malloc(size_t size) {
+    fut_spinlock_acquire(&slab_lock);
+    void *p = slab_malloc_unlocked(size);
+    fut_spinlock_release(&slab_lock);
+    return p;
+}
+
+void slab_free(void *ptr) {
+    fut_spinlock_acquire(&slab_lock);
+    slab_free_unlocked(ptr);
+    fut_spinlock_release(&slab_lock);
+}
+
 void *slab_realloc(void *ptr, size_t new_size) {
     if (!ptr) return slab_malloc(new_size);
     if (new_size == 0) {
         slab_free(ptr);
         return NULL;
     }
+
+    fut_spinlock_acquire(&slab_lock);
 
     /* Check if pointer is in any slab cache */
     slab_obj_t *obj = (slab_obj_t *)ptr - 1;
@@ -506,22 +544,29 @@ void *slab_realloc(void *ptr, size_t new_size) {
                 /* Found in slab cache - use normal realloc */
                 size_t current_size = slab->obj_size - SLAB_OBJ_HDR_SIZE;
 
-                void *new_ptr = slab_malloc(new_size);
+                void *new_ptr = slab_malloc_unlocked(new_size);
                 if (!new_ptr) {
+                    fut_spinlock_release(&slab_lock);
                     return NULL;
                 }
 
                 size_t copy_size = (current_size < new_size) ? current_size : new_size;
                 memcpy(new_ptr, ptr, copy_size);
 
-                slab_free(ptr);
+                slab_free_unlocked(ptr);
+                fut_spinlock_release(&slab_lock);
                 return new_ptr;
             }
         }
     }
 
+    fut_spinlock_release(&slab_lock);
+
     /* Not found in any slab - it must be from buddy allocator
-     * Use buddy_realloc directly instead of guessing size */
+     * Use buddy_realloc directly instead of guessing size. The buddy
+     * allocator takes its own lock; we release slab_lock first to
+     * preserve the slab_lock → buddy_lock ordering even though no
+     * cycle is possible (buddy never calls back into slab). */
     return buddy_realloc(ptr, new_size);
 }
 

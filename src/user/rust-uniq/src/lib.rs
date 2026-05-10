@@ -340,18 +340,56 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             mode.icase = true;
         } else if cstr_eq(p, b"-z") || cstr_eq(p, b"--zero-terminated") {
             mode.sep = 0;
-        } else if cstr_eq(p, b"-s") || cstr_eq(p, b"-w") {
-            // -s N (skip first N chars) / -w N (compare at most N chars).
-            // Both take a non-negative integer in the next argv slot.
-            let kind = unsafe { *p.add(1) };  // 's' or 'w'
-            if i + 1 >= argc {
-                write_str(STDERR, b"rust-uniq: -s / -w needs a non-negative integer\n");
-                return 2;
-            }
-            let np = unsafe { *argv.add((i + 1) as usize) };
-            if np.is_null() || (np as usize) < 0x10000 {
-                return 2;
-            }
+        } else if cstr_eq(p, b"-s") || cstr_eq(p, b"-w")
+                  || cstr_eq(p, b"--skip-chars") || cstr_eq(p, b"--check-chars")
+                  || {
+                      // --skip-chars=N / --check-chars=N (with embedded =)
+                      let mut k = 0usize;
+                      unsafe { while *p.add(k) != 0 { k += 1; } }
+                      (k > 13 && unsafe {
+                          let want = b"--skip-chars=";
+                          let mut ok = true;
+                          for j in 0..want.len() {
+                              if *p.add(j) != want[j] { ok = false; break; }
+                          }
+                          ok
+                      }) || (k > 14 && unsafe {
+                          let want = b"--check-chars=";
+                          let mut ok = true;
+                          for j in 0..want.len() {
+                              if *p.add(j) != want[j] { ok = false; break; }
+                          }
+                          ok
+                      })
+                  }
+        {
+            // -s/--skip-chars N → skip first N chars before compare.
+            // -w/--check-chars N → compare at most N chars after the
+            // skip. Both accept the value via separate-arg or embedded
+            // = (`--skip-chars=N`).
+            let mut p_n = 0usize;
+            unsafe { while *p.add(p_n) != 0 { p_n += 1; } }
+            let is_skip = (cstr_eq(p, b"-s") || cstr_eq(p, b"--skip-chars"))
+                || (p_n > 13 && unsafe { *p.add(2) == b's' });
+            // Decide whether the value is inline (after =) or in argv.
+            let inline_off: Option<usize> = if p_n > 13 && unsafe { *p.add(2) == b's' } {
+                Some(13)  // --skip-chars=
+            } else if p_n > 14 && unsafe { *p.add(2) == b'c' } {
+                Some(14)  // --check-chars=
+            } else {
+                None
+            };
+            let np: *const u8 = if let Some(off) = inline_off {
+                unsafe { p.add(off) }
+            } else {
+                if i + 1 >= argc {
+                    write_str(STDERR, b"rust-uniq: -s / -w needs a non-negative integer\n");
+                    return 2;
+                }
+                let q = unsafe { *argv.add((i + 1) as usize) };
+                if q.is_null() || (q as usize) < 0x10000 { return 2; }
+                q
+            };
             let mut nn = 0usize;
             unsafe { while *np.add(nn) != 0 { nn += 1; } }
             let mut v: usize = 0;
@@ -368,9 +406,9 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
                 write_str(STDERR, b"rust-uniq: invalid -s / -w value\n");
                 return 2;
             }
-            if kind == b's' { mode.skip_chars = v; }
-            else            { mode.cmp_chars = Some(v); }
-            i += 2;
+            if is_skip { mode.skip_chars = v; }
+            else       { mode.cmp_chars = Some(v); }
+            i += if inline_off.is_some() { 1 } else { 2 };
             continue;
         } else if cstr_eq(p, b"--help") {
             let help: &[u8] = b"\

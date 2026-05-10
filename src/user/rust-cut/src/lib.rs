@@ -415,7 +415,7 @@ A '-' in the FILE list means standard input.
                                        help.as_ptr() as u64, len as u64); }
             return 0;
         }
-        if cstr_eq(p, b"-s") {
+        if cstr_eq(p, b"-s") || cstr_eq(p, b"--only-delimited") {
             suppress = true;
             idx += 1;
             continue;

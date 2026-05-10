@@ -201,23 +201,43 @@ fn panic(_info: &PanicInfo) -> ! {
     }
 }
 
-// Format a u64 right-aligned into a 6-char field followed by a tab.
-fn write_lineno(n: u64) -> bool {
-    let mut buf = [b' '; 7];
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum BodyStyle { All, NonBlank, None }
+
+#[derive(Copy, Clone)]
+struct NlOpts {
+    style: BodyStyle,
+    width: u32,         // -w
+    sep: [u8; 16],      // -s SEP
+    sep_len: u32,
+    increment: u64,     // -i
+    start: u64,         // -v
+}
+
+// Format a u64 right-aligned into `width` chars, then append `sep`.
+fn write_lineno(n: u64, opts: &NlOpts) -> bool {
+    let mut numbuf = [b'0'; 32];
+    let mut k = numbuf.len();
     let mut v = n;
-    let mut i = 6;
     if v == 0 {
-        i -= 1;
-        buf[i] = b'0';
+        k -= 1;
+        numbuf[k] = b'0';
     } else {
-        while v > 0 && i > 0 {
-            i -= 1;
-            buf[i] = b'0' + (v % 10) as u8;
+        while v > 0 && k > 0 {
+            k -= 1;
+            numbuf[k] = b'0' + (v % 10) as u8;
             v /= 10;
         }
     }
-    buf[6] = b'\t';
-    write_all(STDOUT, &buf)
+    let nlen = numbuf.len() - k;
+    let want = opts.width as usize;
+    let pad = if want > nlen { want - nlen } else { 0 };
+    let pad_buf = [b' '; 32];
+    if pad > 0 && !write_all(STDOUT, &pad_buf[..pad.min(pad_buf.len())]) {
+        return false;
+    }
+    if !write_all(STDOUT, &numbuf[k..]) { return false; }
+    write_all(STDOUT, &opts.sep[..opts.sep_len as usize])
 }
 
 struct NlState {
@@ -226,7 +246,7 @@ struct NlState {
     line_no: u64,
 }
 
-fn nl_fd(fd: i32, st: &mut NlState) -> bool {
+fn nl_fd(fd: i32, st: &mut NlState, opts: &NlOpts) -> bool {
     let mut buf = [0u8; READ_BUF];
     let mut had_error = false;
 
@@ -242,13 +262,16 @@ fn nl_fd(fd: i32, st: &mut NlState) -> bool {
             let c = chunk[i];
             if c == b'\n' {
                 let seg = &chunk[start..i + 1];
-                if st.at_line_start && st.line_starts_blank {
+                let want_number = match opts.style {
+                    BodyStyle::None => false,
+                    BodyStyle::NonBlank => !st.line_starts_blank,
+                    BodyStyle::All => true,
+                };
+                if !want_number || !st.at_line_start {
                     if !write_all(STDOUT, seg) { had_error = true; break; }
                 } else {
-                    if st.at_line_start {
-                        st.line_no += 1;
-                        if !write_lineno(st.line_no) { had_error = true; break; }
-                    }
+                    st.line_no += opts.increment;
+                    if !write_lineno(st.line_no, opts) { had_error = true; break; }
                     if !write_all(STDOUT, seg) { had_error = true; break; }
                 }
                 st.at_line_start = true;
@@ -261,8 +284,15 @@ fn nl_fd(fd: i32, st: &mut NlState) -> bool {
         if had_error { break; }
         if start < chunk.len() {
             if st.at_line_start {
-                st.line_no += 1;
-                if !write_lineno(st.line_no) { had_error = true; break; }
+                let want_number = match opts.style {
+                    BodyStyle::None => false,
+                    BodyStyle::NonBlank => !st.line_starts_blank,
+                    BodyStyle::All => true,
+                };
+                if want_number {
+                    st.line_no += opts.increment;
+                    if !write_lineno(st.line_no, opts) { had_error = true; break; }
+                }
                 st.at_line_start = false;
                 st.line_starts_blank = false;
             }
@@ -272,46 +302,169 @@ fn nl_fd(fd: i32, st: &mut NlState) -> bool {
     !had_error
 }
 
+fn parse_u64_arg(p: *const u8) -> Option<u64> {
+    let mut k = 0usize;
+    let mut v: u64 = 0;
+    let mut any = false;
+    unsafe {
+        while *p.add(k) != 0 {
+            let c = *p.add(k);
+            if !(b'0'..=b'9').contains(&c) { return None; }
+            v = v.checked_mul(10)?.checked_add((c - b'0') as u64)?;
+            any = true;
+            k += 1;
+        }
+    }
+    if any { Some(v) } else { None }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
-    let mut st = NlState {
-        at_line_start: true,
-        line_starts_blank: true,
-        line_no: 0,
+    let mut opts = NlOpts {
+        style: BodyStyle::NonBlank,
+        width: 6,
+        sep: [0; 16],
+        sep_len: 1,
+        increment: 1,
+        start: 1,
     };
-    let mut had_error = false;
+    opts.sep[0] = b'\t';
 
-    // Top-level --help short-circuits before any input processing.
-    if argc >= 2 {
-        let first = unsafe { *argv.add(1) };
-        if !first.is_null() && (first as usize) >= 0x10000 {
+    let mut idx: i32 = 1;
+    while idx < argc {
+        let p = unsafe { *argv.add(idx as usize) };
+        if p.is_null() || (p as usize) < 0x10000 { break; }
+        let mut nlen = 0usize;
+        unsafe { while *p.add(nlen) != 0 { nlen += 1; } }
+
+        // --help
+        if nlen == 6 && unsafe {
             let want = b"--help";
             let mut ok = true;
-            for i in 0..want.len() {
-                if unsafe { *first.add(i) } != want[i] { ok = false; break; }
-            }
-            if ok && unsafe { *first.add(want.len()) } == 0 {
-                let help: &[u8] = b"\
-Usage: rust-nl [FILE]...
-Number text lines (cat -n shape). Blank lines pass through with no
-prefix; non-blank lines get a 6-char right-aligned line number plus
-a tab. Multiple FILEs share a single running counter.
+            for i in 0..want.len() { if *p.add(i) != want[i] { ok = false; break; } }
+            ok
+        } {
+            let help: &[u8] = b"\
+Usage: rust-nl [-b STYLE] [-w WIDTH] [-s SEP] [-v N] [-i N] [FILE]...
+Number text lines.
 
-  --help    show this help and exit
+  -b STYLE   body number style: a (all), t (non-blank, default), n (none)
+  -w WIDTH   line-number field width (default 6)
+  -s SEP     separator between number and line (default TAB)
+  -v N       initial line number (default 1)
+  -i N       line-number increment (default 1)
+      --help     show this help and exit
 
 A '-' in the FILE list means standard input.
 \0";
-                let len = help.len() - 1;
-                unsafe { let _ = syscall3(sysn::WRITE, STDOUT as u64,
-                                          help.as_ptr() as u64, len as u64); }
-                return 0;
-            }
+            let len = help.len() - 1;
+            unsafe { let _ = syscall3(sysn::WRITE, STDOUT as u64,
+                                      help.as_ptr() as u64, len as u64); }
+            return 0;
         }
+
+        // -b STYLE
+        if nlen == 2 && unsafe { *p == b'-' && *p.add(1) == b'b' } {
+            if idx + 1 >= argc {
+                write_str(STDERR, b"rust-nl: -b needs a style\n");
+                return 1;
+            }
+            let arg = unsafe { *argv.add((idx + 1) as usize) };
+            if arg.is_null() || (arg as usize) < 0x10000 { return 1; }
+            let style = unsafe { *arg };
+            opts.style = match style {
+                b'a' => BodyStyle::All,
+                b't' => BodyStyle::NonBlank,
+                b'n' => BodyStyle::None,
+                _ => {
+                    write_str(STDERR, b"rust-nl: -b expects a/t/n\n");
+                    return 1;
+                }
+            };
+            idx += 2;
+            continue;
+        }
+        // -w WIDTH
+        if nlen == 2 && unsafe { *p == b'-' && *p.add(1) == b'w' } {
+            if idx + 1 >= argc { return 1; }
+            let arg = unsafe { *argv.add((idx + 1) as usize) };
+            if arg.is_null() || (arg as usize) < 0x10000 { return 1; }
+            match parse_u64_arg(arg) {
+                Some(v) if v > 0 && v < 32 => opts.width = v as u32,
+                _ => {
+                    write_str(STDERR, b"rust-nl: -w needs a positive width <32\n");
+                    return 1;
+                }
+            }
+            idx += 2;
+            continue;
+        }
+        // -s SEP
+        if nlen == 2 && unsafe { *p == b'-' && *p.add(1) == b's' } {
+            if idx + 1 >= argc { return 1; }
+            let arg = unsafe { *argv.add((idx + 1) as usize) };
+            if arg.is_null() || (arg as usize) < 0x10000 { return 1; }
+            let mut k = 0usize;
+            unsafe {
+                while *arg.add(k) != 0 && k < opts.sep.len() {
+                    opts.sep[k] = *arg.add(k);
+                    k += 1;
+                }
+            }
+            opts.sep_len = k as u32;
+            idx += 2;
+            continue;
+        }
+        // -v N
+        if nlen == 2 && unsafe { *p == b'-' && *p.add(1) == b'v' } {
+            if idx + 1 >= argc { return 1; }
+            let arg = unsafe { *argv.add((idx + 1) as usize) };
+            if arg.is_null() || (arg as usize) < 0x10000 { return 1; }
+            match parse_u64_arg(arg) {
+                Some(v) => opts.start = v,
+                None => {
+                    write_str(STDERR, b"rust-nl: -v needs a non-negative integer\n");
+                    return 1;
+                }
+            }
+            idx += 2;
+            continue;
+        }
+        // -i N
+        if nlen == 2 && unsafe { *p == b'-' && *p.add(1) == b'i' } {
+            if idx + 1 >= argc { return 1; }
+            let arg = unsafe { *argv.add((idx + 1) as usize) };
+            if arg.is_null() || (arg as usize) < 0x10000 { return 1; }
+            match parse_u64_arg(arg) {
+                Some(v) if v > 0 => opts.increment = v,
+                _ => {
+                    write_str(STDERR, b"rust-nl: -i needs a positive integer\n");
+                    return 1;
+                }
+            }
+            idx += 2;
+            continue;
+        }
+        if nlen == 2 && unsafe { *p == b'-' && *p.add(1) == b'-' } {
+            idx += 1;
+            break;
+        }
+        break;
     }
-    if argc < 2 {
-        if !nl_fd(STDIN, &mut st) { had_error = true; }
+
+    // Pre-bias the counter by (start - increment) so the first
+    // increment lands on `start`.
+    let mut st = NlState {
+        at_line_start: true,
+        line_starts_blank: true,
+        line_no: opts.start.saturating_sub(opts.increment),
+    };
+    let mut had_error = false;
+
+    if idx >= argc {
+        if !nl_fd(STDIN, &mut st, &opts) { had_error = true; }
     } else {
-        for ai in 1..argc {
+        for ai in idx..argc {
             let p = unsafe { *argv.add(ai as usize) };
             if p.is_null() || (p as usize) < 0x10000 {
                 had_error = true;
@@ -321,7 +474,7 @@ A '-' in the FILE list means standard input.
             unsafe { while *p.add(nlen) != 0 { nlen += 1; } }
             let is_dash = nlen == 1 && unsafe { *p } == b'-';
             if is_dash {
-                if !nl_fd(STDIN, &mut st) { had_error = true; }
+                if !nl_fd(STDIN, &mut st, &opts) { had_error = true; }
                 continue;
             }
             let fd = unsafe {
@@ -334,7 +487,7 @@ A '-' in the FILE list means standard input.
                 had_error = true;
                 continue;
             }
-            if !nl_fd(fd, &mut st) { had_error = true; }
+            if !nl_fd(fd, &mut st, &opts) { had_error = true; }
             unsafe { let _ = syscall1(sysn::CLOSE, fd as u64); }
         }
     }

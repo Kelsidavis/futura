@@ -415,15 +415,15 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
 Usage: rust-uniq [OPTION]... [INPUT]
 Filter adjacent matching lines from INPUT (or standard input).
 
-  -c          prefix lines with their occurrence count
-  -d          show only duplicated lines (one copy per group)
+  -c, --count            prefix lines with their occurrence count
+  -d, --repeated         show only duplicated lines (one copy per group)
   -D, --all-repeated   show every line of each duplicated group
-  -u          show only unique lines
-  -i          ignore case while comparing
-  -s N        skip first N chars before comparing
-  -w N        compare at most N chars (after -s skip)
-  -z, --zero-terminated   line separator is NUL (input and output)
-      --help  show this help and exit
+  -u, --unique           show only unique lines
+  -i, --ignore-case      ignore case while comparing
+  -s, --skip-chars=N     skip first N chars before comparing
+  -w, --check-chars=N    compare at most N chars (after -s skip)
+  -z, --zero-terminated  line separator is NUL (input and output)
+      --help             show this help and exit
 
 A '-' as INPUT means standard input.
 \0";

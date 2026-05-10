@@ -467,12 +467,12 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
 Usage: rust-cat [OPTION]... [FILE]...
 Concatenate FILE(s) to standard output. With no FILE, read stdin.
 
-  -n          number every output line
-  -b          number only non-blank output lines
-  -s          squeeze repeated blank lines
-  -E          render '$' at the end of each line
-  -T          render tabs as ^I
-  -v          render non-printables as ^X / M-X (except TAB/LF)
+  -n, --number             number every output line
+  -b, --number-nonblank    number only non-blank output lines
+  -s, --squeeze-blank      squeeze repeated blank lines
+  -E, --show-ends          render '$' at the end of each line
+  -T, --show-tabs          render tabs as ^I
+  -v, --show-nonprinting   render non-printables as ^X / M-X (except TAB/LF)
   -e          equivalent to -vE
   -t          equivalent to -vT
   -A          equivalent to -vET

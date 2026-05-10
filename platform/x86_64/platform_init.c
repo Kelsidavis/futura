@@ -33,6 +33,7 @@
 #define SERIAL_DATA(port) (port)
 #define SERIAL_INTR(port) (port + 1)
 #define SERIAL_FIFO_CTRL(port) (port + 2)
+
 #define SERIAL_LINE_CTRL(port) (port + 3)
 #define SERIAL_MODEM_CTRL(port) (port + 4)
 #define SERIAL_LINE_STATUS(port) (port + 5)
@@ -838,6 +839,10 @@ void fut_platform_init(uint32_t multiboot_magic __attribute__((unused)),
     );
 
     fut_serial_puts("Futura OS x86_64 Platform Initialization\n");
+    /* BUILD-TAG: tells us at-a-glance if the user is actually running the
+     * latest ISO. Bump this string whenever you reflash, so a stale boot
+     * is obvious from the screen. */
+    fut_printf("[BUILD-TAG] BARE-METAL-DIAG-ITER-12 (color markers stripped)\n");
 
     /* Load GDT */
     fut_serial_puts("[INIT] Loading GDT...\n");
@@ -918,8 +923,29 @@ void fut_platform_init(uint32_t multiboot_magic __attribute__((unused)),
         }
     }
 
+
     /* Probe Multiboot framebuffer if present */
     (void)fb_probe_from_multiboot((const void *)(uintptr_t)multiboot_addr);
+
+    /* Bring up the framebuffer console as early as possible so kernel
+     * diagnostics are visible on bare metal — on real hardware (e.g. a
+     * Chromebook with no serial header) every fut_printf above this
+     * point goes to a serial port nobody is listening to. fb_boot_splash
+     * maps the GRUB-provided GOP/VBE framebuffer and calls
+     * fb_console_init(); after that, fut_serial_putc() mirrors to the
+     * screen via the existing hook. The original call site lives in
+     * kernel_main (~line 1172) — far too late if anything between here
+     * and there silently hangs on hardware the kernel doesn't recognize.
+     * This early call is safe: paging, PIC, IDT and interrupts are all
+     * up by this point, and fb_console_init is idempotent so the later
+     * call inside fb_boot_splash is a no-op. */
+    if (fb_is_available()) {
+        extern void fb_boot_splash(void);
+        fb_boot_splash();
+        fut_printf("[INIT] Early framebuffer console online\n");
+    } else {
+        fut_printf("[INIT] No framebuffer from Multiboot2 — kernel output will be serial-only\n");
+    }
 
     /* Print Multiboot info */
     fut_serial_puts("[INIT] Multiboot2 magic: 0x");

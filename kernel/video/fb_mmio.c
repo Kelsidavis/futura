@@ -259,6 +259,23 @@ void fb_boot_splash(void) {
             }
         }
     }
+    /* Fast path for early-boot bring-up: if the FB phys addr fits in the
+     * 4 GB boot identity map (set up in boot.S), use it directly without
+     * calling pmap_map. pmap_map needs the PMM allocator to be fully
+     * populated to grab page-table pages, and that doesn't happen until
+     * much later in kernel_main; calling it here returns -ENOMEM on every
+     * attempt and fb_console never comes up on real hardware. The boot
+     * identity map (PDPT[0..3] = 4 GB with 2 MB huge pages) covers any
+     * UEFI GOP framebuffer location, so phys-addr == virt-addr here. */
+    if (g_fb_hw.phys != 0 && g_fb_hw.phys < (1ULL << 32)) {
+        g_fb_virt = (volatile uint8_t *)(uintptr_t)g_fb_hw.phys;
+        g_fb_hw.length = (size_t)g_fb_hw.info.pitch * (size_t)g_fb_hw.info.height;
+        g_fb_available = true;
+
+        extern int fb_console_init(void);
+        fb_console_init();
+        return;
+    }
 
     /* Try to map framebuffer at discovered address, with fallbacks */
     uint64_t addresses[] = { g_fb_hw.phys, FB_PHYS_QEMU_CIRRUS, FB_PHYS_LEGACY };

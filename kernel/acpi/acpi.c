@@ -246,10 +246,14 @@ void acpi_parse_madt(void) {
     uint64_t io_apic_address = 0;
     uint32_t io_apic_gsi_base = 0;
 
-    /* Store APIC IDs for SMP initialization */
+    /* Store APIC IDs for SMP initialization. apic_ids is currently only
+     * used to count CPUs since smp_init is disabled on bare metal (see
+     * the comment further down); keep collecting them so that re-enabling
+     * SMP later just needs the smp_init() call back. */
     #define MAX_CPUS 256
     static uint32_t apic_ids[MAX_CPUS];
     uint32_t num_apic_ids = 0;
+    (void)apic_ids;  /* Suppress -Wunused-but-set-variable while smp_init is gated off. */
 
     uint8_t *entry_ptr = (uint8_t *)(madt + 1);  /* Start after header */
     uint8_t *end = (uint8_t *)madt + madt->header.length;
@@ -386,14 +390,20 @@ void acpi_parse_madt(void) {
         }
     }
 
-    /* Start Application Processors if we have multiple CPUs */
+    /* SMP startup is currently disabled on bare metal: the kernel's heap
+     * and scheduler ready-queue locks have not been validated for true
+     * concurrent CPU access — the AP hangs inside fut_sched_init_cpu on
+     * real hardware (kmalloc / sched queue / global thread list). Under
+     * QEMU the timing happens to avoid the race, but on a Chromebook
+     * with two real cores it deadlocks every time. Boot single-CPU for
+     * now; revisit once heap/sched locking is audited and fixed. */
     if (num_apic_ids > 1) {
-        fut_printf("[ACPI] Starting %u Application Processors...\n", num_apic_ids - 1);
-        extern void smp_init(uint32_t *apic_ids, uint32_t num_cpus);
-        smp_init(apic_ids, num_apic_ids);
+        fut_printf("[ACPI] Detected %u CPUs, but SMP is disabled for bare-metal boot — running single-CPU\n",
+                   num_apic_ids);
     } else {
-        fut_printf("[ACPI] Single-processor system, SMP disabled\n");
+        fut_printf("[ACPI] Single-processor system\n");
     }
+    fut_printf("[ACPI-DBG] BSP: leaving acpi_parse_madt\n");
 }
 #endif  /* __x86_64__ */
 

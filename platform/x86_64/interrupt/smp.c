@@ -62,6 +62,17 @@ static void udelay(uint32_t usec) {
  * This is the first C code executed by APs.
  */
 void ap_main(uint32_t apic_id) {
+    /* Load the kernel IDT into THIS CPU's IDTR before doing anything that
+     * might raise an exception. IDTR is per-CPU; BSP loads it in
+     * fut_idt_init via lidt, but APs come up with an undefined IDTR after
+     * the long-mode trampoline. Without this, any page fault, #GP, etc.
+     * on the AP (e.g. inside kmalloc during fut_sched_init_cpu) becomes a
+     * triple-fault — silent on real hardware. The BSP's IDT is already
+     * fully populated and is shared by every CPU, so a plain lidt is
+     * enough; no per-CPU IDT needed yet. */
+    extern void fut_idt_load(void);
+    fut_idt_load();
+
     fut_printf("[SMP] AP CPU %u online\n", apic_id);
 
     /* Initialize LAPIC for this CPU */
@@ -93,7 +104,9 @@ void ap_main(uint32_t apic_id) {
 
     /* Initialize scheduler for this CPU (creates per-CPU idle thread) */
     extern void fut_sched_init_cpu(void);
+    fut_printf("[SMP-DBG] AP %u: calling fut_sched_init_cpu\n", apic_id);
     fut_sched_init_cpu();
+    fut_printf("[SMP-DBG] AP %u: fut_sched_init_cpu returned\n", apic_id);
 
     /* Set up per-CPU LAPIC timer for preemptive scheduling */
     extern void lapic_timer_periodic(uint32_t initial_count, uint8_t vector);

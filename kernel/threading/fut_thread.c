@@ -355,11 +355,17 @@ fut_thread_t *fut_thread_create(
  * Voluntarily yield CPU to another thread.
  */
 void fut_thread_yield(void) {
-    /* Quick stack canary check on yield — catches overflow during execution */
+    /* Quick stack canary check on yield — catches overflow during execution.
+     * Skip when canary == 0: that means the thread's stack came from the
+     * bootstrap allocator (BSS-zero stack, no canary written), the same
+     * exception fut_thread_exit makes. Without this skip, EVERY yield by
+     * the bootstrap (TID=1) thread spams a false-positive STACK OVERFLOW
+     * line, which on real hardware drowns the screen and looked like a
+     * fatal loop. */
     fut_thread_t *yt = fut_thread_current();
     if (yt && (uintptr_t)yt >= 0xFFFFFFFF80000000ULL && yt->stack_base) {
         uint64_t canary = *(volatile uint64_t *)yt->stack_base;
-        if (canary != FUT_STACK_CANARY) {
+        if (canary != FUT_STACK_CANARY && canary != 0) {
             fut_printf("[THREAD] *** STACK OVERFLOW *** tid=%llu at yield\n",
                        (unsigned long long)yt->tid);
         }
@@ -590,6 +596,11 @@ void fut_thread_init_bootstrap(void) {
         bootstrap_thread.priority = FUT_DEFAULT_PRIORITY;
         bootstrap_thread.stack_base = bootstrap_stack;
         bootstrap_thread.stack_size = sizeof(bootstrap_stack);
+
+        /* Plant a stack canary at the bottom so the yield/exit overflow
+         * checks become meaningful instead of always-zero. Mirrors what
+         * fut_thread_create does for normal threads. */
+        *(uint64_t *)bootstrap_stack = FUT_STACK_CANARY;
 
         /* Initialize context structure. The bootstrap thread is already running,
          * so its actual state comes from the interrupt frame saved when it gets

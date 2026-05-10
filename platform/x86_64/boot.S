@@ -13,14 +13,19 @@ multiboot2_header:
     .long multiboot2_header_end - multiboot2_header  /* Header length */
     .long -(0xE85250D6 + 0 + (multiboot2_header_end - multiboot2_header))  /* Checksum */
 
-    /* Framebuffer tag (optional) */
+    /* Framebuffer tag — required (flags=0) so GRUB *must* set up a
+     * framebuffer, with width=height=depth=0 meaning "any mode is fine."
+     * On UEFI hardware (e.g. Chromebooks) this hands us the GOP
+     * framebuffer; on legacy BIOS it picks a VBE mode. The kernel's
+     * early-boot framebuffer console (kernel/console/fb_console.c)
+     * relies on this being non-zero to render before drivers init. */
     .align 8
     .short 5                            /* Type: framebuffer */
-    .short 0                            /* Flags */
+    .short 0                            /* Flags: required */
     .long 20                            /* Size */
-    .long 1024                          /* Width */
-    .long 768                           /* Height */
-    .long 32                            /* Depth */
+    .long 0                             /* Width:  0 = no preference */
+    .long 0                             /* Height: 0 = no preference */
+    .long 0                             /* Depth:  0 = no preference */
 
     /* End tag */
     .align 8
@@ -85,6 +90,31 @@ boot_pdpt:
 boot_pd:
     .space 4096, 0                      /* 512 entries * 8 bytes */
 .set boot_pd_phys, boot_pd
+
+/* Three additional PD pages to extend the boot identity map from 1 GB
+ * to 4 GB. UEFI hardware (e.g. Chromebooks) routinely places the GOP
+ * framebuffer and other MMIO regions in BAR space at 2-4 GB, which we
+ * need accessible from early-boot diagnostic markers AND for the C-side
+ * pmap_map calls before pmap takes over its own mappings. Each PD here
+ * maps 1 GB with 512 × 2 MB huge pages. */
+.align 4096
+.global boot_pd1
+boot_pd1:
+    .space 4096, 0
+.set boot_pd1_phys, boot_pd1
+
+.align 4096
+.global boot_pd2
+boot_pd2:
+    .space 4096, 0
+.set boot_pd2_phys, boot_pd2
+
+.align 4096
+.global boot_pd3
+boot_pd3:
+    .space 4096, 0
+.set boot_pd3_phys, boot_pd3
+
 .global boot_ptables_end
 boot_ptables_end:
 
@@ -240,25 +270,97 @@ bsp_init_continue:
     movl %eax, 4088(%ebx)               /* PML4[511] low dword */
     movl $0, 4092(%ebx)                /* PML4[511] high dword */
 
-    /* Setup PDPT: map first and second-to-last entries */
-    movl $boot_pd_phys, %eax            /* Get physical address of PD */
-    orl $0x03, %eax                     /* Present + Writable */
+    /* Setup PDPT: identity-map 0-4 GB via PDPT[0..3] + higher-half via PDPT[510].
+     * The previous version mapped only 0-1 GB. UEFI hardware (e.g. Chromebooks)
+     * places the GOP framebuffer and many MMIO BARs above 1 GB; without 4 GB
+     * coverage, any direct phys-addr access after CR0.PG=1 page-faults. */
     movl $boot_pdpt_phys, %ebx
-    movl %eax, (%ebx)                   /* PDPT[0] low dword */
-    movl $0, 4(%ebx)                   /* PDPT[0] high dword */
-    movl %eax, 4080(%ebx)               /* PDPT[510] low dword */
-    movl $0, 4084(%ebx)                /* PDPT[510] high dword */
 
-    /* Setup PD: identity map full 1GB with 2MB huge pages */
+    movl $boot_pd_phys, %eax            /* PDPT[0] → boot_pd  (0  - 1 GB) */
+    orl $0x03, %eax
+    movl %eax, 0(%ebx)
+    movl $0, 4(%ebx)
+
+    movl $boot_pd1_phys, %eax           /* PDPT[1] → boot_pd1 (1  - 2 GB) */
+    orl $0x03, %eax
+    movl %eax, 8(%ebx)
+    movl $0, 12(%ebx)
+
+    movl $boot_pd2_phys, %eax           /* PDPT[2] → boot_pd2 (2  - 3 GB) */
+    orl $0x03, %eax
+    movl %eax, 16(%ebx)
+    movl $0, 20(%ebx)
+
+    movl $boot_pd3_phys, %eax           /* PDPT[3] → boot_pd3 (3  - 4 GB) */
+    orl $0x03, %eax
+    movl %eax, 24(%ebx)
+    movl $0, 28(%ebx)
+
+    movl $boot_pd_phys, %eax            /* PDPT[510] → boot_pd  (virt 0xFFFFFFFF80000000-0xFFFFFFFFBFFFFFFF → phys 0-1 GB) */
+    orl $0x03, %eax
+    movl %eax, 4080(%ebx)
+    movl $0, 4084(%ebx)
+
+    /* Extend the kernel higher-half mirror to 2 GB by also mapping
+     * PDPT[511] → boot_pd1 (virt 0xFFFFFFFFC0000000-0xFFFFFFFFFFFFFFFF
+     * → phys 1-2 GB). This is required for pmap_phys_to_virt(phys) =
+     * phys + KERNEL_VIRTUAL_BASE to resolve correctly for any phys in
+     * 1-2 GB. On real UEFI/Coreboot hardware the ACPI tables and other
+     * boot-reserved regions routinely sit in this range (e.g. on this
+     * Chromebook the RSDT lived at phys ~0x79AF6000, virt
+     * 0xFFFFFFFFF9AF6000), so without this mapping early ACPI walks
+     * page-fault as soon as the kernel touches anything above 1 GB. */
+    movl $boot_pd1_phys, %eax           /* PDPT[511] → boot_pd1 */
+    orl $0x03, %eax
+    movl %eax, 4088(%ebx)
+    movl $0, 4092(%ebx)
+
+    /* Setup boot_pd: identity map 0 - 1 GB with 2MB huge pages */
     movl $boot_pd_phys, %ebx
-    movl $0x00000083, %eax              /* Base: Present | RW | Large */
+    movl $0x00000083, %eax              /* phys=0x00000000, P|RW|PS */
     xorl %ecx, %ecx
 1:
-    movl %eax, (%ebx,%ecx,8)            /* Low dword */
-    movl $0, 4(%ebx,%ecx,8)             /* High dword */
-    addl $0x00200000, %eax              /* Next 2MB */
+    movl %eax, (%ebx,%ecx,8)
+    movl $0, 4(%ebx,%ecx,8)
+    addl $0x00200000, %eax              /* +2 MB */
     incl %ecx
-    cmpl $512, %ecx                     /* Map 512 × 2MB = 1GB total */
+    cmpl $512, %ecx
+    jb 1b
+
+    /* Setup boot_pd1: identity map 1 - 2 GB. Base phys = 0x40000000. */
+    movl $boot_pd1_phys, %ebx
+    movl $0x40000083, %eax
+    xorl %ecx, %ecx
+1:
+    movl %eax, (%ebx,%ecx,8)
+    movl $0, 4(%ebx,%ecx,8)
+    addl $0x00200000, %eax
+    incl %ecx
+    cmpl $512, %ecx
+    jb 1b
+
+    /* Setup boot_pd2: identity map 2 - 3 GB. Base phys = 0x80000000. */
+    movl $boot_pd2_phys, %ebx
+    movl $0x80000083, %eax
+    xorl %ecx, %ecx
+1:
+    movl %eax, (%ebx,%ecx,8)
+    movl $0, 4(%ebx,%ecx,8)
+    addl $0x00200000, %eax
+    incl %ecx
+    cmpl $512, %ecx
+    jb 1b
+
+    /* Setup boot_pd3: identity map 3 - 4 GB. Base phys = 0xC0000000. */
+    movl $boot_pd3_phys, %ebx
+    movl $0xC0000083, %eax
+    xorl %ecx, %ecx
+1:
+    movl %eax, (%ebx,%ecx,8)
+    movl $0, 4(%ebx,%ecx,8)
+    addl $0x00200000, %eax
+    incl %ecx
+    cmpl $512, %ecx
     jb 1b
 
     /* Load PML4 address into CR3 */

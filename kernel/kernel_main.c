@@ -1078,6 +1078,7 @@ void fut_kernel_main(void) {
     if (acpi_init()) {
         fut_printf("[INIT] Parsing MADT for CPU topology...\n");
         acpi_parse_madt();
+        fut_printf("[INIT-DBG] acpi_parse_madt returned to kernel_main\n");
     }
 #else
     /* ARM64: ACPI parsing not yet implemented */
@@ -1740,86 +1741,113 @@ void fut_kernel_main(void) {
 #endif /* !DRIVERS_QEMU */
 
 #if defined(DRIVERS_AMD) || defined(DRIVERS_ALL)
-    /* AMD chipset drivers */
+    /* AMD chipset drivers — gated on CPUID vendor at runtime so DRIVERS=all
+     * builds boot cleanly on Intel hardware. None of the existing AMD
+     * drivers do their own vendor probing; on Intel they touch AMD-only
+     * MSRs / MMIO and triple-fault. The vendor string lives in
+     * CPUID(0).EBX|EDX|ECX (12 bytes, "AuthenticAMD" or "GenuineIntel"). */
     {
-        extern int amd_smn_init(void);
-        extern int amd_df_init(void);
-        extern int amd_nbio_init(void);
-        extern int amd_smbus_init(void);
-        extern int amd_gpio_init(void);
-        extern int amd_spi_init(void);
-        extern int amd_i2c_init(void);
-        extern int amd_iommu_init(void);
-        extern int amd_ccp_init(void);
-        extern int amd_psp_init(void);
-        extern int amd_sev_init(void);
-        extern int amd_pstate_init(void);
-        extern int amd_sbtsi_init(void);
-        extern int amd_wdt_init(void);
-        extern int amd_mp2_init(void);
-        extern int amd_umc_init(void);
-        extern int amd_xgbe_init(void);
+        uint32_t v_eax = 0, v_ebx = 0, v_ecx = 0, v_edx = 0;
+        __asm__ volatile("cpuid"
+                         : "=a"(v_eax), "=b"(v_ebx), "=c"(v_ecx), "=d"(v_edx)
+                         : "a"(0));
+        bool is_amd = (v_ebx == 0x68747541 /* "Auth" */ &&
+                       v_edx == 0x69746e65 /* "enti" */ &&
+                       v_ecx == 0x444d4163 /* "cAMD" */);
+        if (!is_amd) {
+            fut_printf("[INIT] Skipping AMD chipset drivers (CPU is not AMD)\n");
+        } else {
+            extern int amd_smn_init(void);
+            extern int amd_df_init(void);
+            extern int amd_nbio_init(void);
+            extern int amd_smbus_init(void);
+            extern int amd_gpio_init(void);
+            extern int amd_spi_init(void);
+            extern int amd_i2c_init(void);
+            extern int amd_iommu_init(void);
+            extern int amd_ccp_init(void);
+            extern int amd_psp_init(void);
+            extern int amd_sev_init(void);
+            extern int amd_pstate_init(void);
+            extern int amd_sbtsi_init(void);
+            extern int amd_wdt_init(void);
+            extern int amd_mp2_init(void);
+            extern int amd_umc_init(void);
+            extern int amd_xgbe_init(void);
 
-        amd_smn_init();
-        amd_df_init();
-        amd_nbio_init();
-        amd_smbus_init();
-        amd_gpio_init();
-        amd_spi_init();
-        amd_i2c_init();
-        amd_iommu_init();
-        amd_ccp_init();
-        amd_psp_init();
-        amd_sev_init();
-        amd_pstate_init();
-        amd_sbtsi_init();
-        amd_wdt_init();
-        amd_mp2_init();
-        amd_umc_init();
-        amd_xgbe_init();
+            amd_smn_init();
+            amd_df_init();
+            amd_nbio_init();
+            amd_smbus_init();
+            amd_gpio_init();
+            amd_spi_init();
+            amd_i2c_init();
+            amd_iommu_init();
+            amd_ccp_init();
+            amd_psp_init();
+            amd_sev_init();
+            amd_pstate_init();
+            amd_sbtsi_init();
+            amd_wdt_init();
+            amd_mp2_init();
+            amd_umc_init();
+            amd_xgbe_init();
+        }
     }
 #endif /* DRIVERS_AMD || DRIVERS_ALL */
 
 #if defined(DRIVERS_INTEL) || defined(DRIVERS_ALL)
-    /* Intel chipset drivers */
+    /* Intel chipset drivers — also vendor-gated (mirror of the AMD block).
+     * Most of these touch Intel-specific MSRs / MMIO and crash on AMD. */
     {
-        extern int intel_vtd_init(void);
-        extern int intel_pmc_init(void);
-        extern int intel_gpio_init(void);
-        extern int intel_lpss_init(void);
-        extern int intel_smbus_init(void);
-        extern int intel_spi_init(void);
-        extern int intel_p2sb_init(void);
-        extern int intel_dma_init(void);
-        extern int intel_hwp_init(void);
-        extern int intel_thermal_init(void);
-        extern int intel_wdt_init(void);
-        extern int intel_mei_init(void);
-        extern int intel_tbt_init(void);
-        extern int intel_sst_init(void);
-        extern int intel_gna_init(void);
-        extern int intel_cnvi_init(void);
-        extern int intel_ipu_init(void);
-        extern int intel_hda_hdmi_init(void);
+        uint32_t v_eax = 0, v_ebx = 0, v_ecx = 0, v_edx = 0;
+        __asm__ volatile("cpuid"
+                         : "=a"(v_eax), "=b"(v_ebx), "=c"(v_ecx), "=d"(v_edx)
+                         : "a"(0));
+        bool is_intel = (v_ebx == 0x756e6547 /* "Genu" */ &&
+                         v_edx == 0x49656e69 /* "ineI" */ &&
+                         v_ecx == 0x6c65746e /* "ntel" */);
+        if (!is_intel) {
+            fut_printf("[INIT] Skipping Intel chipset drivers (CPU is not Intel)\n");
+        } else {
+            extern int intel_vtd_init(void);
+            extern int intel_pmc_init(void);
+            extern int intel_gpio_init(void);
+            extern int intel_lpss_init(void);
+            extern int intel_smbus_init(void);
+            extern int intel_spi_init(void);
+            extern int intel_p2sb_init(void);
+            extern int intel_dma_init(void);
+            extern int intel_hwp_init(void);
+            extern int intel_thermal_init(void);
+            extern int intel_wdt_init(void);
+            extern int intel_mei_init(void);
+            extern int intel_tbt_init(void);
+            extern int intel_sst_init(void);
+            extern int intel_gna_init(void);
+            extern int intel_cnvi_init(void);
+            extern int intel_ipu_init(void);
+            extern int intel_hda_hdmi_init(void);
 
-        intel_vtd_init();
-        intel_pmc_init();
-        intel_gpio_init();
-        intel_lpss_init();
-        intel_smbus_init();
-        intel_spi_init();
-        intel_p2sb_init();
-        intel_dma_init();
-        intel_hwp_init();
-        intel_thermal_init();
-        intel_wdt_init();
-        intel_mei_init();
-        intel_tbt_init();
-        intel_sst_init();
-        intel_gna_init();
-        intel_cnvi_init();
-        intel_ipu_init();
-        intel_hda_hdmi_init();
+            intel_vtd_init();
+            intel_pmc_init();
+            intel_gpio_init();
+            intel_lpss_init();
+            intel_smbus_init();
+            intel_spi_init();
+            intel_p2sb_init();
+            intel_dma_init();
+            intel_hwp_init();
+            intel_thermal_init();
+            intel_wdt_init();
+            intel_mei_init();
+            intel_tbt_init();
+            intel_sst_init();
+            intel_gna_init();
+            intel_cnvi_init();
+            intel_ipu_init();
+            intel_hda_hdmi_init();
+        }
     }
 #endif /* DRIVERS_INTEL || DRIVERS_ALL */
 

@@ -1825,11 +1825,23 @@ $(WAYLAND_CLIENT_BIN):
 $(WL_TERM_BIN):
 	@$(MAKE) -C src/user/clients/wl-term all
 
+$(WL_PANEL_BIN):
+	@$(MAKE) -C src/user/clients/wl-panel all
+
 $(WL_EDIT_BIN):
 	@$(MAKE) -C src/user/clients/wl-edit all
 
 $(WL_SYSMON_BIN):
 	@$(MAKE) -C src/user/clients/wl-sysmon all
+
+$(WL_SETTINGS_BIN):
+	@$(MAKE) -C src/user/clients/wl-settings all
+
+$(WL_FILES_BIN):
+	@$(MAKE) -C src/user/clients/wl-files all
+
+$(WL_WALLPAPER_BIN):
+	@$(MAKE) -C src/user/clients/wl-wallpaper all
 
 $(WAYLAND_COLOR_BIN):
 	@$(MAKE) -C src/user/clients/wl-colorwheel all
@@ -1882,6 +1894,18 @@ $(WL_EDIT_BLOB): $(WL_EDIT_BIN) | $(OBJ_DIR)/kernel/blobs
 	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
 
 $(WL_SYSMON_BLOB): $(WL_SYSMON_BIN) | $(OBJ_DIR)/kernel/blobs
+	@echo "OBJCOPY $@"
+	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
+
+$(WL_SETTINGS_BLOB): $(WL_SETTINGS_BIN) | $(OBJ_DIR)/kernel/blobs
+	@echo "OBJCOPY $@"
+	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
+
+$(WL_FILES_BLOB): $(WL_FILES_BIN) | $(OBJ_DIR)/kernel/blobs
+	@echo "OBJCOPY $@"
+	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
+
+$(WL_WALLPAPER_BLOB): $(WL_WALLPAPER_BIN) | $(OBJ_DIR)/kernel/blobs
 	@echo "OBJCOPY $@"
 	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
 

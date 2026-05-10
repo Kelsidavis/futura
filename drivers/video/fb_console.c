@@ -13,6 +13,7 @@
 #include <kernel/fb.h>
 #include <kernel/errno.h>
 #include <platform/platform.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
@@ -174,20 +175,25 @@ static void fb_console_draw_pixel(int x, int y, uint32_t color) {
 
     uint8_t *fb = (uint8_t *)cons->fb_mem;
 
-    /* Sanity check: fb_mem must be a kernel-half virtual address.
-     * Per-arch threshold — same root cause as the matching check in
-     * fb_console_scroll: the hard-coded x86 base (0xFFFFFFFF80000000)
-     * is far above any valid ARM64 fb_mem (TTBR1 base is
-     * 0xFFFF800000000000), so on ARM64 the check tripped on every
-     * single pixel and EVERY draw was silently skipped — the actual
-     * cause of the QEMU-window-stays-black symptom even after the
-     * phys→virt mapping and virtio-gpu flush were correct. */
+    /* Sanity check: reject obviously bogus fb_mem (NULL, low pages).
+     * We accept TWO valid ranges:
+     *   - kernel higher-half virtual addrs (post-pmap_map path, late boot)
+     *   - low identity-mapped addrs below 4 GB (early-boot path where
+     *     fb_boot_splash uses the boot.S 4 GB identity map directly
+     *     because pmap_map has no PMM pages yet)
+     * The original check rejected the second case → every pixel write
+     * silently dropped → black screen on real UEFI hardware where the
+     * FB phys addr is in the 2-4 GB BAR range. */
+    uintptr_t fb_addr = (uintptr_t)fb;
 #if defined(__aarch64__)
-    if ((uintptr_t)fb < 0xFFFF800000000000ULL) {
+    bool fb_addr_ok = (fb_addr >= 0xFFFF800000000000ULL) ||
+                      (fb_addr >= 0x1000ULL && fb_addr < (1ULL << 32));
 #else
-    if ((uintptr_t)fb < 0xFFFFFFFF80000000ULL) {
+    bool fb_addr_ok = (fb_addr >= 0xFFFFFFFF80000000ULL) ||
+                      (fb_addr >= 0x1000ULL && fb_addr < (1ULL << 32));
 #endif
-        return;  /* Skip draw - fb_mem corrupted */
+    if (!fb_addr_ok) {
+        return;  /* Skip draw - fb_mem looks corrupted */
     }
 
     uint32_t offset = (y * cons->pitch) + (x * 4);
@@ -225,22 +231,18 @@ static void fb_console_scroll(void) {
 
     uint8_t *fb = (uint8_t *)cons->fb_mem;
 
-    /* Sanity check: fb_mem must be a kernel-half virtual address.
-     * The threshold differs per arch — x86_64 puts the kernel half at
-     * 0xFFFFFFFF80000000 (negative-2 GiB), ARM64 at 0xFFFF800000000000
-     * (TTBR1 base). The previous hard-coded x86 value was always
-     * larger than any valid ARM64 fb_mem (e.g. 0xFFFFFF8042c02000), so
-     * the check tripped on every scroll → the early 'return' meant the
-     * ARM64 console NEVER scrolled. Once the screen filled, the cursor
-     * stuck on the last row and every new character overwrote the
-     * previous one, hiding the bottom of the boot log and the shell
-     * prompt under itself. */
+    /* Same accept-criteria as fb_console_draw_pixel: kernel higher-half OR
+     * low identity-mapped (<4 GB) addresses. */
+    uintptr_t fb_addr = (uintptr_t)fb;
 #if defined(__aarch64__)
-    if ((uintptr_t)fb < 0xFFFF800000000000ULL) {
+    bool fb_addr_ok = (fb_addr >= 0xFFFF800000000000ULL) ||
+                      (fb_addr >= 0x1000ULL && fb_addr < (1ULL << 32));
 #else
-    if ((uintptr_t)fb < 0xFFFFFFFF80000000ULL) {
+    bool fb_addr_ok = (fb_addr >= 0xFFFFFFFF80000000ULL) ||
+                      (fb_addr >= 0x1000ULL && fb_addr < (1ULL << 32));
 #endif
-        return;  /* Skip scroll to avoid crash - corruption detected */
+    if (!fb_addr_ok) {
+        return;  /* Skip scroll - fb_mem looks corrupted */
     }
 
     /* Calculate protected region pixel boundaries */

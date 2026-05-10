@@ -631,6 +631,22 @@ void *fut_kernel_map_physical(uint64_t paddr, uint64_t size, uint64_t flags) {
     }
 
     uint64_t aligned_phys = PAGE_ALIGN_DOWN(paddr);
+
+    /* Reject mapping of the first page of physical memory (paddr < 4 KiB,
+     * which aligns down to 0). This almost always means a driver tried
+     * to MMIO-map an uninitialized BAR or a device that's not present on
+     * this hardware. Mapping it would clobber the kernel's own first-page
+     * mirror at virt 0xFFFFFFFF80000000 and pmap_map walking page tables
+     * for that range has triple-faulted on bare metal. Print the *original*
+     * paddr (not the aligned value, which is 0) so we can identify which
+     * caller is misbehaving. */
+    if (aligned_phys == 0) {
+        fut_printf("[MMIO] Refusing to map low-mem phys=0x%llx aligned=0x%llx (size=0x%llx flags=0x%llx) — likely uninitialized BAR\n",
+                   (unsigned long long)paddr, (unsigned long long)aligned_phys,
+                   (unsigned long long)size, (unsigned long long)flags);
+        return NULL;
+    }
+
     uint64_t offset = paddr - aligned_phys;
     if (size + offset < size) return NULL;  /* Overflow check */
     uint64_t map_len = PAGE_ALIGN_UP(size + offset);

@@ -183,7 +183,13 @@ SECTIONS
     .stack ALIGN(PAGE_SIZE) :
     {
         _stack_bottom = .;
-        . += 0x4000;            /* 16KB kernel stack */
+        /* 128 KB kernel stack. The original 16 KB was enough for the
+         * QEMU test path where most drivers no-op early, but on real
+         * hardware (DRIVERS=all on a Chromebook) the Intel chipset
+         * driver init chain plus the WiFi/i915-probe routines blow the
+         * 16 KB budget and the kernel page-faults on its own stack.
+         * 128 KB matches Linux's default x86_64 kernel stack. */
+        . += 0x20000;           /* 128 KB kernel stack */
         . = ALIGN(16);          /* Stack must be 16-byte aligned */
         _stack_top = .;
     } :data

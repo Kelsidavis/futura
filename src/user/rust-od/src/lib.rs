@@ -315,7 +315,9 @@ fn finalize(st: &mut OdState) -> bool {
 
 // Parse a non-negative decimal/hex/octal byte count for -N/-j. GNU
 // accepts a 0x/0X hex prefix, leading 0 for octal, and decimal otherwise.
-// Returns None on malformed input or overflow.
+// Optionally followed by a single binary K/M/G/T suffix (1024^N) — `B`
+// is a no-op suffix meaning bytes. Returns None on malformed input or
+// overflow.
 fn parse_count(p: *const u8) -> Option<u64> {
     let mut i = 0usize;
     let mut s: [u8; 32] = [0; 32];
@@ -328,13 +330,24 @@ fn parse_count(p: *const u8) -> Option<u64> {
     }
     let bytes = &s[..i];
     if bytes.is_empty() { return None; }
+    // Strip a binary suffix off the tail before doing radix detection
+    // (so e.g. "0x10K" picks up the hex prefix on "10").
+    let (digits, mult): (&[u8], u64) = match *bytes.last().unwrap() {
+        b'K' | b'k' => (&bytes[..bytes.len() - 1], 1024),
+        b'M' | b'm' => (&bytes[..bytes.len() - 1], 1024 * 1024),
+        b'G' | b'g' => (&bytes[..bytes.len() - 1], 1024 * 1024 * 1024),
+        b'T' | b't' => (&bytes[..bytes.len() - 1], 1024u64 * 1024 * 1024 * 1024),
+        b'B' | b'b' => (&bytes[..bytes.len() - 1], 1),
+        _ => (bytes, 1),
+    };
+    if digits.is_empty() { return None; }
     let (radix, body): (u64, &[u8]) =
-        if bytes.len() >= 2 && bytes[0] == b'0' && (bytes[1] == b'x' || bytes[1] == b'X') {
-            (16, &bytes[2..])
-        } else if bytes.len() >= 2 && bytes[0] == b'0' {
-            (8, &bytes[1..])
+        if digits.len() >= 2 && digits[0] == b'0' && (digits[1] == b'x' || digits[1] == b'X') {
+            (16, &digits[2..])
+        } else if digits.len() >= 2 && digits[0] == b'0' {
+            (8, &digits[1..])
         } else {
-            (10, bytes)
+            (10, digits)
         };
     if body.is_empty() { return None; }
     let mut v: u64 = 0;
@@ -348,7 +361,7 @@ fn parse_count(p: *const u8) -> Option<u64> {
         if d >= radix { return None; }
         v = v.checked_mul(radix)?.checked_add(d)?;
     }
-    Some(v)
+    v.checked_mul(mult)
 }
 
 #[unsafe(no_mangle)]
@@ -371,8 +384,8 @@ Dump each FILE as 16-byte hex rows with a 7-digit hex offset. With
 multiple FILEs the offset is continuous (concatenated-stream view).
 With no FILE (or FILE = '-') reads stdin.
 
-  -j SKIP   skip SKIP bytes before dumping (decimal, 0x hex, 0 octal)
-  -N COUNT  dump at most COUNT bytes after the skip
+  -j SKIP   skip SKIP bytes (decimal, 0x hex, 0 octal; suffix K/M/G/T)
+  -N COUNT  dump at most COUNT bytes after the skip (same suffix syntax)
   --help    show this help and exit
 \0";
             let len = help.len() - 1;

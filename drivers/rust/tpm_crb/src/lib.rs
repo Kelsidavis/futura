@@ -175,13 +175,19 @@ const TPM_CRB_MMIO_SIZE: usize = 0x1000;
 const TPM_CRB_DATA_BUF_SIZE: usize = TPM_CRB_MMIO_SIZE - CRB_DATA_BUFFER;
 
 /// Timeout for locality grant (in poll iterations).
-const LOCALITY_TIMEOUT_ITERS: u32 = 200_000;
+/// Lowered from 200_000 → 20_000: on a Chromebook the TPM CRB MMIO
+/// reads back 0xFF (no controller / wrong base addr) and a 200k poll
+/// per init step measurably stalls boot. Real TPM hardware grants
+/// locality in tens of polls.
+const LOCALITY_TIMEOUT_ITERS: u32 = 20_000;
 
 /// Timeout for command completion (in poll iterations).
-const CMD_TIMEOUT_ITERS: u32 = 2_000_000;
+/// Lowered from 2_000_000 → 200_000 for the same reason; even slow
+/// legitimate TPM commands complete in low thousands of polls.
+const CMD_TIMEOUT_ITERS: u32 = 200_000;
 
 /// Timeout for goReady/goIdle transitions (in poll iterations).
-const READY_TIMEOUT_ITERS: u32 = 200_000;
+const READY_TIMEOUT_ITERS: u32 = 20_000;
 
 // ── StaticCell wrapper (avoids `static mut`) ──
 

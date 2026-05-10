@@ -353,6 +353,15 @@ void fb_boot_splash(void) {
         g_fb_hw.length = (size_t)g_fb_hw.info.pitch * (size_t)g_fb_hw.info.height;
         g_fb_available = true;
 
+        /* Mark the framebuffer pages Write-Combining via the boot
+         * identity-map PD entries. pat_init has already programmed
+         * PAT[1] = WC; this just sets the PWT bit on the relevant
+         * 2 MiB huge-page PDEs. Cuts framebuffer write latency
+         * dramatically — boot-log scroll goes from line-by-line
+         * crawl to instant. */
+        extern void x86_mark_phys_wc(uint64_t phys, uint64_t size);
+        x86_mark_phys_wc(g_fb_hw.phys, g_fb_hw.length);
+
         extern int fb_console_init(void);
         fb_console_init();
         fb_boot_render_banner_and_logo();

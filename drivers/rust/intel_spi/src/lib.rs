@@ -240,8 +240,11 @@ const REGION_NAMES: [&[u8]; 6] = [
 
 // ── Timeouts ──
 
-/// Maximum poll iterations for SCIP clear / FDONE (~100 ms)
-const HSFS_POLL_TIMEOUT: u32 = 1_000_000;
+/// Maximum poll iterations for SCIP clear / FDONE (~100 ms).
+/// Lowered from 1_000_000 → 100_000 for faster bare-metal failure
+/// when the SPI flash controller doesn't respond. Real flash reads
+/// complete in well under 1000 polls.
+const HSFS_POLL_TIMEOUT: u32 = 100_000;
 
 // ── MMIO helpers ──
 

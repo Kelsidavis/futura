@@ -220,7 +220,13 @@ const PRPH_ADDR_MASK: u32 = 0x000F_FFFC;
 const CNVI_MMIO_SIZE: usize = 0x2000;
 
 /// Timeout iteration count for polling loops
-const CNVI_TIMEOUT_ITERS: u32 = 50_000;
+/// Maximum number of polling iterations before declaring a timeout.
+/// Lowered from 50_000 to 5_000 because on hardware where the AX200
+/// firmware hasn't been loaded (e.g. our diagnostic bare-metal boot),
+/// every wake/MAC-clock poll runs to the timeout and visibly stalls
+/// the boot. 5k * thread_yield is still tens of ms — plenty of time
+/// for a real device — but ~10x faster on the failure path. */
+const CNVI_TIMEOUT_ITERS: u32 = 5_000;
 
 // ── Status bits returned by intel_cnvi_status ──
 

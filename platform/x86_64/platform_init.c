@@ -846,8 +846,13 @@ void fut_platform_init(uint32_t multiboot_magic __attribute__((unused)),
      * which the Makefile force-rebuilds on every kernel link by listing
      * platform_init.c as part of the dependency closure. The string
      * changes every build, so a stale boot is obvious from the screen. */
-    fut_printf("[BUILD] Futura kernel built %s %s (iter-18: fb_console hot path)\n",
+    /* Print BUILD line three times in a row so it can't be missed even
+     * if scroll position is at the bottom and the top of the boot log
+     * has scrolled past. */
+    fut_printf("################################################\n");
+    fut_printf("[BUILD] Futura kernel built %s %s (iter-20: WC fb + shorter HW timeouts)\n",
                __DATE__, __TIME__);
+    fut_printf("################################################\n");
 
     /* Load GDT */
     fut_serial_puts("[INIT] Loading GDT...\n");

@@ -905,6 +905,7 @@ KERNEL_SOURCES := \
     kernel/sys_sched_affinity.c \
     kernel/sys_syslog.c \
     kernel/klog_persist.c \
+    kernel/x86_mtrr_wc.c \
     kernel/sys_reboot.c \
     kernel/sys_memfd.c \
     kernel/sys_semaphore.c \

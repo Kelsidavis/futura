@@ -101,8 +101,12 @@ const EC_BURST_ACK: u8 = 0x90;
 
 /// Maximum number of polling iterations before we declare a timeout.
 /// Each iteration includes a thread_yield(), so this is not purely
-/// CPU-spinning.
-const EC_TIMEOUT_POLLS: u32 = 50_000;
+/// CPU-spinning. Lowered from 50_000 → 5_000: on the Chromebook the
+/// EC's IBF was reading 0xff (controller not responding) and the full
+/// 50k poll loop ran on every probe, stalling boot for hundreds of ms.
+/// 5k still gives a real EC plenty of time to clear IBF — the typical
+/// hardware response is < 10 polls.
+const EC_TIMEOUT_POLLS: u32 = 5_000;
 
 // ── Driver state ──
 

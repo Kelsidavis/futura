@@ -487,19 +487,6 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         if arg_is(p, b"-p") || arg_is(p, b"--preserve") {
             preserve_mode = true; idx += 1; continue;
         }
-        if arg_is(p, b"-nv") || arg_is(p, b"-vn") {
-            no_clobber = true; verbose = true; idx += 1; continue;
-        }
-        if arg_is(p, b"-rv") || arg_is(p, b"-vr")
-            || arg_is(p, b"-Rv") || arg_is(p, b"-vR") {
-            recursive = true; verbose = true; idx += 1; continue;
-        }
-        if arg_is(p, b"-pv") || arg_is(p, b"-vp") {
-            preserve_mode = true; verbose = true; idx += 1; continue;
-        }
-        if arg_is(p, b"-rp") || arg_is(p, b"-pr") {
-            recursive = true; preserve_mode = true; idx += 1; continue;
-        }
         if arg_is(p, b"--") { idx += 1; break; }
         if arg_is(p, b"--help") {
             let help: &[u8] = b"\
@@ -520,6 +507,27 @@ DEST/basename(SRC).
             unsafe { let _ = syscall3(sysn::WRITE, STDOUT as u64,
                                        help.as_ptr() as u64, len as u64); }
             return 0;
+        }
+        // Combined short flags like -nv, -rpv, -pTRv, etc. Walk chars;
+        // refuse the bundle on any unknown letter (likely a filename).
+        let n = {
+            let mut k = 0usize;
+            unsafe { while *p.add(k) != 0 { k += 1; } }
+            k
+        };
+        if n >= 2 && unsafe { *p } == b'-' && unsafe { *p.add(1) } != b'-' {
+            let mut all_ok = true;
+            for i in 1..n {
+                match unsafe { *p.add(i) } {
+                    b'n' => no_clobber = true,
+                    b'v' => verbose = true,
+                    b'r' | b'R' => recursive = true,
+                    b'p' => preserve_mode = true,
+                    b'T' => no_target_dir = true,
+                    _ => { all_ok = false; break; }
+                }
+            }
+            if all_ok { idx += 1; continue; }
         }
         break;
     }

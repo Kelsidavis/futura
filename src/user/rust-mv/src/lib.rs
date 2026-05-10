@@ -266,9 +266,6 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             no_clobber = false;
             idx += 1; continue;
         }
-        if arg_eq(p, b"-nv") || arg_eq(p, b"-vn") {
-            no_clobber = true; verbose = true; idx += 1; continue;
-        }
         if arg_eq(p, b"--") { idx += 1; break; }
         if arg_eq(p, b"--help") {
             let help: &[u8] = b"\
@@ -286,6 +283,25 @@ SRC is renamed to DEST/basename(SRC).
             let len = help.len() - 1;
             unsafe { let _ = syscall3(sysn::WRITE, 1, help.as_ptr() as u64, len as u64); }
             return 0;
+        }
+        // Combined short flags like -nv, -fv, -nT, -fvT, etc.
+        let n = {
+            let mut k = 0usize;
+            unsafe { while *p.add(k) != 0 { k += 1; } }
+            k
+        };
+        if n >= 2 && unsafe { *p } == b'-' && unsafe { *p.add(1) } != b'-' {
+            let mut all_ok = true;
+            for i in 1..n {
+                match unsafe { *p.add(i) } {
+                    b'n' => no_clobber = true,
+                    b'v' => verbose = true,
+                    b'f' => no_clobber = false,  // -f clears -n, matches GNU
+                    b'T' => no_target_dir = true,
+                    _ => { all_ok = false; break; }
+                }
+            }
+            if all_ok { idx += 1; continue; }
         }
         break;
     }

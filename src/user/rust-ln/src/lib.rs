@@ -22,6 +22,7 @@ mod sysn {
     pub const EXIT: u64 = 93;
     pub const LINKAT: u64 = 37;
     pub const SYMLINKAT: u64 = 36;
+    pub const UNLINKAT: u64 = 35;
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -30,6 +31,7 @@ mod sysn {
     pub const EXIT: u64 = 60;
     pub const LINK: u64 = 86;
     pub const SYMLINK: u64 = 88;
+    pub const UNLINK: u64 = 87;
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -83,6 +85,23 @@ unsafe fn sys_exit(code: u64) -> ! {
             options(nostack, noreturn),
         );
     }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+unsafe fn syscall1(nr: u64, a: u64) -> i64 {
+    let mut ret: i64;
+    unsafe {
+        core::arch::asm!(
+            "syscall",
+            inout("rax") nr => ret,
+            in("rdi") a,
+            lateout("rcx") _,
+            lateout("r11") _,
+            options(nostack),
+        );
+    }
+    ret
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -161,6 +180,7 @@ fn cstr_eq(p: *const u8, s: &[u8]) -> bool {
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
     let mut symbolic = false;
+    let mut force = false;
     let mut verbose = false;
     let mut idx: i32 = 1;
     while idx < argc {
@@ -170,8 +190,19 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         if cstr_eq(p, b"-v") || cstr_eq(p, b"--verbose") {
             verbose = true; idx += 1; continue;
         }
+        if cstr_eq(p, b"-f") || cstr_eq(p, b"--force") {
+            force = true; idx += 1; continue;
+        }
         if cstr_eq(p, b"-sv") || cstr_eq(p, b"-vs") {
             symbolic = true; verbose = true; idx += 1; continue;
+        }
+        if cstr_eq(p, b"-sf") || cstr_eq(p, b"-fs") {
+            symbolic = true; force = true; idx += 1; continue;
+        }
+        if cstr_eq(p, b"-sfv") || cstr_eq(p, b"-svf")
+            || cstr_eq(p, b"-fsv") || cstr_eq(p, b"-fvs")
+            || cstr_eq(p, b"-vsf") || cstr_eq(p, b"-vfs") {
+            symbolic = true; force = true; verbose = true; idx += 1; continue;
         }
         if cstr_eq(p, b"--") { idx += 1; break; }
         if cstr_eq(p, b"--help") {
@@ -180,6 +211,7 @@ Usage: rust-ln [-sv] TARGET LINKPATH
 Create a link from LINKPATH to TARGET.
 
   -s, --symbolic   make a symbolic link instead of a hard link
+  -f, --force      remove the destination first if it exists
   -v, --verbose    emit \"'linkpath' -> 'target'\" on success
       --help           show this help and exit
 \0";
@@ -199,6 +231,15 @@ Create a link from LINKPATH to TARGET.
        linkpath.is_null() || (linkpath as usize) < 0x10000 {
         write_str(STDERR, b"rust-ln: invalid arguments\n");
         return 1;
+    }
+
+    // -f: remove the destination first if it exists. We ignore the
+    // unlink return — ENOENT is the normal "nothing to remove" case.
+    if force {
+        #[cfg(target_arch = "aarch64")]
+        unsafe { let _ = syscall3(sysn::UNLINKAT, AT_FDCWD as u64, linkpath as u64, 0); }
+        #[cfg(target_arch = "x86_64")]
+        unsafe { let _ = syscall1(sysn::UNLINK, linkpath as u64); }
     }
 
     let r: i64 = if symbolic {

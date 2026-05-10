@@ -468,10 +468,31 @@ int fb_console_init(void) {
  * mapping is WC; memcpy emits aligned movs / streaming-stores that
  * fill WC buffers and flush them in 64-byte bursts, so this is
  * massively faster than per-pixel writes through cached or even WC
- * mappings done one at a time. No-op if there's no back buffer. */
+ * mappings done one at a time. No-op if there's no back buffer.
+ *
+ * Hardware fast path (phase 6): once the i915 BCS engine is up and
+ * the back buffer has been registered with the GTT (via
+ * fb_console_attach_i915), the present is a single XY_SRC_COPY_BLT
+ * back_buf → fb that runs at full DRAM bandwidth without touching
+ * the CPU. Falls through to the WC memcpy on QEMU and on hardware
+ * where the i915 init path didn't complete. */
+extern bool i915_present_ready(void) __attribute__((weak));
+extern int  i915_blt_present(uint32_t width, uint32_t height)
+    __attribute__((weak));
+
 static void fb_console_flush_full(void) {
     struct fb_console_state *cons = &g_fb_console;
     if (!cons->back_buf || !g_fb_addr_validated) return;
+
+    if (cons->bpp == 32 && i915_present_ready && i915_present_ready() &&
+        i915_blt_present) {
+        if (i915_blt_present(cons->width, cons->height) == 0) {
+            return;
+        }
+        /* On BLT failure fall through to CPU memcpy so the screen
+         * still updates — the cost is one slow flush. */
+    }
+
     memcpy((void *)cons->fb_mem, cons->back_buf, cons->back_buf_size);
 }
 
@@ -486,6 +507,26 @@ uint8_t *fb_console_back_buf(void) {
 
 void fb_console_flush_full_external(void) {
     fb_console_flush_full();
+}
+
+/* Register the cached back buffer with the i915 driver so subsequent
+ * presents can use XY_SRC_COPY_BLT (back_buf → fb) instead of a CPU
+ * memcpy. Called from kernel_main after i915_init / i915_gtt_init /
+ * i915_bcs_init / i915_map_fb_in_gtt have all succeeded. Safe to call
+ * even when i915 didn't init — the weak ref is NULL on QEMU/non-Intel. */
+extern int i915_register_back_buf(const void *virt, size_t size, uint32_t pitch)
+    __attribute__((weak));
+
+void fb_console_attach_i915(void) {
+    struct fb_console_state *cons = &g_fb_console;
+    if (!cons->initialized || !cons->back_buf) return;
+    if (!i915_register_back_buf) return;
+    int rc = i915_register_back_buf(cons->back_buf,
+                                    cons->back_buf_size,
+                                    cons->pitch);
+    if (rc != 0) {
+        fut_printf("[FB_CONSOLE] i915_register_back_buf failed: %d (CPU present)\n", rc);
+    }
 }
 
 void fb_console_clear(void) {

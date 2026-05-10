@@ -1843,6 +1843,7 @@ void fut_kernel_main(void) {
             extern int i915_gtt_init(void);
             extern int i915_bcs_init(void);
             extern int i915_map_fb_in_gtt(void);
+            extern void fb_console_attach_i915(void);
 
             intel_vtd_init(0);
             intel_pmc_init();
@@ -1878,6 +1879,11 @@ void fut_kernel_main(void) {
             /* Phase 4: map the kernel framebuffer through the GTT so
              * fb_console_scroll's BLT fast-path has a GPU VA to use. */
             i915_map_fb_in_gtt();
+            /* Phase 6: register fb_console's cached DRAM back buffer
+             * with the GTT. fb_console_flush_full now submits a single
+             * XY_SRC_COPY_BLT (back_buf → fb) per present instead of a
+             * CPU memcpy. */
+            fb_console_attach_i915();
             /* intel_hda_hdmi_init() intentionally NOT called.
              * The Rust function takes (verb_fn: HdaVerbFn, codec_addr: u8)
              * but the C extern was zero-arg, so verb_fn read whatever

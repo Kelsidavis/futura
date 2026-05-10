@@ -149,6 +149,11 @@ struct I915State {
     pub fb_gpu_va: u64,
     pub fb_pitch: u32,
     pub fb_bpp: u32,
+    /// fb_console's cached DRAM back buffer mapped through the GTT for
+    /// hardware presents (XY_SRC_COPY_BLT back_buf → fb). Phase 6.
+    pub back_buf_gpu_va: u64,
+    pub back_buf_size: usize,
+    pub back_buf_pitch: u32,
 }
 
 unsafe impl Send for I915State {}
@@ -174,6 +179,9 @@ static STATE: StaticCell<I915State> = StaticCell::new(I915State {
     fb_gpu_va: 0,
     fb_pitch: 0,
     fb_bpp: 0,
+    back_buf_gpu_va: 0,
+    back_buf_size: 0,
+    back_buf_pitch: 0,
 });
 
 #[inline(always)]
@@ -972,4 +980,190 @@ pub extern "C" fn i915_blt_clear(x1: u32, y1: u32, x2: u32, y2: u32,
     }
 
     0
+}
+
+// ── Phase 6: XY_SRC_COPY_BLT for fb_console_present (back_buf → fb) ──
+//
+// fb_console_flush_full was a CPU memcpy from a cached DRAM back buffer
+// to the WC-mapped framebuffer (~4 MiB on a 1366×768 panel, every
+// newline). Once the BCS engine is up we can issue a single
+// XY_SRC_COPY_BLT (8 DWORDs) that copies the entire back-buffer to the
+// framebuffer at full DRAM bandwidth without touching the CPU.
+//
+// To do that we need the back_buf accessible to the GPU through the
+// GTT. The buffer lives in kernel BSS — physically contiguous when
+// loaded by GRUB but mapped into the higher-half kernel mapping. We
+// walk it page-by-page, ask the kernel for the phys frame of each
+// page, and install a GTT PTE for it.
+
+/// Register fb_console's cached back buffer with the GTT. After this
+/// call, i915_blt_present() can copy from `back_buf_gpu_va` to the
+/// framebuffer in a single submission.
+///
+/// `virt` must be the kernel-virtual address of the buffer (typically
+/// the address of fb_console's BSS-resident `g_fb_back_buf`).
+/// `size` is the number of bytes the buffer holds, and `pitch` is the
+/// stride in bytes per scanline (matches `fb_pitch` on a same-geometry
+/// back buffer).
+///
+/// Returns 0 on success, negative on failure. Idempotent.
+#[unsafe(no_mangle)]
+pub extern "C" fn i915_register_back_buf(virt: *const u8, size: usize, pitch: u32) -> i32 {
+    let st = STATE.get();
+    if !unsafe { (*st).gtt_initialized } {
+        log("i915_register_back_buf: GTT not initialized");
+        return -1;
+    }
+    if unsafe { (*st).back_buf_gpu_va } != 0 {
+        return 0; /* already registered */
+    }
+    if unsafe { (*st).fb_gpu_va } == 0 {
+        if i915_map_fb_in_gtt() != 0 {
+            return -2;
+        }
+    }
+    if virt.is_null() || size == 0 {
+        return -3;
+    }
+
+    let pages = (size + 4095) / 4096;
+    let scratch_pages: u64 = 1;
+    let fb_pages: u64 = ((unsafe { (*st).fb_size } + 4095) / 4096) as u64;
+    let gtt_top = (GTT_NUM_ENTRIES as u64) * GTT_PAGE_SIZE;
+    /* Place back_buf right below the FB window (which is right below
+     * the scratch page). */
+    let back_buf_gpu_va =
+        gtt_top - (scratch_pages + fb_pages + pages as u64) * GTT_PAGE_SIZE;
+
+    let gtt_base = unsafe { (*st).gtt_base };
+    /* Walk pages, virt_to_phys each, install. BSS is contiguous in
+     * physical memory in practice, but we don't rely on that — every
+     * page goes through the kernel's lookup. */
+    for i in 0..pages {
+        let v_page = unsafe { virt.add(i * 4096) } as *const c_void;
+        let phys = unsafe { rust_virt_to_phys(v_page) };
+        if phys == 0 {
+            unsafe {
+                fut_printf(
+                    b"i915_register_back_buf: virt_to_phys(0x%llx) -> 0 at page %u\n\0".as_ptr(),
+                    v_page as u64, i as u32,
+                );
+            }
+            return -4;
+        }
+        let va = back_buf_gpu_va + (i as u64) * GTT_PAGE_SIZE;
+        gtt_install(gtt_base, va, phys);
+    }
+
+    unsafe {
+        (*st).back_buf_gpu_va = back_buf_gpu_va;
+        (*st).back_buf_size = size;
+        (*st).back_buf_pitch = pitch;
+        (*st).gtt_entries_used += pages as u32;
+
+        fut_printf(
+            b"i915: back_buf mapped in GTT: %u pages at gpu_va=0x%llx (pitch=%u)\n\0".as_ptr(),
+            pages as u32, back_buf_gpu_va, pitch,
+        );
+    }
+    0
+}
+
+/// Submit XY_SRC_COPY_BLT to copy the entire registered back-buffer to
+/// the framebuffer. Replaces fb_console_flush_full's CPU memcpy.
+///
+/// Width and height are the FB's pixel dimensions (taken from the
+/// stored `fb_pitch`/`fb_size` and caller-provided height).
+///
+/// Returns 0 on success, negative on failure. The C side must fall
+/// back to a CPU memcpy when this returns nonzero.
+#[unsafe(no_mangle)]
+pub extern "C" fn i915_blt_present(width: u32, height: u32) -> i32 {
+    let st = STATE.get();
+    if !unsafe { (*st).bcs_ready } {
+        return -1;
+    }
+    if unsafe { (*st).fb_gpu_va } == 0 || unsafe { (*st).back_buf_gpu_va } == 0 {
+        return -2;
+    }
+    if width == 0 || height == 0 {
+        return 0;
+    }
+
+    let mmio = unsafe { (*st).mmio_base };
+    let ring_virt = unsafe { (*st).scratch_virt } as *mut u32;
+    let pitch = unsafe { (*st).fb_pitch };
+    let fb_va = unsafe { (*st).fb_gpu_va } as u32;
+    let bb_va = unsafe { (*st).back_buf_gpu_va } as u32;
+
+    if mmio.is_null() || ring_virt.is_null() {
+        return -3;
+    }
+
+    /* Make sure CPU stores to the back buffer are visible to the GPU
+     * before submission. On Gen9 LP the iGPU shares the LLC, so an
+     * mfence is sufficient — no explicit cache flush needed. */
+    unsafe { core::arch::x86_64::_mm_mfence() };
+
+    let cmd: [u32; 8] = [
+        XY_SRC_COPY_BLT_HEADER,
+        /* BR13: depth=3 (32bpp), ROP=SRCCOPY, dest pitch */
+        (3u32 << 24) | (ROP_SRCCOPY << 16) | (pitch & 0xFFFF),
+        /* BR05: dest top-left (0, 0) */
+        0,
+        /* BR06: dest bottom-right (height << 16) | width */
+        (height << 16) | width,
+        /* BR09: dest base GGTT addr (framebuffer) */
+        fb_va,
+        /* BR11: source pitch (low 16 bits) — same as fb pitch */
+        pitch & 0xFFFF,
+        /* BR26: source top-left (0, 0) */
+        0,
+        /* BR12: source base GGTT addr (back buffer) */
+        bb_va,
+    ];
+
+    if !forcewake_get_render(mmio) {
+        return -4;
+    }
+
+    unsafe {
+        /* Drain any prior submission before reusing ring offset 0. */
+        mmio_write32_at(mmio, BCS_RING_TAIL, 0);
+        for _ in 0..1_000_000 {
+            if mmio_read32_at(mmio, BCS_RING_HEAD) & !0x3F == 0 {
+                break;
+            }
+        }
+
+        for (i, dw) in cmd.iter().enumerate() {
+            core::ptr::write_volatile(ring_virt.add(i), *dw);
+        }
+        mmio_write32_at(mmio, BCS_RING_TAIL, (cmd.len() * 4) as u32);
+
+        let mut drained = false;
+        for _ in 0..2_000_000 {
+            let head = mmio_read32_at(mmio, BCS_RING_HEAD) & !0x3F;
+            let tail = mmio_read32_at(mmio, BCS_RING_TAIL) & !0x3F;
+            if head == tail {
+                drained = true;
+                break;
+            }
+        }
+
+        forcewake_put_render(mmio);
+        if !drained {
+            return -5;
+        }
+    }
+    0
+}
+
+/// True iff phase 6 is wired up: the BCS engine is alive and the
+/// back-buffer has been registered with the GTT. Callers gate their
+/// fast-path BLT presents on this.
+#[unsafe(no_mangle)]
+pub extern "C" fn i915_present_ready() -> bool {
+    let st = STATE.get();
+    unsafe { (*st).bcs_ready && (*st).back_buf_gpu_va != 0 }
 }

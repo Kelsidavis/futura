@@ -385,7 +385,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
     let mut dir_ok = false;
 
     while let Some(p) = argv_get(argc, argv, idx) {
-        if arg_is(p, b"-f") {
+        if arg_is(p, b"-f") || arg_is(p, b"--force") {
             force = true;
             idx += 1;
         } else if arg_is(p, b"-r") || arg_is(p, b"-R")

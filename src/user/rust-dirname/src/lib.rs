@@ -118,88 +118,93 @@ fn cstr_len(p: *const u8) -> usize {
     n
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
-    if argc == 2 {
-        let pp = unsafe { *argv.add(1) };
-        if !pp.is_null() && (pp as usize) >= 0x10000 {
-            let want = b"--help";
-            let mut n = 0; unsafe { while *pp.add(n) != 0 { n += 1; } }
-            if n == want.len() {
-                let mut ok = true;
-                for i in 0..want.len() { if unsafe { *pp.add(i) } != want[i] { ok = false; break; } }
-                if ok {
-                    let help: &[u8] = b"\
-Usage: rust-dirname PATH
-Print PATH with the trailing component removed.
-
-  --help    show this help and exit
-\0";
-                    let len = help.len() - 1;
-                    unsafe { let _ = syscall3(sysn::WRITE, 1, help.as_ptr() as u64, len as u64); }
-                    return 0;
-                }
-            }
-        }
-    }
-    if argc < 2 {
-        write_str(STDERR, b"usage: rust-dirname <path>\n");
-        return 1;
-    }
-    let p = unsafe { *argv.add(1) };
-    if p.is_null() || (p as usize) < 0x10000 {
-        write_str(STDERR, b"rust-dirname: invalid argument\n");
-        return 1;
-    }
+// Compute dirname(path) and emit it followed by `term`.
+fn emit_dirname(p: *const u8, term: u8) {
     let n = cstr_len(p);
     let path = unsafe { core::slice::from_raw_parts(p, n) };
-
     if path.is_empty() {
-        write_str(STDOUT, b".\n");
-        return 0;
+        let buf = [b'.', term];
+        write_str(STDOUT, &buf);
+        return;
     }
-
-    // 1) Strip trailing slashes, keeping a lone "/".
     let mut end = path.len();
-    while end > 1 && path[end - 1] == b'/' {
-        end -= 1;
-    }
+    while end > 1 && path[end - 1] == b'/' { end -= 1; }
     if end == 1 && path[0] == b'/' {
-        write_str(STDOUT, b"/\n");
-        return 0;
+        let buf = [b'/', term];
+        write_str(STDOUT, &buf);
+        return;
     }
-
-    // 2) Strip the last path component (everything after the last '/' before `end`).
     let mut last_slash: Option<usize> = None;
     let mut i = end;
     while i > 0 {
-        if path[i - 1] == b'/' {
-            last_slash = Some(i - 1);
-            break;
-        }
+        if path[i - 1] == b'/' { last_slash = Some(i - 1); break; }
         i -= 1;
     }
     let cut = match last_slash {
-        // No slash at all -> "."
-        None => {
-            write_str(STDOUT, b".\n");
-            return 0;
-        }
+        None => { let buf = [b'.', term]; write_str(STDOUT, &buf); return; }
         Some(idx) => idx,
     };
-
-    // 3) Strip the slashes between dirname and basename, but keep the
-    // root '/' if `cut` is at index 0 (e.g. "/foo" -> "/", not "").
     let mut e = cut;
-    while e > 1 && path[e - 1] == b'/' {
-        e -= 1;
-    }
+    while e > 1 && path[e - 1] == b'/' { e -= 1; }
     if e == 0 {
-        write_str(STDOUT, b"/\n");
-        return 0;
+        let buf = [b'/', term];
+        write_str(STDOUT, &buf);
+        return;
     }
-
     write_str(STDOUT, &path[..e]);
-    write_str(STDOUT, b"\n");
+    let buf = [term];
+    write_str(STDOUT, &buf);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
+    let mut zero_term = false;
+    let mut idx: i32 = 1;
+    while idx < argc {
+        let p = unsafe { *argv.add(idx as usize) };
+        if p.is_null() || (p as usize) < 0x10000 { break; }
+        let n = cstr_len(p);
+        // --help
+        if n == 6 && {
+            let want = b"--help";
+            let mut ok = true;
+            for i in 0..want.len() { if unsafe { *p.add(i) } != want[i] { ok = false; break; } }
+            ok
+        } {
+            let help: &[u8] = b"\
+Usage: rust-dirname [-z] PATH [PATH...]
+Print each PATH with the trailing component removed.
+
+  -z, --zero    end each output line with NUL, not newline
+      --help    show this help and exit
+\0";
+            let len = help.len() - 1;
+            unsafe { let _ = syscall3(sysn::WRITE, 1, help.as_ptr() as u64, len as u64); }
+            return 0;
+        }
+        let is_z = n == 2 && unsafe { *p == b'-' && *p.add(1) == b'z' };
+        let is_zlong = n == 6 && {
+            let want = b"--zero";
+            let mut ok = true;
+            for i in 0..want.len() { if unsafe { *p.add(i) } != want[i] { ok = false; break; } }
+            ok
+        };
+        if is_z || is_zlong { zero_term = true; idx += 1; continue; }
+        if n == 2 && unsafe { *p == b'-' && *p.add(1) == b'-' } {
+            idx += 1;
+            break;
+        }
+        break;
+    }
+    if idx >= argc {
+        write_str(STDERR, b"usage: rust-dirname [-z] <path>...\n");
+        return 1;
+    }
+    let term = if zero_term { 0u8 } else { b'\n' };
+    for ai in idx..argc {
+        let p = unsafe { *argv.add(ai as usize) };
+        if p.is_null() || (p as usize) < 0x10000 { continue; }
+        emit_dirname(p, term);
+    }
     0
 }

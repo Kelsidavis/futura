@@ -132,86 +132,154 @@ fn ends_with(s: &[u8], suffix: &[u8]) -> bool {
     true
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
-    if argc == 2 {
-        let p = unsafe { *argv.add(1) };
-        if !p.is_null() && (p as usize) >= 0x10000 {
-            let want = b"--help";
-            let mut n = 0; unsafe { while *p.add(n) != 0 { n += 1; } }
-            if n == want.len() {
-                let mut ok = true;
-                for i in 0..want.len() { if unsafe { *p.add(i) } != want[i] { ok = false; break; } }
-                if ok {
-                    let help: &[u8] = b"\
-Usage: rust-basename PATH [SUFFIX]
-Print PATH with any leading directory and trailing SUFFIX removed.
-
-  --help    show this help and exit
-\0";
-                    let len = help.len() - 1;
-                    unsafe { let _ = syscall3(sysn::WRITE, 1, help.as_ptr() as u64, len as u64); }
-                    return 0;
-                }
-            }
-        }
-    }
-    if argc < 2 {
-        write_str(STDERR, b"usage: rust-basename <path> [suffix]\n");
-        return 1;
-    }
-    let path_p = unsafe { *argv.add(1) };
-    if path_p.is_null() || (path_p as usize) < 0x10000 {
-        write_str(STDERR, b"rust-basename: invalid argument\n");
-        return 1;
-    }
+// Compute basename(path) and optionally strip a trailing suffix.
+// Writes the result + `term` to stdout.
+fn emit_basename(path_p: *const u8, suffix: Option<&[u8]>, term: u8) {
     let path_n = cstr_len(path_p);
     let path = unsafe { core::slice::from_raw_parts(path_p, path_n) };
-
-    // Empty path -> "."
     if path.is_empty() {
-        write_str(STDOUT, b".\n");
-        return 0;
+        let buf = [b'.', term];
+        write_str(STDOUT, &buf);
+        return;
     }
-
-    // Strip trailing slashes, except keep a lone "/" intact.
     let mut end = path.len();
-    while end > 1 && path[end - 1] == b'/' {
-        end -= 1;
-    }
-
-    // If everything was "///...", end is now 1 and path[0]=='/'. Print "/".
+    while end > 1 && path[end - 1] == b'/' { end -= 1; }
     if end == 1 && path[0] == b'/' {
-        write_str(STDOUT, b"/\n");
-        return 0;
+        let buf = [b'/', term];
+        write_str(STDOUT, &buf);
+        return;
     }
-
-    // Find the last '/' before `end`.
     let mut start = 0usize;
     let mut i = end;
     while i > 0 {
-        if path[i - 1] == b'/' {
-            start = i;
-            break;
-        }
+        if path[i - 1] == b'/' { start = i; break; }
         i -= 1;
     }
-
     let mut name = &path[start..end];
-
-    // Optional suffix arg.
-    if argc >= 3 {
-        let sp = unsafe { *argv.add(2) };
-        if !sp.is_null() && (sp as usize) >= 0x10000 {
-            let sn = cstr_len(sp);
-            let suffix = unsafe { core::slice::from_raw_parts(sp, sn) };
-            if ends_with(name, suffix) {
-                name = &name[..name.len() - suffix.len()];
-            }
+    if let Some(s) = suffix {
+        if !s.is_empty() && name.len() > s.len() && ends_with(name, s) {
+            name = &name[..name.len() - s.len()];
         }
     }
-
     write_str(STDOUT, name);
-    write_str(STDOUT, b"\n");
+    let buf = [term];
+    write_str(STDOUT, &buf);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
+    let mut multiple = false;
+    let mut zero_term = false;
+    let mut suffix_p: Option<*const u8> = None;
+    let mut idx: i32 = 1;
+    while idx < argc {
+        let p = unsafe { *argv.add(idx as usize) };
+        if p.is_null() || (p as usize) < 0x10000 { break; }
+        let n = cstr_len(p);
+        // --help
+        if n == 6 && {
+            let want = b"--help";
+            let mut ok = true;
+            for i in 0..want.len() { if unsafe { *p.add(i) } != want[i] { ok = false; break; } }
+            ok
+        } {
+            let help: &[u8] = b"\
+Usage: rust-basename PATH [SUFFIX]
+       rust-basename -a [-s SUFFIX] [-z] PATH [PATH...]
+Print PATH with any leading directory and trailing SUFFIX removed.
+
+  -a, --multiple         support multiple PATH arguments
+  -s, --suffix=SUFFIX    strip SUFFIX from each PATH (implies -a)
+  -z, --zero             end each output line with NUL, not newline
+      --help             show this help and exit
+\0";
+            let len = help.len() - 1;
+            unsafe { let _ = syscall3(sysn::WRITE, 1, help.as_ptr() as u64, len as u64); }
+            return 0;
+        }
+        // -a / --multiple
+        let is_a = n == 2 && unsafe { *p == b'-' && *p.add(1) == b'a' };
+        let is_amlong = n == 10 && {
+            let want = b"--multiple";
+            let mut ok = true;
+            for i in 0..want.len() { if unsafe { *p.add(i) } != want[i] { ok = false; break; } }
+            ok
+        };
+        if is_a || is_amlong { multiple = true; idx += 1; continue; }
+        // -z / --zero
+        let is_z = n == 2 && unsafe { *p == b'-' && *p.add(1) == b'z' };
+        let is_zlong = n == 6 && {
+            let want = b"--zero";
+            let mut ok = true;
+            for i in 0..want.len() { if unsafe { *p.add(i) } != want[i] { ok = false; break; } }
+            ok
+        };
+        if is_z || is_zlong { zero_term = true; idx += 1; continue; }
+        // -s SUFFIX
+        let is_s = n == 2 && unsafe { *p == b'-' && *p.add(1) == b's' };
+        if is_s {
+            if idx + 1 >= argc {
+                write_str(STDERR, b"rust-basename: -s needs a suffix\n");
+                return 1;
+            }
+            let sp = unsafe { *argv.add((idx + 1) as usize) };
+            if sp.is_null() || (sp as usize) < 0x10000 { return 1; }
+            suffix_p = Some(sp);
+            multiple = true;  // -s implies -a per GNU
+            idx += 2;
+            continue;
+        }
+        // --suffix=SUFFIX (long form with embedded =)
+        if n >= 9 && unsafe {
+            let want = b"--suffix=";
+            let mut ok = true;
+            for i in 0..want.len() { if *p.add(i) != want[i] { ok = false; break; } }
+            ok
+        } {
+            suffix_p = Some(unsafe { p.add(9) });
+            multiple = true;
+            idx += 1;
+            continue;
+        }
+        if n == 2 && unsafe { *p == b'-' && *p.add(1) == b'-' } {
+            idx += 1;
+            break;
+        }
+        break;
+    }
+    let term = if zero_term { 0u8 } else { b'\n' };
+    if idx >= argc {
+        write_str(STDERR, b"usage: rust-basename [-a] [-s SUFFIX] [-z] <path>...\n");
+        return 1;
+    }
+    let suffix_slice: Option<&[u8]> = suffix_p.map(|p| {
+        let n = cstr_len(p);
+        unsafe { core::slice::from_raw_parts(p, n) }
+    });
+    if multiple {
+        for ai in idx..argc {
+            let p = unsafe { *argv.add(ai as usize) };
+            if p.is_null() || (p as usize) < 0x10000 { continue; }
+            emit_basename(p, suffix_slice, term);
+        }
+    } else {
+        // Classic 1-or-2-arg form: PATH [SUFFIX].
+        let path_p = unsafe { *argv.add(idx as usize) };
+        if path_p.is_null() || (path_p as usize) < 0x10000 {
+            write_str(STDERR, b"rust-basename: invalid argument\n");
+            return 1;
+        }
+        let suf: Option<&[u8]> = if idx + 1 < argc {
+            let sp = unsafe { *argv.add((idx + 1) as usize) };
+            if sp.is_null() || (sp as usize) < 0x10000 { None }
+            else {
+                let sn = cstr_len(sp);
+                Some(unsafe { core::slice::from_raw_parts(sp, sn) })
+            }
+        } else {
+            None
+        };
+        emit_basename(path_p, suf, term);
+    }
     0
 }

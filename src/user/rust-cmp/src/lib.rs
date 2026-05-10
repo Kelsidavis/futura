@@ -245,6 +245,8 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
     let mut silent = false;
     let mut verbose = false;
     let mut byte_limit: Option<u64> = None;
+    let mut skip1: u64 = 0;
+    let mut skip2: u64 = 0;
     let mut idx: i32 = 1;
     while idx < argc {
         let p = unsafe { *argv.add(idx as usize) };
@@ -257,6 +259,51 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         if arg_eq(p, b"-l") || arg_eq(p, b"--verbose") {
             verbose = true;
             idx += 1;
+            continue;
+        }
+        if arg_eq(p, b"-i") || arg_eq(p, b"--ignore-initial") {
+            // -i SKIP   skip SKIP bytes from both files
+            // -i SKIP1:SKIP2  skip SKIP1 from file1, SKIP2 from file2
+            if idx + 1 >= argc {
+                if !silent { write_str(STDERR, b"rust-cmp: -i needs a SKIP value\n"); }
+                return 2;
+            }
+            let sp = unsafe { *argv.add((idx + 1) as usize) };
+            if sp.is_null() || (sp as usize) < 0x10000 { return 2; }
+            let mut sn = 0usize;
+            unsafe { while *sp.add(sn) != 0 { sn += 1; } }
+            // Find optional ':' splitter.
+            let mut colon = sn;
+            for i in 0..sn { if unsafe { *sp.add(i) } == b':' { colon = i; break; } }
+            let parse = |start: usize, end: usize| -> Option<u64> {
+                if start >= end { return None; }
+                let mut v: u64 = 0;
+                for i in start..end {
+                    let c = unsafe { *sp.add(i) };
+                    if !(b'0'..=b'9').contains(&c) { return None; }
+                    v = v.checked_mul(10)?.checked_add((c - b'0') as u64)?;
+                }
+                Some(v)
+            };
+            match parse(0, colon) {
+                Some(v) => skip1 = v,
+                None => {
+                    if !silent { write_str(STDERR, b"rust-cmp: invalid -i SKIP\n"); }
+                    return 2;
+                }
+            }
+            if colon < sn {
+                match parse(colon + 1, sn) {
+                    Some(v) => skip2 = v,
+                    None => {
+                        if !silent { write_str(STDERR, b"rust-cmp: invalid -i SKIP2\n"); }
+                        return 2;
+                    }
+                }
+            } else {
+                skip2 = skip1;
+            }
+            idx += 2;
             continue;
         }
         if arg_eq(p, b"-n") {
@@ -303,6 +350,8 @@ Compare two files byte by byte.
   -s, --quiet, --silent  suppress all output, exit status only
   -l, --verbose          list every differing byte (POS OCT1 OCT2)
   -n NUM                  compare at most NUM bytes
+  -i SKIP[:SKIP2]        skip SKIP bytes from both files
+                         (or SKIP from file1 and SKIP2 from file2)
       --help              show this help and exit
 
 A '-' for either FILE means standard input (not for both).
@@ -373,6 +422,34 @@ Exit status: 0 identical, 1 differ, 2 trouble.
     let name2: &[u8] = if p2_is_dash { stdin_label } else {
         unsafe { core::slice::from_raw_parts(p2, n2) }
     };
+
+    // -i: drain `skip1`/`skip2` bytes off each fd before comparison
+    // begins. We don't have lseek wired up here, so a stream-friendly
+    // read+discard works for both files and pipes.
+    let mut sink = [0u8; BUF];
+    let mut drain = |fd: i32, mut want: u64| -> bool {
+        while want > 0 {
+            let take = (want as usize).min(sink.len());
+            let n = unsafe {
+                syscall3(sysn::READ, fd as u64, sink.as_mut_ptr() as u64, take as u64)
+            };
+            if n <= 0 { return false; }
+            want -= n as u64;
+        }
+        true
+    };
+    if skip1 > 0 && !drain(fd1, skip1) {
+        if !silent { write_str(STDERR, b"rust-cmp: -i skipped past first file's end\n"); }
+        if owned1 { close_fd(fd1); }
+        if owned2 { close_fd(fd2); }
+        return 1;
+    }
+    if skip2 > 0 && !drain(fd2, skip2) {
+        if !silent { write_str(STDERR, b"rust-cmp: -i skipped past second file's end\n"); }
+        if owned1 { close_fd(fd1); }
+        if owned2 { close_fd(fd2); }
+        return 1;
+    }
 
     let mut buf1 = [0u8; BUF];
     let mut buf2 = [0u8; BUF];

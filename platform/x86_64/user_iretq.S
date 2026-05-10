@@ -46,7 +46,13 @@ fut_do_user_iretq:
      */
     pushq $0x1b                         /* SS = USER_DATA_SELECTOR (0x18|3) */
     pushq %r10                          /* RSP = user stack */
-    pushq $0x202                        /* RFLAGS = IF set, reserved bit 1 */
+    /* RFLAGS: bit 1 (reserved, must be 1). Bit 9 (IF) DELIBERATELY
+     * cleared this iter — user runs with interrupts off so no timer
+     * tick can fire. If the user-space code is alive at all it will
+     * make a syscall before doing anything that needs IRQs, and our
+     * SYSCALL_TRACE_COUNT=8 will print the trap. Restore to 0x202
+     * once we've confirmed userspace is reachable. */
+    pushq $0x002                        /* RFLAGS = no IF, reserved bit 1 */
     pushq $0x23                         /* CS = USER_CODE_SELECTOR (0x20|3) */
     pushq %r11                          /* RIP = entry point */
 

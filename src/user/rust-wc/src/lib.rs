@@ -362,6 +362,11 @@ fn print_counts(c: Counts, show: u8, name: Option<&[u8]>) {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
+    // --total=MODE controls the trailing "total" line. Auto matches
+    // GNU wc's default (printed only for 2+ files).
+    #[derive(Copy, Clone, PartialEq, Eq)]
+    enum TotalMode { Auto, Always, Only, Never }
+    let mut total_mode = TotalMode::Auto;
     let mut idx: usize = 1;
     let mut show: u8 = 0;
     while let Some(p) = argv_get(argc, argv, idx) {
@@ -381,6 +386,14 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         } else if arg_is(p, b"-L") || arg_is(p, b"--max-line-length") {
             show |= 8;
             idx += 1;
+        } else if arg_is(p, b"--total=auto") {
+            total_mode = TotalMode::Auto;   idx += 1;
+        } else if arg_is(p, b"--total=always") {
+            total_mode = TotalMode::Always; idx += 1;
+        } else if arg_is(p, b"--total=only") {
+            total_mode = TotalMode::Only;   idx += 1;
+        } else if arg_is(p, b"--total=never") {
+            total_mode = TotalMode::Never;  idx += 1;
         } else if arg_is(p, b"--") {
             idx += 1;
             break;
@@ -395,6 +408,8 @@ all three are shown. With multiple FILEs, also print a total.
   -c        count bytes
   -m        count chars (same as -c for ASCII inputs)
   -L, --max-line-length   length of the longest line
+      --total=MODE        when to print total: auto|always|only|never
+                          (auto = only with multiple FILEs)
       --help    show this help and exit
 
 A single '-' in the FILE list means standard input.
@@ -459,7 +474,9 @@ A single '-' in the FILE list means standard input.
                     total.words += c.words;
                     total.bytes += c.bytes;
                     if c.max_line > total.max_line { total.max_line = c.max_line; }
-                    print_counts(c, show, Some(name));
+                    if total_mode != TotalMode::Only {
+                        print_counts(c, show, Some(name));
+                    }
                 }
                 Err(_) => {
                     write_str(STDERR, b"rust-wc: read error\n");
@@ -472,7 +489,13 @@ A single '-' in the FILE list means standard input.
             idx += 1;
         }
 
-        if file_count > 1 {
+        let want_total = match total_mode {
+            TotalMode::Auto   => file_count > 1,
+            TotalMode::Always => true,
+            TotalMode::Only   => true,
+            TotalMode::Never  => false,
+        };
+        if want_total {
             print_counts(total, show, Some(b"total"));
         }
     }

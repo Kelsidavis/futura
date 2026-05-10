@@ -25,7 +25,7 @@ endif
 TARGET = echo
 OBJS = main.o
 
-CFLAGS = -std=c2x -ffreestanding -nostdlib -fno-builtin -fno-stack-protector \
+CFLAGS = -std=c2x -ffreestanding -nostdlib -fno-builtin -fno-stack-protector -fcf-protection=none \
          -Wall -Wextra -Werror -g -O2 -I../../../include
 CFLAGS += $(ARCH_CFLAGS)
 

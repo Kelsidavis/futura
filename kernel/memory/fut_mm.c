@@ -137,8 +137,10 @@ fut_mm_t *fut_mm_kernel(void) {
     return &kernel_mm;
 }
 
-static void copy_kernel_half(pte_t *dst) {
-    pte_t *src = fut_get_kernel_pml4();
+static void copy_kernel_half_from(pte_t *dst, const pte_t *src) {
+    if (!dst || !src) {
+        return;
+    }
     /* Kernel occupies upper half entries (256-511). */
     for (size_t idx = 256; idx < 512; ++idx) {
         dst[idx] = src[idx];
@@ -185,8 +187,18 @@ fut_mm_t *fut_mm_create(void) {
     mm_create_printf("[MM-CREATE] Memset completed\n");
 
     pte_t *pml4 = (pte_t *)pml4_page;
-    mm_create_printf("[MM-CREATE] About to copy kernel half, pml4=%p\n", pml4);
-    copy_kernel_half(pml4);
+    const pte_t *kernel_half_src = fut_get_kernel_pml4();
+    if (saved_cr3 >= PAGE_SIZE) {
+        phys_addr_t live_root_phys = (phys_addr_t)(saved_cr3 & PTE_PHYS_ADDR_MASK);
+        const pte_t *live_root = (const pte_t *)(uintptr_t)pmap_phys_to_virt(live_root_phys);
+        if (live_root) {
+            kernel_half_src = live_root;
+            mm_create_printf("[MM-CREATE] Using live CR3 kernel half as clone source (saved_cr3=0x%llx root=%p)\n",
+                       (unsigned long long)saved_cr3, (const void *)live_root);
+        }
+    }
+    mm_create_printf("[MM-CREATE] About to copy kernel half, pml4=%p src=%p\n", pml4, (const void *)kernel_half_src);
+    copy_kernel_half_from(pml4, kernel_half_src);
     mm_create_printf("[MM-CREATE] Kernel half copied, mm=%p\n", (void*)mm);
 
     /* Check mm pointer is still valid kernel address */

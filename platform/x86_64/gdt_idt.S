@@ -131,6 +131,27 @@ fut_idt_set_entry:
 
 .size fut_idt_set_entry, . - fut_idt_set_entry
 
+/* Function to set the IST field for an IDT entry
+ * Parameters:
+ * RDI = interrupt number
+ * RSI = ist index (0..7)
+ */
+.global fut_idt_set_ist
+.type fut_idt_set_ist, @function
+fut_idt_set_ist:
+    leaq idt64_table(%rip), %rax
+    shlq $4, %rdi
+    addq %rdi, %rax
+
+    movzbl 4(%rax), %edx
+    andb $0xF8, %dl
+    andb $0x07, %sil
+    orb %sil, %dl
+    movb %dl, 4(%rax)
+    ret
+
+.size fut_idt_set_ist, . - fut_idt_set_ist
+
 /* Function to disable interrupts */
 .global fut_disable_interrupts
 .type fut_disable_interrupts, @function

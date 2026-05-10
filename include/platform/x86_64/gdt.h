@@ -194,3 +194,15 @@ void fut_tss_init(void);
  * @param rsp0 Stack pointer for ring 0
  */
 void fut_tss_set_kernel_stack(uint64_t rsp0);
+
+/**
+ * Get the current ring-0 transition stack pointer stored in the TSS.
+ */
+uint64_t fut_tss_get_kernel_stack(void);
+
+/**
+ * Program the IST index for an IDT vector.
+ * @param vector Interrupt/exception vector
+ * @param ist_index IST entry number (1-7), or 0 to disable IST
+ */
+void fut_idt_set_ist(uint8_t vector, uint8_t ist_index);

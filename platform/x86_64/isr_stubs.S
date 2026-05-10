@@ -7,6 +7,8 @@
 
 .section .text
 
+.extern fut_early_trap_marker
+
 /* Macro to create exception handler without error code */
 .macro ISR_NO_ERROR vector
 .global isr\vector
@@ -549,15 +551,23 @@ isr_common_stub:
     /* FS intentionally NOT reloaded - must preserve MSR_FS_BASE for TLS support */
     /* GS intentionally NOT reloaded - must preserve GS_BASE MSR setup */
 
+    /* Early diagnostic hook: emit a minimal trap marker before the normal
+     * exception path. This lets us distinguish "entered common trap stub"
+     * from "died before trap handling became visible" during user IRETQ
+     * bring-up on real hardware. */
+    movq %rsp, %rbp
+    movq %rbp, %rdi
+    andq $-16, %rsp
+    call fut_early_trap_marker
+
     /* Set interrupt context flag and frame pointer for scheduler.
      * This is critical for exceptions that may terminate threads (e.g., SIGSEGV from
      * page fault). Without this, fut_schedule() uses cooperative switch which doesn't
      * properly handle the exception frame on the stack. */
-    movq %rsp, fut_current_frame(%rip)
+    movq %rbp, fut_current_frame(%rip)
     movb $1, fut_in_interrupt(%rip)
 
     /* Align stack to 16 bytes for System V ABI */
-    movq %rsp, %rbp
     andq $-16, %rsp
 
     /* Call C exception handler */

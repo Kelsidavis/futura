@@ -1617,6 +1617,132 @@ fut_enter_usermode:
 .size fut_enter_usermode, . - fut_enter_usermode
 
 /*
+ * fut_resume_user_frame - Resume a prebuilt fut_interrupt_frame_t via the
+ * validated x86_64 user-return path used by context switching.
+ *
+ * System V AMD64 ABI:
+ *   RDI = fut_interrupt_frame_t *frame
+ *   RSI = fut_thread_t *thread
+ */
+.global fut_resume_user_frame
+.type fut_resume_user_frame, @function
+fut_resume_user_frame:
+    cli
+
+    /* Use the supplied thread to restore FS_BASE exactly the same way the
+     * scheduler path does. */
+    movq %rsi, %r13
+    movq %rdi, %rsp
+
+    /* Restore segment registers */
+    addq $8, %rsp           /* Skip GS */
+    addq $8, %rsp           /* Skip FS */
+
+    movq 0(%rsp), %rax
+    testw %ax, %ax
+    jz .resume_es_skip
+    cmpw $0x10, %ax
+    je .resume_es_ok
+    cmpw $0x1b, %ax
+    je .resume_es_ok
+.resume_es_skip:
+    addq $8, %rsp
+    jmp .resume_es_done
+.resume_es_ok:
+    popq %rax
+    movw %ax, %es
+.resume_es_done:
+
+    movq 0(%rsp), %rax
+    testw %ax, %ax
+    jz .resume_ds_skip
+    cmpw $0x10, %ax
+    je .resume_ds_ok
+    cmpw $0x1b, %ax
+    je .resume_ds_ok
+.resume_ds_skip:
+    addq $8, %rsp
+    jmp .resume_segments_done
+.resume_ds_ok:
+    popq %rax
+    movw %ax, %ds
+.resume_segments_done:
+
+    pushq %rax
+    pushq %rcx
+    pushq %rdx
+    movq 728(%r13), %rax
+    testq %rax, %rax
+    jz .resume_fsbase_done
+    movl $0xC0000100, %ecx
+    movq %rax, %rdx
+    shrq $32, %rdx
+    wrmsr
+.resume_fsbase_done:
+    popq %rdx
+    popq %rcx
+    popq %rax
+
+    popq %rax
+    popq %rbx
+    popq %rcx
+    popq %rdx
+    popq %rsi
+    popq %rdi
+    popq %rbp
+    popq %r8
+    popq %r9
+    popq %r10
+    popq %r11
+    popq %r12
+    popq %r13
+    popq %r14
+    popq %r15
+
+    addq $16, %rsp          /* Skip vector + error_code */
+
+    /* Validate/fix CS */
+    movq 8(%rsp), %rax
+    cmpq $0x08, %rax
+    je .resume_cs_ok
+    cmpq $0x23, %rax
+    je .resume_cs_ok
+    movq (%rsp), %rax
+    testq %rax, %rax
+    js .resume_fix_kernel_cs
+    movq $0x23, 8(%rsp)
+    jmp .resume_cs_ok
+.resume_fix_kernel_cs:
+    movq $0x08, 8(%rsp)
+.resume_cs_ok:
+
+    /* Validate/fix SS */
+    movq 32(%rsp), %rax
+    testw %ax, %ax
+    jz .resume_ss_ok
+    cmpw $0x10, %ax
+    je .resume_ss_ok
+    cmpw $0x1b, %ax
+    je .resume_ss_ok
+    movq 8(%rsp), %rax
+    cmpq $0x08, %rax
+    je .resume_fix_kernel_ss
+    movq $0x1b, %rax
+    jmp .resume_write_ss
+.resume_fix_kernel_ss:
+    movq $0x10, %rax
+.resume_write_ss:
+    movq %rax, 32(%rsp)
+.resume_ss_ok:
+
+    movb $0, fut_in_interrupt(%rip)
+    movq $0, fut_current_frame(%rip)
+    orq $0x200, 16(%rsp)
+    iretq
+
+.size fut_resume_user_frame, . - fut_resume_user_frame
+
+/*
  * fut_context_size - Return size of context structure
  *
  * Returns: Size in RAX

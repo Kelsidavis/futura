@@ -662,6 +662,7 @@ static void fut_idt_init(void) {
     fut_idt_set_entry(29, (uint64_t)isr29, 0x08, flags);
     fut_idt_set_entry(30, (uint64_t)isr30, 0x08, flags);
     fut_idt_set_entry(31, (uint64_t)isr31, 0x08, flags);
+    fut_idt_set_ist(8, 1);  /* Use TSS.ist[0] for double fault containment */
 
     /* Install IRQ handlers (32-47) */
     fut_idt_set_entry(32, (uint64_t)irq0_timer, 0x08, flags);      /* Timer uses dedicated handler */
@@ -1042,6 +1043,39 @@ static const char *exception_names[32] = {
     "Reserved", "Reserved", "Reserved", "Reserved",
     "Reserved", "Reserved", "Security Exception", "Reserved"
 };
+
+void fut_early_trap_marker(void *regs_ptr) {
+    fut_interrupt_frame_t *regs = (fut_interrupt_frame_t *)regs_ptr;
+    if (!regs) {
+        return;
+    }
+
+    switch ((uint64_t)regs->vector) {
+        case 1:
+        case 8:
+        case 13:
+        case 14:
+            break;
+        default:
+            return;
+    }
+
+    fut_serial_puts("\n[EARLY-TRAP] vec=");
+    print_hex64(regs->vector);
+    fut_serial_puts(" rip=0x");
+    print_hex64(regs->rip);
+    fut_serial_puts(" cs=0x");
+    print_hex64(regs->cs);
+    fut_serial_puts(" err=0x");
+    print_hex64(regs->error_code);
+    if (regs->vector == 14) {
+        uint64_t cr2 = 0;
+        __asm__ volatile("mov %%cr2, %0" : "=r"(cr2));
+        fut_serial_puts(" cr2=0x");
+        print_hex64(cr2);
+    }
+    fut_serial_puts("\n");
+}
 
 void __attribute__((weak)) fut_isr_handler(void *regs_ptr) {
     fut_interrupt_frame_t *regs = (fut_interrupt_frame_t *)regs_ptr;

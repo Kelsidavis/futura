@@ -10,7 +10,7 @@ LD      := $(CROSS_COMPILE)ld
 CFLAGS  := -std=c2x -O2 -g -Wall -Wextra -Werror \
            -Wno-unterminated-string-initialization \
            -ffreestanding -nostdlib -I../../../include \
-           -fno-stack-protector -fno-pic -fno-pie \
+           -fno-stack-protector -fcf-protection=none -fno-pic -fno-pie \
            -march=armv8-a -mno-outline-atomics -mstrict-align
 
 LDFLAGS := -nostdlib -static --build-id=none \

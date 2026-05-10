@@ -12,8 +12,10 @@ extern uint64_t gdt64_table[];
 
 #define TSS_SELECTOR 0x28
 #define USER_DATA_SELECTOR 0x1b
+#define DF_IST_STACK_SIZE 16384
 
 static tss_t g_kernel_tss __attribute__((aligned(16)));
+static uint8_t g_df_ist_stack[DF_IST_STACK_SIZE] __attribute__((aligned(16)));
 
 void fut_gdt_set_tss(tss_t *tss) {
     if (!tss) {
@@ -43,6 +45,7 @@ void fut_tss_init(void) {
     /* Use current stack as initial ring0 stack */
     uint64_t rsp = fut_get_rsp();
     g_kernel_tss.rsp0 = rsp;
+    g_kernel_tss.ist[0] = (uint64_t)(uintptr_t)(g_df_ist_stack + sizeof(g_df_ist_stack));
 
     fut_gdt_set_tss(&g_kernel_tss);
     fut_ltr(TSS_SELECTOR);

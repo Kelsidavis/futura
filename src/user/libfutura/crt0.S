@@ -32,6 +32,15 @@ _start:
     /* argv is now at %rsp, put it in %rsi (second argument) */
     mov %rsp, %rsi
 
+    /* Earliest possible user-mode probe for Gemini Lake bring-up:
+     * raw write(1, "[U-START]\\n", 10) via int $0x80 before main(),
+     * libc env setup, or allocator usage. */
+    mov $1, %rax                  /* SYS_write */
+    mov $1, %rdi                  /* fd=stdout */
+    lea user_early_msg(%rip), %rsi
+    mov $10, %rdx
+    int $0x80
+
     /* Save argc in a callee-saved register (rbx) for use after __libc_init_environ */
     mov %rdi, %rbx
 
@@ -45,9 +54,13 @@ _start:
     /* Align stack to 16 bytes (required by x86-64 ABI) */
     and $-16, %rsp
 
-    /* Call __libc_init_environ(envp). r12/r13 stay valid across it. */
-    mov %r12, %rdi
-    call __libc_init_environ
+    /* Gemini Lake bring-up differential test:
+     * skip __libc_init_environ() for one build so we can tell whether the
+     * first failure happens in early malloc/brk during env setup or later
+     * on the explicit init syscalls. main() in /sbin/init does not depend
+     * on inherited environment today, so this is safe for diagnosis. */
+    /* mov %r12, %rdi */
+    /* call __libc_init_environ */
 
     /* Set up argc, argv, envp for main call */
     mov %rbx, %rdi          /* argc */
@@ -74,6 +87,9 @@ exit:
     int $0x80               /* Use int 0x80, not syscall instruction */
     ud2                     /* unreachable */
 
+.section .rodata
+user_early_msg:
+    .ascii "[U-START]\n"
+
 /* Mark stack as non-executable to silence linker warnings */
 .section .note.GNU-stack, "", @progbits
-

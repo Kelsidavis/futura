@@ -71,7 +71,7 @@ else
 LIBGCC :=
 endif
 
-CFLAGS := -std=c2x -ffreestanding -nostdlib -fno-builtin -fno-stack-protector
+CFLAGS := -std=c2x -ffreestanding -nostdlib -fno-builtin -fno-stack-protector -fcf-protection=none
 CFLAGS += -Wall -Wextra -Werror -g -O2 -Wno-attributes
 CFLAGS += $(ARCH_CFLAGS)
 CFLAGS += -I$(ROOT)/include -I$(ROOT)/include/user

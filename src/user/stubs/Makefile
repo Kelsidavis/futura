@@ -38,7 +38,7 @@ OBJ_DIR := $(BUILD_ROOT)/obj/$(PLATFORM)/user/stubs
 BIN_DIR := $(BUILD_ROOT)/bin/$(PLATFORM)/user
 LIB_DIR := $(BUILD_ROOT)/lib/$(PLATFORM)
 
-CFLAGS := -std=c2x -ffreestanding -nostdlib -fno-builtin -fno-stack-protector
+CFLAGS := -std=c2x -ffreestanding -nostdlib -fno-builtin -fno-stack-protector -fcf-protection=none
 CFLAGS += -Wall -Wextra -Werror -g -O2
 CFLAGS += $(ARCH_CFLAGS)
 CFLAGS += -I$(ROOT)/include

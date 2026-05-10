@@ -84,7 +84,7 @@ endif
 CRT0 := $(BUILD_ROOT)/lib/$(PLATFORM)/crt0.o
 LIBFUTURA := $(BUILD_ROOT)/lib/$(PLATFORM)/libfutura.a
 
-CFLAGS := -std=c2x -ffreestanding -nostdlib -fno-builtin -fno-stack-protector
+CFLAGS := -std=c2x -ffreestanding -nostdlib -fno-builtin -fno-stack-protector -fcf-protection=none
 CFLAGS += -Wall -Wextra -Werror -g -O2
 # wayland-server-core.h uses [[deprecated]] which aarch64-elf-gcc warns
 # about as an unhandled attribute on free-standing builds; demote that

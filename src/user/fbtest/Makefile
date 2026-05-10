@@ -27,7 +27,7 @@ LIB_DIR := $(BUILD_DIR)/lib/$(PLATFORM)
 
 INCLUDES := -I../../../include
 
-CFLAGS := -std=c2x -ffreestanding -nostdlib -fno-builtin -fno-stack-protector
+CFLAGS := -std=c2x -ffreestanding -nostdlib -fno-builtin -fno-stack-protector -fcf-protection=none
 CFLAGS += -Wall -Wextra -Werror
 CFLAGS += -g -O2
 CFLAGS += $(ARCH_CFLAGS)

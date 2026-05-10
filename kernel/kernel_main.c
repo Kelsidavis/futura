@@ -1845,22 +1845,39 @@ void fut_kernel_main(void) {
             extern int i915_map_fb_in_gtt(void);
             extern void fb_console_attach_i915(void);
 
+            fut_printf("[INIT] Intel: entering intel_vtd_init\n");
             intel_vtd_init(0);
+            fut_printf("[INIT] Intel: entering intel_pmc_init\n");
             intel_pmc_init();
+            fut_printf("[INIT] Intel: entering intel_gpio_init\n");
             intel_gpio_init(0, 0);
+            fut_printf("[INIT] Intel: entering intel_lpss_init\n");
             intel_lpss_init();
+            fut_printf("[INIT] Intel: entering intel_smbus_init\n");
             intel_smbus_init();
+            fut_printf("[INIT] Intel: entering intel_spi_init\n");
             intel_spi_init();
+            fut_printf("[INIT] Intel: entering intel_p2sb_init\n");
             intel_p2sb_init();
+            fut_printf("[INIT] Intel: entering intel_dma_init\n");
             intel_dma_init();
+            fut_printf("[INIT] Intel: entering intel_hwp_init\n");
             intel_hwp_init();
+            fut_printf("[INIT] Intel: entering intel_thermal_init\n");
             intel_thermal_init();
+            fut_printf("[INIT] Intel: entering intel_wdt_init\n");
             intel_wdt_init();
+            fut_printf("[INIT] Intel: entering intel_mei_init\n");
             intel_mei_init();
+            fut_printf("[INIT] Intel: entering intel_tbt_init\n");
             intel_tbt_init();
+            fut_printf("[INIT] Intel: entering intel_sst_init\n");
             intel_sst_init();
+            fut_printf("[INIT] Intel: entering intel_gna_init\n");
             intel_gna_init();
+            fut_printf("[INIT] Intel: entering intel_cnvi_init\n");
             intel_cnvi_init();
+            fut_printf("[INIT] Intel: entering intel_ipu_init\n");
             intel_ipu_init();
             /* i915 — Intel integrated GPU. Phase 1 only: detect at PCI
              * 00:02.0, map BAR0 MMIO, log device ID. No display/render
@@ -1869,6 +1886,7 @@ void fut_kernel_main(void) {
              * the framebuffer console — replacing the current bit-banged
              * fb_console_scroll memcpy. Safe to call now: the function
              * just observes and bails cleanly on any non-Intel-GPU config. */
+            fut_printf("[INIT] Intel: entering i915_init\n");
             i915_init();
             /* Phase 2: install at least one GTT mapping as a smoke test.
              * Pre-req for phase 3 (BCS ring buffer) which lives in this

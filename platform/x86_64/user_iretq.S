@@ -8,13 +8,15 @@
 .section .text
 
 /*
- * void fut_do_user_iretq(uint64_t entry, uint64_t stack, uint64_t argc, uint64_t argv);
+ * void fut_do_user_iretq(uint64_t entry, uint64_t stack, uint64_t argc,
+ *                        uint64_t argv, uint64_t kernel_stack_top);
  *
  * Arguments (System V ABI):
  *   rdi = entry point (RIP)
  *   rsi = user stack (RSP)
  *   rdx = argc
  *   rcx = argv
+ *   r8  = kernel stack top to use for the final handoff
  *
  * CRITICAL: This function must execute atomically without interruption.
  * We disable interrupts IMMEDIATELY and keep them disabled until IRETQ.
@@ -32,6 +34,9 @@ fut_do_user_iretq:
     /* Move arguments to temporary registers */
     movq %rdi, %r11                     /* r11 = entry (RIP) */
     movq %rsi, %r10                     /* r10 = user stack (RSP) */
+    movq %r8, %rsp                      /* use known-good kernel handoff stack */
+    andq $-16, %rsp
+    subq $0x20, %rsp
     /* DON'T set rdi/rsi - _start expects argc on stack, not in registers */
 
     /* Build IRETQ frame on stack
@@ -46,13 +51,7 @@ fut_do_user_iretq:
      */
     pushq $0x1b                         /* SS = USER_DATA_SELECTOR (0x18|3) */
     pushq %r10                          /* RSP = user stack */
-    /* RFLAGS: bit 1 (reserved, must be 1). Bit 9 (IF) DELIBERATELY
-     * cleared this iter — user runs with interrupts off so no timer
-     * tick can fire. If the user-space code is alive at all it will
-     * make a syscall before doing anything that needs IRQs, and our
-     * SYSCALL_TRACE_COUNT=8 will print the trap. Restore to 0x202
-     * once we've confirmed userspace is reachable. */
-    pushq $0x002                        /* RFLAGS = no IF, reserved bit 1 */
+    pushq $0x202                        /* RFLAGS = IF|bit1 */
     pushq $0x23                         /* CS = USER_CODE_SELECTOR (0x20|3) */
     pushq %r11                          /* RIP = entry point */
 

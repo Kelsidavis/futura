@@ -350,21 +350,11 @@ pub extern "C" fn intel_hwp_init() -> i32 {
         );
     }
 
-    // Read and log current HWP request.
-    let req = rdmsr(MSR_HWP_REQUEST);
-    let cur_min = (req & 0xFF) as u8;
-    let cur_max = ((req >> 8) & 0xFF) as u8;
-    let cur_desired = ((req >> 16) & 0xFF) as u8;
-    let cur_epp = ((req >> 24) & 0xFF) as u8;
-    unsafe {
-        fut_printf(
-            b"intel_hwp: current request: min=%u max=%u desired=%u epp=%u\n\0".as_ptr(),
-            cur_min as u32,
-            cur_max as u32,
-            cur_desired as u32,
-            cur_epp as u32,
-        );
-    }
+    /* Diagnostic boot: Lenovo L490 faults with #GP on the IA32_HWP_REQUEST
+     * read even though the CPU reports HWP support and survives earlier HWP
+     * MSR accesses. Skip the 0x772 probe for now so we can determine whether
+     * boot continues once this single MSR read is removed. */
+    log("intel_hwp: skipping IA32_HWP_REQUEST read (diagnostic)");
 
     // Store driver state.
     let state = IntelHwpState {

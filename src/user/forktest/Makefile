@@ -18,7 +18,7 @@ ifeq ($(PLATFORM),arm64)
     CFLAGS = -std=c23 -ffreestanding -nostdlib -fno-builtin \
              -Wall -Wextra -O2 -g \
              -I../../../include \
-             -fno-stack-protector \
+             -fno-stack-protector -fcf-protection=none \
              -fno-pic -fno-pie \
              -mcmodel=large \
              -march=armv8-a -mno-outline-atomics -mstrict-align

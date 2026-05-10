@@ -20,6 +20,9 @@
 
 /* Architecture-specific paging headers for KERNEL_VIRTUAL_BASE */
 #include <platform/platform.h>
+#if defined(__x86_64__)
+#include <platform/x86_64/regs.h>
+#endif
 #include <stddef.h>
 
 /* getrandom flags */
@@ -163,10 +166,16 @@ static uint64_t hw_entropy_read(void) {
     uint64_t val = 0;
 #ifdef __x86_64__
     /* Try RDRAND first (true hardware RNG) */
-    unsigned char ok = 0;
-    __asm__ volatile("rdrand %0; setc %1" : "=r"(val), "=qm"(ok));
-    if (ok)
-        return val;
+    {
+        uint32_t eax = 0, ebx = 0, ecx = 0, edx = 0;
+        fut_cpuid(1, &eax, &ebx, &ecx, &edx);
+        if (ecx & (1u << 30)) {
+            unsigned char ok = 0;
+            __asm__ volatile("rdrand %0; setc %1" : "=r"(val), "=qm"(ok));
+            if (ok)
+                return val;
+        }
+    }
     /* Fallback to RDTSC (timing jitter) */
     uint32_t lo, hi;
     __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));

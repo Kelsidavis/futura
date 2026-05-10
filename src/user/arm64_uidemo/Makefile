@@ -26,7 +26,7 @@ LIB_DIR := $(BUILD_DIR)/lib/arm64
 CFLAGS := -std=c23 -O2 -g -Wall -Wextra -Werror \
 	-ffreestanding -nostdlib \
 	-I../../../include \
-	-fno-stack-protector \
+	-fno-stack-protector -fcf-protection=none \
 	-fno-pic -fno-pie \
 	-mcmodel=large \
 	-march=armv8-a -mno-outline-atomics -mstrict-align

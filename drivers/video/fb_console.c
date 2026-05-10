@@ -316,6 +316,9 @@ static void fb_console_scroll(void) {
     extern int  i915_blt_scroll(uint32_t src_y, uint32_t dst_y,
                                 uint32_t height, uint32_t width)
                                 __attribute__((weak));
+    extern int  i915_blt_scroll_back_buf(uint32_t src_y, uint32_t dst_y,
+                                          uint32_t height, uint32_t width)
+                                          __attribute__((weak));
     if (cons->bpp == 32 && i915_bcs_ready && i915_bcs_ready() &&
         i915_blt_scroll) {
         int prot_w = cons->protected_x_start * cons->char_width;
@@ -325,18 +328,30 @@ static void fb_console_scroll(void) {
                                 /* dst_y */ 0,
                                 /* height */ copy_h,
                                 /* width  */ prot_w) == 0) {
-                /* The BLT scrolled FB but left back_buf untouched.
-                 * Without a matching memmove on back_buf, the next
-                 * flush_full would push stale upper rows from back_buf
-                 * to FB and undo the scroll. Mirror the scroll on
-                 * back_buf so the two stay in sync. */
-                if (cons->back_buf) {
+                /* FB has been scrolled by the GPU. We still have to
+                 * keep back_buf in sync, otherwise the next flush_full
+                 * would push stale upper rows back to FB and undo the
+                 * scroll. Phase 8: prefer a second BLT (back_buf →
+                 * back_buf) over a ~3.8 MiB CPU memmove. Falls through
+                 * to the CPU memmove path if the BLT helper isn't
+                 * linked or fails. */
+                bool back_buf_synced = false;
+                if (cons->back_buf && i915_blt_scroll_back_buf &&
+                    i915_blt_scroll_back_buf(cons->char_height, 0,
+                                             copy_h, prot_w) == 0) {
+                    back_buf_synced = true;
+                }
+
+                if (cons->back_buf && !back_buf_synced) {
                     size_t stride = (size_t)prot_w * 4;
                     for (int y = 0; y < copy_h; y++) {
                         memcpy(cons->back_buf + (size_t)y * cons->pitch,
                                cons->back_buf + (size_t)(y + cons->char_height) * cons->pitch,
                                stride);
                     }
+                }
+
+                if (cons->back_buf) {
                     int last_y = (cons->rows - 1) * cons->char_height;
                     uint32_t bg = make_color(0, 0, 0, 255);
                     for (int row = 0; row < cons->char_height; row++) {
@@ -344,7 +359,7 @@ static void fb_console_scroll(void) {
                             (size_t)(last_y + row) * cons->pitch);
                         for (int x = 0; x < prot_w; x++) line[x] = bg;
                     }
-                    /* The BLT didn't touch the bottom char row of FB.
+                    /* The FB BLT didn't touch the bottom char row.
                      * back_buf bottom row is zeroed; mark it dirty so
                      * the next flush pushes the clear to FB. */
                     fb_console_mark_dirty((uint32_t)last_y,

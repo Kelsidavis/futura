@@ -770,6 +770,66 @@ pub extern "C" fn i915_map_fb_in_gtt() -> i32 {
 ///
 /// Returns 0 on success, negative on failure (e.g., BCS not ready,
 /// FB not GTT-mapped, ring full, drain timeout).
+/// Submit XY_SRC_COPY_BLT to scroll a region of the surface at
+/// `gpu_va` (back to itself, in place). Same pitch on src and dst,
+/// rect (0..width, src_y..src_y+height) → (0..width, dst_y..dst_y+height).
+fn blt_scroll_addr(gpu_va: u32, pitch: u32,
+                   src_y: u32, dst_y: u32,
+                   height: u32, width: u32) -> i32 {
+    let st = STATE.get();
+    let mmio = unsafe { (*st).mmio_base };
+    let ring_virt = unsafe { (*st).scratch_virt } as *mut u32;
+    if mmio.is_null() || ring_virt.is_null() {
+        return -3;
+    }
+
+    /* CPU writes into the surface (chars accumulating in back_buf, or
+     * any prior FB pokes) need to land before the GPU reads them. */
+    unsafe { core::arch::x86_64::_mm_mfence() };
+
+    let cmd: [u32; 8] = [
+        XY_SRC_COPY_BLT_HEADER,
+        (3u32 << 24) | (ROP_SRCCOPY << 16) | (pitch & 0xFFFF),
+        (dst_y << 16) | 0,
+        ((dst_y + height) << 16) | width,
+        gpu_va,
+        pitch & 0xFFFF,
+        (src_y << 16) | 0,
+        gpu_va,
+    ];
+
+    if !forcewake_get_render(mmio) {
+        return -4;
+    }
+
+    unsafe {
+        mmio_write32_at(mmio, BCS_RING_TAIL, 0);
+        for _ in 0..1_000_000 {
+            if mmio_read32_at(mmio, BCS_RING_HEAD) & !0x3F == 0 {
+                break;
+            }
+        }
+        for (i, dw) in cmd.iter().enumerate() {
+            core::ptr::write_volatile(ring_virt.add(i), *dw);
+        }
+        mmio_write32_at(mmio, BCS_RING_TAIL, (cmd.len() * 4) as u32);
+        let mut drained = false;
+        for _ in 0..2_000_000 {
+            let head = mmio_read32_at(mmio, BCS_RING_HEAD) & !0x3F;
+            let tail = mmio_read32_at(mmio, BCS_RING_TAIL) & !0x3F;
+            if head == tail {
+                drained = true;
+                break;
+            }
+        }
+        forcewake_put_render(mmio);
+        if !drained {
+            return -5;
+        }
+    }
+    0
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn i915_blt_scroll(src_y: u32, dst_y: u32, height: u32, width: u32) -> i32 {
     let st = STATE.get();
@@ -785,84 +845,36 @@ pub extern "C" fn i915_blt_scroll(src_y: u32, dst_y: u32, height: u32, width: u3
     if width == 0 || height == 0 {
         return 0;
     }
-
-    let mmio = unsafe { (*st).mmio_base };
-    let ring_virt = unsafe { (*st).scratch_virt } as *mut u32;
     let pitch = unsafe { (*st).fb_pitch };
     let fb_va = unsafe { (*st).fb_gpu_va } as u32;
+    blt_scroll_addr(fb_va, pitch, src_y, dst_y, height, width)
+}
 
-    if mmio.is_null() || ring_virt.is_null() {
-        return -3;
+/// Phase 8: same scroll on the registered back buffer instead of FB.
+/// Replaces the per-scroll ~3.8 MiB CPU memmove that fb_console_scroll
+/// previously did to keep back_buf in sync after a BLT FB scroll. The
+/// caller still has to clear the now-empty bottom char row in back_buf
+/// (we don't paint here) and mark the screen-bottom dirty so the next
+/// flush_full pushes those zeros to FB.
+///
+/// Returns 0 on success, negative on failure. -1 BCS not ready, -2
+/// back_buf not registered (call i915_register_back_buf first).
+#[unsafe(no_mangle)]
+pub extern "C" fn i915_blt_scroll_back_buf(src_y: u32, dst_y: u32,
+                                            height: u32, width: u32) -> i32 {
+    let st = STATE.get();
+    if !unsafe { (*st).bcs_ready } {
+        return -1;
     }
-
-    /* Build the 8-DWORD command. */
-    let cmd: [u32; 8] = [
-        XY_SRC_COPY_BLT_HEADER,
-        /* BR13: color depth (3 = 32bpp), ROP (0xCC), dest pitch */
-        (3u32 << 24) | (ROP_SRCCOPY << 16) | (pitch & 0xFFFF),
-        /* BR05: dest top-left (y << 16) | x */
-        (dst_y << 16) | 0,
-        /* BR06: dest bottom-right exclusive */
-        ((dst_y + height) << 16) | width,
-        /* BR09: dest base GGTT addr */
-        fb_va,
-        /* BR11: source pitch (low 16 bits) */
-        pitch & 0xFFFF,
-        /* BR26: source top-left */
-        (src_y << 16) | 0,
-        /* BR12: source base GGTT addr */
-        fb_va,
-    ];
-
-    /* The ring is 4 KiB. We use the head of the ring at offset 0; for
-     * a more robust ring we'd track head/tail and wrap. For boot-time
-     * scrolls (one at a time, drain to completion before next) writing
-     * at offset 0 each time is fine — TAIL=0 then TAIL=4*8 then poll
-     * back to HEAD == TAIL keeps the ring effectively single-shot. */
-    if !forcewake_get_render(mmio) {
-        log("i915_blt_scroll: forcewake ACK timeout");
-        return -4;
+    if unsafe { (*st).back_buf_gpu_va } == 0 {
+        return -2;
     }
-
-    unsafe {
-        /* Reset to known state; safer than racing with previous TAIL */
-        mmio_write32_at(mmio, BCS_RING_TAIL, 0);
-        /* Wait for the engine to drain to 0 first */
-        for _ in 0..1_000_000 {
-            if mmio_read32_at(mmio, BCS_RING_HEAD) & !0x3F == 0 {
-                break;
-            }
-        }
-
-        /* Write the command DWORDs to the ring */
-        for (i, dw) in cmd.iter().enumerate() {
-            core::ptr::write_volatile(ring_virt.add(i), *dw);
-        }
-        /* Pad with MI_NOOP up to a cacheline if we like; not strictly
-         * required for Gen9. */
-
-        /* Bump TAIL to publish — 8 DWORDs = 32 bytes */
-        mmio_write32_at(mmio, BCS_RING_TAIL, (cmd.len() * 4) as u32);
-
-        /* Wait for completion */
-        let mut drained = false;
-        for _ in 0..2_000_000 {
-            let head = mmio_read32_at(mmio, BCS_RING_HEAD) & !0x3F;
-            let tail = mmio_read32_at(mmio, BCS_RING_TAIL) & !0x3F;
-            if head == tail {
-                drained = true;
-                break;
-            }
-        }
-
-        forcewake_put_render(mmio);
-
-        if !drained {
-            return -5;
-        }
+    if width == 0 || height == 0 {
+        return 0;
     }
-
-    0
+    let pitch = unsafe { (*st).back_buf_pitch };
+    let bb_va = unsafe { (*st).back_buf_gpu_va } as u32;
+    blt_scroll_addr(bb_va, pitch, src_y, dst_y, height, width)
 }
 
 /// True iff phase 3 succeeded and the BCS engine is responsive. Callers

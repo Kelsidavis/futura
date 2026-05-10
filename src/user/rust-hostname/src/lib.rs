@@ -160,7 +160,32 @@ fn field_len(field: &[u8]) -> usize {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn main(_argc: i32, _argv: *const *const u8, _envp: *const *const u8) -> i32 {
+pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
+    if argc == 2 {
+        let p = unsafe { *argv.add(1) };
+        if !p.is_null() && (p as usize) >= 0x10000 {
+            let want = b"--help";
+            let mut n = 0; unsafe { while *p.add(n) != 0 { n += 1; } }
+            if n == want.len() {
+                let mut ok = true;
+                for i in 0..want.len() {
+                    if unsafe { *p.add(i) } != want[i] { ok = false; break; }
+                }
+                if ok {
+                    let help: &[u8] = b"\
+Usage: rust-hostname
+Print the system hostname (uname(2) nodename field).
+
+  --help    show this help and exit
+\0";
+                    let len = help.len() - 1;
+                    unsafe { let _ = syscall3(sysn::WRITE, STDOUT as u64,
+                                              help.as_ptr() as u64, len as u64); }
+                    return 0;
+                }
+            }
+        }
+    }
     let mut uts = Utsname {
         sysname: [0; UTS_LEN],
         nodename: [0; UTS_LEN],

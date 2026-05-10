@@ -348,6 +348,7 @@ struct Opts {
     after_ctx: u32,     // -A N: print N lines after each match
     before_ctx: u32,    // -B N: print N lines before each match (capped)
     null_term: bool,    // -Z/-z: NUL-terminate filenames in -l / -L output
+    no_messages: bool,  // -s/--no-messages: suppress per-file error spew
 }
 
 const CTX_CAP: usize = 16;        // max before-context lines
@@ -716,12 +717,14 @@ fn grep_one_file(
     let path_ptr = path_buf.as_ptr();
     let f = unsafe { sys_open_ro(path_ptr) };
     if f < 0 {
-        write_str(STDERR, b"rust-grep: cannot open '");
-        unsafe {
-            let _ = syscall3(sysn::WRITE, STDERR as u64,
-                             path_ptr as u64, path_len as u64);
+        if !opts.no_messages {
+            write_str(STDERR, b"rust-grep: cannot open '");
+            unsafe {
+                let _ = syscall3(sysn::WRITE, STDERR as u64,
+                                 path_ptr as u64, path_len as u64);
+            }
+            write_str(STDERR, b"'\n");
         }
-        write_str(STDERR, b"'\n");
         return (false, true);
     }
     let name = &path_buf[..path_len];
@@ -773,6 +776,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         after_ctx: 0,
         before_ctx: 0,
         null_term: false,
+        no_messages: false,
     };
 
     let mut e_pattern: Option<*const u8> = None;
@@ -892,6 +896,12 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         } else if arg_is(p, b"-Z") || arg_is(p, b"--null") {
             opts.null_term = true;
             idx += 1;
+        } else if arg_is(p, b"-s") || arg_is(p, b"--no-messages") {
+            // GNU grep's -s suppresses "cannot open" / "no such file"
+            // diagnostics. Note this differs from the BSD -q (quiet)
+            // shorthand we already accept via --quiet.
+            opts.no_messages = true;
+            idx += 1;
         } else if arg_is(p, b"-q") || arg_is(p, b"--quiet") || arg_is(p, b"--silent") {
             opts.quiet = true;
             idx += 1;
@@ -943,6 +953,7 @@ Output control:
   -m, --max-count NUM   stop after NUM matches per file
   -o, --only-matching   print only the matched portion of each line
   -Z, --null            NUL-terminate filenames in -l / -L output
+  -s, --no-messages     suppress per-file 'cannot open' diagnostics
       --help            show this help and exit
 \0";
             let len = help.len() - 1;  // strip the trailing NUL
@@ -1050,11 +1061,13 @@ Output control:
             } else {
                 let f = unsafe { sys_open_ro(p) };
                 if f < 0 {
-                    write_str(STDERR, b"rust-grep: cannot open '");
-                    unsafe {
-                        let _ = syscall3(sysn::WRITE, STDERR as u64, p as u64, n as u64);
+                    if !opts.no_messages {
+                        write_str(STDERR, b"rust-grep: cannot open '");
+                        unsafe {
+                            let _ = syscall3(sysn::WRITE, STDERR as u64, p as u64, n as u64);
+                        }
+                        write_str(STDERR, b"'\n");
                     }
-                    write_str(STDERR, b"'\n");
                     had_error = true;
                     idx += 1;
                     continue;

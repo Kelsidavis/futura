@@ -1216,6 +1216,24 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
                     return 2;
                 }
             }
+        } else if {
+            // --file=FILE long form with embedded =
+            let n = cstr_len(p);
+            n > 7 && unsafe {
+                let want = b"--file=";
+                let mut ok = true;
+                for j in 0..want.len() { if *p.add(j) != want[j] { ok = false; break; } }
+                ok
+            }
+        } {
+            let pp = unsafe { p.add(7) };
+            if !load_patterns_file(pp, &mut e_patterns, &mut n_e_patterns) {
+                if !opts.no_messages {
+                    write_str(STDERR, b"rust-grep: cannot read pattern file\n");
+                }
+                return 2;
+            }
+            idx += 1;
         } else if arg_is(p, b"-e") || arg_is(p, b"--regexp")
                   || arg_is(p, b"--pattern") {
             // -e PATTERN — accumulates patterns; ORed at match time.

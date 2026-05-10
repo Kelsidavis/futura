@@ -399,26 +399,6 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         } else if arg_is(p, b"-d") || arg_is(p, b"--dir") {
             dir_ok = true;
             idx += 1;
-        } else if arg_is(p, b"-rf") || arg_is(p, b"-fr")
-            || arg_is(p, b"-Rf") || arg_is(p, b"-fR")
-        {
-            recursive = true;
-            force = true;
-            idx += 1;
-        } else if arg_is(p, b"-rv") || arg_is(p, b"-vr")
-            || arg_is(p, b"-Rv") || arg_is(p, b"-vR")
-        {
-            recursive = true;
-            verbose = true;
-            idx += 1;
-        } else if arg_is(p, b"-rfv") || arg_is(p, b"-rvf")
-            || arg_is(p, b"-frv") || arg_is(p, b"-fvr")
-            || arg_is(p, b"-vfr") || arg_is(p, b"-vrf")
-        {
-            recursive = true;
-            force = true;
-            verbose = true;
-            idx += 1;
         } else if arg_is(p, b"--") {
             idx += 1;
             break;
@@ -437,6 +417,24 @@ Remove each FILE.
             unsafe { let _ = syscall3(sysn::WRITE, 1, help.as_ptr() as u64, len as u64); }
             return 0;
         } else {
+            // Combined short flags like -rf, -rfv, -drv, -fdrv, etc.
+            // Walk the chars; only accept letters we recognize and
+            // refuse the whole bundle on any unknown letter (the user
+            // probably meant a filename).
+            let n = cstr_len(p);
+            if n >= 2 && unsafe { *p } == b'-' && unsafe { *p.add(1) } != b'-' {
+                let mut all_ok = true;
+                for i in 1..n {
+                    match unsafe { *p.add(i) } {
+                        b'f' => force = true,
+                        b'r' | b'R' => recursive = true,
+                        b'v' => verbose = true,
+                        b'd' => dir_ok = true,
+                        _ => { all_ok = false; break; }
+                    }
+                }
+                if all_ok { idx += 1; continue; }
+            }
             break;
         }
     }

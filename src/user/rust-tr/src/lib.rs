@@ -141,16 +141,59 @@ fn cstr_len(p: *const u8) -> usize {
     n
 }
 
+// Append every byte for which `pred` is true to `out`.
+fn append_class<F: Fn(u8) -> bool>(out: &mut [u8; 1024], w: &mut usize, pred: F) -> bool {
+    for c in 0u16..256 {
+        let b = c as u8;
+        if pred(b) {
+            if *w >= out.len() { return false; }
+            out[*w] = b;
+            *w += 1;
+        }
+    }
+    true
+}
+
 // Expand a SET argument into an actual byte sequence in `out`.
 // Returns the count written. Supports:
-//   X-Y      range from X to Y inclusive
-//   \\X      escape (\\, \n, \r, \t, \0)
+//   X-Y          range from X to Y inclusive
+//   \\X          escape (\\, \n, \r, \t, \0)
+//   [:CLASS:]    POSIX character class (alpha, digit, space, ...)
 fn expand_set(p: *const u8, out: &mut [u8; 1024]) -> Option<usize> {
     let n = cstr_len(p);
     let s = unsafe { core::slice::from_raw_parts(p, n) };
     let mut w = 0usize;
     let mut i = 0usize;
     while i < n {
+        // POSIX character class [:NAME:]
+        if i + 4 <= n && s[i] == b'[' && s[i + 1] == b':' {
+            let mut j = i + 2;
+            while j + 1 < n && !(s[j] == b':' && s[j + 1] == b']') { j += 1; }
+            if j + 1 < n && s[j] == b':' && s[j + 1] == b']' {
+                let name = &s[i + 2..j];
+                let ok = match name {
+                    b"alnum" => append_class(out, &mut w, |c| c.is_ascii_alphanumeric()),
+                    b"alpha" => append_class(out, &mut w, |c| c.is_ascii_alphabetic()),
+                    b"digit" => append_class(out, &mut w, |c| c.is_ascii_digit()),
+                    b"lower" => append_class(out, &mut w, |c| c.is_ascii_lowercase()),
+                    b"upper" => append_class(out, &mut w, |c| c.is_ascii_uppercase()),
+                    b"xdigit"=> append_class(out, &mut w, |c| c.is_ascii_hexdigit()),
+                    b"space" => append_class(out, &mut w, |c|
+                        matches!(c, b' ' | b'\t' | b'\n' | b'\r' | 0x0b | 0x0c)),
+                    b"blank" => append_class(out, &mut w, |c| c == b' ' || c == b'\t'),
+                    b"cntrl" => append_class(out, &mut w, |c| c < 0x20 || c == 0x7f),
+                    b"print" => append_class(out, &mut w, |c| (0x20..=0x7e).contains(&c)),
+                    b"graph" => append_class(out, &mut w, |c| (0x21..=0x7e).contains(&c)),
+                    b"punct" => append_class(out, &mut w, |c|
+                        (0x21..=0x7e).contains(&c)
+                            && !c.is_ascii_alphanumeric() && c != b' '),
+                    _ => false,
+                };
+                if !ok { return None; }
+                i = j + 2;
+                continue;
+            }
+        }
         // Decode a possibly-escaped byte at position i.
         let (b, adv) = if s[i] == b'\\' && i + 1 < n {
             let e = s[i + 1];
@@ -250,8 +293,10 @@ Translate, squeeze, and/or delete bytes from stdin to stdout.
                          membership is consulted
       --help    show this help and exit
 
-Sets accept literal bytes, 'a-z' style ranges, and '\\n' '\\t' '\\r'
-'\\0' '\\\\' escapes.
+Sets accept literal bytes, 'a-z' style ranges, '\\n' '\\t' '\\r' '\\0'
+'\\\\' escapes, and POSIX classes [:alpha:] [:digit:] [:space:]
+[:upper:] [:lower:] [:alnum:] [:xdigit:] [:blank:] [:cntrl:]
+[:print:] [:graph:] [:punct:].
 \0";
             let len = help.len() - 1;
             unsafe { let _ = syscall3(sysn::WRITE, 1, help.as_ptr() as u64, len as u64); }

@@ -1311,6 +1311,44 @@ Output control:
             }
             return 0;
         } else {
+            // Combined short flags for the no-argument letters: e.g.
+            // -in, -inv, -nlw. Letters that take a value (-A/-B/-C/-e/
+            // -f/-m) cannot combine. Refuse on unknown letter (likely
+            // a pattern).
+            let n = cstr_len(p);
+            if n >= 2 && unsafe { *p } == b'-' && unsafe { *p.add(1) } != b'-' {
+                let mut all_ok = true;
+                for i in 1..n {
+                    match unsafe { *p.add(i) } {
+                        b'n' => opts.show_lineno = true,
+                        b'b' => opts.byte_offset = true,
+                        b'i' => opts.icase = true,
+                        b'v' => opts.invert = true,
+                        b'w' => opts.word = true,
+                        b'x' => opts.line_match = true,
+                        b'o' => opts.only_matching = true,
+                        b'r' | b'R' => {
+                            opts.recursive = true;
+                            if opts.show_name == ShowName::Auto {
+                                opts.show_name = ShowName::Always;
+                            }
+                        }
+                        b'H' => opts.show_name = ShowName::Always,
+                        b'h' => opts.show_name = ShowName::Never,
+                        b'c' => opts.count = true,
+                        b'l' => opts.list = true,
+                        b'L' => opts.list_no_match = true,
+                        b'q' => opts.quiet = true,
+                        b'F' => {} // fixed-string is the only mode
+                        b'Z' => opts.null_term = true,
+                        b'z' => opts.sep = 0,
+                        b's' => opts.no_messages = true,
+                        b'a' | b'I' => {} // text/binary no-ops
+                        _ => { all_ok = false; break; }
+                    }
+                }
+                if all_ok { idx += 1; continue; }
+            }
             break;
         }
     }

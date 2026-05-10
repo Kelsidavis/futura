@@ -133,8 +133,10 @@ fn panic(_info: &PanicInfo) -> ! {
     }
 }
 
-// Resolve one link, return true on success.
-fn read_one(p: *const u8) -> bool {
+// Resolve one link, return true on success. `terminator` is the byte
+// emitted after the target — '\n' (default), 0 (with -z), or absent
+// (with -n) by passing a zero-length slice.
+fn read_one(p: *const u8, terminator: &[u8]) -> bool {
     let mut buf = [0u8; BUF];
 
     #[cfg(target_arch = "aarch64")]
@@ -164,7 +166,9 @@ fn read_one(p: *const u8) -> bool {
     }
     let n = n as usize;
     write_str(STDOUT, &buf[..n]);
-    write_str(STDOUT, b"\n");
+    if !terminator.is_empty() {
+        write_str(STDOUT, terminator);
+    }
 
     if n >= buf.len() - 1 {
         write_str(STDERR, b"rust-readlink: target truncated to fit buffer\n");
@@ -174,43 +178,78 @@ fn read_one(p: *const u8) -> bool {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
-    if argc == 2 {
-        let first = unsafe { *argv.add(1) };
-        if !first.is_null() && (first as usize) >= 0x10000 {
+    let mut idx: i32 = 1;
+    let mut suppress_newline = false;
+    let mut zero_term = false;
+    while idx < argc {
+        let p = unsafe { *argv.add(idx as usize) };
+        if p.is_null() || (p as usize) < 0x10000 { break; }
+        let mut n = 0; unsafe { while *p.add(n) != 0 { n += 1; } }
+        // --help
+        if n == 6 && {
             let want = b"--help";
-            let mut n = 0; unsafe { while *first.add(n) != 0 { n += 1; } }
-            if n == want.len() {
-                let mut ok = true;
-                for i in 0..want.len() {
-                    if unsafe { *first.add(i) } != want[i] { ok = false; break; }
-                }
-                if ok {
-                    let help: &[u8] = b"\
-Usage: rust-readlink LINK [LINK...]
+            let mut ok = true;
+            for i in 0..want.len() { if unsafe { *p.add(i) } != want[i] { ok = false; break; } }
+            ok
+        } {
+            let help: &[u8] = b"\
+Usage: rust-readlink [-n] [-z] LINK [LINK...]
 Print each LINK's symbolic-link target.
 
-  --help    show this help and exit
+  -n, --no-newline       do not print a trailing newline after the target
+  -z, --zero             terminate the target with NUL instead of newline
+      --help             show this help and exit
 \0";
-                    let len = help.len() - 1;
-                    unsafe { let _ = syscall3(sysn::WRITE, 1, help.as_ptr() as u64, len as u64); }
-                    return 0;
-                }
-            }
+            let len = help.len() - 1;
+            unsafe { let _ = syscall3(sysn::WRITE, 1, help.as_ptr() as u64, len as u64); }
+            return 0;
         }
+        // -n / --no-newline
+        let is_n = n == 2 && unsafe { *p == b'-' && *p.add(1) == b'n' };
+        let is_no_nl = n == 12 && {
+            let want = b"--no-newline";
+            let mut ok = true;
+            for i in 0..want.len() { if unsafe { *p.add(i) } != want[i] { ok = false; break; } }
+            ok
+        };
+        if is_n || is_no_nl { suppress_newline = true; idx += 1; continue; }
+        // -z / --zero
+        let is_z = n == 2 && unsafe { *p == b'-' && *p.add(1) == b'z' };
+        let is_zero = n == 6 && {
+            let want = b"--zero";
+            let mut ok = true;
+            for i in 0..want.len() { if unsafe { *p.add(i) } != want[i] { ok = false; break; } }
+            ok
+        };
+        if is_z || is_zero { zero_term = true; idx += 1; continue; }
+        if n == 2 && unsafe { *p == b'-' && *p.add(1) == b'-' } {
+            idx += 1;
+            break;
+        }
+        break;
     }
-    if argc < 2 {
-        write_str(STDERR, b"usage: rust-readlink <link> [<link>...]\n");
+    if idx >= argc {
+        write_str(STDERR, b"usage: rust-readlink [-n] [-z] <link> [<link>...]\n");
         return 1;
     }
+    // Build the per-target terminator once. Precedence: -n suppresses
+    // any terminator entirely (including -z's NUL), matching GNU.
+    let terminator: &[u8] = if suppress_newline {
+        &[]
+    } else if zero_term {
+        b"\0"
+    } else {
+        b"\n"
+    };
     let mut had_error = false;
-    for ai in 1..argc {
+    for ai in idx..argc {
         let p = unsafe { *argv.add(ai as usize) };
         if p.is_null() || (p as usize) < 0x10000 {
             write_str(STDERR, b"rust-readlink: invalid argument\n");
             had_error = true;
             continue;
         }
-        if !read_one(p) {
+        if !read_one(p, terminator) {
             had_error = true;
         }
     }

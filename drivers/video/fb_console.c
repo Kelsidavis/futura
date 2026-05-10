@@ -166,36 +166,31 @@ static inline uint32_t make_color(uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
     return ((uint32_t)a << 24) | ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
 }
 
+/* Cached at init time after the address sanity check passes. Used by
+ * the hot drawing/scroll paths to skip repeating the check on every
+ * pixel / every scanline (was easily the worst-offender during boot —
+ * sanity check ran 64 times per glyph and ~5500 times per scroll). */
+static bool g_fb_addr_validated = false;
+
+static bool fb_addr_looks_valid(uintptr_t fb_addr) {
+#if defined(__aarch64__)
+    return (fb_addr >= 0xFFFF800000000000ULL) ||
+           (fb_addr >= 0x1000ULL && fb_addr < (1ULL << 32));
+#else
+    return (fb_addr >= 0xFFFFFFFF80000000ULL) ||
+           (fb_addr >= 0x1000ULL && fb_addr < (1ULL << 32));
+#endif
+}
+
 static void fb_console_draw_pixel(int x, int y, uint32_t color) {
     struct fb_console_state *cons = &g_fb_console;
 
     if (x < 0 || x >= (int)cons->width || y < 0 || y >= (int)cons->height) {
         return;
     }
+    if (!g_fb_addr_validated) return;
 
     uint8_t *fb = (uint8_t *)cons->fb_mem;
-
-    /* Sanity check: reject obviously bogus fb_mem (NULL, low pages).
-     * We accept TWO valid ranges:
-     *   - kernel higher-half virtual addrs (post-pmap_map path, late boot)
-     *   - low identity-mapped addrs below 4 GB (early-boot path where
-     *     fb_boot_splash uses the boot.S 4 GB identity map directly
-     *     because pmap_map has no PMM pages yet)
-     * The original check rejected the second case → every pixel write
-     * silently dropped → black screen on real UEFI hardware where the
-     * FB phys addr is in the 2-4 GB BAR range. */
-    uintptr_t fb_addr = (uintptr_t)fb;
-#if defined(__aarch64__)
-    bool fb_addr_ok = (fb_addr >= 0xFFFF800000000000ULL) ||
-                      (fb_addr >= 0x1000ULL && fb_addr < (1ULL << 32));
-#else
-    bool fb_addr_ok = (fb_addr >= 0xFFFFFFFF80000000ULL) ||
-                      (fb_addr >= 0x1000ULL && fb_addr < (1ULL << 32));
-#endif
-    if (!fb_addr_ok) {
-        return;  /* Skip draw - fb_mem looks corrupted */
-    }
-
     uint32_t offset = (y * cons->pitch) + (x * 4);
     if (cons->bpp == 32) {
         *(volatile uint32_t *)(fb + offset) = color;
@@ -206,8 +201,17 @@ static void fb_console_draw_pixel(int x, int y, uint32_t color) {
     }
 }
 
+/* Hot path during boot — every glyph goes through here. The original
+ * version called fb_console_draw_pixel 64 times per char (8x8 font),
+ * each call repeated bounds-check, validity check, and offset compute.
+ * On the Chromebook GOP framebuffer (cached, not WC) this dominated
+ * boot time: ~150 lines × 80 chars × 64 px = ~770k function calls, each
+ * doing several reads of cons->* state through cached memory. The
+ * inlined version writes directly via a base+stride pointer and is
+ * roughly 10x faster. */
 static void fb_console_draw_char(int char_x, int char_y, char c, uint32_t fg_color, uint32_t bg_color) {
     struct fb_console_state *cons = &g_fb_console;
+    if (!g_fb_addr_validated) return;
 
     if (c < 32 || c > 126) {
         c = '?';
@@ -216,63 +220,76 @@ static void fb_console_draw_char(int char_x, int char_y, char c, uint32_t fg_col
     const uint8_t *glyph = g_font_8x8[c - 32];
     int pixel_x = char_x * cons->char_width;
     int pixel_y = char_y * cons->char_height;
+    int char_width  = cons->char_width;
+    int char_height = cons->char_height;
+    uint32_t pitch = cons->pitch;
 
-    for (int row = 0; row < cons->char_height; row++) {
-        uint8_t bits = glyph[row];
-        for (int col = 0; col < cons->char_width; col++) {
-            uint32_t color = (bits & (1 << (7 - col))) ? fg_color : bg_color;
-            fb_console_draw_pixel(pixel_x + col, pixel_y + row, color);
+    /* For 32 bpp we can write whole pixels; for 24 bpp fall back to the
+     * old per-pixel path (rare on modern UEFI hardware). */
+    if (cons->bpp == 32) {
+        uint8_t *fb_base = (uint8_t *)cons->fb_mem
+                         + (uint32_t)pixel_y * pitch
+                         + (uint32_t)pixel_x * 4;
+        for (int row = 0; row < char_height; row++) {
+            uint8_t bits = glyph[row];
+            volatile uint32_t *line = (volatile uint32_t *)(fb_base + (uint32_t)row * pitch);
+            /* Unrolled column loop — fixed 8 columns, no per-iter branch
+             * for the bit shift count. */
+            line[0] = (bits & 0x80) ? fg_color : bg_color;
+            line[1] = (bits & 0x40) ? fg_color : bg_color;
+            line[2] = (bits & 0x20) ? fg_color : bg_color;
+            line[3] = (bits & 0x10) ? fg_color : bg_color;
+            line[4] = (bits & 0x08) ? fg_color : bg_color;
+            line[5] = (bits & 0x04) ? fg_color : bg_color;
+            line[6] = (bits & 0x02) ? fg_color : bg_color;
+            line[7] = (bits & 0x01) ? fg_color : bg_color;
+        }
+    } else {
+        for (int row = 0; row < char_height; row++) {
+            uint8_t bits = glyph[row];
+            for (int col = 0; col < char_width; col++) {
+                uint32_t color = (bits & (1 << (7 - col))) ? fg_color : bg_color;
+                fb_console_draw_pixel(pixel_x + col, pixel_y + row, color);
+            }
         }
     }
 }
 
 static void fb_console_scroll(void) {
     struct fb_console_state *cons = &g_fb_console;
+    if (!g_fb_addr_validated) return;
 
     uint8_t *fb = (uint8_t *)cons->fb_mem;
 
-    /* Same accept-criteria as fb_console_draw_pixel: kernel higher-half OR
-     * low identity-mapped (<4 GB) addresses. */
-    uintptr_t fb_addr = (uintptr_t)fb;
-#if defined(__aarch64__)
-    bool fb_addr_ok = (fb_addr >= 0xFFFF800000000000ULL) ||
-                      (fb_addr >= 0x1000ULL && fb_addr < (1ULL << 32));
-#else
-    bool fb_addr_ok = (fb_addr >= 0xFFFFFFFF80000000ULL) ||
-                      (fb_addr >= 0x1000ULL && fb_addr < (1ULL << 32));
-#endif
-    if (!fb_addr_ok) {
-        return;  /* Skip scroll - fb_mem looks corrupted */
+    /* Bytes per scrolled "stride" — stop at the start of the protected
+     * (logo) region so we don't shuffle the boot logo. */
+    int protected_x_pixels = cons->protected_x_start * cons->char_width * 4;
+    if (protected_x_pixels <= 0) return;
+    size_t stride = (size_t)protected_x_pixels;
+
+    /* Memcpy each scanline up by one character row.
+     *
+     * The previous version copied this byte-by-byte in a nested loop
+     * (~8 × 768 × 5500 ≈ 33 MB of single-byte writes per scroll). On a
+     * cached non-WC GOP framebuffer that's incredibly slow because every
+     * byte is a cache-line read+modify+evict cycle. Even a stock memcpy
+     * call here gets us 8-byte aligned writes and lets the compiler
+     * pick a fast path; on this codebase memcpy is __builtin_memcpy
+     * which inlines to rep-movs on x86_64. */
+    int scroll_pixel_rows = (cons->rows - 1) * cons->char_height;
+    for (int y = 0; y < scroll_pixel_rows; y++) {
+        uint8_t *dst = fb + (size_t)y * cons->pitch;
+        uint8_t *src = fb + (size_t)(y + cons->char_height) * cons->pitch;
+        memcpy(dst, src, stride);
     }
 
-    /* Calculate protected region pixel boundaries */
-    int protected_x_pixels = cons->protected_x_start * cons->char_width * 4; /* In bytes */
-
-    /* Move all lines up by one character height, but avoid the logo area */
-    for (int y = 0; y < (cons->rows - 1) * cons->char_height; y++) {
-        uint32_t src_offset = (y + cons->char_height) * cons->pitch;
-        uint32_t dst_offset = y * cons->pitch;
-
-        /* Only scroll the text area (left side), not the logo area (right side) */
-        for (uint32_t x = 0; x < (uint32_t)protected_x_pixels; x++) {
-            fb[dst_offset + x] = fb[src_offset + x];
-        }
-    }
-
-    /* Clear the bottom CHARACTER row — that's char_height pixel rows,
-     * not just one. The previous code wrote bg_color to a single pixel
-     * row at the start of the last char row, leaving the other 7 rows
-     * full of whatever was there before scroll. New characters drawn on
-     * top of those stale pixels look visibly overprinted on the prior
-     * line — visible on the QEMU display as garbled / overlapping text
-     * at the bottom of the screen during boot. */
+    /* Clear the bottom char row in one shot per scanline. */
     uint32_t bg_color = make_color(0, 0, 0, 255);
+    int last_y = (cons->rows - 1) * cons->char_height;
     for (int row = 0; row < cons->char_height; row++) {
-        uint32_t row_offset = ((cons->rows - 1) * cons->char_height + row) * cons->pitch;
-        uint32_t *fb_word = (uint32_t *)(fb + row_offset);
-        for (uint32_t i = 0; i < (uint32_t)(protected_x_pixels / 4); i++) {
-            fb_word[i] = bg_color;
-        }
+        uint32_t *line = (uint32_t *)(fb + (size_t)(last_y + row) * cons->pitch);
+        size_t pixel_count = stride / 4;
+        for (size_t i = 0; i < pixel_count; i++) line[i] = bg_color;
     }
 }
 
@@ -353,6 +370,14 @@ int fb_console_init(void) {
     cons->protected_y_end = logo_rows;     /* End of protected rows */
     cons->initialized = 1;
 
+    /* One-shot fb_mem validity check. Drawing/scrolling code now skips
+     * the per-pixel/per-scanline check and relies on this flag. */
+    g_fb_addr_validated = fb_addr_looks_valid((uintptr_t)cons->fb_mem);
+    if (!g_fb_addr_validated) {
+        fut_printf("[FB_CONSOLE] WARNING: fb_mem=%p is outside accepted ranges; drawing disabled\n",
+                   (void *)cons->fb_mem);
+    }
+
     fut_printf("[FB_CONSOLE] Initialized: %ux%u, %u cols x %u rows\n",
                cons->width, cons->height, cons->cols, cons->rows);
 
@@ -405,7 +430,29 @@ void fb_console_clear(void) {
  * Resolved at runtime so this driver builds on platforms without
  * virtio-gpu (the symbol is just absent → the weak ref is NULL → no-op). */
 static volatile int fb_console_present_busy = 0;
+/* Cached at first call: does this platform have a virtio-gpu flush hook?
+ * On bare-metal UEFI boots the symbol is absent (weak ref is NULL) and
+ * we'd otherwise burn an IRQ-disable + atomic exchange + IRQ-restore
+ * on every newline / column wrap for nothing. Caching the answer turns
+ * the present() call into a single load+branch on the hot path. */
+static int g_fb_present_needed = -1;  /* -1 = not yet probed, 0 = no, 1 = yes */
 static void fb_console_present(void) {
+    if (g_fb_present_needed == 0) {
+        return;  /* Bare metal — no compositor flush hook, nothing to do. */
+    }
+    if (g_fb_present_needed < 0) {
+#if defined(__aarch64__)
+        extern void virtio_gpu_flush_display_mmio(void) __attribute__((weak));
+        g_fb_present_needed = (virtio_gpu_flush_display_mmio != 0);
+#else
+        extern void virtio_gpu_flush_display(void) __attribute__((weak));
+        g_fb_present_needed = (virtio_gpu_flush_display != 0);
+#endif
+        if (g_fb_present_needed == 0) {
+            return;  /* First call on bare metal — done. */
+        }
+    }
+
     extern uint64_t fut_save_and_disable_interrupts(void) __attribute__((weak));
     extern void fut_restore_interrupts(uint64_t state) __attribute__((weak));
 

@@ -842,7 +842,12 @@ void fut_platform_init(uint32_t multiboot_magic __attribute__((unused)),
     /* BUILD-TAG: tells us at-a-glance if the user is actually running the
      * latest ISO. Bump this string whenever you reflash, so a stale boot
      * is obvious from the screen. */
-    fut_printf("[BUILD-TAG] BARE-METAL-DIAG-ITER-17 (acpi_thermal: gate AMD MSR on CPUID vendor)\n");
+    /* __DATE__ and __TIME__ stamp the actual compile time of this TU,
+     * which the Makefile force-rebuilds on every kernel link by listing
+     * platform_init.c as part of the dependency closure. The string
+     * changes every build, so a stale boot is obvious from the screen. */
+    fut_printf("[BUILD] Futura kernel built %s %s (iter-18: fb_console hot path)\n",
+               __DATE__, __TIME__);
 
     /* Load GDT */
     fut_serial_puts("[INIT] Loading GDT...\n");

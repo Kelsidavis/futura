@@ -199,6 +199,70 @@ void *fb_get_virt_addr(void) {
 #endif
 
 #ifdef __x86_64__
+/* Render the Futura banner + Rory the Ouroboros logo to the framebuffer.
+ * Must be called only after fb_console_init has succeeded and g_fb_virt
+ * points at a writable framebuffer mapping. Called from both the
+ * pmap_map path and the early-boot identity-map fast path. */
+static void fb_boot_render_banner_and_logo(void) {
+    /* Banner via fut_printf — uses fb_console which is already set up. */
+    fut_printf("\n");
+    fut_printf("-------------------------------\n");
+    fut_printf("   ____     __                 \n");
+    fut_printf("  / __/_ __/ /___ _________ _  \n");
+    fut_printf(" / _// // / __/ // / __/ _ `/  \n");
+    fut_printf("/_/  \\_,_/\\__\\_,_/_/  \\_,_/   \n");
+    fut_printf("-------------------------------\n");
+    fut_printf(" Futura OS\n");
+    fut_printf("-------------------------------\n");
+    fut_printf("\n");
+
+    /* Logo: 24-bit BMP, top-right corner with 20px margin. */
+    if (!g_fb_virt) return;
+    volatile uint32_t *fb = (volatile uint32_t *)g_fb_virt;
+    uint32_t w = g_fb_hw.info.width;
+    uint32_t h = g_fb_hw.info.height;
+    const unsigned char *bmp = boot_bmp;
+    const uint32_t bmp_data_len = sizeof(boot_bmp);
+    if (bmp_data_len < 30) {
+        fut_printf("[FB] BMP logo too small for header\n");
+        return;
+    }
+    uint32_t pixel_offset = bmp[10] | (bmp[11] << 8) | (bmp[12] << 16) | (bmp[13] << 24);
+    uint32_t bmp_width  = bmp[18] | (bmp[19] << 8) | (bmp[20] << 16) | (bmp[21] << 24);
+    uint32_t bmp_height = bmp[22] | (bmp[23] << 8) | (bmp[24] << 16) | (bmp[25] << 24);
+    uint16_t bpp = bmp[28] | (bmp[29] << 8);
+    if (bpp != 24) {
+        fut_printf("[FB] BMP logo must be 24-bit color\n");
+        return;
+    }
+    if (bmp_width == 0 || bmp_height == 0 || bmp_width > 4096 || bmp_height > 4096) {
+        fut_printf("[FB] BMP logo dimensions out of range\n");
+        return;
+    }
+
+    int margin = 20;
+    int logo_x = (int)w - margin - (int)bmp_width;
+    int logo_y = margin;
+    uint32_t row_size = ((bmp_width * 3 + 3) / 4) * 4;
+    for (uint32_t y = 0; y < bmp_height; y++) {
+        for (uint32_t x = 0; x < bmp_width; x++) {
+            uint32_t bmp_y = bmp_height - 1 - y;
+            uint32_t pixel_idx = pixel_offset + (bmp_y * row_size) + (x * 3);
+            if (pixel_idx + 2 >= bmp_data_len) continue;
+            uint8_t b = bmp[pixel_idx + 0];
+            uint8_t g = bmp[pixel_idx + 1];
+            uint8_t r = bmp[pixel_idx + 2];
+            if (r == 0 && g == 0 && b == 0) continue;       /* transparent */
+            uint32_t color = 0xFF000000 | (r << 16) | (g << 8) | b;
+            int fb_x = logo_x + (int)x;
+            int fb_y = logo_y + (int)y;
+            if (fb_x >= 0 && fb_x < (int)w && fb_y >= 0 && fb_y < (int)h) {
+                fb[fb_y * w + fb_x] = color;
+            }
+        }
+    }
+}
+
 void fb_boot_splash(void) {
     /* Attempt to initialize device-specific drivers if applicable */
     /* For virtio-gpu (vendor 0x1af4), initialize VIRTIO GPU device */
@@ -274,6 +338,7 @@ void fb_boot_splash(void) {
 
         extern int fb_console_init(void);
         fb_console_init();
+        fb_boot_render_banner_and_logo();
         return;
     }
 
@@ -302,88 +367,7 @@ void fb_boot_splash(void) {
         /* Initialize framebuffer console for text output */
         extern int fb_console_init(void);
         fb_console_init();
-
-        /* Display Futura banner on framebuffer */
-        fut_printf("\n");
-        fut_printf("-------------------------------\n");
-        fut_printf("   ____     __                 \n");
-        fut_printf("  / __/_ __/ /___ _________ _  \n");
-        fut_printf(" / _// // / __/ // / __/ _ `/  \n");
-        fut_printf("/_/  \\_,_/\\__\\_,_/_/  \\_,_/   \n");
-        fut_printf("-------------------------------\n");
-        fut_printf(" Futura OS\n");
-        fut_printf("-------------------------------\n");
-        fut_printf("\n");
-
-        /* Draw Rory the Ouroboros logo from BMP in top-right corner */
-        volatile uint32_t *fb = (volatile uint32_t *)g_fb_virt;
-        uint32_t w = g_fb_hw.info.width;
-        uint32_t h = g_fb_hw.info.height;
-
-        /* Parse BMP header - validate minimum BMP header size */
-        const unsigned char *bmp = boot_bmp;
-        const uint32_t bmp_data_len = sizeof(boot_bmp);
-        if (bmp_data_len < 30) {
-            fut_printf("[FB] BMP logo too small for header\n");
-            return;
-        }
-        uint32_t pixel_offset = bmp[10] | (bmp[11] << 8) | (bmp[12] << 16) | (bmp[13] << 24);
-        uint32_t bmp_width = bmp[18] | (bmp[19] << 8) | (bmp[20] << 16) | (bmp[21] << 24);
-        uint32_t bmp_height = bmp[22] | (bmp[23] << 8) | (bmp[24] << 16) | (bmp[25] << 24);
-        uint16_t bpp = bmp[28] | (bmp[29] << 8);
-
-        if (bpp != 24) {
-            fut_printf("[FB] BMP logo must be 24-bit color\n");
-            return;
-        }
-
-        if (bmp_width == 0 || bmp_height == 0 || bmp_width > 4096 || bmp_height > 4096) {
-            fut_printf("[FB] BMP logo dimensions out of range\n");
-            return;
-        }
-
-        /* Position in top-right corner with margin */
-        int margin = 20;
-        int logo_x = w - margin - bmp_width;
-        int logo_y = margin;
-
-        /* BMP rows are padded to 4-byte boundary */
-        uint32_t row_size = ((bmp_width * 3 + 3) / 4) * 4;
-
-        /* Render BMP (BMPs are stored bottom-to-top, BGR format) */
-        for (uint32_t y = 0; y < bmp_height; y++) {
-            for (uint32_t x = 0; x < bmp_width; x++) {
-                /* BMP is bottom-to-top, so invert y */
-                uint32_t bmp_y = bmp_height - 1 - y;
-                uint32_t pixel_idx = pixel_offset + (bmp_y * row_size) + (x * 3);
-
-                /* Bounds-check BMP pixel access */
-                if (pixel_idx + 2 >= bmp_data_len) {
-                    continue;
-                }
-
-                /* Read BGR pixel */
-                uint8_t b = bmp[pixel_idx + 0];
-                uint8_t g = bmp[pixel_idx + 1];
-                uint8_t r = bmp[pixel_idx + 2];
-
-                /* Skip transparent pixels (black background) */
-                if (r == 0 && g == 0 && b == 0) {
-                    continue;
-                }
-
-                /* Convert to ARGB */
-                uint32_t color = 0xFF000000 | (r << 16) | (g << 8) | b;
-
-                /* Write to framebuffer */
-                int fb_x = logo_x + x;
-                int fb_y = logo_y + y;
-                if (fb_x >= 0 && fb_x < (int)w && fb_y >= 0 && fb_y < (int)h) {
-                    fb[fb_y * w + fb_x] = color;
-                }
-            }
-        }
-
+        fb_boot_render_banner_and_logo();
         return;
     }
 

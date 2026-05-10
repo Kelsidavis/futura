@@ -275,7 +275,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
 
     // Parse the optional -p / -m / -v flags.
     while let Some(p) = argv_get(argc, argv, idx) {
-        if arg_is(p, b"-p") {
+        if arg_is(p, b"-p") || arg_is(p, b"--parents") {
             p_flag = true;
             idx += 1;
         } else if arg_is(p, b"-v") || arg_is(p, b"--verbose") {

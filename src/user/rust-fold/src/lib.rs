@@ -313,7 +313,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             idx += 1;
             continue;
         }
-        if cstr_eq(p, b"-w") {
+        if cstr_eq(p, b"-w") || cstr_eq(p, b"--width") {
             if idx + 1 >= argc {
                 write_str(STDERR, b"rust-fold: -w needs an argument\n");
                 return 2;

@@ -328,15 +328,15 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             i += 1;
             continue;
         }
-        if cstr_eq(p, b"-c") {
+        if cstr_eq(p, b"-c") || cstr_eq(p, b"--count") {
             mode.show_count = true;
-        } else if cstr_eq(p, b"-d") {
+        } else if cstr_eq(p, b"-d") || cstr_eq(p, b"--repeated") {
             mode.only_dups = true;
         } else if cstr_eq(p, b"-D") || cstr_eq(p, b"--all-repeated") {
             mode.all_repeated = true;
-        } else if cstr_eq(p, b"-u") {
+        } else if cstr_eq(p, b"-u") || cstr_eq(p, b"--unique") {
             mode.only_uniq = true;
-        } else if cstr_eq(p, b"-i") {
+        } else if cstr_eq(p, b"-i") || cstr_eq(p, b"--ignore-case") {
             mode.icase = true;
         } else if cstr_eq(p, b"-z") || cstr_eq(p, b"--zero-terminated") {
             mode.sep = 0;

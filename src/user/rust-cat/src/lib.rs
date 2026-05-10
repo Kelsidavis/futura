@@ -485,12 +485,24 @@ A single '-' in the FILE list means standard input.
                                        help.as_ptr() as u64, len as u64); }
             return 0;
         }
-        if arg_is(p, b"-n") { opts.number = true; idx += 1; continue; }
-        if arg_is(p, b"-b") { opts.number_nonblank = true; idx += 1; continue; }
-        if arg_is(p, b"-s") { opts.squeeze = true; idx += 1; continue; }
-        if arg_is(p, b"-E") { opts.show_ends = true; idx += 1; continue; }
-        if arg_is(p, b"-T") { opts.show_tabs = true; idx += 1; continue; }
-        if arg_is(p, b"-v") { opts.show_nonprint = true; idx += 1; continue; }
+        if arg_is(p, b"-n") || arg_is(p, b"--number") {
+            opts.number = true; idx += 1; continue;
+        }
+        if arg_is(p, b"-b") || arg_is(p, b"--number-nonblank") {
+            opts.number_nonblank = true; idx += 1; continue;
+        }
+        if arg_is(p, b"-s") || arg_is(p, b"--squeeze-blank") {
+            opts.squeeze = true; idx += 1; continue;
+        }
+        if arg_is(p, b"-E") || arg_is(p, b"--show-ends") {
+            opts.show_ends = true; idx += 1; continue;
+        }
+        if arg_is(p, b"-T") || arg_is(p, b"--show-tabs") {
+            opts.show_tabs = true; idx += 1; continue;
+        }
+        if arg_is(p, b"-v") || arg_is(p, b"--show-nonprinting") {
+            opts.show_nonprint = true; idx += 1; continue;
+        }
         if arg_is(p, b"-e") {
             opts.show_nonprint = true;
             opts.show_ends = true;

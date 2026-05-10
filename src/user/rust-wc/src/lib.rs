@@ -370,16 +370,16 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
     let mut idx: usize = 1;
     let mut show: u8 = 0;
     while let Some(p) = argv_get(argc, argv, idx) {
-        if arg_is(p, b"-l") {
+        if arg_is(p, b"-l") || arg_is(p, b"--lines") {
             show |= 1;
             idx += 1;
-        } else if arg_is(p, b"-w") {
+        } else if arg_is(p, b"-w") || arg_is(p, b"--words") {
             show |= 2;
             idx += 1;
-        } else if arg_is(p, b"-c") {
+        } else if arg_is(p, b"-c") || arg_is(p, b"--bytes") {
             show |= 4;
             idx += 1;
-        } else if arg_is(p, b"-m") {
+        } else if arg_is(p, b"-m") || arg_is(p, b"--chars") {
             // For ASCII inputs `-m` (chars) equals `-c` (bytes).
             show |= 4;
             idx += 1;

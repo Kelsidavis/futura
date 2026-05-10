@@ -2840,23 +2840,35 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
         if (caller_task && caller_task->fd_table && task->fd_table) {
             int max = caller_task->max_fds;
             if (max > (int)task->max_fds) max = (int)task->max_fds;
+            ELF_LOG("[EXEC-ELF] inherit fds: max=%d caller=%p task=%p\n",
+                    max, caller_task, task);
             int inherited = 0;
             for (int i = 0; i < max; i++) {
                 struct fut_file *f = caller_task->fd_table[i];
                 int cloexec = (caller_task->fd_flags && (caller_task->fd_flags[i] & FD_CLOEXEC));
                 if (f && !cloexec) {
+                    ELF_LOG("[EXEC-ELF]   fd %d: refing file %p\n", i, f);
                     vfs_file_ref(f);
                     task->fd_table[i] = f;
                     if (task->fd_flags) task->fd_flags[i] = 0;
                     inherited++;
                 }
             }
+            ELF_LOG("[EXEC-ELF] inherited %d fds\n", inherited);
+        } else {
+            ELF_LOG("[EXEC-ELF] inherit fds: skipped (caller=%p caller_fd_table=%p task_fd_table=%p)\n",
+                    caller_task,
+                    caller_task ? caller_task->fd_table : NULL,
+                    task->fd_table);
         }
 
         /* Close epoll instances marked EPOLL_CLOEXEC */
         if (caller_task) {
+            ELF_LOG("[EXEC-ELF] epoll_close_cloexec(pid=%llu)\n",
+                    (unsigned long long)caller_task->pid);
             extern void epoll_close_cloexec(uint64_t pid);
             epoll_close_cloexec(caller_task->pid);
+            ELF_LOG("[EXEC-ELF] epoll_close_cloexec done\n");
         }
 
         /* Open /dev/console only for stdio fds that are still unset */

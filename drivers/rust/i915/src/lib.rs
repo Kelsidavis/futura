@@ -136,6 +136,10 @@ struct I915State {
     /// the BCS command ring buffer).
     pub scratch_gpu_va: u64,
     pub scratch_phys: u64,
+    /// CPU-side kernel virtual address of the same page (we write
+    /// commands here; the GPU sees the page through scratch_gpu_va
+    /// via the GTT). pmm_alloc_page returns this directly. */
+    pub scratch_virt: *mut u8,
 }
 
 unsafe impl Send for I915State {}
@@ -154,6 +158,7 @@ static STATE: StaticCell<I915State> = StaticCell::new(I915State {
     gtt_entries_used: 0,
     scratch_gpu_va: 0,
     scratch_phys: 0,
+    scratch_virt: core::ptr::null_mut(),
 });
 
 #[inline(always)]
@@ -377,7 +382,7 @@ pub extern "C" fn i915_gtt_init() -> i32 {
 
     /* Allocate a 4 KiB scratch page in DRAM. Phase 3 will reuse this
      * (or replace it with a larger ring) for BCS command submission. */
-    let (_scratch_virt, scratch_phys) = match alloc_page_phys() {
+    let (scratch_virt, scratch_phys) = match alloc_page_phys() {
         Some(p) => p,
         None => {
             log("i915_gtt_init: PMM alloc for scratch page failed");
@@ -419,6 +424,7 @@ pub extern "C" fn i915_gtt_init() -> i32 {
         (*st).gtt_entries_used = 1;
         (*st).scratch_gpu_va = scratch_gpu_va;
         (*st).scratch_phys = scratch_phys;
+        (*st).scratch_virt = scratch_virt;
         (*st).gtt_initialized = true;
     }
 
@@ -431,4 +437,175 @@ pub extern "C" fn i915_gtt_init() -> i32 {
 pub extern "C" fn i915_gtt_ready() -> bool {
     let st = STATE.get();
     unsafe { (*st).gtt_initialized }
+}
+
+// ── Phase 3: BCS (Blitter Command Streamer) ring buffer init ──
+//
+// The BCS is one of several Gen9 command streamers (RCS=render, BCS=blit,
+// VCS=video, VECS=video-enhance). For replacing fb_console_scroll's CPU
+// memcpy with a GPU 2D copy, BCS is the engine we want — XY_SRC_COPY_BLT
+// is its core command.
+//
+// MMIO layout (offsets from BAR0 MMIO base):
+//   0x22030  BCS_RING_BUFFER_TAIL    (R/W, byte offset, 4-byte aligned)
+//   0x22034  BCS_RING_BUFFER_HEAD    (R/O for SW, hardware-advanced)
+//   0x22038  BCS_RING_BUFFER_START   (R/W, GPU VA of ring base, 4 KiB aligned)
+//   0x2203C  BCS_RING_BUFFER_CTL     (R/W, enable + buffer length)
+//
+// Ring submission protocol:
+//   1. Forcewake the GT (BCS register accesses require the engine block
+//      to be powered up; on Gen9 LP the BCS shares the RENDER forcewake
+//      domain).
+//   2. Write commands to the ring at byte offset RING_TAIL.
+//   3. Bump RING_TAIL by the command length.
+//   4. The hardware advances RING_HEAD as it consumes commands.
+//   5. Poll HEAD == TAIL for completion.
+//
+// MI_NOOP is encoded as the 32-bit DWORD 0x00000000 — opcode 0 in the
+// MI command class, length 0 (single DWORD command).
+//
+// Refs: PRM Vol 2 (Command Reference), Vol 7 (Forcewake protocol).
+
+const BCS_RING_TAIL:  u32 = 0x22030;
+const BCS_RING_HEAD:  u32 = 0x22034;
+const BCS_RING_START: u32 = 0x22038;
+const BCS_RING_CTL:   u32 = 0x2203C;
+
+/// Forcewake "kernel" request for the RENDER domain on Gen9. Setting
+/// bit 0 here (with the corresponding bit 16 enable-mask) requests the
+/// engine block to wake from RC6/RC7. The hardware acknowledges via
+/// FORCEWAKE_ACK_RENDER.
+const FORCEWAKE_RENDER:     u32 = 0xA188;
+const FORCEWAKE_ACK_RENDER: u32 = 0x0D84;
+
+const RING_SIZE: usize = 4096;
+
+#[inline(always)]
+unsafe fn mmio_read32_at(base: *const u8, offset: u32) -> u32 {
+    unsafe { core::ptr::read_volatile(base.add(offset as usize) as *const u32) }
+}
+
+#[inline(always)]
+unsafe fn mmio_write32_at(base: *mut u8, offset: u32, val: u32) {
+    unsafe { core::ptr::write_volatile(base.add(offset as usize) as *mut u32, val) };
+}
+
+/// Acquire the RENDER forcewake. Sets bit 0 (with mask bit 16 to indicate
+/// we're writing bit 0) and polls the ACK register for the same bit.
+/// Returns true on success; false if the ACK never asserted.
+fn forcewake_get_render(mmio: *mut u8) -> bool {
+    unsafe { mmio_write32_at(mmio, FORCEWAKE_RENDER, (1u32 << 16) | 1) };
+    for _ in 0..50_000 {
+        let ack = unsafe { mmio_read32_at(mmio, FORCEWAKE_ACK_RENDER) };
+        if ack & 1 != 0 {
+            return true;
+        }
+    }
+    false
+}
+
+/// Release the RENDER forcewake. Clears bit 0 (with mask bit 16).
+fn forcewake_put_render(mmio: *mut u8) {
+    unsafe { mmio_write32_at(mmio, FORCEWAKE_RENDER, 1u32 << 16) };
+}
+
+/// Phase 3 entry point. Allocates a ring buffer, maps it through the
+/// GTT, programs the BCS RING_* registers, submits a single MI_NOOP,
+/// and waits for the engine to drain it. Returns 0 on success.
+#[unsafe(no_mangle)]
+pub extern "C" fn i915_bcs_init() -> i32 {
+    let st = STATE.get();
+    if !unsafe { (*st).gtt_initialized } {
+        log("i915_bcs_init: GTT not initialized; skipping");
+        return -1;
+    }
+
+    let mmio = unsafe { (*st).mmio_base };
+    if mmio.is_null() {
+        log("i915_bcs_init: MMIO base NULL");
+        return -2;
+    }
+
+    /* Allocate the ring buffer in DRAM. The scratch page from phase 2
+     * is at the very top of the GTT range; reuse it for the ring so we
+     * don't burn another PTE. (The "scratch" name was always going to
+     * be the ring once we got here.) */
+    let ring_phys = unsafe { (*st).scratch_phys };
+    let ring_gpu_va = unsafe { (*st).scratch_gpu_va };
+    if ring_phys == 0 || ring_gpu_va == 0 {
+        log("i915_bcs_init: scratch page from phase 2 missing");
+        return -3;
+    }
+
+    /* CPU-side view of the ring page was stashed in phase 2 (the same
+     * pointer pmm returned to us). The GPU sees the same physical page
+     * through the GTT mapping installed in phase 2. */
+    let ring_virt = unsafe { (*st).scratch_virt } as *mut u32;
+    if ring_virt.is_null() {
+        log("i915_bcs_init: scratch_virt missing from phase 2");
+        return -4;
+    }
+
+    /* Zero the ring and write a single MI_NOOP at offset 0. */
+    for i in 0..(RING_SIZE / 4) {
+        unsafe { core::ptr::write_volatile(ring_virt.add(i), 0) };
+    }
+    /* MI_NOOP is just 0x00000000 — opcode 0, length 0. */
+    unsafe { core::ptr::write_volatile(ring_virt, 0x00000000u32) };
+
+    /* Forcewake the render domain (Gen9 LP: BCS shares this domain). */
+    if !forcewake_get_render(mmio) {
+        log("i915_bcs_init: forcewake RENDER ACK timeout");
+        return -5;
+    }
+
+    unsafe {
+        /* Disable ring before reprogramming. */
+        mmio_write32_at(mmio, BCS_RING_CTL, 0);
+        /* Reset HEAD and TAIL. */
+        mmio_write32_at(mmio, BCS_RING_HEAD, 0);
+        mmio_write32_at(mmio, BCS_RING_TAIL, 0);
+        /* Point ring at our GTT VA (must fit in 32 bits — Gen9 GGTT). */
+        mmio_write32_at(mmio, BCS_RING_START, ring_gpu_va as u32);
+        /* Enable ring with length = 4 KiB.
+         *   bit 0       = ring enable
+         *   bits 20..12 = (size_bytes - PAGE_SIZE) / PAGE_SIZE field
+         * For 4 KiB → 0, so CTL = 0x1. */
+        mmio_write32_at(mmio, BCS_RING_CTL, 0x1);
+
+        /* Submit one MI_NOOP by bumping TAIL past it. */
+        mmio_write32_at(mmio, BCS_RING_TAIL, 4);
+
+        /* Wait for HEAD to catch up to TAIL — BCS has consumed the NOOP. */
+        let mut drained = false;
+        for _ in 0..1_000_000 {
+            let head = mmio_read32_at(mmio, BCS_RING_HEAD);
+            let tail = mmio_read32_at(mmio, BCS_RING_TAIL);
+            if (head & !0x3F) == (tail & !0x3F) {
+                drained = true;
+                break;
+            }
+        }
+
+        let final_head = mmio_read32_at(mmio, BCS_RING_HEAD);
+        let final_tail = mmio_read32_at(mmio, BCS_RING_TAIL);
+
+        forcewake_put_render(mmio);
+
+        if !drained {
+            fut_printf(
+                b"i915_bcs_init: NOOP did not drain - HEAD=0x%x TAIL=0x%x\n\0".as_ptr(),
+                final_head, final_tail,
+            );
+            return -6;
+        }
+
+        fut_printf(
+            b"i915: BCS ring drained MI_NOOP - HEAD=0x%x TAIL=0x%x (engine alive)\n\0".as_ptr(),
+            final_head, final_tail,
+        );
+    }
+
+    log("i915: phase 3 complete (BCS ring + NOOP roundtrip). Phase 4 (BLT scroll) is next.");
+    0
 }

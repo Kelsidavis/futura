@@ -1841,6 +1841,7 @@ void fut_kernel_main(void) {
             extern int intel_ipu_init(void);
             extern int i915_init(void);
             extern int i915_gtt_init(void);
+            extern int i915_bcs_init(void);
 
             intel_vtd_init(0);
             intel_pmc_init();
@@ -1871,6 +1872,8 @@ void fut_kernel_main(void) {
              * Pre-req for phase 3 (BCS ring buffer) which lives in this
              * GTT VA range. */
             i915_gtt_init();
+            /* Phase 3: bring up BCS engine, run NOOP through ring. */
+            i915_bcs_init();
             /* intel_hda_hdmi_init() intentionally NOT called.
              * The Rust function takes (verb_fn: HdaVerbFn, codec_addr: u8)
              * but the C extern was zero-arg, so verb_fn read whatever

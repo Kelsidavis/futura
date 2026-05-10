@@ -271,6 +271,7 @@ struct Counts {
     lines: u64,
     words: u64,
     bytes: u64,
+    max_line: u64,
 }
 
 fn is_space(c: u8) -> bool {
@@ -280,6 +281,7 @@ fn is_space(c: u8) -> bool {
 fn count_fd(fd: i32, buf: &mut [u8]) -> Result<Counts, ()> {
     let mut c = Counts::default();
     let mut in_word = false;
+    let mut cur_line: u64 = 0;
     loop {
         let n = unsafe {
             syscall3(
@@ -300,6 +302,10 @@ fn count_fd(fd: i32, buf: &mut [u8]) -> Result<Counts, ()> {
         for &b in &buf[..n] {
             if b == b'\n' {
                 c.lines += 1;
+                if cur_line > c.max_line { c.max_line = cur_line; }
+                cur_line = 0;
+            } else {
+                cur_line += 1;
             }
             if is_space(b) {
                 in_word = false;
@@ -309,6 +315,8 @@ fn count_fd(fd: i32, buf: &mut [u8]) -> Result<Counts, ()> {
             }
         }
     }
+    // Trailing line without newline still counts toward max line length.
+    if cur_line > c.max_line { c.max_line = cur_line; }
     Ok(c)
 }
 
@@ -334,7 +342,17 @@ fn print_counts(c: Counts, show: u8, name: Option<&[u8]>) {
         }
         let n = fmt_u64(c.bytes, &mut numbuf);
         write_all(STDOUT, &numbuf[..n]);
+        wrote = true;
     }
+    if show & 8 != 0 {
+        if wrote {
+            write_str(STDOUT, b"  ");
+        }
+        let n = fmt_u64(c.max_line, &mut numbuf);
+        write_all(STDOUT, &numbuf[..n]);
+        wrote = true;
+    }
+    let _ = wrote;
     if let Some(name) = name {
         write_str(STDOUT, b"  ");
         write_all(STDOUT, name);
@@ -356,6 +374,13 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         } else if arg_is(p, b"-c") {
             show |= 4;
             idx += 1;
+        } else if arg_is(p, b"-m") {
+            // For ASCII inputs `-m` (chars) equals `-c` (bytes).
+            show |= 4;
+            idx += 1;
+        } else if arg_is(p, b"-L") || arg_is(p, b"--max-line-length") {
+            show |= 8;
+            idx += 1;
         } else if arg_is(p, b"--") {
             idx += 1;
             break;
@@ -368,6 +393,8 @@ all three are shown. With multiple FILEs, also print a total.
   -l        count lines (newlines)
   -w        count whitespace-separated words
   -c        count bytes
+  -m        count chars (same as -c for ASCII inputs)
+  -L, --max-line-length   length of the longest line
       --help    show this help and exit
 
 A single '-' in the FILE list means standard input.
@@ -431,6 +458,7 @@ A single '-' in the FILE list means standard input.
                     total.lines += c.lines;
                     total.words += c.words;
                     total.bytes += c.bytes;
+                    if c.max_line > total.max_line { total.max_line = c.max_line; }
                     print_counts(c, show, Some(name));
                 }
                 Err(_) => {

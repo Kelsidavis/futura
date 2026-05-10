@@ -248,8 +248,8 @@ fn is_word_byte(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_'
 }
 
-fn line_matches(line: &[u8], pat: &[u8], icase: bool, word: bool,
-                line_match: bool, sep: u8) -> bool {
+fn line_matches_one(line: &[u8], pat: &[u8], icase: bool, word: bool,
+                    line_match: bool, sep: u8) -> bool {
     // Strip a single trailing line-separator from the body for `-x`'s
     // "whole-line" comparison — sep is part of the line in our
     // accumulator but isn't part of what the user types as the
@@ -294,6 +294,18 @@ fn line_matches(line: &[u8], pat: &[u8], icase: bool, word: bool,
             if !(left_ok && right_ok) { continue; }
         }
         return true;
+    }
+    false
+}
+
+// OR-over-patterns: returns true if ANY pattern in `pats` matches.
+// With zero patterns, returns false (no candidates → no match).
+fn line_matches(line: &[u8], pats: &[&[u8]], icase: bool, word: bool,
+                line_match: bool, sep: u8) -> bool {
+    for &pat in pats {
+        if line_matches_one(line, pat, icase, word, line_match, sep) {
+            return true;
+        }
     }
     false
 }
@@ -405,52 +417,63 @@ fn emit_match_at(name: Option<&[u8]>, lineno: u64, byte_off: u64,
     }
 }
 
-// Like emit_match but wraps each occurrence of `pat` in ANSI red bold
-// so the match jumps out in a terminal. Honors -i/-w match semantics.
+// Test if any pattern matches starting at body[i]. Returns the
+// matched length (i.e. pat.len() of the winning pattern) or None.
+fn match_at(body: &[u8], i: usize, pats: &[&[u8]],
+            icase: bool, word: bool) -> Option<usize> {
+    for &pat in pats {
+        if pat.is_empty() { continue; }
+        if i + pat.len() > body.len() { continue; }
+        let mut ok = true;
+        for j in 0..pat.len() {
+            let a = if icase { to_lower(body[i + j]) } else { body[i + j] };
+            let b = if icase { to_lower(pat[j])     } else { pat[j]     };
+            if a != b { ok = false; break; }
+        }
+        if !ok { continue; }
+        if word {
+            let left_ok = i == 0 || !is_word_byte(body[i - 1]);
+            let right_ok = i + pat.len() >= body.len()
+                || !is_word_byte(body[i + pat.len()]);
+            if !(left_ok && right_ok) { continue; }
+        }
+        return Some(pat.len());
+    }
+    None
+}
+
+// Like emit_match but wraps each occurrence of any pattern in
+// `pats` in ANSI red bold. First-pattern-wins on overlap.
 fn emit_match_colored(name: Option<&[u8]>, lineno: u64, line: &[u8],
-                      pat: &[u8], opts: &Opts) {
+                      pats: &[&[u8]], opts: &Opts) {
     emit_prefix(name, lineno, opts);
-    if pat.is_empty() {
+    if pats.is_empty() || pats.iter().all(|p| p.is_empty()) {
         write_all(STDOUT, line);
         if line.last().copied() != Some(opts.sep) {
             write_all(STDOUT, &[opts.sep]);
         }
         return;
     }
-    // Strip a trailing line-separator so the highlight isn't re-injected after it.
-    let (body, has_term): (&[u8], bool) = if line.last() == Some(&opts.sep) {
+    let (body, _has_term): (&[u8], bool) = if line.last() == Some(&opts.sep) {
         (&line[..line.len() - 1], true)
     } else { (line, false) };
     let on:  &[u8] = b"\x1b[01;31m\x1b[K";
     let off: &[u8] = b"\x1b[m\x1b[K";
     let mut i = 0usize;
     let mut last = 0usize;
-    while i + pat.len() <= body.len() {
-        let mut ok = true;
-        for j in 0..pat.len() {
-            let a = if opts.icase { to_lower(body[i + j]) } else { body[i + j] };
-            let b = if opts.icase { to_lower(pat[j])      } else { pat[j]      };
-            if a != b { ok = false; break; }
-        }
-        if ok && opts.word {
-            let left_ok = i == 0 || !is_word_byte(body[i - 1]);
-            let right_ok = i + pat.len() >= body.len()
-                || !is_word_byte(body[i + pat.len()]);
-            if !(left_ok && right_ok) { ok = false; }
-        }
-        if ok {
+    while i < body.len() {
+        if let Some(plen) = match_at(body, i, pats, opts.icase, opts.word) {
             if last < i { write_all(STDOUT, &body[last..i]); }
             write_all(STDOUT, on);
-            write_all(STDOUT, &body[i..i + pat.len()]);
+            write_all(STDOUT, &body[i..i + plen]);
             write_all(STDOUT, off);
-            i += pat.len();
+            i += plen.max(1);
             last = i;
         } else {
             i += 1;
         }
     }
     if last < body.len() { write_all(STDOUT, &body[last..]); }
-    let _ = has_term;
     write_all(STDOUT, &[opts.sep]);
 }
 
@@ -478,41 +501,28 @@ fn emit_context(name: Option<&[u8]>, lineno: u64, line: &[u8], opts: &Opts) {
     }
 }
 
-// Scan `line` for every non-overlapping fixed-string match of `pat`
-// (honoring -i and -w boundaries) and emit each matched span on its
-// own output line — the GNU grep -o shape. Returns the number of
-// matches emitted, used by -m N to bound per-file output.
+// Scan `line` for every non-overlapping fixed-string match of any
+// pattern in `pats` (honoring -i and -w boundaries) and emit each
+// matched span on its own output line — the GNU grep -o shape.
+// Returns the number of matches emitted, used by -m N to bound
+// per-file output.
 fn emit_matches_only(name: Option<&[u8]>, lineno: u64, line: &[u8],
-                      pat: &[u8], opts: &Opts) -> u64 {
-    if pat.is_empty() { return 0; }
-    // Trim a single trailing line-sep so it never leaks into a -o emit.
+                      pats: &[&[u8]], opts: &Opts) -> u64 {
+    if pats.is_empty() || pats.iter().all(|p| p.is_empty()) { return 0; }
     let body: &[u8] = if line.last() == Some(&opts.sep) {
         &line[..line.len() - 1]
     } else {
         line
     };
-    if pat.len() > body.len() { return 0; }
     let mut emitted: u64 = 0;
     let mut i = 0usize;
-    while i + pat.len() <= body.len() {
-        let mut ok = true;
-        for j in 0..pat.len() {
-            let a = if opts.icase { to_lower(body[i + j]) } else { body[i + j] };
-            let b = if opts.icase { to_lower(pat[j]) } else { pat[j] };
-            if a != b { ok = false; break; }
-        }
-        if ok && opts.word {
-            let left_ok = i == 0 || !is_word_byte(body[i - 1]);
-            let right_ok = i + pat.len() >= body.len()
-                || !is_word_byte(body[i + pat.len()]);
-            if !(left_ok && right_ok) { ok = false; }
-        }
-        if ok {
+    while i < body.len() {
+        if let Some(plen) = match_at(body, i, pats, opts.icase, opts.word) {
             emit_prefix(name, lineno, opts);
-            write_all(STDOUT, &body[i..i + pat.len()]);
+            write_all(STDOUT, &body[i..i + plen]);
             write_all(STDOUT, &[opts.sep]);
             emitted += 1;
-            i += pat.len();   // non-overlapping
+            i += plen.max(1);   // non-overlapping
         } else {
             i += 1;
         }
@@ -523,7 +533,7 @@ fn emit_matches_only(name: Option<&[u8]>, lineno: u64, line: &[u8],
 fn grep_fd(
     fd: i32,
     name: Option<&[u8]>,
-    pat: &[u8],
+    pats: &[&[u8]],
     opts: &Opts,
     scratch: &mut [u8],
 ) -> Result<u64, ()> {
@@ -581,7 +591,7 @@ fn grep_fd(
                 cur_line_start = byte_pos_before_chunk + i as u64 + 1;
                 if !overflow {
                     let body = &line[..line_len];
-                    let m = line_matches(body, pat, opts.icase, opts.word, opts.line_match, opts.sep);
+                    let m = line_matches(body, pats, opts.icase, opts.word, opts.line_match, opts.sep);
                     let is_match = m != opts.invert;
                     if is_match {
                         // Flush the before-context ring oldest-first.
@@ -602,9 +612,9 @@ fn grep_fd(
                         }
                         if !suppress_lines {
                             if opts.only_matching && !opts.invert {
-                                let _ = emit_matches_only(name, lineno, body, pat, opts);
+                                let _ = emit_matches_only(name, lineno, body, pats, opts);
                             } else if opts.color && !opts.invert {
-                                emit_match_colored(name, lineno, body, pat, opts);
+                                emit_match_colored(name, lineno, body, pats, opts);
                             } else {
                                 emit_match_at(name, lineno, line_off, body, opts);
                             }
@@ -641,11 +651,11 @@ fn grep_fd(
     if line_len > 0 {
         lineno += 1;
         let body = &line[..line_len];
-        let m = line_matches(body, pat, opts.icase, opts.word, opts.line_match, opts.sep);
+        let m = line_matches(body, pats, opts.icase, opts.word, opts.line_match, opts.sep);
         if m != opts.invert {
             if !suppress_lines {
                 if opts.only_matching && !opts.invert {
-                    let _ = emit_matches_only(name, lineno, body, pat, opts);
+                    let _ = emit_matches_only(name, lineno, body, pats, opts);
                 } else {
                     emit_match_at(name, lineno, cur_line_start, body, opts);
                 }
@@ -678,7 +688,7 @@ fn grep_walk_dir(
     path_buf: &mut [u8; PATH_MAX],
     path_len: usize,
     depth: usize,
-    pat: &[u8],
+    pats: &[&[u8]],
     opts: &Opts,
     scratch: &mut [u8],
     show_name_count: bool,
@@ -757,11 +767,11 @@ fn grep_walk_dir(
             }
             if walk_as_dir {
                 let (m, e) = grep_walk_dir(path_buf, child_len, depth + 1,
-                                            pat, opts, scratch, show_name_count);
+                                            pats, opts, scratch, show_name_count);
                 if m { had_match = true; }
                 if e { had_error = true; }
             } else if grep_as_file {
-                let (m, e) = grep_one_file(path_buf, child_len, pat, opts,
+                let (m, e) = grep_one_file(path_buf, child_len, pats, opts,
                                             scratch, show_name_count);
                 if m { had_match = true; }
                 if e { had_error = true; }
@@ -783,7 +793,7 @@ fn grep_walk_dir(
 fn grep_one_file(
     path_buf: &[u8],
     path_len: usize,
-    pat: &[u8],
+    pats: &[&[u8]],
     opts: &Opts,
     scratch: &mut [u8],
     show_name_count: bool,
@@ -804,7 +814,7 @@ fn grep_one_file(
     let name = &path_buf[..path_len];
     let mut had_match = false;
     let mut had_error = false;
-    match grep_fd(f as i32, Some(name), pat, opts, scratch) {
+    match grep_fd(f as i32, Some(name), pats, opts, scratch) {
         Ok(c) => {
             if c > 0 { had_match = true; }
             if !opts.quiet {
@@ -857,7 +867,10 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         sep: b'\n',
     };
 
-    let mut e_pattern: Option<*const u8> = None;
+    // Up to 8 -e PATTERN clauses; OR'd at match time. Without any -e
+    // the next positional non-flag arg becomes the (single) pattern.
+    let mut e_patterns: [*const u8; 8] = [core::ptr::null(); 8];
+    let mut n_e_patterns: usize = 0;
     while let Some(p) = argv_get(argc, argv, idx) {
         if arg_is(p, b"-n") {
             opts.show_lineno = true;
@@ -1023,11 +1036,18 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             // GNU-script portability (no behaviour change).
             idx += 1;
         } else if arg_is(p, b"-e") {
-            // -e PATTERN — useful when PATTERN starts with `-`. Only
-            // the last -e wins for now (single-pattern grep).
+            // -e PATTERN — accumulates patterns; ORed at match time.
+            // Useful when PATTERN starts with `-`, or for multi-pattern
+            // searches like "grep -e foo -e bar".
             idx += 1;
             match argv_get(argc, argv, idx) {
-                Some(pp) => { e_pattern = Some(pp); idx += 1; }
+                Some(pp) => {
+                    if n_e_patterns < e_patterns.len() {
+                        e_patterns[n_e_patterns] = pp;
+                        n_e_patterns += 1;
+                    }
+                    idx += 1;
+                }
                 None => {
                     write_str(STDERR, b"rust-grep: -e needs a pattern\n");
                     return 2;
@@ -1085,19 +1105,28 @@ Output control:
     }
 
     // -e PATTERN takes precedence over a positional one; without -e
-    // the next positional is the pattern.
-    let pat_ptr = match e_pattern {
-        Some(p) => p,
-        None => match argv_get(argc, argv, idx) {
-            Some(p) => { idx += 1; p }
+    // the next positional is the (sole) pattern.
+    if n_e_patterns == 0 {
+        match argv_get(argc, argv, idx) {
+            Some(p) => {
+                e_patterns[0] = p;
+                n_e_patterns = 1;
+                idx += 1;
+            }
             None => {
-                write_str(STDERR, b"usage: rust-grep [-niHhvclqF] [-e PAT] PATTERN [FILE...]\n");
+                write_str(STDERR, b"usage: rust-grep [-niHhvclqF] [-e PAT]... PATTERN [FILE...]\n");
                 return 2;
             }
-        },
-    };
-    let pat_len = cstr_len(pat_ptr);
-    let pat = unsafe { core::slice::from_raw_parts(pat_ptr, pat_len) };
+        };
+    }
+    // Materialize each NUL-terminated argv pointer into a &[u8] view.
+    let mut pat_views: [&[u8]; 8] = [&[]; 8];
+    for i in 0..n_e_patterns {
+        let p = e_patterns[i];
+        let n = cstr_len(p);
+        pat_views[i] = unsafe { core::slice::from_raw_parts(p, n) };
+    }
+    let pats: &[&[u8]] = &pat_views[..n_e_patterns];
 
     let mut scratch = [0u8; READ_BUF];
     let mut had_match = false;
@@ -1107,7 +1136,7 @@ Output control:
     // which lives outside main — can also call it.
 
     if (idx as i32) >= argc {
-        match grep_fd(STDIN, None, pat, &opts, &mut scratch) {
+        match grep_fd(STDIN, None, pats, &opts, &mut scratch) {
             Ok(c) => {
                 if c > 0 { had_match = true; }
                 if !opts.quiet {
@@ -1173,7 +1202,7 @@ Output control:
                     for i in 0..n { path_buf[i] = unsafe { *p.add(i) }; }
                     path_buf[n] = 0;
                     let (m, e) = grep_walk_dir(&mut path_buf, n, 0,
-                                                pat, &opts2, &mut scratch,
+                                                pats, &opts2, &mut scratch,
                                                 show_name_count);
                     if m { had_match = true; }
                     if e { had_error = true; }
@@ -1212,7 +1241,7 @@ Output control:
             } else {
                 unsafe { core::slice::from_raw_parts(p, n) }
             };
-            match grep_fd(fd_i32, Some(name), pat, &opts2, &mut scratch) {
+            match grep_fd(fd_i32, Some(name), pats, &opts2, &mut scratch) {
                 Ok(c) => {
                     if c > 0 { had_match = true; }
                     if !opts.quiet {

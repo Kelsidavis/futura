@@ -371,7 +371,7 @@ fn tail_fd_bytes(fd: i32, n_bytes: usize, arena: &mut [u8], scratch: &mut [u8])
     Ok(())
 }
 
-fn tail_fd(fd: i32, tail: &mut Tail, scratch: &mut [u8]) -> Result<(), ()> {
+fn tail_fd(fd: i32, tail: &mut Tail, sep: u8, scratch: &mut [u8]) -> Result<(), ()> {
     let mut line_buf = [0u8; 4096];
     let mut line_len = 0usize;
     loop {
@@ -396,7 +396,7 @@ fn tail_fd(fd: i32, tail: &mut Tail, scratch: &mut [u8]) -> Result<(), ()> {
                 line_buf[line_len] = b;
                 line_len += 1;
             }
-            if b == b'\n' {
+            if b == sep {
                 tail.push_line(&line_buf[..line_len]);
                 line_len = 0;
             }
@@ -419,6 +419,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
     let mut limit: usize = DEFAULT_LINES;
     let mut byte_limit: Option<usize> = None;
     let mut hmode = HeaderMode::Auto;
+    let mut sep_byte: u8 = b'\n';
 
     while let Some(p) = argv_get(argc, argv, idx) {
         if arg_is(p, b"--help") {
@@ -431,6 +432,7 @@ than one FILE, precede each with a header. With no FILE, read stdin.
   -n, --lines=NUM        print the last NUM lines (default: 10)
   -q, --quiet, --silent  never print headers
   -v, --verbose          always print headers
+  -z, --zero-terminated  line delimiter is NUL, not newline
       --help             show this help and exit
 
 A single '-' in the FILE list means standard input.
@@ -445,6 +447,9 @@ A single '-' in the FILE list means standard input.
         }
         if arg_is(p, b"-v") || arg_is(p, b"--verbose") {
             hmode = HeaderMode::Verbose; idx += 1; continue;
+        }
+        if arg_is(p, b"-z") || arg_is(p, b"--zero-terminated") {
+            sep_byte = 0; idx += 1; continue;
         }
         if arg_is(p, b"-c") {
             idx += 1;
@@ -535,7 +540,7 @@ A single '-' in the FILE list means standard input.
                 }
             } else {
                 TAIL = Tail::new(limit);
-                if tail_fd(STDIN, &mut *core::ptr::addr_of_mut!(TAIL), &mut scratch).is_err() {
+                if tail_fd(STDIN, &mut *core::ptr::addr_of_mut!(TAIL), sep_byte, &mut scratch).is_err() {
                     had_error = true;
                 }
             }
@@ -594,7 +599,7 @@ A single '-' in the FILE list means standard input.
                     }
                 } else {
                     TAIL = Tail::new(limit);
-                    if tail_fd(fd, &mut *core::ptr::addr_of_mut!(TAIL), &mut scratch).is_err() {
+                    if tail_fd(fd, &mut *core::ptr::addr_of_mut!(TAIL), sep_byte, &mut scratch).is_err() {
                         had_error = true;
                     }
                 }

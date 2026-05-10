@@ -259,9 +259,10 @@ fn panic(_info: &PanicInfo) -> ! {
     }
 }
 
-// Pump fd -> stdout, stopping after `limit` newlines.
+// Pump fd -> stdout, stopping after `limit` lines (lines delimited
+// by `sep` — '\n' by default, NUL with -z).
 // Returns Ok(())/Err(()) — on read error returns Err.
-fn head_fd(fd: i32, limit: u64, buf: &mut [u8]) -> Result<(), ()> {
+fn head_fd(fd: i32, limit: u64, sep: u8, buf: &mut [u8]) -> Result<(), ()> {
     let mut printed: u64 = 0;
     while printed < limit {
         let n = unsafe {
@@ -279,11 +280,11 @@ fn head_fd(fd: i32, limit: u64, buf: &mut [u8]) -> Result<(), ()> {
             return Err(());
         }
         let bytes = n as usize;
-        // Walk buf, count '\n', stop at the chunk boundary that hits the limit.
+        // Walk buf, count separators, stop at the chunk boundary that hits the limit.
         let mut emit_to = 0usize;
         for i in 0..bytes {
             emit_to = i + 1;
-            if buf[i] == b'\n' {
+            if buf[i] == sep {
                 printed += 1;
                 if printed >= limit {
                     break;
@@ -323,6 +324,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
     let mut limit: u64 = DEFAULT_LINES;
     let mut byte_limit: Option<u64> = None;
     let mut hmode = HeaderMode::Auto;
+    let mut sep_byte: u8 = b'\n';
 
     // Parse `-n N`, `-c N`, and `-N` (GNU shorthand).
     while let Some(p) = argv_get(argc, argv, idx) {
@@ -336,6 +338,7 @@ than one FILE, precede each with a header. With no FILE, read stdin.
   -n, --lines=NUM        print the first NUM lines (default: 10)
   -q, --quiet, --silent  never print headers
   -v, --verbose          always print headers
+  -z, --zero-terminated  line delimiter is NUL, not newline
       --help             show this help and exit
 
 A single '-' in the FILE list means standard input.
@@ -352,6 +355,11 @@ A single '-' in the FILE list means standard input.
         }
         if arg_is(p, b"-v") || arg_is(p, b"--verbose") {
             hmode = HeaderMode::Verbose;
+            idx += 1;
+            continue;
+        }
+        if arg_is(p, b"-z") || arg_is(p, b"--zero-terminated") {
+            sep_byte = 0;
             idx += 1;
             continue;
         }
@@ -435,7 +443,7 @@ A single '-' in the FILE list means standard input.
     let run = |fd: i32, buf: &mut [u8]| -> Result<(), ()> {
         match byte_limit {
             Some(b) => head_fd_bytes(fd, b, buf),
-            None    => head_fd(fd, limit, buf),
+            None    => head_fd(fd, limit, sep_byte, buf),
         }
     };
 

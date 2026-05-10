@@ -332,7 +332,7 @@ Usage: rust-strings [-n MIN] [FILE]...
 Print runs of MIN-or-more printable bytes from each FILE (or stdin).
 
   -n, --bytes=MIN    minimum run length to emit (default 4)
-  -t RADIX           prefix each run with its byte offset (RADIX = d / x / o)
+  -t, --radix=RADIX  prefix each run with its byte offset (RADIX = d / x / o)
       --help         show this help and exit
 
 A '-' in the FILE list means standard input.

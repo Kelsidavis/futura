@@ -339,7 +339,7 @@ Usage: rust-fold [-w COLS] [FILE]...
 Wrap each input line at COLS columns (default 80). Each byte counts
 as one column; tabs and backspace get no special treatment.
 
-  -w COLS    wrap width (default 80)
+  -w, --width COLS       wrap width (default 80)
   -s, --spaces           break at the last whitespace before the wrap point
   -z, --zero-terminated  line delimiter is NUL, not newline
       --help             show this help and exit

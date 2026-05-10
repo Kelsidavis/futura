@@ -402,7 +402,7 @@ Print selected fields from each line.
              1,3,5  /  1-3  /  -3 (1..=3)  /  5- (5 to MAX)
   -c LIST    1-based byte-position list (-b is an alias)
   -b LIST    same as -c
-  -s         suppress lines that contain no DELIM (with -f)
+  -s, --only-delimited   suppress lines that contain no DELIM (with -f)
       --complement   invert the LIST: emit positions/fields not in it
       --output-delimiter=STR  string to put between fields on output
   -z, --zero-terminated       line delimiter is NUL, not newline

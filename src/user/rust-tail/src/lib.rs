@@ -238,20 +238,32 @@ fn arg_is(p: *const u8, want: &[u8]) -> bool {
     true
 }
 
+// Decimal digits with an optional binary K/M/G/T suffix (1024^N).
+// 'B' means plain bytes (no-op suffix).
 fn parse_usize(p: *const u8) -> Option<usize> {
     let n = cstr_len(p);
     if n == 0 {
         return None;
     }
+    let last = unsafe { *p.add(n - 1) };
+    let (digits_end, mult): (usize, usize) = match last {
+        b'K' | b'k' => (n - 1, 1024),
+        b'M' | b'm' => (n - 1, 1024 * 1024),
+        b'G' | b'g' => (n - 1, 1024 * 1024 * 1024),
+        b'T' | b't' => (n - 1, 1024usize * 1024 * 1024 * 1024),
+        b'B' | b'b' => (n - 1, 1),
+        _ => (n, 1),
+    };
+    if digits_end == 0 { return None; }
     let mut v: usize = 0;
-    for i in 0..n {
+    for i in 0..digits_end {
         let b = unsafe { *p.add(i) };
         if !(b'0'..=b'9').contains(&b) {
             return None;
         }
         v = v.checked_mul(10)?.checked_add((b - b'0') as usize)?;
     }
-    Some(v)
+    v.checked_mul(mult)
 }
 
 #[panic_handler]
@@ -428,7 +440,8 @@ Usage: rust-tail [OPTION]... [FILE]...
 Print the last 10 lines of each FILE to standard output. With more
 than one FILE, precede each with a header. With no FILE, read stdin.
 
-  -c, --bytes=NUM        print the last NUM bytes (capped at 64K arena)
+  -c, --bytes=NUM        print the last NUM bytes (suffix K/M/G/T = 1024^N;
+                         capped at 64K arena)
   -n, --lines=NUM        print the last NUM lines (default: 10)
   -q, --quiet, --silent  never print headers
   -v, --verbose          always print headers

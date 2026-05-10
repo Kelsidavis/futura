@@ -872,11 +872,22 @@ static int build_user_stack(fut_mm_t *mm,
     __asm__ volatile("movw $0x3F8, %%dx; movb $'7', %%al; outb %%al, %%dx" ::: "al", "dx", "memory");
 #endif
 
-    /* Do the per-thread/per-task struct updates BEFORE the CR3 swap.
-     * They touch fut_thread_current()'s percpu access (GS-relative)
-     * and the kernel-heap thread struct — neither should care which
-     * CR3 is live as long as kernel half is mapped, but doing this
-     * pre-CR3 removes them as suspects in the bisection. */
+    /* Do the per-thread/per-task struct updates BEFORE the CR3 swap,
+     * AND program TSS.RSP0 to this thread's kernel stack top.
+     *
+     * The TSS.RSP0 update is critical: the direct-trampoline path
+     * doesn't go through the scheduler, so the scheduler's normal
+     * fut_tss_set_kernel_stack call from select_next_thread()
+     * never fires. Without this, TSS.RSP0 is left at whatever
+     * fut_tss_init set during early platform boot — the BSP's
+     * RSP at that moment, on a tiny static boot stack that is
+     * almost certainly no longer in use. The very first ring-3
+     * → ring-0 transition (a timer IRQ shortly after IRETQ)
+     * pushes the interrupt frame to that stale RSP0 and either
+     * lands in unrelated kernel data (silent corruption then
+     * eventual hang) or off-the-end of mapped memory (silent
+     * #DF → hang). Either way the boot freezes with no further
+     * console output, exactly matching what we see. */
     {
         fut_thread_t *cur_thread = fut_thread_current();
         if (cur_thread) {
@@ -890,6 +901,17 @@ static int build_user_stack(fut_mm_t *mm,
             cur_thread->context.rip = entry;
             cur_thread->context.rsp = stack;
             cur_thread->context.rflags = 0x202;
+
+            if (cur_thread->stack_base && cur_thread->stack_size) {
+                uintptr_t stack_top = (uintptr_t)cur_thread->stack_base
+                                    + cur_thread->stack_size;
+                extern void fut_tss_set_kernel_stack(uint64_t);
+                fut_tss_set_kernel_stack((uint64_t)stack_top);
+                fut_printf("[BISECT-TRAMP] TSS.rsp0 set to 0x%lx (kernel stack top)\n",
+                           (unsigned long)stack_top);
+            } else {
+                fut_printf("[BISECT-TRAMP] WARNING: cur_thread has no stack_base/size — TSS.rsp0 left stale!\n");
+            }
         }
     }
 

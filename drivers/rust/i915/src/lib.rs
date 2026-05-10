@@ -917,6 +917,60 @@ const ROP_PATCOPY: u32 = 0xF0;
 ///
 /// Returns 0 on success, negative on failure (BCS not ready,
 /// FB not GTT-mapped, ring full, drain timeout).
+/// Submit XY_COLOR_BLT to fill `(x1,y1)..(x2,y2)` of the surface at
+/// `gpu_va` (any GGTT-mapped 32 bpp surface) with `argb`.
+fn blt_clear_addr(gpu_va: u32, pitch: u32,
+                  x1: u32, y1: u32, x2: u32, y2: u32,
+                  argb: u32) -> i32 {
+    let st = STATE.get();
+    let mmio = unsafe { (*st).mmio_base };
+    let ring_virt = unsafe { (*st).scratch_virt } as *mut u32;
+    if mmio.is_null() || ring_virt.is_null() {
+        return -3;
+    }
+
+    let cmd: [u32; 6] = [
+        XY_COLOR_BLT_HEADER,
+        (3u32 << 24) | (ROP_PATCOPY << 16) | (pitch & 0xFFFF),
+        (y1 << 16) | x1,
+        (y2 << 16) | x2,
+        gpu_va,
+        argb,
+    ];
+
+    if !forcewake_get_render(mmio) {
+        return -4;
+    }
+
+    unsafe {
+        mmio_write32_at(mmio, BCS_RING_TAIL, 0);
+        for _ in 0..1_000_000 {
+            if mmio_read32_at(mmio, BCS_RING_HEAD) & !0x3F == 0 {
+                break;
+            }
+        }
+        for (i, dw) in cmd.iter().enumerate() {
+            core::ptr::write_volatile(ring_virt.add(i), *dw);
+        }
+        mmio_write32_at(mmio, BCS_RING_TAIL, (cmd.len() * 4) as u32);
+
+        let mut drained = false;
+        for _ in 0..2_000_000 {
+            let head = mmio_read32_at(mmio, BCS_RING_HEAD) & !0x3F;
+            let tail = mmio_read32_at(mmio, BCS_RING_TAIL) & !0x3F;
+            if head == tail {
+                drained = true;
+                break;
+            }
+        }
+        forcewake_put_render(mmio);
+        if !drained {
+            return -5;
+        }
+    }
+    0
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn i915_blt_clear(x1: u32, y1: u32, x2: u32, y2: u32,
                                   argb: u32) -> i32 {
@@ -932,66 +986,32 @@ pub extern "C" fn i915_blt_clear(x1: u32, y1: u32, x2: u32, y2: u32,
     if x2 <= x1 || y2 <= y1 {
         return 0;
     }
-
-    let mmio = unsafe { (*st).mmio_base };
-    let ring_virt = unsafe { (*st).scratch_virt } as *mut u32;
     let pitch = unsafe { (*st).fb_pitch };
     let fb_va = unsafe { (*st).fb_gpu_va } as u32;
+    blt_clear_addr(fb_va, pitch, x1, y1, x2, y2, argb)
+}
 
-    if mmio.is_null() || ring_virt.is_null() {
-        return -3;
+/// Phase 9: same XY_COLOR_BLT against the registered back buffer.
+/// Replaces fb_console_clear's CPU loop that re-zeroed back_buf
+/// after i915_blt_clear painted FB.
+///
+/// Returns 0 on success. -1 BCS not ready, -2 back_buf not registered.
+#[unsafe(no_mangle)]
+pub extern "C" fn i915_blt_clear_back_buf(x1: u32, y1: u32, x2: u32, y2: u32,
+                                           argb: u32) -> i32 {
+    let st = STATE.get();
+    if !unsafe { (*st).bcs_ready } {
+        return -1;
     }
-
-    let cmd: [u32; 6] = [
-        XY_COLOR_BLT_HEADER,
-        /* BR13: depth=3 (32bpp), ROP=PATCOPY for solid color, pitch */
-        (3u32 << 24) | (ROP_PATCOPY << 16) | (pitch & 0xFFFF),
-        /* BR22: dest top-left */
-        (y1 << 16) | x1,
-        /* BR23: dest bottom-right exclusive */
-        (y2 << 16) | x2,
-        /* BR09: dest base GGTT addr */
-        fb_va,
-        /* BR16: fill color */
-        argb,
-    ];
-
-    if !forcewake_get_render(mmio) {
-        log("i915_blt_clear: forcewake ACK timeout");
-        return -4;
+    if unsafe { (*st).back_buf_gpu_va } == 0 {
+        return -2;
     }
-
-    unsafe {
-        /* Drain any prior submission before reusing ring offset 0. */
-        mmio_write32_at(mmio, BCS_RING_TAIL, 0);
-        for _ in 0..1_000_000 {
-            if mmio_read32_at(mmio, BCS_RING_HEAD) & !0x3F == 0 {
-                break;
-            }
-        }
-
-        for (i, dw) in cmd.iter().enumerate() {
-            core::ptr::write_volatile(ring_virt.add(i), *dw);
-        }
-        mmio_write32_at(mmio, BCS_RING_TAIL, (cmd.len() * 4) as u32);
-
-        let mut drained = false;
-        for _ in 0..2_000_000 {
-            let head = mmio_read32_at(mmio, BCS_RING_HEAD) & !0x3F;
-            let tail = mmio_read32_at(mmio, BCS_RING_TAIL) & !0x3F;
-            if head == tail {
-                drained = true;
-                break;
-            }
-        }
-
-        forcewake_put_render(mmio);
-        if !drained {
-            return -5;
-        }
+    if x2 <= x1 || y2 <= y1 {
+        return 0;
     }
-
-    0
+    let pitch = unsafe { (*st).back_buf_pitch };
+    let bb_va = unsafe { (*st).back_buf_gpu_va } as u32;
+    blt_clear_addr(bb_va, pitch, x1, y1, x2, y2, argb)
 }
 
 // ── Phase 6: XY_SRC_COPY_BLT for fb_console_present (back_buf → fb) ──

@@ -633,24 +633,39 @@ void fb_console_clear(void) {
 
     /* Hardware fast path: if the i915 BCS engine is up, fill the FB
      * with one XY_COLOR_BLT submission instead of a CPU 4 MB+ loop.
-     * Falls through to CPU clear on failure or when i915 isn't ready. */
+     * Phase 9: if back_buf is GTT-registered, also clear it via a
+     * second BLT instead of a 4 MiB CPU pixel-fill. Falls through to
+     * CPU clear on failure or when i915 isn't ready. */
     extern bool i915_bcs_ready(void) __attribute__((weak));
     extern int  i915_blt_clear(uint32_t x1, uint32_t y1,
                                uint32_t x2, uint32_t y2,
                                uint32_t argb) __attribute__((weak));
+    extern int  i915_blt_clear_back_buf(uint32_t x1, uint32_t y1,
+                                        uint32_t x2, uint32_t y2,
+                                        uint32_t argb) __attribute__((weak));
     if (cons->bpp == 32 && i915_bcs_ready && i915_bcs_ready() &&
         i915_blt_clear) {
         if (i915_blt_clear(0, 0, cons->width, cons->height,
                            0xFF000000) == 0) {
             /* Sync back buffer so subsequent CPU draws stay coherent. */
             if (cons->back_buf) {
-                uint32_t *fb32 = (uint32_t *)cons->back_buf;
-                size_t pixel_count = (cons->pitch * cons->height) / 4;
-                uint32_t black = 0xFF000000;
-                for (size_t i = 0; i < pixel_count; i++) fb32[i] = black;
+                bool back_buf_cleared = false;
+                if (i915_blt_clear_back_buf &&
+                    i915_blt_clear_back_buf(0, 0, cons->width, cons->height,
+                                             0xFF000000) == 0) {
+                    back_buf_cleared = true;
+                }
+                if (!back_buf_cleared) {
+                    uint32_t *fb32 = (uint32_t *)cons->back_buf;
+                    size_t pixel_count = (cons->pitch * cons->height) / 4;
+                    uint32_t black = 0xFF000000;
+                    for (size_t i = 0; i < pixel_count; i++) fb32[i] = black;
+                }
             }
             cons->cursor_x = 0;
             cons->cursor_y = 0;
+            /* Both FB and back_buf are now zeroed; nothing to flush. */
+            fb_console_clear_dirty();
             return;
         }
     }

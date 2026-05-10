@@ -63,7 +63,7 @@ extern void fut_do_user_iretq(uint64_t entry, uint64_t stack, uint64_t argc, uin
 #endif
 
 /* Debug output for user trampoline serial output (U1234567A characters) */
-/* #define DEBUG_USER_TRAMPOLINE */
+#define DEBUG_USER_TRAMPOLINE   /* enabled to trace bare-metal init exec */
 
 /* Stack debugging (controlled via debug_config.h) */
 #define stack_printf(...) do { if (STACK_DEBUG) fut_printf(__VA_ARGS__); } while(0)
@@ -737,23 +737,16 @@ static int build_user_stack(fut_mm_t *mm,
 }
 
 [[noreturn]] __attribute__((optimize("O0"))) static void fut_user_trampoline(void *arg) {
+    /* Print BEFORE CLI so the print path's I/O is unaffected. The asm
+     * COM1 byte writes the trampoline used to do are invisible on a
+     * Chromebook (no UART) — replace with fut_printf so it shows up
+     * on fb_console. We only switch to single-byte serial spew once
+     * we actually CLI; doing it before is fine. */
+    fut_printf("[USER-TRAMP] entered, arg=%p\n", arg);
+
     /* CRITICAL: Disable interrupts IMMEDIATELY to prevent timer interrupts from
      * corrupting our state during the transition to user mode! */
     __asm__ volatile("cli");
-
-#ifdef DEBUG_USER_TRAMPOLINE
-    /* Debug: Print 'U' to indicate we reached fut_user_trampoline */
-    __asm__ volatile(
-        "pushq %%rax\n"
-        "pushq %%rdx\n"
-        "movw $0x3F8, %%dx\n"
-        "movb $'U', %%al\n"
-        "outb %%al, %%dx\n"
-        "popq %%rdx\n"
-        "popq %%rax\n"
-        ::: "memory"
-    );
-#endif
 
     if (!arg) {
         __asm__ volatile("sti");  /* Re-enable before exit */
@@ -2900,14 +2893,17 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     }
 #endif
 
+    ELF_LOG("[EXEC-ELF] allocating user_entry struct\n");
     struct fut_user_entry *entry = fut_malloc(sizeof(*entry));
     if (!entry) {
+        ELF_LOG("[EXEC-ELF] entry alloc FAILED\n");
         fut_task_destroy(task);
         fut_free(phdrs);
         fut_vfs_close(fd);
         EXEC_CLEANUP_KARGS();
         return -ENOMEM;
     }
+    ELF_LOG("[EXEC-ELF] user_entry=%p\n", entry);
 
     /* If interpreter was loaded, start at its entry point instead of main binary's.
      * The interpreter (ld-linux.so) will use AT_ENTRY and AT_PHDR from auxv
@@ -2924,6 +2920,8 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     entry->argc = user_argc;
     entry->argv_ptr = user_argv;
     entry->task = task;
+
+    ELF_LOG("[EXEC-ELF] calling fut_thread_create for user trampoline (CLI'd)\n");
 
     /* CRITICAL: Disable interrupts to prevent race condition.
      * fut_thread_create() adds the thread to the scheduler queue with fs_base=0.
@@ -2964,8 +2962,10 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     thread->fs_base = USER_TLS_BASE;
     __asm__ volatile("" ::: "memory");  /* Ensure store is visible */
     __asm__ volatile("sti" ::: "memory");
+    ELF_LOG("[EXEC-ELF] fut_thread_create returned %p, fs_base set\n", thread);
     fut_free(phdrs);
     fut_vfs_close(fd);
+    ELF_LOG("[EXEC-ELF] phdrs+fd freed; about to free kargv/kenvp\n");
 
     /* Free the kernel copies of argv/envp - they've been copied to user stack */
     if (kargv && kargv_needs_free) {
@@ -2977,6 +2977,7 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
         fut_free(kenvp);
     }
 
+    ELF_LOG("[EXEC-ELF] returning 0 (success); user trampoline thread queued\n");
     fut_vfs_check_root_canary("fut_exec_elf:exit");
 
     (void)thread;

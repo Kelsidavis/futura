@@ -261,15 +261,35 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             idx += 1;
             continue;
         }
-        if arg_eq(p, b"-i") || arg_eq(p, b"--ignore-initial") {
+        // --ignore-initial=SKIP[:SKIP2] long form with embedded =.
+        let mut sp_inline: Option<*const u8> = None;
+        let p_n = {
+            let mut k = 0usize;
+            unsafe { while *p.add(k) != 0 { k += 1; } }
+            k
+        };
+        if p_n >= 17 && unsafe {
+            let want = b"--ignore-initial=";
+            let mut ok = true;
+            for j in 0..want.len() { if *p.add(j) != want[j] { ok = false; break; } }
+            ok
+        } {
+            sp_inline = Some(unsafe { p.add(17) });
+        }
+        if sp_inline.is_some() || arg_eq(p, b"-i") || arg_eq(p, b"--ignore-initial") {
             // -i SKIP   skip SKIP bytes from both files
             // -i SKIP1:SKIP2  skip SKIP1 from file1, SKIP2 from file2
-            if idx + 1 >= argc {
-                if !silent { write_str(STDERR, b"rust-cmp: -i needs a SKIP value\n"); }
-                return 2;
-            }
-            let sp = unsafe { *argv.add((idx + 1) as usize) };
-            if sp.is_null() || (sp as usize) < 0x10000 { return 2; }
+            let sp = if let Some(p) = sp_inline {
+                p
+            } else {
+                if idx + 1 >= argc {
+                    if !silent { write_str(STDERR, b"rust-cmp: -i needs a SKIP value\n"); }
+                    return 2;
+                }
+                let p = unsafe { *argv.add((idx + 1) as usize) };
+                if p.is_null() || (p as usize) < 0x10000 { return 2; }
+                p
+            };
             let mut sn = 0usize;
             unsafe { while *sp.add(sn) != 0 { sn += 1; } }
             // Find optional ':' splitter.
@@ -317,15 +337,9 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             } else {
                 skip2 = skip1;
             }
-            idx += 2;
+            idx += if sp_inline.is_some() { 1 } else { 2 };
             continue;
         }
-        // --bytes=NUM (long form with embedded =)
-        let p_n = {
-            let mut k = 0usize;
-            unsafe { while *p.add(k) != 0 { k += 1; } }
-            k
-        };
         let mut np_inline: Option<*const u8> = None;
         if p_n >= 8 && unsafe {
             let want = b"--bytes=";

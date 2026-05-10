@@ -248,9 +248,14 @@ ASSERT(_stack_top % 16 == 0, "Stack top not 16-byte aligned")
 /* ============================================================
  *   Kernel Size Assertion
  * ============================================================
- * Ensure kernel fits in reasonable memory (e.g., 32MB limit).
+ * Sanity ceiling on kernel image size. Originally 32 MiB; bumped to
+ * 64 MiB after the fb_console back buffer (~4 MiB) plus various Rust
+ * driver static state pushed legitimate builds over 32 MiB. The 4 GiB
+ * boot identity map (PDPT[0..3]) covers anything we'd realistically
+ * link, so this is just a "did we accidentally embed something huge"
+ * check, not a memory-mapping constraint.
  */
-ASSERT(_kernel_size < 0x2000000, "Kernel exceeds 32MB size limit")
+ASSERT(_kernel_size < 0x4000000, "Kernel exceeds 64MB size limit")
 
 /* ============================================================
  *   Multiboot2 Assertion

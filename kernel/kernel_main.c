@@ -1839,6 +1839,7 @@ void fut_kernel_main(void) {
             extern int intel_gna_init(void);
             extern int intel_cnvi_init(void);
             extern int intel_ipu_init(void);
+            extern int i915_init(void);
 
             intel_vtd_init(0);
             intel_pmc_init();
@@ -1857,6 +1858,14 @@ void fut_kernel_main(void) {
             intel_gna_init();
             intel_cnvi_init();
             intel_ipu_init();
+            /* i915 — Intel integrated GPU. Phase 1 only: detect at PCI
+             * 00:02.0, map BAR0 MMIO, log device ID. No display/render
+             * engines touched yet. The plan is to layer in GTT setup,
+             * BLT command-stream init, and finally hardware scroll for
+             * the framebuffer console — replacing the current bit-banged
+             * fb_console_scroll memcpy. Safe to call now: the function
+             * just observes and bails cleanly on any non-Intel-GPU config. */
+            i915_init();
             /* intel_hda_hdmi_init() intentionally NOT called.
              * The Rust function takes (verb_fn: HdaVerbFn, codec_addr: u8)
              * but the C extern was zero-arg, so verb_fn read whatever

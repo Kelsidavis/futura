@@ -138,7 +138,9 @@ typedef enum {
 } ansi_state_t;
 
 struct fb_console_state {
-    volatile uint8_t *fb_mem;        /* Framebuffer memory pointer */
+    volatile uint8_t *fb_mem;        /* Real framebuffer (WC-mapped MMIO) */
+    uint8_t *back_buf;               /* Cached DRAM back buffer; NULL = direct-write */
+    uint32_t back_buf_size;          /* Bytes allocated in back_buf */
     uint32_t width;                  /* Framebuffer width in pixels */
     uint32_t height;                 /* Framebuffer height in pixels */
     uint32_t pitch;                  /* Bytes per scanline */
@@ -157,6 +159,14 @@ struct fb_console_state {
 };
 
 static struct fb_console_state g_fb_console = {0};
+
+/* Static back buffer in BSS. 1920x1080x4 = 8 MiB, covers any common
+ * laptop / HDMI panel we're likely to boot on. The link.ld ASSERT was
+ * bumped to 64 MiB to accommodate this; the 4 GiB boot identity map
+ * has plenty of room. Once the kernel heap is up early enough we
+ * should swap this for a dynamic allocation. */
+#define FB_BACK_BUF_MAX_BYTES   (1920u * 1080u * 4u)
+static uint8_t g_fb_back_buf[FB_BACK_BUF_MAX_BYTES] __attribute__((aligned(64)));
 
 /* ============================================================
  *   Helper Functions
@@ -190,7 +200,10 @@ static void fb_console_draw_pixel(int x, int y, uint32_t color) {
     }
     if (!g_fb_addr_validated) return;
 
-    uint8_t *fb = (uint8_t *)cons->fb_mem;
+    /* Prefer the back buffer if available — cached writes are ~5-10x
+     * faster than the FB mapping. A subsequent flush copies dirty
+     * region(s) to the real FB. */
+    uint8_t *fb = cons->back_buf ? cons->back_buf : (uint8_t *)cons->fb_mem;
     uint32_t offset = (y * cons->pitch) + (x * 4);
     if (cons->bpp == 32) {
         *(volatile uint32_t *)(fb + offset) = color;
@@ -227,7 +240,11 @@ static void fb_console_draw_char(int char_x, int char_y, char c, uint32_t fg_col
     /* For 32 bpp we can write whole pixels; for 24 bpp fall back to the
      * old per-pixel path (rare on modern UEFI hardware). */
     if (cons->bpp == 32) {
-        uint8_t *fb_base = (uint8_t *)cons->fb_mem
+        /* Render into the back buffer (cached, fast) when present.
+         * fb_console_flush*() pushes the changes to the real FB. */
+        uint8_t *fb_dst = cons->back_buf ? cons->back_buf
+                                         : (uint8_t *)cons->fb_mem;
+        uint8_t *fb_base = fb_dst
                          + (uint32_t)pixel_y * pitch
                          + (uint32_t)pixel_x * 4;
         for (int row = 0; row < char_height; row++) {
@@ -259,7 +276,9 @@ static void fb_console_scroll(void) {
     struct fb_console_state *cons = &g_fb_console;
     if (!g_fb_addr_validated) return;
 
-    uint8_t *fb = (uint8_t *)cons->fb_mem;
+    /* Scroll happens in the back buffer (cached, very fast memmove);
+     * the next fb_console_flush_full pushes the scrolled image to FB. */
+    uint8_t *fb = cons->back_buf ? cons->back_buf : (uint8_t *)cons->fb_mem;
 
     /* Bytes per scrolled "stride" — stop at the start of the protected
      * (logo) region so we don't shuffle the boot logo. */
@@ -378,12 +397,55 @@ int fb_console_init(void) {
                    (void *)cons->fb_mem);
     }
 
+    /* Set up the cached back buffer if our static slot is big enough.
+     * All glyph draws / scrolls go to the back buffer (cached writes
+     * are 5-10x faster than even WC-mapped MMIO). A flush memcpys
+     * the dirty region to the real FB in one streaming-stores burst,
+     * which the WC mapping turns into wide cacheline writes. */
+    size_t fb_bytes = (size_t)cons->pitch * (size_t)cons->height;
+    if (fb_bytes <= FB_BACK_BUF_MAX_BYTES) {
+        cons->back_buf = g_fb_back_buf;
+        cons->back_buf_size = (uint32_t)fb_bytes;
+        memset(cons->back_buf, 0, fb_bytes);
+        fut_printf("[FB_CONSOLE] Back buffer: %zu KiB (cached) → flushed to %p (WC)\n",
+                   fb_bytes / 1024, (void *)cons->fb_mem);
+    } else {
+        cons->back_buf = NULL;
+        cons->back_buf_size = 0;
+        fut_printf("[FB_CONSOLE] Framebuffer (%zu KiB) exceeds %u KiB back-buffer slot; falling back to direct writes\n",
+                   fb_bytes / 1024, FB_BACK_BUF_MAX_BYTES / 1024);
+    }
+
     fut_printf("[FB_CONSOLE] Initialized: %ux%u, %u cols x %u rows\n",
                cons->width, cons->height, cons->cols, cons->rows);
 
     fb_console_clear();
 
     return 0;
+}
+
+/* Copy the entire back buffer to the real framebuffer. The fb_mem
+ * mapping is WC; memcpy emits aligned movs / streaming-stores that
+ * fill WC buffers and flush them in 64-byte bursts, so this is
+ * massively faster than per-pixel writes through cached or even WC
+ * mappings done one at a time. No-op if there's no back buffer. */
+static void fb_console_flush_full(void) {
+    struct fb_console_state *cons = &g_fb_console;
+    if (!cons->back_buf || !g_fb_addr_validated) return;
+    memcpy((void *)cons->fb_mem, cons->back_buf, cons->back_buf_size);
+}
+
+/* External accessors so fb_boot_splash (in fb_mmio.c) can route the
+ * Rory logo BMP rendering through the same back buffer the rest of
+ * the console uses. Without this, the next fb_console_flush_full
+ * would overwrite the logo with whatever is in back_buf (which has
+ * no logo data of its own). */
+uint8_t *fb_console_back_buf(void) {
+    return g_fb_console.back_buf;
+}
+
+void fb_console_flush_full_external(void) {
+    fb_console_flush_full();
 }
 
 void fb_console_clear(void) {
@@ -393,14 +455,18 @@ void fb_console_clear(void) {
         return;
     }
 
-    /* Fill with opaque black (0xFF000000 in ARGB) - don't use memset(0)
-     * because 0x00000000 may not display as black on all hardware */
-    uint32_t *fb32 = (uint32_t *)cons->fb_mem;
+    /* Fill with opaque black (0xFF000000 ARGB). 0x00000000 is not
+     * universally rendered as black on every fb format, so be explicit. */
+    uint32_t *fb32 = (uint32_t *)(cons->back_buf ? cons->back_buf
+                                                 : (uint8_t *)cons->fb_mem);
     size_t pixel_count = (cons->pitch * cons->height) / 4;
-    uint32_t black = 0xFF000000;  /* Opaque black */
+    uint32_t black = 0xFF000000;
     for (size_t i = 0; i < pixel_count; i++) {
         fb32[i] = black;
     }
+    /* Push the cleared back buffer to the real FB so the screen actually
+     * goes black even before the first character is drawn. */
+    fb_console_flush_full();
 
     cons->cursor_x = 0;
     cons->cursor_y = 0;
@@ -437,6 +503,13 @@ static volatile int fb_console_present_busy = 0;
  * the present() call into a single load+branch on the hot path. */
 static int g_fb_present_needed = -1;  /* -1 = not yet probed, 0 = no, 1 = yes */
 static void fb_console_present(void) {
+    /* Always blit our cached back buffer to the real framebuffer when
+     * present() is called. With no virtio-gpu flush hook (bare metal)
+     * this is the only thing that needs to happen — the kernel has
+     * been writing to back_buf, and the screen reflects fb_mem, so
+     * the user only sees output after the memcpy. */
+    fb_console_flush_full();
+
     if (g_fb_present_needed == 0) {
         return;  /* Bare metal — no compositor flush hook, nothing to do. */
     }

@@ -221,9 +221,20 @@ static void fb_boot_render_banner_and_logo(void) {
     fut_printf("-------------------------------\n");
     fut_printf("\n");
 
-    /* Logo: 24-bit BMP, top-right corner with 20px margin. */
+    /* Logo: 24-bit BMP, top-right corner with 20px margin.
+     *
+     * Route the BMP write through the fb_console back buffer when one
+     * is present, otherwise direct to the framebuffer. Without this
+     * the next fb_console_flush_full memcpy would overwrite the logo
+     * (back_buf has no logo data, and flush copies the whole buffer
+     * onto fb_mem). */
     if (!g_fb_virt) return;
-    volatile uint32_t *fb = (volatile uint32_t *)g_fb_virt;
+    extern uint8_t *fb_console_back_buf(void);
+    extern void fb_console_flush_full_external(void);
+    uint8_t *back = fb_console_back_buf();
+    volatile uint32_t *fb = back
+        ? (volatile uint32_t *)back
+        : (volatile uint32_t *)g_fb_virt;
     uint32_t w = g_fb_hw.info.width;
     uint32_t h = g_fb_hw.info.height;
     const unsigned char *bmp = boot_bmp;
@@ -277,6 +288,12 @@ static void fb_boot_render_banner_and_logo(void) {
                 fb[fb_y * w + fb_x] = color;
             }
         }
+    }
+
+    /* If we drew into the back buffer, push the result to the real FB
+     * so the user actually sees the logo. */
+    if (back) {
+        fb_console_flush_full_external();
     }
 }
 

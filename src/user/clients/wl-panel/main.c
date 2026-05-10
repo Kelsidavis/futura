@@ -179,26 +179,56 @@ static long panel_tz_offset_sec(void) {
     return cached;
 }
 
-/* Get current time as HH:MM string */
-static void get_time_string(char *buf) {
+/* Civil-from-days (Howard Hinnant). Converts days since 1970-01-01
+ * to (year, month, day). Same algorithm rust-date uses. */
+static void civil_from_days(long z, int *yo, int *mo, int *do_) {
+    long zz = z + 719468;
+    long era = (zz >= 0 ? zz : zz - 146096) / 146097;
+    unsigned long doe = (unsigned long)(zz - era * 146097);          /* [0, 146096] */
+    unsigned long yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    long y = (long)yoe + era * 400;
+    unsigned long doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    unsigned long mp  = (5 * doy + 2) / 153;
+    unsigned long d   = doy - (153 * mp + 2) / 5 + 1;
+    unsigned long m   = (mp < 10 ? mp + 3 : mp - 9);
+    if (m <= 2) y++;
+    *yo = (int)y; *mo = (int)m; *do_ = (int)d;
+}
+
+/* Get current date+time as "MMM DD  HH:MM" (13 chars + NUL). */
+static void get_clock_string(char *buf) {
     struct timespec ts;
     if (clock_gettime(CLOCK_REALTIME, &ts) == 0) {
         long seconds = ts.tv_sec + panel_tz_offset_sec();
-        /* Modulo with wrap-around in case TZ offset pushes us negative
-         * (e.g. just-after-midnight UTC for a negative offset zone). */
-        long hours = (((seconds / 3600) % 24) + 24) % 24;
-        long minutes = (((seconds / 60) % 60) + 60) % 60;
+        long day_secs = seconds % 86400;
+        long days = seconds / 86400;
+        if (day_secs < 0) { day_secs += 86400; days -= 1; }
+        long hours = day_secs / 3600;
+        long minutes = (day_secs % 3600) / 60;
 
-        buf[0] = (char)('0' + (hours / 10));
-        buf[1] = (char)('0' + (hours % 10));
-        buf[2] = ':';
-        buf[3] = (char)('0' + (minutes / 10));
-        buf[4] = (char)('0' + (minutes % 10));
-        buf[5] = '\0';
+        int y = 0, mo = 0, d = 0;
+        civil_from_days(days, &y, &mo, &d);
+        static const char *MON[13] = {
+            "???", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+            "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+        };
+        const char *mp = MON[(mo >= 1 && mo <= 12) ? mo : 0];
+        buf[0] = mp[0]; buf[1] = mp[1]; buf[2] = mp[2];
+        buf[3] = ' ';
+        buf[4] = (char)('0' + (d / 10));
+        buf[5] = (char)('0' + (d % 10));
+        buf[6] = ' ';
+        buf[7] = ' ';
+        buf[8]  = (char)('0' + (hours / 10));
+        buf[9]  = (char)('0' + (hours % 10));
+        buf[10] = ':';
+        buf[11] = (char)('0' + (minutes / 10));
+        buf[12] = (char)('0' + (minutes % 10));
+        buf[13] = '\0';
     } else {
-        /* Fallback if clock_gettime fails */
-        buf[0] = '-'; buf[1] = '-'; buf[2] = ':';
-        buf[3] = '-'; buf[4] = '-'; buf[5] = '\0';
+        const char *fb = "--- -- --:--";
+        for (int i = 0; i < 13; i++) buf[i] = fb[i];
+        buf[13] = '\0';
     }
 }
 
@@ -233,10 +263,11 @@ static void panel_draw(struct panel_state *state) {
     /* Branding: "FUTURA" left of center */
     draw_text(state->shm_data, PANEL_WIDTH, 90, 11, "FUTURA", ACCENT_COLOR);
 
-    /* Draw clock and date (right side) */
-    char time_str[6];
-    get_time_string(time_str);
-    draw_text(state->shm_data, PANEL_WIDTH, PANEL_WIDTH - 48, 11, time_str, TEXT_COLOR);
+    /* Draw "MMM DD  HH:MM" (right side). 13 chars × 6px stride = 78px,
+     * + ~12px right margin = position at PANEL_WIDTH - 90. */
+    char clock_str[14];
+    get_clock_string(clock_str);
+    draw_text(state->shm_data, PANEL_WIDTH, PANEL_WIDTH - 90, 11, clock_str, TEXT_COLOR);
 
     wl_surface_attach(state->surface, state->buffer, 0, 0);
     wl_surface_damage_buffer(state->surface, 0, 0, PANEL_WIDTH, PANEL_HEIGHT);
@@ -263,15 +294,15 @@ static void frame_callback(void *data, struct wl_callback *callback, uint32_t ti
      * to repaint a panel whose contents change once a minute. Hover
      * transitions already trigger an out-of-band panel_draw() from
      * pointer_motion(), so we just need to catch the minute roll. */
-    static char last_time_str[6] = {0};
-    char now_time_str[6];
-    get_time_string(now_time_str);
+    static char last_time_str[14] = {0};
+    char now_time_str[14];
+    get_clock_string(now_time_str);
     bool changed = false;
-    for (int i = 0; i < 6; i++) {
+    for (int i = 0; i < 14; i++) {
         if (last_time_str[i] != now_time_str[i]) { changed = true; break; }
     }
     if (changed) {
-        for (int i = 0; i < 6; i++) last_time_str[i] = now_time_str[i];
+        for (int i = 0; i < 14; i++) last_time_str[i] = now_time_str[i];
         panel_draw(state);
     }
 

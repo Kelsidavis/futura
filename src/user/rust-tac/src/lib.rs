@@ -270,12 +270,14 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         }
         if h_ok && unsafe { *p.add(want_h.len()) } == 0 {
             let help: &[u8] = b"\
-Usage: rust-tac [-z] [FILE]...
-Concatenate FILEs and print them in reverse line order. Each FILE is
-slurped into a static buffer, then emitted last-line-first. With no
-FILE (or FILE = '-') reads stdin.
+Usage: rust-tac [-z] [-s SEP] [FILE]...
+Concatenate FILEs and print them in reverse record order. Each FILE
+is slurped into a static buffer, then emitted last-record-first.
+With no FILE (or FILE = '-') reads stdin.
 
-  -z, --zero-terminated  line delimiter is NUL, not newline
+  -s, --separator=SEP    use SEP[0] as the record separator instead of
+                         newline (single byte; multi-byte unsupported)
+  -z, --zero-terminated  shorthand for -s '\\0'
       --help             show this help and exit
 \0";
             let len = help.len() - 1;
@@ -293,6 +295,43 @@ FILE (or FILE = '-') reads stdin.
         let is_zlong = zl_ok && unsafe { *p.add(want_zl.len()) } == 0;
         if is_z || is_zlong {
             sep = 0;
+            idx += 1;
+            continue;
+        }
+        // -s SEP / --separator SEP / --separator=SEP
+        let mut p_n = 0usize;
+        unsafe { while *p.add(p_n) != 0 { p_n += 1; } }
+        let is_s = p_n == 2 && unsafe { *p == b'-' && *p.add(1) == b's' };
+        let is_sep_long = p_n == 11 && unsafe {
+            let want = b"--separator";
+            let mut ok = true;
+            for j in 0..want.len() { if *p.add(j) != want[j] { ok = false; break; } }
+            ok
+        };
+        let is_sep_eq = p_n > 12 && unsafe {
+            let want = b"--separator=";
+            let mut ok = true;
+            for j in 0..want.len() { if *p.add(j) != want[j] { ok = false; break; } }
+            ok
+        };
+        if is_s || is_sep_long {
+            if idx + 1 >= argc {
+                write_str(STDERR, b"rust-tac: -s needs a SEP\n");
+                return 1;
+            }
+            let sp = unsafe { *argv.add((idx + 1) as usize) };
+            if sp.is_null() || (sp as usize) < 0x10000 { return 1; }
+            let first = unsafe { *sp };
+            // Empty SEP is treated as "no separator change" — we leave
+            // sep at its current value rather than degenerate to a
+            // record-per-byte mode.
+            if first != 0 { sep = first; }
+            idx += 2;
+            continue;
+        }
+        if is_sep_eq {
+            let first = unsafe { *p.add(12) };
+            if first != 0 { sep = first; }
             idx += 1;
             continue;
         }

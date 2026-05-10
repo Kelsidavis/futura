@@ -310,6 +310,75 @@ fn line_matches(line: &[u8], pats: &[&[u8]], icase: bool, word: bool,
     false
 }
 
+// Load patterns from a file, one per line, into a static buffer and
+// append each NUL-terminated start pointer to `e_patterns` (capped at
+// the array's length). Returns false on open / read failure or if the
+// file would overflow the static buffer.
+const PFB_LEN: usize = 4096;
+static mut PAT_FILE_BUF: [u8; PFB_LEN] = [0u8; PFB_LEN];
+static mut PAT_FILE_USED: usize = 0;
+
+fn load_patterns_file(path: *const u8,
+                      e_patterns: &mut [*const u8; 8],
+                      n_e_patterns: &mut usize) -> bool {
+    let fd = unsafe {
+        syscall4(sysn::OPENAT, AT_FDCWD as u64, path as u64, O_RDONLY, 0)
+    };
+    if fd < 0 { return false; }
+    let fd = fd as i32;
+
+    // SAFETY: we mutate the static buffer up to its declared length,
+    // single-threaded user-space binary, exclusive ownership.
+    let start_off = unsafe { PAT_FILE_USED };
+    let mut total = start_off;
+    loop {
+        let cap = PFB_LEN.saturating_sub(total);
+        if cap == 0 { break; }
+        let n = unsafe {
+            let p = (&raw mut PAT_FILE_BUF) as *mut u8;
+            syscall3(sysn::READ, fd as u64, p.add(total) as u64, cap as u64)
+        };
+        if n <= 0 { break; }
+        total += n as usize;
+    }
+    unsafe { let _ = syscall1(sysn::CLOSE, fd as u64); }
+
+    if total == start_off { return true; }  // empty file: no-op
+
+    // Walk the freshly-loaded slice; replace every '\n' with NUL and
+    // record each non-empty line's starting pointer.
+    let buf_ptr = (&raw mut PAT_FILE_BUF) as *mut u8;
+    let mut line_start = start_off;
+    let mut i = start_off;
+    while i < total {
+        let b = unsafe { *buf_ptr.add(i) };
+        if b == b'\n' {
+            unsafe { *buf_ptr.add(i) = 0; }
+            if i > line_start && *n_e_patterns < e_patterns.len() {
+                e_patterns[*n_e_patterns] = unsafe { buf_ptr.add(line_start) };
+                *n_e_patterns += 1;
+            }
+            line_start = i + 1;
+        }
+        i += 1;
+    }
+    // Trailing line without newline. Need to NUL-terminate; if the
+    // buffer is full we can't safely add a NUL — drop the trailing
+    // pattern to stay sound.
+    if line_start < total {
+        if total < PFB_LEN {
+            unsafe { *buf_ptr.add(total) = 0; }
+            if *n_e_patterns < e_patterns.len() {
+                e_patterns[*n_e_patterns] = unsafe { buf_ptr.add(line_start) };
+                *n_e_patterns += 1;
+            }
+            total += 1;
+        }
+    }
+    unsafe { PAT_FILE_USED = total; }
+    true
+}
+
 fn fmt_u64(mut n: u64, buf: &mut [u8]) -> usize {
     if n == 0 {
         if !buf.is_empty() {
@@ -1127,6 +1196,26 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             // Already fixed-string by default; accept the flag for
             // GNU-script portability (no behaviour change).
             idx += 1;
+        } else if arg_is(p, b"-f") || arg_is(p, b"--file") {
+            // -f FILE — read patterns from FILE, one per line. Each
+            // line is appended to e_patterns; trailing \n stripped
+            // in place by NUL-terminating the loaded buffer.
+            idx += 1;
+            match argv_get(argc, argv, idx) {
+                Some(pp) => {
+                    if !load_patterns_file(pp, &mut e_patterns, &mut n_e_patterns) {
+                        if !opts.no_messages {
+                            write_str(STDERR, b"rust-grep: cannot read pattern file\n");
+                        }
+                        return 2;
+                    }
+                    idx += 1;
+                }
+                None => {
+                    write_str(STDERR, b"rust-grep: -f needs a file path\n");
+                    return 2;
+                }
+            }
         } else if arg_is(p, b"-e") || arg_is(p, b"--regexp")
                   || arg_is(p, b"--pattern") {
             // -e PATTERN — accumulates patterns; ORed at match time.
@@ -1157,7 +1246,8 @@ Usage: rust-grep [OPTION]... PATTERN [FILE]...
 Search for PATTERN in each FILE (or standard input).
 
 Pattern selection and interpretation:
-  -e, --pattern PAT     use PAT as the pattern
+  -e, --pattern PAT     use PAT as the pattern (multiple -e OR'd)
+  -f, --file FILE       read patterns from FILE (one per line)
   -F, --fixed-strings   PATTERN is a fixed string (default; accepted as no-op)
   -i, --ignore-case     case-insensitive match
   -w, --word-regexp     match only whole words

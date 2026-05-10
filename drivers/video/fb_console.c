@@ -610,22 +610,17 @@ void fb_console_putc(char c) {
             fb_console_scroll();
             cons->cursor_y = cons->rows - 1;
         }
-        /* Throttle GPU flushes — flushing on every newline is too
-         * aggressive (the boot log has ~100 lines, each flush sends
-         * TRANSFER_TO_HOST_2D + RESOURCE_FLUSH and polls for both
-         * with IRQs off; the device queue can't drain fast enough
-         * and we hit '[virtio-gpu-mmio] Command timeout' and the
-         * display freezes again). Flushing every 8 newlines cuts
-         * GPU pressure ~8x while still keeping per-screen latency
-         * sub-second at boot rates. The trailing data is still
-         * visible because fb_console_putc on a column wrap also
-         * presents (handles the shell prompt sitting on a partial
-         * line at the bottom). */
-        static unsigned int newlines_since_flush = 0;
-        if (++newlines_since_flush >= 8) {
-            newlines_since_flush = 0;
-            fb_console_present();
-        }
+        /* Flush on every newline. The original 8-newline throttle was
+         * to avoid GPU command-queue saturation in the virtio-gpu
+         * driver, but on bare metal fb_console_present is just a
+         * memcpy from cached back_buf to WC fb_mem — cheap enough to
+         * do every line. Throttling caused a real problem: when boot
+         * got busy doing kmalloc/lock-heavy init that didn't print
+         * for a while, the last 7 lines of output stayed in back_buf
+         * and the user saw a frozen-looking screen even though the
+         * kernel was making progress. With a per-newline flush, what
+         * the user sees matches what the kernel just printed. */
+        fb_console_present();
     } else if (c == '\r') {
         cons->cursor_x = 0;
     } else if (c == '\t') {

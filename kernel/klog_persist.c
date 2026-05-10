@@ -108,12 +108,25 @@ void klog_persist_init(void) {
                           (g_klog->cursor < KLOG_PERSIST_DATA_SIZE);
     uint32_t prev_seq = valid_previous ? g_klog->boot_seq : 0;
 
+    /* The auto-dump of the previous boot's log was confusing during
+     * normal iteration: every boot scrolled last boot's banner /
+     * build line / driver-init log onto this boot's screen, looking
+     * for all the world like the *current* kernel had a duplicate
+     * banner and a stale build tag. The recording infrastructure
+     * still runs (we keep writing to the ring), so the data is
+     * recoverable later via a debug hook — just not splashed onto
+     * the framebuffer at startup. */
     if (valid_previous) {
-        klog_persist_dump_previous();
+        fut_printf("[KLOG-PERSIST] Previous-boot log present (seq=%u, %llu bytes); not auto-dumped\n",
+                   prev_seq,
+                   (unsigned long long)g_klog->total_written);
     } else {
         fut_printf("[KLOG-PERSIST] No previous log (magic=0x%llx) — fresh start\n",
                    (unsigned long long)g_klog->magic);
     }
+    /* Keep the dump function reachable for a future debug hook so the
+     * symbol isn't DCE'd. */
+    if (0) klog_persist_dump_previous();
 
     /* Reset header for this boot. Do magic LAST so a partially-written
      * header from this point onward doesn't get mistaken for valid by

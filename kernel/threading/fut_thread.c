@@ -793,15 +793,19 @@ __attribute__((used)) static void fut_thread_trampoline_impl(void (*entry)(void 
 
 /* The actual C implementation, called by the assembly wrapper */
 [[noreturn]] __attribute__((optimize("O0"))) static void fut_thread_trampoline_impl(void (*entry)(void *), void *arg) {
+    fut_printf("[KTRAMP] entry=%p arg=%p\n", entry, arg);
     if (!entry) {
+        fut_printf("[KTRAMP] entry NULL, exiting\n");
         fut_thread_exit();
     }
 
     /* Check if entry is in kernel space */
     if ((uintptr_t)entry < KERNEL_VIRTUAL_BASE) {
+        fut_printf("[KTRAMP] entry %p < KVA_BASE, exiting\n", entry);
         fut_thread_exit();
     }
 
+    fut_printf("[KTRAMP] calling entry()\n");
     /* Call the entry function */
     entry(arg);
 

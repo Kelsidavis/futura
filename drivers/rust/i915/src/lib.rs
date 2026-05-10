@@ -864,3 +864,112 @@ pub extern "C" fn i915_bcs_ready() -> bool {
     let st = STATE.get();
     unsafe { (*st).bcs_ready }
 }
+
+// ── Phase 5: XY_COLOR_BLT for fb_console hardware clear ──
+//
+// Single GPU submission that fills a rectangle with a constant color.
+// Replaces fb_console_clear's CPU 4 MB+ memset.
+//
+// XY_COLOR_BLT command (Gen9, 6 DWORDs total, length field = 6-2 = 4):
+//
+//   DW0: BR00  header — 0x57300004
+//                bits 31..29 = 010 (2D Command class)
+//                bits 28..22 = 0x50 (XY_COLOR_BLT opcode)
+//                bits 25..24 = 11   (BLT_DEPTH_32 = 32 bpp ARGB)
+//                bit  21     = 1    (Write Alpha)
+//                bit  20     = 1    (Write RGB)
+//                bits 7..0   = 4    (DWORD length minus 2)
+//   DW1: BR13  color depth + ROP + dest pitch
+//                bits 25..24: depth (3 = 32 bpp)
+//                bits 23..16: ROP   (0xF0 = PATCOPY)
+//                bits 15..0:  dest pitch in bytes
+//   DW2: BR22  dest top-left      (y << 16) | x
+//   DW3: BR23  dest bottom-right  (y << 16) | x  (exclusive)
+//   DW4: BR09  dest base GGTT addr (32 bits on Gen9)
+//   DW5: BR16  fill color (32-bit ARGB for 32 bpp)
+
+const XY_COLOR_BLT_HEADER: u32 = 0x5730_0004;
+const ROP_PATCOPY: u32 = 0xF0;
+
+/// Fill a rectangle of the framebuffer with the given ARGB color.
+/// (x1, y1) inclusive, (x2, y2) exclusive — same convention as
+/// XY_COLOR_BLT itself. width = x2 - x1, height = y2 - y1.
+///
+/// Returns 0 on success, negative on failure (BCS not ready,
+/// FB not GTT-mapped, ring full, drain timeout).
+#[unsafe(no_mangle)]
+pub extern "C" fn i915_blt_clear(x1: u32, y1: u32, x2: u32, y2: u32,
+                                  argb: u32) -> i32 {
+    let st = STATE.get();
+    if !unsafe { (*st).bcs_ready } {
+        return -1;
+    }
+    if unsafe { (*st).fb_gpu_va } == 0 {
+        if i915_map_fb_in_gtt() != 0 {
+            return -2;
+        }
+    }
+    if x2 <= x1 || y2 <= y1 {
+        return 0;
+    }
+
+    let mmio = unsafe { (*st).mmio_base };
+    let ring_virt = unsafe { (*st).scratch_virt } as *mut u32;
+    let pitch = unsafe { (*st).fb_pitch };
+    let fb_va = unsafe { (*st).fb_gpu_va } as u32;
+
+    if mmio.is_null() || ring_virt.is_null() {
+        return -3;
+    }
+
+    let cmd: [u32; 6] = [
+        XY_COLOR_BLT_HEADER,
+        /* BR13: depth=3 (32bpp), ROP=PATCOPY for solid color, pitch */
+        (3u32 << 24) | (ROP_PATCOPY << 16) | (pitch & 0xFFFF),
+        /* BR22: dest top-left */
+        (y1 << 16) | x1,
+        /* BR23: dest bottom-right exclusive */
+        (y2 << 16) | x2,
+        /* BR09: dest base GGTT addr */
+        fb_va,
+        /* BR16: fill color */
+        argb,
+    ];
+
+    if !forcewake_get_render(mmio) {
+        log("i915_blt_clear: forcewake ACK timeout");
+        return -4;
+    }
+
+    unsafe {
+        /* Drain any prior submission before reusing ring offset 0. */
+        mmio_write32_at(mmio, BCS_RING_TAIL, 0);
+        for _ in 0..1_000_000 {
+            if mmio_read32_at(mmio, BCS_RING_HEAD) & !0x3F == 0 {
+                break;
+            }
+        }
+
+        for (i, dw) in cmd.iter().enumerate() {
+            core::ptr::write_volatile(ring_virt.add(i), *dw);
+        }
+        mmio_write32_at(mmio, BCS_RING_TAIL, (cmd.len() * 4) as u32);
+
+        let mut drained = false;
+        for _ in 0..2_000_000 {
+            let head = mmio_read32_at(mmio, BCS_RING_HEAD) & !0x3F;
+            let tail = mmio_read32_at(mmio, BCS_RING_TAIL) & !0x3F;
+            if head == tail {
+                drained = true;
+                break;
+            }
+        }
+
+        forcewake_put_render(mmio);
+        if !drained {
+            return -5;
+        }
+    }
+
+    0
+}

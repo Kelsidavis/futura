@@ -850,7 +850,7 @@ void fut_platform_init(uint32_t multiboot_magic __attribute__((unused)),
      * if scroll position is at the bottom and the top of the boot log
      * has scrolled past. */
     fut_printf("################################################\n");
-    fut_printf("[BUILD] Futura kernel built %s %s (iter-39: i915 phase 4 - XY_SRC_COPY_BLT scroll)\n",
+    fut_printf("[BUILD] Futura kernel built %s %s (iter-40: i915 phase 5 - XY_COLOR_BLT clear)\n",
                __DATE__, __TIME__);
     fut_printf("################################################\n");
 

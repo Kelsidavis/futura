@@ -872,16 +872,16 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
     let mut e_patterns: [*const u8; 8] = [core::ptr::null(); 8];
     let mut n_e_patterns: usize = 0;
     while let Some(p) = argv_get(argc, argv, idx) {
-        if arg_is(p, b"-n") {
+        if arg_is(p, b"-n") || arg_is(p, b"--line-number") {
             opts.show_lineno = true;
             idx += 1;
         } else if arg_is(p, b"-b") || arg_is(p, b"--byte-offset") {
             opts.byte_offset = true;
             idx += 1;
-        } else if arg_is(p, b"-i") {
+        } else if arg_is(p, b"-i") || arg_is(p, b"--ignore-case") {
             opts.icase = true;
             idx += 1;
-        } else if arg_is(p, b"-v") {
+        } else if arg_is(p, b"-v") || arg_is(p, b"--invert-match") {
             opts.invert = true;
             idx += 1;
         } else if arg_is(p, b"-w") || arg_is(p, b"--word-regexp") {
@@ -902,13 +902,13 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
                 opts.show_name = ShowName::Always;
             }
             idx += 1;
-        } else if arg_is(p, b"-H") {
+        } else if arg_is(p, b"-H") || arg_is(p, b"--with-filename") {
             opts.show_name = ShowName::Always;
             idx += 1;
-        } else if arg_is(p, b"-h") {
+        } else if arg_is(p, b"-h") || arg_is(p, b"--no-filename") {
             opts.show_name = ShowName::Never;
             idx += 1;
-        } else if arg_is(p, b"-c") {
+        } else if arg_is(p, b"-c") || arg_is(p, b"--count") {
             opts.count = true;
             idx += 1;
         } else if arg_is(p, b"-l") || arg_is(p, b"--files-with-matches") {

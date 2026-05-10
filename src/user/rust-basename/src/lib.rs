@@ -215,9 +215,15 @@ Print PATH with any leading directory and trailing SUFFIX removed.
             ok
         };
         if is_z || is_zlong { zero_term = true; idx += 1; continue; }
-        // -s SUFFIX
+        // -s SUFFIX or --suffix SUFFIX (separate arg)
         let is_s = n == 2 && unsafe { *p == b'-' && *p.add(1) == b's' };
-        if is_s {
+        let is_suffix_long = n == 8 && unsafe {
+            let want = b"--suffix";
+            let mut ok = true;
+            for i in 0..want.len() { if *p.add(i) != want[i] { ok = false; break; } }
+            ok
+        };
+        if is_s || is_suffix_long {
             if idx + 1 >= argc {
                 write_str(STDERR, b"rust-basename: -s needs a suffix\n");
                 return 1;

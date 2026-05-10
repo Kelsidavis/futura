@@ -186,7 +186,9 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
     while idx < argc {
         let p = unsafe { *argv.add(idx as usize) };
         if p.is_null() || (p as usize) < 0x10000 { break; }
-        if cstr_eq(p, b"-s") { symbolic = true; idx += 1; continue; }
+        if cstr_eq(p, b"-s") || cstr_eq(p, b"--symbolic") {
+            symbolic = true; idx += 1; continue;
+        }
         if cstr_eq(p, b"-v") || cstr_eq(p, b"--verbose") {
             verbose = true; idx += 1; continue;
         }

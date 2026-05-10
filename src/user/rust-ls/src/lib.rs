@@ -348,6 +348,9 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             // -U: don't sort (no other side effects), GNU extension.
             unsorted = true;
             idx += 1;
+        } else if arg_is(p, b"--") {
+            idx += 1;
+            break;
         } else if arg_is(p, b"--help") {
             let help: &[u8] = b"\
 Usage: rust-ls [OPTION]... [PATH]...

@@ -397,6 +397,9 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             }
             max_depth = v;
             idx += 2;
+        } else if arg_is(p, b"--") {
+            idx += 1;
+            break;
         } else if arg_is(p, b"--help") {
             let help: &[u8] = b"\
 Usage: rust-tree [-a] [-d] [-L LEVEL] [PATH]

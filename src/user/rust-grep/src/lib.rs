@@ -351,6 +351,7 @@ struct Opts {
     no_messages: bool,  // -s/--no-messages: suppress per-file error spew
     stdin_label: Option<*const u8>,  // --label LABEL: override "(standard input)"
     color: bool,        // --color=always: ANSI-highlight matched substring
+    byte_offset: bool,  // -b: print 0-based byte offset before the match
 }
 
 const CTX_CAP: usize = 16;        // max before-context lines
@@ -364,6 +365,12 @@ enum ShowName {
 }
 
 fn emit_prefix(name: Option<&[u8]>, lineno: u64, opts: &Opts) {
+    emit_prefix_at(name, lineno, 0, opts);
+}
+
+// Variant that also accepts a byte offset for -b. The offset is the
+// 0-based position of the start of `line` in its source stream.
+fn emit_prefix_at(name: Option<&[u8]>, lineno: u64, byte_off: u64, opts: &Opts) {
     let prefix_name = match opts.show_name {
         ShowName::Always => name,
         ShowName::Never => None,
@@ -379,10 +386,17 @@ fn emit_prefix(name: Option<&[u8]>, lineno: u64, opts: &Opts) {
         write_all(STDOUT, &buf[..len]);
         write_all(STDOUT, b":");
     }
+    if opts.byte_offset {
+        let mut buf = [0u8; 24];
+        let len = fmt_u64(byte_off, &mut buf);
+        write_all(STDOUT, &buf[..len]);
+        write_all(STDOUT, b":");
+    }
 }
 
-fn emit_match(name: Option<&[u8]>, lineno: u64, line: &[u8], opts: &Opts) {
-    emit_prefix(name, lineno, opts);
+fn emit_match_at(name: Option<&[u8]>, lineno: u64, byte_off: u64,
+                 line: &[u8], opts: &Opts) {
+    emit_prefix_at(name, lineno, byte_off, opts);
     write_all(STDOUT, line);
     if line.last().copied() != Some(b'\n') {
         write_all(STDOUT, b"\n");
@@ -516,6 +530,8 @@ fn grep_fd(
     let mut lineno: u64 = 0;
     let mut count: u64 = 0;
     let mut overflow = false;
+    let mut byte_pos_before_chunk: u64 = 0;
+    let mut cur_line_start: u64 = 0;
     // -A NUM: lines remaining to emit as after-context.
     let mut after_remaining: u32 = 0;
     // -B NUM: ring buffer of the last `before_ctx` non-matching lines.
@@ -559,6 +575,8 @@ fn grep_fd(
             }
             if b == b'\n' {
                 lineno += 1;
+                let line_off = cur_line_start;
+                cur_line_start = byte_pos_before_chunk + i as u64 + 1;
                 if !overflow {
                     let body = &line[..line_len];
                     let m = line_matches(body, pat, opts.icase, opts.word, opts.line_match);
@@ -586,7 +604,7 @@ fn grep_fd(
                             } else if opts.color && !opts.invert {
                                 emit_match_colored(name, lineno, body, pat, opts);
                             } else {
-                                emit_match(name, lineno, body, opts);
+                                emit_match_at(name, lineno, line_off, body, opts);
                             }
                         }
                         count += 1;
@@ -615,6 +633,7 @@ fn grep_fd(
                 overflow = false;
             }
         }
+        byte_pos_before_chunk += bytes as u64;
     }
     // Trailing partial line (no newline at EOF).
     if line_len > 0 {
@@ -626,7 +645,7 @@ fn grep_fd(
                 if opts.only_matching && !opts.invert {
                     let _ = emit_matches_only(name, lineno, body, pat, opts);
                 } else {
-                    emit_match(name, lineno, body, opts);
+                    emit_match_at(name, lineno, cur_line_start, body, opts);
                 }
             }
             count += 1;
@@ -832,12 +851,16 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         no_messages: false,
         stdin_label: None,
         color: false,
+        byte_offset: false,
     };
 
     let mut e_pattern: Option<*const u8> = None;
     while let Some(p) = argv_get(argc, argv, idx) {
         if arg_is(p, b"-n") {
             opts.show_lineno = true;
+            idx += 1;
+        } else if arg_is(p, b"-b") || arg_is(p, b"--byte-offset") {
+            opts.byte_offset = true;
             idx += 1;
         } else if arg_is(p, b"-i") {
             opts.icase = true;
@@ -1036,6 +1059,7 @@ Output control:
   -s, --no-messages     suppress per-file 'cannot open' diagnostics
       --label LABEL     override the synthetic '(standard input)' header
       --color[=WHEN]    highlight matches; WHEN: always|never|auto
+  -b, --byte-offset     print 0-based byte offset of each match line
       --help            show this help and exit
 \0";
             let len = help.len() - 1;  // strip the trailing NUL

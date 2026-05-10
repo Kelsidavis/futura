@@ -382,6 +382,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
     let mut force = false;
     let mut recursive = false;
     let mut verbose = false;
+    let mut dir_ok = false;
 
     while let Some(p) = argv_get(argc, argv, idx) {
         if arg_is(p, b"-f") {
@@ -394,6 +395,9 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             idx += 1;
         } else if arg_is(p, b"-v") || arg_is(p, b"--verbose") {
             verbose = true;
+            idx += 1;
+        } else if arg_is(p, b"-d") || arg_is(p, b"--dir") {
+            dir_ok = true;
             idx += 1;
         } else if arg_is(p, b"-rf") || arg_is(p, b"-fr")
             || arg_is(p, b"-Rf") || arg_is(p, b"-fR")
@@ -425,6 +429,7 @@ Remove each FILE.
 
   -f                   ignore missing files; do not prompt
   -r, -R, --recursive  walk directories and remove their contents
+  -d, --dir            remove empty directories too
   -v, --verbose        emit \"removed '<path>'\" for each removal
       --help           show this help and exit
 \0";
@@ -466,7 +471,15 @@ Remove each FILE.
                 had_error = true;
             }
         } else {
-            let rc = unsafe { sys_unlink(p) };
+            let mut rc = unsafe { sys_unlink(p) };
+            // -d: if unlink failed because path is a directory, try
+            // rmdir. EISDIR or EPERM (BSD-style) both warrant a
+            // fallback; rather than match exact errno values, just
+            // attempt rmdir on any unlink failure when -d is on.
+            if rc < 0 && dir_ok {
+                let r2 = unsafe { sys_rmdir(p) };
+                if r2 == 0 { rc = 0; }
+            }
             if rc < 0 {
                 if force && rc == ENOENT {
                     // Silent swallow.

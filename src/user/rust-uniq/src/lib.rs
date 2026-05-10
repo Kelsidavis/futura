@@ -240,6 +240,7 @@ struct Mode {
     show_count: bool,
     only_dups: bool,
     only_uniq: bool,
+    all_repeated: bool,          // -D: print every line of each duplicate group
     icase: bool,
     skip_chars: usize,           // -s N: skip first N chars before compare
     cmp_chars: Option<usize>,    // -w N: compare at most first N chars (after skip)
@@ -260,6 +261,18 @@ fn cmp_window<'a>(line: &'a [u8], skip: usize, take: Option<usize>) -> &'a [u8] 
 
 // Print one accumulated line according to mode.
 fn emit(mode: Mode, line: &[u8], count: u64) -> bool {
+    // -D wins precedence: it cares only about duplicates and emits
+    // every line of the group (count copies), not a single
+    // collapsed line.
+    if mode.all_repeated {
+        if count < 2 { return true; }
+        for _ in 0..count {
+            if !write_all(STDOUT, line) { return false; }
+            let term = [mode.sep];
+            if !write_all(STDOUT, &term) { return false; }
+        }
+        return true;
+    }
     if mode.only_dups && count < 2 {
         return true;
     }
@@ -300,6 +313,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         show_count: false,
         only_dups: false,
         only_uniq: false,
+        all_repeated: false,
         icase: false,
         skip_chars: 0,
         cmp_chars: None,
@@ -318,6 +332,8 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             mode.show_count = true;
         } else if cstr_eq(p, b"-d") {
             mode.only_dups = true;
+        } else if cstr_eq(p, b"-D") || cstr_eq(p, b"--all-repeated") {
+            mode.all_repeated = true;
         } else if cstr_eq(p, b"-u") {
             mode.only_uniq = true;
         } else if cstr_eq(p, b"-i") {
@@ -362,7 +378,8 @@ Usage: rust-uniq [OPTION]... [INPUT]
 Filter adjacent matching lines from INPUT (or standard input).
 
   -c          prefix lines with their occurrence count
-  -d          show only duplicated lines
+  -d          show only duplicated lines (one copy per group)
+  -D, --all-repeated   show every line of each duplicated group
   -u          show only unique lines
   -i          ignore case while comparing
   -s N        skip first N chars before comparing

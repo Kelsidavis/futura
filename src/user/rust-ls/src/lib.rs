@@ -213,6 +213,82 @@ fn panic(_info: &PanicInfo) -> ! {
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum DotMode { HideAll, ShowAlmostAll, ShowAll }
 
+// Buffered-listing storage so we can sort before emitting (GNU ls
+// default is alphabetical, not directory-stream order). Cap entries
+// at ~1K names, total ~32 KiB of name bytes — fine for normal dirs;
+// huge directories will fall through to "as many as fit" without
+// erroring out.
+const ENTRY_CAP: usize = 1024;
+const NAME_BUF: usize  = 32 * 1024;
+
+#[derive(Copy, Clone)]
+struct Entry { name_off: u32, name_len: u32, d_type: u8 }
+
+static mut ENTRIES: [Entry; ENTRY_CAP] = [Entry { name_off: 0, name_len: 0, d_type: 0 }; ENTRY_CAP];
+static mut ENTRY_COUNT: usize = 0;
+static mut NAMES: [u8; NAME_BUF] = [0; NAME_BUF];
+static mut NAMES_USED: usize = 0;
+
+fn entries_reset() {
+    unsafe {
+        ENTRY_COUNT = 0;
+        NAMES_USED = 0;
+    }
+}
+
+fn entries_push(name: &[u8], d_type: u8) {
+    unsafe {
+        if ENTRY_COUNT >= ENTRY_CAP { return; }
+        if NAMES_USED + name.len() > NAME_BUF { return; }
+        let off = NAMES_USED as u32;
+        for (i, &b) in name.iter().enumerate() {
+            NAMES[NAMES_USED + i] = b;
+        }
+        NAMES_USED += name.len();
+        ENTRIES[ENTRY_COUNT] = Entry {
+            name_off: off,
+            name_len: name.len() as u32,
+            d_type,
+        };
+        ENTRY_COUNT += 1;
+    }
+}
+
+fn entry_slice(e: Entry) -> &'static [u8] {
+    unsafe {
+        let p = (&raw const NAMES) as *const u8;
+        core::slice::from_raw_parts(p.add(e.name_off as usize), e.name_len as usize)
+    }
+}
+
+// Byte-wise lexicographic less-than. Matches the kernel's UTF-8-naive
+// comparison; collation isn't locale-aware here either way.
+fn entry_less(a: Entry, b: Entry) -> bool {
+    let sa = entry_slice(a);
+    let sb = entry_slice(b);
+    let n = sa.len().min(sb.len());
+    for i in 0..n {
+        if sa[i] != sb[i] { return sa[i] < sb[i]; }
+    }
+    sa.len() < sb.len()
+}
+
+fn entries_sort() {
+    // Insertion sort — fine for the entry counts we cap at.
+    unsafe {
+        let n = ENTRY_COUNT;
+        for i in 1..n {
+            let cur = ENTRIES[i];
+            let mut j = i;
+            while j > 0 && entry_less(cur, ENTRIES[j - 1]) {
+                ENTRIES[j] = ENTRIES[j - 1];
+                j -= 1;
+            }
+            ENTRIES[j] = cur;
+        }
+    }
+}
+
 fn arg_is(p: *const u8, s: &[u8]) -> bool {
     for (i, &b) in s.iter().enumerate() {
         if unsafe { *p.add(i) } != b {
@@ -232,6 +308,8 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
     // anyone running 'ls /etc' and seeing hidden state files.
     let mut mode = DotMode::HideAll;
     let mut classify = false;
+    let mut reverse = false;
+    let mut unsorted = false;
     let mut idx: i32 = 1;
     while idx < argc {
         let p = unsafe { *argv.add(idx as usize) };
@@ -248,14 +326,30 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         } else if arg_is(p, b"-F") || arg_is(p, b"--classify") {
             classify = true;
             idx += 1;
+        } else if arg_is(p, b"-r") || arg_is(p, b"--reverse") {
+            reverse = true;
+            idx += 1;
+        } else if arg_is(p, b"-f") {
+            // GNU ls -f: don't sort, also implies -a. Useful when you
+            // want raw directory-stream order (e.g. on huge dirs).
+            unsorted = true;
+            mode = DotMode::ShowAll;
+            idx += 1;
+        } else if arg_is(p, b"-U") {
+            // -U: don't sort (no other side effects), GNU extension.
+            unsorted = true;
+            idx += 1;
         } else if arg_is(p, b"--help") {
             let help: &[u8] = b"\
 Usage: rust-ls [OPTION]... [PATH]...
-List directory contents.
+List directory contents (sorted alphabetically by default).
 
   -a, --all              do not ignore entries starting with .
   -A, --almost-all       like -a but skip '.' and '..'
   -F, --classify         append entry-type indicator (*/=@|)
+  -r, --reverse          reverse the sort order
+  -f                     do not sort, list raw directory order (implies -a)
+  -U                     do not sort, but keep dot-file filtering
       --help             show this help and exit
 
 With no PATH, list the current directory. Multiple PATHs are listed
@@ -291,6 +385,9 @@ each in turn with a \"<path>:\" header.
                     label_with_header: bool,
                     not_first: bool,
                     buf: &mut [u8; BUF_LEN]| -> bool {
+        // Per-listing static buffers — reset before each path so a
+        // multi-PATH invocation doesn't accumulate names across dirs.
+        entries_reset();
         let fd = unsafe {
             syscall4(
                 sysn::OPENAT,
@@ -372,26 +469,7 @@ each in turn with a \"<path>:\" header.
                     DotMode::ShowAll => false,
                 };
                 if !skip && nlen > 0 {
-                    if !write_all(STDOUT, name) { local_err = true; break; }
-                    if classify {
-                        // GNU ls -F type indicators driven by dirent's
-                        // d_type. We can't tell a regular file is also
-                        // executable without stat(), so '*' is skipped.
-                        const DT_FIFO: u8 = 1;
-                        const DT_DIR:  u8 = 4;
-                        const DT_LNK:  u8 = 10;
-                        const DT_SOCK: u8 = 12;
-                        let suffix: &[u8] = match d_type {
-                            DT_DIR  => b"/",
-                            DT_LNK  => b"@",
-                            DT_FIFO => b"|",
-                            DT_SOCK => b"=",
-                            _       => b"",
-                        };
-                        if !suffix.is_empty()
-                            && !write_all(STDOUT, suffix) { local_err = true; break; }
-                    }
-                    if !write_all(STDOUT, b"\n") { local_err = true; break; }
+                    entries_push(name, d_type);
                 }
                 off += reclen;
             }
@@ -399,6 +477,35 @@ each in turn with a \"<path>:\" header.
         }
 
         let _ = unsafe { syscall1(sysn::CLOSE, fd as u64) };
+
+        // Sort + emit unless -f/-U asked for raw directory order.
+        if !unsorted {
+            entries_sort();
+        }
+        let count = unsafe { ENTRY_COUNT };
+        // Emit forward by default; -r walks the array in reverse.
+        for i in 0..count {
+            let idx = if reverse { count - 1 - i } else { i };
+            let e = unsafe { ENTRIES[idx] };
+            let name = entry_slice(e);
+            if !write_all(STDOUT, name) { local_err = true; break; }
+            if classify {
+                const DT_FIFO: u8 = 1;
+                const DT_DIR:  u8 = 4;
+                const DT_LNK:  u8 = 10;
+                const DT_SOCK: u8 = 12;
+                let suffix: &[u8] = match e.d_type {
+                    DT_DIR  => b"/",
+                    DT_LNK  => b"@",
+                    DT_FIFO => b"|",
+                    DT_SOCK => b"=",
+                    _       => b"",
+                };
+                if !suffix.is_empty()
+                    && !write_all(STDOUT, suffix) { local_err = true; break; }
+            }
+            if !write_all(STDOUT, b"\n") { local_err = true; break; }
+        }
         !local_err
     };
 

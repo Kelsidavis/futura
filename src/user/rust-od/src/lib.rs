@@ -382,8 +382,8 @@ With no FILE (or FILE = '-') reads stdin.
         }
         // -j N or -j=N
         let is_j = unsafe { *p == b'-' && *p.add(1) == b'j' && *p.add(2) == 0 };
-        let is_N = unsafe { *p == b'-' && *p.add(1) == b'N' && *p.add(2) == 0 };
-        if is_j || is_N {
+        let is_n_count = unsafe { *p == b'-' && *p.add(1) == b'N' && *p.add(2) == 0 };
+        if is_j || is_n_count {
             if idx + 1 >= argc {
                 write_str(STDERR,
                     if is_j { b"rust-od: -j needs a count\n" }

@@ -254,17 +254,34 @@ struct OdState {
     row: [u8; COL],
     row_len: usize,
     offset: u64,
+    // Bytes still to skip (consumed, not emitted). Updated as each
+    // file's stream is fed in.
+    skip_left: u64,
+    // Bytes still allowed to emit. None means "no -N limit".
+    take_left: Option<u64>,
 }
 
 fn dump_fd(fd: i32, st: &mut OdState) -> bool {
     let mut buf = [0u8; READ_BUF];
     loop {
+        // Stop early once -N has consumed its budget so we don't
+        // even read more data we'll throw away.
+        if matches!(st.take_left, Some(0)) { break; }
         let n = unsafe {
             syscall3(sysn::READ, fd as u64, buf.as_mut_ptr() as u64, buf.len() as u64)
         };
         if n < 0 { return false; }
         if n == 0 { break; }
-        let chunk = &buf[..n as usize];
+        let mut chunk: &[u8] = &buf[..n as usize];
+        if st.skip_left > 0 {
+            let drop = (st.skip_left as usize).min(chunk.len());
+            st.skip_left -= drop as u64;
+            chunk = &chunk[drop..];
+        }
+        if let Some(remaining) = st.take_left {
+            let take = (remaining as usize).min(chunk.len());
+            chunk = &chunk[..take];
+        }
         for &b in chunk {
             st.row[st.row_len] = b;
             st.row_len += 1;
@@ -273,6 +290,10 @@ fn dump_fd(fd: i32, st: &mut OdState) -> bool {
                 st.offset += COL as u64;
                 st.row_len = 0;
             }
+        }
+        if let Some(remaining) = st.take_left.as_mut() {
+            *remaining -= chunk.len() as u64;
+            if *remaining == 0 { break; }
         }
     }
     true
@@ -292,39 +313,116 @@ fn finalize(st: &mut OdState) -> bool {
     true
 }
 
+// Parse a non-negative decimal/hex/octal byte count for -N/-j. GNU
+// accepts a 0x/0X hex prefix, leading 0 for octal, and decimal otherwise.
+// Returns None on malformed input or overflow.
+fn parse_count(p: *const u8) -> Option<u64> {
+    let mut i = 0usize;
+    let mut s: [u8; 32] = [0; 32];
+    unsafe {
+        while *p.add(i) != 0 && i < s.len() {
+            s[i] = *p.add(i);
+            i += 1;
+        }
+        if *p.add(i) != 0 { return None; }
+    }
+    let bytes = &s[..i];
+    if bytes.is_empty() { return None; }
+    let (radix, body): (u64, &[u8]) =
+        if bytes.len() >= 2 && bytes[0] == b'0' && (bytes[1] == b'x' || bytes[1] == b'X') {
+            (16, &bytes[2..])
+        } else if bytes.len() >= 2 && bytes[0] == b'0' {
+            (8, &bytes[1..])
+        } else {
+            (10, bytes)
+        };
+    if body.is_empty() { return None; }
+    let mut v: u64 = 0;
+    for &c in body {
+        let d: u64 = match c {
+            b'0'..=b'9' => (c - b'0') as u64,
+            b'a'..=b'f' if radix == 16 => (c - b'a' + 10) as u64,
+            b'A'..=b'F' if radix == 16 => (c - b'A' + 10) as u64,
+            _ => return None,
+        };
+        if d >= radix { return None; }
+        v = v.checked_mul(radix)?.checked_add(d)?;
+    }
+    Some(v)
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
-    if argc >= 2 {
-        let first = unsafe { *argv.add(1) };
-        if !first.is_null() && (first as usize) >= 0x10000 {
-            let want = b"--help";
-            let mut ok = true;
-            for i in 0..want.len() {
-                if unsafe { *first.add(i) } != want[i] { ok = false; break; }
-            }
-            if ok && unsafe { *first.add(want.len()) } == 0 {
-                let help: &[u8] = b"\
-Usage: rust-od [FILE]...
+    let mut skip: u64 = 0;
+    let mut take: Option<u64> = None;
+    let mut idx: i32 = 1;
+    while idx < argc {
+        let p = unsafe { *argv.add(idx as usize) };
+        if p.is_null() || (p as usize) < 0x10000 { break; }
+        let want_h = b"--help";
+        let mut h_ok = true;
+        for i in 0..want_h.len() {
+            if unsafe { *p.add(i) } != want_h[i] { h_ok = false; break; }
+        }
+        if h_ok && unsafe { *p.add(want_h.len()) } == 0 {
+            let help: &[u8] = b"\
+Usage: rust-od [-j SKIP] [-N COUNT] [FILE]...
 Dump each FILE as 16-byte hex rows with a 7-digit hex offset. With
 multiple FILEs the offset is continuous (concatenated-stream view).
 With no FILE (or FILE = '-') reads stdin.
 
+  -j SKIP   skip SKIP bytes before dumping (decimal, 0x hex, 0 octal)
+  -N COUNT  dump at most COUNT bytes after the skip
   --help    show this help and exit
 \0";
-                let len = help.len() - 1;
-                unsafe { let _ = syscall3(sysn::WRITE, STDOUT as u64,
-                                          help.as_ptr() as u64, len as u64); }
-                return 0;
-            }
+            let len = help.len() - 1;
+            unsafe { let _ = syscall3(sysn::WRITE, STDOUT as u64,
+                                      help.as_ptr() as u64, len as u64); }
+            return 0;
         }
+        // -j N or -j=N
+        let is_j = unsafe { *p == b'-' && *p.add(1) == b'j' && *p.add(2) == 0 };
+        let is_N = unsafe { *p == b'-' && *p.add(1) == b'N' && *p.add(2) == 0 };
+        if is_j || is_N {
+            if idx + 1 >= argc {
+                write_str(STDERR,
+                    if is_j { b"rust-od: -j needs a count\n" }
+                    else    { b"rust-od: -N needs a count\n" });
+                return 1;
+            }
+            let np = unsafe { *argv.add((idx + 1) as usize) };
+            match parse_count(np) {
+                Some(v) => {
+                    if is_j { skip = v; } else { take = Some(v); }
+                }
+                None => {
+                    write_str(STDERR, b"rust-od: invalid count\n");
+                    return 1;
+                }
+            }
+            idx += 2;
+            continue;
+        }
+        if unsafe { *p == b'-' && *p.add(1) == b'-' && *p.add(2) == 0 } {
+            idx += 1;
+            break;
+        }
+        break;
     }
-    let mut st = OdState { row: [0u8; COL], row_len: 0, offset: 0 };
+
+    let mut st = OdState {
+        row: [0u8; COL],
+        row_len: 0,
+        offset: skip,
+        skip_left: skip,
+        take_left: take,
+    };
     let mut had_error = false;
 
-    if argc < 2 {
+    if idx >= argc {
         if !dump_fd(STDIN, &mut st) { had_error = true; }
     } else {
-        for ai in 1..argc {
+        for ai in idx..argc {
             let p = unsafe { *argv.add(ai as usize) };
             if p.is_null() || (p as usize) < 0x10000 {
                 had_error = true;

@@ -151,15 +151,35 @@ fn cstr_eq(p: *const u8, s: &[u8]) -> bool {
     unsafe { *p.add(s.len()) == 0 }
 }
 
+// Parse SIZE: decimal digits, optionally followed by a single unit
+// suffix. K=1024, M=1024², G=1024³, T=1024⁴ (binary multipliers, GNU
+// truncate compat). Returns None on malformed input or overflow.
 fn parse_u64(p: *const u8) -> Option<u64> {
     let mut n = 0usize;
     unsafe { while *p.add(n) != 0 { n += 1; } }
-    if n == 0 || n > 20 {
+    if n == 0 || n > 24 {
         return None;
     }
     let s = unsafe { core::slice::from_raw_parts(p, n) };
+    let mut digits_end = n;
+    let mut multiplier: u64 = 1;
+    if let Some(&last) = s.last() {
+        let mult: u64 = match last {
+            b'K' | b'k' => 1024,
+            b'M' | b'm' => 1024 * 1024,
+            b'G' | b'g' => 1024 * 1024 * 1024,
+            b'T' | b't' => 1024u64 * 1024 * 1024 * 1024,
+            b'B' | b'b' => 1,
+            _ => 0,
+        };
+        if mult != 0 {
+            multiplier = mult;
+            digits_end -= 1;
+        }
+    }
+    if digits_end == 0 { return None; }
     let mut v: u64 = 0;
-    for &c in s {
+    for &c in &s[..digits_end] {
         if !(b'0'..=b'9').contains(&c) {
             return None;
         }
@@ -168,52 +188,88 @@ fn parse_u64(p: *const u8) -> Option<u64> {
             None => return None,
         };
     }
-    Some(v)
+    v.checked_mul(multiplier)
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
-    // --help is a leading flag; check before the strict argc/-s logic.
-    if argc >= 2 {
-        let p = unsafe { *argv.add(1) };
-        if !p.is_null() && (p as usize) >= 0x10000 && cstr_eq(p, b"--help") {
+    let mut size_p: Option<*const u8> = None;
+    let mut no_create = false;
+    let mut idx: i32 = 1;
+    while idx < argc {
+        let p = unsafe { *argv.add(idx as usize) };
+        if p.is_null() || (p as usize) < 0x10000 { break; }
+        if cstr_eq(p, b"--help") {
             let help: &[u8] = b"\
-Usage: rust-truncate -s NUM FILE [FILE...]
+Usage: rust-truncate [-c] -s NUM[KMGT] FILE [FILE...]
 Set the size of each FILE to exactly NUM bytes (truncating or
 extending with zeros as needed).
 
-  -s NUM   target size in bytes
-      --help    show this help and exit
+  -c, --no-create   skip files that don't exist (don't auto-create)
+  -s, --size=NUM    target size; suffix K/M/G/T = 1024^1..^4
+      --help        show this help and exit
 \0";
             let len = help.len() - 1;
             unsafe { let _ = syscall3(sysn::WRITE, 1, help.as_ptr() as u64, len as u64); }
             return 0;
         }
+        if cstr_eq(p, b"-c") || cstr_eq(p, b"--no-create") {
+            no_create = true;
+            idx += 1;
+            continue;
+        }
+        if cstr_eq(p, b"-s") || cstr_eq(p, b"--size") {
+            if idx + 1 >= argc {
+                write_str(STDERR, b"rust-truncate: -s needs a size\n");
+                return 1;
+            }
+            let np = unsafe { *argv.add((idx + 1) as usize) };
+            if np.is_null() || (np as usize) < 0x10000 { return 1; }
+            size_p = Some(np);
+            idx += 2;
+            continue;
+        }
+        // --size=NUM (long form with embedded =)
+        let p_n = {
+            let mut k = 0usize;
+            unsafe { while *p.add(k) != 0 { k += 1; } }
+            k
+        };
+        if p_n >= 7 && unsafe {
+            let want = b"--size=";
+            let mut ok = true;
+            for j in 0..want.len() { if *p.add(j) != want[j] { ok = false; break; } }
+            ok
+        } {
+            size_p = Some(unsafe { p.add(7) });
+            idx += 1;
+            continue;
+        }
+        if cstr_eq(p, b"--") { idx += 1; break; }
+        break;
     }
-    if argc < 4 {
-        write_str(STDERR, b"usage: rust-truncate -s <bytes> <file> [<file>...]\n");
-        return 1;
-    }
-    let flag = unsafe { *argv.add(1) };
-    if flag.is_null() || (flag as usize) < 0x10000 || !cstr_eq(flag, b"-s") {
-        write_str(STDERR, b"rust-truncate: missing -s flag\n");
-        return 1;
-    }
-    let size_p = unsafe { *argv.add(2) };
-    if size_p.is_null() || (size_p as usize) < 0x10000 {
-        write_str(STDERR, b"rust-truncate: invalid size argument\n");
-        return 1;
-    }
-    let size = match parse_u64(size_p) {
-        Some(v) => v,
+    let size = match size_p {
+        Some(p) => match parse_u64(p) {
+            Some(v) => v,
+            None => {
+                write_str(STDERR, b"rust-truncate: invalid size\n");
+                return 1;
+            }
+        },
         None => {
-            write_str(STDERR, b"rust-truncate: invalid size\n");
+            write_str(STDERR, b"usage: rust-truncate [-c] -s <bytes>[KMGT] <file>...\n");
             return 1;
         }
     };
+    if idx >= argc {
+        write_str(STDERR, b"rust-truncate: at least one FILE required\n");
+        return 1;
+    }
 
+    // ENOENT on Linux is -2.
+    const ENOENT_NEG: i64 = -2;
     let mut had_error = false;
-    for ai in 3..argc {
+    for ai in idx..argc {
         let path = unsafe { *argv.add(ai as usize) };
         if path.is_null() || (path as usize) < 0x10000 {
             had_error = true;
@@ -221,6 +277,9 @@ extending with zeros as needed).
         }
         let r = unsafe { syscall2(sysn::TRUNCATE, path as u64, size) };
         if r < 0 {
+            if no_create && r == ENOENT_NEG {
+                continue;  // -c: silently skip non-existent files
+            }
             write_str(STDERR, b"rust-truncate: cannot truncate '");
             let mut n = 0usize;
             unsafe { while *path.add(n) != 0 { n += 1; } }

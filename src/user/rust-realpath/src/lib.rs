@@ -179,7 +179,7 @@ fn try_readlink(cur: &[u8], out: &mut [u8]) -> Option<usize> {
 // Resolve one path's terminal symlink, printing the (possibly chased)
 // result. Returns false on hard failures (only "argument unusable" —
 // non-symlink paths just echo back as-is, like `readlink -f` does).
-fn resolve_one(p: *const u8) -> bool {
+fn resolve_one(p: *const u8, terminator: u8) -> bool {
     // Working buffer: NUL-terminated path we feed to readlinkat each hop.
     let mut cur = [0u8; PATH_MAX];
     let n = cstr_len(p).min(PATH_MAX - 1);
@@ -221,50 +221,80 @@ fn resolve_one(p: *const u8) -> bool {
     }
 
     write_str(STDOUT, &cur[..cur_len]);
-    write_str(STDOUT, b"\n");
+    let term = [terminator];
+    write_str(STDOUT, &term);
     true
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
-    if argc == 2 {
-        let first = unsafe { *argv.add(1) };
-        if !first.is_null() && (first as usize) >= 0x10000 {
+    let mut zero_term = false;
+    let mut quiet = false;
+    let mut idx: i32 = 1;
+    while idx < argc {
+        let p = unsafe { *argv.add(idx as usize) };
+        if p.is_null() || (p as usize) < 0x10000 { break; }
+        let mut n = 0; unsafe { while *p.add(n) != 0 { n += 1; } }
+        // --help
+        if n == 6 && {
             let want = b"--help";
-            let mut n = 0; unsafe { while *first.add(n) != 0 { n += 1; } }
-            if n == want.len() {
-                let mut ok = true;
-                for i in 0..want.len() {
-                    if unsafe { *first.add(i) } != want[i] { ok = false; break; }
-                }
-                if ok {
-                    let help: &[u8] = b"\
-Usage: rust-realpath PATH [PATH...]
+            let mut ok = true;
+            for i in 0..want.len() { if unsafe { *p.add(i) } != want[i] { ok = false; break; } }
+            ok
+        } {
+            let help: &[u8] = b"\
+Usage: rust-realpath [-z] [-q] PATH [PATH...]
 Print each PATH with its terminal symlink resolved (up to 16 hops).
 
-  --help    show this help and exit
+  -z, --zero             end each output line with NUL, not newline
+  -q, --quiet            suppress most diagnostic messages
+      --help             show this help and exit
 \0";
-                    let len = help.len() - 1;
-                    unsafe { let _ = syscall3(sysn::WRITE, STDOUT as u64,
-                                              help.as_ptr() as u64, len as u64); }
-                    return 0;
-                }
-            }
+            let hlen = help.len() - 1;
+            unsafe { let _ = syscall3(sysn::WRITE, STDOUT as u64,
+                                      help.as_ptr() as u64, hlen as u64); }
+            return 0;
         }
+        // -z / --zero
+        let is_z = n == 2 && unsafe { *p == b'-' && *p.add(1) == b'z' };
+        let is_zlong = n == 6 && {
+            let want = b"--zero";
+            let mut ok = true;
+            for i in 0..want.len() { if unsafe { *p.add(i) } != want[i] { ok = false; break; } }
+            ok
+        };
+        if is_z || is_zlong { zero_term = true; idx += 1; continue; }
+        // -q / --quiet
+        let is_q = n == 2 && unsafe { *p == b'-' && *p.add(1) == b'q' };
+        let is_qlong = n == 7 && {
+            let want = b"--quiet";
+            let mut ok = true;
+            for i in 0..want.len() { if unsafe { *p.add(i) } != want[i] { ok = false; break; } }
+            ok
+        };
+        if is_q || is_qlong { quiet = true; idx += 1; continue; }
+        if n == 2 && unsafe { *p == b'-' && *p.add(1) == b'-' } {
+            idx += 1;
+            break;
+        }
+        break;
     }
-    if argc < 2 {
-        write_str(STDERR, b"usage: rust-realpath <path> [<path>...]\n");
+    if idx >= argc {
+        if !quiet {
+            write_str(STDERR, b"usage: rust-realpath [-z] [-q] <path> [<path>...]\n");
+        }
         return 1;
     }
+    let term = if zero_term { 0u8 } else { b'\n' };
     let mut had_error = false;
-    for ai in 1..argc {
+    for ai in idx..argc {
         let p = unsafe { *argv.add(ai as usize) };
         if p.is_null() || (p as usize) < 0x10000 {
-            write_str(STDERR, b"rust-realpath: invalid argument\n");
+            if !quiet { write_str(STDERR, b"rust-realpath: invalid argument\n"); }
             had_error = true;
             continue;
         }
-        if !resolve_one(p) {
+        if !resolve_one(p, term) {
             had_error = true;
         }
     }

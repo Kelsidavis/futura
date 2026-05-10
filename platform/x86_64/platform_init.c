@@ -850,7 +850,7 @@ void fut_platform_init(uint32_t multiboot_magic __attribute__((unused)),
      * if scroll position is at the bottom and the top of the boot log
      * has scrolled past. */
     fut_printf("################################################\n");
-    fut_printf("[BUILD] Futura kernel built %s %s (iter-26: stage_tls_page bisection prints)\n",
+    fut_printf("[BUILD] Futura kernel built %s %s (iter-27: post-TLS exec bisection)\n",
                __DATE__, __TIME__);
     fut_printf("################################################\n");
 

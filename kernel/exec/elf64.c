@@ -2769,7 +2769,9 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
         return rc;
     }
 
+    ELF_LOG("[EXEC-ELF] post-TLS: vfs canary check\n");
     fut_vfs_check_root_canary("fut_exec_elf:after_stage_stack");
+    ELF_LOG("[EXEC-ELF] vfs canary OK; computing phdr metadata\n");
 
     uint64_t user_rsp = 0;
     uint64_t user_argv = 0;
@@ -2800,12 +2802,9 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     }
 
     /* Use the kernel copies of argv/envp that we made at the start */
-    execdbg_printf("[EXEC-DEBUG] About to build_user_stack: argc=%zu envc=%zu kargv=%p kenvp=%p\n",
-               argc, envc, kargv, kenvp);
-    if (kargv && argc > 0) {
-        execdbg_printf("[EXEC-DEBUG] kargv[0]=%p (content:'%.20s')\n", kargv[0], kargv[0] ? kargv[0] : "(null)");
-    }
+    ELF_LOG("[EXEC-ELF] calling build_user_stack argc=%zu envc=%zu\n", argc, envc);
     rc = build_user_stack(mm, (const char *const *)kargv, argc, (const char *const *)kenvp, envc, &user_rsp, &user_argv, &user_argc);
+    ELF_LOG("[EXEC-ELF] build_user_stack rc=%d user_rsp=0x%llx\n", rc, (unsigned long long)user_rsp);
     if (rc != 0) {
         fut_mm_release(mm);  /* mm not attached to task yet */
         fut_task_destroy(task);
@@ -2823,7 +2822,9 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     }
 
     /* NOW it's safe to attach mm to task - all user pages are mapped */
+    ELF_LOG("[EXEC-ELF] attaching mm to task\n");
     fut_task_set_mm(task, mm);
+    ELF_LOG("[EXEC-ELF] mm attached, inheriting fds\n");
 
     /* Inherit non-CLOEXEC file descriptors from the calling task, then fill
      * any missing stdio fds (0, 1, 2) with /dev/console.  POSIX requires
@@ -2864,7 +2865,9 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
 
         for (int stdio_fd = 0; stdio_fd < 3; stdio_fd++) {
             if (!task->fd_table || !task->fd_table[stdio_fd]) {
+                ELF_LOG("[EXEC-ELF] opening /dev/console for stdio_fd=%d\n", stdio_fd);
                 int got = fut_vfs_open("/dev/console", O_RDWR, 0);
+                ELF_LOG("[EXEC-ELF] /dev/console open got=%d\n", got);
                 if (got >= 0 && got != stdio_fd) {
                     fut_printf("[EXEC-X86] WARNING: stdio fd %d opened as %d\n",
                                stdio_fd, got);

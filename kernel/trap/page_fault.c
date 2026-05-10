@@ -571,6 +571,14 @@ static bool handle_cow_fault_generic(uint64_t fault_addr, bool is_write, bool is
 
 bool fut_trap_handle_page_fault(fut_interrupt_frame_t *frame) {
     const uint64_t fault_addr = fut_read_cr2();
+    /* Bisection breadcrumb: print every page fault until we figure
+     * out where the post-trampoline silent-hang really is. */
+    fut_printf("[BISECT-PF] cr2=0x%llx rip=0x%llx err=0x%llx cs=0x%llx (CPL=%d)\n",
+               (unsigned long long)fault_addr,
+               (unsigned long long)frame->rip,
+               (unsigned long long)frame->error_code,
+               (unsigned long long)frame->cs,
+               (int)(frame->cs & 0x3u));
     const struct fut_uaccess_window *window = fut_uaccess_window_current();
 
     if (window && window->resume && window->length != 0) {

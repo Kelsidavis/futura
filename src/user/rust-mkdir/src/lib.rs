@@ -285,11 +285,9 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             p_flag = true;
             verbose = true;
             idx += 1;
-        } else if arg_is(p, b"-m") {
-            // -m <mode> takes a separate token (we don't support
-            // -m<mode> glued without a space, like coreutils does;
-            // adding it would mean reparsing -m... which is rarely
-            // used and adds complexity for little gain).
+        } else if arg_is(p, b"-m") || arg_is(p, b"--mode") {
+            // -m <mode> takes a separate token. --mode <mode> is
+            // the GNU long form; --mode=<mode> handled below.
             idx += 1;
             match argv_get(argc, argv, idx) {
                 Some(mp) => match parse_octal_mode(mp) {
@@ -304,6 +302,25 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
                     return 1;
                 }
             }
+        } else if {
+            // --mode=MODE long form with embedded =
+            let mut k = 0usize;
+            unsafe { while *p.add(k) != 0 { k += 1; } }
+            k > 7 && unsafe {
+                let want = b"--mode=";
+                let mut ok = true;
+                for j in 0..want.len() { if *p.add(j) != want[j] { ok = false; break; } }
+                ok
+            }
+        } {
+            let mp = unsafe { p.add(7) };
+            match parse_octal_mode(mp) {
+                Some(v) => { mode = v; idx += 1; }
+                None => {
+                    write_str(STDERR, b"rust-mkdir: invalid --mode (must be octal, e.g. 755)\n");
+                    return 1;
+                }
+            }
         } else if arg_is(p, b"--") {
             idx += 1;
             break;
@@ -313,7 +330,7 @@ Usage: rust-mkdir [-pv] [-m MODE] DIR [DIR...]
 Create each DIR.
 
   -p           create parent directories as needed (no error if exists)
-  -m MODE      set the leaf mode (octal, e.g. 700)
+  -m, --mode MODE  set the leaf mode (octal, e.g. 700)
   -v           emit \"created directory '<dir>'\" for each new dir
       --help       show this help and exit
 \0";

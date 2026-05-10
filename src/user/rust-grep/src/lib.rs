@@ -1196,6 +1196,16 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             // Already fixed-string by default; accept the flag for
             // GNU-script portability (no behaviour change).
             idx += 1;
+        } else if arg_is(p, b"-a") || arg_is(p, b"--text")
+               || arg_is(p, b"-I")
+               || arg_is(p, b"--binary-files=text")
+               || arg_is(p, b"--binary-files=binary")
+               || arg_is(p, b"--binary-files=without-match") {
+            // We always treat input as a byte stream. -a/--text is the
+            // GNU spelling for that; -I (skip binary files) and the
+            // various --binary-files=MODE forms have no effect here.
+            // Accepted for portability.
+            idx += 1;
         } else if arg_is(p, b"-f") || arg_is(p, b"--file") {
             // -f FILE — read patterns from FILE, one per line. Each
             // line is appended to e_patterns; trailing \n stripped

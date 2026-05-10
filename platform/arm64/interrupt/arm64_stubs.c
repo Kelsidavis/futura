@@ -98,7 +98,7 @@ int fut_stage_wl_wallpaper_binary(void)       { return -ENODEV; }
 #endif
 
 #if defined(ENABLE_RUST_USERLAND) && ENABLE_RUST_USERLAND
-ARM64_STAGE_FN(fut_stage_rust_hello_binary,         rust_hello,     "/bin",  "/bin/rust-hello")
+ARM64_STAGE_FN(fut_stage_rust_hello_binary,         rust_hello,     "/bin",  "/bin/hello")
 ARM64_STAGE_FN(fut_stage_rust_uname_binary,         rust_uname,     "/bin",  "/bin/uname")
 ARM64_STAGE_FN(fut_stage_rust_pwd_binary,           rust_pwd,       "/bin",  "/bin/pwd")
 ARM64_STAGE_FN(fut_stage_rust_ls_binary,            rust_ls,        "/bin",  "/bin/ls")
@@ -115,9 +115,9 @@ ARM64_STAGE_FN(fut_stage_rust_tail_binary,          rust_tail,      "/bin",  "/b
 ARM64_STAGE_FN(fut_stage_rust_grep_binary,          rust_grep,      "/bin",  "/bin/grep")
 ARM64_STAGE_FN(fut_stage_rust_sleep_binary,         rust_sleep,     "/bin",  "/bin/sleep")
 ARM64_STAGE_FN(fut_stage_rust_date_binary,          rust_date,      "/bin",  "/bin/date")
-ARM64_STAGE_FN(fut_stage_rust_settings_binary,      rust_settings,  "/bin",  "/bin/rust-settings")
+ARM64_STAGE_FN(fut_stage_rust_settings_binary,      rust_settings,  "/bin",  "/bin/settings")
 ARM64_STAGE_FN(fut_stage_rust_tree_binary,          rust_tree,      "/bin",  "/bin/tree")
-ARM64_STAGE_FN(fut_stage_rust_wallpaper_binary,     rust_wallpaper, "/bin",  "/bin/rust-wallpaper")
+ARM64_STAGE_FN(fut_stage_rust_wallpaper_binary,     rust_wallpaper, "/bin",  "/bin/wallpaper")
 ARM64_STAGE_FN(fut_stage_rust_cp_binary,            rust_cp,        "/bin",  "/bin/cp")
 ARM64_STAGE_FN(fut_stage_rust_mv_binary,            rust_mv,        "/bin",  "/bin/mv")
 ARM64_STAGE_FN(fut_stage_rust_basename_binary,      rust_basename,  "/bin",  "/bin/basename")

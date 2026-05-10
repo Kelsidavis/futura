@@ -1465,15 +1465,15 @@ void fut_kernel_main(void) {
                   "# correctly cycles the child task through ZOMBIE on execve).\n"
                   "echo --- rust user-space ---\n"
                   "/bin/date\n"
-                  "/bin/rust-hello; /bin/uname\n"
+                  "/bin/hello; /bin/uname\n"
                   "/bin/pwd; /bin/ls /bin\n"
                   "/bin/id; /bin/whoami\n"
                   "/bin/arch; /bin/hostname\n"
                   "/bin/uptime\n"
                   "/bin/stat /etc/profile\n"
                   "/bin/tree /etc\n"
-                  "/bin/rust-wallpaper --get\n"
-                  "/bin/rust-settings\n"
+                  "/bin/wallpaper --get\n"
+                  "/bin/settings\n"
                   "echo --- end rust ---\n");
         ETC_WRITE("/etc/motd",
                   "\n"
@@ -2322,9 +2322,11 @@ void fut_kernel_main(void) {
          * path baked into elf64.c / arm64_stubs.c. The standard
          * coreutils replacements stage as their canonical names; only
          * the three non-coreutils binaries (hello/settings/wallpaper)
-         * keep their rust- prefix. */
+         * use the canonical names — even hello/settings/wallpaper drop
+         * the rust- prefix so the staged path matches what the user
+         * (or the desktop menu) types. */
         struct { const char *name; int (*fn)(void); } rust_bins[] = {
-            {"rust-hello",  fut_stage_rust_hello_binary},
+            {"hello",       fut_stage_rust_hello_binary},
             {"uname",       fut_stage_rust_uname_binary},
             {"pwd",         fut_stage_rust_pwd_binary},
             {"ls",          fut_stage_rust_ls_binary},
@@ -2341,9 +2343,9 @@ void fut_kernel_main(void) {
             {"grep",        fut_stage_rust_grep_binary},
             {"sleep",       fut_stage_rust_sleep_binary},
             {"date",        fut_stage_rust_date_binary},
-            {"rust-settings", fut_stage_rust_settings_binary},
+            {"settings",    fut_stage_rust_settings_binary},
             {"tree",        fut_stage_rust_tree_binary},
-            {"rust-wallpaper", fut_stage_rust_wallpaper_binary},
+            {"wallpaper",   fut_stage_rust_wallpaper_binary},
             {"cp",          fut_stage_rust_cp_binary},
             {"mv",          fut_stage_rust_mv_binary},
             {"basename",    fut_stage_rust_basename_binary},

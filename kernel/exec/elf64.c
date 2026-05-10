@@ -1287,7 +1287,7 @@ int fut_stage_rust_hello_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_hello_start,
                       _binary_build_bin_x86_64_user_rust_hello_end,
-                      "/bin/rust-hello");
+                      "/bin/hello");
 }
 
 int fut_stage_rust_uname_binary(void) {
@@ -1406,7 +1406,7 @@ int fut_stage_rust_settings_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_settings_start,
                       _binary_build_bin_x86_64_user_rust_settings_end,
-                      "/bin/rust-settings");
+                      "/bin/settings");
 }
 
 int fut_stage_rust_tree_binary(void) {
@@ -1420,7 +1420,7 @@ int fut_stage_rust_wallpaper_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);
     return stage_blob(_binary_build_bin_x86_64_user_rust_wallpaper_start,
                       _binary_build_bin_x86_64_user_rust_wallpaper_end,
-                      "/bin/rust-wallpaper");
+                      "/bin/wallpaper");
 }
 
 int fut_stage_rust_cp_binary(void) {

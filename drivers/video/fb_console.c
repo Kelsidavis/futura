@@ -158,9 +158,33 @@ struct fb_console_state {
     ansi_state_t ansi;               /* Escape-sequence parser state */
     uint8_t  utf8_pending;           /* Continuation bytes still expected */
     uint32_t utf8_codepoint;         /* Codepoint being assembled */
+    /* Dirty-row tracking for fb_console_flush_full. Range is
+     * [dirty_y_min, dirty_y_max) in framebuffer scanlines.
+     * Empty when dirty_y_min >= dirty_y_max. Reset on every flush. */
+    uint32_t dirty_y_min;
+    uint32_t dirty_y_max;
 };
 
-static struct fb_console_state g_fb_console = {0};
+static struct fb_console_state g_fb_console = {
+    .dirty_y_min = UINT32_MAX,
+    .dirty_y_max = 0,
+};
+
+/* Expand the dirty range to include scanlines [y_start, y_end). Clamped
+ * to the framebuffer height so we don't blit past the panel edge. */
+static inline void fb_console_mark_dirty(uint32_t y_start, uint32_t y_end) {
+    struct fb_console_state *cons = &g_fb_console;
+    if (!cons->initialized) return;
+    if (y_end > cons->height) y_end = cons->height;
+    if (y_start >= y_end) return;
+    if (y_start < cons->dirty_y_min) cons->dirty_y_min = y_start;
+    if (y_end   > cons->dirty_y_max) cons->dirty_y_max = y_end;
+}
+
+static inline void fb_console_clear_dirty(void) {
+    g_fb_console.dirty_y_min = UINT32_MAX;
+    g_fb_console.dirty_y_max = 0;
+}
 
 /* Static back buffer in BSS. 1920x1080x4 = 8 MiB, covers any common
  * laptop / HDMI panel we're likely to boot on. The link.ld ASSERT was
@@ -249,6 +273,10 @@ static void fb_console_draw_char(int char_x, int char_y, char c, uint32_t fg_col
         uint8_t *fb_base = fb_dst
                          + (uint32_t)pixel_y * pitch
                          + (uint32_t)pixel_x * 4;
+        /* Mark scanlines pixel_y .. pixel_y+char_height as dirty so
+         * the next flush_full only blits the changed rows. */
+        fb_console_mark_dirty((uint32_t)pixel_y,
+                              (uint32_t)(pixel_y + char_height));
         for (int row = 0; row < char_height; row++) {
             uint8_t bits = glyph[row];
             volatile uint32_t *line = (volatile uint32_t *)(fb_base + (uint32_t)row * pitch);
@@ -297,18 +325,30 @@ static void fb_console_scroll(void) {
                                 /* dst_y */ 0,
                                 /* height */ copy_h,
                                 /* width  */ prot_w) == 0) {
-                /* Hardware did the copy; re-sync the back buffer from
-                 * the FB so subsequent CPU draws stay coherent. */
+                /* The BLT scrolled FB but left back_buf untouched.
+                 * Without a matching memmove on back_buf, the next
+                 * flush_full would push stale upper rows from back_buf
+                 * to FB and undo the scroll. Mirror the scroll on
+                 * back_buf so the two stay in sync. */
                 if (cons->back_buf) {
+                    size_t stride = (size_t)prot_w * 4;
+                    for (int y = 0; y < copy_h; y++) {
+                        memcpy(cons->back_buf + (size_t)y * cons->pitch,
+                               cons->back_buf + (size_t)(y + cons->char_height) * cons->pitch,
+                               stride);
+                    }
                     int last_y = (cons->rows - 1) * cons->char_height;
-                    /* Just clear the now-empty bottom char row in
-                     * back_buf; the rest matches FB after the BLT. */
                     uint32_t bg = make_color(0, 0, 0, 255);
                     for (int row = 0; row < cons->char_height; row++) {
                         uint32_t *line = (uint32_t *)(cons->back_buf +
                             (size_t)(last_y + row) * cons->pitch);
                         for (int x = 0; x < prot_w; x++) line[x] = bg;
                     }
+                    /* The BLT didn't touch the bottom char row of FB.
+                     * back_buf bottom row is zeroed; mark it dirty so
+                     * the next flush pushes the clear to FB. */
+                    fb_console_mark_dirty((uint32_t)last_y,
+                                          (uint32_t)(last_y + cons->char_height));
                 }
                 return;
             }
@@ -350,6 +390,10 @@ static void fb_console_scroll(void) {
         size_t pixel_count = stride / 4;
         for (size_t i = 0; i < pixel_count; i++) line[i] = bg_color;
     }
+    /* CPU scroll updated back_buf only; the entire scrolled area is
+     * out of sync with FB. Mark the full screen dirty so flush_full
+     * pushes it. */
+    fb_console_mark_dirty(0, cons->height);
 }
 
 /* ============================================================
@@ -479,21 +523,49 @@ int fb_console_init(void) {
 extern bool i915_present_ready(void) __attribute__((weak));
 extern int  i915_blt_present(uint32_t width, uint32_t height)
     __attribute__((weak));
+extern int  i915_blt_present_rect(uint32_t x1, uint32_t y1,
+                                  uint32_t x2, uint32_t y2)
+    __attribute__((weak));
 
 static void fb_console_flush_full(void) {
     struct fb_console_state *cons = &g_fb_console;
     if (!cons->back_buf || !g_fb_addr_validated) return;
 
-    if (cons->bpp == 32 && i915_present_ready && i915_present_ready() &&
-        i915_blt_present) {
-        if (i915_blt_present(cons->width, cons->height) == 0) {
+    /* Snapshot + reset the dirty range up-front. Subsequent
+     * fb_console_draw_char/scroll/clear callers can build a fresh
+     * range while the present is in flight. */
+    uint32_t y_min = cons->dirty_y_min;
+    uint32_t y_max = cons->dirty_y_max;
+    fb_console_clear_dirty();
+
+    if (y_min >= y_max) {
+        /* No dirty rows to flush. Common after a successful BLT
+         * scroll/clear that already updated FB. */
+        return;
+    }
+    if (y_max > cons->height) y_max = cons->height;
+
+    if (cons->bpp == 32 && i915_present_ready && i915_present_ready()) {
+        /* Hardware fast path: rect BLT covers exactly the dirty band. */
+        if (i915_blt_present_rect &&
+            i915_blt_present_rect(0, y_min, cons->width, y_max) == 0) {
             return;
         }
-        /* On BLT failure fall through to CPU memcpy so the screen
-         * still updates — the cost is one slow flush. */
+        /* Fall back to full-FB BLT if rect path isn't linked or fails. */
+        if (i915_blt_present &&
+            i915_blt_present(cons->width, cons->height) == 0) {
+            return;
+        }
     }
 
-    memcpy((void *)cons->fb_mem, cons->back_buf, cons->back_buf_size);
+    /* CPU memcpy fallback, scoped to the dirty band. The pitch is
+     * uniform, so a single memcpy of N scanlines starting at
+     * y_min*pitch is correct. */
+    size_t off   = (size_t)y_min * cons->pitch;
+    size_t bytes = (size_t)(y_max - y_min) * cons->pitch;
+    memcpy((uint8_t *)cons->fb_mem + off,
+           cons->back_buf         + off,
+           bytes);
 }
 
 /* External accessors so fb_boot_splash (in fb_mmio.c) can route the
@@ -505,7 +577,15 @@ uint8_t *fb_console_back_buf(void) {
     return g_fb_console.back_buf;
 }
 
+/* External flush hook for callers (e.g. fb_boot_splash) that wrote
+ * directly into the back buffer. They don't participate in the
+ * dirty-row tracking, so promote their writes to a full-screen flush
+ * here. */
 void fb_console_flush_full_external(void) {
+    struct fb_console_state *cons = &g_fb_console;
+    if (cons->initialized) {
+        fb_console_mark_dirty(0, cons->height);
+    }
     fb_console_flush_full();
 }
 
@@ -572,6 +652,7 @@ void fb_console_clear(void) {
     }
     /* Push the cleared back buffer to the real FB so the screen actually
      * goes black even before the first character is drawn. */
+    fb_console_mark_dirty(0, cons->height);
     fb_console_flush_full();
 
     cons->cursor_x = 0;

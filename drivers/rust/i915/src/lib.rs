@@ -1167,3 +1167,98 @@ pub extern "C" fn i915_present_ready() -> bool {
     let st = STATE.get();
     unsafe { (*st).bcs_ready && (*st).back_buf_gpu_va != 0 }
 }
+
+// ── Phase 7: dirty-region BLT present ──
+//
+// Most fb_console flushes only change a single character row (one
+// new line of text). Blitting the whole framebuffer for those wastes
+// memory bandwidth proportional to (rows × char_height) /
+// char_height ≈ rows-fold. A rect-form XY_SRC_COPY_BLT cuts the
+// transfer to just the dirty scanlines.
+//
+// Same command as i915_blt_present but the source/dest rect uses
+// (x1, y1, x2, y2) chosen by the caller, with the same offset on
+// both sides (we're not panning, just copying a sub-region in place).
+
+/// Submit XY_SRC_COPY_BLT to copy a rectangle of the registered
+/// back-buffer to the same rectangle in the framebuffer.
+/// (x1, y1) inclusive, (x2, y2) exclusive.
+///
+/// Returns 0 on success, negative on failure.
+#[unsafe(no_mangle)]
+pub extern "C" fn i915_blt_present_rect(x1: u32, y1: u32,
+                                         x2: u32, y2: u32) -> i32 {
+    let st = STATE.get();
+    if !unsafe { (*st).bcs_ready } {
+        return -1;
+    }
+    if unsafe { (*st).fb_gpu_va } == 0 || unsafe { (*st).back_buf_gpu_va } == 0 {
+        return -2;
+    }
+    if x2 <= x1 || y2 <= y1 {
+        return 0;
+    }
+
+    let mmio = unsafe { (*st).mmio_base };
+    let ring_virt = unsafe { (*st).scratch_virt } as *mut u32;
+    let pitch = unsafe { (*st).fb_pitch };
+    let fb_va = unsafe { (*st).fb_gpu_va } as u32;
+    let bb_va = unsafe { (*st).back_buf_gpu_va } as u32;
+
+    if mmio.is_null() || ring_virt.is_null() {
+        return -3;
+    }
+
+    /* CPU stores → LLC visible to iGPU before the BLT reads them. */
+    unsafe { core::arch::x86_64::_mm_mfence() };
+
+    let cmd: [u32; 8] = [
+        XY_SRC_COPY_BLT_HEADER,
+        (3u32 << 24) | (ROP_SRCCOPY << 16) | (pitch & 0xFFFF),
+        /* BR05: dest top-left */
+        (y1 << 16) | x1,
+        /* BR06: dest bottom-right exclusive */
+        (y2 << 16) | x2,
+        /* BR09: dest base GGTT addr */
+        fb_va,
+        /* BR11: source pitch (low 16 bits) */
+        pitch & 0xFFFF,
+        /* BR26: source top-left (same as dest — copy in place) */
+        (y1 << 16) | x1,
+        /* BR12: source base GGTT addr */
+        bb_va,
+    ];
+
+    if !forcewake_get_render(mmio) {
+        return -4;
+    }
+
+    unsafe {
+        mmio_write32_at(mmio, BCS_RING_TAIL, 0);
+        for _ in 0..1_000_000 {
+            if mmio_read32_at(mmio, BCS_RING_HEAD) & !0x3F == 0 {
+                break;
+            }
+        }
+        for (i, dw) in cmd.iter().enumerate() {
+            core::ptr::write_volatile(ring_virt.add(i), *dw);
+        }
+        mmio_write32_at(mmio, BCS_RING_TAIL, (cmd.len() * 4) as u32);
+
+        let mut drained = false;
+        for _ in 0..2_000_000 {
+            let head = mmio_read32_at(mmio, BCS_RING_HEAD) & !0x3F;
+            let tail = mmio_read32_at(mmio, BCS_RING_TAIL) & !0x3F;
+            if head == tail {
+                drained = true;
+                break;
+            }
+        }
+
+        forcewake_put_render(mmio);
+        if !drained {
+            return -5;
+        }
+    }
+    0
+}

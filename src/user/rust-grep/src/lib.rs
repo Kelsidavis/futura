@@ -347,6 +347,7 @@ struct Opts {
     only_matching: bool,// -o   emit only the matched portion(s)
     after_ctx: u32,     // -A N: print N lines after each match
     before_ctx: u32,    // -B N: print N lines before each match (capped)
+    null_term: bool,    // -Z/-z: NUL-terminate filenames in -l / -L output
 }
 
 const CTX_CAP: usize = 16;        // max before-context lines
@@ -730,15 +731,16 @@ fn grep_one_file(
         Ok(c) => {
             if c > 0 { had_match = true; }
             if !opts.quiet {
+                let term: &[u8] = if opts.null_term { b"\0" } else { b"\n" };
                 if opts.list {
                     if c > 0 {
                         write_all(STDOUT, name);
-                        write_all(STDOUT, b"\n");
+                        write_all(STDOUT, term);
                     }
                 } else if opts.list_no_match {
                     if c == 0 {
                         write_all(STDOUT, name);
-                        write_all(STDOUT, b"\n");
+                        write_all(STDOUT, term);
                     }
                 } else if opts.count {
                     emit_count_line(Some(name), c, show_name_count);
@@ -770,6 +772,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         only_matching: false,
         after_ctx: 0,
         before_ctx: 0,
+        null_term: false,
     };
 
     let mut e_pattern: Option<*const u8> = None;
@@ -886,6 +889,9 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
                     return 2;
                 }
             }
+        } else if arg_is(p, b"-Z") || arg_is(p, b"--null") {
+            opts.null_term = true;
+            idx += 1;
         } else if arg_is(p, b"-q") || arg_is(p, b"--quiet") || arg_is(p, b"--silent") {
             opts.quiet = true;
             idx += 1;
@@ -936,6 +942,7 @@ Output control:
   -C, --context NUM         shorthand for -A NUM -B NUM
   -m, --max-count NUM   stop after NUM matches per file
   -o, --only-matching   print only the matched portion of each line
+  -Z, --null            NUL-terminate filenames in -l / -L output
       --help            show this help and exit
 \0";
             let len = help.len() - 1;  // strip the trailing NUL
@@ -976,10 +983,15 @@ Output control:
             Ok(c) => {
                 if c > 0 { had_match = true; }
                 if !opts.quiet {
+                    let label: &[u8] = if opts.null_term {
+                        b"(standard input)\0"
+                    } else {
+                        b"(standard input)\n"
+                    };
                     if opts.list {
-                        if c > 0 { write_all(STDOUT, b"(standard input)\n"); }
+                        if c > 0 { write_all(STDOUT, label); }
                     } else if opts.list_no_match {
-                        if c == 0 { write_all(STDOUT, b"(standard input)\n"); }
+                        if c == 0 { write_all(STDOUT, label); }
                     } else if opts.count {
                         emit_count_line(None, c, false);
                     }
@@ -1059,15 +1071,16 @@ Output control:
                 Ok(c) => {
                     if c > 0 { had_match = true; }
                     if !opts.quiet {
+                        let term: &[u8] = if opts.null_term { b"\0" } else { b"\n" };
                         if opts.list {
                             if c > 0 {
                                 write_all(STDOUT, name);
-                                write_all(STDOUT, b"\n");
+                                write_all(STDOUT, term);
                             }
                         } else if opts.list_no_match {
                             if c == 0 {
                                 write_all(STDOUT, name);
-                                write_all(STDOUT, b"\n");
+                                write_all(STDOUT, term);
                             }
                         } else if opts.count {
                             emit_count_line(Some(name), c, show_name_count);

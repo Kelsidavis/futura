@@ -148,29 +148,36 @@ fn panic(_info: &PanicInfo) -> ! {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u8) -> i32 {
-    if argc == 2 {
-        let p = unsafe { *argv.add(1) };
-        if !p.is_null() && (p as usize) >= 0x10000 {
-            let want = b"--help";
-            let mut n = 0; unsafe { while *p.add(n) != 0 { n += 1; } }
-            if n == want.len() {
-                let mut ok = true;
-                for i in 0..want.len() {
-                    if unsafe { *p.add(i) } != want[i] { ok = false; break; }
-                }
-                if ok {
-                    let help: &[u8] = b"\
-Usage: rust-pwd
+    // -L/-P toggle the GNU "logical vs physical" preference. We always
+    // call getcwd(2), which on Futura returns the canonical path with
+    // symlinks resolved — i.e. the physical form. So -P is a no-op
+    // and -L is accepted but produces the same output. Flags are
+    // wired so portable scripts that pass them don't error.
+    let mut idx: i32 = 1;
+    while idx < argc {
+        let p = unsafe { *argv.add(idx as usize) };
+        if p.is_null() || (p as usize) < 0x10000 { break; }
+        let mut n = 0; unsafe { while *p.add(n) != 0 { n += 1; } }
+        let s = unsafe { core::slice::from_raw_parts(p, n) };
+        if s == b"--help" {
+            let help: &[u8] = b"\
+Usage: rust-pwd [-L | -P]
 Print the current working directory via getcwd(2).
 
-  --help    show this help and exit
+  -L, --logical    accept symlinks (no-op; getcwd already canonical)
+  -P, --physical   resolve all symlinks (default; matches getcwd)
+      --help       show this help and exit
 \0";
-                    let len = help.len() - 1;
-                    unsafe { let _ = syscall3(SYS_WRITE, 1, help.as_ptr() as u64, len as u64); }
-                    return 0;
-                }
-            }
+            let len = help.len() - 1;
+            unsafe { let _ = syscall3(SYS_WRITE, 1, help.as_ptr() as u64, len as u64); }
+            return 0;
         }
+        if s == b"-L" || s == b"--logical" || s == b"-P" || s == b"--physical" {
+            idx += 1;
+            continue;
+        }
+        if s == b"--" { break; }
+        break;
     }
     let mut buf = [0u8; PATH_MAX];
 

@@ -1913,6 +1913,15 @@ void fut_kernel_main(void) {
         nvme_init();
     }
 
+    /* Storage — SDHCI (Intel Apollo Lake / Gemini Lake on-board SD).
+     * Phase 1 driver: PCI probe + BAR map + version readout + soft
+     * reset. Card init and block writes come in phase 2; this entry
+     * just confirms the controller is reachable from kernel space. */
+    {
+        extern int sdhci_init(void);
+        sdhci_init();
+    }
+
     /* USB host + device class drivers */
     {
         extern int xhci_init(void);

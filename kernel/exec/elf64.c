@@ -913,36 +913,16 @@ static int build_user_stack(fut_mm_t *mm,
      *  print and so subject to the same possible cliff as the CR3
      *  follow-up print we removed above.) */
 
-    /* Set FS_BASE for TLS (Thread Local Storage) support
-     * Required for stack canary checking in code compiled with -fstack-protector
-     * The stack canary is read from %fs:0x28 */
+    /* Set FS_BASE for TLS. Required for stack canary checking in
+     * code compiled with -fstack-protector (canary at %fs:0x28). */
     wrmsr(MSR_FS_BASE, USER_TLS_BASE);
 
-    /* Store fs_base in thread structure so scheduler can restore it after context switch */
-    fut_thread_t *cur_thread = fut_thread_current();
-    if (cur_thread) {
-        cur_thread->fs_base = USER_TLS_BASE;
-        /* Set user segment selectors in context so scheduler can construct valid
-         * IRETQ frames after irq_frame is cleared. Without this, the context has
-         * kernel segments (0x10) from thread creation, causing crashes when the
-         * scheduler constructs a frame from context for a user thread. */
-        cur_thread->context.ds = USER_DATA_SELECTOR;  /* 0x1B */
-        cur_thread->context.es = USER_DATA_SELECTOR;
-        cur_thread->context.fs = USER_DATA_SELECTOR;  /* FS base set via MSR */
-        cur_thread->context.gs = USER_DATA_SELECTOR;
-        cur_thread->context.cs = USER_CODE_SELECTOR;  /* 0x23 */
-        cur_thread->context.ss = USER_DATA_SELECTOR;  /* 0x1B */
-        /* Also update RIP and RSP to user values. If irq_frame is cleared and
-         * scheduler constructs a frame from context, it needs valid user addresses.
-         * Without this, context.rip has kernel trampoline addr causing page fault. */
-        cur_thread->context.rip = entry;
-        cur_thread->context.rsp = stack;
-        cur_thread->context.rflags = 0x202;  /* IF=1, reserved bit 1 set */
-    }
-
     /* Call the pure assembly function to perform IRETQ to userspace.
-     * No prints between fut_write_cr3 above and this call — see comment
-     * above the CR3 swap. */
+     * No prints, no GS-relative percpu access, no struct writes
+     * between fut_write_cr3 above and this call — every memory touch
+     * is a suspect in the post-CR3 silent-hang bisection. The
+     * cur_thread updates that used to live here have been moved to
+     * BEFORE the CR3 swap above. */
     fut_do_user_iretq(entry, stack, argc, argv_ptr);
 
     /* Should NEVER reach here */

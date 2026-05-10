@@ -504,6 +504,26 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         if arg_eq(p, b"-t") || arg_eq(p, b"--terse") {
             terse = true; idx += 1; continue;
         }
+        // --format=FMT and --printf=FMT (long forms with embedded =).
+        let p_n = cstr_len(p);
+        let is_format_eq = p_n >= 9 && unsafe {
+            let want = b"--format=";
+            let mut ok = true;
+            for j in 0..want.len() { if *p.add(j) != want[j] { ok = false; break; } }
+            ok
+        };
+        let is_printf_eq = p_n >= 9 && unsafe {
+            let want = b"--printf=";
+            let mut ok = true;
+            for j in 0..want.len() { if *p.add(j) != want[j] { ok = false; break; } }
+            ok
+        };
+        if is_format_eq || is_printf_eq {
+            if is_printf_eq { printf_mode = true; }
+            format_ptr = Some(unsafe { p.add(9) });
+            idx += 1;
+            continue;
+        }
         if arg_eq(p, b"-c") || arg_eq(p, b"--format") || arg_eq(p, b"--printf") {
             // --printf is identical to -c except the per-file trailing
             // newline is suppressed (matches GNU stat). The user's

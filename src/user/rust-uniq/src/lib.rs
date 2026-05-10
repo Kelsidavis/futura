@@ -243,6 +243,7 @@ struct Mode {
     icase: bool,
     skip_chars: usize,           // -s N: skip first N chars before compare
     cmp_chars: Option<usize>,    // -w N: compare at most first N chars (after skip)
+    sep: u8,                     // line separator (b'\n' default, 0 with -z)
 }
 
 // Slice the comparison window out of a line per -s/-w. Lines shorter
@@ -289,7 +290,8 @@ fn emit(mode: Mode, line: &[u8], count: u64) -> bool {
     if !write_all(STDOUT, line) {
         return false;
     }
-    write_all(STDOUT, b"\n")
+    let term = [mode.sep];
+    write_all(STDOUT, &term)
 }
 
 #[unsafe(no_mangle)]
@@ -301,6 +303,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
         icase: false,
         skip_chars: 0,
         cmp_chars: None,
+        sep: b'\n',
     };
     let mut input_fd: i32 = STDIN;
     let mut input_path: Option<*const u8> = None;
@@ -319,6 +322,8 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
             mode.only_uniq = true;
         } else if cstr_eq(p, b"-i") {
             mode.icase = true;
+        } else if cstr_eq(p, b"-z") || cstr_eq(p, b"--zero-terminated") {
+            mode.sep = 0;
         } else if cstr_eq(p, b"-s") || cstr_eq(p, b"-w") {
             // -s N (skip first N chars) / -w N (compare at most N chars).
             // Both take a non-negative integer in the next argv slot.
@@ -362,6 +367,7 @@ Filter adjacent matching lines from INPUT (or standard input).
   -i          ignore case while comparing
   -s N        skip first N chars before comparing
   -w N        compare at most N chars (after -s skip)
+  -z, --zero-terminated   line separator is NUL (input and output)
       --help  show this help and exit
 
 A '-' as INPUT means standard input.
@@ -440,7 +446,7 @@ A '-' as INPUT means standard input.
         let chunk = &rbuf[..n as usize];
         let mut start = 0usize;
         for i in 0..chunk.len() {
-            if chunk[i] == b'\n' {
+            if chunk[i] == mode.sep {
                 // Append [start..i] to cur, then flush this line.
                 let take = i - start;
                 let copy = take.min(cur.len() - cur_len);

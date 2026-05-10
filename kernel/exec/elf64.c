@@ -2968,10 +2968,20 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
      * before it actually flushes to the framebuffer. */
     ELF_LOG("[EXEC-ELF] fut_thread_create returned %p, fs_base set; about to STI\n", thread);
     __asm__ volatile("sti" ::: "memory");
-    ELF_LOG("[EXEC-ELF] STI'd; trampoline thread is now schedulable\n");
+    /* Diagnostic: a busy loop just so we're definitely not preempted
+     * mid-print. If the kernel is alive after STI we'll see this. */
+    for (volatile int i = 0; i < 1000; i++) { }
+    ELF_LOG("[EXEC-ELF] STI'd successfully (post-busy-loop)\n");
     fut_free(phdrs);
     fut_vfs_close(fd);
-    ELF_LOG("[EXEC-ELF] phdrs+fd freed; about to free kargv/kenvp\n");
+    ELF_LOG("[EXEC-ELF] phdrs+fd freed; about to yield to trampoline\n");
+    /* Voluntarily yield so the scheduler picks the new trampoline thread
+     * deterministically (instead of relying on a queued timer IRQ doing
+     * it post-STI, which we don't seem to be reaching). If the yield
+     * returns, bootstrap got back; if not, trampoline took over. */
+    extern void fut_thread_yield(void);
+    fut_thread_yield();
+    ELF_LOG("[EXEC-ELF] returned from yield (bootstrap rescheduled)\n");
 
     /* Free the kernel copies of argv/envp - they've been copied to user stack */
     if (kargv && kargv_needs_free) {

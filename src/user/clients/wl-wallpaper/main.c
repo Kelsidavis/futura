@@ -148,6 +148,8 @@ static void refresh_procs(void) {
     add_preset("Crimson Twilight",    "crimson",   0xFF400D0Du);
     add_preset("Mint Frost",          "mint",      0xFF1F4A3Au);
     add_preset("Royal Violet",        "violet",    0xFF381541u);
+    add_preset("Coral Reef",          "coral",     0xFF093247u);
+    add_preset("Steel Mist",          "steel",     0xFF252D43u);
 
     /* Clamp selection */
     if (selected >= proc_count) selected = proc_count - 1;

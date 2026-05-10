@@ -1788,6 +1788,12 @@ void comp_render_frame(struct compositor_state *comp) {
         } else if (wp[0] == 'v' && wp[1] == 'i') {                 /* violet */
             wp_top_r = 0x38; wp_top_g = 0x15; wp_top_b = 0x41;
             wp_bot_r = 0xB7; wp_bot_g = 0x4C; wp_bot_b = 0xE0;
+        } else if (wp[0] == 'c' && wp[1] == 'o') {                 /* coral */
+            wp_top_r = 0x09; wp_top_g = 0x32; wp_top_b = 0x47;
+            wp_bot_r = 0xE7; wp_bot_g = 0x6F; wp_bot_b = 0x51;
+        } else if (wp[0] == 's' && wp[1] == 't') {                 /* steel */
+            wp_top_r = 0x25; wp_top_g = 0x2D; wp_top_b = 0x43;
+            wp_bot_r = 0x6F; wp_bot_g = 0x8A; wp_bot_b = 0xB7;
         }
     }
 

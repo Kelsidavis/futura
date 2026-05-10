@@ -291,12 +291,14 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, envp: *const *const u8
                 }
                 if ok {
                     let help: &[u8] = b"\
-Usage: rust-env [COMMAND [ARG...]]
+Usage: rust-env [-0] [COMMAND [ARG...]]
 With no COMMAND, dump the environment one VAR=VALUE per line.
 With COMMAND, execve it (PATH-walked if it has no slash) using the
 current environment - the standard /usr/bin/env shebang shape.
 
-  --help    show this help and exit
+  -0, --null    end each output line with NUL, not newline
+                (only applies when dumping the environment)
+      --help    show this help and exit
 \0";
                     let len = help.len() - 1;
                     unsafe { let _ = syscall3(sysn::WRITE, STDOUT as u64,
@@ -306,16 +308,39 @@ current environment - the standard /usr/bin/env shebang shape.
             }
         }
     }
+    // Parse leading flags before deciding dump-vs-exec. Currently:
+    //   -0 / --null  use NUL line separator in dump mode (no effect on exec)
+    let mut flag_idx: i32 = 1;
+    let mut null_sep = false;
+    while flag_idx < argc {
+        let p = unsafe { *argv.add(flag_idx as usize) };
+        if p.is_null() || (p as usize) < 0x10000 { break; }
+        // -0 / --null
+        let n = cstr_len(p);
+        let m0 = b"-0";
+        let mn = b"--null";
+        let is_zero = n == m0.len()
+            && (0..m0.len()).all(|i| unsafe { *p.add(i) } == m0[i]);
+        let is_null = n == mn.len()
+            && (0..mn.len()).all(|i| unsafe { *p.add(i) } == mn[i]);
+        if is_zero || is_null {
+            null_sep = true;
+            flag_idx += 1;
+            continue;
+        }
+        break;
+    }
+
     // env <cmd> [args...]: execve cmd with the current envp; PATH
     // walk if cmd has no slash. Without this branch, /usr/bin/env
     // shebangs would dump env and exit instead of running their
     // interpreter.
-    if argc >= 2 {
-        let cmd_p = unsafe { *argv.add(1) };
+    if flag_idx < argc {
+        let cmd_p = unsafe { *argv.add(flag_idx as usize) };
         if !cmd_p.is_null() && (cmd_p as usize) >= 0x10000 {
-            // The argv pointer to forward starts at argv[1] so the
+            // The argv pointer to forward starts at the cmd slot so the
             // child sees argv[0] = cmd, argv[1..] = its own args.
-            let child_argv: *const *const u8 = unsafe { argv.add(1) };
+            let child_argv: *const *const u8 = unsafe { argv.add(flag_idx as usize) };
 
             // Slash → exec literal path.
             let mut has_slash = false;
@@ -381,7 +406,11 @@ current environment - the standard /usr/bin/env shebang shape.
         let n = cstr_len(e);
         let bytes = unsafe { core::slice::from_raw_parts(e, n) };
         write_all(STDOUT, bytes);
-        write_all(STDOUT, b"\n");
+        if null_sep {
+            write_all(STDOUT, b"\0");
+        } else {
+            write_all(STDOUT, b"\n");
+        }
         i += 1;
     }
     0

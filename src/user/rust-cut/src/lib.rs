@@ -304,7 +304,7 @@ fn parse_fields(p: *const u8, out: &mut [u32; MAX_FIELDS]) -> Option<usize> {
 // Emit selected byte positions from `line` (1-based). Positions past
 // the line length are silently skipped. Used by -c / -b mode.
 // With complement = true, emits positions NOT in the list instead.
-fn emit_chars(line: &[u8], positions: &[u32], complement: bool) -> bool {
+fn emit_chars(line: &[u8], positions: &[u32], complement: bool, term: u8) -> bool {
     if !complement {
         for &pos in positions {
             let i = pos as usize;
@@ -323,16 +323,18 @@ fn emit_chars(line: &[u8], positions: &[u32], complement: bool) -> bool {
             }
         }
     }
-    write_all(STDOUT, b"\n")
+    write_all(STDOUT, &[term])
 }
 
-// Emit selected fields from `line`, splitting on `delim`, joining with
-// `delim` between emitted fields. With `suppress_no_delim`, lines that
-// contain no delimiter are silently skipped (matches GNU cut -s).
+// Emit selected fields from `line`, splitting on `delim`. The `out_delim`
+// slice is what we emit between fields on output (defaults to the input
+// delim; --output-delimiter=STR replaces it). `suppress_no_delim` skips
+// lines that contain no delimiter (matches GNU cut -s).
 fn emit_line(line: &[u8], delim: u8, fields: &[u32],
-             suppress_no_delim: bool, complement: bool) -> bool {
+             suppress_no_delim: bool, complement: bool,
+             out_delim: &[u8], term: u8) -> bool {
     if fields.is_empty() && !complement {
-        return write_all(STDOUT, b"\n");
+        return write_all(STDOUT, &[term]);
     }
     let want = |idx: u32| -> bool {
         let in_list = fields.contains(&idx);
@@ -352,7 +354,7 @@ fn emit_line(line: &[u8], delim: u8, fields: &[u32],
             field_present = true;
             if want(idx_field) {
                 if printed_any {
-                    if !write_all(STDOUT, &[delim]) { return false; }
+                    if !write_all(STDOUT, out_delim) { return false; }
                 }
                 if !write_all(STDOUT, &line[field_start..i]) { return false; }
                 printed_any = true;
@@ -365,11 +367,11 @@ fn emit_line(line: &[u8], delim: u8, fields: &[u32],
         if !write_all(STDOUT, line) { return false; }
     } else if want(idx_field) {
         if printed_any {
-            if !write_all(STDOUT, &[delim]) { return false; }
+            if !write_all(STDOUT, out_delim) { return false; }
         }
         if !write_all(STDOUT, &line[field_start..]) { return false; }
     }
-    write_all(STDOUT, b"\n")
+    write_all(STDOUT, &[term])
 }
 
 #[unsafe(no_mangle)]
@@ -380,6 +382,8 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8, _envp: *const *const u
     let mut suppress = false;
     let mut chars_mode = false;
     let mut complement = false;
+    let mut zero_term = false;
+    let mut out_delim_p: Option<*const u8> = None;
     let mut idx: i32 = 1;
 
     while idx < argc {
@@ -400,6 +404,8 @@ Print selected fields from each line.
   -b LIST    same as -c
   -s         suppress lines that contain no DELIM (with -f)
       --complement   invert the LIST: emit positions/fields not in it
+      --output-delimiter=STR  string to put between fields on output
+  -z, --zero-terminated       line delimiter is NUL, not newline
       --help     show this help and exit
 
 A '-' in the FILE list means standard input.
@@ -416,6 +422,38 @@ A '-' in the FILE list means standard input.
         }
         if cstr_eq(p, b"--complement") {
             complement = true;
+            idx += 1;
+            continue;
+        }
+        if cstr_eq(p, b"-z") || cstr_eq(p, b"--zero-terminated") {
+            zero_term = true;
+            idx += 1;
+            continue;
+        }
+        if cstr_eq(p, b"--output-delimiter") {
+            if idx + 1 >= argc {
+                write_str(STDERR, b"rust-cut: --output-delimiter needs an argument\n");
+                return 2;
+            }
+            let arg = unsafe { *argv.add((idx + 1) as usize) };
+            if arg.is_null() || (arg as usize) < 0x10000 { return 2; }
+            out_delim_p = Some(arg);
+            idx += 2;
+            continue;
+        }
+        // --output-delimiter=STR (long form with embedded =)
+        let p_n = {
+            let mut k = 0usize;
+            unsafe { while *p.add(k) != 0 { k += 1; } }
+            k
+        };
+        if p_n >= 19 && unsafe {
+            let want = b"--output-delimiter=";
+            let mut ok = true;
+            for i in 0..want.len() { if *p.add(i) != want[i] { ok = false; break; } }
+            ok
+        } {
+            out_delim_p = Some(unsafe { p.add(19) });
             idx += 1;
             continue;
         }
@@ -499,9 +537,30 @@ A '-' in the FILE list means standard input.
         }
     };
     let fields_slice = &fields[..nfields];
+    let sep: u8 = if zero_term { 0 } else { b'\n' };
+
+    // Output delimiter: if --output-delimiter wasn't set, fall back to
+    // the input delimiter (single byte) so existing behavior is
+    // preserved. -c/-b mode never uses out_delim.
+    let mut od_buf = [0u8; 256];
+    let mut od_len = 0usize;
+    if let Some(p) = out_delim_p {
+        let mut k = 0usize;
+        unsafe {
+            while *p.add(k) != 0 && k < od_buf.len() {
+                od_buf[k] = *p.add(k);
+                k += 1;
+            }
+        }
+        od_len = k;
+    } else if let CutMode::Fields { delim: d, .. } = mode {
+        od_buf[0] = d;
+        od_len = 1;
+    }
+    let out_delim = &od_buf[..od_len];
 
     if idx >= argc {
-        return if cut_fd(STDIN, mode, fields_slice, complement) { 0 } else { 1 };
+        return if cut_fd(STDIN, mode, fields_slice, complement, out_delim, sep) { 0 } else { 1 };
     }
     let mut had_error = false;
     while idx < argc {
@@ -515,7 +574,7 @@ A '-' in the FILE list means standard input.
         unsafe { while *p.add(nlen) != 0 { nlen += 1; } }
         let is_dash = nlen == 1 && unsafe { *p } == b'-';
         if is_dash {
-            if !cut_fd(STDIN, mode, fields_slice, complement) { had_error = true; }
+            if !cut_fd(STDIN, mode, fields_slice, complement, out_delim, sep) { had_error = true; }
             continue;
         }
         let fd = unsafe {
@@ -528,7 +587,7 @@ A '-' in the FILE list means standard input.
             had_error = true;
             continue;
         }
-        if !cut_fd(fd, mode, fields_slice, complement) { had_error = true; }
+        if !cut_fd(fd, mode, fields_slice, complement, out_delim, sep) { had_error = true; }
         unsafe { let _ = syscall1(sysn::CLOSE, fd as u64); }
     }
     if had_error { 1 } else { 0 }
@@ -538,7 +597,8 @@ A '-' in the FILE list means standard input.
 #[derive(Copy, Clone)]
 enum CutMode { Fields { delim: u8, suppress: bool }, Chars }
 
-fn cut_fd(fd: i32, mode: CutMode, list: &[u32], complement: bool) -> bool {
+fn cut_fd(fd: i32, mode: CutMode, list: &[u32], complement: bool,
+          out_delim: &[u8], sep: u8) -> bool {
     let mut rbuf = [0u8; READ_BUF];
     let mut line = [0u8; LINE_BUF];
     let mut len = 0usize;
@@ -546,8 +606,8 @@ fn cut_fd(fd: i32, mode: CutMode, list: &[u32], complement: bool) -> bool {
     let emit = |line: &[u8]| -> bool {
         match mode {
             CutMode::Fields { delim, suppress } =>
-                emit_line(line, delim, list, suppress, complement),
-            CutMode::Chars => emit_chars(line, list, complement),
+                emit_line(line, delim, list, suppress, complement, out_delim, sep),
+            CutMode::Chars => emit_chars(line, list, complement, sep),
         }
     };
     'outer: loop {
@@ -558,7 +618,7 @@ fn cut_fd(fd: i32, mode: CutMode, list: &[u32], complement: bool) -> bool {
         if n == 0 { break; }
         let chunk = &rbuf[..n as usize];
         for &c in chunk {
-            if c == b'\n' {
+            if c == sep {
                 if !emit(&line[..len]) {
                     had_error = true;
                     break 'outer;

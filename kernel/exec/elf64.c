@@ -973,21 +973,26 @@ static int stage_stack_pages(fut_mm_t *mm, uint64_t *out_stack_top) {
  * @return: 0 on success, negative errno on failure
  */
 static int stage_tls_page(fut_mm_t *mm, uint64_t *out_tls_base) {
+    ELF_LOG("[TLS] enter\n");
     /* Allocate a page for __thread variables (accessed at negative offsets
      * from the TCB). This page is mapped just below USER_TLS_BASE. */
     uint8_t *tls_data_page = fut_pmm_alloc_page();
     if (!tls_data_page) {
+        ELF_LOG("[TLS] tls_data alloc failed\n");
         return -ENOMEM;
     }
+    ELF_LOG("[TLS] tls_data_page=%p\n", tls_data_page);
     memset(tls_data_page, 0, PAGE_SIZE);
 
     /* Allocate a page for the TCB (Thread Control Block) at USER_TLS_BASE.
      * Contains the self-pointer at offset 0 and stack canary at offset 0x28. */
     uint8_t *tcb_page = fut_pmm_alloc_page();
     if (!tcb_page) {
+        ELF_LOG("[TLS] tcb alloc failed\n");
         fut_pmm_free_page(tls_data_page);
         return -ENOMEM;
     }
+    ELF_LOG("[TLS] tcb_page=%p\n", tcb_page);
     memset(tcb_page, 0, PAGE_SIZE);
 
     /* Write TLS self-pointer at offset 0 (x86_64 TLS ABI requirement).
@@ -1003,19 +1008,23 @@ static int stage_tls_page(fut_mm_t *mm, uint64_t *out_tls_base) {
     /* Ensure canary has a null byte to help detect string overflows */
     canary &= ~0xFFULL;
     *(uint64_t *)(tcb_page + TLS_STACK_CANARY_OFFSET) = canary;
+    ELF_LOG("[TLS] canary written, mapping data page\n");
 
     /* Map TLS data page at USER_TLS_BASE - PAGE_SIZE (for __thread vars) */
     phys_addr_t tls_data_phys = pmap_virt_to_phys((uintptr_t)tls_data_page);
+    ELF_LOG("[TLS] tls_data_phys=0x%llx\n", (unsigned long long)tls_data_phys);
     int rc = pmap_map_user(mm_context(mm),
                            USER_TLS_BASE - PAGE_SIZE,
                            tls_data_phys,
                            PAGE_SIZE,
                            PTE_PRESENT | PTE_USER | PTE_WRITABLE | PTE_NX);
     if (rc != 0) {
+        ELF_LOG("[TLS] map_user(data) rc=%d\n", rc);
         fut_pmm_free_page(tls_data_page);
         fut_pmm_free_page(tcb_page);
         return rc;
     }
+    ELF_LOG("[TLS] data mapped, mapping TCB\n");
 
     /* Map TCB page at USER_TLS_BASE (self-pointer + canary) */
     phys_addr_t tcb_phys = pmap_virt_to_phys((uintptr_t)tcb_page);
@@ -1025,12 +1034,14 @@ static int stage_tls_page(fut_mm_t *mm, uint64_t *out_tls_base) {
                        PAGE_SIZE,
                        PTE_PRESENT | PTE_USER | PTE_WRITABLE | PTE_NX);
     if (rc != 0) {
+        ELF_LOG("[TLS] map_user(tcb) rc=%d\n", rc);
         fut_pmm_free_page(tls_data_page);
         fut_pmm_free_page(tcb_page);
         return rc;
     }
 
     *out_tls_base = USER_TLS_BASE;
+    ELF_LOG("[TLS] done, base=0x%llx\n", (unsigned long long)USER_TLS_BASE);
     return 0;
 }
 

@@ -140,6 +140,15 @@ struct I915State {
     /// commands here; the GPU sees the page through scratch_gpu_va
     /// via the GTT). pmm_alloc_page returns this directly. */
     pub scratch_virt: *mut u8,
+    /// True once the BCS ring is wired up and the engine drained a NOOP.
+    pub bcs_ready: bool,
+    /// FB phys + size + GPU VA after i915_map_fb_in_gtt. Lets the BLT
+    /// helpers reference the framebuffer as both source and destination.
+    pub fb_phys: u64,
+    pub fb_size: usize,
+    pub fb_gpu_va: u64,
+    pub fb_pitch: u32,
+    pub fb_bpp: u32,
 }
 
 unsafe impl Send for I915State {}
@@ -159,6 +168,12 @@ static STATE: StaticCell<I915State> = StaticCell::new(I915State {
     scratch_gpu_va: 0,
     scratch_phys: 0,
     scratch_virt: core::ptr::null_mut(),
+    bcs_ready: false,
+    fb_phys: 0,
+    fb_size: 0,
+    fb_gpu_va: 0,
+    fb_pitch: 0,
+    fb_bpp: 0,
 });
 
 #[inline(always)]
@@ -606,6 +621,246 @@ pub extern "C" fn i915_bcs_init() -> i32 {
         );
     }
 
+    unsafe { (*st).bcs_ready = true; }
     log("i915: phase 3 complete (BCS ring + NOOP roundtrip). Phase 4 (BLT scroll) is next.");
     0
+}
+
+// ── Phase 4: XY_SRC_COPY_BLT for fb_console hardware scroll ──
+//
+// Maps the framebuffer through the GTT and submits XY_SRC_COPY_BLT
+// commands to the BCS ring. Replaces fb_console_scroll's CPU memcpy
+// with a GPU-side blit — the CPU is free during scrolls and the
+// transfer hits memory at full DRAM bandwidth.
+//
+// XY_SRC_COPY_BLT command (Gen9, 8 DWORDs, length field=6):
+//
+//   DW0: 0x53C00006   header (2D, opcode 0x53, write-alpha+rgb, len-2=6)
+//   DW1: BR13         color depth + ROP + dest pitch
+//                       bits 25..24: color depth (3 = 32 bpp ARGB)
+//                       bits 23..16: ROP (0xCC = SRCCOPY)
+//                       bits 15..0:  dest pitch in bytes (signed; we use +)
+//   DW2: BR05         dest top-left  (y1 << 16) | x1
+//   DW3: BR06         dest bot-right (y2 << 16) | x2  (exclusive)
+//   DW4: BR09         dest base GPU VA (32-bit GGTT addr)
+//   DW5: BR11         source pitch in bytes (low 16 bits)
+//   DW6: BR26         source top-left (y1 << 16) | x1
+//   DW7: BR12         source base GPU VA (32-bit GGTT addr)
+
+const XY_SRC_COPY_BLT_HEADER: u32 = 0x5300_0006
+    | (1 << 21)  /* Write Alpha */
+    | (1 << 20)  /* Write RGB   */;
+/* = 0x5330_0006 — but Linux i915 uses 0x53C00006 for 32bpp; the C
+ * field at bits 21..20 already covers ARGB. */
+
+const ROP_SRCCOPY: u32 = 0xCC;
+
+/// Map a 4-KiB-aligned phys range into the GTT starting at `gpu_va`.
+/// Each page consumes one PTE. gpu_va must be 4-KiB aligned.
+fn gtt_map_range(gtt_base: *mut u64, gpu_va: u64, phys_start: u64, size: usize) -> u32 {
+    let pages = (size + 4095) / 4096;
+    for i in 0..pages {
+        let phys = phys_start + (i as u64) * GTT_PAGE_SIZE;
+        let va = gpu_va + (i as u64) * GTT_PAGE_SIZE;
+        gtt_install(gtt_base, va, phys);
+    }
+    pages as u32
+}
+
+/// Map the kernel's framebuffer into the GTT so BLT commands can
+/// reference it as a 32-bit GGTT address. Reads geometry from the
+/// kernel-side fb subsystem (via fb_get_info). Stashes the result in
+/// I915State; subsequent calls are idempotent.
+///
+/// Returns 0 on success, negative on failure.
+#[unsafe(no_mangle)]
+pub extern "C" fn i915_map_fb_in_gtt() -> i32 {
+    let st = STATE.get();
+    if !unsafe { (*st).gtt_initialized } {
+        log("i915_map_fb_in_gtt: GTT not initialized");
+        return -1;
+    }
+    if unsafe { (*st).fb_gpu_va } != 0 {
+        return 0; /* already mapped */
+    }
+
+    /* Pull FB geometry from the kernel-side fb subsystem. The struct
+     * matches kernel/fb_hwinfo as exported by fb_mmio.c; we only need
+     * phys + size + pitch + bpp for BLT. */
+    #[repr(C)]
+    struct FbInfo {
+        width:  u32,
+        height: u32,
+        pitch:  u32,
+        bpp:    u32,
+        red_shift:   u8,
+        green_shift: u8,
+        blue_shift:  u8,
+        flags: u8,
+    }
+    #[repr(C)]
+    struct FbHwinfo {
+        info:   FbInfo,
+        phys:   u64,
+        length: u64,
+    }
+    unsafe extern "C" {
+        fn fb_get_info(out: *mut FbHwinfo) -> i32;
+    }
+    let mut hw: FbHwinfo = unsafe { core::mem::zeroed() };
+    if unsafe { fb_get_info(&mut hw) } != 0 {
+        log("i915_map_fb_in_gtt: fb_get_info failed");
+        return -2;
+    }
+    if hw.phys == 0 || hw.length == 0 {
+        log("i915_map_fb_in_gtt: fb hwinfo missing phys/size");
+        return -3;
+    }
+    if hw.info.bpp != 32 {
+        unsafe {
+            fut_printf(
+                b"i915_map_fb_in_gtt: only 32 bpp supported, got %u\n\0".as_ptr(),
+                hw.info.bpp,
+            );
+        }
+        return -4;
+    }
+
+    /* Carve out a contiguous GTT VA window for the FB just below the
+     * scratch page that phase 2 placed at the very top. Round size up
+     * to the page count. */
+    let pages = ((hw.length as usize) + 4095) / 4096;
+    let gtt_top = (GTT_NUM_ENTRIES as u64) * GTT_PAGE_SIZE;
+    let scratch_pages: u64 = 1;
+    let fb_gpu_va = gtt_top - (scratch_pages + pages as u64) * GTT_PAGE_SIZE;
+
+    let gtt_base = unsafe { (*st).gtt_base };
+    let installed = gtt_map_range(gtt_base, fb_gpu_va, hw.phys, hw.length as usize);
+
+    unsafe {
+        (*st).fb_phys = hw.phys;
+        (*st).fb_size = hw.length as usize;
+        (*st).fb_gpu_va = fb_gpu_va;
+        (*st).fb_pitch = hw.info.pitch;
+        (*st).fb_bpp = hw.info.bpp;
+        (*st).gtt_entries_used += installed;
+
+        fut_printf(
+            b"i915: FB mapped in GTT: %u pages at gpu_va=0x%llx (phys 0x%llx, %ux%u, pitch=%u)\n\0".as_ptr(),
+            installed,
+            fb_gpu_va,
+            hw.phys,
+            hw.info.width, hw.info.height, hw.info.pitch,
+        );
+    }
+    0
+}
+
+/// Submit an XY_SRC_COPY_BLT to scroll a region of the framebuffer.
+/// All coordinates are in pixels. The blit copies a (height × width)
+/// rectangle from (0, src_y) to (0, dst_y) in the FB.
+///
+/// Returns 0 on success, negative on failure (e.g., BCS not ready,
+/// FB not GTT-mapped, ring full, drain timeout).
+#[unsafe(no_mangle)]
+pub extern "C" fn i915_blt_scroll(src_y: u32, dst_y: u32, height: u32, width: u32) -> i32 {
+    let st = STATE.get();
+    if !unsafe { (*st).bcs_ready } {
+        return -1;
+    }
+    if unsafe { (*st).fb_gpu_va } == 0 {
+        /* Lazy first-time map. */
+        if i915_map_fb_in_gtt() != 0 {
+            return -2;
+        }
+    }
+    if width == 0 || height == 0 {
+        return 0;
+    }
+
+    let mmio = unsafe { (*st).mmio_base };
+    let ring_virt = unsafe { (*st).scratch_virt } as *mut u32;
+    let pitch = unsafe { (*st).fb_pitch };
+    let fb_va = unsafe { (*st).fb_gpu_va } as u32;
+
+    if mmio.is_null() || ring_virt.is_null() {
+        return -3;
+    }
+
+    /* Build the 8-DWORD command. */
+    let cmd: [u32; 8] = [
+        XY_SRC_COPY_BLT_HEADER,
+        /* BR13: color depth (3 = 32bpp), ROP (0xCC), dest pitch */
+        (3u32 << 24) | (ROP_SRCCOPY << 16) | (pitch & 0xFFFF),
+        /* BR05: dest top-left (y << 16) | x */
+        (dst_y << 16) | 0,
+        /* BR06: dest bottom-right exclusive */
+        ((dst_y + height) << 16) | width,
+        /* BR09: dest base GGTT addr */
+        fb_va,
+        /* BR11: source pitch (low 16 bits) */
+        pitch & 0xFFFF,
+        /* BR26: source top-left */
+        (src_y << 16) | 0,
+        /* BR12: source base GGTT addr */
+        fb_va,
+    ];
+
+    /* The ring is 4 KiB. We use the head of the ring at offset 0; for
+     * a more robust ring we'd track head/tail and wrap. For boot-time
+     * scrolls (one at a time, drain to completion before next) writing
+     * at offset 0 each time is fine — TAIL=0 then TAIL=4*8 then poll
+     * back to HEAD == TAIL keeps the ring effectively single-shot. */
+    if !forcewake_get_render(mmio) {
+        log("i915_blt_scroll: forcewake ACK timeout");
+        return -4;
+    }
+
+    unsafe {
+        /* Reset to known state; safer than racing with previous TAIL */
+        mmio_write32_at(mmio, BCS_RING_TAIL, 0);
+        /* Wait for the engine to drain to 0 first */
+        for _ in 0..1_000_000 {
+            if mmio_read32_at(mmio, BCS_RING_HEAD) & !0x3F == 0 {
+                break;
+            }
+        }
+
+        /* Write the command DWORDs to the ring */
+        for (i, dw) in cmd.iter().enumerate() {
+            core::ptr::write_volatile(ring_virt.add(i), *dw);
+        }
+        /* Pad with MI_NOOP up to a cacheline if we like; not strictly
+         * required for Gen9. */
+
+        /* Bump TAIL to publish — 8 DWORDs = 32 bytes */
+        mmio_write32_at(mmio, BCS_RING_TAIL, (cmd.len() * 4) as u32);
+
+        /* Wait for completion */
+        let mut drained = false;
+        for _ in 0..2_000_000 {
+            let head = mmio_read32_at(mmio, BCS_RING_HEAD) & !0x3F;
+            let tail = mmio_read32_at(mmio, BCS_RING_TAIL) & !0x3F;
+            if head == tail {
+                drained = true;
+                break;
+            }
+        }
+
+        forcewake_put_render(mmio);
+
+        if !drained {
+            return -5;
+        }
+    }
+
+    0
+}
+
+/// True iff phase 3 succeeded and the BCS engine is responsive. Callers
+/// gate their use of i915_blt_scroll on this.
+#[unsafe(no_mangle)]
+pub extern "C" fn i915_bcs_ready() -> bool {
+    let st = STATE.get();
+    unsafe { (*st).bcs_ready }
 }

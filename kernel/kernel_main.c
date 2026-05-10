@@ -1842,6 +1842,7 @@ void fut_kernel_main(void) {
             extern int i915_init(void);
             extern int i915_gtt_init(void);
             extern int i915_bcs_init(void);
+            extern int i915_map_fb_in_gtt(void);
 
             intel_vtd_init(0);
             intel_pmc_init();
@@ -1874,6 +1875,9 @@ void fut_kernel_main(void) {
             i915_gtt_init();
             /* Phase 3: bring up BCS engine, run NOOP through ring. */
             i915_bcs_init();
+            /* Phase 4: map the kernel framebuffer through the GTT so
+             * fb_console_scroll's BLT fast-path has a GPU VA to use. */
+            i915_map_fb_in_gtt();
             /* intel_hda_hdmi_init() intentionally NOT called.
              * The Rust function takes (verb_fn: HdaVerbFn, codec_addr: u8)
              * but the C extern was zero-arg, so verb_fn read whatever

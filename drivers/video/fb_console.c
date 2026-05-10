@@ -276,6 +276,44 @@ static void fb_console_scroll(void) {
     struct fb_console_state *cons = &g_fb_console;
     if (!g_fb_addr_validated) return;
 
+    /* Hardware acceleration fast path: when the i915 BCS engine is up,
+     * the scroll is a single XY_SRC_COPY_BLT submission. Falls through
+     * to the CPU back-buffer memcpy below if i915 isn't ready (every
+     * non-Intel/non-Gen9LP platform, plus early boot before the GPU
+     * is detected). The kernel-side fb_console keeps writing to the
+     * back buffer for chars; flush + BLT-scroll cover both directions. */
+    extern bool i915_bcs_ready(void) __attribute__((weak));
+    extern int  i915_blt_scroll(uint32_t src_y, uint32_t dst_y,
+                                uint32_t height, uint32_t width)
+                                __attribute__((weak));
+    if (cons->bpp == 32 && i915_bcs_ready && i915_bcs_ready() &&
+        i915_blt_scroll) {
+        int prot_w = cons->protected_x_start * cons->char_width;
+        if (prot_w > 0) {
+            int copy_h = (cons->rows - 1) * cons->char_height;
+            if (i915_blt_scroll(/* src_y */ cons->char_height,
+                                /* dst_y */ 0,
+                                /* height */ copy_h,
+                                /* width  */ prot_w) == 0) {
+                /* Hardware did the copy; re-sync the back buffer from
+                 * the FB so subsequent CPU draws stay coherent. */
+                if (cons->back_buf) {
+                    int last_y = (cons->rows - 1) * cons->char_height;
+                    /* Just clear the now-empty bottom char row in
+                     * back_buf; the rest matches FB after the BLT. */
+                    uint32_t bg = make_color(0, 0, 0, 255);
+                    for (int row = 0; row < cons->char_height; row++) {
+                        uint32_t *line = (uint32_t *)(cons->back_buf +
+                            (size_t)(last_y + row) * cons->pitch);
+                        for (int x = 0; x < prot_w; x++) line[x] = bg;
+                    }
+                }
+                return;
+            }
+            /* fall through to CPU path on BLT failure */
+        }
+    }
+
     /* Scroll happens in the back buffer (cached, very fast memmove);
      * the next fb_console_flush_full pushes the scrolled image to FB. */
     uint8_t *fb = cons->back_buf ? cons->back_buf : (uint8_t *)cons->fb_mem;

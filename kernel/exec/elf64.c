@@ -893,6 +893,20 @@ static int build_user_stack(fut_mm_t *mm,
         }
     }
 
+    /* Print boot_seq so we can tell whether a "same hang" across
+     * iterations is actually a triple-fault reboot loop. boot_seq
+     * lives in the persistent ring buffer at phys 0x10000000 and
+     * survives warm resets on this hardware. If iter N+1 prints
+     * boot_seq=K and iter N+2 prints boot_seq=K+1 across the same
+     * powered session, we have a loop. The +0x18 offset matches
+     * the boot_seq field in struct klog_persist_t. */
+    {
+        volatile uint32_t *boot_seq_p =
+            (volatile uint32_t *)(0xFFFFFFFF80000000ULL + 0x10000000ULL + 12);
+        fut_printf("[BISECT-TRAMP] klog boot_seq=%u (single boot if value stays low)\n",
+                   *boot_seq_p);
+    }
+
     /* Log BEFORE the CR3 swap — we have no diagnostic prints between
      * here and fut_do_user_iretq. Last-visible-line tells us where
      * in {fut_write_cr3, wrmsr, fut_do_user_iretq} we faulted. */

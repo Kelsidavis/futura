@@ -2636,15 +2636,43 @@ void comp_render_frame(struct compositor_state *comp) {
             int mb_min = (int)((mb_daytime % 3600) / 60);
             int mb_sec = (int)(mb_daytime % 60);
 
-            /* Day of week from epoch (Jan 1 1970 was Thursday) */
-            int mb_dow = (int)((mb_secs / 86400 + 4) % 7);
+            /* Day of week + month/day from epoch (Jan 1 1970 = Thu). */
+            long mb_days = mb_secs / 86400;
+            int mb_dow = (int)((mb_days + 4) % 7);
             const char *dow_names[] = {"Sun","Mon","Tue","Wed","Thu","Fri","Sat"};
+            int mb_year = 1970;
+            long mb_rem = mb_days;
+            for (;;) {
+                int diy = 365;
+                if ((mb_year % 4 == 0 && mb_year % 100 != 0) || mb_year % 400 == 0)
+                    diy = 366;
+                if (mb_rem < diy) break;
+                mb_rem -= diy;
+                mb_year++;
+            }
+            bool mb_leap = (mb_year % 4 == 0 && mb_year % 100 != 0) || mb_year % 400 == 0;
+            int mb_md[] = {31, mb_leap ? 29 : 28, 31, 30, 31, 30,
+                           31, 31, 30, 31, 30, 31};
+            int mb_mon = 0;
+            while (mb_mon < 11 && mb_rem >= mb_md[mb_mon]) {
+                mb_rem -= mb_md[mb_mon];
+                mb_mon++;
+            }
+            int mb_day = (int)mb_rem + 1;
+            const char *mon_names[] = {"Jan","Feb","Mar","Apr","May","Jun",
+                                       "Jul","Aug","Sep","Oct","Nov","Dec"};
 
-            /* Build "Tue  20:43:05" */
-            char mb_time[20];
+            /* Build "Thu May 09  20:43:05" — date + time-with-seconds. */
+            char mb_time[28];
             const char *dn = dow_names[mb_dow];
+            const char *mn = mon_names[mb_mon];
             int ci = 0;
             mb_time[ci++] = dn[0]; mb_time[ci++] = dn[1]; mb_time[ci++] = dn[2];
+            mb_time[ci++] = ' ';
+            mb_time[ci++] = mn[0]; mb_time[ci++] = mn[1]; mb_time[ci++] = mn[2];
+            mb_time[ci++] = ' ';
+            mb_time[ci++] = '0' + (char)(mb_day / 10);
+            mb_time[ci++] = '0' + (char)(mb_day % 10);
             mb_time[ci++] = ' '; mb_time[ci++] = ' ';
             mb_time[ci++] = '0' + (char)(mb_hr / 10);
             mb_time[ci++] = '0' + (char)(mb_hr % 10);
@@ -5647,7 +5675,7 @@ int comp_run(struct compositor_state *comp) {
                 /* Force per-second clock damage so clocks keep ticking */
                 int32_t fb_w = (int32_t)comp->fb_info.width;
                 int32_t fb_h = (int32_t)comp->fb_info.height;
-                fut_rect_t menubar_clock = { fb_w - 160, 0, 160, MENUBAR_HEIGHT };
+                fut_rect_t menubar_clock = { fb_w - 220, 0, 220, MENUBAR_HEIGHT };
                 comp_damage_add_rect(comp, menubar_clock);
                 fut_rect_t dock_clock = { 0, fb_h - 48, fb_w, 48 };
                 comp_damage_add_rect(comp, dock_clock);

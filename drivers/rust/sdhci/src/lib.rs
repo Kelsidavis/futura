@@ -360,32 +360,14 @@ pub extern "C" fn sdhci_init() -> i32 {
         return -3;
     }
 
-    // Intel LPSS controllers (Apollo/Gemini Lake) have private
-    // registers at BAR0 offsets 0x800+ that gate the standard SDHCI
-    // register block. The PRV_RESET register at 0x804 holds three
-    // reset bits (DMA, controller, IDMAC); set all three to 1 to
-    // release reset and bring the standard SDHCI registers online.
-    // Without this, HOST_VERSION / CAPABILITIES / PRESENT_STATE all
-    // read as zero (which is what iter-61 actually showed).
-    if vendor == PCI_VENDOR_INTEL {
-        const LPSS_PRV_RESET: u32 = 0x804;
-        const LPSS_PRV_RESET_RELEASE_ALL: u32 = 0x07;
-        let prev = unsafe { r32(mmio, LPSS_PRV_RESET) };
-        unsafe { core::ptr::write_volatile(
-            mmio.add(LPSS_PRV_RESET as usize) as *mut u32,
-            LPSS_PRV_RESET_RELEASE_ALL,
-        ) };
-        for _ in 0..100_000 {
-            let _ = unsafe { r32(mmio, LPSS_PRV_RESET) };
-        }
-        let after = unsafe { r32(mmio, LPSS_PRV_RESET) };
-        unsafe {
-            fut_printf(
-                b"sdhci: LPSS PRV_RESET 0x%x -> wrote 0x%x -> 0x%x\n\0".as_ptr(),
-                prev, LPSS_PRV_RESET_RELEASE_ALL, after,
-            );
-        }
-    }
+    /* Earlier code wrote 0x07 to BAR0+0x804 thinking it was an LPSS
+     * PRV_RESET register. Cross-checked against Linux sdhci-pci-core.c:
+     * that offset is INTEL_ACTIVELTR (Active Latency Tolerance, per
+     * lines 741-748). Writing 0x07 there programs a 7 us latency
+     * tolerance hint, not a reset. The reason iter-61 stopped seeing
+     * all-zero SDHCI registers wasn't this poke — it was the PCI
+     * D3->D0 transition forced via the PM capability above. Removed. */
+    let _ = vendor;
 
     let host_version = unsafe { r16(mmio, SDHCI_HOST_VERSION) };
     let capabilities = unsafe { r64(mmio, SDHCI_CAPABILITIES) };
@@ -677,12 +659,20 @@ fn setup_clock(mmio_ro: *const u8, mmio_rw: *mut u8, caps: u64) {
     }
 }
 
-/// Power up the SD card at the highest voltage the controller
-/// actually supports (per CAPABILITIES bits 24-26). On Apollo / Gemini
-/// Lake the 3.3V bit is clear (only 3.0V + 1.8V), so writing
-/// SDHCI_POWER_330 unconditionally leaves the bus depowered and every
-/// subsequent command times out (which is exactly what iter-66 hit).
-fn setup_power(mmio_rw: *mut u8, caps: u64) {
+/// Power up the SD card following the Intel BYT/APL/GLK SD sequence
+/// from Linux's sdhci-pci-core.c (sdhci_intel_set_power, byt_needs_pwr_off).
+/// Two Intel-specific quirks the SDHCI spec doesn't capture:
+///   1. If firmware (coreboot/depthcharge) handed off with POWER_ON
+///      already set, the bus is in an indeterminate state. We must
+///      pulse POWER_CONTROL=0 and hold for ~10 ms before re-powering.
+///   2. After writing POWER_ON, the bit may not stick across the
+///      controller's internal D-state propagation. Read it back; if
+///      clear, OR it in and retry up to 20 times at ~100 us each
+///      (Linux: SDHCI_INTEL_PWR_TIMEOUT_CNT=20, _UDELAY=100).
+/// Voltage selection: prefer the highest the CAPABILITIES register
+/// actually advertises. On GLK/APL the 3.3 V bit is clear (only 3.0 V
+/// + 1.8 V), so hardcoding 3.3 V leaves the bus depowered (iter-66).
+fn setup_power(mmio_ro: *const u8, mmio_rw: *mut u8, caps: u64) {
     let voltage_sel: u8 = if caps & SDHCI_CAP_VOLTAGE_330 != 0 {
         SDHCI_POWER_330
     } else if caps & SDHCI_CAP_VOLTAGE_300 != 0 {
@@ -701,12 +691,43 @@ fn setup_power(mmio_rw: *mut u8, caps: u64) {
             voltage_sel as u32,
         );
     }
-    unsafe { w8(mmio_rw, SDHCI_POWER_CONTROL, voltage_sel) };
-    // Tiny settle delay (just MMIO reads, no IRQ involvement).
-    for _ in 0..10_000 {
-        let _ = unsafe { core::ptr::read_volatile(mmio_rw.add(SDHCI_POWER_CONTROL as usize)) };
+
+    /* (1) If firmware left the bus powered, pulse off + ~10 ms hold. */
+    let pre = unsafe { r8(mmio_ro, SDHCI_POWER_CONTROL) };
+    if pre & SDHCI_POWER_ON != 0 {
+        unsafe {
+            fut_printf(
+                b"sdhci: POWER_CONTROL handoff=0x%02x (POWER_ON set) -> pulsing off\n\0".as_ptr(),
+                pre as u32,
+            );
+            w8(mmio_rw, SDHCI_POWER_CONTROL, 0);
+        }
+        /* ~10 ms: PRESENT_STATE reads are ~100 ns each, so 120k iters. */
+        for _ in 0..120_000 {
+            let _ = unsafe { r32(mmio_ro, SDHCI_PRESENT_STATE) };
+        }
     }
+
+    /* (2) Write voltage + POWER_ON, then read back and retry. */
     unsafe { w8(mmio_rw, SDHCI_POWER_CONTROL, voltage_sel | SDHCI_POWER_ON) };
+    let mut stuck = false;
+    for _ in 0..20 {
+        let r = unsafe { r8(mmio_ro, SDHCI_POWER_CONTROL) };
+        if r & SDHCI_POWER_ON != 0 { stuck = true; break; }
+        /* ~100 us: ~1200 PRESENT_STATE reads. */
+        for _ in 0..1_200 {
+            let _ = unsafe { r32(mmio_ro, SDHCI_PRESENT_STATE) };
+        }
+        unsafe { w8(mmio_rw, SDHCI_POWER_CONTROL, voltage_sel | SDHCI_POWER_ON) };
+    }
+    let final_pwr = unsafe { r8(mmio_ro, SDHCI_POWER_CONTROL) };
+    unsafe {
+        fut_printf(
+            b"sdhci: POWER_CONTROL final=0x%02x (POWER_ON %s)\n\0".as_ptr(),
+            final_pwr as u32,
+            if stuck { b"stuck\0".as_ptr() } else { b"NOT stuck after 2ms\0".as_ptr() },
+        );
+    }
 }
 
 /// SD card init: CMD0 / CMD8 / ACMD41 / CMD2 / CMD3 / CMD9 / CMD7.
@@ -795,111 +816,6 @@ static mut SDHCI_LAST_INIT_RC: i32 = i32::MIN;
 /// sd_card_init right before each command; sdhci_dump_status emits
 /// it so we know which command stalled.
 static mut SDHCI_LAST_STEP: u32 = 0;
-/// Sweep result encoded for sdhci_dump_status:
-///   0xFFFF_FFFF = sweep didn't run
-///   0xFFFE_FFFE = sweep ran, all candidates failed
-///   port<<16 | pad = winning (port, pad) pair
-static mut SDHCI_SWEEP_RESULT: u32 = 0xFFFF_FFFF;
-static mut SDHCI_SWEEP_TRIED: u32 = 0;
-
-unsafe extern "C" {
-    fn intel_pinctrl_is_initialized() -> bool;
-    fn intel_pinctrl_read_dw0(port_id: u32, pad_idx: u32) -> u32;
-    fn intel_pinctrl_write_dw0(port_id: u32, pad_idx: u32, value: u32) -> i32;
-    fn intel_pinctrl_set_gpio_out(port_id: u32, pad_idx: u32, value: u32) -> i32;
-}
-
-/// Brute-force search for the SD_VDD_EN GPIO. iter-72 dump identified
-/// port=0xC5 as the SD/MMC community (it has native-mode pads at
-/// cc5[7]/[8]/[13]/[14]/[16] — the SD signal lines), with 15 nearby
-/// GPIO-output candidates. None of them is currently driving tx=1,
-/// which is consistent with the card being unpowered. Try each in
-/// turn: save original DW0, drive HIGH, retry card init, restore on
-/// failure. Stop and keep the asserted state on the first success.
-fn sweep_sd_pwr_pad(mmio_ro: *const u8, mmio_rw: *mut u8) -> Option<(u32, u32)> {
-    if !unsafe { intel_pinctrl_is_initialized() } {
-        log("sdhci: intel_pinctrl not ready, skipping SD_VDD_EN sweep");
-        return None;
-    }
-    /* cc5 and cc4 were exhausted in iter-73/74 — confirmed not the
-     * SD_VDD pin community on this stepping. Skip those this round
-     * and go straight to cc8 (audio-adjacent — risky, so we add a
-     * safety filter inside the loop: only touch a cc8 pad if it's
-     * *currently* dormant (pmode=0, txdis=0, tx=0). Anything
-     * currently driving tx=1 is doing something important right
-     * now (codec power, mic enable, etc.) — leave it alone. */
-    let sweep_set: &[(u32, &[u32])] = &[
-        (0xC8, &[
-            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
-            16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
-        ]),
-    ];
-
-    let mut tried = 0u32;
-    for &(port, pads) in sweep_set {
-        for &pad in pads {
-            let saved_dw0 = unsafe { intel_pinctrl_read_dw0(port, pad) };
-            if saved_dw0 == 0xFFFF_FFFF { continue; }
-
-            /* Audio-community safety: only sweep cc8 pads that are
-             * currently dormant outputs (pmode=0, txdis=0, tx=0). */
-            if port == 0xC8 {
-                let pmode    = (saved_dw0 >> 10) & 0xF;
-                let gpio_txd = (saved_dw0 >> 8)  & 0x1;
-                let txstate  = saved_dw0 & 0x1;
-                let dormant = pmode == 0 && gpio_txd == 0 && txstate == 0;
-                if !dormant { continue; }
-            }
-            tried += 1;
-
-            unsafe {
-                fut_printf(b"sdhci: SD_VDD sweep: trying c%02x[%u] (saved dw0=0x%08x)\n\0".as_ptr(),
-                           port, pad, saved_dw0);
-                intel_pinctrl_set_gpio_out(port, pad, 1);
-            }
-            /* ~80 ms settle for a real board-level load switch +
-             * bulk cap. Each iteration of the PRESENT_STATE read is
-             * ~100 ns, so 800K iters ≈ 80 ms. */
-            for _ in 0..800_000 {
-                let _ = unsafe { r32(mmio_ro, SDHCI_PRESENT_STATE) };
-            }
-            /* Reset CMD/DATA. */
-            unsafe {
-                w8(mmio_rw, SDHCI_SOFTWARE_RESET,
-                   SDHCI_RESET_CMD | SDHCI_RESET_DATA);
-            }
-            for _ in 0..1_000_000 {
-                let r = unsafe { r8(mmio_ro, SDHCI_SOFTWARE_RESET) };
-                if r & (SDHCI_RESET_CMD | SDHCI_RESET_DATA) == 0 { break; }
-            }
-            match sd_card_init(mmio_ro, mmio_rw) {
-                Ok(rca) => {
-                    unsafe {
-                        fut_printf(b"sdhci: SD_VDD sweep WIN! pad c%02x[%u], RCA=0x%04x\n\0".as_ptr(),
-                                   port, pad, rca);
-                        core::ptr::write(
-                            core::ptr::addr_of_mut!(SDHCI_SWEEP_RESULT),
-                            (port << 16) | pad);
-                        core::ptr::write(
-                            core::ptr::addr_of_mut!(SDHCI_SWEEP_TRIED), tried);
-                    }
-                    return Some((port, pad));
-                }
-                Err(_) => {
-                    unsafe { intel_pinctrl_write_dw0(port, pad, saved_dw0); }
-                }
-            }
-        }
-    }
-    unsafe {
-        fut_printf(b"sdhci: SD_VDD sweep: tried %u dormant pads in cc8, none worked\n\0".as_ptr(),
-                   tried);
-        core::ptr::write(core::ptr::addr_of_mut!(SDHCI_SWEEP_RESULT), 0xFFFE_FFFE);
-        core::ptr::write(core::ptr::addr_of_mut!(SDHCI_SWEEP_TRIED), tried);
-    }
-    None
-}
-
 /// Phase 2 entry point: power+clock the controller, run SD card init,
 /// stash the RCA. Returns 0 on success. Call after sdhci_init.
 #[unsafe(no_mangle)]
@@ -917,10 +833,10 @@ pub extern "C" fn sdhci_card_init() -> i32 {
     }
 
     let caps = unsafe { (*st).capabilities };
-    setup_power(mmio, caps);
+    setup_power(mmio, mmio, caps);
     setup_clock(mmio, mmio, caps);
 
-    let mut rc = match sd_card_init(mmio, mmio) {
+    let rc = match sd_card_init(mmio, mmio) {
         Ok(rca) => {
             unsafe { fut_printf(b"sdhci: SD card initialized; RCA=0x%04x\n\0".as_ptr(), rca); }
             unsafe {
@@ -930,22 +846,10 @@ pub extern "C" fn sdhci_card_init() -> i32 {
             0
         }
         Err(rc) => {
-            unsafe { fut_printf(b"sdhci: SD card init failed: %d - starting SD_VDD pad sweep\n\0".as_ptr(), rc); }
+            unsafe { fut_printf(b"sdhci: SD card init failed: %d\n\0".as_ptr(), rc); }
             rc
         }
     };
-
-    /* If first attempt failed AND we look like we're stuck at ACMD41
-     * (no power-up), brute-force search for the SD_VDD_EN GPIO pad. */
-    if rc == -101 {
-        if let Some((port, pad)) = sweep_sd_pwr_pad(mmio, mmio) {
-            unsafe {
-                fut_printf(b"sdhci: SD_VDD pad found at c%02x[%u]; card init now succeeded\n\0".as_ptr(),
-                           port, pad);
-            }
-            rc = 0;
-        }
-    }
 
     unsafe { core::ptr::write(core::ptr::addr_of_mut!(SDHCI_LAST_INIT_RC), rc); }
     rc
@@ -1074,21 +978,6 @@ pub extern "C" fn sdhci_dump_status() {
             b"[SDHCI-STATUS] last_init_rc=%d last_step=CMD%u (999=done)\n\0".as_ptr(),
             last_rc, last_step,
         );
-    }
-    let sweep = unsafe { core::ptr::read(core::ptr::addr_of!(SDHCI_SWEEP_RESULT)) };
-    let tried = unsafe { core::ptr::read(core::ptr::addr_of!(SDHCI_SWEEP_TRIED)) };
-    unsafe {
-        if sweep == 0xFFFF_FFFF {
-            fut_printf(b"[SDHCI-STATUS] sweep: not run\n\0".as_ptr());
-        } else if sweep == 0xFFFE_FFFE {
-            fut_printf(b"[SDHCI-STATUS] sweep: tried %u dormant pads in cc8, none worked\n\0".as_ptr(),
-                       tried);
-        } else {
-            let port = sweep >> 16;
-            let pad  = sweep & 0xFFFF;
-            fut_printf(b"[SDHCI-STATUS] sweep: WIN at c%02x[%u] after %u tries\n\0".as_ptr(),
-                       port, pad, tried);
-        }
     }
 }
 

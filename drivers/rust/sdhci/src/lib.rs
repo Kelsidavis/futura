@@ -795,6 +795,12 @@ static mut SDHCI_LAST_INIT_RC: i32 = i32::MIN;
 /// sd_card_init right before each command; sdhci_dump_status emits
 /// it so we know which command stalled.
 static mut SDHCI_LAST_STEP: u32 = 0;
+/// Sweep result encoded for sdhci_dump_status:
+///   0xFFFF_FFFF = sweep didn't run
+///   0xFFFE_FFFE = sweep ran, all candidates failed
+///   port<<16 | pad = winning (port, pad) pair
+static mut SDHCI_SWEEP_RESULT: u32 = 0xFFFF_FFFF;
+static mut SDHCI_SWEEP_TRIED: u32 = 0;
 
 unsafe extern "C" {
     fn intel_pinctrl_is_initialized() -> bool;
@@ -815,55 +821,71 @@ fn sweep_sd_pwr_pad(mmio_ro: *const u8, mmio_rw: *mut u8) -> Option<(u32, u32)> 
         log("sdhci: intel_pinctrl not ready, skipping SD_VDD_EN sweep");
         return None;
     }
-    const SD_COMMUNITY_PORT: u32 = 0xC5;
-    /* Candidate pad indexes — the GPIO-output pads in cc5 from the
-     * iter-72 dump. Skip the native-mode pads (7, 8, 13, 14, 16) and
-     * the GPIO-IN pads. */
-    let candidates: &[u32] = &[
-        0, 2, 4, 6, 9, 10, 11, 12, 15, 17, 18, 19, 20, 21, 22, 23,
-        24, 25, 26, 27, 28, 29, 30, 31,
+    /* Probe cc5 first (SD pin community, confirmed by native-mode
+     * SD signal pads at cc5[7/8/13/14/16] in iter-72). Then cc4 as
+     * fallback. Skip cc8 (audio — risky). */
+    let sweep_set: &[(u32, &[u32])] = &[
+        (0xC5, &[
+            0, 2, 4, 6, 9, 10, 11, 12, 15, 17, 18, 19, 20, 21, 22, 23,
+            24, 25, 26, 27, 28, 29, 30, 31,
+        ]),
+        (0xC4, &[
+            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+            16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
+        ]),
     ];
 
-    for &pad in candidates {
-        let saved_dw0 = unsafe { intel_pinctrl_read_dw0(SD_COMMUNITY_PORT, pad) };
-        if saved_dw0 == 0xFFFF_FFFF { continue; }
+    let mut tried = 0u32;
+    for &(port, pads) in sweep_set {
+        for &pad in pads {
+            let saved_dw0 = unsafe { intel_pinctrl_read_dw0(port, pad) };
+            if saved_dw0 == 0xFFFF_FFFF { continue; }
+            tried += 1;
 
-        unsafe {
-            fut_printf(b"sdhci: SD_VDD sweep: trying c%02x[%u] (saved dw0=0x%08x)\n\0".as_ptr(),
-                       SD_COMMUNITY_PORT, pad, saved_dw0);
-            intel_pinctrl_set_gpio_out(SD_COMMUNITY_PORT, pad, 1);
-        }
-        /* Tiny settle delay (~5 ms) before re-running card init. */
-        for _ in 0..50_000 {
-            let _ = unsafe { r32(mmio_ro, SDHCI_PRESENT_STATE) };
-        }
-        /* Reset CMD/DATA to drop the previous failed-init state. */
-        unsafe {
-            w8(mmio_rw, SDHCI_SOFTWARE_RESET,
-               SDHCI_RESET_CMD | SDHCI_RESET_DATA);
-        }
-        for _ in 0..1_000_000 {
-            let r = unsafe { r8(mmio_ro, SDHCI_SOFTWARE_RESET) };
-            if r & (SDHCI_RESET_CMD | SDHCI_RESET_DATA) == 0 { break; }
-        }
-        /* Try CMD0 + CMD8 + ACMD41 quickly. Reuse sd_card_init for
-         * the full sequence. */
-        match sd_card_init(mmio_ro, mmio_rw) {
-            Ok(rca) => {
-                unsafe {
-                    fut_printf(b"sdhci: SD_VDD sweep WIN! pad c%02x[%u], RCA=0x%04x\n\0".as_ptr(),
-                               SD_COMMUNITY_PORT, pad, rca);
-                }
-                return Some((SD_COMMUNITY_PORT, pad));
+            unsafe {
+                fut_printf(b"sdhci: SD_VDD sweep: trying c%02x[%u] (saved dw0=0x%08x)\n\0".as_ptr(),
+                           port, pad, saved_dw0);
+                intel_pinctrl_set_gpio_out(port, pad, 1);
             }
-            Err(rc) => {
-                unsafe {
-                    fut_printf(b"sdhci: SD_VDD sweep: c%02x[%u] no go (rc=%d), restoring\n\0".as_ptr(),
-                               SD_COMMUNITY_PORT, pad, rc);
-                    intel_pinctrl_write_dw0(SD_COMMUNITY_PORT, pad, saved_dw0);
+            /* ~80 ms settle for a real board-level load switch +
+             * bulk cap. Each iteration of the PRESENT_STATE read is
+             * ~100 ns, so 800K iters ≈ 80 ms. */
+            for _ in 0..800_000 {
+                let _ = unsafe { r32(mmio_ro, SDHCI_PRESENT_STATE) };
+            }
+            /* Reset CMD/DATA. */
+            unsafe {
+                w8(mmio_rw, SDHCI_SOFTWARE_RESET,
+                   SDHCI_RESET_CMD | SDHCI_RESET_DATA);
+            }
+            for _ in 0..1_000_000 {
+                let r = unsafe { r8(mmio_ro, SDHCI_SOFTWARE_RESET) };
+                if r & (SDHCI_RESET_CMD | SDHCI_RESET_DATA) == 0 { break; }
+            }
+            match sd_card_init(mmio_ro, mmio_rw) {
+                Ok(rca) => {
+                    unsafe {
+                        fut_printf(b"sdhci: SD_VDD sweep WIN! pad c%02x[%u], RCA=0x%04x\n\0".as_ptr(),
+                                   port, pad, rca);
+                        core::ptr::write(
+                            core::ptr::addr_of_mut!(SDHCI_SWEEP_RESULT),
+                            (port << 16) | pad);
+                        core::ptr::write(
+                            core::ptr::addr_of_mut!(SDHCI_SWEEP_TRIED), tried);
+                    }
+                    return Some((port, pad));
+                }
+                Err(_) => {
+                    unsafe { intel_pinctrl_write_dw0(port, pad, saved_dw0); }
                 }
             }
         }
+    }
+    unsafe {
+        fut_printf(b"sdhci: SD_VDD sweep: tried %u pads in cc5+cc4, none worked\n\0".as_ptr(),
+                   tried);
+        core::ptr::write(core::ptr::addr_of_mut!(SDHCI_SWEEP_RESULT), 0xFFFE_FFFE);
+        core::ptr::write(core::ptr::addr_of_mut!(SDHCI_SWEEP_TRIED), tried);
     }
     None
 }
@@ -1042,6 +1064,21 @@ pub extern "C" fn sdhci_dump_status() {
             b"[SDHCI-STATUS] last_init_rc=%d last_step=CMD%u (999=done)\n\0".as_ptr(),
             last_rc, last_step,
         );
+    }
+    let sweep = unsafe { core::ptr::read(core::ptr::addr_of!(SDHCI_SWEEP_RESULT)) };
+    let tried = unsafe { core::ptr::read(core::ptr::addr_of!(SDHCI_SWEEP_TRIED)) };
+    unsafe {
+        if sweep == 0xFFFF_FFFF {
+            fut_printf(b"[SDHCI-STATUS] sweep: not run\n\0".as_ptr());
+        } else if sweep == 0xFFFE_FFFE {
+            fut_printf(b"[SDHCI-STATUS] sweep: tried %u pads in cc5+cc4, none worked\n\0".as_ptr(),
+                       tried);
+        } else {
+            let port = sweep >> 16;
+            let pad  = sweep & 0xFFFF;
+            fut_printf(b"[SDHCI-STATUS] sweep: WIN at c%02x[%u] after %u tries\n\0".as_ptr(),
+                       port, pad, tried);
+        }
     }
 }
 

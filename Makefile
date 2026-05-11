@@ -3512,5 +3512,11 @@ DEPFILES := $(OBJECTS:.o=.d)
 -include $(DEPFILES)
 .PHONY: third_party-wayland
 third_party-wayland:
+	@# Build wayland twice: PLATFORM=host populates install-host/ (provides
+	@# the native wayland-scanner the userland clients run against), then
+	@# build for the actual target PLATFORM (populates install-$(PLATFORM)
+	@# with target-arch libwayland). The host build is a no-op rebuild
+	@# when PLATFORM=host already.
+	@$(MAKE) -C third_party/wayland PLATFORM=host all
 	@$(MAKE) -C third_party/wayland all
 CFLAGS += -I$(BUILD_GEN_ROOT)

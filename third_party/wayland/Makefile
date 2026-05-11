@@ -251,7 +251,11 @@ else
 $(STAMP_CONFIGURE): $(STAMP_PATCH) $(NATIVE_FILE) | $(BUILD_DIR) $(INSTALL_DIR)
 	@echo ">> Configuring Wayland (host)"
 	@rm -rf $(BUILD_DIR)
-	@$(MESON) setup $(BUILD_DIR) $(SRC_DIR) $(MESON_FLAGS) --native-file $(NATIVE_FILE)
+	@# Prepend common XDG user-local pkgconfig dirs to PKG_CONFIG_PATH so meson
+	@# can find a newer wayland-scanner.pc (e.g. 1.23 in ~/.local) when the
+	@# system one is older than the source tarball requires.
+	@PKG_CONFIG_PATH="$(HOME)/.local/lib/x86_64-linux-gnu/pkgconfig:$(HOME)/.local/lib/pkgconfig:$(HOME)/.local/lib64/pkgconfig:$$PKG_CONFIG_PATH" \
+		$(MESON) setup $(BUILD_DIR) $(SRC_DIR) $(MESON_FLAGS) --native-file $(NATIVE_FILE)
 	@touch $@
 endif
 

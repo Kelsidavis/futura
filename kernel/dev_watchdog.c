@@ -170,12 +170,25 @@ static int watchdog_ioctl(void *inode, void *priv, unsigned long request,
     }
 }
 
+/* fut_file_ops .release adapter for the parameterless watchdog_on_close.
+ * Without this, sys_close on /dev/watchdog leaves the timer active —
+ * the test suite opens the watchdog, writes 'V', and closes, expecting
+ * the magic-close path to stop the timer. If release isn't wired the
+ * timer keeps running and reboots the kernel ~60 s later, mid-test. */
+void watchdog_on_close(void);  /* defined below */
+static int watchdog_release(void *inode, void *priv) {
+    (void)inode; (void)priv;
+    watchdog_on_close();
+    return 0;
+}
+
 static struct fut_file_ops watchdog_ops;
 
 void watchdog_init(void) {
-    watchdog_ops.read  = watchdog_read;
-    watchdog_ops.write = watchdog_write;
-    watchdog_ops.ioctl = watchdog_ioctl;
+    watchdog_ops.read    = watchdog_read;
+    watchdog_ops.write   = watchdog_write;
+    watchdog_ops.ioctl   = watchdog_ioctl;
+    watchdog_ops.release = watchdog_release;
 
     extern int chrdev_register(unsigned, unsigned, const struct fut_file_ops *,
                                const char *, void *);

@@ -379,41 +379,60 @@ pub extern "C" fn intel_pinctrl_init() -> i32 {
         }
     }
 
-    /* Detailed dump of the Gemini Lake SCC community — where the
-     * SD/eMMC pins actually live, including SD_VDD_EN. 32 pads at
-     * the GLK base offset 0x600. PAD_CFG_DW0 layout:
+    /* Per iter-71 liveness probe, this stepping responds at PortIDs
+     * 0xC4, 0xC5, 0xC6, 0xC8 (NOT 0xC0 as Linux's pinctrl-broxton.c
+     * claims for SCC). So the SD/eMMC pad community is one of those.
+     *
+     * Walk all four. For each pad: skip if dw0 reads as 0xffffffff,
+     * else decode pmode/rxdis/txdis/state. Most important flag: a
+     * pad in GPIO output mode (pmode=0, txdis=0) — those are the
+     * SD-VDD-enable candidates.
+     *
+     * PAD_CFG_DW0 layout:
      *   [31:24] PADRSTCFG / OWN
      *   [13:10] PMODE — 0 = GPIO, 1+ = native function
      *   [9]     GPIORXDIS — 1 = disable input
      *   [8]     GPIOTXDIS — 1 = disable output
      *   [1]     GPIORXSTATE — current input level
-     *   [0]     GPIOTXSTATE — driven output level
-     */
-    let scc_off: u32 = (COMMUNITY_GLK_SCC as u32) << 16;
-    unsafe {
-        fut_printf(b"pinctrl: SCC (port=0x%02x) detailed dump (PAD_BASE=0x600):\n\0".as_ptr(),
-                   COMMUNITY_GLK_SCC as u32);
-    }
-    for pad_idx in 0u32..32 {
-        let dw0_off = scc_off + PAD_BASE_GLK + pad_idx * 8;
-        let dw1_off = dw0_off + 4;
-        let dw0 = unsafe { r32(sbreg, dw0_off) };
-        let dw1 = unsafe { r32(sbreg, dw1_off) };
-        if dw0 == 0xFFFF_FFFF { continue; }  /* skip non-existent pads */
-        let pmode    = (dw0 >> 10) & 0xF;
-        let gpio_rxd = (dw0 >> 9)  & 0x1;
-        let gpio_txd = (dw0 >> 8)  & 0x1;
-        let rxstate  = (dw0 >> 1)  & 0x1;
-        let txstate  = dw0 & 0x1;
-        let role = if pmode == 0 {
-            if gpio_txd == 0 { b"GPIO-OUT\0".as_ptr() } else { b"GPIO-IN\0".as_ptr() }
-        } else {
-            b"native\0".as_ptr()
-        };
+     *   [0]     GPIOTXSTATE — driven output level */
+    for &port in &[0xC4u8, 0xC5u8, 0xC6u8, 0xC8u8] {
+        let community_off: u32 = (port as u32) << 16;
         unsafe {
             fut_printf(
-                b"pinctrl:   scc[%2u] dw0=0x%08x dw1=0x%08x pmode=%u rxdis=%u txdis=%u rx=%u tx=%u (%s)\n\0".as_ptr(),
-                pad_idx, dw0, dw1, pmode, gpio_rxd, gpio_txd, rxstate, txstate, role,
+                b"pinctrl: community port=0x%02x detailed dump (PAD_BASE=0x600):\n\0".as_ptr(),
+                port as u32,
+            );
+        }
+        let mut gpio_out_count: u32 = 0;
+        for pad_idx in 0u32..32 {
+            let dw0_off = community_off + PAD_BASE_GLK + pad_idx * 8;
+            let dw1_off = dw0_off + 4;
+            let dw0 = unsafe { r32(sbreg, dw0_off) };
+            let dw1 = unsafe { r32(sbreg, dw1_off) };
+            if dw0 == 0xFFFF_FFFF { continue; }
+            let pmode    = (dw0 >> 10) & 0xF;
+            let gpio_rxd = (dw0 >> 9)  & 0x1;
+            let gpio_txd = (dw0 >> 8)  & 0x1;
+            let rxstate  = (dw0 >> 1)  & 0x1;
+            let txstate  = dw0 & 0x1;
+            let is_gpio_out = pmode == 0 && gpio_txd == 0;
+            if is_gpio_out { gpio_out_count += 1; }
+            let role = if pmode == 0 {
+                if gpio_txd == 0 { b"*GPIO-OUT*\0".as_ptr() } else { b"GPIO-IN\0".as_ptr() }
+            } else {
+                b"native\0".as_ptr()
+            };
+            unsafe {
+                fut_printf(
+                    b"pinctrl:   c%02x[%2u] dw0=0x%08x dw1=0x%08x pm=%u rxd=%u txd=%u rx=%u tx=%u %s\n\0".as_ptr(),
+                    port as u32, pad_idx, dw0, dw1, pmode, gpio_rxd, gpio_txd, rxstate, txstate, role,
+                );
+            }
+        }
+        unsafe {
+            fut_printf(
+                b"pinctrl:   port=0x%02x summary: %u GPIO-output pads (SD_VDD candidates)\n\0".as_ptr(),
+                port as u32, gpio_out_count,
             );
         }
     }

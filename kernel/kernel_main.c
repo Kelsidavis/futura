@@ -2016,11 +2016,20 @@ void fut_kernel_main(void) {
         extern int acpi_ec_init(uint16_t data_port, uint16_t cmd_port);
         extern int acpi_thermal_init(void *ec_read);   /* Option<EcReadFn> */
         extern int acpi_button_init(uint16_t pm1a_evt, uint16_t pm1a_en);
+        /* ChromeOS EC: probe LPC memmap at 0x900 for 'EC' signature
+         * and, if present, send HELLO + GET_VERSION + GET_BOARD_VERSION
+         * via the v3 packet host-command interface. The version string
+         * carries the EC firmware codename (e.g. "meep"), which we use
+         * to identify the exact board family for follow-on driver
+         * decisions (battery, keyboard, thermal, USB-PD). Pure
+         * read-only on platforms where no EC is present. */
+        extern int cros_ec_init(void);
 
         acpi_pm_init(0, 0, 0, 0);
         acpi_ec_init(0, 0);
         acpi_thermal_init(NULL);
         acpi_button_init(0, 0);
+        cros_ec_init();
     }
 
     /* Display — VESA framebuffer */

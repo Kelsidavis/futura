@@ -72,10 +72,13 @@ fn pci_write32(bus: u8, dev: u8, func: u8, offset: u8, val: u32) {
 // ── PCI config-space offsets ──
 const PCI_CFG_VENDOR_DEVICE: u8 = 0x00;
 const PCI_CFG_COMMAND:       u8 = 0x04;
+const PCI_CFG_STATUS_HI:     u8 = 0x06;  /* status (16) — bit 4 = caps list */
 const PCI_CFG_REVCLASS:      u8 = 0x08;  /* Revision (8) | ClassCode (24) */
 const PCI_CFG_HEADER_TYPE:   u8 = 0x0C;  /* upper byte of dword: header type */
 const PCI_CFG_BAR0_LO:       u8 = 0x10;
 const PCI_CFG_BAR0_HI:       u8 = 0x14;
+const PCI_CFG_CAP_PTR:       u8 = 0x34;  /* pointer to PCI capability list */
+const PCI_CAP_ID_PM:         u8 = 0x01;  /* Power Management capability */
 
 const PCI_VENDOR_INTEL: u16 = 0x8086;
 const PCI_CLASS_SD_HOST: u32 = 0x080501;
@@ -275,11 +278,74 @@ pub extern "C" fn sdhci_init() -> i32 {
         }
     }
 
+    // Walk the PCI capability list and force the device to D0 power
+    // state. Apollo Lake / Gemini Lake LPSS SD controllers may have
+    // been left in D3hot by firmware; in that state MMIO registers
+    // read back as zero (which is exactly what iter-61 showed).
+    let status = (pci_read32(bus, dev, func, PCI_CFG_STATUS_HI & !3) >> 16) as u16;
+    if status & (1 << 4) != 0 {
+        let mut cap = (pci_read32(bus, dev, func, PCI_CFG_CAP_PTR) & 0xFC) as u8;
+        for _ in 0..32 {  /* bound the walk */
+            if cap == 0 { break; }
+            let cap_dw = pci_read32(bus, dev, func, cap & !3);
+            let id = (cap_dw & 0xFF) as u8;
+            let next = ((cap_dw >> 8) & 0xFC) as u8;
+            if id == PCI_CAP_ID_PM {
+                let pmcsr_off = cap.wrapping_add(4);
+                let mut pmcsr = pci_read32(bus, dev, func, pmcsr_off & !3);
+                let cur_state = pmcsr & 0x3;
+                if cur_state != 0 {
+                    pmcsr = (pmcsr & !0x3) | 0;  /* D0 */
+                    pci_write32(bus, dev, func, pmcsr_off & !3, pmcsr);
+                    unsafe {
+                        fut_printf(
+                            b"sdhci: forced PCI power state D%u -> D0\n\0".as_ptr(),
+                            cur_state,
+                        );
+                    }
+                } else {
+                    unsafe {
+                        fut_printf(b"sdhci: PCI already in D0\n\0".as_ptr());
+                    }
+                }
+                break;
+            }
+            cap = next;
+        }
+    }
+
     const SDHCI_MMIO_SIZE: usize = 4096;
     let mmio = unsafe { map_mmio_region(bar0_phys, SDHCI_MMIO_SIZE, MMIO_DEFAULT_FLAGS) };
     if mmio.is_null() {
         log("sdhci: failed to map BAR0");
         return -3;
+    }
+
+    // Intel LPSS controllers (Apollo/Gemini Lake) have private
+    // registers at BAR0 offsets 0x800+ that gate the standard SDHCI
+    // register block. The PRV_RESET register at 0x804 holds three
+    // reset bits (DMA, controller, IDMAC); set all three to 1 to
+    // release reset and bring the standard SDHCI registers online.
+    // Without this, HOST_VERSION / CAPABILITIES / PRESENT_STATE all
+    // read as zero (which is what iter-61 actually showed).
+    if vendor == PCI_VENDOR_INTEL {
+        const LPSS_PRV_RESET: u32 = 0x804;
+        const LPSS_PRV_RESET_RELEASE_ALL: u32 = 0x07;
+        let prev = unsafe { r32(mmio, LPSS_PRV_RESET) };
+        unsafe { core::ptr::write_volatile(
+            mmio.add(LPSS_PRV_RESET as usize) as *mut u32,
+            LPSS_PRV_RESET_RELEASE_ALL,
+        ) };
+        for _ in 0..100_000 {
+            let _ = unsafe { r32(mmio, LPSS_PRV_RESET) };
+        }
+        let after = unsafe { r32(mmio, LPSS_PRV_RESET) };
+        unsafe {
+            fut_printf(
+                b"sdhci: LPSS PRV_RESET 0x%x -> wrote 0x%x -> 0x%x\n\0".as_ptr(),
+                prev, LPSS_PRV_RESET_RELEASE_ALL, after,
+            );
+        }
     }
 
     let host_version = unsafe { r16(mmio, SDHCI_HOST_VERSION) };

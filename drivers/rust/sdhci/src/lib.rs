@@ -525,8 +525,10 @@ fn make_cmd(index: u32, flags: u16) -> u16 {
 }
 
 /// Wait for CMD_INHIBIT to clear so we can issue a new command.
+/// 100K-read cap = ~10 ms on real MMIO; plenty of headroom for a
+/// well-behaved controller, fast-fail otherwise.
 fn wait_cmd_ready(mmio: *const u8) -> bool {
-    for _ in 0..2_000_000 {
+    for _ in 0..100_000 {
         let ps = unsafe { r32(mmio, SDHCI_PRESENT_STATE) };
         if ps & SDHCI_PS_CMD_INHIBIT == 0 {
             return true;
@@ -538,7 +540,7 @@ fn wait_cmd_ready(mmio: *const u8) -> bool {
 /// Wait for both CMD and DAT inhibit to clear (needed before a data
 /// command).
 fn wait_cmd_dat_ready(mmio: *const u8) -> bool {
-    for _ in 0..2_000_000 {
+    for _ in 0..100_000 {
         let ps = unsafe { r32(mmio, SDHCI_PRESENT_STATE) };
         if ps & (SDHCI_PS_CMD_INHIBIT | SDHCI_PS_DAT_INHIBIT) == 0 {
             return true;
@@ -571,10 +573,12 @@ fn issue_cmd(mmio_ro: *const u8, mmio_rw: *mut u8,
         w16(mmio_rw, SDHCI_COMMAND, make_cmd(index, flags));
     }
 
-    // Poll INT_STATUS for CMD_COMPLETE or ERROR.
+    // Poll INT_STATUS for CMD_COMPLETE or ERROR. Tight cap; if the
+    // controller doesn't respond within 100K reads (~10 ms) something
+    // is wrong with this command, not our overall protocol.
     let mut status = 0u32;
     let mut done = false;
-    for _ in 0..2_000_000 {
+    for _ in 0..100_000 {
         status = unsafe { r32(mmio_ro, SDHCI_INT_STATUS) };
         if status & (SDHCI_INT_CMD_COMPLETE | SDHCI_INT_ERROR) != 0 {
             done = true;
@@ -636,25 +640,34 @@ fn setup_power(mmio_rw: *mut u8) {
     unsafe { w8(mmio_rw, SDHCI_POWER_CONTROL, SDHCI_POWER_330 | SDHCI_POWER_ON) };
 }
 
-/// SD card init: CMD0 / CMD8 / ACMD41 / CMD2 / CMD3 / CMD7. Stores
-/// the assigned RCA in I915State.rca_unused (we add a new field).
-/// Returns 0 on success, negative on failure.
+/// SD card init: CMD0 / CMD8 / ACMD41 / CMD2 / CMD3 / CMD9 / CMD7.
+/// Tight timeouts + step-by-step diagnostics so we can tell which
+/// command stalls. Returns 0 on success, negative on failure.
 fn sd_card_init(mmio_ro: *const u8, mmio_rw: *mut u8) -> Result<u32, i32> {
-    // CMD0: GO_IDLE_STATE. No response.
+    unsafe { fut_printf(b"sdhci: CMD0 (GO_IDLE)\n\0".as_ptr()); }
     let _ = issue_cmd(mmio_ro, mmio_rw, 0, 0, SDHCI_CMD_RESP_NONE, false);
 
-    // CMD8: SEND_IF_COND. Voltage 2.7-3.6V (0x100), check pattern 0xAA.
-    let cmd8_arg = 0x1AAu32;
-    let r = issue_cmd(mmio_ro, mmio_rw, 8, cmd8_arg,
+    unsafe { fut_printf(b"sdhci: CMD8 (SEND_IF_COND)\n\0".as_ptr()); }
+    let r = issue_cmd(mmio_ro, mmio_rw, 8, 0x1AA,
                       SDHCI_CMD_RESP_R48 | SDHCI_CMD_CRC_CHECK | SDHCI_CMD_INDEX_CHECK,
                       false);
     let is_sdv2 = r != i64::MIN && (r as u32 & 0xFF) == 0xAA;
+    unsafe {
+        fut_printf(b"sdhci: CMD8 r=0x%llx sdv2=%d\n\0".as_ptr(),
+                   r as u64, is_sdv2 as i32);
+    }
 
-    // ACMD41 loop: CMD55 + ACMD41 until card returns ready.
+    // ACMD41: 100-iteration outer cap (vs 1000), 1000-read inner
+    // delay (vs 50K). At ~100 ns/read this is at most 10 ms × 100 ≈
+    // 1 sec of total wait — fast enough that a misbehaving card
+    // surfaces immediately instead of looking like a kernel hang.
     let acmd41_arg = if is_sdv2 { 0x4030_0000u32 } else { 0x0030_0000u32 };
+    unsafe { fut_printf(b"sdhci: ACMD41 loop arg=0x%x\n\0".as_ptr(), acmd41_arg); }
     let mut ocr: u32 = 0;
     let mut ok = false;
-    for _ in 0..1000 {
+    let mut iter = 0u32;
+    for i in 0..100u32 {
+        iter = i;
         let _ = issue_cmd(mmio_ro, mmio_rw, 55, 0,
                           SDHCI_CMD_RESP_R48 | SDHCI_CMD_CRC_CHECK | SDHCI_CMD_INDEX_CHECK,
                           false);
@@ -663,30 +676,35 @@ fn sd_card_init(mmio_ro: *const u8, mmio_rw: *mut u8) -> Result<u32, i32> {
         if r == i64::MIN { continue; }
         ocr = r as u32;
         if ocr & 0x8000_0000 != 0 { ok = true; break; }
-        for _ in 0..50_000 {
+        for _ in 0..1000 {
             let _ = unsafe { r32(mmio_ro, SDHCI_PRESENT_STATE) };
         }
     }
+    unsafe {
+        fut_printf(b"sdhci: ACMD41 done iter=%u ocr=0x%x ok=%d\n\0".as_ptr(),
+                   iter, ocr, ok as i32);
+    }
     if !ok { return Err(-101); }
 
-    // CMD2: ALL_SEND_CID. R2 (136-bit).
+    unsafe { fut_printf(b"sdhci: CMD2 (ALL_SEND_CID)\n\0".as_ptr()); }
     let _ = issue_cmd(mmio_ro, mmio_rw, 2, 0,
                       SDHCI_CMD_RESP_R136 | SDHCI_CMD_CRC_CHECK,
                       false);
 
-    // CMD3: SEND_RELATIVE_ADDR. R6 returns RCA in upper 16 bits.
+    unsafe { fut_printf(b"sdhci: CMD3 (SEND_RELATIVE_ADDR)\n\0".as_ptr()); }
     let r = issue_cmd(mmio_ro, mmio_rw, 3, 0,
                       SDHCI_CMD_RESP_R48 | SDHCI_CMD_CRC_CHECK | SDHCI_CMD_INDEX_CHECK,
                       false);
     if r == i64::MIN { return Err(-103); }
     let rca = ((r as u32) >> 16) & 0xFFFF;
+    unsafe { fut_printf(b"sdhci: CMD3 RCA=0x%x\n\0".as_ptr(), rca); }
 
-    // CMD9: SEND_CSD with RCA. R2 (136-bit). We skip parsing for now.
+    unsafe { fut_printf(b"sdhci: CMD9 (SEND_CSD)\n\0".as_ptr()); }
     let _ = issue_cmd(mmio_ro, mmio_rw, 9, rca << 16,
                       SDHCI_CMD_RESP_R136 | SDHCI_CMD_CRC_CHECK,
                       false);
 
-    // CMD7: SELECT_CARD with RCA. R1b (with busy).
+    unsafe { fut_printf(b"sdhci: CMD7 (SELECT_CARD)\n\0".as_ptr()); }
     let r = issue_cmd(mmio_ro, mmio_rw, 7, rca << 16,
                       SDHCI_CMD_RESP_R48_BUSY | SDHCI_CMD_CRC_CHECK | SDHCI_CMD_INDEX_CHECK,
                       false);

@@ -796,6 +796,78 @@ static mut SDHCI_LAST_INIT_RC: i32 = i32::MIN;
 /// it so we know which command stalled.
 static mut SDHCI_LAST_STEP: u32 = 0;
 
+unsafe extern "C" {
+    fn intel_pinctrl_is_initialized() -> bool;
+    fn intel_pinctrl_read_dw0(port_id: u32, pad_idx: u32) -> u32;
+    fn intel_pinctrl_write_dw0(port_id: u32, pad_idx: u32, value: u32) -> i32;
+    fn intel_pinctrl_set_gpio_out(port_id: u32, pad_idx: u32, value: u32) -> i32;
+}
+
+/// Brute-force search for the SD_VDD_EN GPIO. iter-72 dump identified
+/// port=0xC5 as the SD/MMC community (it has native-mode pads at
+/// cc5[7]/[8]/[13]/[14]/[16] — the SD signal lines), with 15 nearby
+/// GPIO-output candidates. None of them is currently driving tx=1,
+/// which is consistent with the card being unpowered. Try each in
+/// turn: save original DW0, drive HIGH, retry card init, restore on
+/// failure. Stop and keep the asserted state on the first success.
+fn sweep_sd_pwr_pad(mmio_ro: *const u8, mmio_rw: *mut u8) -> Option<(u32, u32)> {
+    if !unsafe { intel_pinctrl_is_initialized() } {
+        log("sdhci: intel_pinctrl not ready, skipping SD_VDD_EN sweep");
+        return None;
+    }
+    const SD_COMMUNITY_PORT: u32 = 0xC5;
+    /* Candidate pad indexes — the GPIO-output pads in cc5 from the
+     * iter-72 dump. Skip the native-mode pads (7, 8, 13, 14, 16) and
+     * the GPIO-IN pads. */
+    let candidates: &[u32] = &[
+        0, 2, 4, 6, 9, 10, 11, 12, 15, 17, 18, 19, 20, 21, 22, 23,
+        24, 25, 26, 27, 28, 29, 30, 31,
+    ];
+
+    for &pad in candidates {
+        let saved_dw0 = unsafe { intel_pinctrl_read_dw0(SD_COMMUNITY_PORT, pad) };
+        if saved_dw0 == 0xFFFF_FFFF { continue; }
+
+        unsafe {
+            fut_printf(b"sdhci: SD_VDD sweep: trying c%02x[%u] (saved dw0=0x%08x)\n\0".as_ptr(),
+                       SD_COMMUNITY_PORT, pad, saved_dw0);
+            intel_pinctrl_set_gpio_out(SD_COMMUNITY_PORT, pad, 1);
+        }
+        /* Tiny settle delay (~5 ms) before re-running card init. */
+        for _ in 0..50_000 {
+            let _ = unsafe { r32(mmio_ro, SDHCI_PRESENT_STATE) };
+        }
+        /* Reset CMD/DATA to drop the previous failed-init state. */
+        unsafe {
+            w8(mmio_rw, SDHCI_SOFTWARE_RESET,
+               SDHCI_RESET_CMD | SDHCI_RESET_DATA);
+        }
+        for _ in 0..1_000_000 {
+            let r = unsafe { r8(mmio_ro, SDHCI_SOFTWARE_RESET) };
+            if r & (SDHCI_RESET_CMD | SDHCI_RESET_DATA) == 0 { break; }
+        }
+        /* Try CMD0 + CMD8 + ACMD41 quickly. Reuse sd_card_init for
+         * the full sequence. */
+        match sd_card_init(mmio_ro, mmio_rw) {
+            Ok(rca) => {
+                unsafe {
+                    fut_printf(b"sdhci: SD_VDD sweep WIN! pad c%02x[%u], RCA=0x%04x\n\0".as_ptr(),
+                               SD_COMMUNITY_PORT, pad, rca);
+                }
+                return Some((SD_COMMUNITY_PORT, pad));
+            }
+            Err(rc) => {
+                unsafe {
+                    fut_printf(b"sdhci: SD_VDD sweep: c%02x[%u] no go (rc=%d), restoring\n\0".as_ptr(),
+                               SD_COMMUNITY_PORT, pad, rc);
+                    intel_pinctrl_write_dw0(SD_COMMUNITY_PORT, pad, saved_dw0);
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Phase 2 entry point: power+clock the controller, run SD card init,
 /// stash the RCA. Returns 0 on success. Call after sdhci_init.
 #[unsafe(no_mangle)]
@@ -816,7 +888,7 @@ pub extern "C" fn sdhci_card_init() -> i32 {
     setup_power(mmio, caps);
     setup_clock(mmio, mmio, caps);
 
-    let rc = match sd_card_init(mmio, mmio) {
+    let mut rc = match sd_card_init(mmio, mmio) {
         Ok(rca) => {
             unsafe { fut_printf(b"sdhci: SD card initialized; RCA=0x%04x\n\0".as_ptr(), rca); }
             unsafe {
@@ -826,10 +898,23 @@ pub extern "C" fn sdhci_card_init() -> i32 {
             0
         }
         Err(rc) => {
-            unsafe { fut_printf(b"sdhci: SD card init failed: %d\n\0".as_ptr(), rc); }
+            unsafe { fut_printf(b"sdhci: SD card init failed: %d - starting SD_VDD pad sweep\n\0".as_ptr(), rc); }
             rc
         }
     };
+
+    /* If first attempt failed AND we look like we're stuck at ACMD41
+     * (no power-up), brute-force search for the SD_VDD_EN GPIO pad. */
+    if rc == -101 {
+        if let Some((port, pad)) = sweep_sd_pwr_pad(mmio, mmio) {
+            unsafe {
+                fut_printf(b"sdhci: SD_VDD pad found at c%02x[%u]; card init now succeeded\n\0".as_ptr(),
+                           port, pad);
+            }
+            rc = 0;
+        }
+    }
+
     unsafe { core::ptr::write(core::ptr::addr_of_mut!(SDHCI_LAST_INIT_RC), rc); }
     rc
 }

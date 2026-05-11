@@ -447,9 +447,8 @@ pub extern "C" fn intel_pinctrl_is_initialized() -> bool {
     unsafe { (*st).initialized }
 }
 
-/// Phase 2 stub: configure a specific pad as GPIO output high. Will
-/// be wired up once the user identifies the SD-VDD pin from the
-/// phase-1 dump.
+/// Configure a specific pad as GPIO output, setting the output state.
+/// Returns 0 on success.
 #[unsafe(no_mangle)]
 pub extern "C" fn intel_pinctrl_set_gpio_out(port_id: u32, pad_idx: u32, value: u32) -> i32 {
     let st = STATE.get();
@@ -461,22 +460,34 @@ pub extern "C" fn intel_pinctrl_set_gpio_out(port_id: u32, pad_idx: u32, value: 
     let dw0_off = community_off + PAD_BASE_GLK + pad_idx * 8;
     let mut dw0 = unsafe { r32(base, dw0_off) };
 
-    // Force PMODE = 0 (GPIO).
-    dw0 &= !(0xF << 10);
-    // GPIORXDIS = 1 (disable input).
-    dw0 |= 1 << 9;
-    // GPIOTXDIS = 0 (enable output).
-    dw0 &= !(1 << 8);
-    // GPIOTXSTATE = value & 1.
-    dw0 = (dw0 & !1) | (value & 1);
+    dw0 &= !(0xF << 10);   /* PMODE = 0 (GPIO) */
+    dw0 |= 1 << 9;         /* GPIORXDIS = 1 (disable input) */
+    dw0 &= !(1 << 8);      /* GPIOTXDIS = 0 (enable output) */
+    dw0 = (dw0 & !1) | (value & 1);  /* GPIOTXSTATE = value */
     unsafe { w32(base, dw0_off, dw0); }
+    let _readback = unsafe { r32(base, dw0_off) };
+    0
+}
 
-    let readback = unsafe { r32(base, dw0_off) };
-    unsafe {
-        fut_printf(
-            b"pinctrl: pad %u/%u <- 0x%08x (readback 0x%08x)\n\0".as_ptr(),
-            port_id, pad_idx, dw0, readback,
-        );
-    }
+/// Read a pad's DW0 (for save-before-modify, restore-on-failure).
+#[unsafe(no_mangle)]
+pub extern "C" fn intel_pinctrl_read_dw0(port_id: u32, pad_idx: u32) -> u32 {
+    let st = STATE.get();
+    if !unsafe { (*st).initialized } { return 0xFFFF_FFFF; }
+    let base = unsafe { (*st).sbreg_base };
+    if base.is_null() { return 0xFFFF_FFFF; }
+    let dw0_off = (port_id << 16) + PAD_BASE_GLK + pad_idx * 8;
+    unsafe { r32(base, dw0_off) }
+}
+
+/// Restore a pad's DW0 to a previously-saved value.
+#[unsafe(no_mangle)]
+pub extern "C" fn intel_pinctrl_write_dw0(port_id: u32, pad_idx: u32, value: u32) -> i32 {
+    let st = STATE.get();
+    if !unsafe { (*st).initialized } { return -1; }
+    let base = unsafe { (*st).sbreg_base };
+    if base.is_null() { return -2; }
+    let dw0_off = (port_id << 16) + PAD_BASE_GLK + pad_idx * 8;
+    unsafe { w32(base, dw0_off, value); }
     0
 }

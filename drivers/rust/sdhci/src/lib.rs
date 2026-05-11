@@ -491,9 +491,17 @@ const SDHCI_CLOCK_INT_EN:     u16 = 1 << 0;
 const SDHCI_CLOCK_INT_STABLE: u16 = 1 << 1;
 const SDHCI_CLOCK_SD_EN:      u16 = 1 << 2;
 
-// Power-control register (offset 0x29, 8-bit)
+// Power-control register (offset 0x29, 8-bit). Bits [3:1] select bus
+// voltage: 111=3.3V, 110=3.0V, 101=1.8V. Bit 0 = SD bus power-on.
 const SDHCI_POWER_ON:         u8 = 1 << 0;
 const SDHCI_POWER_330:        u8 = 0b111 << 1;  /* 3.3V */
+const SDHCI_POWER_300:        u8 = 0b110 << 1;  /* 3.0V */
+const SDHCI_POWER_180:        u8 = 0b101 << 1;  /* 1.8V */
+
+// CAPABILITIES register voltage-support bits (offset 0x40, 64-bit).
+const SDHCI_CAP_VOLTAGE_330:  u64 = 1 << 24;
+const SDHCI_CAP_VOLTAGE_300:  u64 = 1 << 25;
+const SDHCI_CAP_VOLTAGE_180:  u64 = 1 << 26;
 
 // Command-register fields (offset 0x0E, 16-bit). Format:
 //   [15:8] command index, [5:0] flags + response type
@@ -669,14 +677,36 @@ fn setup_clock(mmio_ro: *const u8, mmio_rw: *mut u8, caps: u64) {
     }
 }
 
-/// Power up the SD card at 3.3 V.
-fn setup_power(mmio_rw: *mut u8) {
-    unsafe { w8(mmio_rw, SDHCI_POWER_CONTROL, SDHCI_POWER_330) };
+/// Power up the SD card at the highest voltage the controller
+/// actually supports (per CAPABILITIES bits 24-26). On Apollo / Gemini
+/// Lake the 3.3V bit is clear (only 3.0V + 1.8V), so writing
+/// SDHCI_POWER_330 unconditionally leaves the bus depowered and every
+/// subsequent command times out (which is exactly what iter-66 hit).
+fn setup_power(mmio_rw: *mut u8, caps: u64) {
+    let voltage_sel: u8 = if caps & SDHCI_CAP_VOLTAGE_330 != 0 {
+        SDHCI_POWER_330
+    } else if caps & SDHCI_CAP_VOLTAGE_300 != 0 {
+        SDHCI_POWER_300
+    } else if caps & SDHCI_CAP_VOLTAGE_180 != 0 {
+        SDHCI_POWER_180
+    } else {
+        SDHCI_POWER_330  /* nothing advertised — fall back, will fail visibly */
+    };
+    unsafe {
+        fut_printf(
+            b"sdhci: caps voltage support 3.3=%d 3.0=%d 1.8=%d -> using sel=0x%x\n\0".as_ptr(),
+            (caps & SDHCI_CAP_VOLTAGE_330 != 0) as i32,
+            (caps & SDHCI_CAP_VOLTAGE_300 != 0) as i32,
+            (caps & SDHCI_CAP_VOLTAGE_180 != 0) as i32,
+            voltage_sel as u32,
+        );
+    }
+    unsafe { w8(mmio_rw, SDHCI_POWER_CONTROL, voltage_sel) };
     // Tiny settle delay (just MMIO reads, no IRQ involvement).
     for _ in 0..10_000 {
         let _ = unsafe { core::ptr::read_volatile(mmio_rw.add(SDHCI_POWER_CONTROL as usize)) };
     }
-    unsafe { w8(mmio_rw, SDHCI_POWER_CONTROL, SDHCI_POWER_330 | SDHCI_POWER_ON) };
+    unsafe { w8(mmio_rw, SDHCI_POWER_CONTROL, voltage_sel | SDHCI_POWER_ON) };
 }
 
 /// SD card init: CMD0 / CMD8 / ACMD41 / CMD2 / CMD3 / CMD9 / CMD7.
@@ -783,7 +813,7 @@ pub extern "C" fn sdhci_card_init() -> i32 {
     }
 
     let caps = unsafe { (*st).capabilities };
-    setup_power(mmio);
+    setup_power(mmio, caps);
     setup_clock(mmio, mmio, caps);
 
     let rc = match sd_card_init(mmio, mmio) {

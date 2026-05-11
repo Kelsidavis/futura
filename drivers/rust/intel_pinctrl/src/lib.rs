@@ -103,15 +103,18 @@ fn pci_write8(bus: u8, dev: u8, func: u8, offset: u8, val: u8) {
 const PCI_VENDOR_INTEL: u16 = 0x8086;
 
 /// P2SB PCI device IDs we recognize.
-/// 0x5A92 — Apollo Lake
-/// 0x319B — Gemini Lake
-const P2SB_DEVICE_IDS: &[u16] = &[0x5A92, 0x319B];
+///   0x5A92 — Apollo Lake
+///   0x31BB — Gemini Lake (NOT 0x319B; that's a different LPSS dev)
+///   0x0BD0 — Lakefield
+///   0x1980 — Coffee Lake
+///   0x9D20 — Sunrise Point-LP
+const P2SB_DEVICE_IDS: &[u16] = &[0x5A92, 0x31BB, 0x0BD0, 0x1980, 0x9D20];
 
-/// P2SB Hide register. Setting bit 0 hides the P2SB device from PCI
-/// scans; clearing bit 0 reveals it. Firmware on Apollo/Gemini Lake
-/// platforms usually leaves bit 0 set, so the device reads as
-/// vendor=0xFFFF until we unhide it.
-const P2SB_E0H_HIDE: u8 = 0xE0;
+/// P2SB Hide register. The P2SB Configuration register is a 32-bit
+/// field at config offset 0xE0; the HIDE control is bit 8 of that
+/// dword, i.e. byte 0xE1. Clearing it reveals the device to PCI
+/// config scans (firmware on Apollo/Gemini Lake leaves it set).
+const P2SB_E0H_HIDE_BYTE: u8 = 0xE1;
 
 const SBREG_BAR_SIZE: usize = 16 * 1024 * 1024;
 
@@ -178,8 +181,7 @@ unsafe fn w32(base: *mut u8, offset: u32, val: u32) {
 
 fn find_p2sb() -> Option<(u8, u8, u8, u16, u16)> {
     /* P2SB is conventionally at 00:0d.0 on Broxton-family SoCs. Try
-     * that first by reading directly; if it's hidden, attempt the
-     * unhide quirk before scanning. */
+     * that first by reading directly. */
     let direct = pci_read32(0, 0x0d, 0, 0);
     let vendor = (direct & 0xFFFF) as u16;
     if vendor == PCI_VENDOR_INTEL {
@@ -188,16 +190,29 @@ fn find_p2sb() -> Option<(u8, u8, u8, u16, u16)> {
             return Some((0, 0x0d, 0, vendor, device));
         }
     }
+    unsafe {
+        fut_printf(
+            b"pinctrl: direct read 00:0d.0 returned vendor=0x%04x (not P2SB), attempting unhide\n\0".as_ptr(),
+            vendor as u32,
+        );
+    }
 
-    /* Try the unhide trick: even when read as 0xFFFF the config
-     * write to register 0xE0 still lands. Clear bit 0 to reveal. */
-    pci_write8(0, 0x0d, 0, P2SB_E0H_HIDE, 0);
+    /* Unhide quirk: write 0 to config byte 0xE1 (bit 8 of the
+     * 32-bit P2SBC register at 0xE0). The config write lands even
+     * when the device reads as 0xFFFF. */
+    pci_write8(0, 0x0d, 0, P2SB_E0H_HIDE_BYTE, 0);
     let after = pci_read32(0, 0x0d, 0, 0);
     let vendor = (after & 0xFFFF) as u16;
     let device = (after >> 16) as u16;
+    unsafe {
+        fut_printf(
+            b"pinctrl: after unhide write, 00:0d.0 reads vendor=0x%04x device=0x%04x\n\0".as_ptr(),
+            vendor as u32, device as u32,
+        );
+    }
     if vendor == PCI_VENDOR_INTEL && P2SB_DEVICE_IDS.contains(&device) {
         unsafe {
-            fut_printf(b"pinctrl: unhid P2SB at 00:0d.0 (was hidden by firmware)\n\0".as_ptr());
+            fut_printf(b"pinctrl: unhid P2SB at 00:0d.0\n\0".as_ptr());
         }
         return Some((0, 0x0d, 0, vendor, device));
     }
@@ -211,6 +226,30 @@ fn find_p2sb() -> Option<(u8, u8, u8, u16, u16)> {
             let d = (dw >> 16) as u16;
             if P2SB_DEVICE_IDS.contains(&d) {
                 return Some((0, dev, func, v, d));
+            }
+        }
+    }
+
+    /* Diagnostic: print every Intel device on bus 0 so the user can
+     * spot a P2SB-like one we haven't listed. */
+    unsafe { fut_printf(b"pinctrl: bus-0 Intel device inventory (no P2SB found):\n\0".as_ptr()); }
+    for dev in 0u8..32 {
+        for func in 0u8..8 {
+            let dw = pci_read32(0, dev, func, 0);
+            let v = (dw & 0xFFFF) as u16;
+            if v != PCI_VENDOR_INTEL { continue; }
+            let d = (dw >> 16) as u16;
+            let class = pci_read32(0, dev, func, 0x08) >> 8;
+            unsafe {
+                fut_printf(
+                    b"pinctrl:   00:%02x.%x device=0x%04x class=0x%06x\n\0".as_ptr(),
+                    dev as u32, func as u32, d as u32, class,
+                );
+            }
+            if func == 0 {
+                let header = pci_read32(0, dev, func, 0x0C);
+                let multi = ((header >> 16) & 0x80) != 0;
+                if !multi { break; }
             }
         }
     }

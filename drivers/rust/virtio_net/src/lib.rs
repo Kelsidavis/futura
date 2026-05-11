@@ -1036,12 +1036,21 @@ pub extern "C" fn virtio_net_init() -> FutStatus {
         return 0;
     }
 
+    /* Silent gate: no virtio-net hardware on bare metal. Bail without
+     * logging so real-hw boot stays quiet. Callers treat ENODEV as
+     * "not present" and fall back to loopback without a warning. */
+    if find_device().is_none() {
+        return ENODEV;
+    }
+
     log("virtio-net: probing for hardware...");
 
     let device = match VirtioNetDevice::probe() {
         Ok(dev) => dev,
         Err(e) => {
-            log("virtio-net: probe failed, using loopback fallback");
+            if e != ENODEV {
+                log("virtio-net: probe failed, using loopback fallback");
+            }
             return e;
         }
     };

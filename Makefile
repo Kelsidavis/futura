@@ -721,13 +721,19 @@ RUST_LIB_RPI_WATCHDOG := $(RUST_BUILD_DIR_RPI_WATCHDOG)/librpi_watchdog.a
 #   Driver Selection — DRIVERS=qemu|amd|intel|all (default: all)
 #
 #   DRIVERS=qemu   — VirtIO only (fast builds, CI/QEMU testing)
-#   DRIVERS=amd    — VirtIO + AMD chipset + common x86 platform
-#   DRIVERS=intel  — VirtIO + Intel chipset + common x86 platform
-#   DRIVERS=all    — Everything (real hardware deployment)
+#   DRIVERS=amd    — AMD chipset + common x86 platform (no VirtIO)
+#   DRIVERS=intel  — Intel chipset + common x86 platform (no VirtIO)
+#   DRIVERS=all    — All real-hw drivers, no VirtIO. Use DRIVERS=qemu to test in QEMU.
+#
+#   VirtIO is link-gated to the qemu profile only: on bare metal the
+#   crates are dead weight (they'd scan PCI for vendor 0x1AF4 and find
+#   nothing). Keeping them out of real-hw builds avoids probe noise
+#   and shrinks the kernel image. ARM64 is unaffected — virtio-mmio
+#   is the real hardware path there.
 # ============================================================
 DRIVERS ?= all
 
-# Core VirtIO drivers (always included on x86_64)
+# Core VirtIO drivers (linked only for DRIVERS=qemu on x86_64; always on ARM64).
 RUST_VIRTIO_LIBS := $(RUST_LIB_VIRTIO_BLK) $(RUST_LIB_VIRTIO_NET) $(RUST_LIB_VIRTIO_INPUT) $(RUST_LIB_VIRTIO_CON)
 
 # Common x86 platform drivers (timers, basic I/O, PCI)
@@ -751,14 +757,14 @@ ifeq ($(PLATFORM),x86_64)
     RUST_LIBS := $(RUST_VIRTIO_LIBS)
     CFLAGS += -DDRIVERS_QEMU
   else ifeq ($(DRIVERS),amd)
-    RUST_LIBS := $(RUST_VIRTIO_LIBS) $(RUST_X86_PLATFORM_LIBS) $(RUST_X86_STORAGE_LIBS) $(RUST_X86_NET_LIBS) $(RUST_AMD_LIBS)
+    RUST_LIBS := $(RUST_X86_PLATFORM_LIBS) $(RUST_X86_STORAGE_LIBS) $(RUST_X86_NET_LIBS) $(RUST_AMD_LIBS)
     CFLAGS += -DDRIVERS_AMD
   else ifeq ($(DRIVERS),intel)
-    RUST_LIBS := $(RUST_VIRTIO_LIBS) $(RUST_X86_PLATFORM_LIBS) $(RUST_X86_STORAGE_LIBS) $(RUST_X86_NET_LIBS) $(RUST_INTEL_LIBS)
+    RUST_LIBS := $(RUST_X86_PLATFORM_LIBS) $(RUST_X86_STORAGE_LIBS) $(RUST_X86_NET_LIBS) $(RUST_INTEL_LIBS)
     CFLAGS += -DDRIVERS_INTEL
   else
-    # all: everything
-    RUST_LIBS := $(RUST_VIRTIO_LIBS) $(RUST_X86_PLATFORM_LIBS) $(RUST_X86_STORAGE_LIBS) $(RUST_X86_NET_LIBS) $(RUST_AMD_LIBS) $(RUST_INTEL_LIBS)
+    # all: every real-hw driver, no VirtIO. To test in QEMU use DRIVERS=qemu.
+    RUST_LIBS := $(RUST_X86_PLATFORM_LIBS) $(RUST_X86_STORAGE_LIBS) $(RUST_X86_NET_LIBS) $(RUST_AMD_LIBS) $(RUST_INTEL_LIBS)
     CFLAGS += -DDRIVERS_ALL
   endif
 else ifeq ($(PLATFORM),arm64)
@@ -1152,8 +1158,17 @@ endif
 # Subsystem sources (POSIX compat)
 SUBSYSTEM_SOURCES := \
     subsystems/posix_compat/posix_shim.c \
-    subsystems/posix_compat/posix_syscall.c \
-    kernel/input/virtio_input_ffi.c
+    subsystems/posix_compat/posix_syscall.c
+
+# virtio_input_ffi.c calls virtio_input_rust_init from the Rust virtio_input
+# crate. Only include it when that crate is being linked (ARM64 always, or
+# x86_64 with DRIVERS=qemu) — otherwise we'd get an undefined-symbol link
+# error on real-hw x86 profiles where virtio is link-gated out.
+ifeq ($(PLATFORM),arm64)
+  SUBSYSTEM_SOURCES += kernel/input/virtio_input_ffi.c
+else ifeq ($(DRIVERS),qemu)
+  SUBSYSTEM_SOURCES += kernel/input/virtio_input_ffi.c
+endif
 
 # All sources
 ALL_SOURCES := $(KERNEL_SOURCES) $(PLATFORM_SOURCES) $(SUBSYSTEM_SOURCES)

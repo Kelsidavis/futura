@@ -933,12 +933,21 @@ pub extern "C" fn virtio_console_init() -> i32 {
         return 0; // already initialised
     }
 
+    /* Silent gate: no virtio console hardware on bare metal. Bail
+     * without logging so real-hw boot stays quiet. Callers treat
+     * ENODEV as "not present" and skip without warning. */
+    if find_device().is_none() {
+        return ENODEV;
+    }
+
     log("virtio-console: probing for hardware...");
 
     let device = match VirtioConsoleDevice::probe() {
         Ok(dev) => dev,
         Err(e) => {
-            log("virtio-console: probe failed");
+            if e != ENODEV {
+                log("virtio-console: probe failed");
+            }
             return e;
         }
     };

@@ -1688,6 +1688,8 @@ void fut_kernel_main(void) {
     fut_printf("[INIT] Initializing block device subsystem...\n");
     fut_blockdev_init();
     fut_blk_core_init();
+    /* virtio-blk: ARM64 real-hw via virtio-mmio, or x86 QEMU profile only. */
+#if defined(__aarch64__) || defined(DRIVERS_QEMU)
     fut_status_t vblk_rc = virtio_blk_init(0);
     if (vblk_rc == 0) {
         fut_printf("[INIT] VirtIO block device initialized\n");
@@ -1695,6 +1697,7 @@ void fut_kernel_main(void) {
         /* -19 = ENODEV (no device), -22 = EINVAL (empty/no-capacity disk) */
         fut_printf("[virtio-blk] init: %d\n", vblk_rc);
     }
+#endif
     {
         extern void pci_enumerate(void);
         pci_enumerate();  /* Scan PCI bus for all devices */
@@ -2032,13 +2035,17 @@ void fut_kernel_main(void) {
     }
 #endif /* !DRIVERS_QEMU */
 
-    /* VirtIO drivers — always initialized on x86_64 (used by QEMU) */
+#ifdef DRIVERS_QEMU
+    /* VirtIO drivers are only linked in for the QEMU build profile.
+     * On real-hw profiles (amd/intel/all) the crates aren't built or
+     * linked, so referencing their symbols here would be a link error. */
     {
         extern int virtio_console_init(void);
         extern int virtio_input_rust_init(void);
         virtio_console_init();
         virtio_input_rust_init();
     }
+#endif /* DRIVERS_QEMU */
 #endif /* __x86_64__ */
 
 #ifdef __aarch64__
@@ -2282,10 +2289,16 @@ void fut_kernel_main(void) {
     /* Initialize network drivers (but not TCP/IP - that needs scheduler) */
     fut_printf("[INIT] Initializing network subsystem...\n");
     fut_net_init();
+    /* virtio-net is only linked on ARM64 (real-hw via virtio-mmio) and on
+     * x86_64+DRIVERS_QEMU. Real-hw x86 profiles drop the crate entirely. */
+#if defined(__aarch64__) || defined(DRIVERS_QEMU)
     fut_status_t vnet_rc = virtio_net_init();
-    if (vnet_rc != 0) {
+    /* -19 (ENODEV) means no virtio-net device is present on this bus —
+     * expected on bare metal. Stay silent. Log only real failures. */
+    if (vnet_rc != 0 && vnet_rc != -19) {
         fut_printf("[virtio-net] init failed: %d\n", vnet_rc);
     }
+#endif
     fut_printf("[INIT] Network drivers initialized (TCP/IP stack will start after scheduler)\n");
 
     /* Test block device operations - DISABLED (heap too small for 1MB ramdisk) */

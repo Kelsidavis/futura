@@ -24,7 +24,7 @@ use core::ptr::{read_volatile, write_volatile};
 use core::sync::atomic::{fence, Ordering};
 
 use common::{
-    alloc, alloc_page, free, log, map_mmio_region, thread_sleep, thread_yield,
+    alloc, alloc_page, free, free_page, log, map_mmio_region, thread_sleep, thread_yield,
     unmap_mmio_region, MMIO_DEFAULT_FLAGS,
 };
 
@@ -891,6 +891,695 @@ fn init_ports(ctrl: &XhciController) {
     }
 }
 
+// ── USB device enumeration ─────────────────────────────────────────────────
+//
+// Below this line is the bring-up path that takes a port from "device
+// connected, port enabled after reset" to "device addressed, EP0 control
+// transfers working, device + configuration descriptors read, class
+// driver dispatched". It is layered on top of the host controller setup
+// the rest of this file provides.
+//
+// Stages:
+//   1. Enable Slot          → allocate a slot id in the DCBAA
+//   2. setup_input_context  → fill in Slot + EP0 contexts (Add flags A0|A1)
+//   3. Address Device       → HC issues USB SetAddress, EP0 becomes live
+//   4. control_transfer     → Setup/Data/Status TRBs on EP0 transfer ring
+//   5. GET_DESCRIPTOR(dev)  → 18 bytes, identifies vendor/product/class
+//   6. GET_DESCRIPTOR(cfg)  → walk interface/endpoint descriptors
+//   7. Class dispatch       → log; future stages call usb_storage_attach,
+//                             usb_hub_attach, etc.
+//
+// Per-slot state lives in the SLOT_TABLE (one entry per slot id, 1-based).
+// Each slot owns an Input Context page, an Output Context page (the latter
+// also pointed to by DCBAA[slot_id]), and a Transfer Ring for EP0.
+
+const EP0_TRING_SIZE: usize = 64; // TRBs (last is Link TRB)
+
+/// Endpoint types for the EP Context type field [5:3].
+const EP_TYPE_CONTROL:    u8 = 4;
+const _EP_TYPE_BULK_OUT:  u8 = 2;
+const _EP_TYPE_BULK_IN:   u8 = 6;
+
+/// Speed encoding used by Slot Context and PORTSC (identical values).
+const _USB_SPEED_FS: u32 = 1;
+const _USB_SPEED_LS: u32 = 2;
+const USB_SPEED_HS: u32 = 3;
+const USB_SPEED_SS: u32 = 4;
+const _USB_SPEED_SSP: u32 = 5;
+
+/// Default EP0 max packet size by speed. SuperSpeed is always 512; HS is 64.
+/// FS/LS devices can advertise 8/16/32/64 (FS) or always 8 (LS) — we start
+/// with 64 for FS to match what most devices use, and fix up via Evaluate
+/// Context if the first 8 bytes of the device descriptor disagree.
+fn default_max_packet_ep0(speed: u32) -> u16 {
+    match speed {
+        USB_SPEED_SS | _USB_SPEED_SSP => 512,
+        _USB_SPEED_LS => 8,
+        _ => 64,
+    }
+}
+
+#[derive(Copy, Clone)]
+struct DeviceSlot {
+    in_use: bool,
+    root_hub_port: u32,        // 1-based
+    speed: u32,
+    max_packet_ep0: u16,
+    input_ctx_virt: usize,     // virtual address of 4 KiB input ctx page
+    input_ctx_phys: u64,
+    output_ctx_virt: usize,    // virtual address of 4 KiB output ctx page
+    output_ctx_phys: u64,
+    ep0_tring_virt: usize,     // virtual address of 4 KiB EP0 TRB ring
+    ep0_tring_phys: u64,
+    ep0_enqueue: u16,
+    ep0_cycle: bool,
+}
+
+impl DeviceSlot {
+    const fn empty() -> Self {
+        Self {
+            in_use: false,
+            root_hub_port: 0,
+            speed: 0,
+            max_packet_ep0: 0,
+            input_ctx_virt: 0,
+            input_ctx_phys: 0,
+            output_ctx_virt: 0,
+            output_ctx_phys: 0,
+            ep0_tring_virt: 0,
+            ep0_tring_phys: 0,
+            ep0_enqueue: 0,
+            ep0_cycle: false,
+        }
+    }
+}
+
+static mut SLOT_TABLE: [DeviceSlot; MAX_SLOTS + 1] = [DeviceSlot::empty(); MAX_SLOTS + 1];
+
+/// Borrow a mutable reference to a slot's state. Returns None if the
+/// slot id is out of range. Callers must avoid aliasing -- one
+/// slot-mutable borrow at a time across the whole driver.
+unsafe fn slot_mut(slot_id: u32) -> Option<&'static mut DeviceSlot> {
+    if slot_id == 0 || slot_id as usize > MAX_SLOTS {
+        return None;
+    }
+    unsafe {
+        let table = core::ptr::addr_of_mut!(SLOT_TABLE);
+        Some(&mut (*table)[slot_id as usize])
+    }
+}
+
+/// Send an Enable Slot command and wait for completion. Returns the
+/// allocated slot ID on success, or 0 on failure (slot IDs are 1-based
+/// in xHCI, so 0 unambiguously signals an error).
+fn enable_slot(ctrl: &mut XhciController) -> u32 {
+    let trb = Trb {
+        param: 0,
+        status: 0,
+        control: TRB_TYPE_ENABLE_SLOT << TRB_TYPE_SHIFT,
+    };
+    ctrl.cmd_ring.enqueue_trb(&trb);
+    ring_cmd_doorbell(ctrl.bar0, ctrl.db_base);
+
+    match wait_cmd_completion(ctrl) {
+        Some(event) => {
+            let cc = trb_completion_code(event.status);
+            if cc == TRB_CC_SUCCESS {
+                trb_slot_id(event.control)
+            } else {
+                unsafe {
+                    fut_printf(
+                        b"xhci: Enable Slot failed, completion code = %u\n\0".as_ptr(),
+                        cc,
+                    );
+                }
+                0
+            }
+        }
+        None => {
+            log("xhci: Enable Slot timed out waiting for command completion");
+            0
+        }
+    }
+}
+
+/// Compute offsets into the input or output context page for a given DCI,
+/// honoring the controller's context_size (32 or 64 bytes per context).
+/// Input context layout:    0 = Input Control Ctx, 1 = Slot Ctx, 2 = EP0 Ctx, ...
+/// Output context layout:   0 = Slot Ctx,          1 = EP0 Ctx,  ...
+/// We always pass the input-context index (so 1 = Slot, 2 = EP0). For
+/// output context offsets, subtract 1 from the index manually.
+#[inline]
+fn ctx_offset(context_size: usize, idx: usize) -> usize {
+    idx * context_size
+}
+
+/// Initialize a slot's per-slot state: allocate input ctx, output ctx,
+/// and EP0 transfer ring; populate Slot + EP0 contexts for Address Device;
+/// register the output context in DCBAA[slot_id]. On success the slot is
+/// marked in_use and is ready for an Address Device command.
+fn setup_slot_for_address(
+    ctrl: &mut XhciController,
+    slot_id: u32,
+    root_hub_port: u32,
+    speed: u32,
+) -> bool {
+    if slot_id == 0 || slot_id as usize > MAX_SLOTS {
+        return false;
+    }
+
+    let input_ctx = alloc_page_zeroed();
+    let output_ctx = alloc_page_zeroed();
+    let ep0_tring = alloc_page_zeroed();
+    if input_ctx.is_null() || output_ctx.is_null() || ep0_tring.is_null() {
+        log("xhci: setup_slot_for_address: page alloc failed");
+        return false;
+    }
+
+    let input_ctx_phys = virt_to_phys(input_ctx);
+    let output_ctx_phys = virt_to_phys(output_ctx);
+    let ep0_tring_phys = virt_to_phys(ep0_tring);
+
+    // Install Link TRB at the last slot of the EP0 transfer ring so the
+    // HC wraps cleanly back to the start. Toggle Cycle (TC) flips the
+    // expected cycle bit on each pass.
+    unsafe {
+        let trbs = ep0_tring as *mut Trb;
+        let link = trbs.add(EP0_TRING_SIZE - 1);
+        let link_ctrl = (TRB_TYPE_LINK << TRB_TYPE_SHIFT) | TRB_TC;
+        write_volatile(&mut (*link).param as *mut u64, ep0_tring_phys);
+        write_volatile(&mut (*link).status as *mut u32, 0);
+        write_volatile(&mut (*link).control as *mut u32, link_ctrl);
+    }
+
+    let max_packet = default_max_packet_ep0(speed);
+    let cs = ctrl.context_size;
+
+    // Input Control Context: Add flag for Slot Ctx (A0) and EP0 Ctx (A1).
+    unsafe {
+        let icc = input_ctx;
+        // bytes 0..3 = Drop flags (0); bytes 4..7 = Add flags
+        write_volatile(icc.add(4) as *mut u32, 0x3); // A0 | A1
+    }
+
+    // Slot Context at input ctx offset ctx_offset(cs, 1).
+    unsafe {
+        let slot = input_ctx.add(ctx_offset(cs, 1));
+        let dw0: u32 = (speed << 20) | (1u32 << 27); // Context Entries = 1
+        let dw1: u32 = (root_hub_port & 0xFF) << 16;
+        write_volatile(slot as *mut u32, dw0);
+        write_volatile(slot.add(4) as *mut u32, dw1);
+        write_volatile(slot.add(8) as *mut u32, 0);
+        write_volatile(slot.add(12) as *mut u32, 0);
+    }
+
+    // EP0 Context at input ctx offset ctx_offset(cs, 2).
+    // DW0 = 0 (HC will set State). DW1 = (EP_TYPE_CONTROL << 3) | (CErr=3 << 1)
+    //   | (Max Packet Size << 16). DW2/3 = TR Dequeue Pointer | DCS(=1).
+    // DW4 = Average TRB Length = 8 (Control).
+    unsafe {
+        let ep0 = input_ctx.add(ctx_offset(cs, 2));
+        let dw1: u32 = ((EP_TYPE_CONTROL as u32) << 3)
+            | (3u32 << 1) // CErr = 3
+            | ((max_packet as u32) << 16);
+        write_volatile(ep0 as *mut u32, 0);
+        write_volatile(ep0.add(4) as *mut u32, dw1);
+        // Dequeue pointer: low 4 bits are reserved/DCS. We start with cycle=1
+        // (matches a freshly-zeroed ring), so set DCS=1.
+        let dq = ep0_tring_phys | 1;
+        write_volatile(ep0.add(8) as *mut u32, dq as u32);
+        write_volatile(ep0.add(12) as *mut u32, (dq >> 32) as u32);
+        // Average TRB length
+        write_volatile(ep0.add(16) as *mut u32, 8);
+    }
+
+    // Install the output context in DCBAA[slot_id]. The HC reads this on
+    // Address Device and writes the assigned address back into it.
+    unsafe {
+        let entry = ctrl.dcbaa.add(slot_id as usize);
+        write_volatile(entry, output_ctx_phys);
+    }
+
+    // Stash per-slot state.
+    unsafe {
+        *slot_mut(slot_id).unwrap() = DeviceSlot {
+            in_use: true,
+            root_hub_port,
+            speed,
+            max_packet_ep0: max_packet,
+            input_ctx_virt: input_ctx as usize,
+            input_ctx_phys,
+            output_ctx_virt: output_ctx as usize,
+            output_ctx_phys,
+            ep0_tring_virt: ep0_tring as usize,
+            ep0_tring_phys,
+            ep0_enqueue: 0,
+            ep0_cycle: true,
+        };
+    }
+    true
+}
+
+/// Issue Address Device command. After completion the HC has put the
+/// device through SET_ADDRESS and the EP0 default control pipe is live
+/// at the bus address equal to slot_id. Returns true on success.
+fn address_device(ctrl: &mut XhciController, slot_id: u32) -> bool {
+    let in_ctx_phys = unsafe { slot_mut(slot_id).unwrap().input_ctx_phys };
+    let trb = Trb {
+        param: in_ctx_phys,
+        status: 0,
+        control: (TRB_TYPE_ADDRESS_DEVICE << TRB_TYPE_SHIFT)
+            | ((slot_id & 0xFF) << 24),
+    };
+    ctrl.cmd_ring.enqueue_trb(&trb);
+    ring_cmd_doorbell(ctrl.bar0, ctrl.db_base);
+
+    match wait_cmd_completion(ctrl) {
+        Some(event) => {
+            let cc = trb_completion_code(event.status);
+            if cc == TRB_CC_SUCCESS {
+                true
+            } else {
+                unsafe {
+                    fut_printf(
+                        b"xhci: Address Device failed (slot %u), completion code = %u\n\0".as_ptr(),
+                        slot_id, cc,
+                    );
+                }
+                false
+            }
+        }
+        None => {
+            log("xhci: Address Device timed out");
+            false
+        }
+    }
+}
+
+/// Wait for a Transfer Event on the event ring matching the given slot id
+/// and endpoint DCI. Returns the event TRB on success.
+fn wait_transfer_event(ctrl: &mut XhciController, slot_id: u32, _ep_id: u32) -> Option<Trb> {
+    for _ in 0..1_000_000u32 {
+        if ctrl.evt_ring.has_event() {
+            let trb = ctrl.evt_ring.dequeue_trb();
+            let erdp = ctrl.evt_ring.dequeue_phys() | (1 << 3);
+            mmio_write64(
+                ctrl.bar0,
+                ctrl.rt_base + XHCI_RT_IR0 + XHCI_IR_ERDP,
+                erdp,
+            );
+            let tt = trb_type(trb.control);
+            if tt == TRB_TYPE_TRANSFER_EVENT && trb_slot_id(trb.control) == slot_id {
+                return Some(trb);
+            }
+            // Drain unrelated events (port status changes, command
+            // completions from earlier work, etc.) until we see ours.
+            continue;
+        }
+        thread_yield();
+    }
+    None
+}
+
+/// Push one TRB onto a slot's EP0 transfer ring, handling cycle bit and
+/// Link TRB wrap. Mirrors CommandRing::enqueue_trb but for control rings.
+fn ep0_enqueue(slot: &mut DeviceSlot, trb_in: &Trb) {
+    let mut control = trb_in.control;
+    if slot.ep0_cycle {
+        control |= TRB_CYCLE;
+    } else {
+        control &= !TRB_CYCLE;
+    }
+    unsafe {
+        let trbs = slot.ep0_tring_virt as *mut Trb;
+        let dst = trbs.add(slot.ep0_enqueue as usize);
+        write_volatile(&mut (*dst).param as *mut u64, trb_in.param);
+        write_volatile(&mut (*dst).status as *mut u32, trb_in.status);
+        fence(Ordering::Release);
+        write_volatile(&mut (*dst).control as *mut u32, control);
+    }
+    slot.ep0_enqueue += 1;
+    if slot.ep0_enqueue as usize >= EP0_TRING_SIZE - 1 {
+        // Update the Link TRB's cycle bit then wrap.
+        unsafe {
+            let trbs = slot.ep0_tring_virt as *mut Trb;
+            let link = trbs.add(EP0_TRING_SIZE - 1);
+            let link_ctrl = (TRB_TYPE_LINK << TRB_TYPE_SHIFT) | TRB_TC
+                | if slot.ep0_cycle { TRB_CYCLE } else { 0 };
+            write_volatile(&mut (*link).control as *mut u32, link_ctrl);
+        }
+        slot.ep0_cycle = !slot.ep0_cycle;
+        slot.ep0_enqueue = 0;
+    }
+}
+
+/// Execute a USB control transfer on the default control pipe of `slot_id`.
+/// The caller supplies the 8-byte Setup packet fields plus an optional data
+/// buffer. Returns Ok(actual_bytes_transferred) or Err(completion_code).
+///
+/// Layout:
+///   - Setup Stage TRB     (immediate data: bmRequestType, bRequest, wValue,
+///                          wIndex, wLength); TRT = 2 (OUT) or 3 (IN) or 0 (none)
+///   - Optional Data Stage TRB (buffer phys, length, DIR = IN/OUT)
+///   - Status Stage TRB    (DIR = opposite of data, IOC = 1)
+fn control_transfer(
+    ctrl: &mut XhciController,
+    slot_id: u32,
+    bm_request_type: u8,
+    b_request: u8,
+    w_value: u16,
+    w_index: u16,
+    data: *mut u8,
+    data_len: u16,
+) -> Result<u16, u32> {
+    let slot = match unsafe { slot_mut(slot_id) } {
+        Some(s) if s.in_use => s,
+        _ => return Err(0xFF),
+    };
+
+    let is_in = (bm_request_type & 0x80) != 0;
+    let trt: u32 = if data_len == 0 {
+        0
+    } else if is_in {
+        3
+    } else {
+        2
+    };
+
+    // Setup Stage TRB with Immediate Data.
+    let setup_param: u64 = (bm_request_type as u64)
+        | ((b_request as u64) << 8)
+        | ((w_value as u64) << 16)
+        | ((w_index as u64) << 32)
+        | ((data_len as u64) << 48);
+    let setup_status: u32 = 8; // TRB Transfer Length = 8 (Setup payload)
+    let setup_control: u32 = (TRB_TYPE_SETUP << TRB_TYPE_SHIFT)
+        | TRB_IDT
+        | TRB_IOC // request completion for the setup stage too (helps debugging)
+        | (trt << 16);
+    ep0_enqueue(slot, &Trb { param: setup_param, status: setup_status, control: setup_control });
+
+    // Optional Data Stage TRB.
+    if data_len > 0 {
+        let data_phys = virt_to_phys(data);
+        let status: u32 = data_len as u32;
+        let control: u32 = (TRB_TYPE_DATA << TRB_TYPE_SHIFT)
+            | TRB_IOC
+            | if is_in { 1 << 16 } else { 0 };
+        ep0_enqueue(slot, &Trb { param: data_phys, status, control });
+    }
+
+    // Status Stage TRB: direction is opposite of Data Stage (or IN if no data).
+    let status_dir_in = !is_in || data_len == 0;
+    let status_control: u32 = (TRB_TYPE_STATUS << TRB_TYPE_SHIFT)
+        | TRB_IOC
+        | if status_dir_in { 1 << 16 } else { 0 };
+    ep0_enqueue(slot, &Trb { param: 0, status: 0, control: status_control });
+
+    // Doorbell EP0 (DCI = 1).
+    ring_doorbell(ctrl.bar0, ctrl.db_base, slot_id, 1);
+
+    // Drain transfer events: one per TRB with IOC set. We set IOC on
+    // Setup, Data (if any), and Status. So expect 3 events with a data
+    // stage, 2 without.
+    let expected_events = if data_len > 0 { 3 } else { 2 };
+    let mut data_residual: u32 = 0;
+    for _ in 0..expected_events {
+        match wait_transfer_event(ctrl, slot_id, 1) {
+            Some(ev) => {
+                let cc = trb_completion_code(ev.status);
+                if cc != TRB_CC_SUCCESS && cc != TRB_CC_SHORT_PACKET {
+                    return Err(cc);
+                }
+                data_residual = ev.status & 0x00FFFFFF;
+            }
+            None => {
+                return Err(0xFE);
+            }
+        }
+    }
+    Ok(data_len.saturating_sub(data_residual as u16))
+}
+
+const USB_REQ_GET_DESCRIPTOR: u8 = 0x06;
+const _USB_REQ_SET_ADDRESS:    u8 = 0x05;
+const USB_REQ_SET_CONFIG:      u8 = 0x09;
+const USB_DESC_DEVICE:         u16 = 0x0100;
+const USB_DESC_CONFIG:         u16 = 0x0200;
+
+/// USB device descriptor (18 bytes). Fields we care about for class dispatch
+/// are vendor/product id and (more commonly) the per-interface class bytes
+/// in the configuration descriptor below.
+#[repr(C, packed)]
+#[derive(Clone, Copy)]
+struct UsbDeviceDescriptor {
+    b_length: u8,
+    b_descriptor_type: u8,
+    bcd_usb: u16,
+    b_device_class: u8,
+    b_device_subclass: u8,
+    b_device_protocol: u8,
+    b_max_packet_size0: u8,
+    id_vendor: u16,
+    id_product: u16,
+    bcd_device: u16,
+    i_manufacturer: u8,
+    i_product: u8,
+    i_serial_number: u8,
+    b_num_configurations: u8,
+}
+
+const _: () = assert!(core::mem::size_of::<UsbDeviceDescriptor>() == 18);
+
+/// Read the 18-byte device descriptor. Caller supplies an 18-byte aligned
+/// buffer (we use a static page; descriptor is small).
+fn get_device_descriptor(
+    ctrl: &mut XhciController,
+    slot_id: u32,
+    out: &mut UsbDeviceDescriptor,
+) -> bool {
+    // Use a temporary page-aligned buffer the HC can DMA into.
+    let buf = alloc_page_zeroed();
+    if buf.is_null() {
+        return false;
+    }
+    let rc = control_transfer(
+        ctrl,
+        slot_id,
+        0x80, // bmRequestType: device-to-host, standard, device
+        USB_REQ_GET_DESCRIPTOR,
+        USB_DESC_DEVICE,
+        0,
+        buf,
+        18,
+    );
+    if let Ok(n) = rc {
+        if n >= 18 {
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    buf as *const u8,
+                    out as *mut _ as *mut u8,
+                    18,
+                );
+            }
+            unsafe { free_page(buf); }
+            return true;
+        }
+    }
+    unsafe { free_page(buf); }
+    false
+}
+
+/// Read up to `max_len` bytes of the first configuration descriptor (which
+/// includes the interface + endpoint descriptors concatenated). Returns the
+/// number of bytes actually returned by the device.
+fn get_config_descriptor(
+    ctrl: &mut XhciController,
+    slot_id: u32,
+    buf_virt: *mut u8,
+    max_len: u16,
+) -> u16 {
+    match control_transfer(
+        ctrl, slot_id,
+        0x80,
+        USB_REQ_GET_DESCRIPTOR,
+        USB_DESC_CONFIG,
+        0,
+        buf_virt,
+        max_len,
+    ) {
+        Ok(n) => n,
+        Err(_) => 0,
+    }
+}
+
+/// Set device configuration. After this, the endpoints listed in the chosen
+/// configuration become active.
+fn set_configuration(ctrl: &mut XhciController, slot_id: u32, config_value: u8) -> bool {
+    match control_transfer(
+        ctrl, slot_id,
+        0x00, // host-to-device, standard, device
+        USB_REQ_SET_CONFIG,
+        config_value as u16,
+        0,
+        core::ptr::null_mut(),
+        0,
+    ) {
+        Ok(_) => true,
+        Err(cc) => {
+            unsafe {
+                fut_printf(
+                    b"xhci: slot %u: SET_CONFIGURATION(%u) cc=%u\n\0".as_ptr(),
+                    slot_id, config_value as u32, cc,
+                );
+            }
+            false
+        }
+    }
+}
+
+/// Walk every connected/enabled root-hub port and enumerate the device
+/// behind it: Enable Slot → setup input ctx → Address Device → GET_DESCRIPTOR
+/// (device) → GET_DESCRIPTOR (config). The output is logged; future stages
+/// will wire each interface to a class driver based on the bInterfaceClass.
+fn enumerate_devices(ctrl: &mut XhciController) {
+    for port in 0..ctrl.max_ports as u32 {
+        let portsc = read_portsc(ctrl.bar0, ctrl.op_base, port);
+        if (portsc & PORTSC_CCS) == 0 || (portsc & PORTSC_PED) == 0 {
+            continue;
+        }
+        let speed = (portsc & PORTSC_SPEED_MASK) >> PORTSC_SPEED_SHIFT;
+        let slot_id = enable_slot(ctrl);
+        if slot_id == 0 {
+            continue;
+        }
+        unsafe {
+            fut_printf(
+                b"xhci: port %u: slot %u allocated (speed=%u)\n\0".as_ptr(),
+                port + 1, slot_id, speed,
+            );
+        }
+        if !setup_slot_for_address(ctrl, slot_id, port + 1, speed) {
+            unsafe {
+                fut_printf(
+                    b"xhci: port %u: input ctx setup failed\n\0".as_ptr(),
+                    port + 1,
+                );
+            }
+            continue;
+        }
+        if !address_device(ctrl, slot_id) {
+            continue;
+        }
+        let mut dev = UsbDeviceDescriptor {
+            b_length: 0, b_descriptor_type: 0, bcd_usb: 0,
+            b_device_class: 0, b_device_subclass: 0, b_device_protocol: 0,
+            b_max_packet_size0: 0, id_vendor: 0, id_product: 0,
+            bcd_device: 0, i_manufacturer: 0, i_product: 0,
+            i_serial_number: 0, b_num_configurations: 0,
+        };
+        if !get_device_descriptor(ctrl, slot_id, &mut dev) {
+            unsafe {
+                fut_printf(
+                    b"xhci: slot %u: GET_DESCRIPTOR(device) failed\n\0".as_ptr(),
+                    slot_id,
+                );
+            }
+            continue;
+        }
+        let id_vendor = dev.id_vendor;
+        let id_product = dev.id_product;
+        let dev_class = dev.b_device_class;
+        let dev_sub = dev.b_device_subclass;
+        let dev_proto = dev.b_device_protocol;
+        let mps0 = dev.b_max_packet_size0;
+        let n_cfg = dev.b_num_configurations;
+        unsafe {
+            fut_printf(
+                b"xhci: slot %u: USB device %04x:%04x class=%02x:%02x:%02x mps0=%u cfg=%u\n\0".as_ptr(),
+                slot_id, id_vendor as u32, id_product as u32,
+                dev_class as u32, dev_sub as u32, dev_proto as u32,
+                mps0 as u32, n_cfg as u32,
+            );
+        }
+
+        // Read the configuration descriptor (first 9 bytes give total length).
+        let cfg_buf = alloc_page_zeroed();
+        if cfg_buf.is_null() {
+            continue;
+        }
+        let n = get_config_descriptor(ctrl, slot_id, cfg_buf, 9);
+        if n < 9 {
+            unsafe {
+                fut_printf(
+                    b"xhci: slot %u: GET_DESCRIPTOR(config) header failed (got %u)\n\0".as_ptr(),
+                    slot_id, n as u32,
+                );
+                free_page(cfg_buf);
+            }
+            continue;
+        }
+        let total = unsafe {
+            (*(cfg_buf.add(2) as *const u16))
+        };
+        let total = core::cmp::min(total, 4096) as u16;
+        let n2 = get_config_descriptor(ctrl, slot_id, cfg_buf, total);
+        if n2 < total {
+            unsafe {
+                fut_printf(
+                    b"xhci: slot %u: GET_DESCRIPTOR(config) short read %u/%u\n\0".as_ptr(),
+                    slot_id, n2 as u32, total as u32,
+                );
+            }
+        }
+        // Walk descriptors looking for interface (type 4) entries.
+        let mut off = 0usize;
+        let buf_end = n2 as usize;
+        let cfg_value = unsafe { *cfg_buf.add(5) };
+        while off + 2 <= buf_end {
+            let dlen = unsafe { *cfg_buf.add(off) } as usize;
+            let dtype = unsafe { *cfg_buf.add(off + 1) };
+            if dlen == 0 || off + dlen > buf_end {
+                break;
+            }
+            if dtype == 4 && dlen >= 9 {
+                let if_num = unsafe { *cfg_buf.add(off + 2) };
+                let if_class = unsafe { *cfg_buf.add(off + 5) };
+                let if_sub = unsafe { *cfg_buf.add(off + 6) };
+                let if_proto = unsafe { *cfg_buf.add(off + 7) };
+                let n_ep = unsafe { *cfg_buf.add(off + 4) };
+                let class_label: *const u8 = match if_class {
+                    0x03 => b"HID\0".as_ptr(),
+                    0x08 => b"Mass Storage\0".as_ptr(),
+                    0x09 => b"Hub\0".as_ptr(),
+                    0x0e => b"Video\0".as_ptr(),
+                    _    => b"-\0".as_ptr(),
+                };
+                unsafe {
+                    fut_printf(
+                        b"xhci: slot %u: interface %u class=%02x:%02x:%02x (%s) endpoints=%u\n\0".as_ptr(),
+                        slot_id, if_num as u32,
+                        if_class as u32, if_sub as u32, if_proto as u32,
+                        class_label, n_ep as u32,
+                    );
+                }
+            }
+            off += dlen;
+        }
+        // Activate the configuration so endpoints become valid for future
+        // bulk-transfer work.
+        if !set_configuration(ctrl, slot_id, cfg_value) {
+            unsafe {
+                fut_printf(
+                    b"xhci: slot %u: SET_CONFIGURATION(%u) failed\n\0".as_ptr(),
+                    slot_id, cfg_value as u32,
+                );
+            }
+        }
+        unsafe { free_page(cfg_buf); }
+    }
+}
+
 /// Send a No-Op command to verify command/event ring operation.
 fn test_cmd_ring(ctrl: &mut XhciController) -> bool {
     let trb = Trb {
@@ -1147,6 +1836,17 @@ pub extern "C" fn xhci_init() -> i32 {
     // ── Initialize root hub ports ──
 
     init_ports(&ctrl);
+
+    // ── Enumerate connected devices ──
+    //
+    // After port power+reset, each connected device sits in the Default
+    // address state. Walk every Enabled port and bring it through
+    // Enable Slot / Address Device / GET_DESCRIPTOR so the boot log
+    // shows what's actually on the USB bus and so subsequent class
+    // drivers (usb_storage, usb_hub, …) have an addressed device to
+    // attach to. enumerate_devices is best-effort: a failure on one
+    // port doesn't block the others.
+    enumerate_devices(&mut ctrl);
 
     // ── Store global state ──
 

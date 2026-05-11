@@ -821,15 +821,15 @@ fn sweep_sd_pwr_pad(mmio_ro: *const u8, mmio_rw: *mut u8) -> Option<(u32, u32)> 
         log("sdhci: intel_pinctrl not ready, skipping SD_VDD_EN sweep");
         return None;
     }
-    /* Probe cc5 first (SD pin community, confirmed by native-mode
-     * SD signal pads at cc5[7/8/13/14/16] in iter-72). Then cc4 as
-     * fallback. Skip cc8 (audio — risky). */
+    /* cc5 and cc4 were exhausted in iter-73/74 — confirmed not the
+     * SD_VDD pin community on this stepping. Skip those this round
+     * and go straight to cc8 (audio-adjacent — risky, so we add a
+     * safety filter inside the loop: only touch a cc8 pad if it's
+     * *currently* dormant (pmode=0, txdis=0, tx=0). Anything
+     * currently driving tx=1 is doing something important right
+     * now (codec power, mic enable, etc.) — leave it alone. */
     let sweep_set: &[(u32, &[u32])] = &[
-        (0xC5, &[
-            0, 2, 4, 6, 9, 10, 11, 12, 15, 17, 18, 19, 20, 21, 22, 23,
-            24, 25, 26, 27, 28, 29, 30, 31,
-        ]),
-        (0xC4, &[
+        (0xC8, &[
             0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
             16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
         ]),
@@ -840,6 +840,16 @@ fn sweep_sd_pwr_pad(mmio_ro: *const u8, mmio_rw: *mut u8) -> Option<(u32, u32)> 
         for &pad in pads {
             let saved_dw0 = unsafe { intel_pinctrl_read_dw0(port, pad) };
             if saved_dw0 == 0xFFFF_FFFF { continue; }
+
+            /* Audio-community safety: only sweep cc8 pads that are
+             * currently dormant outputs (pmode=0, txdis=0, tx=0). */
+            if port == 0xC8 {
+                let pmode    = (saved_dw0 >> 10) & 0xF;
+                let gpio_txd = (saved_dw0 >> 8)  & 0x1;
+                let txstate  = saved_dw0 & 0x1;
+                let dormant = pmode == 0 && gpio_txd == 0 && txstate == 0;
+                if !dormant { continue; }
+            }
             tried += 1;
 
             unsafe {
@@ -882,7 +892,7 @@ fn sweep_sd_pwr_pad(mmio_ro: *const u8, mmio_rw: *mut u8) -> Option<(u32, u32)> 
         }
     }
     unsafe {
-        fut_printf(b"sdhci: SD_VDD sweep: tried %u pads in cc5+cc4, none worked\n\0".as_ptr(),
+        fut_printf(b"sdhci: SD_VDD sweep: tried %u dormant pads in cc8, none worked\n\0".as_ptr(),
                    tried);
         core::ptr::write(core::ptr::addr_of_mut!(SDHCI_SWEEP_RESULT), 0xFFFE_FFFE);
         core::ptr::write(core::ptr::addr_of_mut!(SDHCI_SWEEP_TRIED), tried);
@@ -1071,7 +1081,7 @@ pub extern "C" fn sdhci_dump_status() {
         if sweep == 0xFFFF_FFFF {
             fut_printf(b"[SDHCI-STATUS] sweep: not run\n\0".as_ptr());
         } else if sweep == 0xFFFE_FFFE {
-            fut_printf(b"[SDHCI-STATUS] sweep: tried %u pads in cc5+cc4, none worked\n\0".as_ptr(),
+            fut_printf(b"[SDHCI-STATUS] sweep: tried %u dormant pads in cc8, none worked\n\0".as_ptr(),
                        tried);
         } else {
             let port = sweep >> 16;

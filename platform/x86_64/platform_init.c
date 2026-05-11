@@ -851,7 +851,7 @@ void fut_platform_init(uint32_t multiboot_magic __attribute__((unused)),
      * if scroll position is at the bottom and the top of the boot log
      * has scrolled past. */
     fut_printf("################################################\n");
-    fut_printf("[BUILD] Futura kernel built %s %s (iter-74: SD_VDD sweep cc5+cc4 longer settle)\n",
+    fut_printf("[BUILD] Futura kernel built %s %s (iter-76: SD_VDD sweep cc8-only)\n",
                __DATE__, __TIME__);
     fut_printf("################################################\n");
 

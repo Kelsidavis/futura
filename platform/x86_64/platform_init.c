@@ -851,7 +851,7 @@ void fut_platform_init(uint32_t multiboot_magic __attribute__((unused)),
      * if scroll position is at the bottom and the top of the boot log
      * has scrolled past. */
     fut_printf("################################################\n");
-    fut_printf("[BUILD] Futura kernel built %s %s (iter-62: SDHCI Intel LPSS wake-up sequence)\n",
+    fut_printf("[BUILD] Futura kernel built %s %s (iter-63: SDHCI class-only match + scan dump)\n",
                __DATE__, __TIME__);
     fut_printf("################################################\n");
 

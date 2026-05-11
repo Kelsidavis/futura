@@ -155,6 +155,19 @@ static STATE: StaticCell<SdhciState> = StaticCell::new(SdhciState {
     card_inserted: false,
 });
 
+/// Class-08 (mass storage) PCI hits seen during sdhci_init's scan.
+/// Used by sdhci_dump_status to re-emit the scan results right above
+/// the trampoline cliff (without this the scan output scrolls past
+/// before the user can see it).
+#[derive(Copy, Clone)]
+#[repr(C)]
+struct PciHit {
+    dev: u8, func: u8, vendor: u16, device: u16, class: u32,
+}
+static MASS_STORAGE_HITS: StaticCell<[PciHit; 8]> = StaticCell::new(
+    [PciHit { dev: 0, func: 0, vendor: 0, device: 0, class: 0 }; 8]);
+static MASS_STORAGE_COUNT: StaticCell<u32> = StaticCell::new(0);
+
 #[inline(always)]
 unsafe fn r8(base: *const u8, offset: u32) -> u8 {
     unsafe { core::ptr::read_volatile(base.add(offset as usize)) }
@@ -178,11 +191,18 @@ unsafe fn w8(base: *mut u8, offset: u32, val: u8) {
 
 // ── PCI scan ──
 
-/// Find a candidate SDHCI controller by class code (preferred) or
-/// known Intel device ID. Scans bus 0 only — multi-bus systems would
-/// need to walk PCI bridges, but the on-SoC SD controllers we care
-/// about live on bus 0.
+/// Find a candidate SDHCI controller by PCI class code 08:05:xx
+/// (mass storage / SD host). We deliberately do NOT match on Intel
+/// device IDs — many similar-looking Intel LPSS device IDs (I2C,
+/// SPI, UART) accidentally collided with previous device-ID lists
+/// and we'd "initialize" the wrong chip. Class code is authoritative.
+///
+/// As a side-effect, prints every class-08 (mass storage) device
+/// found on bus 0, so when nothing matches the user can see what
+/// IS actually on the SoC.
 fn find_sdhci() -> Option<(u8, u8, u8, u16, u16, u32)> {
+    let mut found_any = false;
+    let mut hit: Option<(u8, u8, u8, u16, u16, u32)> = None;
     for dev in 0u8..32 {
         for func in 0u8..8 {
             let vendor_device = pci_read32(0, dev, func, PCI_CFG_VENDOR_DEVICE);
@@ -194,15 +214,31 @@ fn find_sdhci() -> Option<(u8, u8, u8, u16, u16, u32)> {
             let revclass = pci_read32(0, dev, func, PCI_CFG_REVCLASS);
             let class = revclass >> 8;  /* class:subclass:progif */
 
-            let class_match = class == PCI_CLASS_SD_HOST
-                           || class == PCI_CLASS_EMMC;
-            let intel_sdhci = vendor == PCI_VENDOR_INTEL
-                           && (device == 0x5ACC || device == 0x5AC2
-                               || device == 0x31CC || device == 0x318C
-                               || device == 0x9D2B || device == 0x9D2D);
+            // Log every mass-storage class device for diagnostics.
+            if (class >> 16) == 0x08 {
+                found_any = true;
+                unsafe {
+                    fut_printf(
+                        b"sdhci-scan: %02x:%02x.%x vendor=0x%04x device=0x%04x class=0x%06x\n\0".as_ptr(),
+                        0u32, dev as u32, func as u32,
+                        vendor as u32, device as u32, class,
+                    );
+                }
+                // Also stash for sdhci_dump_status to re-emit later.
+                let count_p = MASS_STORAGE_COUNT.get();
+                unsafe {
+                    let n = *count_p as usize;
+                    if n < 8 {
+                        let hits = MASS_STORAGE_HITS.get();
+                        (*hits)[n] = PciHit { dev, func, vendor, device, class };
+                        *count_p = (n + 1) as u32;
+                    }
+                }
+            }
 
-            if class_match || intel_sdhci {
-                return Some((0, dev, func, vendor, device, class));
+            // Strict match: SD host or eMMC class only.
+            if hit.is_none() && (class == PCI_CLASS_SD_HOST || class == PCI_CLASS_EMMC) {
+                hit = Some((0, dev, func, vendor, device, class));
             }
 
             /* Stop probing functions on a single-function device. */
@@ -213,7 +249,10 @@ fn find_sdhci() -> Option<(u8, u8, u8, u16, u16, u32)> {
             }
         }
     }
-    None
+    if !found_any {
+        log("sdhci-scan: no class-0x08 (mass storage) devices on bus 0");
+    }
+    hit
 }
 
 // ── Public C API ──
@@ -768,14 +807,33 @@ pub extern "C" fn sdhci_log_set_lba(lba: u32) {
 /// Re-print the full controller status. Designed to be called near
 /// the trampoline cliff so the user sees SDHCI state on the bottom
 /// of the visible screen instead of having to scroll up through the
-/// boot log.
+/// boot log. Also re-emits every class-08 PCI hit seen during
+/// sdhci_init's scan so the user can identify the actual SD/eMMC
+/// controller (if any) without scrolling back.
 #[unsafe(no_mangle)]
 pub extern "C" fn sdhci_dump_status() {
+    // Re-emit the PCI scan first.
+    let count = unsafe { *MASS_STORAGE_COUNT.get() };
+    if count == 0 {
+        unsafe { fut_printf(b"[SDHCI-SCAN] no class-08 devices on bus 0\n\0".as_ptr()); }
+    } else {
+        for i in 0..count as usize {
+            let h = unsafe { (*MASS_STORAGE_HITS.get())[i] };
+            unsafe {
+                fut_printf(
+                    b"[SDHCI-SCAN] 00:%02x.%x vendor=0x%04x device=0x%04x class=0x%06x\n\0".as_ptr(),
+                    h.dev as u32, h.func as u32,
+                    h.vendor as u32, h.device as u32, h.class,
+                );
+            }
+        }
+    }
+
     let st = STATE.get();
     let inited = unsafe { (*st).initialized };
     let ready  = unsafe { core::ptr::read(core::ptr::addr_of!(SDHCI_CARD_READY)) };
     if !inited {
-        unsafe { fut_printf(b"[SDHCI-STATUS] controller NOT detected\n\0".as_ptr()); }
+        unsafe { fut_printf(b"[SDHCI-STATUS] no SD/eMMC class-08:05 controller bound\n\0".as_ptr()); }
         return;
     }
     let mmio = unsafe { (*st).mmio_base };

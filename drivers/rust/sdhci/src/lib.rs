@@ -369,3 +369,362 @@ pub extern "C" fn sdhci_card_present() -> bool {
     let present = unsafe { r32(mmio, SDHCI_PRESENT_STATE) };
     (present & SDHCI_PRESENT_CARD_INSERTED) != 0
 }
+
+// ── Phase 2: Card init + single-block PIO write + log API ──
+
+#[inline(always)]
+unsafe fn w16(base: *mut u8, offset: u32, val: u16) {
+    unsafe { core::ptr::write_volatile(base.add(offset as usize) as *mut u16, val) }
+}
+#[inline(always)]
+unsafe fn w32(base: *mut u8, offset: u32, val: u32) {
+    unsafe { core::ptr::write_volatile(base.add(offset as usize) as *mut u32, val) }
+}
+
+// Clock-control register fields (offset 0x2C, 16-bit)
+const SDHCI_CLOCK_INT_EN:     u16 = 1 << 0;
+const SDHCI_CLOCK_INT_STABLE: u16 = 1 << 1;
+const SDHCI_CLOCK_SD_EN:      u16 = 1 << 2;
+
+// Power-control register (offset 0x29, 8-bit)
+const SDHCI_POWER_ON:         u8 = 1 << 0;
+const SDHCI_POWER_330:        u8 = 0b111 << 1;  /* 3.3V */
+
+// Command-register fields (offset 0x0E, 16-bit). Format:
+//   [15:8] command index, [5:0] flags + response type
+const SDHCI_CMD_RESP_NONE:    u16 = 0;
+const SDHCI_CMD_RESP_R136:    u16 = 1;  /* 136-bit (CMD2, CMD9) */
+const SDHCI_CMD_RESP_R48:     u16 = 2;
+const SDHCI_CMD_RESP_R48_BUSY: u16 = 3;
+const SDHCI_CMD_CRC_CHECK:    u16 = 1 << 3;
+const SDHCI_CMD_INDEX_CHECK:  u16 = 1 << 4;
+const SDHCI_CMD_DATA:         u16 = 1 << 5;
+
+// Transfer-mode register (offset 0x0C, 16-bit)
+const SDHCI_TM_READ:          u16 = 1 << 4;
+const SDHCI_TM_BLOCK_COUNT_EN: u16 = 1 << 1;
+
+// Interrupt status bits (offset 0x30, 32-bit)
+const SDHCI_INT_CMD_COMPLETE: u32 = 1 << 0;
+const SDHCI_INT_XFER_COMPLETE: u32 = 1 << 1;
+const SDHCI_INT_BUF_WR_READY: u32 = 1 << 4;
+const SDHCI_INT_ERROR:        u32 = 1 << 15;
+
+// Present-state bits we use (offset 0x24, 32-bit)
+const SDHCI_PS_CMD_INHIBIT:    u32 = 1 << 0;
+const SDHCI_PS_DAT_INHIBIT:    u32 = 1 << 1;
+
+// Encode the upper byte (cmd index) + lower flags into one 16-bit word.
+fn make_cmd(index: u32, flags: u16) -> u16 {
+    ((index & 0x3F) as u16) << 8 | (flags & 0x3F)
+}
+
+/// Wait for CMD_INHIBIT to clear so we can issue a new command.
+fn wait_cmd_ready(mmio: *const u8) -> bool {
+    for _ in 0..2_000_000 {
+        let ps = unsafe { r32(mmio, SDHCI_PRESENT_STATE) };
+        if ps & SDHCI_PS_CMD_INHIBIT == 0 {
+            return true;
+        }
+    }
+    false
+}
+
+/// Wait for both CMD and DAT inhibit to clear (needed before a data
+/// command).
+fn wait_cmd_dat_ready(mmio: *const u8) -> bool {
+    for _ in 0..2_000_000 {
+        let ps = unsafe { r32(mmio, SDHCI_PRESENT_STATE) };
+        if ps & (SDHCI_PS_CMD_INHIBIT | SDHCI_PS_DAT_INHIBIT) == 0 {
+            return true;
+        }
+    }
+    false
+}
+
+/// Issue a command and wait for CMD_COMPLETE. Caller is responsible
+/// for setting BLOCK_SIZE/COUNT and TRANSFER_MODE before this for
+/// data commands. Returns the lower 32 bits of the response (R1/R3/
+/// R6/R7) on success, or i64::MIN on error/timeout.
+fn issue_cmd(mmio_ro: *const u8, mmio_rw: *mut u8,
+             index: u32, arg: u32,
+             flags: u16, is_data: bool) -> i64 {
+    let ready = if is_data {
+        wait_cmd_dat_ready(mmio_ro)
+    } else {
+        wait_cmd_ready(mmio_ro)
+    };
+    if !ready {
+        return i64::MIN;
+    }
+
+    // Clear interrupt status first.
+    unsafe { w32(mmio_rw, SDHCI_INT_STATUS, 0xFFFFFFFF) };
+
+    unsafe {
+        w32(mmio_rw, SDHCI_ARGUMENT, arg);
+        w16(mmio_rw, SDHCI_COMMAND, make_cmd(index, flags));
+    }
+
+    // Poll INT_STATUS for CMD_COMPLETE or ERROR.
+    let mut status = 0u32;
+    let mut done = false;
+    for _ in 0..2_000_000 {
+        status = unsafe { r32(mmio_ro, SDHCI_INT_STATUS) };
+        if status & (SDHCI_INT_CMD_COMPLETE | SDHCI_INT_ERROR) != 0 {
+            done = true;
+            break;
+        }
+    }
+    if !done || (status & SDHCI_INT_ERROR) != 0 {
+        return i64::MIN;
+    }
+
+    // Ack CMD_COMPLETE.
+    unsafe { w32(mmio_rw, SDHCI_INT_STATUS, SDHCI_INT_CMD_COMPLETE) };
+
+    unsafe { r32(mmio_ro, SDHCI_RESPONSE) as i64 }
+}
+
+/// Configure clock divider for ~400 kHz initial-state clock. The base
+/// clock comes from CAPABILITIES bits [13:8]. We divide by N (placed
+/// in CLOCK_CONTROL bits [15:8] for 10-bit divider; 8-bit on v2.0).
+/// Then enable internal clock, wait stable, enable SD clock to card.
+fn setup_clock(mmio_ro: *const u8, mmio_rw: *mut u8, caps: u64) {
+    let base_clock_mhz = ((caps >> 8) & 0xFF) as u32;
+    let base_clock_hz = base_clock_mhz * 1_000_000;
+    let target_hz = 400_000u32;
+
+    // Divisor: floor(base / (2 * target)). Clamped to 1..=0x80.
+    let mut div: u32 = if base_clock_hz > 0 && target_hz > 0 {
+        base_clock_hz / (target_hz * 2)
+    } else {
+        1
+    };
+    if div == 0 { div = 1; }
+    if div > 0x80 { div = 0x80; }
+
+    // Encode divisor in CLOCK_CONTROL bits [15:8] (8-bit SDHCI 2.0
+    // encoding is "div / 2 in bits [15:8]"; we use the simpler form).
+    let div_byte = (div & 0xFF) as u16;
+    let clk = (div_byte << 8) | SDHCI_CLOCK_INT_EN;
+    unsafe { w16(mmio_rw, SDHCI_CLOCK_CONTROL, clk) };
+
+    // Wait for internal clock stable.
+    for _ in 0..1_000_000 {
+        let r = unsafe { r16(mmio_ro, SDHCI_CLOCK_CONTROL) };
+        if r & SDHCI_CLOCK_INT_STABLE != 0 { break; }
+    }
+
+    // Enable SD clock output to the card.
+    let clk2 = clk | SDHCI_CLOCK_SD_EN;
+    unsafe { w16(mmio_rw, SDHCI_CLOCK_CONTROL, clk2) };
+}
+
+/// Power up the SD card at 3.3 V.
+fn setup_power(mmio_rw: *mut u8) {
+    unsafe { w8(mmio_rw, SDHCI_POWER_CONTROL, SDHCI_POWER_330) };
+    // Tiny settle delay (just MMIO reads, no IRQ involvement).
+    for _ in 0..10_000 {
+        let _ = unsafe { core::ptr::read_volatile(mmio_rw.add(SDHCI_POWER_CONTROL as usize)) };
+    }
+    unsafe { w8(mmio_rw, SDHCI_POWER_CONTROL, SDHCI_POWER_330 | SDHCI_POWER_ON) };
+}
+
+/// SD card init: CMD0 / CMD8 / ACMD41 / CMD2 / CMD3 / CMD7. Stores
+/// the assigned RCA in I915State.rca_unused (we add a new field).
+/// Returns 0 on success, negative on failure.
+fn sd_card_init(mmio_ro: *const u8, mmio_rw: *mut u8) -> Result<u32, i32> {
+    // CMD0: GO_IDLE_STATE. No response.
+    let _ = issue_cmd(mmio_ro, mmio_rw, 0, 0, SDHCI_CMD_RESP_NONE, false);
+
+    // CMD8: SEND_IF_COND. Voltage 2.7-3.6V (0x100), check pattern 0xAA.
+    let cmd8_arg = 0x1AAu32;
+    let r = issue_cmd(mmio_ro, mmio_rw, 8, cmd8_arg,
+                      SDHCI_CMD_RESP_R48 | SDHCI_CMD_CRC_CHECK | SDHCI_CMD_INDEX_CHECK,
+                      false);
+    let is_sdv2 = r != i64::MIN && (r as u32 & 0xFF) == 0xAA;
+
+    // ACMD41 loop: CMD55 + ACMD41 until card returns ready.
+    let acmd41_arg = if is_sdv2 { 0x4030_0000u32 } else { 0x0030_0000u32 };
+    let mut ocr: u32 = 0;
+    let mut ok = false;
+    for _ in 0..1000 {
+        let _ = issue_cmd(mmio_ro, mmio_rw, 55, 0,
+                          SDHCI_CMD_RESP_R48 | SDHCI_CMD_CRC_CHECK | SDHCI_CMD_INDEX_CHECK,
+                          false);
+        let r = issue_cmd(mmio_ro, mmio_rw, 41, acmd41_arg,
+                          SDHCI_CMD_RESP_R48, false);
+        if r == i64::MIN { continue; }
+        ocr = r as u32;
+        if ocr & 0x8000_0000 != 0 { ok = true; break; }
+        for _ in 0..50_000 {
+            let _ = unsafe { r32(mmio_ro, SDHCI_PRESENT_STATE) };
+        }
+    }
+    if !ok { return Err(-101); }
+
+    // CMD2: ALL_SEND_CID. R2 (136-bit).
+    let _ = issue_cmd(mmio_ro, mmio_rw, 2, 0,
+                      SDHCI_CMD_RESP_R136 | SDHCI_CMD_CRC_CHECK,
+                      false);
+
+    // CMD3: SEND_RELATIVE_ADDR. R6 returns RCA in upper 16 bits.
+    let r = issue_cmd(mmio_ro, mmio_rw, 3, 0,
+                      SDHCI_CMD_RESP_R48 | SDHCI_CMD_CRC_CHECK | SDHCI_CMD_INDEX_CHECK,
+                      false);
+    if r == i64::MIN { return Err(-103); }
+    let rca = ((r as u32) >> 16) & 0xFFFF;
+
+    // CMD9: SEND_CSD with RCA. R2 (136-bit). We skip parsing for now.
+    let _ = issue_cmd(mmio_ro, mmio_rw, 9, rca << 16,
+                      SDHCI_CMD_RESP_R136 | SDHCI_CMD_CRC_CHECK,
+                      false);
+
+    // CMD7: SELECT_CARD with RCA. R1b (with busy).
+    let r = issue_cmd(mmio_ro, mmio_rw, 7, rca << 16,
+                      SDHCI_CMD_RESP_R48_BUSY | SDHCI_CMD_CRC_CHECK | SDHCI_CMD_INDEX_CHECK,
+                      false);
+    if r == i64::MIN { return Err(-107); }
+
+    Ok(rca)
+}
+
+static mut SDHCI_RCA: u32 = 0;
+static mut SDHCI_CARD_READY: bool = false;
+
+/// Phase 2 entry point: power+clock the controller, run SD card init,
+/// stash the RCA. Returns 0 on success. Call after sdhci_init.
+#[unsafe(no_mangle)]
+pub extern "C" fn sdhci_card_init() -> i32 {
+    let st = STATE.get();
+    if !unsafe { (*st).initialized } {
+        log("sdhci_card_init: controller not initialized");
+        return -1;
+    }
+    let mmio = unsafe { (*st).mmio_base };
+    if mmio.is_null() { return -2; }
+    if !unsafe { (*st).card_inserted } {
+        log("sdhci_card_init: no card present at probe");
+        return -3;
+    }
+
+    let caps = unsafe { (*st).capabilities };
+    setup_power(mmio);
+    setup_clock(mmio, mmio, caps);
+
+    match sd_card_init(mmio, mmio) {
+        Ok(rca) => {
+            unsafe { fut_printf(b"sdhci: SD card initialized; RCA=0x%04x\n\0".as_ptr(), rca); }
+            unsafe {
+                core::ptr::write(core::ptr::addr_of_mut!(SDHCI_RCA), rca);
+                core::ptr::write(core::ptr::addr_of_mut!(SDHCI_CARD_READY), true);
+            }
+            0
+        }
+        Err(rc) => {
+            unsafe { fut_printf(b"sdhci: SD card init failed: %d\n\0".as_ptr(), rc); }
+            rc
+        }
+    }
+}
+
+/// Single-block PIO write to LBA `lba` from a 512-byte buffer.
+/// CMD24 (WRITE_BLOCK). Returns 0 on success.
+#[unsafe(no_mangle)]
+pub extern "C" fn sdhci_write_block(lba: u32, buf: *const u8) -> i32 {
+    if !unsafe { core::ptr::read(core::ptr::addr_of!(SDHCI_CARD_READY)) } { return -1; }
+    if buf.is_null() { return -2; }
+    let st = STATE.get();
+    let mmio = unsafe { (*st).mmio_base };
+    if mmio.is_null() { return -3; }
+
+    // BLOCK_SIZE = 512, BLOCK_COUNT = 1, TRANSFER_MODE = write (READ=0).
+    unsafe {
+        w16(mmio, SDHCI_BLOCK_SIZE, 512);
+        w16(mmio, SDHCI_BLOCK_COUNT, 1);
+        w16(mmio, SDHCI_TRANSFER_MODE, 0);  /* write, no-DMA */
+    }
+
+    let r = issue_cmd(mmio, mmio, 24, lba,
+                      SDHCI_CMD_RESP_R48 | SDHCI_CMD_CRC_CHECK |
+                      SDHCI_CMD_INDEX_CHECK | SDHCI_CMD_DATA,
+                      true);
+    if r == i64::MIN { return -4; }
+
+    // Wait for BUFFER_WRITE_READY then PIO-write 512 bytes as DWORDs.
+    let mut ready = false;
+    for _ in 0..2_000_000 {
+        let status = unsafe { r32(mmio, SDHCI_INT_STATUS) };
+        if status & SDHCI_INT_ERROR != 0 { return -5; }
+        if status & SDHCI_INT_BUF_WR_READY != 0 { ready = true; break; }
+    }
+    if !ready { return -6; }
+    unsafe { w32(mmio, SDHCI_INT_STATUS, SDHCI_INT_BUF_WR_READY) };
+
+    for i in 0..128 {  /* 128 DWORDs = 512 bytes */
+        let off = i * 4;
+        let dw = unsafe {
+            (*buf.add(off) as u32)
+            | ((*buf.add(off + 1) as u32) << 8)
+            | ((*buf.add(off + 2) as u32) << 16)
+            | ((*buf.add(off + 3) as u32) << 24)
+        };
+        unsafe { w32(mmio, SDHCI_BUFFER, dw) };
+    }
+
+    // Wait for XFER_COMPLETE.
+    let mut done = false;
+    for _ in 0..2_000_000 {
+        let status = unsafe { r32(mmio, SDHCI_INT_STATUS) };
+        if status & SDHCI_INT_ERROR != 0 { return -7; }
+        if status & SDHCI_INT_XFER_COMPLETE != 0 { done = true; break; }
+    }
+    if !done { return -8; }
+    unsafe { w32(mmio, SDHCI_INT_STATUS, SDHCI_INT_XFER_COMPLETE) };
+
+    0
+}
+
+/// Append a message to the SD-card log block. We reserve LBA `lba_base`
+/// for the log; each call rewrites the entire block with the prior
+/// content plus the new message, NUL-padded. ~1 KB total log capacity
+/// (we use 2 blocks). Crude but enough for post-CR3 breadcrumbs.
+static mut LOG_LBA_BASE: u32 = 8192;  /* 4 MiB into card; far from FS metadata */
+static mut LOG_BUF: [u8; 1024] = [0; 1024];
+static mut LOG_USED: usize = 0;
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sdhci_log_set_lba(lba: u32) {
+    unsafe { core::ptr::write(core::ptr::addr_of_mut!(LOG_LBA_BASE), lba); }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sdhci_log_write(msg: *const u8, len: usize) -> i32 {
+    if !unsafe { core::ptr::read(core::ptr::addr_of!(SDHCI_CARD_READY)) } { return -1; }
+    if msg.is_null() || len == 0 { return 0; }
+
+    let buf_ptr: *mut u8 = unsafe { core::ptr::addr_of_mut!(LOG_BUF) as *mut u8 };
+    let buf_cap: usize = unsafe { (*core::ptr::addr_of!(LOG_BUF)).len() };
+    let used: usize = unsafe { core::ptr::read(core::ptr::addr_of!(LOG_USED)) };
+    let space = buf_cap.saturating_sub(used);
+    let copy_len = if len > space { space } else { len };
+
+    unsafe {
+        for i in 0..copy_len {
+            core::ptr::write(buf_ptr.add(used + i), *msg.add(i));
+        }
+        core::ptr::write(core::ptr::addr_of_mut!(LOG_USED), used + copy_len);
+    }
+
+    // Flush both 512-byte halves back to the card on every call.
+    // Slow but reliable; trampoline only logs a handful of times.
+    let lba_base = unsafe { core::ptr::read(core::ptr::addr_of!(LOG_LBA_BASE)) };
+    unsafe {
+        let rc = sdhci_write_block(lba_base,     buf_ptr);
+        if rc != 0 { return rc; }
+        let rc = sdhci_write_block(lba_base + 1, buf_ptr.add(512));
+        if rc != 0 { return rc; }
+    }
+    0
+}

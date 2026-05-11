@@ -851,7 +851,7 @@ void fut_platform_init(uint32_t multiboot_magic __attribute__((unused)),
      * if scroll position is at the bottom and the top of the boot log
      * has scrolled past. */
     fut_printf("################################################\n");
-    fut_printf("[BUILD] Futura kernel built %s %s (iter-59: SDHCI phase 1 - probe + BAR + reset)\n",
+    fut_printf("[BUILD] Futura kernel built %s %s (iter-60: SDHCI phase 2 - card init + write)\n",
                __DATE__, __TIME__);
     fut_printf("################################################\n");
 
@@ -1051,8 +1051,13 @@ void fut_early_trap_marker(void *regs_ptr) {
     }
 
     switch ((uint64_t)regs->vector) {
+        case 3:
+        case 6:
         case 1:
         case 8:
+        case 10:
+        case 11:
+        case 12:
         case 13:
         case 14:
             break;

@@ -21,6 +21,7 @@
 
 #include <platform/x86_64/memory/paging.h>
 #include <platform/x86_64/memory/pmap.h>
+#include <platform/x86_64/gdt.h>
 #include <platform/x86_64/interrupt/lapic.h>
 #include <platform/x86_64/regs.h>
 #include <arch/x86_64/msr.h>
@@ -50,7 +51,13 @@ static bool g_bisect_mask_timer_before_first_user = true;
 /* Diagnostic: briefly execute under the target CR3, then restore the original
  * CR3 and report the result. This avoids depending on the console path while
  * the target CR3 is active. */
-static bool g_bisect_probe_kernel_cr3_roundtrip = true;
+static bool g_bisect_probe_kernel_cr3_roundtrip = false;
+/* Diagnostic: replace the real ELF entry with a synthetic userspace
+ * probe (`ud2`) so we can tell whether the CPU retires even a single user
+ * instruction on hardware. */
+static bool g_bisect_user_ud2_probe = true;
+
+#define BISECT_USER_INT3_VA 0x0000000000500000ULL
 
 static void bisect_walk_target_va(const char *tag, uint64_t root_cr3, uint64_t va) {
     uint64_t *pml4 = (uint64_t *)((root_cr3 & ~0xFFFULL) | KERNEL_VIRTUAL_BASE);
@@ -229,6 +236,33 @@ static size_t kstrlen(const char *s) {
 
 static inline fut_vmem_context_t *mm_context(fut_mm_t *mm) {
     return fut_mm_context(mm);
+}
+
+static int stage_bisect_user_ud2_page(fut_mm_t *mm, uint64_t *out_entry) {
+    uint8_t *page = fut_pmm_alloc_page();
+    if (!page) {
+        return -ENOMEM;
+    }
+
+    memset(page, 0x90, PAGE_SIZE);
+    page[0] = 0x0F; /* ud2 */
+    page[1] = 0x0B;
+    page[2] = 0xEB; /* jmp . */
+    page[3] = 0xFE;
+
+    phys_addr_t phys = pmap_virt_to_phys((uintptr_t)page);
+    int rc = pmap_map_user(mm_context(mm),
+                           BISECT_USER_INT3_VA,
+                           phys,
+                           PAGE_SIZE,
+                           PTE_PRESENT | PTE_USER);
+    if (rc != 0) {
+        fut_pmm_free_page(page);
+        return rc;
+    }
+
+    *out_entry = BISECT_USER_INT3_VA;
+    return 0;
 }
 
 /* REMOVED: Duplicate definition - see line 1049 for active implementation */
@@ -854,6 +888,18 @@ static int build_user_stack(fut_mm_t *mm,
         __asm__ volatile("sti");  /* Re-enable before exit */
         extern void fut_thread_exit(void);
         fut_thread_exit();
+    }
+
+    if (g_bisect_user_ud2_probe) {
+        uint64_t probe_entry = 0;
+        int probe_rc = stage_bisect_user_ud2_page(mm, &probe_entry);
+        if (probe_rc != 0) {
+            fut_printf("[BISECT-UD2] failed to stage probe page rc=%d\n", probe_rc);
+            fut_platform_panic("[BISECT-UD2] unable to install synthetic user probe");
+        }
+        entry = probe_entry;
+        fut_printf("[BISECT-UD2] synthetic user entry armed at 0x%llx\n",
+                   (unsigned long long)entry);
     }
 
 #ifdef DEBUG_USER_TRAMPOLINE

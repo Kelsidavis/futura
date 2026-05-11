@@ -1932,12 +1932,18 @@ void fut_kernel_main(void) {
     }
 
     /* Storage — SDHCI (Intel Apollo Lake / Gemini Lake on-board SD).
-     * Phase 1 driver: PCI probe + BAR map + version readout + soft
-     * reset. Card init and block writes come in phase 2; this entry
-     * just confirms the controller is reachable from kernel space. */
+     * Phase 1: PCI probe + BAR map + soft reset.
+     * Phase 2: SD card init (CMD0/8/55+41/2/3/9/7) + single-block
+     * PIO writes. After this, sdhci_log_write(msg, len) writes a
+     * string to LBA 8192 of the SD card — a fb_console-independent
+     * log channel from any kernel context (including post-CR3 paths
+     * where the framebuffer route is suspect). */
     {
         extern int sdhci_init(void);
-        sdhci_init();
+        extern int sdhci_card_init(void);
+        if (sdhci_init() == 0) {
+            sdhci_card_init();
+        }
     }
 
     /* USB host + device class drivers */

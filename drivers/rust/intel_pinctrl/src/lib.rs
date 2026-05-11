@@ -130,18 +130,32 @@ const P2SB_E0H_HIDE_BYTE: u8 = 0xE1;
 
 const SBREG_BAR_SIZE: usize = 16 * 1024 * 1024;
 
-// ── Communities (Apollo Lake / Gemini Lake) ──
+// ── Communities ──
+//
+// Apollo Lake (BXT) and Gemini Lake (GLK) both use 4 communities but
+// the PortIDs and the count/identity of communities differ.
+//
+//                     Apollo Lake     Gemini Lake
+//   NORTH              0xC4            0xC5  (swapped)
+//   NORTHWEST          0xC5            0xC4  (swapped)
+//   WEST               0xC7            — (removed)
+//   SOUTHWEST          0xC0            — (renamed to SCC)
+//   AUDIO              —               0xC8  (new)
+//   SCC (SD/eMMC pins) —               0xC0  (renamed from SOUTHWEST)
+//
+// iter-70 used the Apollo Lake set and saw NORTH/NORTHWEST come up
+// (with all-zero pads) but WEST and SOUTHWEST returned all-0xff,
+// confirming those PortIDs aren't valid on this Gemini Lake chip.
 
-const COMMUNITY_NORTH:     u8 = 0xC4;
-const COMMUNITY_NORTHWEST: u8 = 0xC5;
-const COMMUNITY_WEST:      u8 = 0xC7;
-const COMMUNITY_SOUTHWEST: u8 = 0xC0;
+const COMMUNITY_GLK_NORTH:     u8 = 0xC5;
+const COMMUNITY_GLK_NORTHWEST: u8 = 0xC4;
+const COMMUNITY_GLK_AUDIO:     u8 = 0xC8;
+const COMMUNITY_GLK_SCC:       u8 = 0xC0;
 
 /// Per-community offset where the pad config block starts. Apollo
-/// Lake uses 0x500; Gemini Lake uses 0x500 too in practice (the
-/// Linux driver branches but both end up at the same place for the
-/// pads we care about).
-const PAD_BASE_APL: u32 = 0x500;
+/// Lake uses 0x500; Gemini Lake uses 0x600. Pads are 8 bytes each
+/// (DW0 + DW1).
+const PAD_BASE_GLK: u32 = 0x600;
 
 // ── Driver state ──
 
@@ -343,46 +357,64 @@ pub extern "C" fn intel_pinctrl_init() -> i32 {
         (*st).initialized = true;
     }
 
-    /* Dump first 16 pads of each community. PAD_CFG_DW0 layout:
+    /* Broad PortID probe: read DW0 of pad 0 (at both candidate bases
+     * 0x500 and 0x600) for every PortID 0xC0..0xCC. A community is
+     * "live" if at least one read isn't all-0xff. Tells us which
+     * communities actually exist on this chip without committing to
+     * an APL-vs-GLK assumption. */
+    unsafe { fut_printf(b"pinctrl: PortID liveness probe (DW0 of pad 0):\n\0".as_ptr()); }
+    for port in 0xC0u32..=0xCCu32 {
+        let community_off = port << 16;
+        let at500 = unsafe { r32(sbreg, community_off + 0x500) };
+        let at600 = unsafe { r32(sbreg, community_off + 0x600) };
+        let live500 = at500 != 0xFFFF_FFFF;
+        let live600 = at600 != 0xFFFF_FFFF;
+        unsafe {
+            fut_printf(
+                b"pinctrl:   port=0x%02x dw0@0x500=0x%08x %s  dw0@0x600=0x%08x %s\n\0".as_ptr(),
+                port,
+                at500, if live500 { b"LIVE\0".as_ptr() } else { b"void\0".as_ptr() },
+                at600, if live600 { b"LIVE\0".as_ptr() } else { b"void\0".as_ptr() },
+            );
+        }
+    }
+
+    /* Detailed dump of the Gemini Lake SCC community — where the
+     * SD/eMMC pins actually live, including SD_VDD_EN. 32 pads at
+     * the GLK base offset 0x600. PAD_CFG_DW0 layout:
      *   [31:24] PADRSTCFG / OWN
-     *   [13:10] PMODE — 0 = GPIO, 1 = native mode 1, ...
+     *   [13:10] PMODE — 0 = GPIO, 1+ = native function
      *   [9]     GPIORXDIS — 1 = disable input
      *   [8]     GPIOTXDIS — 1 = disable output
      *   [1]     GPIORXSTATE — current input level
      *   [0]     GPIOTXSTATE — driven output level
-     *
-     * Look for any pad with GPIOTXDIS=0 and GPIOTXSTATE asserting
-     * something SD-power-related. The actual mapping is board-
-     * specific; we just dump and the user identifies. */
-    for (name, port) in [
-        ("NORTH",     COMMUNITY_NORTH),
-        ("NORTHWEST", COMMUNITY_NORTHWEST),
-        ("WEST",      COMMUNITY_WEST),
-        ("SOUTHWEST", COMMUNITY_SOUTHWEST),
-    ] {
-        let community_off: u32 = (port as u32) << 16;
+     */
+    let scc_off: u32 = (COMMUNITY_GLK_SCC as u32) << 16;
+    unsafe {
+        fut_printf(b"pinctrl: SCC (port=0x%02x) detailed dump (PAD_BASE=0x600):\n\0".as_ptr(),
+                   COMMUNITY_GLK_SCC as u32);
+    }
+    for pad_idx in 0u32..32 {
+        let dw0_off = scc_off + PAD_BASE_GLK + pad_idx * 8;
+        let dw1_off = dw0_off + 4;
+        let dw0 = unsafe { r32(sbreg, dw0_off) };
+        let dw1 = unsafe { r32(sbreg, dw1_off) };
+        if dw0 == 0xFFFF_FFFF { continue; }  /* skip non-existent pads */
+        let pmode    = (dw0 >> 10) & 0xF;
+        let gpio_rxd = (dw0 >> 9)  & 0x1;
+        let gpio_txd = (dw0 >> 8)  & 0x1;
+        let rxstate  = (dw0 >> 1)  & 0x1;
+        let txstate  = dw0 & 0x1;
+        let role = if pmode == 0 {
+            if gpio_txd == 0 { b"GPIO-OUT\0".as_ptr() } else { b"GPIO-IN\0".as_ptr() }
+        } else {
+            b"native\0".as_ptr()
+        };
         unsafe {
             fut_printf(
-                b"pinctrl: community %s (port=0x%02x) pad-config dump:\n\0".as_ptr(),
-                name.as_ptr(),
-                port as u32,
+                b"pinctrl:   scc[%2u] dw0=0x%08x dw1=0x%08x pmode=%u rxdis=%u txdis=%u rx=%u tx=%u (%s)\n\0".as_ptr(),
+                pad_idx, dw0, dw1, pmode, gpio_rxd, gpio_txd, rxstate, txstate, role,
             );
-        }
-        for pad_idx in 0u32..16 {
-            let dw0_off = community_off + PAD_BASE_APL + pad_idx * 8;
-            let dw1_off = dw0_off + 4;
-            let dw0 = unsafe { r32(sbreg, dw0_off) };
-            let dw1 = unsafe { r32(sbreg, dw1_off) };
-            let pmode    = (dw0 >> 10) & 0xF;
-            let gpio_rxd = (dw0 >> 9)  & 0x1;
-            let gpio_txd = (dw0 >> 8)  & 0x1;
-            let txstate  = dw0 & 0x1;
-            unsafe {
-                fut_printf(
-                    b"pinctrl:   pad %2u dw0=0x%08x dw1=0x%08x pmode=%u rxdis=%u txdis=%u tx=%u\n\0".as_ptr(),
-                    pad_idx, dw0, dw1, pmode, gpio_rxd, gpio_txd, txstate,
-                );
-            }
         }
     }
 
@@ -407,7 +439,7 @@ pub extern "C" fn intel_pinctrl_set_gpio_out(port_id: u32, pad_idx: u32, value: 
     if base.is_null() { return -2; }
 
     let community_off: u32 = port_id << 16;
-    let dw0_off = community_off + PAD_BASE_APL + pad_idx * 8;
+    let dw0_off = community_off + PAD_BASE_GLK + pad_idx * 8;
     let mut dw0 = unsafe { r32(base, dw0_off) };
 
     // Force PMODE = 0 (GPIO).

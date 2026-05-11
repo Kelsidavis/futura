@@ -851,7 +851,7 @@ void fut_platform_init(uint32_t multiboot_magic __attribute__((unused)),
      * if scroll position is at the bottom and the top of the boot log
      * has scrolled past. */
     fut_printf("################################################\n");
-    fut_printf("[BUILD] Futura kernel built %s %s (iter-67: SDHCI voltage select from caps)\n",
+    fut_printf("[BUILD] Futura kernel built %s %s (iter-68: intel_pinctrl P2SB probe + pad dump)\n",
                __DATE__, __TIME__);
     fut_printf("################################################\n");
 

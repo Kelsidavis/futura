@@ -1931,6 +1931,17 @@ void fut_kernel_main(void) {
         nvme_init();
     }
 
+    /* Intel SoC pin controller (Apollo Lake / Gemini Lake P2SB).
+     * Required before SDHCI on these SoCs: the on-board SD slot's
+     * Vdd rail is gated by an SoC GPIO that ACPI _PS0 normally
+     * configures, but we have no ACPI interpreter. Phase 1 just
+     * dumps the pad config of each community so we can identify
+     * which pad drives SD_VDD; phase 2 (future) toggles it. */
+    {
+        extern int intel_pinctrl_init(void);
+        intel_pinctrl_init();
+    }
+
     /* Storage — SDHCI (Intel Apollo Lake / Gemini Lake on-board SD).
      * Phase 1: PCI probe + BAR map + soft reset.
      * Phase 2: SD card init (CMD0/8/55+41/2/3/9/7) + single-block

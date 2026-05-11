@@ -1,0 +1,371 @@
+// SPDX-License-Identifier: MPL-2.0
+//
+// intel_pinctrl.rs — phase 1 of the Intel SoC pin-controller driver.
+//
+// Target: Apollo Lake / Gemini Lake (Broxton-family) on-SoC GPIO,
+// accessed via the P2SB (Primary-to-Sideband) bridge. P2SB lives at
+// PCI 00:0d.0 and (per Intel's convention) is *hidden* by firmware
+// after early boot. We have to write 0x00 to PCI config register
+// 0xE0 of the bridge to unhide it before we can read BAR0.
+//
+// SBREG_BAR (BAR0 of P2SB) is a 16 MiB MMIO window. Communities are
+// addressed by an 8-bit PortID, with each community's registers at
+// SBREG_BAR + (PortID << 16). Per Linux's pinctrl-broxton.c:
+//
+//   Community         PortID  Comment
+//   ---------         ------  -------
+//   North              0xC4
+//   NorthWest          0xC5
+//   West               0xC7
+//   SouthWest          0xC0
+//
+// Within a community, the per-pad config registers (DW0/DW1) start
+// at offset 0x500 (Apollo Lake) or 0x600 (Gemini Lake), 8 bytes per
+// pad. PAD_CFG_DW0 controls direction, output value, alt-function;
+// PAD_CFG_DW1 controls pull / termination.
+//
+// Phase 1 scope:
+//   - P2SB PCI detect (vendor 0x8086, device 0x5A92 / 0x319B).
+//   - P2SB unhide (write 0 to PCI config 0xE0).
+//   - Map SBREG_BAR (16 MiB).
+//   - Dump the first N pad PAD_CFG_DW0 values for each known
+//     community so we can identify which pad currently drives the
+//     SD slot voltage rail.
+//
+// Phase 2 (next iter): actually toggle the identified pad to GPIO
+// output high, drive SD_VDD_EN, and call sdhci_card_init from a
+// fresh power-up state. For now we only OBSERVE.
+//
+// References:
+//   - Linux drivers/pinctrl/intel/pinctrl-broxton.c
+//   - Linux drivers/mfd/intel-p2sb.c (P2SB unhide quirk)
+//   - Intel Apollo Lake EDS Volume 3 (Pad Configuration)
+
+#![no_std]
+#![forbid(unsafe_op_in_unsafe_fn)]
+#![allow(unexpected_cfgs)]
+
+use core::cell::UnsafeCell;
+use core::ffi::c_void;
+use common::{log, map_mmio_region, MMIO_DEFAULT_FLAGS};
+
+unsafe extern "C" {
+    fn fut_printf(fmt: *const u8, ...);
+}
+
+// ── PCI I/O ──
+
+const PCI_CONFIG_ADDR: u16 = 0x0CF8;
+const PCI_CONFIG_DATA: u16 = 0x0CFC;
+
+fn pci_config_addr(bus: u8, dev: u8, func: u8, offset: u8) -> u32 {
+    (1u32 << 31)
+        | ((bus as u32) << 16)
+        | ((dev as u32) << 11)
+        | ((func as u32) << 8)
+        | ((offset as u32) & 0xFC)
+}
+
+fn pci_read32(bus: u8, dev: u8, func: u8, offset: u8) -> u32 {
+    let addr = pci_config_addr(bus, dev, func, offset);
+    unsafe {
+        core::arch::asm!("out dx, eax", in("dx") PCI_CONFIG_ADDR, in("eax") addr);
+        let val: u32;
+        core::arch::asm!("in eax, dx", in("dx") PCI_CONFIG_DATA, out("eax") val);
+        val
+    }
+}
+
+fn pci_write32(bus: u8, dev: u8, func: u8, offset: u8, val: u32) {
+    let addr = pci_config_addr(bus, dev, func, offset);
+    unsafe {
+        core::arch::asm!("out dx, eax", in("dx") PCI_CONFIG_ADDR, in("eax") addr);
+        core::arch::asm!("out dx, eax", in("dx") PCI_CONFIG_DATA, in("eax") val);
+    }
+}
+
+fn pci_read8(bus: u8, dev: u8, func: u8, offset: u8) -> u8 {
+    let dw = pci_read32(bus, dev, func, offset & 0xFC);
+    ((dw >> ((offset & 0x3) * 8)) & 0xFF) as u8
+}
+
+fn pci_write8(bus: u8, dev: u8, func: u8, offset: u8, val: u8) {
+    let aligned = offset & 0xFC;
+    let shift = (offset & 0x3) * 8;
+    let mask = 0xFFu32 << shift;
+    let dw = pci_read32(bus, dev, func, aligned);
+    let new = (dw & !mask) | ((val as u32) << shift);
+    pci_write32(bus, dev, func, aligned, new);
+}
+
+// ── P2SB ──
+
+const PCI_VENDOR_INTEL: u16 = 0x8086;
+
+/// P2SB PCI device IDs we recognize.
+/// 0x5A92 — Apollo Lake
+/// 0x319B — Gemini Lake
+const P2SB_DEVICE_IDS: &[u16] = &[0x5A92, 0x319B];
+
+/// P2SB Hide register. Setting bit 0 hides the P2SB device from PCI
+/// scans; clearing bit 0 reveals it. Firmware on Apollo/Gemini Lake
+/// platforms usually leaves bit 0 set, so the device reads as
+/// vendor=0xFFFF until we unhide it.
+const P2SB_E0H_HIDE: u8 = 0xE0;
+
+const SBREG_BAR_SIZE: usize = 16 * 1024 * 1024;
+
+// ── Communities (Apollo Lake / Gemini Lake) ──
+
+const COMMUNITY_NORTH:     u8 = 0xC4;
+const COMMUNITY_NORTHWEST: u8 = 0xC5;
+const COMMUNITY_WEST:      u8 = 0xC7;
+const COMMUNITY_SOUTHWEST: u8 = 0xC0;
+
+/// Per-community offset where the pad config block starts. Apollo
+/// Lake uses 0x500; Gemini Lake uses 0x500 too in practice (the
+/// Linux driver branches but both end up at the same place for the
+/// pads we care about).
+const PAD_BASE_APL: u32 = 0x500;
+
+// ── Driver state ──
+
+struct StaticCell<T>(UnsafeCell<T>);
+unsafe impl<T> Sync for StaticCell<T> {}
+impl<T> StaticCell<T> {
+    const fn new(v: T) -> Self { Self(UnsafeCell::new(v)) }
+    fn get(&self) -> *mut T { self.0.get() }
+}
+
+#[repr(C)]
+struct PinctrlState {
+    pub initialized: bool,
+    pub bus: u8,
+    pub dev: u8,
+    pub func: u8,
+    pub vendor: u16,
+    pub device: u16,
+    pub sbreg_phys: u64,
+    pub sbreg_base: *mut u8,
+}
+
+unsafe impl Send for PinctrlState {}
+unsafe impl Sync for PinctrlState {}
+
+static STATE: StaticCell<PinctrlState> = StaticCell::new(PinctrlState {
+    initialized: false,
+    bus: 0,
+    dev: 0,
+    func: 0,
+    vendor: 0,
+    device: 0,
+    sbreg_phys: 0,
+    sbreg_base: core::ptr::null_mut(),
+});
+
+#[inline(always)]
+unsafe fn r32(base: *const u8, offset: u32) -> u32 {
+    unsafe { core::ptr::read_volatile(base.add(offset as usize) as *const u32) }
+}
+
+#[inline(always)]
+#[allow(dead_code)]
+unsafe fn w32(base: *mut u8, offset: u32, val: u32) {
+    unsafe { core::ptr::write_volatile(base.add(offset as usize) as *mut u32, val) }
+}
+
+// ── PCI scan + unhide ──
+
+fn find_p2sb() -> Option<(u8, u8, u8, u16, u16)> {
+    /* P2SB is conventionally at 00:0d.0 on Broxton-family SoCs. Try
+     * that first by reading directly; if it's hidden, attempt the
+     * unhide quirk before scanning. */
+    let direct = pci_read32(0, 0x0d, 0, 0);
+    let vendor = (direct & 0xFFFF) as u16;
+    if vendor == PCI_VENDOR_INTEL {
+        let device = (direct >> 16) as u16;
+        if P2SB_DEVICE_IDS.contains(&device) {
+            return Some((0, 0x0d, 0, vendor, device));
+        }
+    }
+
+    /* Try the unhide trick: even when read as 0xFFFF the config
+     * write to register 0xE0 still lands. Clear bit 0 to reveal. */
+    pci_write8(0, 0x0d, 0, P2SB_E0H_HIDE, 0);
+    let after = pci_read32(0, 0x0d, 0, 0);
+    let vendor = (after & 0xFFFF) as u16;
+    let device = (after >> 16) as u16;
+    if vendor == PCI_VENDOR_INTEL && P2SB_DEVICE_IDS.contains(&device) {
+        unsafe {
+            fut_printf(b"pinctrl: unhid P2SB at 00:0d.0 (was hidden by firmware)\n\0".as_ptr());
+        }
+        return Some((0, 0x0d, 0, vendor, device));
+    }
+
+    /* Fall back: scan bus 0 for any P2SB-family device. */
+    for dev in 0u8..32 {
+        for func in 0u8..8 {
+            let dw = pci_read32(0, dev, func, 0);
+            let v = (dw & 0xFFFF) as u16;
+            if v != PCI_VENDOR_INTEL { continue; }
+            let d = (dw >> 16) as u16;
+            if P2SB_DEVICE_IDS.contains(&d) {
+                return Some((0, dev, func, v, d));
+            }
+        }
+    }
+    None
+}
+
+// ── Public C API ──
+
+const PCI_CFG_BAR0_LO: u8 = 0x10;
+const PCI_CFG_BAR0_HI: u8 = 0x14;
+const PCI_CFG_COMMAND: u8 = 0x04;
+
+/// Phase 1: detect the P2SB bridge, unhide it if firmware hid it,
+/// map SBREG_BAR, and dump the first N pad config words of each
+/// community so we can identify which pad drives the SD slot
+/// voltage rail. Returns 0 on success, negative on failure.
+#[unsafe(no_mangle)]
+pub extern "C" fn intel_pinctrl_init() -> i32 {
+    log("pinctrl: probing Intel P2SB bridge at 00:0d.0");
+
+    let (bus, dev, func, vendor, device) = match find_p2sb() {
+        Some(v) => v,
+        None => {
+            log("pinctrl: no P2SB bridge found — SoC GPIO unavailable");
+            return -1;
+        }
+    };
+    unsafe {
+        fut_printf(
+            b"pinctrl: P2SB at %02x:%02x.%x vendor=0x%04x device=0x%04x\n\0".as_ptr(),
+            bus as u32, dev as u32, func as u32,
+            vendor as u32, device as u32,
+        );
+    }
+
+    /* Enable memory-space + bus-master in PCI command. */
+    let mut cmd = pci_read32(bus, dev, func, PCI_CFG_COMMAND) & 0xFFFF;
+    if (cmd & 0x0006) != 0x0006 {
+        cmd |= 0x0006;
+        pci_write32(bus, dev, func, PCI_CFG_COMMAND, cmd);
+    }
+
+    /* P2SB BAR0 is a 64-bit MMIO BAR. */
+    let bar0_lo = pci_read32(bus, dev, func, PCI_CFG_BAR0_LO);
+    let bar0_hi = pci_read32(bus, dev, func, PCI_CFG_BAR0_HI);
+    let sbreg_phys: u64 = ((bar0_hi as u64) << 32) | ((bar0_lo as u64) & !0x0Fu64);
+    if sbreg_phys == 0 {
+        log("pinctrl: P2SB BAR0 not programmed by firmware");
+        return -2;
+    }
+    unsafe {
+        fut_printf(b"pinctrl: SBREG_BAR phys=0x%llx (16 MiB)\n\0".as_ptr(), sbreg_phys);
+    }
+
+    let sbreg = unsafe { map_mmio_region(sbreg_phys, SBREG_BAR_SIZE, MMIO_DEFAULT_FLAGS) };
+    if sbreg.is_null() {
+        log("pinctrl: failed to map SBREG_BAR");
+        return -3;
+    }
+
+    let st = STATE.get();
+    unsafe {
+        (*st).bus = bus;
+        (*st).dev = dev;
+        (*st).func = func;
+        (*st).vendor = vendor;
+        (*st).device = device;
+        (*st).sbreg_phys = sbreg_phys;
+        (*st).sbreg_base = sbreg;
+        (*st).initialized = true;
+    }
+
+    /* Dump first 16 pads of each community. PAD_CFG_DW0 layout:
+     *   [31:24] PADRSTCFG / OWN
+     *   [13:10] PMODE — 0 = GPIO, 1 = native mode 1, ...
+     *   [9]     GPIORXDIS — 1 = disable input
+     *   [8]     GPIOTXDIS — 1 = disable output
+     *   [1]     GPIORXSTATE — current input level
+     *   [0]     GPIOTXSTATE — driven output level
+     *
+     * Look for any pad with GPIOTXDIS=0 and GPIOTXSTATE asserting
+     * something SD-power-related. The actual mapping is board-
+     * specific; we just dump and the user identifies. */
+    for (name, port) in [
+        ("NORTH",     COMMUNITY_NORTH),
+        ("NORTHWEST", COMMUNITY_NORTHWEST),
+        ("WEST",      COMMUNITY_WEST),
+        ("SOUTHWEST", COMMUNITY_SOUTHWEST),
+    ] {
+        let community_off: u32 = (port as u32) << 16;
+        unsafe {
+            fut_printf(
+                b"pinctrl: community %s (port=0x%02x) pad-config dump:\n\0".as_ptr(),
+                name.as_ptr(),
+                port as u32,
+            );
+        }
+        for pad_idx in 0u32..16 {
+            let dw0_off = community_off + PAD_BASE_APL + pad_idx * 8;
+            let dw1_off = dw0_off + 4;
+            let dw0 = unsafe { r32(sbreg, dw0_off) };
+            let dw1 = unsafe { r32(sbreg, dw1_off) };
+            let pmode    = (dw0 >> 10) & 0xF;
+            let gpio_rxd = (dw0 >> 9)  & 0x1;
+            let gpio_txd = (dw0 >> 8)  & 0x1;
+            let txstate  = dw0 & 0x1;
+            unsafe {
+                fut_printf(
+                    b"pinctrl:   pad %2u dw0=0x%08x dw1=0x%08x pmode=%u rxdis=%u txdis=%u tx=%u\n\0".as_ptr(),
+                    pad_idx, dw0, dw1, pmode, gpio_rxd, gpio_txd, txstate,
+                );
+            }
+        }
+    }
+
+    log("pinctrl: phase 1 complete (P2SB unhidden, SBREG mapped, pad dump emitted)");
+    0
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn intel_pinctrl_is_initialized() -> bool {
+    let st = STATE.get();
+    unsafe { (*st).initialized }
+}
+
+/// Phase 2 stub: configure a specific pad as GPIO output high. Will
+/// be wired up once the user identifies the SD-VDD pin from the
+/// phase-1 dump.
+#[unsafe(no_mangle)]
+pub extern "C" fn intel_pinctrl_set_gpio_out(port_id: u32, pad_idx: u32, value: u32) -> i32 {
+    let st = STATE.get();
+    if !unsafe { (*st).initialized } { return -1; }
+    let base = unsafe { (*st).sbreg_base };
+    if base.is_null() { return -2; }
+
+    let community_off: u32 = port_id << 16;
+    let dw0_off = community_off + PAD_BASE_APL + pad_idx * 8;
+    let mut dw0 = unsafe { r32(base, dw0_off) };
+
+    // Force PMODE = 0 (GPIO).
+    dw0 &= !(0xF << 10);
+    // GPIORXDIS = 1 (disable input).
+    dw0 |= 1 << 9;
+    // GPIOTXDIS = 0 (enable output).
+    dw0 &= !(1 << 8);
+    // GPIOTXSTATE = value & 1.
+    dw0 = (dw0 & !1) | (value & 1);
+    unsafe { w32(base, dw0_off, dw0); }
+
+    let readback = unsafe { r32(base, dw0_off) };
+    unsafe {
+        fut_printf(
+            b"pinctrl: pad %u/%u <- 0x%08x (readback 0x%08x)\n\0".as_ptr(),
+            port_id, pad_idx, dw0, readback,
+        );
+    }
+    0
+}

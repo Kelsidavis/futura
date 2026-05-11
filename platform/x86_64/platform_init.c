@@ -851,7 +851,7 @@ void fut_platform_init(uint32_t multiboot_magic __attribute__((unused)),
      * if scroll position is at the bottom and the top of the boot log
      * has scrolled past. */
     fut_printf("################################################\n");
-    fut_printf("[BUILD] Futura kernel built %s %s (iter-69: P2SB device-id + unhide-offset fix)\n",
+    fut_printf("[BUILD] Futura kernel built %s %s (iter-70: P2SB trust 00:0d.0 location)\n",
                __DATE__, __TIME__);
     fut_printf("################################################\n");
 

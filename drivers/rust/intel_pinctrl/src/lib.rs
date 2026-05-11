@@ -104,11 +104,23 @@ const PCI_VENDOR_INTEL: u16 = 0x8086;
 
 /// P2SB PCI device IDs we recognize.
 ///   0x5A92 — Apollo Lake
-///   0x31BB — Gemini Lake (NOT 0x319B; that's a different LPSS dev)
+///   0x31BB — Gemini Lake (per Linux drivers/mfd/intel-p2sb.c)
+///   0x3192 — Gemini Lake variant (observed on HP Chromebook 11 G7
+///            after unhide; Linux's pci_ids table doesn't include
+///            this stepping but it's clearly the same IP at the
+///            conventional 00:0d.0 location and responds to the
+///            unhide quirk identically).
 ///   0x0BD0 — Lakefield
 ///   0x1980 — Coffee Lake
 ///   0x9D20 — Sunrise Point-LP
-const P2SB_DEVICE_IDS: &[u16] = &[0x5A92, 0x31BB, 0x0BD0, 0x1980, 0x9D20];
+const P2SB_DEVICE_IDS: &[u16] = &[0x5A92, 0x31BB, 0x3192, 0x0BD0, 0x1980, 0x9D20];
+
+/// If the device at 00:0d.0 reports Intel vendor after unhide but
+/// the device ID isn't in our known list, trust the location anyway.
+/// 00:0d.0 is the conventional P2SB slot on Broxton-family SoCs and
+/// nothing else lives there in firmware-default routing. Without
+/// this fallback we'd be stuck adding device IDs forever.
+const P2SB_TRUST_LOCATION: bool = true;
 
 /// P2SB Hide register. The P2SB Configuration register is a 32-bit
 /// field at config offset 0xE0; the HIDE control is bit 8 of that
@@ -212,7 +224,16 @@ fn find_p2sb() -> Option<(u8, u8, u8, u16, u16)> {
     }
     if vendor == PCI_VENDOR_INTEL && P2SB_DEVICE_IDS.contains(&device) {
         unsafe {
-            fut_printf(b"pinctrl: unhid P2SB at 00:0d.0\n\0".as_ptr());
+            fut_printf(b"pinctrl: unhid P2SB at 00:0d.0 (known device id)\n\0".as_ptr());
+        }
+        return Some((0, 0x0d, 0, vendor, device));
+    }
+    if vendor == PCI_VENDOR_INTEL && P2SB_TRUST_LOCATION {
+        unsafe {
+            fut_printf(
+                b"pinctrl: unhid Intel device at 00:0d.0 (device=0x%04x not in known list, trusting location)\n\0".as_ptr(),
+                device as u32,
+            );
         }
         return Some((0, 0x0d, 0, vendor, device));
     }

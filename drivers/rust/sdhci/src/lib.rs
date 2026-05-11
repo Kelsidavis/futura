@@ -699,6 +699,35 @@ pub extern "C" fn sdhci_log_set_lba(lba: u32) {
     unsafe { core::ptr::write(core::ptr::addr_of_mut!(LOG_LBA_BASE), lba); }
 }
 
+/// Re-print the full controller status. Designed to be called near
+/// the trampoline cliff so the user sees SDHCI state on the bottom
+/// of the visible screen instead of having to scroll up through the
+/// boot log.
+#[unsafe(no_mangle)]
+pub extern "C" fn sdhci_dump_status() {
+    let st = STATE.get();
+    let inited = unsafe { (*st).initialized };
+    let ready  = unsafe { core::ptr::read(core::ptr::addr_of!(SDHCI_CARD_READY)) };
+    if !inited {
+        unsafe { fut_printf(b"[SDHCI-STATUS] controller NOT detected\n\0".as_ptr()); }
+        return;
+    }
+    let mmio = unsafe { (*st).mmio_base };
+    let present = if mmio.is_null() { 0 } else { unsafe { r32(mmio, SDHCI_PRESENT_STATE) } };
+    let card_inserted = (present & SDHCI_PRESENT_CARD_INSERTED) != 0;
+    unsafe {
+        fut_printf(
+            b"[SDHCI-STATUS] vendor=0x%04x device=0x%04x version=0x%04x caps=0x%llx card_%s ready=%d\n\0".as_ptr(),
+            (*st).vendor_id as u32,
+            (*st).device_id as u32,
+            (*st).host_version as u32,
+            (*st).capabilities,
+            if card_inserted { b"INSERTED\0".as_ptr() } else { b"absent\0".as_ptr() },
+            ready as u32,
+        );
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn sdhci_log_write(msg: *const u8, len: usize) -> i32 {
     if !unsafe { core::ptr::read(core::ptr::addr_of!(SDHCI_CARD_READY)) } { return -1; }

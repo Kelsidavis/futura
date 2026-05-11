@@ -644,10 +644,11 @@ fn setup_power(mmio_rw: *mut u8) {
 /// Tight timeouts + step-by-step diagnostics so we can tell which
 /// command stalls. Returns 0 on success, negative on failure.
 fn sd_card_init(mmio_ro: *const u8, mmio_rw: *mut u8) -> Result<u32, i32> {
-    unsafe { fut_printf(b"sdhci: CMD0 (GO_IDLE)\n\0".as_ptr()); }
+    let step_p = core::ptr::addr_of_mut!(SDHCI_LAST_STEP);
+    unsafe { core::ptr::write(step_p, 0); fut_printf(b"sdhci: CMD0 (GO_IDLE)\n\0".as_ptr()); }
     let _ = issue_cmd(mmio_ro, mmio_rw, 0, 0, SDHCI_CMD_RESP_NONE, false);
 
-    unsafe { fut_printf(b"sdhci: CMD8 (SEND_IF_COND)\n\0".as_ptr()); }
+    unsafe { core::ptr::write(step_p, 8); fut_printf(b"sdhci: CMD8 (SEND_IF_COND)\n\0".as_ptr()); }
     let r = issue_cmd(mmio_ro, mmio_rw, 8, 0x1AA,
                       SDHCI_CMD_RESP_R48 | SDHCI_CMD_CRC_CHECK | SDHCI_CMD_INDEX_CHECK,
                       false);
@@ -662,7 +663,7 @@ fn sd_card_init(mmio_ro: *const u8, mmio_rw: *mut u8) -> Result<u32, i32> {
     // 1 sec of total wait — fast enough that a misbehaving card
     // surfaces immediately instead of looking like a kernel hang.
     let acmd41_arg = if is_sdv2 { 0x4030_0000u32 } else { 0x0030_0000u32 };
-    unsafe { fut_printf(b"sdhci: ACMD41 loop arg=0x%x\n\0".as_ptr(), acmd41_arg); }
+    unsafe { core::ptr::write(step_p, 41); fut_printf(b"sdhci: ACMD41 loop arg=0x%x\n\0".as_ptr(), acmd41_arg); }
     let mut ocr: u32 = 0;
     let mut ok = false;
     let mut iter = 0u32;
@@ -686,12 +687,12 @@ fn sd_card_init(mmio_ro: *const u8, mmio_rw: *mut u8) -> Result<u32, i32> {
     }
     if !ok { return Err(-101); }
 
-    unsafe { fut_printf(b"sdhci: CMD2 (ALL_SEND_CID)\n\0".as_ptr()); }
+    unsafe { core::ptr::write(step_p, 2); fut_printf(b"sdhci: CMD2 (ALL_SEND_CID)\n\0".as_ptr()); }
     let _ = issue_cmd(mmio_ro, mmio_rw, 2, 0,
                       SDHCI_CMD_RESP_R136 | SDHCI_CMD_CRC_CHECK,
                       false);
 
-    unsafe { fut_printf(b"sdhci: CMD3 (SEND_RELATIVE_ADDR)\n\0".as_ptr()); }
+    unsafe { core::ptr::write(step_p, 3); fut_printf(b"sdhci: CMD3 (SEND_RELATIVE_ADDR)\n\0".as_ptr()); }
     let r = issue_cmd(mmio_ro, mmio_rw, 3, 0,
                       SDHCI_CMD_RESP_R48 | SDHCI_CMD_CRC_CHECK | SDHCI_CMD_INDEX_CHECK,
                       false);
@@ -699,22 +700,32 @@ fn sd_card_init(mmio_ro: *const u8, mmio_rw: *mut u8) -> Result<u32, i32> {
     let rca = ((r as u32) >> 16) & 0xFFFF;
     unsafe { fut_printf(b"sdhci: CMD3 RCA=0x%x\n\0".as_ptr(), rca); }
 
-    unsafe { fut_printf(b"sdhci: CMD9 (SEND_CSD)\n\0".as_ptr()); }
+    unsafe { core::ptr::write(step_p, 9); fut_printf(b"sdhci: CMD9 (SEND_CSD)\n\0".as_ptr()); }
     let _ = issue_cmd(mmio_ro, mmio_rw, 9, rca << 16,
                       SDHCI_CMD_RESP_R136 | SDHCI_CMD_CRC_CHECK,
                       false);
 
-    unsafe { fut_printf(b"sdhci: CMD7 (SELECT_CARD)\n\0".as_ptr()); }
+    unsafe { core::ptr::write(step_p, 7); fut_printf(b"sdhci: CMD7 (SELECT_CARD)\n\0".as_ptr()); }
     let r = issue_cmd(mmio_ro, mmio_rw, 7, rca << 16,
                       SDHCI_CMD_RESP_R48_BUSY | SDHCI_CMD_CRC_CHECK | SDHCI_CMD_INDEX_CHECK,
                       false);
     if r == i64::MIN { return Err(-107); }
 
+    unsafe { core::ptr::write(step_p, 999); }
     Ok(rca)
 }
 
 static mut SDHCI_RCA: u32 = 0;
 static mut SDHCI_CARD_READY: bool = false;
+/// Last value returned by sd_card_init: 0 on success, negative
+/// error code on failure, or i32::MIN if init was never attempted.
+/// Cached so sdhci_dump_status can re-emit it near the trampoline
+/// cliff (the per-CMD trace lines scroll past visible area).
+static mut SDHCI_LAST_INIT_RC: i32 = i32::MIN;
+/// Last sd_card_init step that printed something useful. Set by
+/// sd_card_init right before each command; sdhci_dump_status emits
+/// it so we know which command stalled.
+static mut SDHCI_LAST_STEP: u32 = 0;
 
 /// Phase 2 entry point: power+clock the controller, run SD card init,
 /// stash the RCA. Returns 0 on success. Call after sdhci_init.
@@ -736,7 +747,7 @@ pub extern "C" fn sdhci_card_init() -> i32 {
     setup_power(mmio);
     setup_clock(mmio, mmio, caps);
 
-    match sd_card_init(mmio, mmio) {
+    let rc = match sd_card_init(mmio, mmio) {
         Ok(rca) => {
             unsafe { fut_printf(b"sdhci: SD card initialized; RCA=0x%04x\n\0".as_ptr(), rca); }
             unsafe {
@@ -749,7 +760,9 @@ pub extern "C" fn sdhci_card_init() -> i32 {
             unsafe { fut_printf(b"sdhci: SD card init failed: %d\n\0".as_ptr(), rc); }
             rc
         }
-    }
+    };
+    unsafe { core::ptr::write(core::ptr::addr_of_mut!(SDHCI_LAST_INIT_RC), rc); }
+    rc
 }
 
 /// Single-block PIO write to LBA `lba` from a 512-byte buffer.
@@ -866,6 +879,14 @@ pub extern "C" fn sdhci_dump_status() {
             (*st).capabilities,
             if card_inserted { b"INSERTED\0".as_ptr() } else { b"absent\0".as_ptr() },
             ready as u32,
+        );
+    }
+    let last_rc = unsafe { core::ptr::read(core::ptr::addr_of!(SDHCI_LAST_INIT_RC)) };
+    let last_step = unsafe { core::ptr::read(core::ptr::addr_of!(SDHCI_LAST_STEP)) };
+    unsafe {
+        fut_printf(
+            b"[SDHCI-STATUS] last_init_rc=%d last_step=CMD%u (999=done)\n\0".as_ptr(),
+            last_rc, last_step,
         );
     }
 }

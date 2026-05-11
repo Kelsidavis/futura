@@ -595,39 +595,78 @@ fn issue_cmd(mmio_ro: *const u8, mmio_rw: *mut u8,
     unsafe { r32(mmio_ro, SDHCI_RESPONSE) as i64 }
 }
 
-/// Configure clock divider for ~400 kHz initial-state clock. The base
-/// clock comes from CAPABILITIES bits [13:8]. We divide by N (placed
-/// in CLOCK_CONTROL bits [15:8] for 10-bit divider; 8-bit on v2.0).
-/// Then enable internal clock, wait stable, enable SD clock to card.
+/// Configure clock divider for ~400 kHz initial-state clock.
+///
+/// SDHCI 2.00 SDCLK Frequency Select (bits 15:8 of CLOCK_CONTROL)
+/// is *exponential*: at most ONE bit may be set, and the resulting
+/// SDCLK = base / (2 * reg_value). Legal register values:
+///   0x00  = no divide   (= base)
+///   0x01  = /2
+///   0x02  = /4
+///   0x04  = /8
+///   0x08  = /16
+///   0x10  = /32
+///   0x20  = /64
+///   0x40  = /128
+///   0x80  = /256
+/// Writing a linear value like 10 (0x0A = bits 1+3) violates the
+/// "one bit set" rule and the controller silently emits no SDCLK,
+/// which leaves the card powered but unclocked → ACMD41 never sees
+/// the ready bit (exactly what iter-65 hit).
+///
+/// Pick the smallest legal register value that drops SDCLK below
+/// 400 kHz, capped at 0x80 (the slowest divide). Then enable the
+/// internal clock, wait for INT_STABLE, enable the SDCLK output, and
+/// hold for at least 74 SDCLK cycles before the caller issues CMD0
+/// (SDHCI 2.00 §3.3 "Bus Power-On Sequence").
 fn setup_clock(mmio_ro: *const u8, mmio_rw: *mut u8, caps: u64) {
-    let base_clock_mhz = ((caps >> 8) & 0xFF) as u32;
-    let base_clock_hz = base_clock_mhz * 1_000_000;
+    // For SDHCI 2.0, base clock freq lives in CAPS[13:8] (6 bits, max
+    // 63 MHz). For SDHCI 3.0 it would be CAPS[15:8] (8 bits). Use the
+    // 6-bit field — the host_version on this hw is 0x1002 (spec=2).
+    let base_clock_mhz = ((caps >> 8) & 0x3F) as u32;
+    let base_clock_hz = base_clock_mhz.saturating_mul(1_000_000);
     let target_hz = 400_000u32;
 
-    // Divisor: floor(base / (2 * target)). Clamped to 1..=0x80.
-    let mut div: u32 = if base_clock_hz > 0 && target_hz > 0 {
-        base_clock_hz / (target_hz * 2)
-    } else {
-        1
-    };
-    if div == 0 { div = 1; }
-    if div > 0x80 { div = 0x80; }
+    let mut reg_v: u32 = 0;
+    if base_clock_hz > target_hz {
+        reg_v = 1;
+        while reg_v < 0x80 && (base_clock_hz / (2 * reg_v)) > target_hz {
+            reg_v <<= 1;
+        }
+    }
+    let actual_hz = if reg_v == 0 { base_clock_hz } else { base_clock_hz / (2 * reg_v) };
+    unsafe {
+        fut_printf(
+            b"sdhci: base=%u MHz, target=400 kHz, reg_v=0x%02x, actual=%u Hz\n\0".as_ptr(),
+            base_clock_mhz, reg_v, actual_hz,
+        );
+    }
 
-    // Encode divisor in CLOCK_CONTROL bits [15:8] (8-bit SDHCI 2.0
-    // encoding is "div / 2 in bits [15:8]"; we use the simpler form).
-    let div_byte = (div & 0xFF) as u16;
+    let div_byte = (reg_v & 0xFF) as u16;
     let clk = (div_byte << 8) | SDHCI_CLOCK_INT_EN;
     unsafe { w16(mmio_rw, SDHCI_CLOCK_CONTROL, clk) };
 
     // Wait for internal clock stable.
+    let mut stable = false;
     for _ in 0..1_000_000 {
         let r = unsafe { r16(mmio_ro, SDHCI_CLOCK_CONTROL) };
-        if r & SDHCI_CLOCK_INT_STABLE != 0 { break; }
+        if r & SDHCI_CLOCK_INT_STABLE != 0 { stable = true; break; }
+    }
+    unsafe {
+        fut_printf(b"sdhci: internal clock stable=%d\n\0".as_ptr(), stable as i32);
     }
 
     // Enable SD clock output to the card.
     let clk2 = clk | SDHCI_CLOCK_SD_EN;
     unsafe { w16(mmio_rw, SDHCI_CLOCK_CONTROL, clk2) };
+
+    // Hold for at least 74 SDCLK cycles before the first CMD per
+    // SDHCI 2.00 §3.3. At ~250 kHz that's ~296 µs; at our worst-case
+    // 781 kHz it's ~95 µs. 100K MMIO reads at ~100 ns each ≈ 10 ms,
+    // comfortable above both.
+    for _ in 0..100_000 {
+        let _ = unsafe { r16(mmio_ro, SDHCI_CLOCK_CONTROL) };
+    }
 }
 
 /// Power up the SD card at 3.3 V.

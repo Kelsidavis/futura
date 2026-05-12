@@ -714,14 +714,10 @@ irq_common_stub:
     call fut_irq_handler
 
     /* Always send LAPIC EOI after handling any IRQ.
-     * Use the lapic_base global which points to the mapped LAPIC region.
-     * This ensures the ISR bit is cleared, preventing lower-priority
-     * interrupts (like the timer) from being blocked. */
-    movq lapic_base(%rip), %rax
-    testq %rax, %rax
-    jz .girq_skip_eoi
-    movl $0, 0xB0(%rax)
-.girq_skip_eoi:
+     * Call lapic_send_eoi which dispatches to MSR write in x2APIC mode
+     * or MMIO write in xAPIC mode. Direct MMIO writes here would silently
+     * fail on Whiskey Lake+ where BIOS often boots in x2APIC mode. */
+    call lapic_send_eoi
 
     /* Restore stack */
     movq %rbp, %rsp
@@ -1061,12 +1057,8 @@ irq1_keyboard:
     /* Call keyboard IRQ handler */
     call ps2_irq_keyboard
 
-    /* Send LAPIC EOI (required for IOAPIC-routed interrupts) */
-    movq lapic_base(%rip), %rax
-    testq %rax, %rax
-    jz .kbd_skip_eoi
-    movl $0, 0xB0(%rax)
-.kbd_skip_eoi:
+    /* Send LAPIC EOI (x2APIC-aware via C dispatch). */
+    call lapic_send_eoi
 
     /* Clear interrupt context flag */
     movb $0, fut_in_interrupt(%rip)
@@ -1212,12 +1204,8 @@ irq12_mouse:
     /* Call mouse IRQ handler */
     call ps2_irq_mouse
 
-    /* Send LAPIC EOI (required for IOAPIC-routed interrupts) */
-    movq lapic_base(%rip), %rax
-    testq %rax, %rax
-    jz .mse_skip_eoi
-    movl $0, 0xB0(%rax)
-.mse_skip_eoi:
+    /* Send LAPIC EOI (x2APIC-aware via C dispatch). */
+    call lapic_send_eoi
 
     /* Clear interrupt context flag */
     movb $0, fut_in_interrupt(%rip)

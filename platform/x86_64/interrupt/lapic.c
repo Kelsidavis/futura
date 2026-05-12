@@ -15,26 +15,48 @@
 /* MSR for LAPIC base address */
 #define MSR_APIC_BASE   0x1B
 #define APIC_BASE_ENABLE (1ULL << 11)
+#define APIC_BASE_EXTD   (1ULL << 10)   /* x2APIC mode */
 #define APIC_BASE_BSP    (1ULL << 8)
 
 /* LAPIC MMIO base address (virtual) - exported for assembly access */
 volatile uint32_t *lapic_base = NULL;
 
+/* x2APIC mode is enabled — when true, access LAPIC via MSRs instead of MMIO.
+ *
+ * Whiskey Lake and later UEFI firmware (Lenovo L490 specifically) often
+ * boot with x2APIC already enabled. In x2APIC mode, MMIO writes to the
+ * LAPIC region are SILENTLY IGNORED — the CPU only honors MSR writes.
+ * Our LAPIC timer setup writes to LVT_TIMER and TIMER_INITIAL via MMIO;
+ * with x2APIC on, those writes vanish and the timer never fires. */
+static bool lapic_x2apic = false;
+
 /* Flag indicating LAPIC is fully initialized and safe to use */
 static bool lapic_initialized = false;
 
+/* x2APIC MSR address for a LAPIC register: 0x800 + (offset >> 4). */
+static inline uint32_t x2apic_msr_for_reg(uint32_t reg) {
+    return 0x800u + (reg >> 4);
+}
+
 /**
- * Read LAPIC register.
+ * Read LAPIC register. Uses MSR in x2APIC mode, MMIO otherwise.
  */
 static inline uint32_t lapic_read(uint32_t reg) {
+    if (lapic_x2apic) {
+        return (uint32_t)rdmsr(x2apic_msr_for_reg(reg));
+    }
     if (!lapic_base) return 0;
     return lapic_base[reg / 4];
 }
 
 /**
- * Write LAPIC register.
+ * Write LAPIC register. Uses MSR in x2APIC mode, MMIO otherwise.
  */
 static inline void lapic_write(uint32_t reg, uint32_t value) {
+    if (lapic_x2apic) {
+        wrmsr(x2apic_msr_for_reg(reg), (uint64_t)value);
+        return;
+    }
     if (!lapic_base) return;
     lapic_base[reg / 4] = value;
 }
@@ -66,20 +88,34 @@ static void *lapic_map_mmio(uint64_t phys_addr) {
 void lapic_init(uint64_t lapic_phys_base) {
     fut_printf("[LAPIC] Initializing Local APIC at 0x%llx\n", lapic_phys_base);
 
-    /* Map LAPIC MMIO region */
+    /* Map LAPIC MMIO region. Still needed even if x2APIC ends up enabled
+     * (some callers like assembly EOI paths walk lapic_base directly). */
     lapic_base = (volatile uint32_t *)lapic_map_mmio(lapic_phys_base);
     if (!lapic_base) {
         fut_printf("[LAPIC] ERROR: Failed to map LAPIC MMIO region\n");
         return;
     }
 
-    /* Enable LAPIC via MSR */
+    /* Read current APIC mode from MSR. */
     uint64_t apic_base_msr = rdmsr(MSR_APIC_BASE);
     fut_printf("[LAPIC] APIC_BASE MSR: 0x%llx\n", apic_base_msr);
 
     /* Check if this is the BSP (Bootstrap Processor) */
     bool is_bsp = (apic_base_msr & APIC_BASE_BSP) != 0;
     fut_printf("[LAPIC] CPU is %s\n", is_bsp ? "BSP (Bootstrap)" : "AP (Application Processor)");
+
+    /* x2APIC detection. Whiskey Lake / Lenovo L490 BIOS boots with this
+     * mode already enabled. In x2APIC mode the LAPIC MMIO region returns
+     * 0/ignores writes — we MUST use MSR access for register I/O.
+     *
+     * The MSR addresses are 0x800 + (mmio_offset >> 4): e.g. EOI = 0x80B,
+     * TIMER_INITIAL = 0x838. lapic_read/lapic_write above handle the dispatch. */
+    lapic_x2apic = (apic_base_msr & APIC_BASE_EXTD) != 0;
+    if (lapic_x2apic) {
+        fut_printf("[LAPIC] x2APIC mode ENABLED — using MSR access (0x800+)\n");
+    } else {
+        fut_printf("[LAPIC] xAPIC (MMIO) mode\n");
+    }
 
     /* Enable LAPIC in MSR if not already enabled */
     if (!(apic_base_msr & APIC_BASE_ENABLE)) {

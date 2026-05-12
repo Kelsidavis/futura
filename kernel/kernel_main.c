@@ -1072,8 +1072,29 @@ static void klog_persist_to_sd_once(int verbose) {
          * the user a fixed string to grep for to find this boot's start. */
         (void)fut_vfs_write(fd, marker, (size_t)n);
         ssize_t w = fut_vfs_write(fd, buf, got);
-        if (verbose) fut_printf("[KLOG-SD] wrote %lld/%zu bytes to %s (iter %u)\n",
-                                (long long)w, got, g_klog_sd_path,
+        /* Write a sentinel line + pad to a fixed 64 KiB length. FAT
+         * vnode_ops doesn't implement .truncate, so a shorter write to an
+         * existing file leaves the tail bytes from the previous boot's
+         * write — which is what the user reported as "the log file isn't
+         * being overwritten unless deleted manually". By always padding
+         * to the same length, the next boot's write fully covers any
+         * previous content, and the END-OF-LOG sentinel tells consumers
+         * where the real data stops. */
+        const char *sentinel = "\n=== END OF LOG (PAD BELOW IGNORE) ===\n";
+        size_t sentinel_len = 0;
+        while (sentinel[sentinel_len]) sentinel_len++;
+        (void)fut_vfs_write(fd, sentinel, sentinel_len);
+        size_t written = (size_t)n + got + sentinel_len;
+        if (written < cap) {
+            /* Reuse the snapshot buffer as a newline pad — known content,
+             * already allocated, and large enough to cover the remainder
+             * in one syscall if cap fits. */
+            size_t pad = cap - written;
+            for (size_t i = 0; i < pad && i < cap; i++) buf[i] = '\n';
+            (void)fut_vfs_write(fd, buf, pad);
+        }
+        if (verbose) fut_printf("[KLOG-SD] wrote %lld bytes + sentinel + pad to %zu KiB in %s (iter %u)\n",
+                                (long long)w, cap / 1024, g_klog_sd_path,
                                 g_klog_flush_iter);
         fut_free(buf);
     }

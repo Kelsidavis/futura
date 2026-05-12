@@ -340,17 +340,26 @@ endif
 # appear before the 'all:' line.
 .DEFAULT_GOAL := all
 
-$(GEN_VERSION_HDR):
-	@mkdir -p $(GEN_DIR)
-	@echo "/* Auto-generated. Do not edit. */"                     >  $(GEN_VERSION_HDR)
-	@echo "#pragma once"                                          >> $(GEN_VERSION_HDR)
-	@echo "#define FUT_BUILD_DATE    \"$(BUILD_DATE_UTC)\""       >> $(GEN_VERSION_HDR)
-	@echo "#define FUT_BUILD_GIT     \"$(BUILD_GIT_DESC)\""       >> $(GEN_VERSION_HDR)
-	@echo "#define FUT_BUILD_HOST    \"$(BUILD_HOST)\""           >> $(GEN_VERSION_HDR)
-	@echo "#define FUT_BUILD_USER    \"$(BUILD_USER)\""           >> $(GEN_VERSION_HDR)
-	@echo "#define FUT_VERSION_STR   \"Futura $(BUILD_GIT_DESC)\"" >> $(GEN_VERSION_HDR)
-
 .PHONY: FORCE
+
+# Regenerate on every build so __DATE__/__TIME__-style timestamps in the
+# binary always reflect the actual link, not the last make-clean. Atomic
+# write (tmp + cmp + mv) means downstream .o files only rebuild when the
+# CONTENT changes — usually only the FUT_BUILD_DATE second field — so
+# you don't pay the full kernel re-link cost on every incremental make.
+$(GEN_VERSION_HDR): FORCE
+	@mkdir -p $(GEN_DIR)
+	@tmp=$@.tmp; \
+	{ \
+		echo "/* Auto-generated. Do not edit. */"; \
+		echo "#pragma once"; \
+		echo "#define FUT_BUILD_DATE    \"$(BUILD_DATE_UTC)\""; \
+		echo "#define FUT_BUILD_GIT     \"$(BUILD_GIT_DESC)\""; \
+		echo "#define FUT_BUILD_HOST    \"$(BUILD_HOST)\""; \
+		echo "#define FUT_BUILD_USER    \"$(BUILD_USER)\""; \
+		echo "#define FUT_VERSION_STR   \"Futura $(BUILD_GIT_DESC)\""; \
+	} > $$tmp; \
+	if [ ! -f $@ ] || ! cmp -s $$tmp $@; then mv $$tmp $@; else rm $$tmp; fi
 
 $(GEN_FEATURE_HDR): FORCE
 	@mkdir -p $(GEN_DIR)

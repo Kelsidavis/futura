@@ -27,6 +27,7 @@
 #include <kernel/platform_hooks.h>
 #include <kernel/fut_sched.h>
 #include <platform/x86_64/interrupt/lapic.h>
+#include <generated/version.h>
 
 /* Serial port definitions for debugging */
 #define SERIAL_PORT_COM1 0x3F8
@@ -895,19 +896,15 @@ void fut_platform_init(uint32_t multiboot_magic __attribute__((unused)),
     );
 
     fut_serial_puts("Futura OS x86_64 Platform Initialization\n");
-    /* BUILD-TAG: tells us at-a-glance if the user is actually running the
-     * latest ISO. Bump this string whenever you reflash, so a stale boot
-     * is obvious from the screen. */
-    /* __DATE__ and __TIME__ stamp the actual compile time of this TU,
-     * which the Makefile force-rebuilds on every kernel link by listing
-     * platform_init.c as part of the dependency closure. The string
-     * changes every build, so a stale boot is obvious from the screen. */
-    /* Print BUILD line three times in a row so it can't be missed even
-     * if scroll position is at the bottom and the top of the boot log
-     * has scrolled past. */
+    /* FUT_BUILD_DATE/GIT come from include/generated/version.h which the
+     * Makefile regenerates on every build (FORCE dep + atomic write).
+     * Previously this line used __DATE__/__TIME__, which only changed
+     * when this TU recompiled — a stale platform_init.o could leave the
+     * boot screen showing a build timestamp from days ago even though
+     * the kernel binary itself was freshly linked. */
     fut_printf("################################################\n");
-    fut_printf("[BUILD] Futura kernel built %s %s (iter-76: SD_VDD sweep cc8-only)\n",
-               __DATE__, __TIME__);
+    fut_printf("[BUILD] Futura kernel built %s (%s)\n",
+               FUT_BUILD_DATE, FUT_BUILD_GIT);
     fut_printf("################################################\n");
 
     /* Load GDT */

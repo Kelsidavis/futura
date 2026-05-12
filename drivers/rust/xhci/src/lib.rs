@@ -1750,16 +1750,42 @@ unsafe extern "C" fn xhci_bulk_thunk(dev: u32, ep: u8, data: *mut u8, len: u32) 
 /// (device) → GET_DESCRIPTOR (config). The output is logged; future stages
 /// will wire each interface to a class driver based on the bInterfaceClass.
 fn enumerate_devices(ctrl: &mut XhciController) {
+    // Per-port iteration summary -- one line per visited port so we can
+    // tell after the fact whether a missing slot is "port not connected",
+    // "port reset failed (PED=0)", or "Enable Slot rejected the port".
+    let mut connected = 0u32;
+    let mut enabled = 0u32;
+    let mut slotted = 0u32;
     for port in 0..ctrl.max_ports as u32 {
         let portsc = read_portsc(ctrl.bar0, ctrl.op_base, port);
-        if (portsc & PORTSC_CCS) == 0 || (portsc & PORTSC_PED) == 0 {
+        let ccs = (portsc & PORTSC_CCS) != 0;
+        let ped = (portsc & PORTSC_PED) != 0;
+        let speed_v = (portsc & PORTSC_SPEED_MASK) >> PORTSC_SPEED_SHIFT;
+        if ccs {
+            connected += 1;
+            unsafe {
+                fut_printf(
+                    b"xhci: enum port %u: PORTSC=0x%08x CCS=1 PED=%u speed=%u\n\0".as_ptr(),
+                    port + 1, portsc, ped as u32, speed_v,
+                );
+            }
+        }
+        if !ccs || !ped {
             continue;
         }
-        let speed = (portsc & PORTSC_SPEED_MASK) >> PORTSC_SPEED_SHIFT;
+        enabled += 1;
+        let speed = speed_v;
         let slot_id = enable_slot(ctrl);
         if slot_id == 0 {
+            unsafe {
+                fut_printf(
+                    b"xhci: enum port %u: Enable Slot returned 0, skipping\n\0".as_ptr(),
+                    port + 1,
+                );
+            }
             continue;
         }
+        slotted += 1;
         unsafe {
             fut_printf(
                 b"xhci: port %u: slot %u allocated (speed=%u)\n\0".as_ptr(),
@@ -1960,6 +1986,12 @@ fn enumerate_devices(ctrl: &mut XhciController) {
             }
         }
         unsafe { free_page(cfg_buf); }
+    }
+    unsafe {
+        fut_printf(
+            b"xhci: enum summary: %u port(s) connected, %u enabled, %u slot(s) allocated\n\0".as_ptr(),
+            connected, enabled, slotted,
+        );
     }
 }
 

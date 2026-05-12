@@ -241,6 +241,13 @@ static void percpu_update_load_avg(fut_percpu_t *percpu) {
 
 static void idle_thread_entry(void *arg) {
     (void)arg;
+    {
+        static int dbg_idle_once = 0;
+        if (!dbg_idle_once) {
+            dbg_idle_once = 1;
+            fut_printf("[BCRUMB-IDLE] idle thread reached entry function\n");
+        }
+    }
     for (;;) {
 #ifdef __x86_64__
         /* Check the timer-broken flag: with no timer IRQs, `sti; hlt`

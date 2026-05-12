@@ -427,7 +427,12 @@ static void fb_console_scroll(void) {
  * visible region — including row 0 — so without this helper the pin
  * gets shifted up and clobbered on the first scroll. Called inline
  * from fb_console_scroll() and once from fb_console_set_pinned_line()
- * to draw the initial pin. */
+ * to draw the initial pin.
+ *
+ * The line is horizontally centered: leading spaces equal to
+ * (cols - len) / 2 push the text into the middle of the row. Cosmetic
+ * but makes the banner read like a header rather than scrolling text
+ * that just happened to lock in place. */
 static void fb_console_repaint_pinned(void) {
     struct fb_console_state *cons = &g_fb_console;
     if (!cons->pinned_active || cons->pinned_len == 0) return;
@@ -436,11 +441,18 @@ static void fb_console_repaint_pinned(void) {
     uint32_t fg = make_color(0xFF, 0xFF, 0xFF, 0xFF);
     uint32_t bg = make_color(0x00, 0x00, 0x00, 0xFF);
 
-    int max_chars = cons->cols;
-    if (max_chars > (int)cons->pinned_len) max_chars = (int)cons->pinned_len;
+    int len = (int)cons->pinned_len;
+    if (len > cons->cols) len = cons->cols;
+    int offset = (cons->cols - len) / 2;
+    if (offset < 0) offset = 0;
 
     for (int x = 0; x < cons->cols; x++) {
-        char c = (x < max_chars) ? cons->pinned_text[x] : ' ';
+        char c;
+        if (x < offset || x >= offset + len) {
+            c = ' ';
+        } else {
+            c = cons->pinned_text[x - offset];
+        }
         fb_console_draw_char(x, 0, c, fg, bg);
     }
 }

@@ -27,6 +27,9 @@
 #![no_std]
 #![forbid(unsafe_op_in_unsafe_fn)]
 #![allow(unexpected_cfgs)]
+// SDHCI register/spec constants are kept verbatim — many are defined for
+// reference and aren't poked yet. Allow the dead-code warnings.
+#![allow(dead_code)]
 
 use core::cell::UnsafeCell;
 use core::ffi::c_void;

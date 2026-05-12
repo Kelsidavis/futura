@@ -42,6 +42,9 @@
 #![no_std]
 #![forbid(unsafe_op_in_unsafe_fn)]
 #![allow(unexpected_cfgs)]
+// Some community/PortID tables and helper accessors are defined for
+// reference (e.g. COMMUNITY_GLK_NORTH, pci_read8) and aren't called yet.
+#![allow(dead_code)]
 
 use core::cell::UnsafeCell;
 use core::ffi::c_void;

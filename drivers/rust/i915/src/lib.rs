@@ -29,6 +29,10 @@
 #![no_std]
 #![forbid(unsafe_op_in_unsafe_fn)]
 #![allow(unexpected_cfgs)]
+// Many i915 MMIO offsets and Gen9-LP-specific constants are defined for
+// reference / future use; we don't poke every register yet. Allow the
+// dead constants to live without spamming the build log.
+#![allow(dead_code)]
 
 use core::cell::UnsafeCell;
 use core::ffi::c_void;

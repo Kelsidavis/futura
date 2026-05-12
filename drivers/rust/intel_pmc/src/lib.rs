@@ -46,12 +46,16 @@
 #![no_std]
 #![forbid(unsafe_op_in_unsafe_fn)]
 #![allow(unexpected_cfgs)]
+// PMC register offsets are kept verbatim from the Intel PCH datasheet so
+// future code that wants to touch a slot doesn't have to look it up again.
+// Suppress the dead-code warnings on the unused-yet constants.
+#![allow(dead_code)]
 
 use core::cell::UnsafeCell;
 use core::ptr::{read_volatile, write_volatile};
 use core::sync::atomic::{fence, Ordering};
 
-use common::{log, map_mmio_region, unmap_mmio_region, MMIO_DEFAULT_FLAGS};
+use common::{log, map_mmio_region, MMIO_DEFAULT_FLAGS};
 
 // ── FFI imports ──
 

@@ -917,6 +917,103 @@ static int blkcore_bridge_write(struct fut_blockdev *dev, uint64_t lba, uint64_t
     return fut_blk_write(dev->private_data, lba, (uint32_t)count, buf);
 }
 
+/* ============================================================
+ *   klog-to-SD periodic flusher
+ *
+ * Writes the BSS klog buffer to a FAT-formatted SD/USB stick at
+ * /mnt/sd/KLBNNNN.LOG every ~1.5s. Lives in its own kernel thread
+ * so it survives fut_exec_elf("/sbin/init") replacing the boot
+ * context — without this, every byte logged after init exec was
+ * lost on real hardware. Best-effort: errors at every step just
+ * return; the next tick tries again.
+ * ============================================================ */
+
+static int g_klog_sd_mount_idx = -1;
+static char g_klog_sd_path[64];
+static int g_klog_sd_path_built = 0;
+
+static int klog_sd_try_mount(void) {
+    extern int fut_vfs_mount(const char *device, const char *mountpoint,
+                             const char *fstype, int flags, void *data,
+                             uint64_t boot_handle);
+    extern int fut_vfs_mkdir(const char *, uint32_t);
+    if (g_klog_sd_mount_idx >= 0) return 0;
+    static const char *candidates[] = { "usb1", "usb0", "usb2", "usb3" };
+    fut_vfs_mkdir("/mnt", 0755);
+    fut_vfs_mkdir("/mnt/sd", 0755);
+    for (size_t i = 0; i < sizeof(candidates)/sizeof(candidates[0]); i++) {
+        int rc = fut_vfs_mount(candidates[i], "/mnt/sd", "vfat",
+                               0, NULL, (uint64_t)-1);
+        if (rc == 0) {
+            g_klog_sd_mount_idx = (int)i;
+            fut_printf("[KLOG-SD] mounted /dev/%s at /mnt/sd (vfat)\n",
+                       candidates[i]);
+            return 0;
+        }
+    }
+    return -1;
+}
+
+static void klog_sd_build_path(void) {
+    extern uint32_t klog_persist_boot_seq(void) __attribute__((weak));
+    uint32_t seq = klog_persist_boot_seq ? klog_persist_boot_seq() : 0;
+    if (seq == 0xFFFFFFFFu) seq = 0;
+    int n = 0;
+    const char *prefix = "/mnt/sd/KLB";
+    for (const char *p = prefix; *p && n < 62; p++) g_klog_sd_path[n++] = *p;
+    for (int shift = 12; shift >= 0; shift -= 4) {
+        if (n >= 62) break;
+        uint32_t nib = (seq >> shift) & 0xF;
+        g_klog_sd_path[n++] = "0123456789ABCDEF"[nib];
+    }
+    const char *suffix = ".LOG";
+    for (const char *p = suffix; *p && n < 63; p++) g_klog_sd_path[n++] = *p;
+    g_klog_sd_path[n] = '\0';
+    g_klog_sd_path_built = 1;
+}
+
+static void klog_persist_to_sd_once(int verbose) {
+    extern int fut_vfs_open(const char *path, int flags, int mode);
+    extern ssize_t fut_vfs_write(int fd, const void *buf, size_t size);
+    extern int sys_close(int fd);
+    extern size_t klog_snapshot(char *out, size_t max);
+
+    if (klog_sd_try_mount() != 0) {
+        if (verbose) fut_printf("[KLOG-SD] no FAT FS on /dev/usbN — skipping\n");
+        return;
+    }
+    if (!g_klog_sd_path_built) klog_sd_build_path();
+
+    int fd = fut_vfs_open(g_klog_sd_path,
+                          /* O_WRONLY|O_CREAT|O_TRUNC */ 0x241,
+                          0644);
+    if (fd < 0) {
+        if (verbose) fut_printf("[KLOG-SD] open %s failed: %d\n",
+                                g_klog_sd_path, fd);
+        return;
+    }
+    size_t cap = 64 * 1024;
+    char *buf = (char *)fut_malloc(cap);
+    if (buf) {
+        size_t got = klog_snapshot(buf, cap);
+        ssize_t w = fut_vfs_write(fd, buf, got);
+        if (verbose) fut_printf("[KLOG-SD] wrote %lld/%zu bytes to %s\n",
+                                (long long)w, got, g_klog_sd_path);
+        fut_free(buf);
+    }
+    sys_close(fd);
+}
+
+static void klog_sd_flush_thread(void *arg) {
+    (void)arg;
+    /* Quiet flush every 1.5s. First write already happened in the
+     * boot thread, so we don't need to print on every tick. */
+    for (;;) {
+        fut_thread_sleep(1500);
+        klog_persist_to_sd_once(0);
+    }
+}
+
 void fut_kernel_main(void) {
 
     /* Core Wayland variables (production) */
@@ -2857,6 +2954,40 @@ try_ramdisk: (void)0;
     }
 #endif
 
+    /* Pre-init forensic flush: print the late-boot summary and write
+     * an initial klog→SD snapshot BEFORE fut_exec_elf("/sbin/init")
+     * replaces this context. Also spawn a kernel thread that keeps
+     * flushing klog to SD every ~1.5s — that thread survives the
+     * exec (only the current task's context is replaced) and gives
+     * us a forensic trail through any subsequent init/compositor
+     * crash. Without this, anything logged after the init exec is
+     * gone if the box hangs. */
+    {
+        extern void cros_ec_print_summary(void) __attribute__((weak));
+        extern void sdhci_dump_status(void)    __attribute__((weak));
+        extern void xhci_print_summary(void)   __attribute__((weak));
+        fut_printf("\n-------- pre-init summary --------\n");
+        if (cros_ec_print_summary) cros_ec_print_summary();
+        if (sdhci_dump_status)     sdhci_dump_status();
+        if (xhci_print_summary)    xhci_print_summary();
+        fut_printf("----------------------------------\n");
+        klog_persist_to_sd_once(1);
+        fut_task_t *flush_task = fut_task_create();
+        if (flush_task) {
+            fut_thread_t *t = fut_thread_create(
+                flush_task, klog_sd_flush_thread, NULL,
+                16 * 1024, 200);
+            if (t) {
+                fut_printf("[KLOG-SD] periodic flusher started (TID %llu)\n",
+                           (unsigned long long)t->tid);
+            } else {
+                fut_printf("[KLOG-SD] flusher thread create failed\n");
+            }
+        } else {
+            fut_printf("[KLOG-SD] flusher task create failed\n");
+        }
+    }
+
 #if ENABLE_WAYLAND && !defined(__aarch64__)
     /* Launch init process with environment for Wayland.
      * init will fork and exec the compositor, then launch wl-term.
@@ -3112,91 +3243,14 @@ try_ramdisk: (void)0;
         fut_printf("-----------------------------------\n");
     }
 
-    /* Persist this boot's klog to the SD card or USB stick if one is
-     * mounted as a FAT filesystem. We try /dev/usb1 first (typical
-     * on-board SD card reader index on octopus Chromebooks) then
-     * /dev/usb0 (typical first external USB stick). Best-effort: any
-     * failure is just logged and ignored. */
-    {
-        extern int fut_vfs_mount(const char *device, const char *mountpoint,
-                                 const char *fstype, int flags, void *data,
-                                 uint64_t boot_handle);
-        extern int fut_vfs_mkdir(const char *, uint32_t);
-        extern int fut_vfs_open(const char *path, int flags, int mode);
-        extern ssize_t fut_vfs_write(int fd, const void *buf, size_t size);
-        extern int sys_close(int fd);
-        /* klog_snapshot lives in sys_syslog.c (BSS); reliable.
-         * klog_persist_boot_seq still names the file uniquely. */
-        extern size_t klog_snapshot(char *out, size_t max);
-        extern uint32_t klog_persist_boot_seq(void) __attribute__((weak));
-
-        static const char *candidates[] = { "usb1", "usb0", "usb2", "usb3" };
-        int mounted_idx = -1;
-        fut_vfs_mkdir("/mnt", 0755);
-        fut_vfs_mkdir("/mnt/sd", 0755);
-        for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
-            int rc = fut_vfs_mount(candidates[i], "/mnt/sd", "vfat",
-                                   0, NULL, (uint64_t)-1);
-            if (rc == 0) {
-                mounted_idx = (int)i;
-                fut_printf("[KLOG-SD] mounted /dev/%s at /mnt/sd (vfat)\n",
-                           candidates[i]);
-                break;
-            }
-        }
-        if (mounted_idx >= 0) {
-            /* Build a unique 8.3-compatible filename per boot so
-             * successive runs don't stomp each other. Format:
-             *   /mnt/sd/KLBNNNN.LOG     (4-hex-digit boot seq)
-             * KLB = "kernel log boot". Wraps every 65536 boots, which
-             * is fine for any real-hw debugging cycle. The kernel's
-             * FAT driver only supports 8.3 names today; LFN write is
-             * a future feature. */
-            uint32_t seq = klog_persist_boot_seq ? klog_persist_boot_seq() : 0;
-            /* klog_persist's ring is at a fixed phys address the PMM
-             * may have overwritten by now, so on some boards boot_seq
-             * reads back as 0xFFFFFFFF. If we see all-ones, treat it
-             * as "unknown" and use 0 -- we'd rather overwrite the
-             * same KLB0000.LOG each boot than emit confusing KLBFFFF
-             * for a board where klog_persist is unreliable. */
-            if (seq == 0xFFFFFFFFu) seq = 0;
-            char path[64];
-            int n = 0;
-            const char *prefix = "/mnt/sd/KLB";
-            for (const char *p = prefix; *p && n < 62; p++) path[n++] = *p;
-            for (int shift = 12; shift >= 0; shift -= 4) {
-                if (n >= 62) break;
-                uint32_t nib = (seq >> shift) & 0xF;
-                path[n++] = "0123456789ABCDEF"[nib];
-            }
-            const char *suffix = ".LOG";
-            for (const char *p = suffix; *p && n < 63; p++) path[n++] = *p;
-            path[n] = '\0';
-
-            int fd = fut_vfs_open(path,
-                                  /* O_WRONLY|O_CREAT|O_TRUNC */ 0x241,
-                                  0644);
-            if (fd >= 0) {
-                /* 64 KiB matches klog_buf (KLOG_BUF_SIZE in sys_syslog.c). */
-                size_t cap = 64 * 1024;
-                char *buf = (char *)fut_malloc(cap);
-                if (buf) {
-                    size_t got = klog_snapshot(buf, cap);
-                    ssize_t w = fut_vfs_write(fd, buf, got);
-                    fut_printf("[KLOG-SD] wrote %lld/%zu bytes to %s\n",
-                               (long long)w, got, path);
-                    fut_free(buf);
-                } else {
-                    fut_printf("[KLOG-SD] alloc failed, log not written\n");
-                }
-                sys_close(fd);
-            } else {
-                fut_printf("[KLOG-SD] open %s failed: %d\n", path, fd);
-            }
-        } else if (mounted_idx < 0) {
-            fut_printf("[KLOG-SD] no FAT filesystem found on /dev/usbN — log not persisted\n");
-        }
-    }
+    /* Final klog→SD flush. On ENABLE_WAYLAND=1 x86 builds this block
+     * is unreachable because fut_exec_elf("/sbin/init") above never
+     * returns — that case is handled by the pre-init flush and the
+     * periodic flusher thread spawned before the exec. On ARM64 and
+     * non-wayland builds the pre-init flush already mounted /mnt/sd
+     * and built the path; this is just a final overwrite with the
+     * end-of-init log state. */
+    klog_persist_to_sd_once(1);
 
     fut_printf("\n");
     fut_printf("=======================================================\n");

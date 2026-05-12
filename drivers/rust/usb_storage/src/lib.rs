@@ -179,6 +179,39 @@ impl UsbStorageDevice {
 
 // ── Global state ──
 
+/// Diagnostics for the most recent usb_storage_attach() call. The xhci
+/// host-controller driver re-reads this in its late-boot summary to
+/// surface the failure mode (sense key + ASC) for Mass Storage slots
+/// that didn't attach. Attaches are serialized today (xhci enumerates
+/// ports one at a time during xhci_init), so a single global is fine.
+#[repr(C)]
+pub struct UsbStorageLastAttach {
+    pub dev_id: u32,
+    pub rc: i32,
+    pub sk: u8,
+    pub asc: u8,
+    pub ascq: u8,
+    pub _pad: u8,
+    pub attempts: u32,
+}
+
+static mut LAST_ATTACH: UsbStorageLastAttach = UsbStorageLastAttach {
+    dev_id: 0, rc: 0, sk: 0, asc: 0, ascq: 0, _pad: 0, attempts: 0,
+};
+
+/// C-callable getter for the most recent attach's diagnostic state.
+/// Writes nothing if `out` is null. The xhci summary uses this to
+/// annotate stage=4 slots with the actual SCSI sense.
+#[unsafe(no_mangle)]
+pub extern "C" fn usb_storage_last_attach(out: *mut UsbStorageLastAttach) {
+    if out.is_null() {
+        return;
+    }
+    unsafe {
+        core::ptr::write(out, core::ptr::read(&raw const LAST_ATTACH));
+    }
+}
+
 struct UsbStorageState {
     devices: [UsbStorageDevice; MAX_USB_STORAGE_DEVICES],
     initialised: bool,
@@ -810,41 +843,83 @@ pub extern "C" fn usb_storage_attach(
         );
     }
 
-    // Step 2: TEST UNIT READY (retry for spin-up). The Samsung card-reader
-    // chip in HP Chromebook 11 G7 EE-class boards reports NOT_READY for
-    // ~50-100 ms after attach while it mounts an inserted microSD card.
-    // We can't use thread_sleep here because usb_storage_attach runs from
-    // xhci_init, which executes before the scheduler is started -- a real
-    // sleep would block on an empty run queue. Bound the retry count
-    // generously and burn a calibrated busy loop between attempts.
+    // Step 2: TEST UNIT READY (retry for spin-up). Card-reader chips
+    // (e.g. Samsung 04e8:6300 on HP Chromebook 11 G7 EE) report NOT_READY
+    // for tens to hundreds of ms after attach while they mount the
+    // inserted microSD. We can't use thread_sleep here -- usb_storage_attach
+    // runs from xhci_init, which executes before the scheduler starts;
+    // a real sleep would block on an empty run queue. Use a big busy
+    // loop between attempts instead, and bail early if the device reports
+    // MEDIUM_NOT_PRESENT (no card in the slot) since waiting won't help
+    // that case.
     let mut ready = false;
-    for attempt in 0..40u32 {
+    let mut last_sk = 0u8;
+    let mut last_asc = 0u8;
+    let mut last_ascq = 0u8;
+    let mut attempts_used = 0u32;
+    for attempt in 0..60u32 {
+        attempts_used = attempt + 1;
         let ret = scsi_test_unit_ready(dev);
         if ret == 0 {
             ready = true;
             break;
         }
-        // Get sense data for diagnostic
+        // Sense data tells us *why* the device says NOT_READY.
         let (sk, asc, ascq) = scsi_request_sense(dev);
-        if attempt < 39 {
+        last_sk = sk;
+        last_asc = asc;
+        last_ascq = ascq;
+        // MEDIUM NOT PRESENT (3a/00) means the reader has no card --
+        // no amount of waiting will help. Bail immediately.
+        if sk == 0x02 && asc == 0x3a {
+            unsafe {
+                fut_printf(
+                    b"usb_storage: MEDIUM_NOT_PRESENT, giving up after %u attempt(s)\n\0".as_ptr(),
+                    attempt + 1,
+                );
+            }
+            break;
+        }
+        if attempt < 59 {
             unsafe {
                 fut_printf(
                     b"usb_storage: not ready (sense=%02x/%02x/%02x), retry %u\n\0".as_ptr(),
                     sk as u32, asc as u32, ascq as u32, attempt + 1,
                 );
             }
-            // ~25 ms busy delay between retries on Broadwell-class CPUs
-            // (volatile reads pace the loop so the optimizer can't elide
-            // it; each iteration is a few cycles).
-            for _ in 0..2_500_000u32 {
+            // Busy wait ~50 ms. 25M volatile reads x ~2 ns per iter on a
+            // 1 GHz Gemini Lake. Overestimated rather than under -- a
+            // total cap of 60 x ~50 ms ~= 3 s is well within boot budget
+            // for an SD reader spin-up.
+            for _ in 0..25_000_000u32 {
                 unsafe { core::ptr::read_volatile(&attempt); }
             }
         }
     }
     if !ready {
-        log("usb_storage: device not ready after retries");
+        unsafe {
+            fut_printf(
+                b"usb_storage: gave up after %u attempts, last sense=%02x/%02x/%02x\n\0".as_ptr(),
+                attempts_used,
+                last_sk as u32, last_asc as u32, last_ascq as u32,
+            );
+            LAST_ATTACH.dev_id = dev_id;
+            LAST_ATTACH.rc = -11;
+            LAST_ATTACH.sk = last_sk;
+            LAST_ATTACH.asc = last_asc;
+            LAST_ATTACH.ascq = last_ascq;
+            LAST_ATTACH.attempts = attempts_used;
+        }
         dev.attached = false;
         return -11;
+    }
+    unsafe {
+        LAST_ATTACH.dev_id = dev_id;
+        LAST_ATTACH.rc = 0;
+        LAST_ATTACH.sk = last_sk;
+        LAST_ATTACH.asc = last_asc;
+        LAST_ATTACH.ascq = last_ascq;
+        LAST_ATTACH.attempts = attempts_used;
     }
 
     // Step 3: READ CAPACITY (10)

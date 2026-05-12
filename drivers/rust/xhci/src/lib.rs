@@ -1765,6 +1765,17 @@ fn bulk_transfer(
 // the signature `unsafe extern "C" fn(dev: u32, ep: u8, data: *mut u8,
 // len: u32) -> i32`, where `dev` is whatever opaque id the host driver
 // passes to usb_storage_attach. We pass the slot id.
+#[repr(C)]
+struct UsbStorageLastAttach {
+    dev_id: u32,
+    rc: i32,
+    sk: u8,
+    asc: u8,
+    ascq: u8,
+    _pad: u8,
+    attempts: u32,
+}
+
 unsafe extern "C" {
     fn usb_storage_attach(
         dev_id: u32,
@@ -1772,6 +1783,7 @@ unsafe extern "C" {
         bulk_out_ep: u8,
         bulk_fn: unsafe extern "C" fn(dev: u32, ep: u8, data: *mut u8, len: u32) -> i32,
     ) -> i32;
+    fn usb_storage_last_attach(out: *mut UsbStorageLastAttach);
 }
 
 /// C-callable bulk transfer used by class drivers. Looks up the
@@ -2532,6 +2544,34 @@ pub extern "C" fn xhci_print_summary() {
                     s.msc_in_addr as u32, s.msc_out_addr as u32,
                     stage_label,
                 );
+                // When attach reached usb_storage but failed (stage 4),
+                // pull the SCSI sense + retry count from usb_storage's
+                // last-attach diagnostic record so the screen shows
+                // *why* the LUN reported not-ready (becoming-ready vs
+                // medium-not-present vs transport error).
+                if s.attach_stage == 4 {
+                    let mut info = UsbStorageLastAttach {
+                        dev_id: 0, rc: 0, sk: 0, asc: 0, ascq: 0, _pad: 0,
+                        attempts: 0,
+                    };
+                    usb_storage_last_attach(&mut info);
+                    if info.dev_id == slot_id {
+                        let sense_label: *const u8 = match (info.sk, info.asc) {
+                            (0x02, 0x04) => b"LUN BECOMING_READY (timed out)\0".as_ptr(),
+                            (0x02, 0x3a) => b"MEDIUM_NOT_PRESENT\0".as_ptr(),
+                            (0x06, _)    => b"UNIT_ATTENTION\0".as_ptr(),
+                            (0xFF, _)    => b"transport error (no sense)\0".as_ptr(),
+                            _            => b"-\0".as_ptr(),
+                        };
+                        fut_printf(
+                            b"[SUMMARY] xhci: slot %u MSC sense=%02x/%02x/%02x after %u attempts (%s)\n\0".as_ptr(),
+                            slot_id,
+                            info.sk as u32, info.asc as u32, info.ascq as u32,
+                            info.attempts,
+                            sense_label,
+                        );
+                    }
+                }
             }
         }
     }

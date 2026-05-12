@@ -899,12 +899,76 @@ static int fat_vnode_create(struct fut_vnode *dir, const char *name,
     return 0;
 }
 
-static int fat_ro2(struct fut_vnode *d, const char *n) {
-    (void)d;(void)n; return -EROFS; }
 static int fat_ro3(struct fut_vnode *d, const char *n, uint32_t m) {
     (void)d;(void)n;(void)m; return -EROFS; }
 static int fat_ro4(struct fut_vnode *d, const char *o, const char *n) {
     (void)d;(void)o;(void)n; return -EROFS; }
+
+/* Walk the cluster chain rooted at `first_cluster`, marking each entry
+ * free (0) in every FAT mirror. Stops at the FAT-type-specific EOC or
+ * if it sees a value < 2 (free / reserved). Returns 0 on success. */
+static int fat_free_chain(struct fat_mount_info *fi, uint32_t first_cluster) {
+    uint32_t c = first_cluster;
+    int safety = 0;
+    while (c >= 2) {
+        uint32_t next = fat_next_cluster(fi, c);
+        int rc = fat_set_fat_entry(fi, c, 0);
+        if (rc < 0) return rc;
+        if (next < 2) break;
+        c = next;
+        /* Cluster count is bounded by fi->total_clusters; double that to
+         * be safe against a corrupted self-loop. */
+        if (++safety > (int)(fi->total_clusters * 2 + 16)) return -EIO;
+    }
+    return 0;
+}
+
+/* Delete `name` in directory `dir`. Walks the cluster chain on disk and
+ * marks each cluster free, then marks the dir entry as deleted (0xE5)
+ * which is the standard FAT "free dir slot" sentinel.
+ *
+ * Limitations versus a full POSIX unlink:
+ *   - LFN slots that prefix the 8.3 entry are NOT marked deleted (so
+ *     listing the directory may still see the long name pointing at a
+ *     deleted entry). The next O_CREAT may need to overwrite them. For
+ *     our use case (the klog SD log path L0000.LOG — 8.3-friendly), this
+ *     is acceptable; a fuller implementation can come later.
+ *   - No support for unlinking directories (must be empty).
+ *   - Does not update FSInfo free-cluster hint.
+ */
+static int fat_vnode_unlink(struct fut_vnode *dir, const char *name) {
+    struct fat_vnode_info *dvi = (struct fat_vnode_info *)dir->fs_data;
+    if (!dvi || !(dvi->attr & FAT_ATTR_DIRECTORY)) return -ENOTDIR;
+    struct fat_mount_info *fi = dvi->fi;
+
+    /* Re-use lookup to find the target vnode (and its dir_entry_disk_off). */
+    struct fut_vnode *target = NULL;
+    int rc = fat_vnode_lookup(dir, name, &target);
+    if (rc < 0) return rc;
+    if (!target) return -ENOENT;
+
+    struct fat_vnode_info *tvi = (struct fat_vnode_info *)target->fs_data;
+    if (tvi->attr & FAT_ATTR_DIRECTORY) {
+        /* Could implement rmdir-with-empty-check here; for now refuse. */
+        return -EISDIR;
+    }
+    if (tvi->dir_entry_disk_off == 0) return -EIO;
+
+    /* Free the cluster chain (if the file has any). */
+    if (tvi->first_cluster >= 2) {
+        rc = fat_free_chain(fi, tvi->first_cluster);
+        if (rc < 0) return rc;
+    }
+
+    /* Mark the dir entry's first byte as 0xE5 = "deleted slot". The rest
+     * of the entry can stay — FAT scanners treat 0xE5 as the sentinel. */
+    uint8_t deleted = 0xE5;
+    ssize_t w = fut_blockdev_write_bytes(fi->dev, tvi->dir_entry_disk_off,
+                                          1, &deleted);
+    if (w < 0) return (int)w;
+
+    return 0;
+}
 
 static struct fut_vnode_ops fat_vnode_ops;
 
@@ -1041,7 +1105,7 @@ void fat_init(void) {
     fat_vnode_ops.lookup = fat_vnode_lookup;
     fat_vnode_ops.readdir = fat_vnode_readdir;
     fat_vnode_ops.create = fat_vnode_create;
-    fat_vnode_ops.unlink = fat_ro2;
+    fat_vnode_ops.unlink = fat_vnode_unlink;
     fat_vnode_ops.mkdir = fat_ro3;
     fat_vnode_ops.rename = fat_ro4;
 

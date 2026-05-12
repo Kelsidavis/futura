@@ -52,7 +52,7 @@
  * capture what init actually does. The original "dies on first IRQ" question
  * is moot now that we have the SD-flusher capturing arbitrary post-IRETQ
  * state. */
-static bool g_bisect_mask_timer_before_first_user = false;
+static bool g_bisect_mask_timer_before_first_user = true;
 /* Diagnostic: briefly execute under the target CR3, then restore the original
  * CR3 and report the result. This avoids depending on the console path while
  * the target CR3 is active. Now ON by default — we need to know whether the
@@ -1168,11 +1168,12 @@ static int build_user_stack(fut_mm_t *mm,
     fut_printf("[BISECT-A] post-CR3 fetch+printf OK (cr3=0x%llx)\n",
                (unsigned long long)fut_read_cr3());
 
-    /* Nail down whether the cliff is inside the SECOND fut_printf call or
-     * before it. A1 prints immediately after BISECT-A — if it doesn't fire,
-     * the cliff is in the printf re-entry path (fb_console lock, scroll
-     * memcpy, etc.). A2 prints right before the handoff_frame compute.
-     * A3 prints right after the compute, before the original BISECT-B. */
+    /* Explicit cli — if BISECT-A1 was being lost to a timer IRQ taken
+     * between the two printfs, this should make A1 fire reliably. The
+     * g_bisect_mask_timer_before_first_user flag (set above) already
+     * disabled the timer before the CR3 swap, but cli + interrupt mask
+     * is the belt-and-suspenders version. */
+    __asm__ volatile("cli" ::: "memory");
     fut_printf("[BISECT-A1] survived the post-CR3 printf, about to compute handoff_frame\n");
 
     if (g_bisect_probe_kernel_cr3_roundtrip) {

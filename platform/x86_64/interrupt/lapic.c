@@ -406,10 +406,12 @@ void lapic_timer_calibrate_and_start(uint32_t hz, uint8_t vector) {
     fut_printf("[LAPIC-TIMER] Started periodic timer at %u Hz (vector %u), PIT disabled\n", hz, vector);
 
     /* Step 8: Self-test — verify the timer ISR is actually firing into
-     * system_ticks. On Lenovo L490 (Whiskey Lake) the calibration above
-     * appears to succeed but no LAPIC timer IRQs ever reach vector 32,
-     * so system_ticks never advances. Spin on rdtsc for ~100 ms wall
-     * clock and watch system_ticks. If it didn't advance, screech.
+     * system_ticks on an ongoing basis. On Lenovo L490 (Whiskey Lake)
+     * we've seen LAPIC fire ONCE post-start (or a residual PIT IRQ that
+     * was queued before we masked it land afterward) and then go silent
+     * forever. Checking "ticks_after != ticks_before" passes that case
+     * spuriously, so require at least 5 ticks advancement in 100 ms (we
+     * expect 10 at 100 Hz).
      *
      * Why rdtsc instead of a sleep: this is a free-running TSC read with
      * no dependency on the very thing we're trying to test. */
@@ -427,12 +429,17 @@ void lapic_timer_calibrate_and_start(uint32_t hz, uint8_t vector) {
         __asm__ volatile("pause" ::: "memory");
     }
     uint64_t ticks_after = fut_get_ticks();
-    if (ticks_after == ticks_before) {
+    /* Require ≥5 ticks (half the 100-ms-at-100Hz expectation) so that a
+     * one-shot fire or residual queued IRQ doesn't fool us into thinking
+     * the timer is working ongoing. */
+    if ((ticks_after - ticks_before) < 5) {
         fut_printf("\n");
         fut_printf("####################################################################\n");
         fut_printf("##  WARNING: LAPIC TIMER ISR NOT FIRING — falling back to PIT     ##\n");
         fut_printf("##  Calibration reported success (elapsed=%u, count=%u)         ##\n", elapsed, count);
-        fut_printf("##  but vector 32 saw 0 IRQs in 100ms. Attempting PIT fallback.  ##\n");
+        fut_printf("##  Got only %llu ticks in 100ms (expected ≥5). LAPIC fire-once  ##\n",
+                   (unsigned long long)(ticks_after - ticks_before));
+        fut_printf("##  pattern likely — IRQ delivered then no more. Switching now.   ##\n");
         fut_printf("####################################################################\n");
         fut_printf("\n");
 
@@ -461,7 +468,7 @@ void lapic_timer_calibrate_and_start(uint32_t hz, uint8_t vector) {
             __asm__ volatile("pause" ::: "memory");
         }
         uint64_t retick_after = fut_get_ticks();
-        if (retick_after == retick_before) {
+        if ((retick_after - retick_before) < 5) {
             fut_printf("\n");
             fut_printf("####################################################################\n");
             fut_printf("##  CRITICAL: PIT FALLBACK ALSO NOT FIRING — system has no timer  ##\n");
@@ -480,8 +487,17 @@ void lapic_timer_calibrate_and_start(uint32_t hz, uint8_t vector) {
         fut_printf("[LAPIC-TIMER] self-test OK: system_ticks advanced from %llu to %llu in ~100ms\n",
                    (unsigned long long)ticks_before,
                    (unsigned long long)ticks_after);
+        extern uint64_t g_lapic_timer_self_test_advance;
+        g_lapic_timer_self_test_advance = ticks_after - ticks_before;
     }
 }
+
+/* Set by the LAPIC self-test in lapic_timer_calibrate_and_start so that
+ * later boot phases can print "LAPIC timer health: N ticks in 100ms" once
+ * the screen has scrolled past the noisy device-driver init. Helps the
+ * user see at-a-glance whether the timer is working without scrolling
+ * back through hundreds of lines. */
+uint64_t g_lapic_timer_self_test_advance = 0;
 
 /**
  * Check if LAPIC is enabled.

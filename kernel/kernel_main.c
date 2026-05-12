@@ -2994,6 +2994,15 @@ try_ramdisk: (void)0;
                 fut_printf("[INIT] formatting ramdisk as FuturaFS...\n");
                 int fmt_rc = fut_futurafs_format(ramdisk, "FuturaOS", 4096);
                 fut_printf("[INIT] format returned rc=%d\n", fmt_rc);
+                /* Echo the LAPIC self-test result here so it doesn't scroll
+                 * off in the early-boot noise. If this number is < 5, the
+                 * timer ISR isn't firing reliably and the nanosleep rdtsc
+                 * fallback (e1197112) is what's holding things together. */
+#if defined(__x86_64__)
+                extern uint64_t g_lapic_timer_self_test_advance;
+                fut_printf("[INIT] LAPIC timer health: %llu ticks advanced in 100ms self-test (expect ~10)\n",
+                           (unsigned long long)g_lapic_timer_self_test_advance);
+#endif
                 if (fmt_rc == 0) {
                     extern struct fut_vnode *fut_vfs_get_root(void);
                     struct fut_vnode *root = fut_vfs_get_root();

@@ -1792,6 +1792,17 @@ unsafe extern "C" {
         bulk_fn: unsafe extern "C" fn(dev: u32, ep: u8, data: *mut u8, len: u32) -> i32,
     ) -> i32;
     fn usb_storage_last_attach(out: *mut UsbStorageLastAttach);
+    fn usb_storage_get_capacity(
+        dev_id: u32,
+        blocks: *mut u64,
+        block_size: *mut u32,
+    ) -> i32;
+    fn usb_storage_get_ids(
+        dev_id: u32,
+        vendor_out: *mut u8,
+        product_out: *mut u8,
+        name_out: *mut u8,
+    ) -> i32;
 }
 
 /// C-callable bulk transfer used by class drivers. Looks up the
@@ -2536,6 +2547,37 @@ pub extern "C" fn xhci_print_summary() {
                 if s.storage_attached { b" -- usb_storage attached\0".as_ptr() }
                 else                  { b"\0".as_ptr() },
             );
+            // For attached storage, surface the vendor/product strings,
+            // block-device name, and capacity so the user can identify
+            // which disk this is (Samsung USB stick vs Genesys SD reader
+            // vs ...) without scrolling back. MiB is computed integer-only.
+            if s.storage_attached {
+                let mut vendor = [0u8; 9];
+                let mut product = [0u8; 17];
+                let mut name = [0u8; 8];
+                usb_storage_get_ids(
+                    slot_id,
+                    vendor.as_mut_ptr(),
+                    product.as_mut_ptr(),
+                    name.as_mut_ptr(),
+                );
+                let mut blocks: u64 = 0;
+                let mut bsize: u32 = 0;
+                usb_storage_get_capacity(slot_id, &mut blocks, &mut bsize);
+                let mib = if bsize > 0 {
+                    blocks * (bsize as u64) / (1024 * 1024)
+                } else { 0 };
+                fut_printf(
+                    b"[SUMMARY] xhci: slot %u disk /dev/%s '%s' '%s' %llu blocks x %u bytes (%llu MiB)\n\0".as_ptr(),
+                    slot_id,
+                    name.as_ptr(),
+                    vendor.as_ptr(),
+                    product.as_ptr(),
+                    blocks,
+                    bsize,
+                    mib,
+                );
+            }
             // For Mass Storage slots that didn't end up attached, spell
             // out exactly where the bring-up stopped.
             if s.first_if_class == 0x08 && !s.storage_attached {

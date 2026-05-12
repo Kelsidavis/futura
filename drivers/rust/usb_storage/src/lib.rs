@@ -1066,3 +1066,34 @@ pub extern "C" fn usb_storage_get_capacity(
     }
     0
 }
+
+/// Copy the attached device's SCSI INQUIRY vendor (8 chars, NUL-terminated)
+/// and product (16 chars, NUL-terminated) and the registered block-device
+/// name ("usbN", NUL-terminated) into caller-provided buffers. The xhci
+/// summary uses this to identify the disk in the late-boot block.
+/// Buffers must hold at least 9 / 17 / 8 bytes respectively. Returns 0
+/// on success, negative if the device isn't attached.
+#[unsafe(no_mangle)]
+pub extern "C" fn usb_storage_get_ids(
+    dev_id: u32,
+    vendor_out: *mut u8,
+    product_out: *mut u8,
+    name_out: *mut u8,
+) -> i32 {
+    let state = unsafe { &*STATE.get() };
+    let slot = match find_slot(state, dev_id) {
+        Some(s) => s,
+        None => return -1,
+    };
+    let dev = &state.devices[slot];
+    if !vendor_out.is_null() {
+        unsafe { core::ptr::copy_nonoverlapping(dev.vendor.as_ptr(), vendor_out, 9); }
+    }
+    if !product_out.is_null() {
+        unsafe { core::ptr::copy_nonoverlapping(dev.product.as_ptr(), product_out, 17); }
+    }
+    if !name_out.is_null() {
+        unsafe { core::ptr::copy_nonoverlapping(dev.name.as_ptr(), name_out, 8); }
+    }
+    0
+}

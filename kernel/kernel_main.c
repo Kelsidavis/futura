@@ -2160,13 +2160,18 @@ void fut_kernel_main(void) {
             fut_printf("[INIT] Intel: entering intel_lpss_init\n");
             intel_lpss_init();
             /* Probe LPSS I2C buses for HID-over-I2C devices (Chromebook
-             * touchpads, etc.). Must run AFTER intel_lpss_init so the I2C
-             * controller table is populated. */
+             * touchpads, etc.). DISABLED by default — pending diagnosis
+             * of an HP regression where this probe loop (96 probes × 8
+             * buses, each potentially timing out on no-ACK) seems to
+             * break subsequent USB enumeration. Re-enable when the
+             * probe path is bounded against bus stalls. */
+            #if 0
             {
                 extern int intel_i2c_hid_init(void);
                 fut_printf("[INIT] Intel: entering intel_i2c_hid_init\n");
                 intel_i2c_hid_init();
             }
+            #endif
             fut_printf("[INIT] Intel: entering intel_smbus_init\n");
             intel_smbus_init();
             fut_printf("[INIT] Intel: entering intel_spi_init\n");

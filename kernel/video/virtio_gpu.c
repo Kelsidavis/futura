@@ -897,7 +897,7 @@ int virtio_gpu_init(uint64_t *out_fb_phys, uint32_t width, uint32_t height) {
         fb[i] = pixel;
     }
 
-    fut_printf("[VIRTIO-GPU] Test pattern drawn to guest framebuffer at 0x%p\n",
+    fut_printf("[VIRTIO-GPU] Test pattern drawn to guest framebuffer at %p\n",
                (void *)g_framebuffer_guest);
 
     /* Send VIRTIO GPU commands to set up display */

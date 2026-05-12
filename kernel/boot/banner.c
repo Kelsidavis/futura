@@ -176,6 +176,35 @@ void fut_boot_banner(void) {
     fut_printf(" %s\n", FUT_VERSION_STR);
     fut_printf(" Build: %s  by %s@%s\n", FUT_BUILD_DATE, FUT_BUILD_USER, FUT_BUILD_HOST);
 
+    /* Pin the version line at row 0 so it stays visible for the whole
+     * boot. Critical for real-hardware diagnosis: when a board hangs,
+     * we need to know which build it was running, and scrollback is
+     * unreachable without serial. Weak-linked because fb_console is a
+     * Rust driver that may not be present in headless test builds. */
+    {
+        extern void fb_console_set_pinned_line(const char *text, uint32_t len)
+            __attribute__((weak));
+        if (fb_console_set_pinned_line) {
+            char pin[96];
+            int n = 0;
+            const char *prefix = " ";
+            for (const char *p = prefix; *p && n < (int)sizeof(pin) - 1; p++) {
+                pin[n++] = *p;
+            }
+            for (const char *p = FUT_VERSION_STR; *p && n < (int)sizeof(pin) - 1; p++) {
+                pin[n++] = *p;
+            }
+            const char *sep = "   ";
+            for (const char *p = sep; *p && n < (int)sizeof(pin) - 1; p++) {
+                pin[n++] = *p;
+            }
+            for (const char *p = FUT_BUILD_DATE; *p && n < (int)sizeof(pin) - 1; p++) {
+                pin[n++] = *p;
+            }
+            fb_console_set_pinned_line(pin, (uint32_t)n);
+        }
+    }
+
     fut_printf("\n[CPU] %s\n", (cpu_brand[0] != '\0') ? cpu_brand : "Unknown CPU");
 #ifdef __x86_64__
     fut_printf("[CPU] NX=%u OSXSAVE=%u SSE=%u AVX=%u FSGSBASE=%u PGE=%u\n",

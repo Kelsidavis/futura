@@ -200,6 +200,13 @@ struct ConsoleState {
     fb_set_cursor: Option<FbSetCursorFn>,
     fb_clear: Option<FbClearFn>,
 
+    // Pinned line on row 0 — re-painted after every scroll so the boot
+    // banner stays visible all the way through. Lets the user verify
+    // which build is running on a hanging box without scrollback.
+    pinned_text: [u8; MAX_COLS],
+    pinned_len: u32,
+    pinned_active: bool,
+
     initialized: bool,
 }
 
@@ -226,6 +233,9 @@ impl ConsoleState {
             fb_scroll: None,
             fb_set_cursor: None,
             fb_clear: None,
+            pinned_text: [b' '; MAX_COLS],
+            pinned_len: 0,
+            pinned_active: false,
             initialized: false,
         }
     }
@@ -295,6 +305,45 @@ impl ConsoleState {
         // Tell framebuffer to scroll
         if let Some(fb_scroll) = self.fb_scroll {
             unsafe { fb_scroll(count); }
+        }
+
+        // Re-paint the pinned line on row 0 if active. fb_scroll moves
+        // the whole framebuffer up, so row 0 now shows what used to be
+        // on row `count`; overwriting it brings the banner back.
+        self.repaint_pinned();
+    }
+
+    // ── Repaint the pinned line at row 0 ──
+
+    fn repaint_pinned(&mut self) {
+        if !self.pinned_active {
+            return;
+        }
+        let cols = self.cols as usize;
+        let len = (self.pinned_len as usize).min(cols);
+        let fg = self.fg_rgb();
+        let bg = self.bg_rgb();
+        let attr = self.current_attr();
+
+        // Update the screen buffer so redraw_screen stays consistent.
+        for c in 0..cols {
+            let ch = if c < len { self.pinned_text[c] } else { b' ' };
+            self.screen[0][c] = Cell { ch, attr };
+        }
+
+        // Position fb cursor at row 0, draw, then restore to the
+        // logical (col, row) the kernel's actual output is at.
+        if let Some(fb_set_cursor) = self.fb_set_cursor {
+            unsafe { fb_set_cursor(0, 0); }
+        }
+        if let Some(fb_putchar) = self.fb_putchar {
+            for c in 0..cols {
+                let ch = if c < len { self.pinned_text[c] } else { b' ' };
+                unsafe { fb_putchar(ch, fg, bg); }
+            }
+        }
+        if let Some(fb_set_cursor) = self.fb_set_cursor {
+            unsafe { fb_set_cursor(self.cursor_col, self.cursor_row); }
         }
     }
 
@@ -882,6 +931,37 @@ pub extern "C" fn fb_console_set_cursor_pos(col: u32, row: u32) {
     s.cursor_col = col.min(s.cols.saturating_sub(1));
     s.cursor_row = row.min(s.rows.saturating_sub(1));
     s.update_hw_cursor();
+}
+
+/// Pin a single line of text at row 0. The text is re-painted after
+/// every scroll, so it stays visible for the entire boot. Use to keep
+/// the version banner on screen — invaluable for diagnosing hangs on
+/// real hardware where scrollback isn't reachable.
+///
+/// Passing `len == 0` clears the pinned line.
+#[unsafe(no_mangle)]
+pub extern "C" fn fb_console_set_pinned_line(text: *const u8, len: u32) {
+    let s = unsafe { &mut *STATE.get() };
+    if !s.initialized {
+        return;
+    }
+    if len == 0 || text.is_null() {
+        s.pinned_active = false;
+        s.pinned_len = 0;
+        return;
+    }
+    let cols = s.cols as usize;
+    let copy_len = (len as usize).min(MAX_COLS).min(cols);
+    for i in 0..copy_len {
+        s.pinned_text[i] = unsafe { *text.add(i) };
+    }
+    // Pad the remaining columns with spaces so the row is fully filled.
+    for i in copy_len..MAX_COLS {
+        s.pinned_text[i] = b' ';
+    }
+    s.pinned_len = copy_len as u32;
+    s.pinned_active = true;
+    s.repaint_pinned();
 }
 
 /// Get the console size in character cells.

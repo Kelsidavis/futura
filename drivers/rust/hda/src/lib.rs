@@ -847,6 +847,20 @@ fn enumerate_widgets(ctrl: &mut HdaController, codec_idx: usize) {
     let start_nid = ((sub >> 16) & 0xFF) as u8;
     let num_nodes = (sub & 0xFF) as u8;
 
+    // Diagnostic: surface the raw SUB_NODE_COUNT response so we can tell
+    // a "codec returned weird data" failure from a "we parsed the verb
+    // wrong" failure. On the user's L490 boot we saw "codec 2 enumerated
+    // 2 widgets (NID 2..3)" which is too few for any real Realtek codec
+    // — print the raw register so a follow-up boot can show whether the
+    // codec really claims only 2 widgets or the verb is returning a
+    // default/stale value.
+    unsafe {
+        fut_printf(
+            b"hda: codec %d: AFG sub-node-count raw=0x%08x (start=%d count=%d)\n\0".as_ptr(),
+            codec_addr as u32, sub, start_nid as u32, num_nodes as u32,
+        );
+    }
+
     ctrl.codecs[codec_idx].afg_start_nid = start_nid;
     ctrl.codecs[codec_idx].afg_num_nodes = num_nodes;
 

@@ -3178,56 +3178,18 @@ try_ramdisk: (void)0;
                 }
                 sys_close(fd);
             } else if (fd == -30 /* EROFS */) {
+                /* The FAT and ext2 drivers in this kernel are RO-only,
+                 * so we can't actually write the log file. We previously
+                 * tried a raw-block fallback into sectors 8..71, but on
+                 * standard FAT32-formatted SD cards the FAT table starts
+                 * around sector 32 (with RsvdSecCnt=32), so those writes
+                 * corrupted the filesystem and the card became unmountable
+                 * on the host. Disabled until we have FAT write support
+                 * (or a confirmed-safe sector range we can use). */
                 fut_printf("[KLOG-SD] %s: filesystem mounted read-only -- "
-                           "FAT/ext2 drivers don't support writes. "
-                           "Writing raw blocks instead...\n", path);
-                /* Raw fallback: write the klog to the MBR gap (sectors
-                 * 8..71 = 32 KiB) of the block device. On standard
-                 * MBR-partitioned SD cards the first partition starts at
-                 * sector 2048, so 8..71 is free space we can safely
-                 * clobber. Prefix with a 16-byte header
-                 * ("FUTLOG\0\0" + boot_seq + length) so a host can locate
-                 * and extract it via `dd skip=8 count=64 | tail -c +17`. */
-                extern struct fut_blockdev *fut_blockdev_find(const char *);
-                extern int fut_blockdev_write(struct fut_blockdev *,
-                                              uint64_t, uint64_t, const void *);
-                struct fut_blockdev *blk = fut_blockdev_find(candidates[mounted_idx]);
-                if (blk) {
-                    /* 64 sectors × 512 bytes = 32 KiB capacity. */
-                    size_t raw_cap = 64 * 512;
-                    uint8_t *raw = (uint8_t *)fut_malloc(raw_cap);
-                    if (raw) {
-                        for (size_t i = 0; i < raw_cap; i++) raw[i] = 0;
-                        /* header at offset 0: magic + boot_seq + length */
-                        raw[0]='F'; raw[1]='U'; raw[2]='T'; raw[3]='L';
-                        raw[4]='O'; raw[5]='G'; raw[6]=0;   raw[7]=0;
-                        uint32_t seq2 = klog_persist_boot_seq();
-                        raw[8]  = (uint8_t)(seq2 & 0xff);
-                        raw[9]  = (uint8_t)((seq2 >> 8) & 0xff);
-                        raw[10] = (uint8_t)((seq2 >> 16) & 0xff);
-                        raw[11] = (uint8_t)((seq2 >> 24) & 0xff);
-                        size_t got = klog_persist_read((char *)(raw + 16),
-                                                        raw_cap - 16);
-                        raw[12] = (uint8_t)(got & 0xff);
-                        raw[13] = (uint8_t)((got >> 8) & 0xff);
-                        raw[14] = (uint8_t)((got >> 16) & 0xff);
-                        raw[15] = (uint8_t)((got >> 24) & 0xff);
-                        int wr = fut_blockdev_write(blk, 8, 64, raw);
-                        if (wr == 0) {
-                            fut_printf("[KLOG-SD] wrote %zu bytes to /dev/%s "
-                                       "sectors 8..71 (seq=%u, recover with "
-                                       "`dd if=/dev/sdX skip=8 count=64`)\n",
-                                       got, candidates[mounted_idx], seq2);
-                        } else {
-                            fut_printf("[KLOG-SD] raw write to /dev/%s failed: %d\n",
-                                       candidates[mounted_idx], wr);
-                        }
-                        fut_free(raw);
-                    }
-                } else {
-                    fut_printf("[KLOG-SD] blockdev_find(%s) returned NULL\n",
-                               candidates[mounted_idx]);
-                }
+                           "Futura's FAT/ext2 drivers don't support writes "
+                           "yet; log not persisted to disk this boot.\n",
+                           path);
             } else {
                 fut_printf("[KLOG-SD] open %s failed: %d\n", path, fd);
             }

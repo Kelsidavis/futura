@@ -3008,6 +3008,8 @@ try_ramdisk: (void)0;
                 fut_printf("[INIT] timer health: source=%s, %llu ticks in 100ms self-test (expect ~10)\n",
                            src_name,
                            (unsigned long long)g_lapic_timer_self_test_advance);
+                extern void lapic_dump_state(void);
+                lapic_dump_state();
                 /* Also echo FB geometry + virt here — the user trampoline
                  * BISECT-A line was supposed to print this but on HP the
                  * second fut_printf after CR3 swap hangs, so we never see it.

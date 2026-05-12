@@ -441,6 +441,27 @@ void lapic_timer_calibrate_and_start(uint32_t hz, uint8_t vector) {
 
     fut_printf("[LAPIC-TIMER] Started periodic timer at %u Hz (vector %u), PIT disabled\n", hz, vector);
 
+    /* Diagnostic readback: confirm the writes actually took effect.
+     * On L490 the timer self-test reports 0 ticks even after this whole
+     * setup completes; reading back lets us check whether LVT_TIMER kept
+     * the values we wrote, or whether the LAPIC silently rejected them
+     * (which it does in x2APIC mode if we used MMIO, or vice versa). */
+    {
+        uint32_t lvt = lapic_read(LAPIC_REG_LVT_TIMER);
+        uint32_t init = lapic_read(LAPIC_REG_TIMER_INITIAL);
+        uint32_t cur = lapic_read(LAPIC_REG_TIMER_CURRENT);
+        uint32_t div = lapic_read(LAPIC_REG_TIMER_DIVIDE);
+        uint32_t tpr = lapic_read(LAPIC_REG_TPR);
+        uint32_t svr = lapic_read(LAPIC_REG_SVR);
+        fut_printf("[LAPIC-TIMER] readback: LVT_TIMER=0x%08x (vec=%u, mask=%u, mode=%s)\n",
+                   lvt, lvt & 0xFF, (lvt >> 16) & 1,
+                   (lvt & 0x20000) ? "periodic" : "oneshot/tsc");
+        fut_printf("[LAPIC-TIMER] readback: TIMER_INITIAL=%u TIMER_CURRENT=%u DIVIDE=0x%x\n",
+                   init, cur, div);
+        fut_printf("[LAPIC-TIMER] readback: TPR=0x%x SVR=0x%x (enabled=%u)\n",
+                   tpr, svr, (svr >> 8) & 1);
+    }
+
     /* Step 8: Self-test — verify the timer ISR is actually firing into
      * system_ticks on an ongoing basis. On Lenovo L490 (Whiskey Lake)
      * we've seen LAPIC fire ONCE post-start (or a residual PIT IRQ that
@@ -548,6 +569,33 @@ void lapic_timer_calibrate_and_start(uint32_t hz, uint8_t vector) {
 uint64_t g_lapic_timer_self_test_advance = 0;
 /* 0 = none (both LAPIC and PIT failed), 1 = LAPIC, 2 = PIT fallback. */
 int g_lapic_timer_source = 0;
+
+/* Dump the current LAPIC state for late-boot diagnostics. Safe to call
+ * any time after lapic_init has run. */
+void lapic_dump_state(void) {
+    if (!lapic_base && !lapic_x2apic) {
+        fut_printf("[LAPIC-STATE] LAPIC not initialized\n");
+        return;
+    }
+    uint64_t apic_base_msr = rdmsr(MSR_APIC_BASE);
+    uint32_t lvt = lapic_read(LAPIC_REG_LVT_TIMER);
+    uint32_t init = lapic_read(LAPIC_REG_TIMER_INITIAL);
+    uint32_t cur = lapic_read(LAPIC_REG_TIMER_CURRENT);
+    uint32_t div = lapic_read(LAPIC_REG_TIMER_DIVIDE);
+    uint32_t tpr = lapic_read(LAPIC_REG_TPR);
+    uint32_t svr = lapic_read(LAPIC_REG_SVR);
+    fut_printf("[LAPIC-STATE] APIC_BASE_MSR=0x%llx (x2APIC=%u enabled=%u)\n",
+               (unsigned long long)apic_base_msr,
+               (unsigned)((apic_base_msr >> 10) & 1),
+               (unsigned)((apic_base_msr >> 11) & 1));
+    fut_printf("[LAPIC-STATE] LVT_TIMER=0x%08x (vec=%u mask=%u %s)\n",
+               lvt, lvt & 0xFF, (lvt >> 16) & 1,
+               (lvt & 0x20000) ? "periodic" : "oneshot/tsc");
+    fut_printf("[LAPIC-STATE] TIMER_INITIAL=%u CURRENT=%u DIVIDE=0x%x\n",
+               init, cur, div);
+    fut_printf("[LAPIC-STATE] TPR=0x%x SVR=0x%x (enabled=%u)\n",
+               tpr, svr, (svr >> 8) & 1);
+}
 
 /**
  * Check if LAPIC is enabled.

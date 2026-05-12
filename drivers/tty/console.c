@@ -58,12 +58,20 @@ static void console_input_thread(void *arg) {
         /* Try non-blocking read first */
         int c = fut_serial_getc();
         if (c >= 0) {
-            tty_ldisc_input(&console_ldisc, (char)c);
+            /* Suppress 0x7F (DEL) byte storms from a UART RX register that
+             * isn't wired to anything on this platform. On Gemini Lake the
+             * legacy 16550 at 0x3F8 floats / returns 0x7F when no real UART
+             * is present, and the line discipline echoes it back to the
+             * FB console — saturating fut_printf and starving the boot
+             * trampoline thread. */
+            if ((unsigned char)c != 0x7F) {
+                tty_ldisc_input(&console_ldisc, (char)c);
+            }
             continue;  /* Check for more data immediately */
         }
         /* No data — block until UART has data (interrupt or polling fallback) */
         c = fut_serial_getc_blocking();
-        if (c >= 0) {
+        if (c >= 0 && (unsigned char)c != 0x7F) {
             tty_ldisc_input(&console_ldisc, (char)c);
         }
     }

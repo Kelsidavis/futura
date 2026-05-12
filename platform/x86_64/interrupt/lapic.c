@@ -463,6 +463,25 @@ void lapic_timer_calibrate_and_start(uint32_t hz, uint8_t vector) {
 
     fut_printf("[LAPIC-TIMER] Started periodic timer at %u Hz (vector %u), PIT disabled\n", hz, vector);
 
+    /* On Whiskey Lake / Coffee Lake (and likely other 8th-gen+ parts) the
+     * BIOS auto-promotes the bootstrap CPU from hlt (C1) to C3/C6, and the
+     * LAPIC timer halts in those states. Symptom on L490: first timer IRQ
+     * fires fine, switch to idle's sti;hlt, never wake again.
+     *
+     * Workaround until a real C-state cap or TSC-deadline timer is wired:
+     * mark the timer as "broken-for-hlt-purposes" so the idle thread takes
+     * the busy-yield path (pause + fut_schedule) instead of sti;hlt. The
+     * timer keeps firing for every other purpose — sleep, alarms, preemptive
+     * scheduling, etc. — this only changes idle's wait strategy.
+     *
+     * Cheap CPU cost (100% on idle) is acceptable while we boot real
+     * hardware; HP Gemini Lake already busy-yields too without issue. */
+    {
+        extern _Atomic int g_timer_ticks_broken;
+        __atomic_store_n(&g_timer_ticks_broken, 1, __ATOMIC_RELEASE);
+        fut_printf("[LAPIC-TIMER] forcing idle busy-yield (workaround for C3 LAPIC pause)\n");
+    }
+
     /* Diagnostic readback: confirm the writes actually took effect.
      * On L490 the timer self-test reports 0 ticks even after this whole
      * setup completes; reading back lets us check whether LVT_TIMER kept

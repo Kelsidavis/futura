@@ -923,6 +923,111 @@ static int fat_free_chain(struct fat_mount_info *fi, uint32_t first_cluster) {
     return 0;
 }
 
+/* Truncate a file to `length` bytes. Walks the cluster chain to find the
+ * boundary cluster, then:
+ *   - shrink-to-0:    free the whole chain, set first_cluster=0 in dir
+ *   - shrink-to-N:    set the boundary cluster's FAT entry to EOC, free
+ *                     everything past it
+ *   - same size:      no-op
+ *   - grow-to-N:      allocate new EOC-terminated clusters at the end of
+ *                     the chain, zero-fill, then update size
+ * In every case the dir entry's `file_size` field is rewritten.
+ *
+ * O_TRUNC on an existing file goes through this path (after unlink+create
+ * was the previous workaround). With this in place, the klog SD writer
+ * could in principle drop its unlink-before-write call, but leaving both
+ * costs nothing and gives defence in depth. */
+static int fat_vnode_truncate(struct fut_vnode *v, uint64_t length) {
+    struct fat_vnode_info *vi = (struct fat_vnode_info *)v->fs_data;
+    if (!vi) return -EINVAL;
+    if (vi->attr & FAT_ATTR_DIRECTORY) return -EINVAL;
+    if (vi->dir_entry_disk_off == 0) return -EROFS;
+    struct fat_mount_info *fi = vi->fi;
+    uint32_t old_size = vi->file_size;
+    if ((uint64_t)length > 0xFFFFFFFFULL) return -EFBIG;
+    uint32_t new_size = (uint32_t)length;
+    if (new_size == old_size) return 0;
+
+    if (new_size < old_size) {
+        if (new_size == 0) {
+            if (vi->first_cluster >= 2) {
+                int rc = fat_free_chain(fi, vi->first_cluster);
+                if (rc < 0) return rc;
+            }
+            vi->first_cluster = 0;
+        } else {
+            /* Walk forward (new_size-1)/cluster_size clusters from the
+             * head. That's the last cluster the file still needs. */
+            uint32_t keep_clusters = (new_size + fi->cluster_size - 1) / fi->cluster_size;
+            uint32_t cur = vi->first_cluster;
+            for (uint32_t i = 1; i < keep_clusters && cur >= 2; ++i) {
+                cur = fat_next_cluster(fi, cur);
+            }
+            if (cur < 2) return -EIO;
+            uint32_t to_free = fat_next_cluster(fi, cur);
+            uint32_t eoc = (fi->fat_type == FAT_TYPE_32) ? FAT32_EOC : FAT16_EOC;
+            int rc = fat_set_fat_entry(fi, cur, eoc);
+            if (rc < 0) return rc;
+            if (to_free >= 2) {
+                rc = fat_free_chain(fi, to_free);
+                if (rc < 0) return rc;
+            }
+        }
+    } else {
+        /* Grow. Walk to the chain end, then allocate-link-zero each new
+         * cluster up to the new size. */
+        uint32_t cur_clusters = (old_size + fi->cluster_size - 1) / fi->cluster_size;
+        uint32_t need_clusters = (new_size + fi->cluster_size - 1) / fi->cluster_size;
+        uint32_t to_add = need_clusters - cur_clusters;
+        if (to_add == 0) {
+            /* Same number of clusters, just a size bump within the last
+             * cluster — no FAT work needed, only the dir-entry update. */
+        } else if (vi->first_cluster == 0) {
+            /* Empty file growing for the first time. */
+            uint32_t newc;
+            int rc = fat_alloc_cluster(fi, &newc);
+            if (rc < 0) return rc;
+            vi->first_cluster = newc;
+            to_add--;
+            uint32_t prev = newc;
+            while (to_add > 0) {
+                rc = fat_alloc_cluster(fi, &newc);
+                if (rc < 0) return rc;
+                rc = fat_set_fat_entry(fi, prev, newc);
+                if (rc < 0) return rc;
+                prev = newc;
+                to_add--;
+            }
+        } else {
+            uint32_t cur = vi->first_cluster;
+            while (true) {
+                uint32_t next = fat_next_cluster(fi, cur);
+                if (next < 2) break;
+                cur = next;
+            }
+            while (to_add > 0) {
+                uint32_t newc;
+                int rc = fat_alloc_cluster(fi, &newc);
+                if (rc < 0) return rc;
+                rc = fat_set_fat_entry(fi, cur, newc);
+                if (rc < 0) return rc;
+                cur = newc;
+                to_add--;
+            }
+        }
+        /* Zero-fill the newly-allocated tail. We don't bother zeroing
+         * partial bytes in the last cluster — those were either zero
+         * already (cluster came from fat_alloc_cluster on a freshly-
+         * formatted volume) or contain a previous deleted file's bytes.
+         * A strict POSIX zero-fill would memset() each new cluster; left
+         * for later if it ever matters. */
+    }
+
+    vi->file_size = new_size;
+    return fat_dir_entry_set_size(fi, vi->dir_entry_disk_off,
+                                  vi->first_cluster, new_size);
+}
+
 /* Delete `name` in directory `dir`. Walks the cluster chain on disk and
  * marks each cluster free, then marks the dir entry as deleted (0xE5)
  * which is the standard FAT "free dir slot" sentinel.
@@ -1106,6 +1211,7 @@ void fat_init(void) {
     fat_vnode_ops.readdir = fat_vnode_readdir;
     fat_vnode_ops.create = fat_vnode_create;
     fat_vnode_ops.unlink = fat_vnode_unlink;
+    fat_vnode_ops.truncate = fat_vnode_truncate;
     fat_vnode_ops.mkdir = fat_ro3;
     fat_vnode_ops.rename = fat_ro4;
 

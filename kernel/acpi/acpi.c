@@ -255,9 +255,9 @@ void acpi_parse_madt(void) {
         return;
     }
 
-    fut_printf("[ACPI] MADT found at 0x%p\n", (void *)madt);
-    fut_printf("[ACPI] Local APIC address: 0x%x\n", madt->local_apic_address);
-    fut_printf("[ACPI] Flags: 0x%x (PC-AT compatible: %s)\n",
+    fut_printf("[ACPI] MADT found at %p\n", (void *)madt);
+    fut_printf("[ACPI] Local APIC address: 0x%08x\n", madt->local_apic_address);
+    fut_printf("[ACPI] Flags: 0x%08x (PC-AT compatible: %s)\n",
                madt->flags,
                (madt->flags & 1) ? "yes" : "no");
 

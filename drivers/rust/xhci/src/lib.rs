@@ -18,13 +18,17 @@
 #![no_std]
 #![forbid(unsafe_op_in_unsafe_fn)]
 #![allow(unexpected_cfgs)]
+// xHCI register offsets and TRB-type constants are kept verbatim from
+// the xHCI spec — many are defined for reference and aren't used by the
+// current minimal enumeration path. Allow the dead-code warnings on them.
+#![allow(dead_code)]
 
-use core::ffi::{c_char, c_void};
+use core::ffi::c_void;
 use core::ptr::{read_volatile, write_volatile};
 use core::sync::atomic::{fence, Ordering};
 
 use common::{
-    alloc, alloc_page, free, free_page, log, map_mmio_region, thread_sleep, thread_yield,
+    alloc, alloc_page, free_page, log, map_mmio_region, thread_sleep, thread_yield,
     unmap_mmio_region, MMIO_DEFAULT_FLAGS,
 };
 
@@ -2001,9 +2005,7 @@ fn enumerate_devices(ctrl: &mut XhciController) {
             }
             continue;
         }
-        let total = unsafe {
-            (*(cfg_buf.add(2) as *const u16))
-        };
+        let total = unsafe { *(cfg_buf.add(2) as *const u16) };
         let total = core::cmp::min(total, 4096) as u16;
         let n2 = get_config_descriptor(ctrl, slot_id, cfg_buf, total);
         if n2 < total {
@@ -2267,7 +2269,7 @@ pub extern "C" fn xhci_init() -> i32 {
     let caplength = mmio_read32(bar0, XHCI_CAP_CAPLENGTH) & 0xFF;
     let hciversion = (mmio_read32(bar0, XHCI_CAP_CAPLENGTH) >> 16) & 0xFFFF;
     let hcsparams1 = mmio_read32(bar0, XHCI_CAP_HCSPARAMS1);
-    let hcsparams2 = mmio_read32(bar0, XHCI_CAP_HCSPARAMS2);
+    let _hcsparams2 = mmio_read32(bar0, XHCI_CAP_HCSPARAMS2);
     let hccparams1 = mmio_read32(bar0, XHCI_CAP_HCCPARAMS1);
     let dboff = mmio_read32(bar0, XHCI_CAP_DBOFF) & !0x3;
     let rtsoff = mmio_read32(bar0, XHCI_CAP_RTSOFF) & !0x1F;
@@ -2510,9 +2512,7 @@ pub extern "C" fn xhci_print_summary() {
         match (*core::ptr::addr_of!(XHCI)).as_ref() {
             Some(c) => c.max_slots as u32,
             None => {
-                unsafe {
-                    fut_printf(b"[SUMMARY] xhci: not initialized\n\0".as_ptr());
-                }
+                fut_printf(b"[SUMMARY] xhci: not initialized\n\0".as_ptr());
                 return;
             }
         }

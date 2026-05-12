@@ -16,14 +16,15 @@
 #![no_std]
 #![forbid(unsafe_op_in_unsafe_fn)]
 #![allow(unexpected_cfgs)]
+#![allow(dead_code)] // NVMe spec register/opcode definitions kept verbatim
 
 use core::ffi::{c_char, c_void};
 use core::ptr::{read_volatile, write_volatile};
-use core::sync::atomic::{AtomicU16, AtomicU32, Ordering, fence};
+use core::sync::atomic::{Ordering, fence};
 
 use common::{
-    alloc, alloc_page, free, log, map_mmio_region, register, thread_yield,
-    unmap_mmio_region, FutBlkBackend, FutBlkDev, FutStatus,
+    alloc, alloc_page, log, map_mmio_region, register, thread_yield,
+    FutBlkBackend, FutBlkDev, FutStatus,
     FUT_BLK_ADMIN, FUT_BLK_READ, FUT_BLK_WRITE, MMIO_DEFAULT_FLAGS,
 };
 
@@ -266,7 +267,7 @@ fn admin_submit(ctrl: &mut NvmeController, cmd: &NvmeSubmCmd) -> u16 {
     cmd.command_id
 }
 
-fn admin_wait_completion(ctrl: &mut NvmeController, cmd_id: u16) -> Result<u32, u16> {
+fn admin_wait_completion(ctrl: &mut NvmeController, _cmd_id: u16) -> Result<u32, u16> {
     for _ in 0..1_000_000u32 {
         let idx = ctrl.admin_cq_head as usize;
         let entry = unsafe { read_volatile(ctrl.admin_cq.add(idx)) };
@@ -712,7 +713,7 @@ pub extern "C" fn nvme_init() -> i32 {
         (*blkdev).core = core::ptr::null_mut();
     }
 
-    let mut blkdev_ref = unsafe { &mut *blkdev };
+    let blkdev_ref = unsafe { &mut *blkdev };
     match register(blkdev_ref) {
         Ok(()) => {
             log("nvme: registered as block device nvme0n1");

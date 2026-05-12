@@ -48,6 +48,7 @@
 #![no_std]
 #![forbid(unsafe_op_in_unsafe_fn)]
 #![allow(unexpected_cfgs)]
+#![allow(dead_code)] // hardware register definitions kept verbatim from spec
 
 use core::cell::UnsafeCell;
 use core::ptr::{read_volatile, write_volatile};
@@ -409,7 +410,7 @@ fn calibrate_timer(base: *mut u8) -> u32 {
     // approximates 10 ms on modern hardware (~30M-50M iterations).
     // This is intentionally rough -- the timer will be re-calibrated
     // against HPET or PIT by higher-level code if precision is needed.
-    let start_tsc: u64;
+    let _start_tsc: u64;
     unsafe {
         core::arch::asm!(
             "rdtsc",

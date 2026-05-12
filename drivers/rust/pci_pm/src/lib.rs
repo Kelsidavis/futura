@@ -17,8 +17,7 @@
 #![no_std]
 #![forbid(unsafe_op_in_unsafe_fn)]
 #![allow(unexpected_cfgs)]
-
-use common::log;
+#![allow(dead_code)] // PCI PM cap definitions kept verbatim
 
 // ── FFI imports ──
 

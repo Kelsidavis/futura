@@ -18,9 +18,14 @@
 #![no_std]
 #![forbid(unsafe_op_in_unsafe_fn)]
 #![allow(unexpected_cfgs)]
+#![allow(dead_code)] // hardware register definitions kept verbatim from spec
 
 use core::cell::UnsafeCell;
 
+// Keep an explicit dependency on `common` so its #[panic_handler] is
+// pulled into the link; without any `use common::*` line the crate fails
+// to compile with "panic_handler function required, but not found".
+#[allow(unused_imports)]
 use common::log;
 
 unsafe extern "C" {

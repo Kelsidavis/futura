@@ -16,8 +16,8 @@
 #![no_std]
 #![forbid(unsafe_op_in_unsafe_fn)]
 #![allow(unexpected_cfgs)]
+#![allow(dead_code)] // PCI MSI-X cap definitions kept verbatim
 
-use core::ffi::c_void;
 use core::ptr::{read_volatile, write_volatile};
 
 use common::{log, map_mmio_region, unmap_mmio_region, MMIO_DEFAULT_FLAGS};

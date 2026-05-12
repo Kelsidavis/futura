@@ -18,12 +18,13 @@
 #![no_std]
 #![forbid(unsafe_op_in_unsafe_fn)]
 #![allow(unexpected_cfgs)]
+#![allow(dead_code)] // USB MSC spec constants kept verbatim
 
 use core::cell::UnsafeCell;
 use core::ffi::{c_char, c_void};
 
 use common::{
-    alloc, alloc_page, free, log, register,
+    alloc, free, log, register,
     FutBlkBackend, FutBlkDev, FutStatus,
     FUT_BLK_ADMIN, FUT_BLK_READ, FUT_BLK_WRITE,
 };
@@ -942,9 +943,9 @@ pub extern "C" fn usb_storage_attach(
         );
     }
 
-    // Step 4: Register as block device
-    // Drop dev borrow before passing state to register_blkdev
-    drop(dev);
+    // Step 4: Register as block device. The `dev` borrow above ends at its
+    // last use (line 941), so NLL has already released it before we pass
+    // `state` back to register_blkdev — no explicit drop needed.
     let ret = register_blkdev(state, slot);
     if ret < 0 {
         state.devices[slot].attached = false;

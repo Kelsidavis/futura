@@ -11,10 +11,9 @@
 #![allow(unexpected_cfgs)]
 
 use core::cell::UnsafeCell;
-use core::ffi::c_void;
-use core::ptr::{copy_nonoverlapping, write_bytes};
+use core::ptr::write_bytes;
 
-use common::{log, map_mmio_region, unmap_mmio_region, MMIO_DEFAULT_FLAGS};
+use common::{log, map_mmio_region, MMIO_DEFAULT_FLAGS};
 
 unsafe extern "C" {
     fn fut_printf(fmt: *const u8, ...);

@@ -18,6 +18,9 @@
 #![no_std]
 #![forbid(unsafe_op_in_unsafe_fn)]
 #![allow(unexpected_cfgs)]
+// AHCI register/spec constants kept verbatim from the AHCI 1.3.1 spec;
+// most aren't poked by the current minimal probe. Allow dead-code on those.
+#![allow(dead_code)]
 
 use core::cell::UnsafeCell;
 use core::ffi::{c_char, c_void};

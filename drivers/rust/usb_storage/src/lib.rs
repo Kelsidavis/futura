@@ -810,9 +810,15 @@ pub extern "C" fn usb_storage_attach(
         );
     }
 
-    // Step 2: TEST UNIT READY (retry a few times for spin-up)
+    // Step 2: TEST UNIT READY (retry for spin-up). The Samsung card-reader
+    // chip in HP Chromebook 11 G7 EE-class boards reports NOT_READY for
+    // ~50-100 ms after attach while it mounts an inserted microSD card.
+    // We can't use thread_sleep here because usb_storage_attach runs from
+    // xhci_init, which executes before the scheduler is started -- a real
+    // sleep would block on an empty run queue. Bound the retry count
+    // generously and burn a calibrated busy loop between attempts.
     let mut ready = false;
-    for attempt in 0..5u32 {
+    for attempt in 0..40u32 {
         let ret = scsi_test_unit_ready(dev);
         if ret == 0 {
             ready = true;
@@ -820,12 +826,18 @@ pub extern "C" fn usb_storage_attach(
         }
         // Get sense data for diagnostic
         let (sk, asc, ascq) = scsi_request_sense(dev);
-        if attempt < 4 {
+        if attempt < 39 {
             unsafe {
                 fut_printf(
                     b"usb_storage: not ready (sense=%02x/%02x/%02x), retry %u\n\0".as_ptr(),
                     sk as u32, asc as u32, ascq as u32, attempt + 1,
                 );
+            }
+            // ~25 ms busy delay between retries on Broadwell-class CPUs
+            // (volatile reads pace the loop so the optimizer can't elide
+            // it; each iteration is a few cycles).
+            for _ in 0..2_500_000u32 {
+                unsafe { core::ptr::read_volatile(&attempt); }
             }
         }
     }

@@ -2916,12 +2916,19 @@ try_ramdisk: (void)0;
                 extern int devfs_create_chr(const char *, unsigned, unsigned);
                 devfs_create_chr("/dev/ram0", 1, 0);  /* major 1, minor 0 */
                 fut_printf("[INIT] ✓ Created /dev/ram0 (1MB ramdisk)\n");
+                /* Bracket each subsequent step so a hang (reported on L490
+                 * with "Created /dev/ram0" as the last visible line) tells
+                 * us which one stalled rather than just "somewhere after
+                 * ramdisk creation". */
+                fut_printf("[INIT] formatting ramdisk as FuturaFS...\n");
                 int fmt_rc = fut_futurafs_format(ramdisk, "FuturaOS", 4096);
+                fut_printf("[INIT] format returned rc=%d\n", fmt_rc);
                 if (fmt_rc == 0) {
                     extern struct fut_vnode *fut_vfs_get_root(void);
                     struct fut_vnode *root = fut_vfs_get_root();
                     if (root && root->ops && root->ops->mkdir)
                         root->ops->mkdir(root, "mnt", 0755);
+                    fut_printf("[INIT] mounting ramdisk at /mnt...\n");
                     int mnt_rc = fut_vfs_mount("ramdisk0", "/mnt", "futurafs", 0, NULL, FUT_INVALID_HANDLE);
                     if (mnt_rc == 0) {
                         fut_printf("[INIT] ✓ FuturaFS mounted at /mnt (4MB ramdisk)\n");

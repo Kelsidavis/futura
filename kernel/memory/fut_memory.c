@@ -51,10 +51,13 @@ void fut_pmm_init(uint64_t mem_size_bytes, uintptr_t phys_base) {
     pmm_base  = phys_base;
 
 #if defined(__x86_64__)
-    /* Boot paging sets up 512 × 2MB huge pages in PD[0-511] mapping physical 0x0-0x40000000 (1GB).
-     * The limit must match the boot mapping, not exceed it. Attempting to allocate beyond
-     * this range would cause page faults due to missing page table entries. */
-    uint64_t boot_map_limit = 0x40000000;  /* 1GB - matches boot page table setup */
+    /* Boot paging in platform/x86_64/boot.S sets up four PD pages
+     * (boot_pd / boot_pd1 / boot_pd2 / boot_pd3), each 512 × 2 MiB huge
+     * pages, mapping physical 0x0-0x100000000 (4 GiB).
+     * The limit must match the boot mapping, not exceed it. Attempting
+     * to allocate beyond this range would cause page faults due to
+     * missing page table entries. */
+    uint64_t boot_map_limit = 0x100000000ULL;  /* 4 GiB — matches boot page table setup */
     uint64_t pmm_max_phys = pmm_base + (pmm_total * FUT_PAGE_SIZE);
     uint64_t safe_limit_pages = pmm_total;  /* Default: no limit needed */
 

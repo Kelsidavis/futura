@@ -74,7 +74,33 @@ struct multiboot_tag {
     uint32_t size;
 } __attribute__((packed));
 
+#define MULTIBOOT_TAG_TYPE_END     0
 #define MULTIBOOT_TAG_TYPE_CMDLINE 1
+#define MULTIBOOT_TAG_TYPE_MMAP    6
+
+struct multiboot_mmap_entry {
+    uint64_t addr;
+    uint64_t len;
+    uint32_t type;       /* 1=available, 3=ACPI reclaim, 4=NVS, 5=badram, else reserved */
+    uint32_t zero;
+} __attribute__((packed));
+
+struct multiboot_tag_mmap {
+    uint32_t type;
+    uint32_t size;
+    uint32_t entry_size;
+    uint32_t entry_version;
+    struct multiboot_mmap_entry entries[];
+} __attribute__((packed));
+
+/* Cached results from Multiboot2 memmap parsing, consumed by
+ * arch_memory_config. The end address is the highest physical address
+ * marked as available in any usable region. Capped to 4 GiB at
+ * arch_memory_config time because the boot page tables in boot.S only
+ * cover phys 0-4 GiB (boot_pd / boot_pd1 / boot_pd2 / boot_pd3); going
+ * beyond that requires extending those PDs first. */
+static uint64_t g_arch_detected_ram_end_phys = 0;
+static uint64_t g_arch_detected_usable_bytes = 0;
 
 /* PIT (Programmable Interval Timer) definitions */
 #define PIT_CHANNEL0 0x40
@@ -792,7 +818,36 @@ void arch_memory_config(uintptr_t *ram_start, uintptr_t *ram_end, size_t *heap_s
     }
 
     *ram_start = mem_base_phys;
-    *ram_end = mem_base_phys + (1024 * 1024 * 1024);  /* 1 GiB */
+
+    /* Use the Multiboot2-reported highest available-RAM end address,
+     * capped at 4 GiB (the boot page tables only map phys 0-4 GiB via
+     * boot_pd / boot_pd1 / boot_pd2 / boot_pd3 in platform/x86_64/boot.S).
+     * Fall back to a 1 GiB hardcode if no MMAP tag was found, matching
+     * the historical conservative behaviour. */
+    const uint64_t boot_paging_limit = 0x100000000ULL;  /* 4 GiB */
+    uint64_t ram_end_phys;
+    if (g_arch_detected_ram_end_phys >= (uint64_t)mem_base_phys + (16ULL << 20)) {
+        ram_end_phys = g_arch_detected_ram_end_phys;
+    } else {
+        fut_printf("[arch_memory_config] no MMAP tag — falling back to 1 GiB\n");
+        ram_end_phys = (uint64_t)mem_base_phys + (1024ULL << 20);
+    }
+    if (ram_end_phys > boot_paging_limit) {
+        fut_printf("[arch_memory_config] capping ram_end 0x%llx -> 0x%llx "
+                   "(boot paging only covers 4 GiB)\n",
+                   (unsigned long long)ram_end_phys,
+                   (unsigned long long)boot_paging_limit);
+        ram_end_phys = boot_paging_limit;
+    }
+    *ram_end = (uintptr_t)ram_end_phys;
+
+    fut_printf("[arch_memory_config] ram_start=0x%llx ram_end=0x%llx "
+               "(%llu MiB usable; detected_avail=%llu MiB)\n",
+               (unsigned long long)*ram_start,
+               (unsigned long long)*ram_end,
+               (unsigned long long)((ram_end_phys - mem_base_phys) >> 20),
+               (unsigned long long)(g_arch_detected_usable_bytes >> 20));
+
     *heap_size = 96 * 1024 * 1024;  /* 96 MiB kernel heap */
 }
 
@@ -915,7 +970,7 @@ void fut_platform_init(uint32_t multiboot_magic __attribute__((unused)),
             tag_count++;
             fut_printf("[INIT-MB2] tag #%d: type=%u size=%u\n",
                        tag_count, tag->type, tag->size);
-            if (tag->type == 0 || tag->size == 0) {
+            if (tag->type == MULTIBOOT_TAG_TYPE_END || tag->size == 0) {
                 break;
             }
             if (tag->type == MULTIBOOT_TAG_TYPE_CMDLINE) {
@@ -923,7 +978,38 @@ void fut_platform_init(uint32_t multiboot_magic __attribute__((unused)),
                 fut_printf("[INIT-MB2] CMDLINE tag found: %s\n", cmdline);
                 fut_boot_args_init(cmdline);
                 cmdline_found = true;
-                break;
+            } else if (tag->type == MULTIBOOT_TAG_TYPE_MMAP) {
+                const struct multiboot_tag_mmap *mt =
+                    (const struct multiboot_tag_mmap *)tag;
+                uint32_t entries_bytes = mt->size
+                    - (uint32_t)offsetof(struct multiboot_tag_mmap, entries);
+                uint32_t n_entries = (mt->entry_size > 0)
+                    ? entries_bytes / mt->entry_size : 0;
+                fut_printf("[INIT-MB2] MMAP tag: %u entries (entry_size=%u)\n",
+                           n_entries, mt->entry_size);
+                uint64_t hi_avail = 0;
+                uint64_t tot_avail = 0;
+                for (uint32_t i = 0; i < n_entries; i++) {
+                    const struct multiboot_mmap_entry *e =
+                        (const struct multiboot_mmap_entry *)
+                            ((const uint8_t *)mt->entries
+                             + (uint64_t)i * mt->entry_size);
+                    fut_printf("[INIT-MB2]   [0x%llx +0x%llx] type=%u\n",
+                               (unsigned long long)e->addr,
+                               (unsigned long long)e->len,
+                               e->type);
+                    if (e->type == 1) {  /* available */
+                        uint64_t reg_end = e->addr + e->len;
+                        if (reg_end > hi_avail) hi_avail = reg_end;
+                        tot_avail += e->len;
+                    }
+                }
+                g_arch_detected_ram_end_phys = hi_avail;
+                g_arch_detected_usable_bytes = tot_avail;
+                fut_printf("[INIT-MB2] MMAP: total available=%llu MiB, "
+                           "highest avail end=0x%llx\n",
+                           (unsigned long long)(tot_avail >> 20),
+                           (unsigned long long)hi_avail);
             }
             tag_ptr += (tag->size + 7u) & ~7u;
         }

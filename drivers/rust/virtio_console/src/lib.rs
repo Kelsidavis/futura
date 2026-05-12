@@ -14,6 +14,7 @@
 #![no_std]
 #![forbid(unsafe_op_in_unsafe_fn)]
 #![allow(unexpected_cfgs)]
+#![allow(dead_code)] // hardware register definitions kept verbatim from spec
 
 #[cfg(target_arch = "x86_64")]
 use core::arch::asm;

@@ -303,8 +303,13 @@ pub extern "C" fn acpi_thermal_init(ec_read: Option<EcReadFn>) -> i32 {
                 temp % 1000,
             );
         }
+    } else if temp == -38 {
+        // ENOSYS: Intel CPU — read_cpu_temp_msr() is AMD-only by design.
+        // The intel_thermal driver covers temperature on Intel via the
+        // IA32_THERM_STATUS / RAPL MSRs, so this isn't a fault.
+        log("acpi_thermal: AMD temperature MSR not available (Intel CPU — use intel_thermal)");
     } else {
-        log("acpi_thermal: WARNING -- could not read CPU temperature MSR");
+        log("acpi_thermal: WARNING -- could not read AMD CPU temperature MSR");
     }
 
     unsafe {

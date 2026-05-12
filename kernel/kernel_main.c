@@ -1014,6 +1014,13 @@ static void klog_persist_to_sd_once(int verbose) {
     klog_sd_build_path_iter(g_klog_flush_iter);
     g_klog_sd_path_built = 1;
 
+    /* FAT vnode_ops doesn't implement .truncate, so O_TRUNC is a silent
+     * no-op — stale bytes from a prior boot's flush remain past the new
+     * end-of-write. Unlink the path first so the create gets a zero-length
+     * file; if the path doesn't exist yet, unlink returns an error we
+     * ignore. */
+    extern int fut_vfs_unlink(const char *path);
+    (void)fut_vfs_unlink(g_klog_sd_path);
     int fd = fut_vfs_open(g_klog_sd_path,
                           /* O_WRONLY|O_CREAT */ 0x41,
                           0644);

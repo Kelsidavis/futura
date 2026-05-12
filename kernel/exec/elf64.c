@@ -1168,6 +1168,13 @@ static int build_user_stack(fut_mm_t *mm,
     fut_printf("[BISECT-A] post-CR3 fetch+printf OK (cr3=0x%llx)\n",
                (unsigned long long)fut_read_cr3());
 
+    /* Nail down whether the cliff is inside the SECOND fut_printf call or
+     * before it. A1 prints immediately after BISECT-A — if it doesn't fire,
+     * the cliff is in the printf re-entry path (fb_console lock, scroll
+     * memcpy, etc.). A2 prints right before the handoff_frame compute.
+     * A3 prints right after the compute, before the original BISECT-B. */
+    fut_printf("[BISECT-A1] survived the post-CR3 printf, about to compute handoff_frame\n");
+
     if (g_bisect_probe_kernel_cr3_roundtrip) {
         uint64_t original_cr3 = current_cr3;
         uint64_t observed_cr3 = 0;
@@ -1198,6 +1205,8 @@ static int build_user_stack(fut_mm_t *mm,
     /* Build a real interrupt frame on the handoff stack and resume it through
      * the validated context-switch restore path instead of the bespoke
      * user_iretq.S transition. */
+    fut_printf("[BISECT-A2] before handoff_frame compute, handoff_stack_top=0x%llx\n",
+               (unsigned long long)handoff_stack_top);
     fut_interrupt_frame_t *handoff_frame =
         (fut_interrupt_frame_t *)(uintptr_t)(handoff_stack_top - sizeof(fut_interrupt_frame_t));
     fut_printf("[BISECT-B] handoff_frame=0x%llx (about to memset)\n",

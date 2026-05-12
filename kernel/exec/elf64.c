@@ -1132,7 +1132,7 @@ static int build_user_stack(fut_mm_t *mm,
         lapic_timer_disable();
         g_bisect_mask_timer_before_first_user = false;
     }
-    fut_printf("[BISECT-TRAMP] CR3 swap+iretq: cur=0x%llx new=0x%llx (no more prints)\n",
+    fut_printf("[BISECT-TRAMP] CR3 swap+iretq: cur=0x%llx new=0x%llx\n",
                (unsigned long long)current_cr3,
                (unsigned long long)expected_cr3);
     const bool debug_skip_user_cr3_swap = false;
@@ -1142,6 +1142,15 @@ static int build_user_stack(fut_mm_t *mm,
     } else if (debug_skip_user_cr3_swap) {
         fut_printf("[BISECT-TRAMP] DEBUG: skipping CR3 switch on purpose; expect immediate user fetch fault if trap path works\n");
     }
+
+    /* DIAGNOSTIC: print waypoints after CR3 swap so we can tell exactly
+     * where execution dies if the box hangs. The historical comment
+     * said "no prints after CR3" — but that assumption hides which
+     * step actually faults. Each of these prints uses kernel-half code
+     * + data + klog ring + fb_console; if any of those isn't mapped in
+     * the new CR3 we'll know which is the first to break. */
+    fut_printf("[BISECT-A] post-CR3 fetch+printf OK (cr3=0x%llx)\n",
+               (unsigned long long)fut_read_cr3());
 
     if (g_bisect_probe_kernel_cr3_roundtrip) {
         uint64_t original_cr3 = current_cr3;
@@ -1175,7 +1184,10 @@ static int build_user_stack(fut_mm_t *mm,
      * user_iretq.S transition. */
     fut_interrupt_frame_t *handoff_frame =
         (fut_interrupt_frame_t *)(uintptr_t)(handoff_stack_top - sizeof(fut_interrupt_frame_t));
+    fut_printf("[BISECT-B] handoff_frame=0x%llx (about to memset)\n",
+               (unsigned long long)(uintptr_t)handoff_frame);
     __builtin_memset(handoff_frame, 0, sizeof(*handoff_frame));
+    fut_printf("[BISECT-C] memset done, populating frame\n");
     handoff_frame->ds = USER_DATA_SELECTOR;
     handoff_frame->es = USER_DATA_SELECTOR;
     handoff_frame->vector = 32;
@@ -1185,8 +1197,8 @@ static int build_user_stack(fut_mm_t *mm,
     handoff_frame->rflags = 0x202;
     handoff_frame->rsp = stack;
     handoff_frame->ss = USER_DATA_SELECTOR;
+    fut_printf("[BISECT-D] frame populated, calling fut_resume_user_frame\n");
 
-    /* No prints or other kernel state mutations after the CR3 switch. */
     fut_resume_user_frame(handoff_frame, handoff_thread);
 
     /* Should NEVER reach here */

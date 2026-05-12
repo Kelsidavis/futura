@@ -18,7 +18,6 @@
 #include <kernel/fut_vfs.h>
 #include <kernel/uaccess.h>
 #include <kernel/kprintf.h>
-#include <kernel/fb.h>
 
 #include <platform/x86_64/memory/paging.h>
 #include <platform/x86_64/memory/pmap.h>
@@ -1185,60 +1184,8 @@ static int build_user_stack(fut_mm_t *mm,
      * thread on its way to user mode. */
     __asm__ volatile("cli" ::: "memory");
 
-    extern void *fb_get_virt_addr(void);
-    extern int fb_get_info(struct fut_fb_hwinfo *out);
-    struct fut_fb_hwinfo fbi = {0};
-    fb_get_info(&fbi);
-    fut_printf("[BISECT-A] post-CR3 fetch+printf OK (cr3=0x%llx) fb_virt=%p\n",
-               (unsigned long long)fut_read_cr3(),
-               fb_get_virt_addr());
-    fut_printf("[BISECT-A] fb geom: %ux%u pitch=%u bpp=%u phys=0x%llx length=%llu\n",
-               (unsigned)fbi.info.width, (unsigned)fbi.info.height,
-               (unsigned)fbi.info.pitch, (unsigned)fbi.info.bpp,
-               (unsigned long long)fbi.phys,
-               (unsigned long long)fbi.length);
-
-    /* The BIG SURPRISE on HP Chromebook real hardware: the SECOND
-     * fut_printf after CR3 swap hangs, even though the first one
-     * (BISECT-A above) completes. Tiny corner markers don't show up in
-     * photos. Draw BIG colored rectangles instead — 6 boxes in a row
-     * along the bottom-right of the FB so we can photograph and tell
-     * unambiguously which was the last waypoint reached.
-     *
-     *   step 0 (red)      = first thing after BISECT-A printf
-     *   step 1 (orange)   = past direct serial outb to 0x3F8
-     *   step 2 (yellow)   = past second fut_printf attempt
-     *   step 3 (green)    = past cli
-     *   step 4 (blue)     = past A0.5 fut_printf
-     *   step 5 (magenta)  = past A1 fut_printf */
-    extern void fb_poke_big_step(int step);
-    fb_poke_big_step(0); /* red */
-    __asm__ volatile(
-        "movw $0x3F8, %%dx\n\t"
-        "movb $'A', %%al\n\t"
-        "outb %%al, %%dx\n\t"
-        "movb $'0', %%al\n\t"
-        "outb %%al, %%dx\n\t"
-        "movb $'.', %%al\n\t"
-        "outb %%al, %%dx\n\t"
-        "movb $'1', %%al\n\t"
-        "outb %%al, %%dx\n\t"
-        "movb $'\\n', %%al\n\t"
-        "outb %%al, %%dx\n\t"
-        ::: "rax", "rdx", "memory");
-    fb_poke_big_step(1); /* orange — past raw serial */
-
-    fut_printf("[BISECT-A0.3] second-fut_printf after CR3 — hang point?\n");
-    fb_poke_big_step(2); /* yellow — past second fut_printf */
-
-    /* cli already issued earlier — skip duplicate. */
-    fb_poke_big_step(3); /* green — past where cli used to be */
-
-    fut_printf("[BISECT-A0.5] after cli\n");
-    fb_poke_big_step(4); /* blue */
-
-    fut_printf("[BISECT-A1] survived the post-CR3 printf, about to compute handoff_frame\n");
-    fb_poke_big_step(5); /* magenta */
+    fut_printf("[BISECT-A] post-CR3 fetch+printf OK (cr3=0x%llx)\n",
+               (unsigned long long)fut_read_cr3());
 
     if (g_bisect_probe_kernel_cr3_roundtrip) {
         uint64_t original_cr3 = current_cr3;

@@ -352,6 +352,32 @@ void acpi_parse_madt(void) {
                 break;
             }
 
+            /* Recognise (but don't act on) the other ACPI-defined MADT
+             * entry types so the boot log distinguishes "we know what this
+             * is, just don't use it yet" from "this is something the
+             * firmware made up". Acting on Local APIC NMI / NMI Source
+             * would route those NMI vectors to specific LAPIC LVT slots;
+             * we'll wire that up when SMP brings up multiple cores. */
+            case 3: /* NMI Source */
+                fut_printf("[ACPI]   NMI Source entry (not yet used)\n");
+                break;
+            case 4: /* Local APIC NMI */
+                fut_printf("[ACPI]   Local APIC NMI entry (not yet used)\n");
+                break;
+            case 5: /* Local APIC Address Override */
+                fut_printf("[ACPI]   Local APIC Address Override (not yet used)\n");
+                break;
+            case 6: /* I/O SAPIC (Itanium) */
+            case 7: /* Local SAPIC (Itanium) */
+            case 8: /* Platform Interrupt Source (Itanium) */
+                fut_printf("[ACPI]   Itanium-specific MADT entry type %u (ignored)\n",
+                           header->type);
+                break;
+            case 9:  /* Processor Local x2APIC */
+            case 10: /* Local x2APIC NMI */
+                fut_printf("[ACPI]   x2APIC MADT entry type %u (not yet used)\n",
+                           header->type);
+                break;
             default:
                 fut_printf("[ACPI]   Unknown MADT entry type: %u\n", header->type);
                 break;

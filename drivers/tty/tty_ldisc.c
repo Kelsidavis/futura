@@ -207,6 +207,17 @@ void tty_ldisc_input(tty_ldisc_t *ldisc, char c) {
         return;  /* Safety check */
     }
 
+    /* Drop the all-bits-set garbage byte that floating UART RX registers
+     * and disconnected/initializing PS/2 controllers spam at us. As signed
+     * char, 0xFF is -1; it doesn't match BS/DEL or any real control code,
+     * so the echo path renders it as `'^'` + `(-1 + '@')` = `'^'` + `'?'`
+     * → an endless "^?" wallpaper that saturates fut_printf. This is the
+     * actual byte the line was misattributing to 0x7F (DEL). A real DEL
+     * still comes through unchanged. */
+    if ((unsigned char)c == 0xFF) {
+        return;
+    }
+
     /* (trace removed) */
 
     /* Acquire lock for buffer modification */

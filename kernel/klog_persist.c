@@ -168,10 +168,22 @@ void klog_persist_write(const char *data, size_t len) {
         return;
     }
 
-    /* Single-CPU boot for now (SMP disabled), so plain reads/writes are
+    /* Validate cursor: HP Chromebook page-faulted in klog_persist_write
+     * inside init's CR3 because g_klog->cursor read back as 0xFFFFFFFF.
+     * Adding that as the byte index to g_klog->data overflows 64-bit math
+     * and wraps to a low unmapped address. Most likely the persist ring's
+     * page isn't actually mapped in init's CR3 (despite the PML4[256..511]
+     * copy claiming diff_count=0) and we're reading garbage.
+     *
+     * Single-CPU boot for now (SMP disabled), so plain reads/writes are
      * fine. When SMP is re-enabled this needs an atomic cursor bump or
      * a per-CPU sub-buffer. */
     uint32_t cursor = g_klog->cursor;
+    if (cursor >= KLOG_PERSIST_DATA_SIZE) {
+        /* Garbage cursor — likely the ring is unmapped/stale here. Skip
+         * the write entirely rather than scribble on random memory. */
+        return;
+    }
     for (size_t i = 0; i < len; i++) {
         g_klog->data[cursor] = (uint8_t)data[i];
         cursor++;

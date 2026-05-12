@@ -200,9 +200,18 @@ const PORTSC_WOE: u32 = 1 << 27;          // Wake on Over-current Enable
 const PORTSC_DR: u32 = 1 << 30;           // Device Removable
 const PORTSC_WPR: u32 = 1u32 << 31;       // Warm Port Reset
 
-// Bits that are RW1C in PORTSC - must be preserved (not accidentally cleared)
+// Bits in PORTSC that "write 1 to clear" the underlying state. They MUST
+// be written as 0 in any read-modify-write update of PORTSC; otherwise
+// the next write feeds back the current value and inadvertently clears
+// the bit. The PED (Port Enabled/Disabled) bit is the dangerous one --
+// it is RW1CS, so once the HC sets PED=1 after a successful reset, any
+// R-M-W that writes PED=1 back to the register *disables the port*.
+// That is exactly the bug that left every reset port at PED=0 after
+// port_reset's clear_portsc_changes(PRC) call. CSC, PEC, etc. are RW1C
+// change bits with the same write-1-clear semantics.
 const PORTSC_CHANGE_BITS: u32 =
-    PORTSC_CSC | PORTSC_PEC | PORTSC_WRC | PORTSC_OCC | PORTSC_PRC | PORTSC_PLC | PORTSC_CEC;
+    PORTSC_PED
+    | PORTSC_CSC | PORTSC_PEC | PORTSC_WRC | PORTSC_OCC | PORTSC_PRC | PORTSC_PLC | PORTSC_CEC;
 
 // Port Link State values
 const PLS_U0: u32 = 0;                    // U0 (active)

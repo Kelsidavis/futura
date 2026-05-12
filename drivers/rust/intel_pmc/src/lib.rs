@@ -282,6 +282,90 @@ fn read_pwrmbase() -> u64 {
     base as u64
 }
 
+// ── Apollo/Gemini Lake fallback ──
+//
+// On Apollo/Gemini Lake the PMC is NOT exposed via the LPC bridge — it
+// lives as a hidden PCI function at 00:0D.2 (Power Management Controller,
+// device IDs 0x3193/0x5193). Coreboot hides the entire 00:0D.* slot via a
+// hide bit at 00:0D.0 config offset 0xE1; writing 0 to that byte reveals
+// all four sub-functions (P2SB / PUNIT / SSRAM / PMC) and from there we
+// can read BAR0 of 0D.2 to get the PMC MMIO region.
+//
+// The intel_p2sb driver does the unhide for slot 0D first; if that has
+// already run before us, the bridge is still visible. Otherwise we do
+// the unhide ourselves.
+
+const APL_PMC_BUS:  u8 = 0x00;
+const APL_PMC_DEV:  u8 = 0x0D;
+const APL_PMC_FUNC: u8 = 0x02;
+const APL_HIDE_HOST_DEV:  u8 = 0x0D;
+const APL_HIDE_HOST_FUNC: u8 = 0x00;
+const APL_HIDE_CFG_BYTE:  u8 = 0xE1;
+
+/// Apollo/Gemini Lake PMC PCI device IDs (CNL/CFL/WHL use 0xA0AC and
+/// later parts use ACPI namespace, but Apollo/Gemini specifically expose
+/// the PMC as a real PCI function).
+const APL_PMC_DEVICE_IDS: &[u16] = &[
+    0x3193, // Gemini Lake N4020 / HP Chromebook 11 G7
+    0x5193, // Apollo Lake refresh
+    0x31AB, // Gemini Lake refresh variant
+];
+
+fn pci_write8(bus: u8, dev: u8, func: u8, offset: u8, val: u8) {
+    let aligned = offset & 0xFC;
+    let shift = (offset & 3) * 8;
+    let mut val32 = pci_read32(bus, dev, func, aligned);
+    val32 &= !(0xFF << shift);
+    val32 |= (val as u32) << shift;
+    let addr = pci_config_addr(bus, dev, func, aligned);
+    unsafe {
+        core::arch::asm!("out dx, eax", in("dx") PCI_CONFIG_ADDR, in("eax") addr);
+        core::arch::asm!("out dx, eax", in("dx") PCI_CONFIG_DATA, in("eax") val32);
+    }
+}
+
+/// Try the Apollo/Gemini Lake path — probe 00:0D.2 directly, doing the
+/// hide-bit clear if the bridge reads as 0xFFFF. Returns BAR0 phys or 0
+/// if no recognised PMC is present.
+fn try_apollo_lake_pmc() -> u64 {
+    // First read 00:0D.2 directly — if firmware already exposed it
+    // (because intel_p2sb_init ran earlier), we're done.
+    let mut header = pci_read32(APL_PMC_BUS, APL_PMC_DEV, APL_PMC_FUNC, 0);
+    let mut vendor = (header & 0xFFFF) as u16;
+    let mut device = (header >> 16) as u16;
+    if vendor != 0x8086 || !APL_PMC_DEVICE_IDS.contains(&device) {
+        // Try to unhide slot 0D.
+        pci_write8(APL_HIDE_HOST_DEV, APL_HIDE_HOST_DEV, APL_HIDE_HOST_FUNC,
+                   APL_HIDE_CFG_BYTE, 0);
+        header = pci_read32(APL_PMC_BUS, APL_PMC_DEV, APL_PMC_FUNC, 0);
+        vendor = (header & 0xFFFF) as u16;
+        device = (header >> 16) as u16;
+    }
+    if vendor != 0x8086 || !APL_PMC_DEVICE_IDS.contains(&device) {
+        return 0;
+    }
+    log("intel_pmc: Apollo/Gemini Lake PMC found at 00:0D.2");
+
+    // Enable memory-space + bus-master access (firmware may have cleared them
+    // when hiding the device).
+    let cmd = pci_read32(APL_PMC_BUS, APL_PMC_DEV, APL_PMC_FUNC, 0x04) & 0xFFFF;
+    let new_cmd = (cmd | 0x06) as u32;
+    let addr = pci_config_addr(APL_PMC_BUS, APL_PMC_DEV, APL_PMC_FUNC, 0x04);
+    unsafe {
+        core::arch::asm!("out dx, eax", in("dx") PCI_CONFIG_ADDR, in("eax") addr);
+        core::arch::asm!("out dx, eax", in("dx") PCI_CONFIG_DATA, in("eax") new_cmd);
+    }
+
+    // Read BAR0 — Apollo Lake uses a 32-bit BAR.
+    let bar0 = pci_read32(APL_PMC_BUS, APL_PMC_DEV, APL_PMC_FUNC, 0x10);
+    if bar0 & 0x01 != 0 {
+        // I/O space — wrong.
+        return 0;
+    }
+    let phys = (bar0 & 0xFFFF_FFF0) as u64;
+    phys
+}
+
 /// Map the MSR C-state index (2, 3, 6, 7, 8, 9, 10) to the corresponding MSR address.
 /// Returns 0 if the C-state index is not valid.
 fn cstate_to_msr(cstate: u32) -> u32 {
@@ -312,14 +396,21 @@ fn cstate_to_msr(cstate: u32) -> u32 {
 pub extern "C" fn intel_pmc_init() -> i32 {
     log("intel_pmc: initializing PMC driver");
 
-    // Verify the LPC/eSPI bridge is enumerated
-    if !find_lpc_bridge() {
-        log("intel_pmc: LPC/eSPI bridge (00:1F.0) not found");
-        return -1;
+    // First try the Sunrise-Point-and-later flow: PWRMBASE register in
+    // the LPC/eSPI bridge (00:1F.0) config space. Most client/server
+    // PCHs from Skylake onward put the PMC here.
+    let mut pwrmbase: u64 = 0;
+    if find_lpc_bridge() {
+        pwrmbase = read_pwrmbase();
     }
 
-    // Read PWRMBASE from LPC bridge config space offset 0x48
-    let pwrmbase = read_pwrmbase();
+    // Apollo/Gemini Lake fallback: PMC lives at 00:0D.2 instead, and the
+    // whole 00:0D slot is hidden by default. Probe it (with unhide) only
+    // if the LPC PWRMBASE didn't pan out.
+    if pwrmbase == 0 {
+        pwrmbase = try_apollo_lake_pmc();
+    }
+
     if pwrmbase == 0 {
         log("intel_pmc: PWRMBASE is zero or invalid");
         return -2;

@@ -954,22 +954,28 @@ static int klog_sd_try_mount(void) {
     return -1;
 }
 
-static void klog_sd_build_path(void) {
+/* Build a per-iteration filename: /mnt/sd/L{boot_seq:02X}{iter:02X}.LOG
+ * Each flush writes to a FRESH file, never appending. This keeps every
+ * write to an empty file (no cluster chain to walk), which is critical
+ * on USB Mass Storage where each FAT-table read is ~5-10ms — appending
+ * to a growing file gets exponentially slow and was hanging the boot
+ * after 1-2 iterations on real hardware. */
+static void klog_sd_build_path_iter(unsigned iter) {
     extern uint32_t klog_persist_boot_seq(void) __attribute__((weak));
     uint32_t seq = klog_persist_boot_seq ? klog_persist_boot_seq() : 0;
     if (seq == 0xFFFFFFFFu) seq = 0;
     int n = 0;
-    const char *prefix = "/mnt/sd/KLB";
-    for (const char *p = prefix; *p && n < 62; p++) g_klog_sd_path[n++] = *p;
-    for (int shift = 12; shift >= 0; shift -= 4) {
-        if (n >= 62) break;
-        uint32_t nib = (seq >> shift) & 0xF;
-        g_klog_sd_path[n++] = "0123456789ABCDEF"[nib];
-    }
+    const char *prefix = "/mnt/sd/L";
+    for (const char *p = prefix; *p && n < 60; p++) g_klog_sd_path[n++] = *p;
+    /* 2-hex-digit boot seq (wraps every 256 boots — fine for debug). */
+    g_klog_sd_path[n++] = "0123456789ABCDEF"[(seq >> 4) & 0xF];
+    g_klog_sd_path[n++] = "0123456789ABCDEF"[seq & 0xF];
+    /* 2-hex-digit iter (wraps every 256 — gives ~6 min at 1.5s ticks). */
+    g_klog_sd_path[n++] = "0123456789ABCDEF"[(iter >> 4) & 0xF];
+    g_klog_sd_path[n++] = "0123456789ABCDEF"[iter & 0xF];
     const char *suffix = ".LOG";
     for (const char *p = suffix; *p && n < 63; p++) g_klog_sd_path[n++] = *p;
     g_klog_sd_path[n] = '\0';
-    g_klog_sd_path_built = 1;
 }
 
 /* Append a marker + the current klog snapshot to the SD log file.
@@ -1002,17 +1008,14 @@ static void klog_persist_to_sd_once(int verbose) {
         if (verbose) fut_printf("[KLOG-SD] no FAT FS on /dev/usbN — skipping\n");
         return;
     }
-    if (!g_klog_sd_path_built) klog_sd_build_path();
+    /* Build a fresh path for this iteration so we always write to an
+     * empty file — no cluster-chain walk, no progressively-slower
+     * writes. The user gets one ~21KB file per flush. */
+    klog_sd_build_path_iter(g_klog_flush_iter);
+    g_klog_sd_path_built = 1;
 
-    /* Always O_APPEND. fat_vnode_ops has no .truncate callback, so
-     * O_TRUNC silently fails on FAT — and on real hardware the
-     * truncate path appears to hang on cluster-chain teardown when
-     * the file already exists from a prior boot. Append-only avoids
-     * both the silent failure and the hang. Each boot's filename is
-     * unique (KLB{boot_seq:04X}.LOG) so cross-boot accumulation is
-     * already prevented at the path level. */
     int fd = fut_vfs_open(g_klog_sd_path,
-                          /* O_WRONLY|O_CREAT|O_APPEND */ 0x441,
+                          /* O_WRONLY|O_CREAT */ 0x41,
                           0644);
     if (fd < 0) {
         if (verbose) fut_printf("[KLOG-SD] open %s failed: %d\n",
@@ -3041,32 +3044,21 @@ try_ramdisk: (void)0;
         if (sdhci_dump_status)     sdhci_dump_status();
         if (xhci_print_summary)    xhci_print_summary();
         fut_printf("----------------------------------\n");
-        klog_persist_to_sd_once(1);                                /* iter 0 */
-        /* DEBUG: bracket each pre-init step with a sync flush so we
-         * can tell exactly where the boot is hanging by which iter
-         * marker is the LAST one to appear on the SD card. */
-        fut_printf("[KLOG-SD] DBG-A: after iter 0, before task_create\n");
-        klog_persist_to_sd_once(1);                                /* iter 1 */
+        klog_persist_to_sd_once(1);
         fut_task_t *flush_task = fut_task_create();
-        fut_printf("[KLOG-SD] DBG-B: task_create returned %p\n", (void *)flush_task);
-        klog_persist_to_sd_once(1);                                /* iter 2 */
-        fut_thread_t *t = NULL;
         if (flush_task) {
-            t = fut_thread_create(
+            fut_thread_t *t = fut_thread_create(
                 flush_task, klog_sd_flush_thread, NULL,
                 16 * 1024, 200);
-        }
-        fut_printf("[KLOG-SD] DBG-C: thread_create returned %p\n", (void *)t);
-        klog_persist_to_sd_once(1);                                /* iter 3 */
-        if (t) {
-            fut_printf("[KLOG-SD] periodic flusher started (TID %llu)\n",
-                       (unsigned long long)t->tid);
+            if (t) {
+                fut_printf("[KLOG-SD] periodic flusher started (TID %llu)\n",
+                           (unsigned long long)t->tid);
+            } else {
+                fut_printf("[KLOG-SD] flusher thread create failed\n");
+            }
         } else {
-            fut_printf("[KLOG-SD] flusher spawn failed (task=%p thread=%p)\n",
-                       (void *)flush_task, (void *)t);
+            fut_printf("[KLOG-SD] flusher task create failed\n");
         }
-        fut_printf("[KLOG-SD] DBG-D: about to exit pre-init block\n");
-        klog_persist_to_sd_once(1);                                /* iter 4 */
     }
 
 #if ENABLE_WAYLAND && !defined(__aarch64__)

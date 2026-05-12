@@ -395,21 +395,30 @@ pub extern "C" fn intel_pinctrl_init() -> i32 {
      *   [8]     GPIOTXDIS — 1 = disable output
      *   [1]     GPIORXSTATE — current input level
      *   [0]     GPIOTXSTATE — driven output level */
+    // Per-pad dump is ~128 log lines (4 communities × 32 pads); useful when
+    // bringing up a new SKU to verify PMODE/RX/TX routing, but on a working
+    // system it pads out the boot log by ~10 seconds. Gate it behind a
+    // compile-time flag; the per-community summary line is unconditional.
+    const PINCTRL_VERBOSE_PAD_DUMP: bool = false;
     for &port in &[0xC4u8, 0xC5u8, 0xC6u8, 0xC8u8] {
         let community_off: u32 = (port as u32) << 16;
-        unsafe {
-            fut_printf(
-                b"pinctrl: community port=0x%02x detailed dump (PAD_BASE=0x600):\n\0".as_ptr(),
-                port as u32,
-            );
+        if PINCTRL_VERBOSE_PAD_DUMP {
+            unsafe {
+                fut_printf(
+                    b"pinctrl: community port=0x%02x detailed dump (PAD_BASE=0x600):\n\0".as_ptr(),
+                    port as u32,
+                );
+            }
         }
         let mut gpio_out_count: u32 = 0;
+        let mut live_count: u32 = 0;
         for pad_idx in 0u32..32 {
             let dw0_off = community_off + PAD_BASE_GLK + pad_idx * 8;
             let dw1_off = dw0_off + 4;
             let dw0 = unsafe { r32(sbreg, dw0_off) };
             let dw1 = unsafe { r32(sbreg, dw1_off) };
             if dw0 == 0xFFFF_FFFF { continue; }
+            live_count += 1;
             let pmode    = (dw0 >> 10) & 0xF;
             let gpio_rxd = (dw0 >> 9)  & 0x1;
             let gpio_txd = (dw0 >> 8)  & 0x1;
@@ -417,22 +426,24 @@ pub extern "C" fn intel_pinctrl_init() -> i32 {
             let txstate  = dw0 & 0x1;
             let is_gpio_out = pmode == 0 && gpio_txd == 0;
             if is_gpio_out { gpio_out_count += 1; }
-            let role = if pmode == 0 {
-                if gpio_txd == 0 { b"*GPIO-OUT*\0".as_ptr() } else { b"GPIO-IN\0".as_ptr() }
-            } else {
-                b"native\0".as_ptr()
-            };
-            unsafe {
-                fut_printf(
-                    b"pinctrl:   c%02x[%2u] dw0=0x%08x dw1=0x%08x pm=%u rxd=%u txd=%u rx=%u tx=%u %s\n\0".as_ptr(),
-                    port as u32, pad_idx, dw0, dw1, pmode, gpio_rxd, gpio_txd, rxstate, txstate, role,
-                );
+            if PINCTRL_VERBOSE_PAD_DUMP {
+                let role = if pmode == 0 {
+                    if gpio_txd == 0 { b"*GPIO-OUT*\0".as_ptr() } else { b"GPIO-IN\0".as_ptr() }
+                } else {
+                    b"native\0".as_ptr()
+                };
+                unsafe {
+                    fut_printf(
+                        b"pinctrl:   c%02x[%2u] dw0=0x%08x dw1=0x%08x pm=%u rxd=%u txd=%u rx=%u tx=%u %s\n\0".as_ptr(),
+                        port as u32, pad_idx, dw0, dw1, pmode, gpio_rxd, gpio_txd, rxstate, txstate, role,
+                    );
+                }
             }
         }
         unsafe {
             fut_printf(
-                b"pinctrl:   port=0x%02x summary: %u GPIO-output pads\n\0".as_ptr(),
-                port as u32, gpio_out_count,
+                b"pinctrl:   port=0x%02x: %u live pads (%u GPIO-out)\n\0".as_ptr(),
+                port as u32, live_count, gpio_out_count,
             );
         }
     }

@@ -505,12 +505,6 @@ void fut_timer_tick(void) {
 
     // Trigger preemptive scheduling if the scheduler is running.
     if (cur_thread != nullptr) {
-        static int dbg_tick_once = 0;
-        if (!dbg_tick_once) {
-            dbg_tick_once = 1;
-            fut_printf("[BCRUMB-TICK] calling fut_schedule, cur=%p\n",
-                       (void *)cur_thread);
-        }
         fut_schedule();
     }
 }
@@ -647,15 +641,6 @@ uint64_t fut_get_time_us(void) {
 }
 
 void fut_timer_irq(void) {
-    /* One-shot diagnostic: prove the first timer IRQ actually fired on
-     * this CPU. L490 hangs immediately after fut_sched_start's sti, and
-     * without this we can't tell whether the IRQ stub even ran. */
-    static int dbg_irq_once = 0;
-    if (!dbg_irq_once) {
-        dbg_irq_once = 1;
-        fut_printf("[BCRUMB-IRQ] first timer IRQ fired\n");
-    }
-
     /* Send EOI to LAPIC BEFORE processing the tick.
      * This must happen first because fut_timer_tick() may trigger a context
      * switch via fut_switch_context_irq() which does IRETQ and never returns.

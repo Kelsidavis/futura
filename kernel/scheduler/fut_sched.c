@@ -371,44 +371,10 @@ void fut_sched_init(void) {
 /**
  * Start the scheduler, allowing context switches to occur.
  * Must be called after all kernel initialization is complete.
- *
- * The three breadcrumb prints are diagnostic, not load-bearing. L490
- * was hanging somewhere inside this function and there's nothing else
- * to anchor "are we past the atomic_store?" against. With the prints
- * in place the screen makes the cliff point unambiguous — last visible
- * BCRUMB pins it to one of three two-line ranges.
  */
 void fut_sched_start(void) {
-    /* Sample RFLAGS so we know whether interrupts are armed at entry. */
-#ifdef __x86_64__
-    unsigned long flags = 0;
-    __asm__ volatile("pushfq\n\tpopq %0" : "=r"(flags) :: "memory");
-    int if_set = (flags & (1UL << 9)) ? 1 : 0;
-#else
-    int if_set = -1;
-#endif
-    fut_printf("[SCHED-BCRUMB] fut_sched_start entered, IF=%d\n", if_set);
-
-    /* L490 dies somewhere between this point and the third breadcrumb,
-     * even though there is nothing between them other than one
-     * atomic_store. Theory: the first real context switch (kicked off
-     * when scheduler_started flips true and the next timer IRQ fires)
-     * wedges the kernel.  Mask interrupts around the body so the
-     * atomic_store and the prints cannot be interrupted; if all three
-     * breadcrumbs now reach the screen, the cliff is confirmed to be
-     * the first IRQ-driven context switch, not anything in this
-     * function. */
-#ifdef __x86_64__
-    __asm__ volatile("cli" ::: "memory");
-#endif
-    fut_printf("[SCHED-BCRUMB] CLI executed, about to atomic_store\n");
     atomic_store_explicit(&scheduler_started, true, memory_order_release);
-    fut_printf("[SCHED-BCRUMB] scheduler_started flag set, IRQs still masked\n");
     fut_printf("[SCHED] Scheduler started - preemptive scheduling now enabled\n");
-#ifdef __x86_64__
-    __asm__ volatile("sti" ::: "memory");
-#endif
-    fut_printf("[SCHED-BCRUMB] STI executed, awaiting first IRQ\n");
 }
 
 /**
@@ -1100,19 +1066,6 @@ void fut_schedule(void) {
              * to userspace as the "result" instead of the actual return value.
              *
              * The EOI is already sent by fut_switch_context_irq assembly. */
-            {
-                static int dbg_switch_once = 0;
-                if (!dbg_switch_once) {
-                    dbg_switch_once = 1;
-                    fut_printf("[BCRUMB-SWITCH] first irq-switch prev=%p next=%p "
-                               "frame=%p prev->irq_frame=%p next->irq_frame=%p\n",
-                               (void *)(prev_terminated ? NULL : prev),
-                               (void *)next,
-                               (void *)fut_current_frame,
-                               (void *)(prev ? prev->irq_frame : NULL),
-                               (void *)next->irq_frame);
-                }
-            }
             fut_switch_context_irq(prev_terminated ? NULL : prev, next, fut_current_frame);
         } else {
             // Regular cooperative context switch (uses RET)

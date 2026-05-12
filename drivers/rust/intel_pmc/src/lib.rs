@@ -298,8 +298,9 @@ fn read_pwrmbase() -> u64 {
 const APL_PMC_BUS:  u8 = 0x00;
 const APL_PMC_DEV:  u8 = 0x0D;
 const APL_PMC_FUNC: u8 = 0x02;
-const APL_HIDE_HOST_DEV:  u8 = 0x0D;
-const APL_HIDE_HOST_FUNC: u8 = 0x00;
+const APL_HIDE_HOST_BUS:  u8 = 0x00; // host bus
+const APL_HIDE_HOST_DEV:  u8 = 0x0D; // P2SB host function on bus 0
+const APL_HIDE_HOST_FUNC: u8 = 0x00; // function 0 of slot 0D = P2SB
 const APL_HIDE_CFG_BYTE:  u8 = 0xE1;
 
 /// Apollo/Gemini Lake PMC PCI device IDs (CNL/CFL/WHL use 0xA0AC and
@@ -334,8 +335,14 @@ fn try_apollo_lake_pmc() -> u64 {
     let mut vendor = (header & 0xFFFF) as u16;
     let mut device = (header >> 16) as u16;
     if vendor != 0x8086 || !APL_PMC_DEVICE_IDS.contains(&device) {
-        // Try to unhide slot 0D.
-        pci_write8(APL_HIDE_HOST_DEV, APL_HIDE_HOST_DEV, APL_HIDE_HOST_FUNC,
+        // Try to unhide slot 0D. Bug fix: this previously passed
+        // APL_HIDE_HOST_DEV (0x0D) as BOTH bus and dev, so the unhide
+        // write landed at PCI 0D:0D.0 instead of the actual host at
+        // 00:0D.0 — silently no-op, leaving the PMC hidden and our
+        // fallback failing on the next read. The 00:0D.2 PMC stayed
+        // invisible and intel_pmc kept reporting "PWRMBASE is zero or
+        // invalid" on the user's Gemini Lake.
+        pci_write8(APL_HIDE_HOST_BUS, APL_HIDE_HOST_DEV, APL_HIDE_HOST_FUNC,
                    APL_HIDE_CFG_BYTE, 0);
         header = pci_read32(APL_PMC_BUS, APL_PMC_DEV, APL_PMC_FUNC, 0);
         vendor = (header & 0xFFFF) as u16;

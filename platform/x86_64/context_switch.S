@@ -1421,14 +1421,35 @@ fut_switch_context_irq:
      * For NON-FRESH kernel threads the ISR unwind (fut_timer_irq → lapic_send_eoi)
      * will write to EOI a second time; that write is a safe no-op if the ISR
      * bit is already clear, or it correctly acknowledges the next timer tick
-     * that arrived in the window between the two writes. */
+     * that arrived in the window between the two writes.
+     *
+     * Must go through the C wrapper (lapic_send_eoi) rather than poking MMIO
+     * inline: on x2APIC parts (e.g. Whiskey Lake / Lenovo L490) the LAPIC
+     * MMIO window is dead — EOI has to be issued via MSR 0x80B. A direct
+     * write to lapic_base+0xB0 there is silently dropped, the LAPIC ISR bit
+     * stays set, and the very next thread (idle) sti;hlts forever waiting
+     * for a timer IRQ the LAPIC will never deliver.  The C wrapper picks
+     * MSR-vs-MMIO based on lapic_x2apic. */
     pushq %rax
     pushq %rcx
-    movq lapic_base(%rip), %rcx
-    testq %rcx, %rcx
-    jz .kernel_coop_skip_eoi
-    movl $0, 0xB0(%rcx)             /* Write 0 to LAPIC EOI register (offset 0xB0) */
-.kernel_coop_skip_eoi:
+    pushq %rdx
+    pushq %rsi
+    pushq %rdi
+    pushq %r8
+    pushq %r9
+    pushq %r10
+    pushq %r11
+    /* rsp is now A-64 (from .kernel_coop_restore entry) minus 9*8 = A-136.
+     * The call instruction pushes another 8 -> A-144, which is 16-aligned.
+     * System V ABI is satisfied at lapic_send_eoi entry. */
+    call lapic_send_eoi
+    popq %r11
+    popq %r10
+    popq %r9
+    popq %r8
+    popq %rdi
+    popq %rsi
+    popq %rdx
     popq %rcx
     popq %rax
 

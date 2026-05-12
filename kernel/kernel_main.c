@@ -3041,30 +3041,32 @@ try_ramdisk: (void)0;
         if (sdhci_dump_status)     sdhci_dump_status();
         if (xhci_print_summary)    xhci_print_summary();
         fut_printf("----------------------------------\n");
-        klog_persist_to_sd_once(1);
+        klog_persist_to_sd_once(1);                                /* iter 0 */
+        /* DEBUG: bracket each pre-init step with a sync flush so we
+         * can tell exactly where the boot is hanging by which iter
+         * marker is the LAST one to appear on the SD card. */
+        fut_printf("[KLOG-SD] DBG-A: after iter 0, before task_create\n");
+        klog_persist_to_sd_once(1);                                /* iter 1 */
         fut_task_t *flush_task = fut_task_create();
+        fut_printf("[KLOG-SD] DBG-B: task_create returned %p\n", (void *)flush_task);
+        klog_persist_to_sd_once(1);                                /* iter 2 */
         fut_thread_t *t = NULL;
         if (flush_task) {
             t = fut_thread_create(
                 flush_task, klog_sd_flush_thread, NULL,
                 16 * 1024, 200);
-            if (t) {
-                fut_printf("[KLOG-SD] periodic flusher started (TID %llu)\n",
-                           (unsigned long long)t->tid);
-            } else {
-                fut_printf("[KLOG-SD] flusher thread create failed\n");
-            }
-        } else {
-            fut_printf("[KLOG-SD] flusher task create failed\n");
         }
-        /* Synchronous second flush BEFORE init exec — proves O_APPEND
-         * works at all (writes iter 1 to the file with the spawn-result
-         * print included). If user sees iter 1 in the file but no iter
-         * 2+, the issue is the periodic thread not running. If user
-         * sees only iter 0, even the second sync append fails. */
-        fut_printf("[KLOG-SD] sync re-flush before init exec (task=%p thread=%p)\n",
-                   (void *)flush_task, (void *)t);
-        klog_persist_to_sd_once(1);
+        fut_printf("[KLOG-SD] DBG-C: thread_create returned %p\n", (void *)t);
+        klog_persist_to_sd_once(1);                                /* iter 3 */
+        if (t) {
+            fut_printf("[KLOG-SD] periodic flusher started (TID %llu)\n",
+                       (unsigned long long)t->tid);
+        } else {
+            fut_printf("[KLOG-SD] flusher spawn failed (task=%p thread=%p)\n",
+                       (void *)flush_task, (void *)t);
+        }
+        fut_printf("[KLOG-SD] DBG-D: about to exit pre-init block\n");
+        klog_persist_to_sd_once(1);                                /* iter 4 */
     }
 
 #if ENABLE_WAYLAND && !defined(__aarch64__)

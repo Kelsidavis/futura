@@ -125,12 +125,19 @@ const INTEL_VENDOR_ID: u16 = 0x8086;
 
 /// Known Intel Thunderbolt / USB4 NHI device IDs
 const TBT_DEVICE_IDS: &[u16] = &[
-    0x8A17, // Ice Lake TBT3
-    0x8A0D, // Ice Lake TBT3
-    0x9A1B, // Tiger Lake TBT4
-    0x9A1D, // Tiger Lake TBT4
-    0x463E, // Alder Lake TBT4
-    0x7EC4, // Meteor Lake USB4
+    // Alpine Ridge (Skylake/Kaby Lake era) — TBT3 add-on controller
+    0x1575, // Alpine Ridge LP
+    0x1577, // Alpine Ridge 4C
+    // Titan Ridge (Coffee Lake / Whiskey Lake / Lenovo L490 TBT3 variants)
+    0x15E7, 0x15E8, 0x15E9, 0x15EA, 0x15EB, 0x15EC, 0x15ED, 0x15EE,
+    // Ice Lake TBT3
+    0x8A17, 0x8A0D,
+    // Tiger Lake TBT4
+    0x9A1B, 0x9A1D,
+    // Alder Lake TBT4
+    0x463E,
+    // Meteor Lake USB4
+    0x7EC4,
 ];
 
 /// PCI class 0Ch (serial bus controller), subclass 03h (USB)

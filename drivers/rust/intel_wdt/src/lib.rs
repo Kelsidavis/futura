@@ -464,6 +464,27 @@ fn discover_tcobase(bus: u8, dev: u8, func: u8) -> Option<u16> {
     let acpi_base = (abase_reg & 0xFF80) as u16;
 
     if acpi_base == 0 || acpi_base == 0xFF80 {
+        // Strategy 3: Apollo/Gemini Lake fallback. The ABASE register on
+        // these PCHs is not in LPC config space at offset 0x40 — it's set
+        // by the PMC, and Coreboot's convention puts it at 0x400 (TCOBASE
+        // = 0x400 + 0x60 = 0x460). Match by LPC device ID; if it looks
+        // like an Apollo / Gemini Lake LPC, return the known address.
+        let header = pci_read32(bus, dev, func, 0);
+        let device_id = (header >> 16) as u16;
+        const APL_GLK_LPC_IDS: &[u16] = &[
+            0x5AE8, 0x5AE9, // Apollo Lake LPC variants
+            0x3197, 0x3198, 0x3199, 0x319A, // Gemini Lake LPC variants
+        ];
+        if APL_GLK_LPC_IDS.contains(&device_id) {
+            const APL_GLK_ABASE: u16 = 0x400;
+            unsafe {
+                fut_printf(
+                    b"intel_wdt: ABASE not in LPC config (PCH dev 0x%04x); using Apollo/GLK default 0x%04x\n\0".as_ptr(),
+                    device_id as u32, APL_GLK_ABASE as u32,
+                );
+            }
+            return Some(APL_GLK_ABASE + ACPI_TCO_OFFSET);
+        }
         log("intel_wdt: ACPI base address not configured");
         return None;
     }

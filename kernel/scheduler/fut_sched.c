@@ -290,6 +290,18 @@ static void idle_thread_entry(void *arg) {
                        (unsigned)((svr >> 8) & 1));
             fut_printf("[BCRUMB-IDLE] IRR[0:31]=0x%08x ISR[0:31]=0x%08x IF=%d\n",
                        irr_low, isr_low, if_set);
+
+            /* THEORY TEST: L490 (Whiskey Lake) is xAPIC, LAPIC is fully
+             * enabled, timer is programmed periodic + counting down at
+             * idle entry — yet no further IRQs reach the CPU. Classic
+             * signature of BIOS auto-promoting hlt -> C3/C6, where the
+             * LAPIC timer halts. Force the busy-yield path on first
+             * idle entry to confirm: if the box boots through, the
+             * issue is C-state-driven LAPIC freeze; the real fix is
+             * either always-busy-yield (cheap CPU) or TSC-deadline. */
+            __atomic_store_n(&g_timer_ticks_broken, 1, __ATOMIC_RELEASE);
+            fut_printf("[BCRUMB-IDLE] forcing busy-yield path "
+                       "(theory: hlt halts LAPIC via C3 promotion)\n");
 #endif
         }
     }

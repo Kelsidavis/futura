@@ -367,3 +367,60 @@ pub extern "C" fn cros_ec_init() -> i32 {
         }
     }
 }
+
+/// Compact one-line summary for the late-boot banner. Re-issues
+/// GET_VERSION + GET_BOARD_VERSION so we don't need a static cache,
+/// and prints only the most useful identification: board codename
+/// (parsed from the version string prefix up to the first underscore)
+/// + active firmware image + board hardware revision.
+#[unsafe(no_mangle)]
+pub extern "C" fn cros_ec_print_summary() {
+    if !detect() {
+        return;
+    }
+    // GET_VERSION
+    let mut vbuf = [0u8; 32 * 3 + 4];
+    let active_image = match send_v3(EC_CMD_GET_VERSION, 0, &[], &mut vbuf) {
+        Ok(n) if n >= 96 => {
+            // Find first underscore in RO string -- gives codename.
+            let ro = &vbuf[0..32];
+            let mut codename_end = 0;
+            for (i, b) in ro.iter().enumerate() {
+                if *b == b'_' || *b == 0 { codename_end = i; break; }
+            }
+            if codename_end == 0 { codename_end = 32; }
+            let mut codename = [0u8; 33];
+            codename[..codename_end].copy_from_slice(&ro[..codename_end]);
+            let active_image = if n >= 100 {
+                u32::from_le_bytes([vbuf[96], vbuf[97], vbuf[98], vbuf[99]])
+            } else { 0 };
+            unsafe {
+                fut_printf(
+                    b"[SUMMARY] cros_ec: board=%s active=%s\n\0".as_ptr(),
+                    codename.as_ptr(),
+                    match active_image {
+                        1 => b"RO\0".as_ptr(),
+                        2 => b"RW\0".as_ptr(),
+                        _ => b"?\0".as_ptr(),
+                    },
+                );
+            }
+            active_image
+        }
+        _ => 0,
+    };
+    let _ = active_image;
+    // BOARD_VERSION
+    let mut bvbuf = [0u8; 2];
+    if let Ok(n) = send_v3(EC_CMD_GET_BOARD_VERSION, 0, &[], &mut bvbuf) {
+        if n >= 2 {
+            let bv = u16::from_le_bytes([bvbuf[0], bvbuf[1]]);
+            unsafe {
+                fut_printf(
+                    b"[SUMMARY] cros_ec: board_version=%u\n\0".as_ptr(),
+                    bv as u32,
+                );
+            }
+        }
+    }
+}

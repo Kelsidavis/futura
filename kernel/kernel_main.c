@@ -3096,6 +3096,22 @@ try_ramdisk: (void)0;
      *   Step 8: Platform Late Initialization
      * ======================================== */
 
+    /* Late-boot summary block: re-print the most useful identification
+     * and state right before the banner so it appears at the end of the
+     * fb_console scroll (avoids the user having to time a photo against
+     * the early-boot scroll-by). Drivers that aren't linked are weakly
+     * referenced and skipped silently. */
+    {
+        extern void cros_ec_print_summary(void) __attribute__((weak));
+        extern void sdhci_dump_status(void)    __attribute__((weak));
+        extern void xhci_print_summary(void)   __attribute__((weak));
+        fut_printf("\n-------- late-boot summary --------\n");
+        if (cros_ec_print_summary) cros_ec_print_summary();
+        if (sdhci_dump_status)     sdhci_dump_status();
+        if (xhci_print_summary)    xhci_print_summary();
+        fut_printf("-----------------------------------\n");
+    }
+
     fut_printf("\n");
     fut_printf("=======================================================\n");
     fut_printf("   Kernel initialization complete!\n");

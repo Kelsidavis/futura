@@ -997,6 +997,17 @@ struct DeviceSlot {
     ep0_cycle: bool,
     bulk_in:  BulkEp,
     bulk_out: BulkEp,
+    // Captured during enumeration so the late-boot summary can re-print
+    // device identity without re-issuing GET_DESCRIPTOR.
+    vendor_id: u16,
+    product_id: u16,
+    dev_class: u8,
+    dev_subclass: u8,
+    dev_protocol: u8,
+    first_if_class: u8,
+    first_if_subclass: u8,
+    first_if_protocol: u8,
+    storage_attached: bool,
 }
 
 impl DeviceSlot {
@@ -1016,6 +1027,15 @@ impl DeviceSlot {
             ep0_cycle: false,
             bulk_in: BulkEp::empty(),
             bulk_out: BulkEp::empty(),
+            vendor_id: 0,
+            product_id: 0,
+            dev_class: 0,
+            dev_subclass: 0,
+            dev_protocol: 0,
+            first_if_class: 0xFF,
+            first_if_subclass: 0,
+            first_if_protocol: 0,
+            storage_attached: false,
         }
     }
 }
@@ -1168,22 +1188,20 @@ fn setup_slot_for_address(
 
     // Stash per-slot state.
     unsafe {
-        *slot_mut(slot_id).unwrap() = DeviceSlot {
-            in_use: true,
-            root_hub_port,
-            speed,
-            max_packet_ep0: max_packet,
-            input_ctx_virt: input_ctx as usize,
-            input_ctx_phys,
-            output_ctx_virt: output_ctx as usize,
-            output_ctx_phys,
-            ep0_tring_virt: ep0_tring as usize,
-            ep0_tring_phys,
-            ep0_enqueue: 0,
-            ep0_cycle: true,
-            bulk_in: BulkEp::empty(),
-            bulk_out: BulkEp::empty(),
-        };
+        *slot_mut(slot_id).unwrap() = DeviceSlot::empty();
+        let s = slot_mut(slot_id).unwrap();
+        s.in_use = true;
+        s.root_hub_port = root_hub_port;
+        s.speed = speed;
+        s.max_packet_ep0 = max_packet;
+        s.input_ctx_virt = input_ctx as usize;
+        s.input_ctx_phys = input_ctx_phys;
+        s.output_ctx_virt = output_ctx as usize;
+        s.output_ctx_phys = output_ctx_phys;
+        s.ep0_tring_virt = ep0_tring as usize;
+        s.ep0_tring_phys = ep0_tring_phys;
+        s.ep0_enqueue = 0;
+        s.ep0_cycle = true;
     }
     true
 }
@@ -1896,6 +1914,14 @@ fn enumerate_devices(ctrl: &mut XhciController) {
                 dev_class as u32, dev_sub as u32, dev_proto as u32,
                 mps0 as u32, n_cfg as u32,
             );
+            // Cache identity for the late-boot summary.
+            if let Some(s) = slot_mut(slot_id) {
+                s.vendor_id = id_vendor;
+                s.product_id = id_product;
+                s.dev_class = dev_class;
+                s.dev_subclass = dev_sub;
+                s.dev_protocol = dev_proto;
+            }
         }
 
         // Read the configuration descriptor (first 9 bytes give total length).
@@ -1968,6 +1994,14 @@ fn enumerate_devices(ctrl: &mut XhciController) {
                         cur_if_class as u32, cur_if_sub as u32, cur_if_proto as u32,
                         class_label, n_ep as u32,
                     );
+                    // Cache the first interface's class for the late summary.
+                    if let Some(s) = slot_mut(slot_id) {
+                        if s.first_if_class == 0xFF {
+                            s.first_if_class = cur_if_class;
+                            s.first_if_subclass = cur_if_sub;
+                            s.first_if_protocol = cur_if_proto;
+                        }
+                    }
                 }
             } else if dtype == 5 && dlen >= 7 {
                 // Endpoint descriptor.
@@ -2044,6 +2078,11 @@ fn enumerate_devices(ctrl: &mut XhciController) {
                         b"xhci: slot %u: usb_storage_attach rc=%d\n\0".as_ptr(),
                         slot_id, rc,
                     );
+                    if rc == 0 {
+                        if let Some(s) = slot_mut(slot_id) {
+                            s.storage_attached = true;
+                        }
+                    }
                 }
             }
         }
@@ -2377,6 +2416,62 @@ pub extern "C" fn xhci_port_speed(port: u32) -> u32 {
                 (portsc & PORTSC_SPEED_MASK) >> PORTSC_SPEED_SHIFT
             }
             None => 0,
+        }
+    }
+}
+
+
+/// Re-print the per-slot enumeration results in a compact form so the
+/// fb console doesn't require scrollback during late boot. Intended to
+/// be called right before the "Kernel initialization complete!" banner.
+#[unsafe(no_mangle)]
+pub extern "C" fn xhci_print_summary() {
+    let max = unsafe {
+        match (*core::ptr::addr_of!(XHCI)).as_ref() {
+            Some(c) => c.max_slots as u32,
+            None => {
+                unsafe {
+                    fut_printf(b"[SUMMARY] xhci: not initialized\n\0".as_ptr());
+                }
+                return;
+            }
+        }
+    };
+    unsafe {
+        fut_printf(b"[SUMMARY] xhci: enumerated devices --\n\0".as_ptr());
+    }
+    let mut any = false;
+    for slot_id in 1..=max {
+        let slot = unsafe { slot_mut(slot_id) };
+        let s = match slot {
+            Some(s) if s.in_use => s,
+            _ => continue,
+        };
+        any = true;
+        let if_label: *const u8 = match s.first_if_class {
+            0x03 => b"HID\0".as_ptr(),
+            0x08 => b"Mass Storage\0".as_ptr(),
+            0x09 => b"Hub\0".as_ptr(),
+            0x0e => b"Video\0".as_ptr(),
+            0xe0 => b"Wireless\0".as_ptr(),
+            0xff => b"(no interface)\0".as_ptr(),
+            _    => b"-\0".as_ptr(),
+        };
+        unsafe {
+            fut_printf(
+                b"[SUMMARY] xhci: slot %u port %u speed=%u %04x:%04x if0=%02x:%02x:%02x (%s)%s\n\0".as_ptr(),
+                slot_id, s.root_hub_port, s.speed,
+                s.vendor_id as u32, s.product_id as u32,
+                s.first_if_class as u32, s.first_if_subclass as u32,
+                s.first_if_protocol as u32, if_label,
+                if s.storage_attached { b" -- usb_storage attached\0".as_ptr() }
+                else                  { b"\0".as_ptr() },
+            );
+        }
+    }
+    if !any {
+        unsafe {
+            fut_printf(b"[SUMMARY] xhci: no devices enumerated\n\0".as_ptr());
         }
     }
 }

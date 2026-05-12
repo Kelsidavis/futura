@@ -670,10 +670,25 @@ pub extern "C" fn intel_mei_init() -> i32 {
     // Set host ready and enable interrupts
     mei_host_set_ready(mmio);
 
-    // Verify ME is still ready after handshake
-    let mecsr = mmio_read32(mmio, ME_CSR_HA);
-    if mecsr & CSR_RDY == 0 {
-        log("intel_mei: ME not ready after handshake");
+    // The ME firmware mirrors the host-ready handshake by re-asserting
+    // CSR_RDY in ME_CSR_HA. That re-assertion is not instantaneous —
+    // observed on the user's Gemini Lake Chromebook (8086:319a) where
+    // an immediate read returned 0 and tripped "ME not ready after
+    // handshake". Linux's intel-mei polls up to ~30 ms before giving
+    // up; do the same here, with a yield each pass so we don't spin
+    // a tight MMIO loop against the bus.
+    let mut mecsr: u32 = 0;
+    let mut ready = false;
+    for _ in 0..3000u32 {
+        mecsr = mmio_read32(mmio, ME_CSR_HA);
+        if mecsr & CSR_RDY != 0 {
+            ready = true;
+            break;
+        }
+        thread_yield();
+    }
+    if !ready {
+        log("intel_mei: ME not ready after handshake (timeout)");
         unsafe { unmap_mmio_region(mmio, MEI_MMIO_SIZE); }
         return -6;
     }

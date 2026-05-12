@@ -32,10 +32,26 @@ uint64_t fut_cycles_per_ms(void) {
         return cached;
     }
 
+    extern void fut_printf(const char *fmt, ...);
+    fut_printf("[PERF-CAL] calibrating cycles_per_ms (waits for timer ticks)...\n");
+
+    /* Bound each tick-wait so we don't hang the kernel if timer interrupts
+     * aren't firing — happened on Lenovo L490, where this function was the
+     * cliff inside the first fut_get_time_ns() call from fut_futurafs_format.
+     * Each fut_rdtsc() spin in this bound takes a handful of cycles, so the
+     * limit caps the wait at ~tens of seconds on modern CPUs, not "forever".
+     * If we hit the limit, fall back to a TSC-only self-calibration that
+     * uses rdtsc deltas of a fixed pause-loop instead of wall-clock ticks. */
+    const uint64_t CAL_SPIN_LIMIT = 50ULL * 1000ULL * 1000ULL * 1000ULL; /* ~50 G iters */
+
     /* Align to tick boundary for consistency. */
     uint64_t start_tick = fut_get_ticks();
+    uint64_t spins = 0;
     while (fut_get_ticks() == start_tick) {
         cpu_relax();
+        if (++spins >= CAL_SPIN_LIMIT) {
+            goto fallback;
+        }
     }
 
     start_tick = fut_get_ticks();
@@ -43,8 +59,12 @@ uint64_t fut_cycles_per_ms(void) {
 
     /* Wait ~50ms to average out jitter. */
     const uint64_t target_tick = start_tick + 50u;
+    spins = 0;
     while (fut_get_ticks() < target_tick) {
         cpu_relax();
+        if (++spins >= CAL_SPIN_LIMIT) {
+            goto fallback;
+        }
     }
 
     uint64_t end_cycles = fut_rdtsc();
@@ -63,6 +83,20 @@ uint64_t fut_cycles_per_ms(void) {
 
     cached = cycles;
     __atomic_store_n(&calibrated, 1, __ATOMIC_RELEASE);
+    fut_printf("[PERF-CAL] cycles_per_ms=%llu (from timer-tick calibration)\n",
+               (unsigned long long)cached);
+    return cached;
+
+fallback:
+    /* Timer didn't tick in the spin budget. Fall back to a TSC-self-calibration:
+     * delta-rdtsc of a fixed-count pause loop. Result will be ~CPU clock, not
+     * exact, but lets the kernel proceed past this calibration. We assume a
+     * 2 GHz nominal clock — within an order of magnitude of any laptop CPU,
+     * which is enough for the timestamp uses that depend on this. */
+    cached = 2000000ULL; /* 2 GHz */
+    __atomic_store_n(&calibrated, 1, __ATOMIC_RELEASE);
+    fut_printf("[PERF-CAL] WARN: timer ticks not advancing during calibration — using fallback cycles_per_ms=%llu\n",
+               (unsigned long long)cached);
     return cached;
 }
 

@@ -125,22 +125,43 @@ fn pci_write16(bus: u8, dev: u8, func: u8, offset: u8, val: u16) {
 const INTEL_VENDOR_ID: u16 = 0x8086;
 
 /// Known Intel LPSS I2C PCI device IDs (Gen 10+).
-const LPSS_I2C_DEVICE_IDS: [u16; 22] = [
+const LPSS_I2C_DEVICE_IDS: &[u16] = &[
+    // Apollo Lake (BXT)
+    0x5AAC, 0x5AAE, 0x5AB0, 0x5AB2, // I2C0-3
+    0x5AB4, 0x5AB6, 0x5AB8, 0x5ABA, // I2C4-7
+    // Gemini Lake (GLK) — HP Chromebook 11 G7 part family
+    0x31AC, 0x31AE, 0x31B0, 0x31B2, // I2C0-3
+    0x31B4, 0x31B6, 0x31B8, 0x31BA, // I2C4-7
+    // Sunrise Point (SKL/KBL) — desktop / mobile H
+    0x9D60, 0x9D61, 0x9D62, 0x9D63, // I2C0-3
+    0x9D64, 0x9D65,                 // I2C4-5
+    // Cannon Point LP (WHL/CFL-U) — L490 PCH
+    0x9DE8, 0x9DE9, 0x9DEA, 0x9DEB, // I2C0-3
+    0x9DC5, 0x9DC6,                 // I2C4-5
     // Ice Lake (ICL)
     0x34E8, 0x34E9, 0x34EA, 0x34EB, // I2C0-3
-    0x34C5, 0x34C6, // I2C4-5
+    0x34C5, 0x34C6,                 // I2C4-5
     // Tiger Lake (TGL)
     0xA0E8, 0xA0E9, 0xA0EA, 0xA0EB, // I2C0-3
-    0xA0C5, 0xA0C6, // I2C4-5
+    0xA0C5, 0xA0C6,                 // I2C4-5
     // Alder Lake / Raptor Lake (ADL/RPL)
     0x51E8, 0x51E9, 0x51EA, 0x51EB, // I2C0-3
-    0x51C5, 0x51C6, // I2C4-5
+    0x51C5, 0x51C6,                 // I2C4-5
     // Meteor Lake (MTL)
     0x7E50, 0x7E51, 0x7E52, 0x7E53, // I2C0-3 (via SOC-M)
 ];
 
-/// Known Intel LPSS SPI PCI device IDs (Gen 10+).
-const LPSS_SPI_DEVICE_IDS: [u16; 3] = [
+/// Known Intel LPSS SPI PCI device IDs.
+const LPSS_SPI_DEVICE_IDS: &[u16] = &[
+    // Apollo Lake (BXT)
+    0x5AC4, 0x5AC6,
+    // Gemini Lake (GLK)
+    0x31C2, 0x31C4,
+    // Sunrise Point (SKL/KBL)
+    0x9D29, 0x9D2A,
+    // Cannon Point LP (WHL/CFL-U) — L490
+    0x9DAA, 0x9DAB, 0x9DFB,
+    // Ice Lake / Tiger Lake / Alder Lake
     0x34AA, // ICL
     0xA0AA, // TGL
     0x51AA, // ADL/RPL
@@ -516,7 +537,7 @@ fn is_lpss_i2c_device(vendor: u16, device: u16) -> bool {
     if vendor != INTEL_VENDOR_ID {
         return false;
     }
-    for &id in &LPSS_I2C_DEVICE_IDS {
+    for &id in LPSS_I2C_DEVICE_IDS {
         if device == id {
             return true;
         }
@@ -528,7 +549,7 @@ fn is_lpss_spi_device(vendor: u16, device: u16) -> bool {
     if vendor != INTEL_VENDOR_ID {
         return false;
     }
-    for &id in &LPSS_SPI_DEVICE_IDS {
+    for &id in LPSS_SPI_DEVICE_IDS {
         if device == id {
             return true;
         }

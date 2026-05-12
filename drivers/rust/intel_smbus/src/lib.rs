@@ -56,7 +56,12 @@ const PCI_CLASS_SERIAL_BUS: u8 = 0x0C;
 const PCI_SUBCLASS_SMBUS: u8 = 0x05;
 
 const SMBUS_DEVICE_IDS: &[u16] = &[
-    0xA323, // Cannon/Comet Lake
+    0x5AD4, // Apollo Lake (BXT)
+    0x31D4, // Gemini Lake (GLK) — HP Chromebook 11 G7
+    0x9D23, // Sunrise Point LP (SKL/KBL-U)
+    0x9DA3, // Cannon Point LP (WHL/CFL-U) — Lenovo L490
+    0xA123, // Sunrise Point H (SKL/KBL desktop)
+    0xA323, // Cannon Point (Cannon/Comet Lake desktop)
     0xA3A3, // Ice Lake
     0x43A3, // Tiger Lake
     0x51A3, // Alder/Raptor Lake

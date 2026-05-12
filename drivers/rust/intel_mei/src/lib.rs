@@ -149,6 +149,12 @@ const INTEL_VENDOR_ID: u16 = 0x8086;
 
 /// Known MEI (HECI) device IDs per platform generation
 const MEI_DEVICE_IDS: &[u16] = &[
+    0x5A9A, // Apollo Lake (BXT)
+    0x319A, // Gemini Lake (GLK)
+    0x9D3A, // Sunrise Point LP (SKL/KBL-U)
+    0x9DE0, // Cannon Point LP (WHL/CFL-U) — Lenovo L490
+    0xA13A, // Sunrise Point H (SKL/KBL desktop)
+    0xA2BA, // Kabylake H / Cannon Point H (CFL desktop)
     0xA3BA, // Comet Lake (CML)
     0xA0E0, // Tiger Lake (TGL)
     0x51E0, // Alder Lake (ADL)

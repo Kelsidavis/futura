@@ -2160,17 +2160,22 @@ void fut_kernel_main(void) {
             fut_printf("[INIT] Intel: entering intel_lpss_init\n");
             intel_lpss_init();
             /* Probe LPSS I2C buses for HID-over-I2C devices (Chromebook
-             * touchpads, etc.). The probe was the root cause of the HP
-             * USB regression — a stalled controller burned ~48 s of
-             * POLL_TIMEOUT × 96 attempts and broke later xhci_init.
-             * 801ab5c6 bounds the probe: clean NACKs (-6 ENXIO) keep
-             * trying the next address, but any other error skips the
-             * rest of that bus. Worst case is now ~4 s. */
+             * touchpads, etc.). DISABLED again — re-enabled in 3a12b8af
+             * after bounding the probe (801ab5c6), and HP booted fine,
+             * but L490 hangs at "Starting scheduler..." with the probe
+             * enabled. af1bc096 (LPSS function-reset deassert for combined-
+             * BAR layouts) didn't fix it. Symptom is between fut_enable_
+             * interrupts() and the fut_printf inside fut_sched_start —
+             * something we touch during the probe corrupts state that
+             * bites once the first timer IRQ fires. Needs proper bisection
+             * with SD logging; keep disabled until then. */
+            #if 0
             {
                 extern int intel_i2c_hid_init(void);
                 fut_printf("[INIT] Intel: entering intel_i2c_hid_init\n");
                 intel_i2c_hid_init();
             }
+            #endif
             fut_printf("[INIT] Intel: entering intel_smbus_init\n");
             intel_smbus_init();
             fut_printf("[INIT] Intel: entering intel_spi_init\n");

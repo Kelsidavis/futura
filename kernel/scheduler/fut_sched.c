@@ -247,27 +247,49 @@ static void idle_thread_entry(void *arg) {
             dbg_idle_once = 1;
             fut_printf("[BCRUMB-IDLE] idle thread reached entry function\n");
 #ifdef __x86_64__
-            /* Dump LAPIC timer state immediately before idle sti;hlt's.
-             * If the timer is no longer programmed periodic, the next
-             * tick will never fire and idle halts forever — exactly the
-             * L490 symptom. The readbacks tell us whether LVT_TIMER kept
-             * periodic mode (bit 17), whether TIMER_CURRENT is counting
-             * down toward a reload, and whether the LAPIC ISR bit for
-             * vector 32 stayed set (suppressing further deliveries). */
+            /* Dump LAPIC state immediately before idle sti;hlt's. The
+             * timer was confirmed to be programmed periodic + counting
+             * down on L490, yet no further IRQs reach the CPU. Look at
+             * APIC_BASE_MSR (xAPIC vs x2APIC + global enable), TPR
+             * (high TPR blocks low-priority IRQs), SVR (LAPIC software
+             * enable bit), IRR (a pending-vector latch) to narrow down
+             * which gate is closed. */
             extern uint32_t lapic_read_reg(uint32_t reg);
+            /* Inline rdmsr — the platform header's static inline can't be
+             * used via extern decl, and we only need it for APIC_BASE here. */
+            uint64_t apic_base;
+            {
+                uint32_t hi, lo;
+                __asm__ volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(0x1Bu));
+                apic_base = ((uint64_t)hi << 32) | (uint64_t)lo;
+            }
             uint32_t lvt = lapic_read_reg(0x320);
             uint32_t cur = lapic_read_reg(0x390);
             uint32_t init_cnt = lapic_read_reg(0x380);
             uint32_t divcfg = lapic_read_reg(0x3E0);
             uint32_t isr_low = lapic_read_reg(0x100);
+            uint32_t irr_low = lapic_read_reg(0x200);
+            uint32_t tpr = lapic_read_reg(0x80);
+            uint32_t svr = lapic_read_reg(0xF0);
+            unsigned long flags = 0;
+            __asm__ volatile("pushfq\n\tpopq %0" : "=r"(flags) :: "memory");
+            int if_set = (flags & (1UL << 9)) ? 1 : 0;
             extern _Atomic int g_timer_ticks_broken;
             int tb = __atomic_load_n(&g_timer_ticks_broken, __ATOMIC_ACQUIRE);
             fut_printf("[BCRUMB-IDLE] LAPIC LVT_TIMER=0x%08x mode=%s mask=%u vec=%u\n",
                        lvt,
                        ((lvt >> 17) & 1) ? "periodic" : "oneshot",
                        (lvt >> 16) & 1, lvt & 0xFF);
-            fut_printf("[BCRUMB-IDLE] TIMER_CURRENT=0x%08x TIMER_INITIAL=0x%08x DIV=0x%x ISR[0:31]=0x%08x g_timer_broken=%d\n",
-                       cur, init_cnt, divcfg, isr_low, tb);
+            fut_printf("[BCRUMB-IDLE] TIMER_CURRENT=0x%08x TIMER_INITIAL=0x%08x DIV=0x%x g_timer_broken=%d\n",
+                       cur, init_cnt, divcfg, tb);
+            fut_printf("[BCRUMB-IDLE] APIC_BASE=0x%llx x2apic=%u global_en=%u TPR=0x%x SVR=0x%x sw_en=%u\n",
+                       (unsigned long long)apic_base,
+                       (unsigned)((apic_base >> 10) & 1),
+                       (unsigned)((apic_base >> 11) & 1),
+                       tpr, svr,
+                       (unsigned)((svr >> 8) & 1));
+            fut_printf("[BCRUMB-IDLE] IRR[0:31]=0x%08x ISR[0:31]=0x%08x IF=%d\n",
+                       irr_low, isr_low, if_set);
 #endif
         }
     }

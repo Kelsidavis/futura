@@ -1312,14 +1312,28 @@ fut_switch_context_irq:
      * NOTE: This is safe because we're still in kernel mode with kernel page tables.
      * The LAPIC is mapped at its physical address 0xFEE00000 to a kernel VA.
      */
-    /* Send LAPIC EOI via the lapic_base global. The pmap_phys_to_virt
-     * mapping now correctly maps LAPIC phys 0xFEE00000 into kernel space. */
+    /* Send LAPIC EOI via the C wrapper — same reasoning as the
+     * .kernel_coop_restore path (lines ~1425-1445): direct MMIO to
+     * lapic_base+0xB0 is silently dropped on x2APIC. The C wrapper
+     * lapic_send_eoi dispatches MSR-vs-MMIO correctly. */
     pushq %rax
-    movq lapic_base(%rip), %rax
-    testq %rax, %rax
-    jz .skip_ctx_eoi
-    movl $0, 0xB0(%rax)
-.skip_ctx_eoi:
+    pushq %rcx
+    pushq %rdx
+    pushq %rsi
+    pushq %rdi
+    pushq %r8
+    pushq %r9
+    pushq %r10
+    pushq %r11
+    call lapic_send_eoi
+    popq %r11
+    popq %r10
+    popq %r9
+    popq %r8
+    popq %rdi
+    popq %rsi
+    popq %rdx
+    popq %rcx
     popq %rax
 
     /* CRITICAL: Clear fut_in_interrupt and fut_current_frame before IRETQ.

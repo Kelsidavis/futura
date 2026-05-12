@@ -2405,8 +2405,16 @@ pub extern "C" fn xhci_init() -> i32 {
 
     // ── Start the controller ──
 
+    // Start the controller WITHOUT enabling the interrupter (USBCMD_INTE).
+    // All enumeration and bulk transfers are polled (event-ring doorbell +
+    // status read). Enabling INTE without a registered ISR for the xhci
+    // PCI interrupt vector leaves a live interrupt source whose handler
+    // never sends LAPIC EOI — the in-service bit stays set and blocks all
+    // lower-priority vectors including the timer (vec 32), hanging the
+    // scheduler on Whiskey Lake L490 (and potentially any system where
+    // xhci's legacy INTx routes to a vector > 32).
     let usbcmd = mmio_read32(bar0, op_base + XHCI_OP_USBCMD);
-    mmio_write32(bar0, op_base + XHCI_OP_USBCMD, usbcmd | USBCMD_RUN | USBCMD_INTE);
+    mmio_write32(bar0, op_base + XHCI_OP_USBCMD, (usbcmd | USBCMD_RUN) & !USBCMD_INTE);
 
     // Wait for HCHalted to clear
     for _ in 0..1_000_000u32 {

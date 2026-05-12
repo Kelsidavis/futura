@@ -3143,20 +3143,24 @@ try_ramdisk: (void)0;
             }
         }
         if (mounted_idx >= 0 && klog_persist_read && klog_persist_boot_seq) {
-            /* Build a unique filename per boot so successive runs don't
-             * stomp each other. /mnt/sd/futura-bootNNNN.log */
+            /* Build a unique 8.3-compatible filename per boot so
+             * successive runs don't stomp each other. Format:
+             *   /mnt/sd/KLBNNNN.LOG     (4-hex-digit boot seq)
+             * KLB = "kernel log boot". Wraps every 65536 boots, which
+             * is fine for any real-hw debugging cycle. The kernel's
+             * FAT driver only supports 8.3 names today; LFN write is
+             * a future feature. */
             uint32_t seq = klog_persist_boot_seq();
             char path[64];
             int n = 0;
-            const char *prefix = "/mnt/sd/futura-boot";
+            const char *prefix = "/mnt/sd/KLB";
             for (const char *p = prefix; *p && n < 62; p++) path[n++] = *p;
-            /* 8-digit zero-padded boot seq. */
-            for (int shift = 28; shift >= 0; shift -= 4) {
+            for (int shift = 12; shift >= 0; shift -= 4) {
                 if (n >= 62) break;
                 uint32_t nib = (seq >> shift) & 0xF;
-                path[n++] = "0123456789abcdef"[nib];
+                path[n++] = "0123456789ABCDEF"[nib];
             }
-            const char *suffix = ".log";
+            const char *suffix = ".LOG";
             for (const char *p = suffix; *p && n < 63; p++) path[n++] = *p;
             path[n] = '\0';
 
@@ -3177,19 +3181,6 @@ try_ramdisk: (void)0;
                     fut_printf("[KLOG-SD] alloc failed, log not written\n");
                 }
                 sys_close(fd);
-            } else if (fd == -30 /* EROFS */) {
-                /* The FAT and ext2 drivers in this kernel are RO-only,
-                 * so we can't actually write the log file. We previously
-                 * tried a raw-block fallback into sectors 8..71, but on
-                 * standard FAT32-formatted SD cards the FAT table starts
-                 * around sector 32 (with RsvdSecCnt=32), so those writes
-                 * corrupted the filesystem and the card became unmountable
-                 * on the host. Disabled until we have FAT write support
-                 * (or a confirmed-safe sector range we can use). */
-                fut_printf("[KLOG-SD] %s: filesystem mounted read-only -- "
-                           "Futura's FAT/ext2 drivers don't support writes "
-                           "yet; log not persisted to disk this boot.\n",
-                           path);
             } else {
                 fut_printf("[KLOG-SD] open %s failed: %d\n", path, fd);
             }

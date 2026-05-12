@@ -165,6 +165,11 @@ struct fat_vnode_info {
     uint32_t file_size;
     uint8_t  attr;
     struct fat_mount_info *fi;
+    /* Absolute disk byte offset of this file's 8.3 directory entry.
+     * Used by fat_vnode_write / unlink to update the on-disk metadata
+     * (size, first_cluster). 0 for the root vnode and for vnodes that
+     * weren't created via the lookup/create paths. */
+    uint64_t dir_entry_disk_off;
 };
 
 static ssize_t fat_vnode_read(struct fut_vnode *vnode, void *buf,
@@ -208,8 +213,189 @@ static ssize_t fat_vnode_read(struct fut_vnode *vnode, void *buf,
     return (ssize_t)total;
 }
 
-static ssize_t fat_vnode_write(struct fut_vnode *v, const void *b, size_t s, uint64_t o) {
-    (void)v; (void)b; (void)s; (void)o; return -EROFS;
+/* Forward decls for write primitives defined below. */
+static int fat_alloc_cluster(struct fat_mount_info *fi, uint32_t *out_cluster);
+static int fat_set_fat_entry(struct fat_mount_info *fi, uint32_t cluster,
+                              uint32_t value);
+static ssize_t fat_write_cluster_at(struct fat_mount_info *fi, uint32_t cluster,
+                                     uint32_t off_in, const void *buf, size_t len);
+static int fat_dir_entry_set_size(struct fat_mount_info *fi, uint64_t disk_off,
+                                   uint32_t first_cluster, uint32_t size);
+
+static ssize_t fat_vnode_write(struct fut_vnode *v, const void *b, size_t s,
+                                uint64_t o) {
+    struct fat_vnode_info *vi = (struct fat_vnode_info *)v->fs_data;
+    if (!vi) return -EIO;
+    if (vi->attr & FAT_ATTR_DIRECTORY) return -EISDIR;
+    if (vi->dir_entry_disk_off == 0) return -EROFS;
+    struct fat_mount_info *fi = vi->fi;
+    if (s == 0) return 0;
+
+    const uint8_t *src = (const uint8_t *)b;
+    size_t total = 0;
+
+    /* Allocate first cluster if the file is empty. */
+    if (vi->first_cluster < 2) {
+        uint32_t newc = 0;
+        int rc = fat_alloc_cluster(fi, &newc);
+        if (rc < 0) return rc;
+        vi->first_cluster = newc;
+    }
+
+    /* Skip clusters to reach `o`. */
+    uint64_t skip = o;
+    uint32_t cluster = vi->first_cluster;
+    while (skip >= fi->cluster_size) {
+        uint32_t next = fat_next_cluster(fi, cluster);
+        if (next < 2) {
+            /* Need to extend. Allocate + link. */
+            int rc = fat_alloc_cluster(fi, &next);
+            if (rc < 0) return rc;
+            rc = fat_set_fat_entry(fi, cluster, next);
+            if (rc < 0) return rc;
+        }
+        cluster = next;
+        skip -= fi->cluster_size;
+    }
+    uint32_t off_in = (uint32_t)skip;
+
+    /* Walk and write. */
+    while (total < s) {
+        size_t avail = fi->cluster_size - off_in;
+        if (avail > s - total) avail = s - total;
+        ssize_t wrote = fat_write_cluster_at(fi, cluster, off_in,
+                                              src + total, avail);
+        if (wrote < 0) return wrote;
+        total += (size_t)wrote;
+        if ((size_t)wrote < avail) break;
+        off_in = 0;
+        if (total < s) {
+            uint32_t next = fat_next_cluster(fi, cluster);
+            if (next < 2) {
+                int rc = fat_alloc_cluster(fi, &next);
+                if (rc < 0) break;
+                rc = fat_set_fat_entry(fi, cluster, next);
+                if (rc < 0) break;
+            }
+            cluster = next;
+        }
+    }
+
+    /* Update the in-memory + on-disk dir entry if the file grew. */
+    uint64_t new_size = o + total;
+    if (new_size > vi->file_size) {
+        vi->file_size = (uint32_t)new_size;
+        v->size = (uint64_t)vi->file_size;
+        fat_dir_entry_set_size(fi, vi->dir_entry_disk_off,
+                               vi->first_cluster, vi->file_size);
+    } else if (vi->first_cluster != 0 && total > 0) {
+        /* Keep dir entry's first_cluster in sync in case we allocated it. */
+        fat_dir_entry_set_size(fi, vi->dir_entry_disk_off,
+                               vi->first_cluster, vi->file_size);
+    }
+    return (ssize_t)total;
+}
+
+/* ============================================================
+ *   FAT write primitives
+ * ============================================================ */
+
+/* Write a FAT entry for cluster `cluster` with value `value`, mirrored
+ * across all FAT copies the BPB declares. Handles FAT32 (4-byte entries
+ * with high 4 bits reserved) and FAT16 (2-byte entries). FAT12 (4-bit
+ * straddling) is not supported -- SD card use case is FAT32, eMMC eMMC
+ * is also FAT32; FAT12 callers get -ENOTSUP. */
+static int fat_set_fat_entry(struct fat_mount_info *fi, uint32_t cluster,
+                              uint32_t value) {
+    if (fi->fat_type == FAT_TYPE_12) return -ENOTSUP;
+
+    uint64_t fat_base = (uint64_t)fi->reserved_sectors * fi->bytes_per_sector;
+    uint64_t fat_bytes = (uint64_t)fi->fat_size * fi->bytes_per_sector;
+
+    for (uint32_t f = 0; f < fi->num_fats; f++) {
+        uint64_t this_fat = fat_base + (uint64_t)f * fat_bytes;
+        if (fi->fat_type == FAT_TYPE_32) {
+            uint32_t cur = 0;
+            uint64_t off = this_fat + (uint64_t)cluster * 4;
+            fut_blockdev_read_bytes(fi->dev, off, 4, &cur);
+            uint32_t merged = (cur & 0xF0000000) | (value & 0x0FFFFFFF);
+            ssize_t w = fut_blockdev_write_bytes(fi->dev, off, 4, &merged);
+            if (w < 0) return (int)w;
+        } else { /* FAT16 */
+            uint16_t v16 = (uint16_t)value;
+            uint64_t off = this_fat + (uint64_t)cluster * 2;
+            ssize_t w = fut_blockdev_write_bytes(fi->dev, off, 2, &v16);
+            if (w < 0) return (int)w;
+        }
+    }
+    return 0;
+}
+
+/* Read a FAT entry without the EOC translation that fat_next_cluster
+ * does. Returns the raw value (0 = free, EOC marker = end of chain). */
+static uint32_t fat_read_fat_entry_raw(struct fat_mount_info *fi,
+                                        uint32_t cluster) {
+    uint64_t fat_base = (uint64_t)fi->reserved_sectors * fi->bytes_per_sector;
+    if (fi->fat_type == FAT_TYPE_32) {
+        uint32_t entry = 0;
+        fut_blockdev_read_bytes(fi->dev, fat_base + (uint64_t)cluster * 4,
+                                4, &entry);
+        return entry & 0x0FFFFFFF;
+    } else if (fi->fat_type == FAT_TYPE_16) {
+        uint16_t entry = 0;
+        fut_blockdev_read_bytes(fi->dev, fat_base + (uint64_t)cluster * 2,
+                                2, &entry);
+        return entry;
+    }
+    return 0;
+}
+
+/* Linearly scan the FAT for a free cluster (entry == 0). On success
+ * marks the entry EOC, returns the cluster number in `*out`.
+ *
+ * Not efficient for large volumes -- a proper implementation reads the
+ * FSInfo "next free hint" and tracks free count -- but it's correct,
+ * which is what we need for the klog-write use case (a few hundred KB
+ * tops). */
+static int fat_alloc_cluster(struct fat_mount_info *fi, uint32_t *out) {
+    uint32_t eoc = (fi->fat_type == FAT_TYPE_32) ? FAT32_EOC : FAT16_EOC;
+    /* Cluster 0 + 1 reserved per spec; valid data clusters start at 2. */
+    for (uint32_t c = 2; c < fi->total_clusters + 2; c++) {
+        if (fat_read_fat_entry_raw(fi, c) == 0) {
+            int rc = fat_set_fat_entry(fi, c, eoc);
+            if (rc < 0) return rc;
+            *out = c;
+            return 0;
+        }
+    }
+    return -ENOSPC;
+}
+
+/* Write up to `len` bytes into cluster `cluster` starting at offset
+ * `off_in` (must be < cluster_size). Returns bytes written or -errno. */
+static ssize_t fat_write_cluster_at(struct fat_mount_info *fi, uint32_t cluster,
+                                     uint32_t off_in, const void *buf,
+                                     size_t len) {
+    if (off_in >= fi->cluster_size) return -EINVAL;
+    if (off_in + len > fi->cluster_size) len = fi->cluster_size - off_in;
+    uint64_t disk = (uint64_t)fat_cluster_to_sector(fi, cluster)
+                        * fi->bytes_per_sector + off_in;
+    return fut_blockdev_write_bytes(fi->dev, disk, len, buf);
+}
+
+/* Update the size + first_cluster fields of a directory entry already
+ * on disk. `disk_off` is the absolute byte offset of the 32-byte 8.3
+ * entry. Leaves other fields (name, attr, timestamps) untouched. */
+static int fat_dir_entry_set_size(struct fat_mount_info *fi, uint64_t disk_off,
+                                   uint32_t first_cluster, uint32_t size) {
+    struct fat_dir_entry de;
+    ssize_t r = fut_blockdev_read_bytes(fi->dev, disk_off, sizeof(de), &de);
+    if (r < 0) return (int)r;
+    de.first_cluster_lo = (uint16_t)(first_cluster & 0xFFFF);
+    de.first_cluster_hi = (uint16_t)((first_cluster >> 16) & 0xFFFF);
+    de.file_size = size;
+    ssize_t w = fut_blockdev_write_bytes(fi->dev, disk_off, sizeof(de), &de);
+    return (w < 0) ? (int)w : 0;
 }
 
 /* Convert 8.3 name to lowercase null-terminated string */
@@ -264,7 +450,8 @@ static bool fat_names_equal(const char *a, size_t alen, const char *b, size_t bl
  */
 typedef int (*fat_dir_iter_cb)(struct fat_dir_entry *de, const char *lfn_name,
                                 size_t lfn_len, const char *short_name,
-                                uint32_t byte_pos, void *ctx);
+                                uint32_t byte_pos, uint64_t disk_off,
+                                void *ctx);
 
 static int fat_dir_iterate(struct fat_mount_info *fi, uint32_t first_cluster,
                             uint32_t start_pos, fat_dir_iter_cb cb, void *ctx) {
@@ -356,7 +543,11 @@ static int fat_dir_iterate(struct fat_mount_info *fi, uint32_t first_cluster,
                 fat_83_to_name(de->name, short_name);
 
                 if (pos > start_pos) {
-                    int rc = cb(de, final_lfn, final_lfn_len, short_name, pos, ctx);
+                    uint64_t disk_off =
+                        (uint64_t)fi->first_root_dir_sector * fi->bytes_per_sector
+                        + root_off + off;
+                    int rc = cb(de, final_lfn, final_lfn_len, short_name,
+                                pos, disk_off, ctx);
                     if (rc != 0) { fut_free(cbuf); return rc; }
                 }
             }
@@ -426,7 +617,11 @@ static int fat_dir_iterate(struct fat_mount_info *fi, uint32_t first_cluster,
                 fat_83_to_name(de->name, short_name);
 
                 if (pos > start_pos) {
-                    int rc = cb(de, final_lfn, final_lfn_len, short_name, pos, ctx);
+                    uint64_t disk_off =
+                        (uint64_t)fat_cluster_to_sector(fi, cluster)
+                            * fi->bytes_per_sector + off;
+                    int rc = cb(de, final_lfn, final_lfn_len, short_name,
+                                pos, disk_off, ctx);
                     if (rc != 0) { fut_free(cbuf); return rc; }
                 }
             }
@@ -450,7 +645,7 @@ struct fat_lookup_ctx {
 
 static int fat_lookup_cb(struct fat_dir_entry *de, const char *lfn_name,
                           size_t lfn_len, const char *short_name,
-                          uint32_t byte_pos, void *ctx) {
+                          uint32_t byte_pos, uint64_t disk_off, void *ctx) {
     (void)byte_pos;
     struct fat_lookup_ctx *lc = (struct fat_lookup_ctx *)ctx;
 
@@ -472,6 +667,9 @@ static int fat_lookup_cb(struct fat_dir_entry *de, const char *lfn_name,
         char *ndup = fut_malloc(lc->name_len + 1);
         if (ndup) { memcpy(ndup, lc->name, lc->name_len); ndup[lc->name_len] = '\0'; }
         lc->result->name = ndup;
+        /* Remember where this file's 8.3 entry lives on disk so future
+         * writes can update size + first_cluster in place. */
+        ((struct fat_vnode_info *)lc->result->fs_data)->dir_entry_disk_off = disk_off;
         return 1; /* found — stop iteration */
     }
     return 0; /* continue */
@@ -511,7 +709,8 @@ struct fat_readdir_ctx {
 
 static int fat_readdir_cb(struct fat_dir_entry *de, const char *lfn_name,
                            size_t lfn_len, const char *short_name,
-                           uint32_t byte_pos, void *ctx) {
+                           uint32_t byte_pos, uint64_t disk_off, void *ctx) {
+    (void)disk_off;
     struct fat_readdir_ctx *rc = (struct fat_readdir_ctx *)ctx;
 
     rc->dirent->d_ino = ((uint32_t)de->first_cluster_hi << 16) | de->first_cluster_lo;
@@ -557,8 +756,149 @@ static int fat_vnode_readdir(struct fut_vnode *dir, uint64_t *cookie,
     return -ENOENT;
 }
 
-static int fat_ro(struct fut_vnode *d, const char *n, uint32_t m, struct fut_vnode **r) {
-    (void)d;(void)n;(void)m;(void)r; return -EROFS; }
+/* Build an 11-byte 8.3 directory entry name from a possibly-lowercase
+ * filename. Returns 0 on success, -EINVAL if the name doesn't fit 8.3.
+ * Limitations: no LFN, no Unicode -- ASCII only, at most 8 chars before
+ * the dot and 3 chars after. We don't need more for `klog.log`-style
+ * names; LFN support is a future task. */
+static int fat_make_short_name(const char *name, char out[11]) {
+    for (int i = 0; i < 11; i++) out[i] = ' ';
+    int n_base = 0, n_ext = 0;
+    bool past_dot = false;
+    for (const char *p = name; *p; p++) {
+        char c = *p;
+        if (c == '.') {
+            if (past_dot) return -EINVAL; /* multiple dots not allowed */
+            past_dot = true;
+            continue;
+        }
+        if (c >= 'a' && c <= 'z') c = c - 'a' + 'A';
+        if (c < ' ' || c == '"' || c == '*' || c == '/' || c == ':' ||
+            c == '<' || c == '>' || c == '?' || c == '\\' || c == '|')
+            return -EINVAL;
+        if (!past_dot) {
+            if (n_base >= 8) return -EINVAL;
+            out[n_base++] = c;
+        } else {
+            if (n_ext >= 3) return -EINVAL;
+            out[8 + n_ext++] = c;
+        }
+    }
+    if (n_base == 0) return -EINVAL;
+    /* Filenames whose first byte is 0xE5 must be written as 0x05 in
+     * the on-disk entry. */
+    if ((uint8_t)out[0] == 0xE5) out[0] = 0x05;
+    return 0;
+}
+
+/* Find a free 32-byte slot in a directory's cluster chain (or fixed
+ * root for FAT12/16). Returns 0 + slot_disk_off on success.
+ * "Free" means name[0] == 0xE5 (deleted) or name[0] == 0x00 (terminator
+ * -- we use this slot and let the next slot be the new terminator).
+ *
+ * For cluster-chained dirs (FAT32), extends the directory by allocating
+ * a new cluster + linking it onto the chain if no slot is found. */
+static int fat_dir_find_free_slot(struct fat_mount_info *fi,
+                                    uint32_t dir_cluster,
+                                    uint64_t *out_disk_off) {
+    if (fat_is_fixed_root(fi, dir_cluster)) {
+        uint32_t root_bytes = fi->root_entry_count * 32;
+        uint64_t base = (uint64_t)fi->first_root_dir_sector * fi->bytes_per_sector;
+        struct fat_dir_entry de;
+        for (uint32_t off = 0; off < root_bytes; off += 32) {
+            fut_blockdev_read_bytes(fi->dev, base + off, sizeof(de), &de);
+            uint8_t n0 = (uint8_t)de.name[0];
+            if (n0 == 0x00 || n0 == 0xE5) {
+                *out_disk_off = base + off;
+                return 0;
+            }
+        }
+        return -ENOSPC;
+    }
+
+    /* Cluster-chained directory (FAT32 root, or FAT12/16 subdir). */
+    uint32_t cluster = dir_cluster;
+    uint32_t prev = cluster;
+    while (cluster >= 2) {
+        uint64_t base = (uint64_t)fat_cluster_to_sector(fi, cluster)
+                            * fi->bytes_per_sector;
+        struct fat_dir_entry de;
+        for (uint32_t off = 0; off < fi->cluster_size; off += 32) {
+            fut_blockdev_read_bytes(fi->dev, base + off, sizeof(de), &de);
+            uint8_t n0 = (uint8_t)de.name[0];
+            if (n0 == 0x00 || n0 == 0xE5) {
+                *out_disk_off = base + off;
+                return 0;
+            }
+        }
+        prev = cluster;
+        cluster = fat_next_cluster(fi, cluster);
+    }
+    /* No slot found and chain ended. Extend by allocating a new
+     * cluster, zero-filling it, linking it onto the chain. */
+    uint32_t newc = 0;
+    int rc = fat_alloc_cluster(fi, &newc);
+    if (rc < 0) return rc;
+    /* Zero the new directory cluster so name[0]=0 marks all slots free. */
+    uint8_t *zbuf = fut_malloc(fi->cluster_size);
+    if (!zbuf) return -ENOMEM;
+    memset(zbuf, 0, fi->cluster_size);
+    fat_write_cluster_at(fi, newc, 0, zbuf, fi->cluster_size);
+    fut_free(zbuf);
+    rc = fat_set_fat_entry(fi, prev, newc);
+    if (rc < 0) return rc;
+    *out_disk_off = (uint64_t)fat_cluster_to_sector(fi, newc) * fi->bytes_per_sector;
+    return 0;
+}
+
+/* Create a new empty regular file in `dir` named `name` (8.3 only).
+ * Writes a single 32-byte directory entry with size=0, first_cluster=0.
+ * Returns a new vnode in *result on success. */
+static int fat_vnode_create(struct fut_vnode *dir, const char *name,
+                             uint32_t mode, struct fut_vnode **result) {
+    (void)mode;
+    struct fat_vnode_info *dvi = (struct fat_vnode_info *)dir->fs_data;
+    if (!dvi || !(dvi->attr & FAT_ATTR_DIRECTORY)) return -ENOTDIR;
+    struct fat_mount_info *fi = dvi->fi;
+
+    char shortname[11];
+    int rc = fat_make_short_name(name, shortname);
+    if (rc < 0) return rc;
+
+    /* Refuse if a file with this short name already exists in the dir.
+     * Use the existing lookup path -- it case-folds + handles LFN, so
+     * this is a stronger "no duplicate" check than 8.3-only would give. */
+    struct fut_vnode *existing = NULL;
+    if (fat_vnode_lookup(dir, name, &existing) == 0) {
+        return -EEXIST;
+    }
+
+    uint64_t slot = 0;
+    rc = fat_dir_find_free_slot(fi, dvi->first_cluster, &slot);
+    if (rc < 0) return rc;
+
+    /* Build a zero-initialized dir entry with our 8.3 name. */
+    struct fat_dir_entry de;
+    memset(&de, 0, sizeof(de));
+    memcpy(de.name, shortname, 11);
+    de.attr = FAT_ATTR_ARCHIVE;
+
+    ssize_t w = fut_blockdev_write_bytes(fi->dev, slot, sizeof(de), &de);
+    if (w < 0) return (int)w;
+
+    struct fut_vnode *vn = fat_alloc_vnode(fi, 0, 0, FAT_ATTR_ARCHIVE,
+                                            dir->mount);
+    if (!vn) return -ENOMEM;
+    vn->parent = dir;
+    size_t nl = 0; while (name[nl]) nl++;
+    char *ndup = fut_malloc(nl + 1);
+    if (ndup) { memcpy(ndup, name, nl); ndup[nl] = '\0'; }
+    vn->name = ndup;
+    ((struct fat_vnode_info *)vn->fs_data)->dir_entry_disk_off = slot;
+    *result = vn;
+    return 0;
+}
+
 static int fat_ro2(struct fut_vnode *d, const char *n) {
     (void)d;(void)n; return -EROFS; }
 static int fat_ro3(struct fut_vnode *d, const char *n, uint32_t m) {
@@ -581,6 +921,7 @@ static struct fut_vnode *fat_alloc_vnode(struct fat_mount_info *fi,
     vi->file_size = size;
     vi->attr = attr;
     vi->fi = fi;
+    vi->dir_entry_disk_off = 0; /* set by lookup or create after alloc */
 
     vn->fs_data = vi;
     vn->ops = &fat_vnode_ops;
@@ -699,7 +1040,7 @@ void fat_init(void) {
     fat_vnode_ops.write = fat_vnode_write;
     fat_vnode_ops.lookup = fat_vnode_lookup;
     fat_vnode_ops.readdir = fat_vnode_readdir;
-    fat_vnode_ops.create = fat_ro;
+    fat_vnode_ops.create = fat_vnode_create;
     fat_vnode_ops.unlink = fat_ro2;
     fat_vnode_ops.mkdir = fat_ro3;
     fat_vnode_ops.rename = fat_ro4;

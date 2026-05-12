@@ -55,8 +55,17 @@
 static bool g_bisect_mask_timer_before_first_user = false;
 /* Diagnostic: briefly execute under the target CR3, then restore the original
  * CR3 and report the result. This avoids depending on the console path while
- * the target CR3 is active. */
-static bool g_bisect_probe_kernel_cr3_roundtrip = false;
+ * the target CR3 is active. Now ON by default — we need to know whether the
+ * CR3 swap itself is the cliff or something downstream of it. The probe does:
+ *   1. mov target_cr3 -> %cr3
+ *   2. mov %cr3 -> %rax  (read back)
+ *   3. nop; nop
+ *   4. mov original_cr3 -> %cr3
+ * Then prints "[BISECT-KCR3] roundtrip survived ..." and panics. If we see
+ * that print, CR3 swap is fine and init/IRETQ is the actual problem. If we
+ * see no print and the box still hangs at "CR3 swap+iretq", the CR3 swap
+ * itself faults (kernel-half not mapped, etc.). */
+static bool g_bisect_probe_kernel_cr3_roundtrip = true;
 /* Diagnostic: replace the real ELF entry with a synthetic userspace
  * probe (`ud2`) so we can tell whether the CPU retires even a single user
  * instruction on hardware. Now off by default — combined with the post-CR3

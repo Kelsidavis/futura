@@ -65,6 +65,23 @@ static int fat_validate_bpb(const struct fat_bpb *bpb) {
  *   Cluster chain helpers
  * ============================================================ */
 
+/* Wrappers that apply fi->partition_offset_bytes to every block I/O. When
+ * the FAT FS is at LBA 0 (no MBR) the offset is 0 and these are pass-through;
+ * when an MBR partition was discovered they shift every read/write into the
+ * partition's address space. */
+static ssize_t fat_dev_read(struct fat_mount_info *fi, uint64_t off,
+                             size_t len, void *buf) {
+    return fut_blockdev_read_bytes(fi->dev,
+                                    fi->partition_offset_bytes + off,
+                                    len, buf);
+}
+static ssize_t fat_dev_write(struct fat_mount_info *fi, uint64_t off,
+                              size_t len, const void *buf) {
+    return fut_blockdev_write_bytes(fi->dev,
+                                     fi->partition_offset_bytes + off,
+                                     len, buf);
+}
+
 static uint64_t fat_cluster_to_sector(struct fat_mount_info *fi, uint32_t cluster) {
     return fi->first_data_sector + (uint64_t)(cluster - 2) * fi->sectors_per_cluster;
 }
@@ -72,7 +89,7 @@ static uint64_t fat_cluster_to_sector(struct fat_mount_info *fi, uint32_t cluste
 static ssize_t fat_read_cluster(struct fat_mount_info *fi, uint32_t cluster, void *buf) {
     uint64_t sector = fat_cluster_to_sector(fi, cluster);
     uint64_t offset = sector * fi->bytes_per_sector;
-    return fut_blockdev_read_bytes(fi->dev, offset, fi->cluster_size, buf);
+    return fat_dev_read(fi, offset, fi->cluster_size, buf);
 }
 
 static uint32_t fat_next_cluster(struct fat_mount_info *fi, uint32_t cluster) {
@@ -82,20 +99,20 @@ static uint32_t fat_next_cluster(struct fat_mount_info *fi, uint32_t cluster) {
 
     if (fi->fat_type == FAT_TYPE_32) {
         fat_offset = cluster * 4;
-        fut_blockdev_read_bytes(fi->dev, fat_start + fat_offset, 4, &entry);
+        fat_dev_read(fi, fat_start + fat_offset, 4, &entry);
         entry &= 0x0FFFFFFF;
         if (entry < 2 || entry >= FAT32_EOC) return 0;
         return entry;
     } else if (fi->fat_type == FAT_TYPE_16) {
         fat_offset = cluster * 2;
         uint16_t entry16;
-        fut_blockdev_read_bytes(fi->dev, fat_start + fat_offset, 2, &entry16);
+        fat_dev_read(fi, fat_start + fat_offset, 2, &entry16);
         if (entry16 < 2 || entry16 >= FAT16_EOC) return 0;
         return entry16;
     } else { /* FAT12 */
         fat_offset = cluster + (cluster / 2);
         uint16_t entry12;
-        fut_blockdev_read_bytes(fi->dev, fat_start + fat_offset, 2, &entry12);
+        fat_dev_read(fi, fat_start + fat_offset, 2, &entry12);
         entry12 = (cluster & 1) ? (entry12 >> 4) : (entry12 & 0xFFF);
         if (entry12 < 2 || entry12 >= FAT12_EOC) return 0;
         return entry12;
@@ -113,7 +130,7 @@ static ssize_t fat_read_fixed_root(struct fat_mount_info *fi, uint32_t byte_offs
     if (byte_offset >= root_bytes) return 0;
     if (byte_offset + len > root_bytes) len = root_bytes - byte_offset;
     uint64_t disk_off = (uint64_t)fi->first_root_dir_sector * fi->bytes_per_sector + byte_offset;
-    return fut_blockdev_read_bytes(fi->dev, disk_off, len, buf);
+    return fat_dev_read(fi, disk_off, len, buf);
 }
 
 /* Check if a vnode represents the FAT12/16 fixed root directory */
@@ -317,14 +334,14 @@ static int fat_set_fat_entry(struct fat_mount_info *fi, uint32_t cluster,
         if (fi->fat_type == FAT_TYPE_32) {
             uint32_t cur = 0;
             uint64_t off = this_fat + (uint64_t)cluster * 4;
-            fut_blockdev_read_bytes(fi->dev, off, 4, &cur);
+            fat_dev_read(fi, off, 4, &cur);
             uint32_t merged = (cur & 0xF0000000) | (value & 0x0FFFFFFF);
-            ssize_t w = fut_blockdev_write_bytes(fi->dev, off, 4, &merged);
+            ssize_t w = fat_dev_write(fi, off, 4, &merged);
             if (w < 0) return (int)w;
         } else { /* FAT16 */
             uint16_t v16 = (uint16_t)value;
             uint64_t off = this_fat + (uint64_t)cluster * 2;
-            ssize_t w = fut_blockdev_write_bytes(fi->dev, off, 2, &v16);
+            ssize_t w = fat_dev_write(fi, off, 2, &v16);
             if (w < 0) return (int)w;
         }
     }
@@ -338,12 +355,12 @@ static uint32_t fat_read_fat_entry_raw(struct fat_mount_info *fi,
     uint64_t fat_base = (uint64_t)fi->reserved_sectors * fi->bytes_per_sector;
     if (fi->fat_type == FAT_TYPE_32) {
         uint32_t entry = 0;
-        fut_blockdev_read_bytes(fi->dev, fat_base + (uint64_t)cluster * 4,
+        fat_dev_read(fi, fat_base + (uint64_t)cluster * 4,
                                 4, &entry);
         return entry & 0x0FFFFFFF;
     } else if (fi->fat_type == FAT_TYPE_16) {
         uint16_t entry = 0;
-        fut_blockdev_read_bytes(fi->dev, fat_base + (uint64_t)cluster * 2,
+        fat_dev_read(fi, fat_base + (uint64_t)cluster * 2,
                                 2, &entry);
         return entry;
     }
@@ -380,7 +397,7 @@ static ssize_t fat_write_cluster_at(struct fat_mount_info *fi, uint32_t cluster,
     if (off_in + len > fi->cluster_size) len = fi->cluster_size - off_in;
     uint64_t disk = (uint64_t)fat_cluster_to_sector(fi, cluster)
                         * fi->bytes_per_sector + off_in;
-    return fut_blockdev_write_bytes(fi->dev, disk, len, buf);
+    return fat_dev_write(fi, disk, len, buf);
 }
 
 /* Update the size + first_cluster fields of a directory entry already
@@ -389,12 +406,12 @@ static ssize_t fat_write_cluster_at(struct fat_mount_info *fi, uint32_t cluster,
 static int fat_dir_entry_set_size(struct fat_mount_info *fi, uint64_t disk_off,
                                    uint32_t first_cluster, uint32_t size) {
     struct fat_dir_entry de;
-    ssize_t r = fut_blockdev_read_bytes(fi->dev, disk_off, sizeof(de), &de);
+    ssize_t r = fat_dev_read(fi, disk_off, sizeof(de), &de);
     if (r < 0) return (int)r;
     de.first_cluster_lo = (uint16_t)(first_cluster & 0xFFFF);
     de.first_cluster_hi = (uint16_t)((first_cluster >> 16) & 0xFFFF);
     de.file_size = size;
-    ssize_t w = fut_blockdev_write_bytes(fi->dev, disk_off, sizeof(de), &de);
+    ssize_t w = fat_dev_write(fi, disk_off, sizeof(de), &de);
     return (w < 0) ? (int)w : 0;
 }
 
@@ -806,7 +823,7 @@ static int fat_dir_find_free_slot(struct fat_mount_info *fi,
         uint64_t base = (uint64_t)fi->first_root_dir_sector * fi->bytes_per_sector;
         struct fat_dir_entry de;
         for (uint32_t off = 0; off < root_bytes; off += 32) {
-            fut_blockdev_read_bytes(fi->dev, base + off, sizeof(de), &de);
+            fat_dev_read(fi, base + off, sizeof(de), &de);
             uint8_t n0 = (uint8_t)de.name[0];
             if (n0 == 0x00 || n0 == 0xE5) {
                 *out_disk_off = base + off;
@@ -824,7 +841,7 @@ static int fat_dir_find_free_slot(struct fat_mount_info *fi,
                             * fi->bytes_per_sector;
         struct fat_dir_entry de;
         for (uint32_t off = 0; off < fi->cluster_size; off += 32) {
-            fut_blockdev_read_bytes(fi->dev, base + off, sizeof(de), &de);
+            fat_dev_read(fi, base + off, sizeof(de), &de);
             uint8_t n0 = (uint8_t)de.name[0];
             if (n0 == 0x00 || n0 == 0xE5) {
                 *out_disk_off = base + off;
@@ -883,7 +900,7 @@ static int fat_vnode_create(struct fut_vnode *dir, const char *name,
     memcpy(de.name, shortname, 11);
     de.attr = FAT_ATTR_ARCHIVE;
 
-    ssize_t w = fut_blockdev_write_bytes(fi->dev, slot, sizeof(de), &de);
+    ssize_t w = fat_dev_write(fi, slot, sizeof(de), &de);
     if (w < 0) return (int)w;
 
     struct fut_vnode *vn = fat_alloc_vnode(fi, 0, 0, FAT_ATTR_ARCHIVE,
@@ -1082,7 +1099,7 @@ static int fat_vnode_unlink(struct fut_vnode *dir, const char *name) {
         if (entry_off < 32) break;
         uint64_t prev_off = entry_off - 32;
         struct fat_dir_entry prev_de;
-        ssize_t r = fut_blockdev_read_bytes(fi->dev, prev_off, sizeof(prev_de), &prev_de);
+        ssize_t r = fat_dev_read(fi, prev_off, sizeof(prev_de), &prev_de);
         if (r < 0) break;
         /* Stop if this isn't an LFN slot, or if it's already deleted
          * (0xE5 in the first byte). */
@@ -1094,13 +1111,13 @@ static int fat_vnode_unlink(struct fut_vnode *dir, const char *name) {
             (prev_off  & ~((uint64_t)fi->cluster_size - 1))) {
             break;
         }
-        ssize_t lw = fut_blockdev_write_bytes(fi->dev, prev_off, 1, &deleted);
+        ssize_t lw = fat_dev_write(fi, prev_off, 1, &deleted);
         if (lw < 0) break;
         entry_off = prev_off;
     }
 
     /* Mark the dir entry's first byte as 0xE5 = "deleted slot". */
-    ssize_t w = fut_blockdev_write_bytes(fi->dev, tvi->dir_entry_disk_off,
+    ssize_t w = fat_dev_write(fi, tvi->dir_entry_disk_off,
                                           1, &deleted);
     if (w < 0) return (int)w;
 
@@ -1148,20 +1165,61 @@ static int fat_mount_impl(const char *device, int flags, void *data,
     struct fut_blockdev *dev = fut_blockdev_find(device);
     if (!dev) return -ENODEV;
 
-    /* Read BPB */
+    /* Try to read a FAT BPB at LBA 0 first. If the device starts with
+     * an MBR partition table (common for USB sticks / SD cards formatted
+     * by Windows/macOS/Linux), the LBA-0 block is the MBR — not a FAT
+     * BPB. In that case parse the partition table and re-read the BPB
+     * from the start of the first FAT partition. */
     struct fat_bpb bpb;
+    uint64_t partition_offset_bytes = 0;
     ssize_t n = fut_blockdev_read_bytes(dev, 0, sizeof(bpb), &bpb);
     if (n < 0) return (int)n;
 
-    /* Comprehensive BPB validation */
     int val = fat_validate_bpb(&bpb);
-    if (val < 0) return val;
+    if (val < 0) {
+        /* Try MBR parsing. The MBR has 0x55 0xAA at offset 0x1FE and four
+         * 16-byte partition entries starting at offset 0x1BE. Each entry's
+         * type byte (offset 4) is one of: 0x01 (FAT12), 0x04/0x06 (FAT16),
+         * 0x0B/0x0C (FAT32). Bytes 8..11 hold the partition's start LBA
+         * as little-endian uint32. */
+        uint8_t mbr[512];
+        ssize_t mn = fut_blockdev_read_bytes(dev, 0, sizeof(mbr), mbr);
+        if (mn < (ssize_t)sizeof(mbr)) return val;
+        if (mbr[0x1FE] != 0x55 || mbr[0x1FF] != 0xAA) return val;
+        uint32_t fat_start_lba = 0;
+        for (int p = 0; p < 4; ++p) {
+            const uint8_t *ent = &mbr[0x1BE + p * 16];
+            uint8_t type = ent[4];
+            if (type != 0x01 && type != 0x04 && type != 0x06
+                && type != 0x0B && type != 0x0C) continue;
+            uint32_t lba = (uint32_t)ent[8]
+                         | ((uint32_t)ent[9]  << 8)
+                         | ((uint32_t)ent[10] << 16)
+                         | ((uint32_t)ent[11] << 24);
+            if (lba == 0) continue;
+            fat_start_lba = lba;
+            break;
+        }
+        if (fat_start_lba == 0) return val;
+        /* Assume 512-byte sectors at the MBR layer (universal for SD/USB).
+         * The BPB itself may report a different bytes_per_sector but the
+         * partition table always uses 512-byte LBAs. */
+        partition_offset_bytes = (uint64_t)fat_start_lba * 512ULL;
+        n = fut_blockdev_read_bytes(dev, partition_offset_bytes,
+                                     sizeof(bpb), &bpb);
+        if (n < 0) return (int)n;
+        val = fat_validate_bpb(&bpb);
+        if (val < 0) return val;
+        fut_printf("[FAT] Found FAT partition at LBA %u (offset %llu bytes)\n",
+                   fat_start_lba, (unsigned long long)partition_offset_bytes);
+    }
 
     struct fat_mount_info *fi = fut_malloc(sizeof(struct fat_mount_info));
     if (!fi) return -ENOMEM;
     memset(fi, 0, sizeof(*fi));
 
     fi->dev = dev;
+    fi->partition_offset_bytes = partition_offset_bytes;
     fi->bytes_per_sector = bpb.bytes_per_sector;
     fi->sectors_per_cluster = bpb.sectors_per_cluster;
     fi->cluster_size = fi->bytes_per_sector * fi->sectors_per_cluster;

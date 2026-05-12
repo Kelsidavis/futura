@@ -119,6 +119,13 @@ struct fat_mount_info {
     uint32_t root_entry_count;     /* FAT12/16: entries in root dir */
     uint32_t total_sectors;
     uint32_t first_root_dir_sector; /* FAT12/16: sector of root dir */
+    /* Byte offset of partition start on the underlying block device.
+     * 0 when the FAT FS is at LBA 0 (no partition table). When the SD card
+     * has an MBR with a FAT partition (typical for USB sticks formatted
+     * by Windows/macOS/Linux), this holds the LBA-start of partition 1
+     * multiplied by the device's sector size. All subsequent block reads
+     * add this offset. */
+    uint64_t partition_offset_bytes;
 };
 
 void fat_init(void);

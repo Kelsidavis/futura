@@ -114,6 +114,40 @@ void fb_poke_corner_marker(int n) {
         row[width - n - 4 + i] = 0x00FFFF00;
     }
 }
+
+/* Larger, more photo-visible step marker. Draws a 60×24 solid colored
+ * rectangle at the BOTTOM-RIGHT of the FB. step in 0..5 picks position
+ * and color. Used by the trampoline bisect path so a photo can tell
+ * unambiguously which waypoint was the last reached. */
+void fb_poke_big_step(int step) {
+    if (!g_fb_virt || g_fb_hw.info.pitch == 0 || g_fb_hw.info.width == 0
+        || g_fb_hw.info.height == 0) return;
+    if (step < 0 || step > 5) return;
+    uint32_t pitch = g_fb_hw.info.pitch;
+    uint32_t width = g_fb_hw.info.width;
+    uint32_t height = g_fb_hw.info.height;
+    /* Six 60×24 boxes in a row, from x=(width-380) rightward. */
+    const uint32_t box_w = 60, box_h = 24, gap = 4;
+    uint32_t x0 = width - (6 * (box_w + gap)) - 8 + step * (box_w + gap);
+    uint32_t y0 = height - box_h - 8;
+    /* Distinct colors per step. */
+    static const uint32_t colors[6] = {
+        0x00FF0000, /* step 0: red */
+        0x00FFA500, /* step 1: orange */
+        0x00FFFF00, /* step 2: yellow */
+        0x0000FF00, /* step 3: green */
+        0x000080FF, /* step 4: blue */
+        0x00FF00FF, /* step 5: magenta */
+    };
+    uint32_t color = colors[step];
+    for (uint32_t dy = 0; dy < box_h; ++dy) {
+        volatile uint32_t *row =
+            (volatile uint32_t *)(g_fb_virt + (y0 + dy) * pitch);
+        for (uint32_t dx = 0; dx < box_w; ++dx) {
+            row[x0 + dx] = color;
+        }
+    }
+}
 #endif
 
 /* Multiboot2 tag IDs */

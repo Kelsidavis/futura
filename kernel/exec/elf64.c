@@ -1170,21 +1170,19 @@ static int build_user_stack(fut_mm_t *mm,
 
     /* The BIG SURPRISE on HP Chromebook real hardware: the SECOND
      * fut_printf after CR3 swap hangs, even though the first one
-     * (BISECT-A above) completes. The first printf's full path —
-     * serial-LSR-poll, fb_console scroll, klog_write, klog_persist_write
-     * — all completed fine. State that changed between calls: klog
-     * cursor advanced, klog_at_line_start now 1 (so the next call will
-     * inject a timestamp), fb_console cursor advanced past EOL, possibly
-     * a scroll on next char.
+     * (BISECT-A above) completes. Tiny corner markers don't show up in
+     * photos. Draw BIG colored rectangles instead — 6 boxes in a row
+     * along the bottom-right of the FB so we can photograph and tell
+     * unambiguously which was the last waypoint reached.
      *
-     * Bisect by NOT calling fut_printf for the immediate next step.
-     * Instead use bypass mechanisms: a direct fb_poke_corner_marker
-     * (touches g_fb_virt only) and raw inline-asm outb to serial port
-     * 0x3F8 (no LSR poll, no fb_console_putc, no klog_write). If we see
-     * the corner marker but no further fut_printf, the cliff is inside
-     * fut_printf's klog/fb_console/serial path. */
-    extern void fb_poke_corner_marker(int n);
-    fb_poke_corner_marker(8);  /* 8-pixel yellow marker — direct FB write */
+     *   step 0 (red)      = first thing after BISECT-A printf
+     *   step 1 (orange)   = past direct serial outb to 0x3F8
+     *   step 2 (yellow)   = past second fut_printf attempt
+     *   step 3 (green)    = past cli
+     *   step 4 (blue)     = past A0.5 fut_printf
+     *   step 5 (magenta)  = past A1 fut_printf */
+    extern void fb_poke_big_step(int step);
+    fb_poke_big_step(0); /* red */
     __asm__ volatile(
         "movw $0x3F8, %%dx\n\t"
         "movb $'A', %%al\n\t"
@@ -1198,17 +1196,19 @@ static int build_user_stack(fut_mm_t *mm,
         "movb $'\\n', %%al\n\t"
         "outb %%al, %%dx\n\t"
         ::: "rax", "rdx", "memory");
-    fb_poke_corner_marker(16);  /* 16-pixel marker — past the raw serial */
+    fb_poke_big_step(1); /* orange — past raw serial */
 
     fut_printf("[BISECT-A0.3] second-fut_printf after CR3 — hang point?\n");
-    fb_poke_corner_marker(24); /* 24-pixel marker — printf returned */
+    fb_poke_big_step(2); /* yellow — past second fut_printf */
 
     __asm__ volatile("cli" ::: "memory");
+    fb_poke_big_step(3); /* green — past cli */
+
     fut_printf("[BISECT-A0.5] after cli\n");
-    fb_poke_corner_marker(32);
+    fb_poke_big_step(4); /* blue */
 
     fut_printf("[BISECT-A1] survived the post-CR3 printf, about to compute handoff_frame\n");
-    fb_poke_corner_marker(40);
+    fb_poke_big_step(5); /* magenta */
 
     if (g_bisect_probe_kernel_cr3_roundtrip) {
         uint64_t original_cr3 = current_cr3;

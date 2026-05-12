@@ -388,9 +388,27 @@ void fut_sched_start(void) {
     int if_set = -1;
 #endif
     fut_printf("[SCHED-BCRUMB] fut_sched_start entered, IF=%d\n", if_set);
+
+    /* L490 dies somewhere between this point and the third breadcrumb,
+     * even though there is nothing between them other than one
+     * atomic_store. Theory: the first real context switch (kicked off
+     * when scheduler_started flips true and the next timer IRQ fires)
+     * wedges the kernel.  Mask interrupts around the body so the
+     * atomic_store and the prints cannot be interrupted; if all three
+     * breadcrumbs now reach the screen, the cliff is confirmed to be
+     * the first IRQ-driven context switch, not anything in this
+     * function. */
+#ifdef __x86_64__
+    __asm__ volatile("cli" ::: "memory");
+#endif
+    fut_printf("[SCHED-BCRUMB] CLI executed, about to atomic_store\n");
     atomic_store_explicit(&scheduler_started, true, memory_order_release);
-    fut_printf("[SCHED-BCRUMB] scheduler_started flag set, awaiting first IRQ\n");
+    fut_printf("[SCHED-BCRUMB] scheduler_started flag set, IRQs still masked\n");
     fut_printf("[SCHED] Scheduler started - preemptive scheduling now enabled\n");
+#ifdef __x86_64__
+    __asm__ volatile("sti" ::: "memory");
+#endif
+    fut_printf("[SCHED-BCRUMB] STI executed, awaiting first IRQ\n");
 }
 
 /**

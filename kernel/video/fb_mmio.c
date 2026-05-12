@@ -115,22 +115,29 @@ void fb_poke_corner_marker(int n) {
     }
 }
 
-/* Larger, more photo-visible step marker. Draws a 60×24 solid colored
- * rectangle at the BOTTOM-RIGHT of the FB. step in 0..5 picks position
- * and color. Used by the trampoline bisect path so a photo can tell
- * unambiguously which waypoint was the last reached. */
+/* Larger, more photo-visible step marker. Draws a FULL-WIDTH horizontal
+ * stripe near the TOP of the FB so it can't miss being photographed.
+ * The top of the FB is the start of the mapped region and gets the
+ * boot-log text first, but our writes happen AFTER the text, so the
+ * stripe overpaints it for a clear visible band.
+ *
+ * step 0..5 picks the y-band and a distinct color. Each band is 24px
+ * tall, separated by 6px gap, starting at y=8. So bands at y=8..31,
+ * 38..61, 68..91, 98..121, 128..151, 158..181.
+ *
+ * sfence at the end forces the write-combining buffers (FB pages are
+ * mapped WC) to drain immediately. Without this the box pixels sit in
+ * a WC buffer waiting to flush, and if the very next kernel statement
+ * hangs the buffer never reaches the FB hardware and the photo shows
+ * no stripe. */
 void fb_poke_big_step(int step) {
     if (!g_fb_virt || g_fb_hw.info.pitch == 0 || g_fb_hw.info.width == 0
         || g_fb_hw.info.height == 0) return;
     if (step < 0 || step > 5) return;
     uint32_t pitch = g_fb_hw.info.pitch;
     uint32_t width = g_fb_hw.info.width;
-    uint32_t height = g_fb_hw.info.height;
-    /* Six 60×24 boxes in a row, from x=(width-380) rightward. */
-    const uint32_t box_w = 60, box_h = 24, gap = 4;
-    uint32_t x0 = width - (6 * (box_w + gap)) - 8 + step * (box_w + gap);
-    uint32_t y0 = height - box_h - 8;
-    /* Distinct colors per step. */
+    const uint32_t band_h = 24, band_gap = 6, top = 8;
+    uint32_t y0 = top + step * (band_h + band_gap);
     static const uint32_t colors[6] = {
         0x00FF0000, /* step 0: red */
         0x00FFA500, /* step 1: orange */
@@ -140,13 +147,17 @@ void fb_poke_big_step(int step) {
         0x00FF00FF, /* step 5: magenta */
     };
     uint32_t color = colors[step];
-    for (uint32_t dy = 0; dy < box_h; ++dy) {
+    for (uint32_t dy = 0; dy < band_h; ++dy) {
         volatile uint32_t *row =
             (volatile uint32_t *)(g_fb_virt + (y0 + dy) * pitch);
-        for (uint32_t dx = 0; dx < box_w; ++dx) {
-            row[x0 + dx] = color;
+        for (uint32_t dx = 0; dx < width; ++dx) {
+            row[dx] = color;
         }
     }
+    /* Drain write-combining buffers — without this the pixels sit in a
+     * CPU WC buffer until something else evicts them, and if the kernel
+     * is about to hang they may never reach the FB hardware. */
+    __asm__ volatile("sfence" ::: "memory");
 }
 #endif
 

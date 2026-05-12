@@ -229,8 +229,12 @@ void fb_promote_to_high_half_virt(void) {
                (unsigned long long)g_fb_hw.phys,
                (unsigned long long)map_size);
 
-    if (pmap_map((uint64_t)virt_base, phys_base, map_size,
-                 PTE_KERNEL_RW | PTE_WRITE_THROUGH | PTE_CACHE_DISABLE) != 0) {
+    /* Plain kernel RW — no WT/CD. The firmware's MTRRs already cover the FB
+     * range (typically Write-Combining on GMA-class IGPs), so the cache type
+     * is determined by MTRR, not PTE. Adding WT|CD here forces strong UC and
+     * makes scrolling unbearably slow (each FB write goes straight to MMIO,
+     * memcpy on the scroll buffer becomes O(rows*bytes/dram-latency)). */
+    if (pmap_map((uint64_t)virt_base, phys_base, map_size, PTE_KERNEL_RW) != 0) {
         fut_printf("[FB] promote: pmap_map failed; init exec will break the FB console\n");
         return;
     }

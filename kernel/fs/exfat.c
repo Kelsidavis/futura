@@ -21,13 +21,22 @@
  *   Cluster I/O
  * ============================================================ */
 
+/* Wrapper that applies ei->partition_offset_bytes to every block I/O.
+ * When the FS is at LBA 0 (no MBR) the offset is 0 — pass-through. */
+static ssize_t exfat_dev_read(struct exfat_mount_info *ei, uint64_t off,
+                               size_t len, void *buf) {
+    return fut_blockdev_read_bytes(ei->dev,
+                                    ei->partition_offset_bytes + off,
+                                    len, buf);
+}
+
 static uint64_t exfat_cluster_offset(struct exfat_mount_info *ei, uint32_t cluster) {
     return ((uint64_t)ei->cluster_heap_offset + (uint64_t)(cluster - 2) * ei->sectors_per_cluster)
            * ei->bytes_per_sector;
 }
 
 static ssize_t exfat_read_cluster(struct exfat_mount_info *ei, uint32_t cluster, void *buf) {
-    return fut_blockdev_read_bytes(ei->dev, exfat_cluster_offset(ei, cluster),
+    return exfat_dev_read(ei, exfat_cluster_offset(ei, cluster),
                                    ei->cluster_size, buf);
 }
 
@@ -35,7 +44,7 @@ static uint32_t exfat_next_cluster(struct exfat_mount_info *ei, uint32_t cluster
     uint64_t fat_off = (uint64_t)ei->fat_offset * ei->bytes_per_sector +
                        (uint64_t)cluster * 4;
     uint32_t entry;
-    fut_blockdev_read_bytes(ei->dev, fat_off, 4, &entry);
+    exfat_dev_read(ei, fat_off, 4, &entry);
     return (entry >= 0xFFFFFFF8) ? 0 : entry;
 }
 
@@ -88,7 +97,7 @@ static ssize_t exfat_vnode_read(struct fut_vnode *vn, void *buf, size_t size, ui
         uint64_t base = exfat_cluster_offset(ei, cluster);
         size_t to_read = (size_t)(ei->cluster_size - skip);
         if (to_read > size - total) to_read = size - total;
-        if (fut_blockdev_read_bytes(ei->dev, base + skip, to_read,
+        if (exfat_dev_read(ei, base + skip, to_read,
                                     out + total) < 0) {
             break;
         }
@@ -302,21 +311,57 @@ static int exfat_mount_impl(const char *device, int flags, void *data,
     struct fut_blockdev *dev = fut_blockdev_find(device);
     if (!dev) return -ENODEV;
 
+    /* Try LBA 0 first. If that's not exFAT, look for an MBR partition
+     * table and retry at the partition's LBA-start * 512. Mirrors the
+     * fat.c change in 7e5d0536. */
     struct exfat_boot_sector bs;
+    uint64_t partition_offset_bytes = 0;
     ssize_t n = fut_blockdev_read_bytes(dev, 0, sizeof(bs), &bs);
     if (n < 0) return (int)n;
 
-    /* Validate OEM name */
-    if (bs.oem_name[0] != 'E' || bs.oem_name[1] != 'X' ||
-        bs.oem_name[2] != 'F' || bs.oem_name[3] != 'A' ||
-        bs.oem_name[4] != 'T')
-        return -EINVAL;
+    int oem_ok = (bs.oem_name[0] == 'E' && bs.oem_name[1] == 'X' &&
+                  bs.oem_name[2] == 'F' && bs.oem_name[3] == 'A' &&
+                  bs.oem_name[4] == 'T');
+    if (!oem_ok) {
+        uint8_t mbr[512];
+        ssize_t mn = fut_blockdev_read_bytes(dev, 0, sizeof(mbr), mbr);
+        if (mn < (ssize_t)sizeof(mbr)) return -EINVAL;
+        if (mbr[0x1FE] != 0x55 || mbr[0x1FF] != 0xAA) return -EINVAL;
+        /* exFAT shows up in MBR with type 0x07 (NTFS/exFAT/HPFS) most
+         * commonly, or 0x0B/0x0C if the formatter wrote a FAT-family
+         * type. Accept all of those and validate the BPB after. */
+        uint32_t fs_lba = 0;
+        for (int p = 0; p < 4; ++p) {
+            const uint8_t *ent = &mbr[0x1BE + p * 16];
+            uint8_t type = ent[4];
+            if (type != 0x07 && type != 0x0B && type != 0x0C
+                && type != 0x01 && type != 0x04 && type != 0x06) continue;
+            uint32_t lba = (uint32_t)ent[8]
+                         | ((uint32_t)ent[9]  << 8)
+                         | ((uint32_t)ent[10] << 16)
+                         | ((uint32_t)ent[11] << 24);
+            if (lba == 0) continue;
+            fs_lba = lba;
+            break;
+        }
+        if (fs_lba == 0) return -EINVAL;
+        partition_offset_bytes = (uint64_t)fs_lba * 512ULL;
+        n = fut_blockdev_read_bytes(dev, partition_offset_bytes, sizeof(bs), &bs);
+        if (n < 0) return (int)n;
+        oem_ok = (bs.oem_name[0] == 'E' && bs.oem_name[1] == 'X' &&
+                  bs.oem_name[2] == 'F' && bs.oem_name[3] == 'A' &&
+                  bs.oem_name[4] == 'T');
+        if (!oem_ok) return -EINVAL;
+        fut_printf("[EXFAT] Found exFAT partition at LBA %u (offset %llu bytes)\n",
+                   fs_lba, (unsigned long long)partition_offset_bytes);
+    }
 
     struct exfat_mount_info *ei = fut_malloc(sizeof(struct exfat_mount_info));
     if (!ei) return -ENOMEM;
     memset(ei, 0, sizeof(*ei));
 
     ei->dev = dev;
+    ei->partition_offset_bytes = partition_offset_bytes;
     ei->bytes_per_sector = 1u << bs.bytes_per_sector_shift;
     ei->sectors_per_cluster = 1u << bs.sectors_per_cluster_shift;
     ei->cluster_size = ei->bytes_per_sector * ei->sectors_per_cluster;

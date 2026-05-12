@@ -952,14 +952,20 @@ static int klog_sd_try_mount(void) {
     };
     fut_vfs_mkdir("/mnt", 0755);
     fut_vfs_mkdir("/mnt/sd", 0755);
+    /* Try both vfat (FAT32 / FAT16) and exfat — many SD cards and USB
+     * sticks formatted by current Windows/macOS/Linux default to exFAT
+     * for sizes >32 GB. */
+    static const char *fstypes[] = { "vfat", "exfat" };
     for (size_t i = 0; i < sizeof(candidates)/sizeof(candidates[0]); i++) {
-        int rc = fut_vfs_mount(candidates[i], "/mnt/sd", "vfat",
-                               0, NULL, (uint64_t)-1);
-        if (rc == 0) {
-            g_klog_sd_mount_idx = (int)i;
-            fut_printf("[KLOG-SD] mounted /dev/%s at /mnt/sd (vfat)\n",
-                       candidates[i]);
-            return 0;
+        for (size_t f = 0; f < sizeof(fstypes)/sizeof(fstypes[0]); f++) {
+            int rc = fut_vfs_mount(candidates[i], "/mnt/sd", fstypes[f],
+                                   0, NULL, (uint64_t)-1);
+            if (rc == 0) {
+                g_klog_sd_mount_idx = (int)i;
+                fut_printf("[KLOG-SD] mounted /dev/%s at /mnt/sd (%s)\n",
+                           candidates[i], fstypes[f]);
+                return 0;
+            }
         }
     }
     /* Diagnostic: print the full list we tried so the next failure tells
@@ -1000,13 +1006,15 @@ static int klog_sd_try_mount(void) {
                 if (*a == 0 && *b == 0) { tried = 1; break; }
             }
             if (!tried) {
-                int rc = fut_vfs_mount(bd->name, "/mnt/sd", "vfat",
-                                        0, NULL, (uint64_t)-1);
-                if (rc == 0) {
-                    g_klog_sd_mount_idx = 100 + n;
-                    fut_printf("[KLOG-SD] mounted /dev/%s at /mnt/sd (vfat, fallback enum)\n",
-                               bd->name);
-                    return 0;
+                for (size_t f = 0; f < sizeof(fstypes)/sizeof(fstypes[0]); f++) {
+                    int rc = fut_vfs_mount(bd->name, "/mnt/sd", fstypes[f],
+                                            0, NULL, (uint64_t)-1);
+                    if (rc == 0) {
+                        g_klog_sd_mount_idx = 100 + n;
+                        fut_printf("[KLOG-SD] mounted /dev/%s at /mnt/sd (%s, fallback enum)\n",
+                                   bd->name, fstypes[f]);
+                        return 0;
+                    }
                 }
             }
             bd = bd->next;

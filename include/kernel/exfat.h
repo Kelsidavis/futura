@@ -108,6 +108,11 @@ struct exfat_mount_info {
     uint32_t cluster_count;
     uint32_t root_cluster;
     uint64_t volume_length;
+    /* Byte offset of the partition start on the underlying block device.
+     * 0 if the FS is at LBA 0; non-zero when an MBR partition table is
+     * present and we found the exFAT signature inside a partition.
+     * All block I/O in this file adds this offset. */
+    uint64_t partition_offset_bytes;
 };
 
 void exfat_init(void);

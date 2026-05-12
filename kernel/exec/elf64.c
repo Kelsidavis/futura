@@ -1174,6 +1174,17 @@ static int build_user_stack(fut_mm_t *mm,
      * Also dump FB geometry so we can tell whether pmap_map covered the
      * whole framebuffer or only a sliver. HP shows fb_virt=HIGH but no
      * stripes visible — most likely the mapping is partial. */
+    /* CLI immediately after CR3 swap to keep timer IRQs from preempting
+     * the bootstrap thread mid-trampoline. The IRETQ at the bottom restores
+     * RFLAGS from the user frame (which has IF=1), so this only blocks
+     * interrupts inside the kernel half of the trampoline. Without this,
+     * HP Chromebook reliably hangs between BISECT-A's printf returning and
+     * the next instruction running — most likely a timer IRQ that fires
+     * mid-trampoline, context-switches the bootstrap thread out, and never
+     * picks it again because some scheduler bookkeeping is wrong for a
+     * thread on its way to user mode. */
+    __asm__ volatile("cli" ::: "memory");
+
     extern void *fb_get_virt_addr(void);
     extern int fb_get_info(struct fut_fb_hwinfo *out);
     struct fut_fb_hwinfo fbi = {0};
@@ -1220,8 +1231,8 @@ static int build_user_stack(fut_mm_t *mm,
     fut_printf("[BISECT-A0.3] second-fut_printf after CR3 — hang point?\n");
     fb_poke_big_step(2); /* yellow — past second fut_printf */
 
-    __asm__ volatile("cli" ::: "memory");
-    fb_poke_big_step(3); /* green — past cli */
+    /* cli already issued earlier — skip duplicate. */
+    fb_poke_big_step(3); /* green — past where cli used to be */
 
     fut_printf("[BISECT-A0.5] after cli\n");
     fb_poke_big_step(4); /* blue */

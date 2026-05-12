@@ -3112,6 +3112,130 @@ try_ramdisk: (void)0;
         fut_printf("-----------------------------------\n");
     }
 
+    /* Persist this boot's klog to the SD card or USB stick if one is
+     * mounted as a FAT filesystem. We try /dev/usb1 first (typical
+     * on-board SD card reader index on octopus Chromebooks) then
+     * /dev/usb0 (typical first external USB stick). Best-effort: any
+     * failure is just logged and ignored. */
+    {
+        extern int fut_vfs_mount(const char *device, const char *mountpoint,
+                                 const char *fstype, int flags, void *data,
+                                 uint64_t boot_handle);
+        extern int fut_vfs_mkdir(const char *, uint32_t);
+        extern int fut_vfs_open(const char *path, int flags, int mode);
+        extern ssize_t fut_vfs_write(int fd, const void *buf, size_t size);
+        extern int sys_close(int fd);
+        extern size_t klog_persist_read(char *out, size_t max) __attribute__((weak));
+        extern uint32_t klog_persist_boot_seq(void) __attribute__((weak));
+
+        static const char *candidates[] = { "usb1", "usb0", "usb2", "usb3" };
+        int mounted_idx = -1;
+        fut_vfs_mkdir("/mnt", 0755);
+        fut_vfs_mkdir("/mnt/sd", 0755);
+        for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
+            int rc = fut_vfs_mount(candidates[i], "/mnt/sd", "vfat",
+                                   0, NULL, (uint64_t)-1);
+            if (rc == 0) {
+                mounted_idx = (int)i;
+                fut_printf("[KLOG-SD] mounted /dev/%s at /mnt/sd (vfat)\n",
+                           candidates[i]);
+                break;
+            }
+        }
+        if (mounted_idx >= 0 && klog_persist_read && klog_persist_boot_seq) {
+            /* Build a unique filename per boot so successive runs don't
+             * stomp each other. /mnt/sd/futura-bootNNNN.log */
+            uint32_t seq = klog_persist_boot_seq();
+            char path[64];
+            int n = 0;
+            const char *prefix = "/mnt/sd/futura-boot";
+            for (const char *p = prefix; *p && n < 62; p++) path[n++] = *p;
+            /* 8-digit zero-padded boot seq. */
+            for (int shift = 28; shift >= 0; shift -= 4) {
+                if (n >= 62) break;
+                uint32_t nib = (seq >> shift) & 0xF;
+                path[n++] = "0123456789abcdef"[nib];
+            }
+            const char *suffix = ".log";
+            for (const char *p = suffix; *p && n < 63; p++) path[n++] = *p;
+            path[n] = '\0';
+
+            int fd = fut_vfs_open(path,
+                                  /* O_WRONLY|O_CREAT|O_TRUNC */ 0x241,
+                                  0644);
+            if (fd >= 0) {
+                /* 256 KiB matches the klog_persist ring; one alloc, one write. */
+                size_t cap = 256 * 1024;
+                char *buf = (char *)fut_malloc(cap);
+                if (buf) {
+                    size_t got = klog_persist_read(buf, cap);
+                    ssize_t w = fut_vfs_write(fd, buf, got);
+                    fut_printf("[KLOG-SD] wrote %lld/%zu bytes to %s\n",
+                               (long long)w, got, path);
+                    fut_free(buf);
+                } else {
+                    fut_printf("[KLOG-SD] alloc failed, log not written\n");
+                }
+                sys_close(fd);
+            } else if (fd == -30 /* EROFS */) {
+                fut_printf("[KLOG-SD] %s: filesystem mounted read-only -- "
+                           "FAT/ext2 drivers don't support writes. "
+                           "Writing raw blocks instead...\n", path);
+                /* Raw fallback: write the klog to the MBR gap (sectors
+                 * 8..71 = 32 KiB) of the block device. On standard
+                 * MBR-partitioned SD cards the first partition starts at
+                 * sector 2048, so 8..71 is free space we can safely
+                 * clobber. Prefix with a 16-byte header
+                 * ("FUTLOG\0\0" + boot_seq + length) so a host can locate
+                 * and extract it via `dd skip=8 count=64 | tail -c +17`. */
+                extern struct fut_blockdev *fut_blockdev_find(const char *);
+                extern int fut_blockdev_write(struct fut_blockdev *,
+                                              uint64_t, uint64_t, const void *);
+                struct fut_blockdev *blk = fut_blockdev_find(candidates[mounted_idx]);
+                if (blk) {
+                    /* 64 sectors × 512 bytes = 32 KiB capacity. */
+                    size_t raw_cap = 64 * 512;
+                    uint8_t *raw = (uint8_t *)fut_malloc(raw_cap);
+                    if (raw) {
+                        for (size_t i = 0; i < raw_cap; i++) raw[i] = 0;
+                        /* header at offset 0: magic + boot_seq + length */
+                        raw[0]='F'; raw[1]='U'; raw[2]='T'; raw[3]='L';
+                        raw[4]='O'; raw[5]='G'; raw[6]=0;   raw[7]=0;
+                        uint32_t seq2 = klog_persist_boot_seq();
+                        raw[8]  = (uint8_t)(seq2 & 0xff);
+                        raw[9]  = (uint8_t)((seq2 >> 8) & 0xff);
+                        raw[10] = (uint8_t)((seq2 >> 16) & 0xff);
+                        raw[11] = (uint8_t)((seq2 >> 24) & 0xff);
+                        size_t got = klog_persist_read((char *)(raw + 16),
+                                                        raw_cap - 16);
+                        raw[12] = (uint8_t)(got & 0xff);
+                        raw[13] = (uint8_t)((got >> 8) & 0xff);
+                        raw[14] = (uint8_t)((got >> 16) & 0xff);
+                        raw[15] = (uint8_t)((got >> 24) & 0xff);
+                        int wr = fut_blockdev_write(blk, 8, 64, raw);
+                        if (wr == 0) {
+                            fut_printf("[KLOG-SD] wrote %zu bytes to /dev/%s "
+                                       "sectors 8..71 (seq=%u, recover with "
+                                       "`dd if=/dev/sdX skip=8 count=64`)\n",
+                                       got, candidates[mounted_idx], seq2);
+                        } else {
+                            fut_printf("[KLOG-SD] raw write to /dev/%s failed: %d\n",
+                                       candidates[mounted_idx], wr);
+                        }
+                        fut_free(raw);
+                    }
+                } else {
+                    fut_printf("[KLOG-SD] blockdev_find(%s) returned NULL\n",
+                               candidates[mounted_idx]);
+                }
+            } else {
+                fut_printf("[KLOG-SD] open %s failed: %d\n", path, fd);
+            }
+        } else if (mounted_idx < 0) {
+            fut_printf("[KLOG-SD] no FAT filesystem found on /dev/usbN — log not persisted\n");
+        }
+    }
+
     fut_printf("\n");
     fut_printf("=======================================================\n");
     fut_printf("   Kernel initialization complete!\n");

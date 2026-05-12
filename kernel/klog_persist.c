@@ -168,3 +168,54 @@ void klog_persist_write(const char *data, size_t len) {
     g_klog->cursor = cursor;
     g_klog->total_written += len;
 }
+
+/* Copy up to `max` bytes of the current boot's log into `out`, unwrapped
+ * (oldest bytes first, newest last). Returns the number of bytes copied.
+ *
+ * If total_written <= data_size, the log hasn't wrapped: contents live
+ * in g_klog->data[0..total_written) and we just copy that. If it has
+ * wrapped, oldest bytes start at `cursor` and continue through the end,
+ * then wrap to [0..cursor). */
+size_t klog_persist_read(char *out, size_t max) {
+    if (atomic_load_explicit(&g_klog_initialized, memory_order_acquire) == 0) {
+        return 0;
+    }
+    if (!out || max == 0) {
+        return 0;
+    }
+    uint64_t total = g_klog->total_written;
+    uint32_t data_size = KLOG_PERSIST_DATA_SIZE;
+    uint32_t cursor = g_klog->cursor;
+    if (total == 0) {
+        return 0;
+    }
+    if (total <= (uint64_t)data_size) {
+        /* No wrap. Bytes are [0 .. cursor). */
+        size_t n = (size_t)cursor;
+        if (n > max) {
+            n = max;
+        }
+        for (size_t i = 0; i < n; i++) {
+            out[i] = (char)g_klog->data[i];
+        }
+        return n;
+    }
+    /* Wrapped. Oldest bytes start at cursor and wrap. */
+    size_t produced = 0;
+    /* tail: [cursor .. data_size) */
+    for (uint32_t i = cursor; i < data_size && produced < max; i++) {
+        out[produced++] = (char)g_klog->data[i];
+    }
+    /* head: [0 .. cursor) */
+    for (uint32_t i = 0; i < cursor && produced < max; i++) {
+        out[produced++] = (char)g_klog->data[i];
+    }
+    return produced;
+}
+
+uint32_t klog_persist_boot_seq(void) {
+    if (atomic_load_explicit(&g_klog_initialized, memory_order_acquire) == 0) {
+        return 0;
+    }
+    return g_klog->boot_seq;
+}

@@ -1178,14 +1178,18 @@ static int build_user_stack(fut_mm_t *mm,
     /* Build a real interrupt frame on the handoff stack and resume it through
      * the validated context-switch restore path instead of the bespoke
      * user_iretq.S transition. */
-    fut_printf("[BISECT-A2] before handoff_frame compute, handoff_stack_top=0x%llx\n",
-               (unsigned long long)handoff_stack_top);
+    if (verbose) {
+        fut_printf("[BISECT-A2] before handoff_frame compute, handoff_stack_top=0x%llx\n",
+                   (unsigned long long)handoff_stack_top);
+    }
     fut_interrupt_frame_t *handoff_frame =
         (fut_interrupt_frame_t *)(uintptr_t)(handoff_stack_top - sizeof(fut_interrupt_frame_t));
-    fut_printf("[BISECT-B] handoff_frame=0x%llx (about to memset)\n",
-               (unsigned long long)(uintptr_t)handoff_frame);
+    if (verbose) {
+        fut_printf("[BISECT-B] handoff_frame=0x%llx (about to memset)\n",
+                   (unsigned long long)(uintptr_t)handoff_frame);
+    }
     __builtin_memset(handoff_frame, 0, sizeof(*handoff_frame));
-    fut_printf("[BISECT-C] memset done, populating frame\n");
+    if (verbose) fut_printf("[BISECT-C] memset done, populating frame\n");
     handoff_frame->ds = USER_DATA_SELECTOR;
     handoff_frame->es = USER_DATA_SELECTOR;
     handoff_frame->vector = 32;
@@ -1195,7 +1199,7 @@ static int build_user_stack(fut_mm_t *mm,
     handoff_frame->rflags = 0x202;
     handoff_frame->rsp = stack;
     handoff_frame->ss = USER_DATA_SELECTOR;
-    fut_printf("[BISECT-D] frame populated, calling fut_resume_user_frame\n");
+    if (verbose) fut_printf("[BISECT-D] frame populated, calling fut_resume_user_frame\n");
 
     fut_resume_user_frame(handoff_frame, handoff_thread);
 

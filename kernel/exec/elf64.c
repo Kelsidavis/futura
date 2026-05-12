@@ -18,6 +18,7 @@
 #include <kernel/fut_vfs.h>
 #include <kernel/uaccess.h>
 #include <kernel/kprintf.h>
+#include <kernel/fb.h>
 
 #include <platform/x86_64/memory/paging.h>
 #include <platform/x86_64/memory/pmap.h>
@@ -1168,11 +1169,23 @@ static int build_user_stack(fut_mm_t *mm,
     /* Print g_fb_virt's value alongside the cr3 confirmation so we can
      * tell at the cliff point whether fb_promote_to_high_half_virt
      * succeeded: HIGH (0xFFFFFFFF...) = good, fb_poke_* will work;
-     * LOW = bug, fb_poke_* faults silently after CR3 swap. */
+     * LOW = bug, fb_poke_* faults silently after CR3 swap.
+     *
+     * Also dump FB geometry so we can tell whether pmap_map covered the
+     * whole framebuffer or only a sliver. HP shows fb_virt=HIGH but no
+     * stripes visible — most likely the mapping is partial. */
     extern void *fb_get_virt_addr(void);
+    extern int fb_get_info(struct fut_fb_hwinfo *out);
+    struct fut_fb_hwinfo fbi = {0};
+    fb_get_info(&fbi);
     fut_printf("[BISECT-A] post-CR3 fetch+printf OK (cr3=0x%llx) fb_virt=%p\n",
                (unsigned long long)fut_read_cr3(),
                fb_get_virt_addr());
+    fut_printf("[BISECT-A] fb geom: %ux%u pitch=%u bpp=%u phys=0x%llx length=%llu\n",
+               (unsigned)fbi.info.width, (unsigned)fbi.info.height,
+               (unsigned)fbi.info.pitch, (unsigned)fbi.info.bpp,
+               (unsigned long long)fbi.phys,
+               (unsigned long long)fbi.length);
 
     /* The BIG SURPRISE on HP Chromebook real hardware: the SECOND
      * fut_printf after CR3 swap hangs, even though the first one

@@ -9,7 +9,11 @@ on:
 jobs:
   build-x86_64:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    # 25 min: build is consistently ~6 min, but the kernel-test phase
+    # (2659 tests via qemu's isa-debug-exit harness) trips the 20-min cap
+    # on slow runner days — observed cancellations mid-test on otherwise-
+    # passing commits.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 

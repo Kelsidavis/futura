@@ -52,6 +52,14 @@ const EC_LPC_HOST_PACKET_SIZE: usize = 256;
 const EC_MEMMAP_ID_OFF: u16 = 0x20;
 const EC_MEMMAP_ID_VERSION_OFF: u16 = 0x22;
 
+/* EC MKBP (Matrix KeyBoard Protocol) memmap region.
+ * The EC scans the keyboard matrix and exposes the current state as 13
+ * bytes at MEMMAP offset 0x40. Each byte is one column; each bit is one
+ * row's pressed state. Polling this and diffing against the prior read
+ * gives us key-down / key-up events without needing an interrupt path. */
+const EC_MEMMAP_KMATRIX_OFF: u16 = 0x40;
+const EC_MEMMAP_KMATRIX_LEN: usize = 13; /* 13 columns × 8 rows = 104 keys */
+
 // EC status byte bits (read from EC_LPC_ADDR_HOST_CMD)
 const EC_LPC_STATUS_FROM_HOST: u8 = 0x02; // IBF
 const EC_LPC_STATUS_PROCESSING: u8 = 0x04;
@@ -423,4 +431,68 @@ pub extern "C" fn cros_ec_print_summary() {
             }
         }
     }
+}
+
+/* Read the EC keyboard matrix into `out`. Returns the number of bytes
+ * read (== EC_MEMMAP_KMATRIX_LEN on success), or 0 if the EC isn't
+ * present. Safe to call repeatedly — it's just port reads. */
+#[unsafe(no_mangle)]
+pub extern "C" fn cros_ec_read_kmatrix(out: *mut u8, max_len: u32) -> i32 {
+    if out.is_null() || max_len < EC_MEMMAP_KMATRIX_LEN as u32 {
+        return -1;
+    }
+    /* Probe: read the magic 'EC' ID bytes. If they aren't there, no EC. */
+    let id_lo = io_inb(EC_LPC_ADDR_MEMMAP + EC_MEMMAP_ID_OFF);
+    let id_hi = io_inb(EC_LPC_ADDR_MEMMAP + EC_MEMMAP_ID_OFF + 1);
+    if id_lo != b'E' || id_hi != b'C' {
+        return -2;
+    }
+    for i in 0..EC_MEMMAP_KMATRIX_LEN {
+        let b = io_inb(EC_LPC_ADDR_MEMMAP + EC_MEMMAP_KMATRIX_OFF + i as u16);
+        unsafe { *out.add(i) = b; }
+    }
+    EC_MEMMAP_KMATRIX_LEN as i32
+}
+
+/* Diff the EC keyboard matrix against a previous snapshot and report
+ * key transitions. Each transition is written to `events` as
+ * (col << 4) | row, with the high bit (0x80) set on key-down and clear
+ * on key-up. Returns the number of events written (clamped to max_events).
+ *
+ * Typical usage from a polling thread:
+ *   static mut prev: [u8; 13] = [0; 13];
+ *   let mut cur = [0u8; 13];
+ *   cros_ec_read_kmatrix(cur.as_mut_ptr(), 13);
+ *   let n = cros_ec_kmatrix_diff(&prev, &cur, events, max);
+ *   // dispatch events ...
+ *   prev = cur;
+ */
+#[unsafe(no_mangle)]
+pub extern "C" fn cros_ec_kmatrix_diff(
+    prev: *const u8,
+    cur: *const u8,
+    events: *mut u8,
+    max_events: u32,
+) -> i32 {
+    if prev.is_null() || cur.is_null() || events.is_null() {
+        return -1;
+    }
+    let mut count: u32 = 0;
+    for col in 0..EC_MEMMAP_KMATRIX_LEN {
+        let p = unsafe { *prev.add(col) };
+        let c = unsafe { *cur.add(col) };
+        let diff = p ^ c;
+        if diff == 0 { continue; }
+        for row in 0..8u8 {
+            let bit = 1u8 << row;
+            if diff & bit == 0 { continue; }
+            if count >= max_events { return count as i32; }
+            let pressed = (c & bit) != 0;
+            let encoded = ((col as u8) << 4) | row;
+            let val = if pressed { encoded | 0x80 } else { encoded };
+            unsafe { *events.add(count as usize) = val; }
+            count += 1;
+        }
+    }
+    count as i32
 }

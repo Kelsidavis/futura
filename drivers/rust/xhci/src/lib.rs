@@ -1275,7 +1275,15 @@ fn address_device(ctrl: &mut XhciController, slot_id: u32) -> bool {
 /// Wait for a Transfer Event on the event ring matching the given slot id
 /// and endpoint DCI. Returns the event TRB on success.
 fn wait_transfer_event(ctrl: &mut XhciController, slot_id: u32, _ep_id: u32) -> Option<Trb> {
-    for _ in 0..1_000_000u32 {
+    // 50M iters * ~100 ns per PIO event-ring poll ~= 5 s on a 1 GHz
+    // Gemini Lake. USB 3 Mass Storage devices (in particular SD card
+    // readers like Genesys 05e3:0747) NRDY-stall the IN endpoint for
+    // a while after a fresh command while the card mounts; the HC
+    // does not generate a Transfer Event until the device finally
+    // sends data (or until the EP gives up internally), so we need
+    // to be patient on this path. 5 s is well below the SCSI-layer
+    // retry budget and far above any normal bulk turnaround.
+    for _ in 0..50_000_000u32 {
         if ctrl.evt_ring.has_event() {
             let trb = ctrl.evt_ring.dequeue_trb();
             let erdp = ctrl.evt_ring.dequeue_phys() | (1 << 3);

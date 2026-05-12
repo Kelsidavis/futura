@@ -351,8 +351,20 @@ void lapic_timer_disable(void) {
  */
 void lapic_timer_calibrate_and_start(uint32_t hz, uint8_t vector) {
     if (!lapic_base || !lapic_initialized) {
-        fut_printf("[LAPIC-TIMER] Cannot start: LAPIC not initialized\n");
-        return;
+        /* ACPI MADT parsing didn't call lapic_init successfully on this
+         * machine (observed on Lenovo L490 — the boot reaches this point
+         * with lapic_base==NULL because something in the MADT walk
+         * silently dropped out before reaching lapic_init). Fall back to
+         * the architecturally-defined default LAPIC MMIO address. The
+         * hardware will not actually relocate the LAPIC away from
+         * 0xFEE00000 unless something explicitly wrote IA32_APIC_BASE
+         * MSR with a different base, which firmware rarely does. */
+        fut_printf("[LAPIC-TIMER] LAPIC not initialized — falling back to default 0xFEE00000\n");
+        lapic_init(0xFEE00000);
+        if (!lapic_base || !lapic_initialized) {
+            fut_printf("[LAPIC-TIMER] Cannot start: LAPIC init still failed after fallback\n");
+            return;
+        }
     }
 
     /* I/O port helpers (lapic.c doesn't have platform_init's static outb/inb) */

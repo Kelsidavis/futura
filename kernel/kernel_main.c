@@ -939,7 +939,17 @@ static int klog_sd_try_mount(void) {
                              uint64_t boot_handle);
     extern int fut_vfs_mkdir(const char *, uint32_t);
     if (g_klog_sd_mount_idx >= 0) return 0;
-    static const char *candidates[] = { "usb1", "usb0", "usb2", "usb3" };
+    /* Widened candidate list: USB enumeration order varies between boots
+     * and between machines (HP Chromebook puts a USB SD reader at usb1
+     * sometimes, usb0 other times). Also try sdhci/mmc/sd names for
+     * built-in SD readers — the SDHCI driver registers under those when
+     * its CMD41 init sequence completes. */
+    static const char *candidates[] = {
+        "usb0", "usb1", "usb2", "usb3",
+        "usb4", "usb5", "usb6", "usb7",
+        "sd0", "sd1", "mmc0", "mmc1",
+        "sdhci0", "sdhci1",
+    };
     fut_vfs_mkdir("/mnt", 0755);
     fut_vfs_mkdir("/mnt/sd", 0755);
     for (size_t i = 0; i < sizeof(candidates)/sizeof(candidates[0]); i++) {
@@ -952,6 +962,13 @@ static int klog_sd_try_mount(void) {
             return 0;
         }
     }
+    /* Diagnostic: print the full list we tried so the next failure tells
+     * us at a glance whether the SD reader name we expect even exists. */
+    fut_printf("[KLOG-SD] none of these block devices had a vfat FS:");
+    for (size_t i = 0; i < sizeof(candidates)/sizeof(candidates[0]); i++) {
+        fut_printf(" %s", candidates[i]);
+    }
+    fut_printf("\n");
     return -1;
 }
 

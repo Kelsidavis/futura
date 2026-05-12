@@ -270,22 +270,25 @@ long sys_nanosleep(const fut_timespec_t *u_req, fut_timespec_t *u_rem) {
          * incrementing system_ticks (Lenovo L490 in early bring-up), the
          * timer-driven waitq sleep below never wakes.
          *
-         * CRITICAL: do NOT call fut_schedule() inside this loop. fut_schedule
-         * may switch us to the idle thread, which executes `hlt` waiting for
-         * an interrupt. With broken timer, no timer IRQ fires to wake idle,
-         * so the kernel deadlocks. Just pure-spin on rdtsc and yield ONLY
-         * via the `pause` hint, which keeps us running on this CPU.
+         * Spin on rdtsc as the deadline, but yield to other threads every
+         * ~1 ms so the compositor / other user processes get CPU time
+         * during this sleep. Pairs with the idle-thread change that makes
+         * idle busy-yield instead of hlt when timer is broken: yielding
+         * to idle in this state is no longer a deadlock — idle will spin
+         * back to the scheduler and pick whatever non-idle thread is
+         * ready.
          *
-         * Cost: this thread monopolizes the CPU during the sleep. Acceptable
-         * when the alternative is deadlock. Single-CPU only matters for
-         * boot — once timer works, this path doesn't run. */
+         * Cost: high CPU usage during sleeps, but cooperative — other
+         * user processes can make forward progress. */
         extern _Atomic int g_timer_ticks_broken;
         if (__atomic_load_n(&g_timer_ticks_broken, __ATOMIC_ACQUIRE)) {
             extern uint64_t fut_rdtsc(void);
             extern uint64_t fut_cycles_per_ms(void);
+            extern void fut_schedule(void);
             uint64_t start_tsc = fut_rdtsc();
             uint64_t cpm = fut_cycles_per_ms();
             uint64_t target_tsc = start_tsc + cpm * millis;
+            uint64_t yield_tsc = start_tsc + cpm; /* yield every ~1 ms */
             while (fut_rdtsc() < target_tsc) {
                 if (task) {
                     uint64_t sig = __atomic_load_n(&task->pending_signals,
@@ -296,7 +299,12 @@ long sys_nanosleep(const fut_timespec_t *u_req, fut_timespec_t *u_rem) {
                         task->signal_mask;
                     if (sig & ~blk) break;
                 }
-                __asm__ volatile("pause" ::: "memory");
+                if (fut_rdtsc() >= yield_tsc) {
+                    fut_schedule();
+                    yield_tsc = fut_rdtsc() + cpm;
+                } else {
+                    __asm__ volatile("pause" ::: "memory");
+                }
             }
             goto sleep_done;
         }

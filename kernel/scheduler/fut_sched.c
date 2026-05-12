@@ -243,7 +243,19 @@ static void idle_thread_entry(void *arg) {
     (void)arg;
     for (;;) {
 #ifdef __x86_64__
-        __asm__ volatile("sti\n\thlt" ::: "memory");  /* Enable interrupts and halt */
+        /* Check the timer-broken flag: with no timer IRQs, `sti; hlt`
+         * waits forever — nothing wakes the CPU. Switch to a busy-yield
+         * loop in that case so the scheduler keeps polling for runnable
+         * non-idle threads. Cost: CPU stays at 100%, but that's fine
+         * because the alternative is a deadlocked boot. */
+        extern _Atomic int g_timer_ticks_broken;
+        if (__atomic_load_n(&g_timer_ticks_broken, __ATOMIC_ACQUIRE)) {
+            __asm__ volatile("pause" ::: "memory");
+            extern void fut_schedule(void);
+            fut_schedule();
+        } else {
+            __asm__ volatile("sti\n\thlt" ::: "memory");  /* Enable interrupts and halt */
+        }
 #elif defined(__aarch64__)
         /* Enable IRQ (daifclr #2 clears the I bit, unmasking IRQ) and then
          * wait for interrupt. The previous 'daifset #2' did the opposite:

@@ -823,16 +823,20 @@ fn port_reset(ctrl: &XhciController, port: u32) -> bool {
     // in case the port was somehow depowered.
     write_portsc(ctrl.bar0, ctrl.op_base, port, PORTSC_PP | PORTSC_PR);
 
-    // USB 2.0 spec requires a 50 ms minimum reset assertion window. Give
-    // it that up front (block, not spin) before checking, then poll for
-    // up to ~450 ms more in 10 ms steps. Some on-board USB chips (the
-    // integrated SD card reader hub on octopus Chromebooks in particular)
-    // are slower than typical external devices to come out of reset.
-    thread_sleep(50);
-
+    // Busy-poll PORTSC for completion. Each MMIO read on PCI is ~100 ns
+    // on x86, so 1_000_000 iterations is ~100 ms of wall-clock -- plenty
+    // for the USB 2.0 50 ms minimum reset window and the slower on-board
+    // USB chips (integrated SD card reader hubs etc.) that don't latch
+    // PRC until well after spec-minimum reset.
+    //
     // Acceptable completion: HC has cleared PR back to 0 OR set PRC.
     // Either signals "reset finished, port is in Enabled state (PED=1)".
-    for _ in 0..45 {
+    //
+    // thread_sleep can't be used here -- xhci_init runs before the
+    // scheduler starts; thread_sleep would block on an empty run queue.
+    // thread_yield works in early boot because it's a no-op until the
+    // scheduler is up, so the cost reduces to the MMIO read.
+    for _ in 0..1_000_000u32 {
         let portsc = read_portsc(ctrl.bar0, ctrl.op_base, port);
         let pr_done  = (portsc & PORTSC_PR)  == 0;
         let prc_seen = (portsc & PORTSC_PRC) != 0;
@@ -840,7 +844,7 @@ fn port_reset(ctrl: &XhciController, port: u32) -> bool {
             clear_portsc_changes(ctrl.bar0, ctrl.op_base, port, PORTSC_PRC);
             return true;
         }
-        thread_sleep(10);
+        thread_yield();
     }
     unsafe {
         fut_printf(

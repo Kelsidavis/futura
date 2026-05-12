@@ -330,7 +330,7 @@ void ioapic_vector_allocator_init(void) {
     }
 
     vector_allocator_initialized = true;
-    fut_printf("[IOAPIC] Vector allocator initialized (vectors 32-255 available)\\n");
+    fut_printf("[IOAPIC] Vector allocator initialized (vectors 32-255 available)\n");
 }
 
 /**
@@ -364,7 +364,7 @@ uint8_t ioapic_allocate_vector(void) {
     }
 
     /* No available vectors */
-    fut_printf("[IOAPIC] WARNING: No available interrupt vectors!\\n");
+    fut_printf("[IOAPIC] WARNING: No available interrupt vectors!\n");
     return 0xFF;
 }
 
@@ -376,7 +376,7 @@ uint8_t ioapic_allocate_vector(void) {
 void ioapic_free_vector(uint8_t vector) {
     /* Only device vectors (32-255) can be freed; cpu exceptions (0-31) cannot */
     if (vector < 32) {
-        fut_printf("[IOAPIC] WARNING: Attempt to free reserved vector %u\\n", vector);
+        fut_printf("[IOAPIC] WARNING: Attempt to free reserved vector %u\n", vector);
         return;
     }
 

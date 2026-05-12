@@ -540,6 +540,19 @@ fn forcewake_get_render(mmio: *mut u8) -> bool {
         }
         unsafe { core::arch::asm!("pause", options(nomem, nostack, preserves_flags)) };
     }
+    /* Diagnostic: dump what forcewake is doing on a timeout. Helps tell apart
+     * "GPU is fully powered off" (0xFFFFFFFF reads) from "GPU is awake but
+     * something is masking us" (sensible-looking ACK value with bit 0 clear)
+     * vs "ACK is stuck low" (all zeros). Also re-read the request register so
+     * the user can confirm the kernel-side write actually landed. */
+    let req_after = unsafe { mmio_read32_at(mmio, FORCEWAKE_RENDER) };
+    let ack_after = unsafe { mmio_read32_at(mmio, FORCEWAKE_ACK_RENDER) };
+    unsafe {
+        fut_printf(
+            b"i915: forcewake timeout - REQ(0xA188)=0x%08x ACK(0x0D84)=0x%08x\n\0".as_ptr(),
+            req_after, ack_after,
+        );
+    }
     false
 }
 

@@ -13,7 +13,8 @@ ifeq ($(PLATFORM),arm64)
     else
         CROSS_COMPILE ?= aarch64-linux-gnu-
     endif
-    CC := $(CROSS_COMPILE)gcc
+    CC_SUFFIX := $(shell command -v $(CROSS_COMPILE)gcc >/dev/null 2>&1 && echo "" || echo "-14")
+    CC := $(CROSS_COMPILE)gcc$(CC_SUFFIX)
     AR := $(CROSS_COMPILE)ar
     OBJCOPY := $(CROSS_COMPILE)objcopy
     ARCH_CFLAGS := -march=armv8-a -mtune=cortex-a53 -mno-outline-atomics

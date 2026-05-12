@@ -1021,6 +1021,19 @@ struct DeviceSlot {
     first_if_subclass: u8,
     first_if_protocol: u8,
     storage_attached: bool,
+    // Diagnostics for Mass Storage slots that didn't reach the
+    // "attached" state. attach_stage records the deepest step we got
+    // through:
+    //   0 = nothing tried (interface was not MSC)
+    //   1 = MSC interface found but bulk IN/OUT endpoints not captured
+    //   2 = bulk endpoints captured, transfer-ring allocation failed
+    //   3 = rings allocated, Configure Endpoint failed
+    //   4 = Configure Endpoint succeeded, usb_storage_attach called
+    //   5 = usb_storage_attach returned success (== storage_attached)
+    attach_stage: u8,
+    attach_rc: i32,
+    msc_in_addr: u8,
+    msc_out_addr: u8,
 }
 
 impl DeviceSlot {
@@ -1049,6 +1062,10 @@ impl DeviceSlot {
             first_if_subclass: 0,
             first_if_protocol: 0,
             storage_attached: false,
+            attach_stage: 0,
+            attach_rc: 0,
+            msc_in_addr: 0,
+            msc_out_addr: 0,
         }
     }
 }
@@ -2047,6 +2064,17 @@ fn enumerate_devices(ctrl: &mut XhciController) {
             continue;
         }
 
+        // Track diagnostics for Mass Storage slots so the late-boot
+        // summary can show exactly how far attach got.
+        if cur_if_class == 0x08 && cur_if_sub == 0x06 && cur_if_proto == 0x50 {
+            unsafe {
+                if let Some(s) = slot_mut(slot_id) {
+                    s.attach_stage = 1; // MSC interface seen
+                    s.msc_in_addr = msc_bulk_in;
+                    s.msc_out_addr = msc_bulk_out;
+                }
+            }
+        }
         // If this device exposed a Mass Storage (BBB) interface, allocate
         // transfer rings for its bulk endpoints, issue Configure Endpoint
         // to make them active in the HC, then hand off to usb_storage.
@@ -2073,7 +2101,15 @@ fn enumerate_devices(ctrl: &mut XhciController) {
                     _ => false,
                 }
             };
-            if setup_ok && configure_bulk_endpoints(ctrl, slot_id) {
+            if !setup_ok {
+                unsafe {
+                    if let Some(s) = slot_mut(slot_id) { s.attach_stage = 2; }
+                }
+            } else if !configure_bulk_endpoints(ctrl, slot_id) {
+                unsafe {
+                    if let Some(s) = slot_mut(slot_id) { s.attach_stage = 3; }
+                }
+            } else {
                 unsafe {
                     fut_printf(
                         b"xhci: slot %u: MSC bulk endpoints ready (in=0x%02x mps=%u out=0x%02x mps=%u)\n\0".as_ptr(),
@@ -2091,10 +2127,10 @@ fn enumerate_devices(ctrl: &mut XhciController) {
                         b"xhci: slot %u: usb_storage_attach rc=%d\n\0".as_ptr(),
                         slot_id, rc,
                     );
-                    if rc == 0 {
-                        if let Some(s) = slot_mut(slot_id) {
-                            s.storage_attached = true;
-                        }
+                    if let Some(s) = slot_mut(slot_id) {
+                        s.attach_stage = if rc == 0 { 5 } else { 4 };
+                        s.attach_rc = rc;
+                        if rc == 0 { s.storage_attached = true; }
                     }
                 }
             }
@@ -2480,6 +2516,23 @@ pub extern "C" fn xhci_print_summary() {
                 if s.storage_attached { b" -- usb_storage attached\0".as_ptr() }
                 else                  { b"\0".as_ptr() },
             );
+            // For Mass Storage slots that didn't end up attached, spell
+            // out exactly where the bring-up stopped.
+            if s.first_if_class == 0x08 && !s.storage_attached {
+                let stage_label: *const u8 = match s.attach_stage {
+                    1 => b"MSC iface seen, bulk endpoints not captured\0".as_ptr(),
+                    2 => b"bulk eps captured, ring alloc failed\0".as_ptr(),
+                    3 => b"rings allocated, Configure Endpoint failed\0".as_ptr(),
+                    4 => b"Configure Endpoint OK, usb_storage_attach failed\0".as_ptr(),
+                    _ => b"unknown stage\0".as_ptr(),
+                };
+                fut_printf(
+                    b"[SUMMARY] xhci: slot %u MSC attach: stage=%u rc=%d in=0x%02x out=0x%02x (%s)\n\0".as_ptr(),
+                    slot_id, s.attach_stage as u32, s.attach_rc,
+                    s.msc_in_addr as u32, s.msc_out_addr as u32,
+                    stage_label,
+                );
+            }
         }
     }
     if !any {

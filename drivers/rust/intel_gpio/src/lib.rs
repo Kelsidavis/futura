@@ -45,12 +45,13 @@
 #![no_std]
 #![forbid(unsafe_op_in_unsafe_fn)]
 #![allow(unexpected_cfgs)]
+#![allow(dead_code)] // hardware register definitions kept verbatim from spec
 
 use core::cell::UnsafeCell;
 use core::ptr::{read_volatile, write_volatile};
 use core::sync::atomic::{fence, Ordering};
 
-use common::{log, map_mmio_region, unmap_mmio_region, MMIO_DEFAULT_FLAGS};
+use common::{log, map_mmio_region, MMIO_DEFAULT_FLAGS};
 
 unsafe extern "C" {
     fn fut_printf(fmt: *const u8, ...);

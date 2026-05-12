@@ -25,6 +25,7 @@
 #![no_std]
 #![forbid(unsafe_op_in_unsafe_fn)]
 #![allow(unexpected_cfgs)]
+#![allow(dead_code)] // hardware register definitions kept verbatim from spec
 
 use core::cell::UnsafeCell;
 use core::ffi::c_void;
@@ -680,7 +681,7 @@ pub extern "C" fn amd_ccp_aes256_cbc(
     }
 
     let key_phys = virt_to_phys(key_page);
-    let iv_phys = virt_to_phys(unsafe { key_page.add(32) });
+    let _iv_phys = virt_to_phys(unsafe { key_page.add(32) });
     let src_phys = virt_to_phys(input);
     let dst_phys = virt_to_phys(output as *const u8);
 

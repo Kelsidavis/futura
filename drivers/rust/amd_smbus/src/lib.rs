@@ -19,8 +19,9 @@
 #![no_std]
 #![forbid(unsafe_op_in_unsafe_fn)]
 #![allow(unexpected_cfgs)]
+#![allow(dead_code)] // hardware register definitions kept verbatim from spec
 
-use core::ptr::{read_volatile, write_volatile};
+use core::ptr::write_volatile;
 use core::sync::atomic::{fence, Ordering};
 
 use common::log;

@@ -45,6 +45,7 @@
 #![no_std]
 #![forbid(unsafe_op_in_unsafe_fn)]
 #![allow(unexpected_cfgs)]
+#![allow(dead_code)] // hardware register definitions kept verbatim from spec
 
 use core::cell::UnsafeCell;
 use core::ptr::{read_volatile, write_volatile};
@@ -566,9 +567,7 @@ pub extern "C" fn intel_spi_read(offset: u32, buf: *mut u8, len: u32) -> i32 {
 
             // Copy to caller's buffer
             for i in 0..chunk {
-                unsafe {
-                    *buf.add(buf_offset + i) = tmp[i];
-                }
+                *buf.add(buf_offset + i) = tmp[i];
             }
 
             remaining -= chunk;
@@ -615,9 +614,7 @@ pub extern "C" fn intel_spi_write(offset: u32, buf: *const u8, len: u32) -> i32 
             // Copy source data into local buffer then write to FDATA
             let mut tmp = [0u8; FDATA_MAX_BYTES];
             for i in 0..chunk {
-                unsafe {
-                    tmp[i] = *buf.add(buf_offset + i);
-                }
+                tmp[i] = *buf.add(buf_offset + i);
             }
 
             write_fdata(base, &tmp, chunk);
@@ -701,12 +698,10 @@ pub extern "C" fn intel_spi_read_jedec_id(out: *mut u32) -> i32 {
         // Verify flash descriptor signature (0x0FF0A55A)
         if flvalsig != 0x0FF0_A55A {
             log("intel_spi: flash descriptor signature mismatch");
-            unsafe {
-                fut_printf(
-                    b"intel_spi: expected 0x0FF0A55A, got 0x%08x\n\0".as_ptr(),
-                    flvalsig,
-                );
-            }
+            fut_printf(
+                b"intel_spi: expected 0x0FF0A55A, got 0x%08x\n\0".as_ptr(),
+                flvalsig,
+            );
             return -5; // EIO
         }
 
@@ -722,16 +717,12 @@ pub extern "C" fn intel_spi_read_jedec_id(out: *mut u32) -> i32 {
 
         // The component density field in FLCOMP encodes the JEDEC-style
         // capacity. Extract the lower 24 bits as a pseudo JEDEC ID.
-        unsafe {
-            *out = comp0 & 0x00FF_FFFF;
-        }
+        *out = comp0 & 0x00FF_FFFF;
 
-        unsafe {
-            fut_printf(
-                b"intel_spi: JEDEC/component ID: 0x%06x\n\0".as_ptr(),
-                comp0 & 0x00FF_FFFF,
-            );
-        }
+        fut_printf(
+            b"intel_spi: JEDEC/component ID: 0x%06x\n\0".as_ptr(),
+            comp0 & 0x00FF_FFFF,
+        );
     }
 
     0

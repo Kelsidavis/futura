@@ -23,6 +23,7 @@
 #![no_std]
 #![forbid(unsafe_op_in_unsafe_fn)]
 #![allow(unexpected_cfgs)]
+#![allow(dead_code)] // hardware register definitions kept verbatim from spec
 
 use core::ffi::c_void;
 use core::ptr::{read_volatile, write_volatile};
@@ -846,7 +847,7 @@ fn invalidate_iommu_pages(state: &mut IommuState, domain_id: u16) {
 }
 
 /// Issue an INVALIDATE_IOTLB_PAGES command for the given device.
-fn invalidate_iotlb(state: &mut IommuState, device_id: u16, domain_id: u16) {
+fn invalidate_iotlb(state: &mut IommuState, device_id: u16, _domain_id: u16) {
     let mut cmd = CommandEntry::zeroed();
     // Opcode 0x04 in bits [63:60]
     // DeviceID in bits [15:0]

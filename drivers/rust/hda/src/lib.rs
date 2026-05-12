@@ -18,6 +18,7 @@
 #![no_std]
 #![forbid(unsafe_op_in_unsafe_fn)]
 #![allow(unexpected_cfgs)]
+#![allow(dead_code)] // hardware register definitions kept verbatim from spec
 
 use core::ffi::c_void;
 use core::cell::UnsafeCell;
@@ -25,8 +26,8 @@ use core::ptr::{read_volatile, write_volatile};
 use core::sync::atomic::{Ordering, fence};
 
 use common::{
-    alloc, alloc_page, free, log, map_mmio_region, unmap_mmio_region,
-    thread_yield, MMIO_DEFAULT_FLAGS,
+    alloc, alloc_page, log, map_mmio_region, unmap_mmio_region,
+    MMIO_DEFAULT_FLAGS,
 };
 
 unsafe extern "C" {

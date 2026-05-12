@@ -32,7 +32,6 @@
 #![allow(dead_code)]
 
 use core::cell::UnsafeCell;
-use core::ffi::c_void;
 use common::{log, map_mmio_region, MMIO_DEFAULT_FLAGS};
 
 unsafe extern "C" {

@@ -95,6 +95,27 @@ static bool g_fb_available = false;
 static volatile uint8_t *g_fb_virt = NULL;
 #endif
 
+#ifdef __x86_64__
+/* Diagnostic marker — paint `n` bright yellow pixels at the top-right
+ * corner of the FB by writing directly via the high-half mapping. Used
+ * by the user-trampoline bisect path to prove we executed past a given
+ * checkpoint without depending on fut_printf / fb_console / klog (any
+ * of which could be the cliff we're trying to find). */
+void fb_poke_corner_marker(int n) {
+    if (!g_fb_virt || g_fb_hw.info.pitch == 0 || g_fb_hw.info.width == 0) return;
+    if (n <= 0) return;
+    if (n > 64) n = 64;
+    uint32_t pitch = g_fb_hw.info.pitch;
+    uint32_t width = g_fb_hw.info.width;
+    /* Row 0, columns (width - n - 4)..(width - 4) */
+    volatile uint32_t *row =
+        (volatile uint32_t *)(g_fb_virt + 4 * pitch);
+    for (int i = 0; i < n; ++i) {
+        row[width - n - 4 + i] = 0x00FFFF00;
+    }
+}
+#endif
+
 /* Multiboot2 tag IDs */
 #define MB2_TAG_FRAMEBUFFER 8
 

@@ -52,7 +52,7 @@
  * capture what init actually does. The original "dies on first IRQ" question
  * is moot now that we have the SD-flusher capturing arbitrary post-IRETQ
  * state. */
-static bool g_bisect_mask_timer_before_first_user = true;
+static bool g_bisect_mask_timer_before_first_user = false;
 /* Diagnostic: briefly execute under the target CR3, then restore the original
  * CR3 and report the result. This avoids depending on the console path while
  * the target CR3 is active. Now ON by default — we need to know whether the
@@ -1168,13 +1168,19 @@ static int build_user_stack(fut_mm_t *mm,
     fut_printf("[BISECT-A] post-CR3 fetch+printf OK (cr3=0x%llx)\n",
                (unsigned long long)fut_read_cr3());
 
-    /* Explicit cli — if BISECT-A1 was being lost to a timer IRQ taken
-     * between the two printfs, this should make A1 fire reliably. The
-     * g_bisect_mask_timer_before_first_user flag (set above) already
-     * disabled the timer before the CR3 swap, but cli + interrupt mask
-     * is the belt-and-suspenders version. */
+    /* Both g_bisect_mask_timer_before_first_user (above) and the explicit
+     * cli below close off preemption. If A1 still never fires after that,
+     * the cliff is genuinely INSIDE the second fut_printf — fb_console
+     * scroll, fut_serial_putc LSR spin, klog_write, etc. — and chasing
+     * it with another fut_printf is hopeless. Drop a direct FB pixel poke
+     * here that bypasses everything: any visible yellow square at the
+     * top-right corner means we got past BISECT-A's printf return. */
     __asm__ volatile("cli" ::: "memory");
+    extern void fb_poke_corner_marker(int n);
+    fb_poke_corner_marker(16);  /* yellow square if we get here */
+
     fut_printf("[BISECT-A1] survived the post-CR3 printf, about to compute handoff_frame\n");
+    fb_poke_corner_marker(32); /* longer yellow bar if A1's printf returned */
 
     if (g_bisect_probe_kernel_cr3_roundtrip) {
         uint64_t original_cr3 = current_cr3;

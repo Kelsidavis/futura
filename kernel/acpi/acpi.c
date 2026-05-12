@@ -217,6 +217,34 @@ acpi_madt_t *acpi_get_madt(void) {
 }
 
 /**
+ * Get the first PCIe ECAM aperture from the MCFG table.
+ *
+ * Most x86 systems publish a single MCFG entry covering buses 0..N — that's
+ * all we need to bootstrap MMIO-based PCI config access. If the firmware
+ * exposes multiple segments (rare on consumer hardware), we just take the
+ * first one; segment 0 is the canonical PC.
+ */
+bool acpi_get_pcie_ecam(uint64_t *out_base, uint8_t *out_start, uint8_t *out_end) {
+    acpi_mcfg_t *mcfg = (acpi_mcfg_t *)acpi_find_table(ACPI_SIG_MCFG);
+    if (!mcfg) {
+        return false;
+    }
+    uint32_t total_len = mcfg->header.length;
+    if (total_len <= sizeof(acpi_mcfg_t)) {
+        return false;
+    }
+    uint32_t entries_bytes = total_len - sizeof(acpi_mcfg_t);
+    if (entries_bytes < sizeof(acpi_mcfg_entry_t)) {
+        return false;
+    }
+    acpi_mcfg_entry_t *e = (acpi_mcfg_entry_t *)((uint8_t *)mcfg + sizeof(acpi_mcfg_t));
+    if (out_base)  *out_base  = e->base_address;
+    if (out_start) *out_start = e->start_bus;
+    if (out_end)   *out_end   = e->end_bus;
+    return true;
+}
+
+/**
  * Parse MADT to discover CPU topology.
  */
 #ifdef __x86_64__

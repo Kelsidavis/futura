@@ -154,6 +154,22 @@ typedef struct {
     uint16_t flags;    /* MPS INTI flags */
 } __attribute__((packed)) acpi_madt_interrupt_override_t;
 
+/* MCFG (Memory-Mapped PCI Configuration) Entry */
+typedef struct {
+    uint64_t base_address;     /* PCIe ECAM base for this segment+bus range */
+    uint16_t pci_segment;      /* PCI segment group number */
+    uint8_t  start_bus;        /* First bus covered by this aperture */
+    uint8_t  end_bus;          /* Last bus covered (inclusive) */
+    uint32_t reserved;
+} __attribute__((packed)) acpi_mcfg_entry_t;
+
+/* MCFG table — fixed header + N config entries */
+typedef struct {
+    acpi_sdt_header_t header;
+    uint64_t reserved;
+    /* acpi_mcfg_entry_t entries[] follow */
+} __attribute__((packed)) acpi_mcfg_t;
+
 /**
  * Initialize ACPI subsystem.
  * Locates RSDP, parses RSDT/XSDT, and validates tables.
@@ -183,6 +199,16 @@ acpi_fadt_t *acpi_get_fadt(void);
  * @return Pointer to MADT, or NULL if not found
  */
 acpi_madt_t *acpi_get_madt(void);
+
+/**
+ * Get the first PCIe ECAM aperture from the MCFG table.
+ *
+ * @param out_base  Filled with the ECAM physical base on success
+ * @param out_start Filled with start bus number on success
+ * @param out_end   Filled with end bus number on success
+ * @return true if MCFG was present with at least one entry, false otherwise
+ */
+bool acpi_get_pcie_ecam(uint64_t *out_base, uint8_t *out_start, uint8_t *out_end);
 
 /**
  * Parse MADT to discover CPU topology.

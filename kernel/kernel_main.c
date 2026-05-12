@@ -1936,9 +1936,22 @@ void fut_kernel_main(void) {
         extern int pci_msix_init(uint8_t bus, uint8_t dev, uint8_t func);
         extern int dma_pool_init(void);
 
-        /* No firmware ECAM base wired up yet — pass 0/0/0 so the driver
-         * fails its own bus-range sanity check and bails cleanly. */
-        pcie_ecam_init(0, 0, 0);
+        /* ACPI MCFG has the firmware-published PCIe ECAM aperture(s).
+         * Most x86 systems list a single segment covering buses 0..N. If
+         * the table isn't present (older legacy-only firmware), fall back
+         * to 0/0/0 — the driver's own sanity check will reject that and
+         * port-CF8/CFC stays the only path. */
+        extern bool acpi_get_pcie_ecam(uint64_t *, uint8_t *, uint8_t *);
+        uint64_t ecam_base = 0;
+        uint8_t  ecam_start = 0, ecam_end = 0;
+        if (acpi_get_pcie_ecam(&ecam_base, &ecam_start, &ecam_end)) {
+            fut_printf("[ACPI] MCFG: ECAM 0x%llx buses %u..%u\n",
+                       (unsigned long long)ecam_base,
+                       (unsigned)ecam_start, (unsigned)ecam_end);
+            pcie_ecam_init(ecam_base, ecam_start, ecam_end);
+        } else {
+            pcie_ecam_init(0, 0, 0);
+        }
         /* No specific MSI-X target device yet; driver returns -1 if no
          * MSI-X cap is found at the probed BDF. */
         pci_msix_init(0, 0, 0);

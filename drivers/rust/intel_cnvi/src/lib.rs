@@ -187,18 +187,29 @@ const CSR_UCODE_DRV_GP1: usize = 0x0A0;
 /// RX Status Channel 0
 const CSR_FH_RSCSR_CHNL0: usize = 0x100;
 
-// ── GP_CNTRL bit definitions ──
+// ── GP_CNTRL bit definitions (match Linux iwlwifi CSR_GP_CNTRL_*) ──
+//
+// These were previously wrong — MAC_ACCESS_REQ was at bit 0 and
+// MAC_CLOCK_READY at bit 1, which matched no Intel WiFi family. On
+// the user's AX200 the wake sequence ran against the wrong bits and
+// every nic_wake() call timed out ("NIC wake timeout - MAC clock
+// not ready" in the boot log). Linux iwlwifi (iwl-csr.h) puts
+// MAC_CLOCK_READY at bit 0 (read-only) and MAC_ACCESS_REQ at bit 3.
 
-/// Request NIC internal register access
-const GP_CNTRL_MAC_ACCESS_REQ: u32 = 1 << 0;
 /// MAC clock is stable (read-only)
-const GP_CNTRL_MAC_CLOCK_READY: u32 = 1 << 1;
-/// Initialisation complete
-const GP_CNTRL_INIT_DONE: u32 = 1 << 2;
+const GP_CNTRL_MAC_CLOCK_READY: u32 = 1 << 0;
 /// MAC access window is open (read-only)
-const GP_CNTRL_MAC_ACCESS_ENA: u32 = 1 << 5;
-/// NIC is in low-power sleep state
-const GP_CNTRL_NIC_SLEEP: u32 = 1 << 7;
+const GP_CNTRL_MAC_ACCESS_ENA: u32 = 1 << 1;
+/// Initialisation complete — set to move adapter from D0U* to D0A
+const GP_CNTRL_INIT_DONE: u32 = 1 << 2;
+/// Request NIC internal register access
+const GP_CNTRL_MAC_ACCESS_REQ: u32 = 1 << 3;
+/// Going-to-sleep status (read-only)
+const GP_CNTRL_GOING_TO_SLEEP: u32 = 1 << 4;
+/// SW reset / GIO-off (Gen2+ uses this slot for SW_RESET)
+const GP_CNTRL_SW_RESET: u32 = 1 << 7;
+/// Hardware RF kill switch (high = RF disabled)
+const GP_CNTRL_HW_RF_KILL_SW: u32 = 1 << 27;
 
 // ── Peripheral register access window ──
 
@@ -343,25 +354,22 @@ fn read_bar0(bus: u8, dev: u8, func: u8) -> u64 {
     phys
 }
 
-/// Wake the NIC from sleep by clearing NIC_SLEEP and setting
-/// MAC_ACCESS_REQ, then waiting for MAC_CLOCK_READY.
+/// Wake the NIC and stabilise the MAC clock. Mirrors the relevant tail
+/// of iwl_pcie_apm_init() for Gen2+ devices (AX200/AX201/AX210):
+///   1. Set INIT_DONE in CSR_GP_CNTRL — moves adapter from D0U* to D0A.
+///   2. Poll MAC_CLOCK_READY until the clock is stable.
 /// Returns true on success, false on timeout.
+///
+/// Note: we do NOT clear NIC_SLEEP or set MAC_ACCESS_REQ here — those
+/// belong to the older 5000-series flow. On Gen2 hardware the wake is
+/// driven purely by INIT_DONE.
 fn nic_wake(base: *mut u8) -> bool {
+    // Read first so we can OR onto existing flags (don't clobber RF kill,
+    // BUS_MASTER_DISABLE_STATUS, etc).
     let gp = mmio_read32(base, CSR_GP_CNTRL);
-
-    // If NIC is sleeping, we need to clear the sleep bit first
-    if gp & GP_CNTRL_NIC_SLEEP != 0 {
-        // Clear NIC_SLEEP by writing 1 to bit 7 (write-1-to-clear)
-        mmio_write32(base, CSR_GP_CNTRL, gp | GP_CNTRL_NIC_SLEEP);
-        fence(Ordering::SeqCst);
-    }
-
-    // Request MAC access
-    let gp = mmio_read32(base, CSR_GP_CNTRL);
-    mmio_write32(base, CSR_GP_CNTRL, gp | GP_CNTRL_MAC_ACCESS_REQ);
+    mmio_write32(base, CSR_GP_CNTRL, gp | GP_CNTRL_INIT_DONE);
     fence(Ordering::SeqCst);
 
-    // Poll for MAC_CLOCK_READY
     for _ in 0..CNVI_TIMEOUT_ITERS {
         let val = mmio_read32(base, CSR_GP_CNTRL);
         if val & GP_CNTRL_MAC_CLOCK_READY != 0 {
@@ -658,7 +666,11 @@ pub extern "C" fn intel_cnvi_status() -> u32 {
     if gp & GP_CNTRL_MAC_CLOCK_READY != 0 {
         status |= STATUS_CLOCK_READY;
     }
-    if gp & GP_CNTRL_NIC_SLEEP == 0 {
+    // For Gen2+ devices there is no NIC_SLEEP bit; "awake" is implied by
+    // INIT_DONE being set and MAC_CLOCK_READY tracking the clock. Use
+    // GOING_TO_SLEEP (read-only) to flag transitions, treating "not going
+    // to sleep" as awake.
+    if gp & GP_CNTRL_GOING_TO_SLEEP == 0 {
         status |= STATUS_NIC_AWAKE;
     }
     if unsafe { (*state).mac_access_held } {

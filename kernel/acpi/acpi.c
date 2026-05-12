@@ -95,14 +95,17 @@ static acpi_rsdp_v2_t *acpi_find_rsdp_from_multiboot(void) {
 
 static acpi_rsdp_v2_t *acpi_find_rsdp(void) {
 #if defined(__x86_64__)
-    /* UEFI path: RSDP is pointed to by the UEFI ConfigurationTable and
-     * passed in via Multiboot2 tag 14/15. Modern x86_64 hardware booted
-     * via UEFI has nothing in the legacy 0xE0000-0xFFFFF area. Try the
-     * multiboot path FIRST before falling back to BIOS-area search. */
-    acpi_rsdp_v2_t *mb_rsdp = acpi_find_rsdp_from_multiboot();
-    if (mb_rsdp) return mb_rsdp;
-
-    /* Legacy BIOS / Coreboot path */
+    /* Try the legacy BIOS / Coreboot search area first. HP Chromebook
+     * (Coreboot) and many BIOS systems put RSDP in 0xE0000-0xFFFFF for
+     * backwards compatibility. Falling through to Multiboot2 tag 14/15
+     * only when legacy turns up empty avoids the regression where GRUB's
+     * Multiboot2 ACPI tag points to a different (UEFI runtime-services)
+     * copy that has subtly different MADT contents — observed to break
+     * USB enumeration on HP Chromebook between yesterday's and today's
+     * boots.
+     *
+     * UEFI-pure systems (L490 with no legacy BIOS area populated) fall
+     * through to the Multiboot path, which is the L490-fix from cf2cdd0c. */
     const uintptr_t bios_start = 0xE0000;
     const uintptr_t bios_end = 0x100000;
     const uintptr_t kernel_offset = KERNEL_VIRTUAL_BASE;
@@ -129,15 +132,17 @@ static acpi_rsdp_v2_t *acpi_find_rsdp(void) {
                 continue;
             }
 
-            fut_printf("[ACPI] Found RSDP v2 at 0x%lx\n", addr);
+            fut_printf("[ACPI] Found RSDP v2 at 0x%lx (legacy BIOS area)\n", addr);
             return v2;
         } else {
-            fut_printf("[ACPI] Found RSDP v1 at 0x%lx\n", addr);
+            fut_printf("[ACPI] Found RSDP v1 at 0x%lx (legacy BIOS area)\n", addr);
             return (acpi_rsdp_v2_t *)candidate;
         }
     }
 
-    return NULL;
+    /* Legacy BIOS area is empty — try Multiboot2 ACPI tag (UEFI path).
+     * This is the L490 case: pure UEFI boot, no 0xE0000-area RSDP. */
+    return acpi_find_rsdp_from_multiboot();
 #else
     /* ARM64: ACPI discovery not implemented - use device tree instead */
     fut_printf("[ACPI] ARM64: RSDP discovery not implemented (device tree used instead)\n");

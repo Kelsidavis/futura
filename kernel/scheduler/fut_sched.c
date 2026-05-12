@@ -1100,6 +1100,19 @@ void fut_schedule(void) {
              * to userspace as the "result" instead of the actual return value.
              *
              * The EOI is already sent by fut_switch_context_irq assembly. */
+            {
+                static int dbg_switch_once = 0;
+                if (!dbg_switch_once) {
+                    dbg_switch_once = 1;
+                    fut_printf("[BCRUMB-SWITCH] first irq-switch prev=%p next=%p "
+                               "frame=%p prev->irq_frame=%p next->irq_frame=%p\n",
+                               (void *)(prev_terminated ? NULL : prev),
+                               (void *)next,
+                               (void *)fut_current_frame,
+                               (void *)(prev ? prev->irq_frame : NULL),
+                               (void *)next->irq_frame);
+                }
+            }
             fut_switch_context_irq(prev_terminated ? NULL : prev, next, fut_current_frame);
         } else {
             // Regular cooperative context switch (uses RET)

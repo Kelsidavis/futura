@@ -1004,15 +1004,16 @@ static void klog_persist_to_sd_once(int verbose) {
     }
     if (!g_klog_sd_path_built) klog_sd_build_path();
 
-    /* First call uses O_TRUNC to start a fresh file for this boot.
-     * Subsequent calls (the periodic flusher) use O_APPEND. */
-    int flags;
-    if (g_klog_flush_iter == 0) {
-        flags = 0x241;  /* O_WRONLY|O_CREAT|O_TRUNC */
-    } else {
-        flags = 0x441;  /* O_WRONLY|O_CREAT|O_APPEND */
-    }
-    int fd = fut_vfs_open(g_klog_sd_path, flags, 0644);
+    /* Always O_APPEND. fat_vnode_ops has no .truncate callback, so
+     * O_TRUNC silently fails on FAT — and on real hardware the
+     * truncate path appears to hang on cluster-chain teardown when
+     * the file already exists from a prior boot. Append-only avoids
+     * both the silent failure and the hang. Each boot's filename is
+     * unique (KLB{boot_seq:04X}.LOG) so cross-boot accumulation is
+     * already prevented at the path level. */
+    int fd = fut_vfs_open(g_klog_sd_path,
+                          /* O_WRONLY|O_CREAT|O_APPEND */ 0x441,
+                          0644);
     if (fd < 0) {
         if (verbose) fut_printf("[KLOG-SD] open %s failed: %d\n",
                                 g_klog_sd_path, fd);
@@ -1020,12 +1021,15 @@ static void klog_persist_to_sd_once(int verbose) {
     }
 
     /* Per-iteration marker so the user can see the flusher is alive even
-     * if the appended snapshot is identical (klog_buf full + steady). */
+     * if the appended snapshot is identical (klog_buf full + steady).
+     * Iter 0 is the pre-init flush — its marker reads "BOOT START iter 0". */
     char marker[96];
     int ticks = klog_flush_get_ticks();
     int dt = ticks - (int)g_klog_flush_ticks_started;
     int n = 0;
-    const char *m = "\n=== [KLOG-SD] flush iter ";
+    const char *m = (g_klog_flush_iter == 0)
+                    ? "\n=== [KLOG-SD] BOOT START iter "
+                    : "\n=== [KLOG-SD] flush iter ";
     for (const char *p = m; *p && n < (int)sizeof(marker) - 1; p++) marker[n++] = *p;
     /* iter number as decimal */
     unsigned it = g_klog_flush_iter;
@@ -1054,10 +1058,9 @@ static void klog_persist_to_sd_once(int verbose) {
     char *buf = (char *)fut_malloc(cap);
     if (buf) {
         size_t got = klog_snapshot(buf, cap);
-        /* On the first call write only the snapshot — no leading marker. */
-        if (g_klog_flush_iter > 0) {
-            (void)fut_vfs_write(fd, marker, (size_t)n);
-        }
+        /* Always write the per-iteration marker, including iter 0 — gives
+         * the user a fixed string to grep for to find this boot's start. */
+        (void)fut_vfs_write(fd, marker, (size_t)n);
         ssize_t w = fut_vfs_write(fd, buf, got);
         if (verbose) fut_printf("[KLOG-SD] wrote %lld/%zu bytes to %s (iter %u)\n",
                                 (long long)w, got, g_klog_sd_path,

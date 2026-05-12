@@ -18,6 +18,7 @@
 #include <kernel/fut_mm.h>
 #include <kernel/fut_thread.h>
 #include <kernel/fut_task.h>
+#include <kernel/acpi.h>
 #include <kernel/fut_fipc.h>
 #include <kernel/exec.h>
 #include <kernel/fut_vfs.h>
@@ -2255,10 +2256,33 @@ void fut_kernel_main(void) {
          * read-only on platforms where no EC is present. */
         extern int cros_ec_init(void);
 
-        acpi_pm_init(0, 0, 0, 0);
+        /* Pull PM1A/PM_TMR/GPE0 port addresses out of the FADT instead
+         * of passing zeros — the user's Gemini Lake boot log was showing
+         * "acpi_pm: invalid PM1 port configuration" because the call was
+         * acpi_pm_init(0,0,0,0). FADT fields are 32-bit I/O port
+         * addresses; on x86 they fit in a u16. acpi_get_fadt() returns
+         * NULL if no FADT is published, in which case we fall back to
+         * the all-zeros call and the drivers' own sanity checks bail. */
+        extern acpi_fadt_t *acpi_get_fadt(void);
+        acpi_fadt_t *fadt = acpi_get_fadt();
+        if (fadt) {
+            uint16_t pm1a_evt = (uint16_t)fadt->pm1a_event_block;
+            uint16_t pm1a_cnt = (uint16_t)fadt->pm1a_control_block;
+            uint16_t pm_tmr   = (uint16_t)fadt->pm_timer_block;
+            uint16_t gpe0     = (uint16_t)fadt->gpe0_block;
+            fut_printf("[ACPI] FADT: PM1A_EVT=0x%04x PM1A_CNT=0x%04x PM_TMR=0x%04x GPE0=0x%04x\n",
+                       pm1a_evt, pm1a_cnt, pm_tmr, gpe0);
+            acpi_pm_init(pm1a_evt, pm1a_cnt, pm_tmr, gpe0);
+            /* acpi_button shares PM1A_EVT with acpi_pm; PM1A_EN is in the
+             * upper half of the PM1A_EVT 4-byte block (PM1A_EVT_BLK is
+             * 4 bytes: STS at +0 and EN at +2). */
+            acpi_button_init(pm1a_evt, pm1a_evt + 2);
+        } else {
+            acpi_pm_init(0, 0, 0, 0);
+            acpi_button_init(0, 0);
+        }
         acpi_ec_init(0, 0);
         acpi_thermal_init(NULL);
-        acpi_button_init(0, 0);
         cros_ec_init();
     }
 

@@ -2160,18 +2160,17 @@ void fut_kernel_main(void) {
             fut_printf("[INIT] Intel: entering intel_lpss_init\n");
             intel_lpss_init();
             /* Probe LPSS I2C buses for HID-over-I2C devices (Chromebook
-             * touchpads, etc.). DISABLED by default — pending diagnosis
-             * of an HP regression where this probe loop (96 probes × 8
-             * buses, each potentially timing out on no-ACK) seems to
-             * break subsequent USB enumeration. Re-enable when the
-             * probe path is bounded against bus stalls. */
-            #if 0
+             * touchpads, etc.). The probe was the root cause of the HP
+             * USB regression — a stalled controller burned ~48 s of
+             * POLL_TIMEOUT × 96 attempts and broke later xhci_init.
+             * 801ab5c6 bounds the probe: clean NACKs (-6 ENXIO) keep
+             * trying the next address, but any other error skips the
+             * rest of that bus. Worst case is now ~4 s. */
             {
                 extern int intel_i2c_hid_init(void);
                 fut_printf("[INIT] Intel: entering intel_i2c_hid_init\n");
                 intel_i2c_hid_init();
             }
-            #endif
             fut_printf("[INIT] Intel: entering intel_smbus_init\n");
             intel_smbus_init();
             fut_printf("[INIT] Intel: entering intel_spi_init\n");

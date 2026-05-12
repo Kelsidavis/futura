@@ -268,14 +268,17 @@ long sys_nanosleep(const fut_timespec_t *u_req, fut_timespec_t *u_rem) {
 #ifdef __x86_64__
         /* Timer-broken fallback: on hardware where the LAPIC timer ISR isn't
          * incrementing system_ticks (Lenovo L490 in early bring-up), the
-         * timer-driven waitq sleep below never wakes. Use rdtsc to drive a
-         * busy-yield until the requested time has elapsed in real wall-clock
-         * cycles. fut_cycles_per_ms() runs through PERF-CAL and sets the
-         * g_timer_ticks_broken flag when its tick-wait times out.
+         * timer-driven waitq sleep below never wakes.
          *
-         * Cost: this thread polls rdtsc + fut_schedule() until the deadline,
-         * never sleeping the CPU. Acceptable when the alternative is
-         * deadlock at boot. */
+         * CRITICAL: do NOT call fut_schedule() inside this loop. fut_schedule
+         * may switch us to the idle thread, which executes `hlt` waiting for
+         * an interrupt. With broken timer, no timer IRQ fires to wake idle,
+         * so the kernel deadlocks. Just pure-spin on rdtsc and yield ONLY
+         * via the `pause` hint, which keeps us running on this CPU.
+         *
+         * Cost: this thread monopolizes the CPU during the sleep. Acceptable
+         * when the alternative is deadlock. Single-CPU only matters for
+         * boot — once timer works, this path doesn't run. */
         extern _Atomic int g_timer_ticks_broken;
         if (__atomic_load_n(&g_timer_ticks_broken, __ATOMIC_ACQUIRE)) {
             extern uint64_t fut_rdtsc(void);
@@ -293,7 +296,7 @@ long sys_nanosleep(const fut_timespec_t *u_req, fut_timespec_t *u_rem) {
                         task->signal_mask;
                     if (sig & ~blk) break;
                 }
-                fut_schedule();
+                __asm__ volatile("pause" ::: "memory");
             }
             goto sleep_done;
         }

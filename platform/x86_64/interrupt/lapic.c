@@ -472,16 +472,26 @@ void lapic_timer_calibrate_and_start(uint32_t hz, uint8_t vector) {
             fut_printf("\n");
             fut_printf("####################################################################\n");
             fut_printf("##  CRITICAL: PIT FALLBACK ALSO NOT FIRING — system has no timer  ##\n");
+            fut_printf("##  Got %llu ticks in 100ms via PIT (expected ≥5).               ##\n",
+                       (unsigned long long)(retick_after - retick_before));
             fut_printf("##  Kernel will continue but nanosleep/select/poll/sleep are all  ##\n");
             fut_printf("##  on the rdtsc-busy fallback. Preemption disabled. SMP unsafe.  ##\n");
             fut_printf("####################################################################\n");
             fut_printf("\n");
             extern _Atomic int g_timer_ticks_broken;
             __atomic_store_n(&g_timer_ticks_broken, 1, __ATOMIC_RELEASE);
+            extern uint64_t g_lapic_timer_self_test_advance;
+            g_lapic_timer_self_test_advance = retick_after - retick_before;
+            extern int g_lapic_timer_source;
+            g_lapic_timer_source = 0; /* none */
         } else {
             fut_printf("[LAPIC-TIMER] PIT fallback OK: system_ticks advanced %llu -> %llu in ~100ms\n",
                        (unsigned long long)retick_before,
                        (unsigned long long)retick_after);
+            extern uint64_t g_lapic_timer_self_test_advance;
+            g_lapic_timer_self_test_advance = retick_after - retick_before;
+            extern int g_lapic_timer_source;
+            g_lapic_timer_source = 2; /* PIT */
         }
     } else {
         fut_printf("[LAPIC-TIMER] self-test OK: system_ticks advanced from %llu to %llu in ~100ms\n",
@@ -489,6 +499,8 @@ void lapic_timer_calibrate_and_start(uint32_t hz, uint8_t vector) {
                    (unsigned long long)ticks_after);
         extern uint64_t g_lapic_timer_self_test_advance;
         g_lapic_timer_self_test_advance = ticks_after - ticks_before;
+        extern int g_lapic_timer_source;
+        g_lapic_timer_source = 1; /* LAPIC */
     }
 }
 
@@ -498,6 +510,8 @@ void lapic_timer_calibrate_and_start(uint32_t hz, uint8_t vector) {
  * user see at-a-glance whether the timer is working without scrolling
  * back through hundreds of lines. */
 uint64_t g_lapic_timer_self_test_advance = 0;
+/* 0 = none (both LAPIC and PIT failed), 1 = LAPIC, 2 = PIT fallback. */
+int g_lapic_timer_source = 0;
 
 /**
  * Check if LAPIC is enabled.

@@ -3000,7 +3000,13 @@ try_ramdisk: (void)0;
                  * fallback (e1197112) is what's holding things together. */
 #if defined(__x86_64__)
                 extern uint64_t g_lapic_timer_self_test_advance;
-                fut_printf("[INIT] LAPIC timer health: %llu ticks advanced in 100ms self-test (expect ~10)\n",
+                extern int g_lapic_timer_source;
+                const char *src_name =
+                    g_lapic_timer_source == 1 ? "LAPIC" :
+                    g_lapic_timer_source == 2 ? "PIT (fallback)" :
+                    "NONE (rdtsc-busy)";
+                fut_printf("[INIT] timer health: source=%s, %llu ticks in 100ms self-test (expect ~10)\n",
+                           src_name,
                            (unsigned long long)g_lapic_timer_self_test_advance);
 #endif
                 if (fmt_rc == 0) {

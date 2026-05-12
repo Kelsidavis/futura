@@ -202,6 +202,16 @@ void lapic_send_eoi(void) {
 }
 
 /**
+ * Public wrapper for reading any LAPIC register, dispatched MMIO or MSR
+ * according to the current xAPIC / x2APIC mode. Returns 0 if neither
+ * is available. Used by diagnostic call sites that need to dump LAPIC
+ * state from outside this translation unit.
+ */
+uint32_t lapic_read_reg(uint32_t reg) {
+    return lapic_read(reg);
+}
+
+/**
  * Send IPI (Inter-Processor Interrupt) to target CPU.
  */
 void lapic_send_ipi(uint32_t apic_id, uint32_t vector) {

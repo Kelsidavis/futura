@@ -246,6 +246,29 @@ static void idle_thread_entry(void *arg) {
         if (!dbg_idle_once) {
             dbg_idle_once = 1;
             fut_printf("[BCRUMB-IDLE] idle thread reached entry function\n");
+#ifdef __x86_64__
+            /* Dump LAPIC timer state immediately before idle sti;hlt's.
+             * If the timer is no longer programmed periodic, the next
+             * tick will never fire and idle halts forever — exactly the
+             * L490 symptom. The readbacks tell us whether LVT_TIMER kept
+             * periodic mode (bit 17), whether TIMER_CURRENT is counting
+             * down toward a reload, and whether the LAPIC ISR bit for
+             * vector 32 stayed set (suppressing further deliveries). */
+            extern uint32_t lapic_read_reg(uint32_t reg);
+            uint32_t lvt = lapic_read_reg(0x320);
+            uint32_t cur = lapic_read_reg(0x390);
+            uint32_t init_cnt = lapic_read_reg(0x380);
+            uint32_t divcfg = lapic_read_reg(0x3E0);
+            uint32_t isr_low = lapic_read_reg(0x100);
+            extern _Atomic int g_timer_ticks_broken;
+            int tb = __atomic_load_n(&g_timer_ticks_broken, __ATOMIC_ACQUIRE);
+            fut_printf("[BCRUMB-IDLE] LAPIC LVT_TIMER=0x%08x mode=%s mask=%u vec=%u\n",
+                       lvt,
+                       ((lvt >> 17) & 1) ? "periodic" : "oneshot",
+                       (lvt >> 16) & 1, lvt & 0xFF);
+            fut_printf("[BCRUMB-IDLE] TIMER_CURRENT=0x%08x TIMER_INITIAL=0x%08x DIV=0x%x ISR[0:31]=0x%08x g_timer_broken=%d\n",
+                       cur, init_cnt, divcfg, isr_low, tb);
+#endif
         }
     }
     for (;;) {

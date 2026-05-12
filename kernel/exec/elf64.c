@@ -1168,16 +1168,18 @@ static int build_user_stack(fut_mm_t *mm,
     fut_printf("[BISECT-A] post-CR3 fetch+printf OK (cr3=0x%llx)\n",
                (unsigned long long)fut_read_cr3());
 
-    /* Both g_bisect_mask_timer_before_first_user (above) and the explicit
-     * cli below close off preemption. If A1 still never fires after that,
-     * the cliff is genuinely INSIDE the second fut_printf — fb_console
-     * scroll, fut_serial_putc LSR spin, klog_write, etc. — and chasing
-     * it with another fut_printf is hopeless. Drop a direct FB pixel poke
-     * here that bypasses everything: any visible yellow square at the
-     * top-right corner means we got past BISECT-A's printf return. */
+    /* Split the A → A1 gap into per-step waypoints so we can read the
+     * FB log and tell exactly which operation between A's printf and
+     * A1's printf is the cliff. Order matters — each fut_printf is
+     * also a "marker" the user can see in FB. We previously had cli +
+     * fb_poke + printf between A and A1 and never saw A1 land, so split
+     * them out and we'll see exactly the last line that survives. */
+    fut_printf("[BISECT-A0.3] before cli\n");
     __asm__ volatile("cli" ::: "memory");
+    fut_printf("[BISECT-A0.5] after cli, before fb_poke\n");
     extern void fb_poke_corner_marker(int n);
     fb_poke_corner_marker(16);  /* yellow square if we get here */
+    fut_printf("[BISECT-A0.7] after fb_poke, before A1 banner\n");
 
     fut_printf("[BISECT-A1] survived the post-CR3 printf, about to compute handoff_frame\n");
     fb_poke_corner_marker(32); /* longer yellow bar if A1's printf returned */

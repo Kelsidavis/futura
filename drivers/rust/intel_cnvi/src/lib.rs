@@ -150,14 +150,21 @@ fn pci_write16(bus: u8, dev: u8, func: u8, offset: u8, val: u16) {
 
 const INTEL_VENDOR_ID: u16 = 0x8086;
 
-/// Known CNVi WiFi device IDs
+/// Known CNVi WiFi device IDs (PCH-side CNVi MAC for the AX/AC family)
 const CNVI_DEVICE_IDS: &[u16] = &[
+    // WiFi 6 / 6E / 7
     0xA370, // AX201 / WiFi 6 (Ice Lake)
     0x2723, // AX200
     0x2725, // AX210 / WiFi 6E
     0x51F0, // AX211 (Alder Lake)
     0x7AF0, // AX211 (Raptor Lake)
     0x7E40, // BE200 / WiFi 7 (Meteor Lake)
+    // Wireless-AC CNVi (covers Whiskey Lake / L490, Coffee Lake, Cannon Lake)
+    0x02F0, // 9462 (CNL)
+    0x4DF0, // 9462 (CML-U / CML-H)
+    0x9DF0, // 9560 (CNL/CFL/WHL) — Lenovo L490 typical part
+    0x34F0, // 9462 (ICL companion)
+    0x43F0, // 9462 (TGL)
 ];
 
 /// PCI class 02h = Network Controller, subclass 80h = Other
@@ -399,6 +406,11 @@ fn device_name(device_id: u16) -> &'static [u8] {
         0x51F0 => b"AX211 (ADL)\0",
         0x7AF0 => b"AX211 (RPL)\0",
         0x7E40 => b"BE200 (MTL WiFi7)\0",
+        0x02F0 => b"9462 (CNL WiFi-AC)\0",
+        0x4DF0 => b"9462 (CML WiFi-AC)\0",
+        0x9DF0 => b"9560 (CNL/CFL/WHL WiFi-AC)\0",
+        0x34F0 => b"9462 (ICL WiFi-AC)\0",
+        0x43F0 => b"9462 (TGL WiFi-AC)\0",
         _      => b"unknown\0",
     }
 }

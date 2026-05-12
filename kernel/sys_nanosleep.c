@@ -337,7 +337,9 @@ long sys_nanosleep(const fut_timespec_t *u_req, fut_timespec_t *u_rem) {
             }
         }
     }
+#ifdef __x86_64__
 sleep_done:;
+#endif
 
     /* Check if we were woken early by a signal (use thread mask) */
     if (task) {

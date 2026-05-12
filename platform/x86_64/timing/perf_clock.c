@@ -35,21 +35,23 @@ uint64_t fut_cycles_per_ms(void) {
     extern void fut_printf(const char *fmt, ...);
     fut_printf("[PERF-CAL] calibrating cycles_per_ms (waits for timer ticks)...\n");
 
-    /* Bound each tick-wait so we don't hang the kernel if timer interrupts
-     * aren't firing — happened on Lenovo L490, where this function was the
-     * cliff inside the first fut_get_time_ns() call from fut_futurafs_format.
-     * Each fut_rdtsc() spin in this bound takes a handful of cycles, so the
-     * limit caps the wait at ~tens of seconds on modern CPUs, not "forever".
-     * If we hit the limit, fall back to a TSC-only self-calibration that
-     * uses rdtsc deltas of a fixed pause-loop instead of wall-clock ticks. */
-    const uint64_t CAL_SPIN_LIMIT = 50ULL * 1000ULL * 1000ULL * 1000ULL; /* ~50 G iters */
+    /* Bound each tick-wait using a TSC-derived budget so we don't hang the
+     * kernel when timer interrupts aren't firing into system_ticks (the
+     * cliff observed on Lenovo L490, where this function was the cliff
+     * inside the first fut_get_time_ns() call from fut_futurafs_format).
+     *
+     * Using rdtsc instead of an iteration count makes the budget independent
+     * of how slow `pause` is on the target CPU. ~5 s of wall time per wait
+     * is generous: at 4 GHz that's 2e10 cycles, which any sane modern x86
+     * can rdtsc-poll through long before the user thinks the box has hung. */
+    uint64_t cal_t0 = fut_rdtsc();
+    const uint64_t TSC_BUDGET = 20ULL * 1000ULL * 1000ULL * 1000ULL; /* ~5 s @ 4 GHz */
 
     /* Align to tick boundary for consistency. */
     uint64_t start_tick = fut_get_ticks();
-    uint64_t spins = 0;
     while (fut_get_ticks() == start_tick) {
         cpu_relax();
-        if (++spins >= CAL_SPIN_LIMIT) {
+        if (fut_rdtsc() - cal_t0 >= TSC_BUDGET) {
             goto fallback;
         }
     }
@@ -59,10 +61,10 @@ uint64_t fut_cycles_per_ms(void) {
 
     /* Wait ~50ms to average out jitter. */
     const uint64_t target_tick = start_tick + 50u;
-    spins = 0;
+    uint64_t wait_t0 = fut_rdtsc();
     while (fut_get_ticks() < target_tick) {
         cpu_relax();
-        if (++spins >= CAL_SPIN_LIMIT) {
+        if (fut_rdtsc() - wait_t0 >= TSC_BUDGET) {
             goto fallback;
         }
     }

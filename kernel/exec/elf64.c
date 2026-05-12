@@ -46,8 +46,13 @@
 #define TLS_SIZE        PAGE_SIZE
 
 /* Diagnostic: mask the LAPIC timer across the first userspace handoff so we can
- * separate "dies in transition" from "dies on the first post-entry timer IRQ". */
-static bool g_bisect_mask_timer_before_first_user = true;
+ * separate "dies in transition" from "dies on the first post-entry timer IRQ".
+ * Now OFF by default — masking the timer freezes the entire scheduler after
+ * init starts, so the periodic klog→SD flusher thread can never wake up to
+ * capture what init actually does. The original "dies on first IRQ" question
+ * is moot now that we have the SD-flusher capturing arbitrary post-IRETQ
+ * state. */
+static bool g_bisect_mask_timer_before_first_user = false;
 /* Diagnostic: briefly execute under the target CR3, then restore the original
  * CR3 and report the result. This avoids depending on the console path while
  * the target CR3 is active. */

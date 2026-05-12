@@ -206,30 +206,6 @@ const LPSS_GENERAL_LTR_MODE_SW: u32 = 1 << 2;
 const LPSS_GENERAL_IO_EN: u32 = 1 << 0;
 
 // ---------------------------------------------------------------------------
-// LPSS Private Registers (combined-BAR layout, Skylake+ / Apollo / Gemini Lake)
-// ---------------------------------------------------------------------------
-//
-// On older Atom platforms the LPSS private control registers (resets,
-// general, software LTR, remap address) live in a separate BAR1. Starting
-// with Skylake — and including Apollo Lake / Gemini Lake / Cannon Lake /
-// Tiger Lake — there is no BAR1: the private window is folded into BAR0
-// at offset 0x200. PCI config reports BAR1=0 in that case.
-//
-// Without deasserting the function reset in this window, the DesignWare
-// I2C core comes up enough to expose its capability/param registers but
-// every actual transfer hangs (IC_STATUS.TFNF stays clear forever).
-// That was the on-hardware symptom: every probe → ETIMEDOUT.
-
-/// Offset of the private register window inside BAR0 (combined layout).
-const LPSS_PRIV_OFFSET: usize = 0x200;
-/// Reset control register, relative to LPSS_PRIV_OFFSET.
-const LPSS_PRIV_RESETS: usize = 0x04;
-/// Bit 0: function (DesignWare core) reset deassert.
-const LPSS_PRIV_RESETS_FUNC: u32 = 1 << 0;
-/// Bit 1: integrated DMA reset deassert.
-const LPSS_PRIV_RESETS_IDMA: u32 = 1 << 1;
-
-// ---------------------------------------------------------------------------
 // DW I2C Register offsets (BAR0, Synopsys DesignWare)
 // ---------------------------------------------------------------------------
 
@@ -1014,24 +990,9 @@ fn get_i2c_controller(idx: u32) -> Result<&'static LpssController, i32> {
 fn init_i2c_controller(ctrl: &mut LpssController) -> i32 {
     let base = ctrl.bar0_base;
 
-    // Initialise LPSS private registers. Two layouts in the wild:
-    //   • Pre-Skylake Atom: separate BAR1 holds the private window.
-    //   • Skylake / Apollo / Gemini Lake / TGL+: no BAR1, private window
-    //     lives at BAR0 + 0x200.
-    // We pick by which BAR is mapped. The combined-BAR path also writes
-    // the function-reset deassert, which is mandatory before any transfer
-    // will complete — without it the DesignWare core comes up but every
-    // IC_STATUS poll stalls. Found this diagnosing HP Gemini Lake where
-    // intel_i2c_hid's probe hit POLL_TIMEOUT on all 5 buses.
+    // Initialise LPSS private registers if BAR1 is mapped.
     if ctrl.bar1_base != 0 {
         lpss_private_init(ctrl.bar1_base);
-    } else {
-        reg_write(
-            base,
-            LPSS_PRIV_OFFSET + LPSS_PRIV_RESETS,
-            LPSS_PRIV_RESETS_FUNC | LPSS_PRIV_RESETS_IDMA,
-        );
-        fence(Ordering::SeqCst);
     }
 
     // Disable the controller before configuring.

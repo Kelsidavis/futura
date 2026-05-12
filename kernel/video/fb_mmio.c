@@ -441,8 +441,22 @@ void fb_boot_splash(void) {
      * much later in kernel_main; calling it here returns -ENOMEM on every
      * attempt and fb_console never comes up on real hardware. The boot
      * identity map (PDPT[0..3] = 4 GB with 2 MB huge pages) covers any
-     * UEFI GOP framebuffer location, so phys-addr == virt-addr here. */
+     * UEFI GOP framebuffer location, so phys-addr == virt-addr here.
+     *
+     * IDEMPOTENT: fb_boot_splash is called twice on x86_64 — once from
+     * platform_init (early, low-identity map only) and once from
+     * kernel_main (late, after fb_promote_to_high_half_virt). On the
+     * second call g_fb_virt is already in the high-half. Re-running the
+     * fast path and overwriting g_fb_virt back to LOW phys was the cause
+     * of the L490 page fault inside fb_poke_corner_marker at CR2=0x80009580
+     * after CR3 swap: fb_console.fb_mem stayed HIGH (its init is idempotent)
+     * but g_fb_virt got demoted to LOW, so the direct-write helpers faulted
+     * while fb_console_putc kept working. */
     if (g_fb_hw.phys != 0 && g_fb_hw.phys < (1ULL << 32)) {
+        if ((uintptr_t)g_fb_virt >= 0xFFFFFFFF00000000ULL) {
+            /* Already promoted to high-half — don't demote. */
+            return;
+        }
         g_fb_virt = (volatile uint8_t *)(uintptr_t)g_fb_hw.phys;
         g_fb_hw.length = (size_t)g_fb_hw.info.pitch * (size_t)g_fb_hw.info.height;
         g_fb_available = true;

@@ -972,6 +972,26 @@ static void klog_sd_build_path(void) {
     g_klog_sd_path_built = 1;
 }
 
+/* Append a marker + the current klog snapshot to the SD log file.
+ *
+ * Earlier version used O_TRUNC + write, which exposed a FAT-driver bug:
+ * fat_vnode_ops has no .truncate callback, so the VFS silently skips
+ * truncation for FAT files. Reopening with O_TRUNC therefore left the
+ * file's existing clusters intact, and the second open/write at offset
+ * 0 wrote new data but the on-disk dir entry / cluster chain ended up
+ * in a state where the host PC only saw the first boot's content.
+ *
+ * Switching to O_APPEND sidesteps that path entirely: each iteration
+ * appends a fresh chunk to the end. The user just tails the file. */
+static unsigned g_klog_flush_iter = 0;
+static unsigned g_klog_flush_ticks_started = 0;
+
+static int klog_flush_get_ticks(void) {
+    extern uint64_t fut_timer_get_ticks(void) __attribute__((weak));
+    if (fut_timer_get_ticks) return (int)(fut_timer_get_ticks() & 0x7FFFFFFF);
+    return 0;
+}
+
 static void klog_persist_to_sd_once(int verbose) {
     extern int fut_vfs_open(const char *path, int flags, int mode);
     extern ssize_t fut_vfs_write(int fd, const void *buf, size_t size);
@@ -984,30 +1004,76 @@ static void klog_persist_to_sd_once(int verbose) {
     }
     if (!g_klog_sd_path_built) klog_sd_build_path();
 
-    int fd = fut_vfs_open(g_klog_sd_path,
-                          /* O_WRONLY|O_CREAT|O_TRUNC */ 0x241,
-                          0644);
+    /* First call uses O_TRUNC to start a fresh file for this boot.
+     * Subsequent calls (the periodic flusher) use O_APPEND. */
+    int flags;
+    if (g_klog_flush_iter == 0) {
+        flags = 0x241;  /* O_WRONLY|O_CREAT|O_TRUNC */
+    } else {
+        flags = 0x441;  /* O_WRONLY|O_CREAT|O_APPEND */
+    }
+    int fd = fut_vfs_open(g_klog_sd_path, flags, 0644);
     if (fd < 0) {
         if (verbose) fut_printf("[KLOG-SD] open %s failed: %d\n",
                                 g_klog_sd_path, fd);
         return;
     }
+
+    /* Per-iteration marker so the user can see the flusher is alive even
+     * if the appended snapshot is identical (klog_buf full + steady). */
+    char marker[96];
+    int ticks = klog_flush_get_ticks();
+    int dt = ticks - (int)g_klog_flush_ticks_started;
+    int n = 0;
+    const char *m = "\n=== [KLOG-SD] flush iter ";
+    for (const char *p = m; *p && n < (int)sizeof(marker) - 1; p++) marker[n++] = *p;
+    /* iter number as decimal */
+    unsigned it = g_klog_flush_iter;
+    if (it == 0) {
+        marker[n++] = '0';
+    } else {
+        char tmp[12]; int tn = 0;
+        while (it && tn < 11) { tmp[tn++] = '0' + (it % 10); it /= 10; }
+        while (tn-- > 0 && n < (int)sizeof(marker) - 1) marker[n++] = tmp[tn];
+    }
+    const char *tag = " tick ";
+    for (const char *p = tag; *p && n < (int)sizeof(marker) - 1; p++) marker[n++] = *p;
+    unsigned t = (unsigned)dt;
+    if (t == 0) {
+        marker[n++] = '0';
+    } else {
+        char tmp[12]; int tn = 0;
+        while (t && tn < 11) { tmp[tn++] = '0' + (t % 10); t /= 10; }
+        while (tn-- > 0 && n < (int)sizeof(marker) - 1) marker[n++] = tmp[tn];
+    }
+    const char *end = " ===\n";
+    for (const char *p = end; *p && n < (int)sizeof(marker) - 1; p++) marker[n++] = *p;
+    marker[n] = '\0';
+
     size_t cap = 64 * 1024;
     char *buf = (char *)fut_malloc(cap);
     if (buf) {
         size_t got = klog_snapshot(buf, cap);
+        /* On the first call write only the snapshot — no leading marker. */
+        if (g_klog_flush_iter > 0) {
+            (void)fut_vfs_write(fd, marker, (size_t)n);
+        }
         ssize_t w = fut_vfs_write(fd, buf, got);
-        if (verbose) fut_printf("[KLOG-SD] wrote %lld/%zu bytes to %s\n",
-                                (long long)w, got, g_klog_sd_path);
+        if (verbose) fut_printf("[KLOG-SD] wrote %lld/%zu bytes to %s (iter %u)\n",
+                                (long long)w, got, g_klog_sd_path,
+                                g_klog_flush_iter);
         fut_free(buf);
     }
     sys_close(fd);
+
+    if (g_klog_flush_iter == 0) {
+        g_klog_flush_ticks_started = (unsigned)klog_flush_get_ticks();
+    }
+    g_klog_flush_iter++;
 }
 
 static void klog_sd_flush_thread(void *arg) {
     (void)arg;
-    /* Quiet flush every 1.5s. First write already happened in the
-     * boot thread, so we don't need to print on every tick. */
     for (;;) {
         fut_thread_sleep(1500);
         klog_persist_to_sd_once(0);

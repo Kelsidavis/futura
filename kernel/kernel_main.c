@@ -3125,7 +3125,9 @@ try_ramdisk: (void)0;
         extern int fut_vfs_open(const char *path, int flags, int mode);
         extern ssize_t fut_vfs_write(int fd, const void *buf, size_t size);
         extern int sys_close(int fd);
-        extern size_t klog_persist_read(char *out, size_t max) __attribute__((weak));
+        /* klog_snapshot lives in sys_syslog.c (BSS); reliable.
+         * klog_persist_boot_seq still names the file uniquely. */
+        extern size_t klog_snapshot(char *out, size_t max);
         extern uint32_t klog_persist_boot_seq(void) __attribute__((weak));
 
         static const char *candidates[] = { "usb1", "usb0", "usb2", "usb3" };
@@ -3142,7 +3144,7 @@ try_ramdisk: (void)0;
                 break;
             }
         }
-        if (mounted_idx >= 0 && klog_persist_read && klog_persist_boot_seq) {
+        if (mounted_idx >= 0) {
             /* Build a unique 8.3-compatible filename per boot so
              * successive runs don't stomp each other. Format:
              *   /mnt/sd/KLBNNNN.LOG     (4-hex-digit boot seq)
@@ -3150,7 +3152,14 @@ try_ramdisk: (void)0;
              * is fine for any real-hw debugging cycle. The kernel's
              * FAT driver only supports 8.3 names today; LFN write is
              * a future feature. */
-            uint32_t seq = klog_persist_boot_seq();
+            uint32_t seq = klog_persist_boot_seq ? klog_persist_boot_seq() : 0;
+            /* klog_persist's ring is at a fixed phys address the PMM
+             * may have overwritten by now, so on some boards boot_seq
+             * reads back as 0xFFFFFFFF. If we see all-ones, treat it
+             * as "unknown" and use 0 -- we'd rather overwrite the
+             * same KLB0000.LOG each boot than emit confusing KLBFFFF
+             * for a board where klog_persist is unreliable. */
+            if (seq == 0xFFFFFFFFu) seq = 0;
             char path[64];
             int n = 0;
             const char *prefix = "/mnt/sd/KLB";
@@ -3168,11 +3177,11 @@ try_ramdisk: (void)0;
                                   /* O_WRONLY|O_CREAT|O_TRUNC */ 0x241,
                                   0644);
             if (fd >= 0) {
-                /* 256 KiB matches the klog_persist ring; one alloc, one write. */
-                size_t cap = 256 * 1024;
+                /* 64 KiB matches klog_buf (KLOG_BUF_SIZE in sys_syslog.c). */
+                size_t cap = 64 * 1024;
                 char *buf = (char *)fut_malloc(cap);
                 if (buf) {
-                    size_t got = klog_persist_read(buf, cap);
+                    size_t got = klog_snapshot(buf, cap);
                     ssize_t w = fut_vfs_write(fd, buf, got);
                     fut_printf("[KLOG-SD] wrote %lld/%zu bytes to %s\n",
                                (long long)w, got, path);

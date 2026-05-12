@@ -65,6 +65,23 @@ size_t klog_write_pos = 0;
 /* Consumer read cursor for SYSLOG_ACTION_READ (2) — advances on read */
 static size_t klog_read_pos = 0;
 
+/* Copy up to `max` bytes of the current boot's kernel log into `out`,
+ * unwrapped (oldest first, newest last). Doesn't advance any cursor --
+ * pure snapshot read for the late-boot SD-card persistence path. Lives
+ * in BSS (klog_buf), so unlike klog_persist's at-a-fixed-phys ring,
+ * the PMM can't recycle it out from under us between writes and end
+ * of boot. Returns bytes copied. */
+size_t klog_snapshot(char *out, size_t max) {
+    if (!out || max == 0) return 0;
+    size_t n = klog_count;
+    if (n > max) n = max;
+    /* Read from klog_head, wrapping. */
+    for (size_t i = 0; i < n; i++) {
+        out[i] = klog_buf[(klog_head + i) % KLOG_BUF_SIZE];
+    }
+    return n;
+}
+
 static int klog_console_level = 7;  /* Default: show all but debug */
 
 /* Track whether we're at the start of a new line for timestamp injection */

@@ -4650,6 +4650,7 @@ void fut_futurafs_init(void) {
 }
 
 int fut_futurafs_format(struct fut_blockdev *dev, const char *label, uint32_t inode_ratio) {
+    fut_printf("[FUTURAFS-FMT] entry: dev=%p\n", (void *)dev);
     if (!dev) {
         return FUTURAFS_EINVAL;
     }
@@ -4670,6 +4671,10 @@ int fut_futurafs_format(struct fut_blockdev *dev, const char *label, uint32_t in
     uint64_t inode_bitmap_block = 1 + inode_table_blocks;
     uint64_t data_bitmap_block = inode_bitmap_block + 1;
     uint64_t data_blocks_start = data_bitmap_block + 1;
+    fut_printf("[FUTURAFS-FMT] layout: total=%llu inode_tbl=%llu data_start=%llu\n",
+               (unsigned long long)total_blocks,
+               (unsigned long long)inode_table_blocks,
+               (unsigned long long)data_blocks_start);
 
     /* Create superblock */
     struct futurafs_superblock sb = {0};
@@ -4686,7 +4691,10 @@ int fut_futurafs_format(struct fut_blockdev *dev, const char *label, uint32_t in
     sb.data_bitmap_block = data_bitmap_block;
     sb.data_blocks_start = data_blocks_start;
 
+    fut_printf("[FUTURAFS-FMT] calling fut_get_time_ns...\n");
     uint64_t format_now = fut_get_time_ns() / 1000000000ULL;
+    fut_printf("[FUTURAFS-FMT] fut_get_time_ns returned, format_now=%llu\n",
+               (unsigned long long)format_now);
     sb.mount_time = format_now;
     sb.write_time = format_now;
     sb.mount_count = 0;

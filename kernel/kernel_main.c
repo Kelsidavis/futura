@@ -1139,16 +1139,6 @@ void fut_kernel_main(void) {
     fut_printf("[INIT] PMM initialized: %llu pages total, %llu pages free\n",
                fut_pmm_total_pages(), fut_pmm_free_pages());
 
-    /* Promote the boot-time framebuffer mapping from the low-half identity
-     * map (PML4[0], which user processes don't inherit) to a kernel-high-
-     * half virt (PML4[511] via the secondary window). Otherwise the very
-     * first CR3 swap to a user process's PT makes the FB virt unreachable
-     * and the next fut_printf silently dies. Needs PMM up for pmap_map. */
-#if defined(__x86_64__)
-    extern void fb_promote_to_high_half_virt(void);
-    fb_promote_to_high_half_virt();
-#endif
-
     /* Initialize kernel heap */
     fut_printf("[INIT] Initializing kernel heap...\n");
 
@@ -1171,6 +1161,18 @@ void fut_kernel_main(void) {
     fut_printf("[INIT] Initializing MM subsystem...\n");
     extern void fut_mm_system_init(void);
     fut_mm_system_init();
+
+    /* Promote the boot-time framebuffer mapping from the low-half identity
+     * map (PML4[0], which user processes don't inherit) to a kernel-high-
+     * half virt (PML4[511] via the secondary window). Otherwise the very
+     * first CR3 swap to a user process's PT makes the FB virt unreachable.
+     * Must run AFTER fut_heap_init so the heap has reserved its phys range
+     * in the PMM, otherwise pmap_map's PT-page alloc would come from within
+     * the heap region and get clobbered when buddy hands it out for malloc. */
+#if defined(__x86_64__)
+    extern void fb_promote_to_high_half_virt(void);
+    fb_promote_to_high_half_virt();
+#endif
 
     fut_printf("[INIT] Initializing timer subsystem...\n");
     fut_timer_subsystem_init();

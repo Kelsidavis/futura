@@ -165,6 +165,7 @@ const CNVI_DEVICE_IDS: &[u16] = &[
     0x9DF0, // 9560 (CNL/CFL/WHL) — Lenovo L490 typical part
     0x34F0, // 9462 (ICL companion)
     0x43F0, // 9462 (TGL)
+    0x31DC, // 9461/9462 (APL/GLK) — Gemini Lake HP Chromebook
 ];
 
 /// PCI class 02h = Network Controller, subclass 80h = Other
@@ -411,6 +412,7 @@ fn device_name(device_id: u16) -> &'static [u8] {
         0x9DF0 => b"9560 (CNL/CFL/WHL WiFi-AC)\0",
         0x34F0 => b"9462 (ICL WiFi-AC)\0",
         0x43F0 => b"9462 (TGL WiFi-AC)\0",
+        0x31DC => b"9461/9462 (APL/GLK WiFi-AC)\0",
         _      => b"unknown\0",
     }
 }

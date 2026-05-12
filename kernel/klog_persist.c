@@ -140,6 +140,20 @@ void klog_persist_init(void) {
 
     atomic_store_explicit(&g_klog_initialized, 1, memory_order_release);
 
+    /* Read back boot_seq immediately as a sanity check. If the persist
+     * region's phys page isn't actually backing this VA — e.g. it's been
+     * unmapped or PMM stomped it — the readback will show a different
+     * value (often 0xFFFFFFFF when DRAM uninitialized). The trampoline's
+     * boot_seq print has shown 0xFFFFFFFF on the HP Chromebook even though
+     * we wrote (prev_seq + 1) here. Surfacing the mismatch points at the
+     * bug rather than letting it look like the trampoline is reading the
+     * wrong field. */
+    uint32_t readback = g_klog->boot_seq;
+    if (readback != prev_seq + 1) {
+        fut_printf("[KLOG-PERSIST] WARN: wrote boot_seq=%u but readback=%u — persist region not sticky\n",
+                   prev_seq + 1, readback);
+    }
+
     fut_printf("[KLOG-PERSIST] Initialized at phys=0x%llx size=%llu boot_seq=%u\n",
                (unsigned long long)KLOG_PERSIST_PHYS,
                (unsigned long long)KLOG_PERSIST_SIZE,

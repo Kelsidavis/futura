@@ -1637,6 +1637,30 @@ int fut_stage_shell_binary(void) {
                       "/bin/shell");
 }
 
+/* Startup sound: bundled as both the original MP3 (preserved as source-
+ * of-truth for future MP3-decoder work) and a 10-second/22.05 kHz/stereo
+ * S16LE PCM clip with a 1-second fade-out at the tail (decode-free, can
+ * be handed straight to whichever audio backend comes up first). Staged
+ * at /usr/share/sounds/ following the XDG-ish layout the userland shell
+ * uses for other assets. */
+extern const uint8_t _binary_assets_sounds_startup_mp3_start[];
+extern const uint8_t _binary_assets_sounds_startup_mp3_end[];
+extern const uint8_t _binary_assets_sounds_startup_pcm_start[];
+extern const uint8_t _binary_assets_sounds_startup_pcm_end[];
+
+int fut_stage_startup_sound(void) {
+    (void)fut_vfs_mkdir("/usr", 0755);
+    (void)fut_vfs_mkdir("/usr/share", 0755);
+    (void)fut_vfs_mkdir("/usr/share/sounds", 0755);
+    int mp3_rc = stage_blob(_binary_assets_sounds_startup_mp3_start,
+                            _binary_assets_sounds_startup_mp3_end,
+                            "/usr/share/sounds/startup.mp3");
+    int pcm_rc = stage_blob(_binary_assets_sounds_startup_pcm_start,
+                            _binary_assets_sounds_startup_pcm_end,
+                            "/usr/share/sounds/startup.pcm");
+    return (mp3_rc < 0) ? mp3_rc : pcm_rc;
+}
+
 #if ENABLE_RUST_USERLAND
 int fut_stage_rust_hello_binary(void) {
     (void)fut_vfs_mkdir("/bin", 0755);

@@ -1191,6 +1191,11 @@ OBJECTS += $(patsubst %.S,$(OBJ_DIR)/%.o,$(filter %.S,$(ALL_SOURCES)))
 
 SHELL_BIN := $(BIN_DIR)/$(PLATFORM)/user/shell
 SHELL_BLOB := $(OBJ_DIR)/kernel/blobs/shell_blob.o
+# Embedded startup sound assets (staged at /usr/share/sounds/ on boot).
+STARTUP_SOUND_MP3 := assets/sounds/startup.mp3
+STARTUP_SOUND_PCM := assets/sounds/startup.pcm
+STARTUP_SOUND_MP3_BLOB := $(OBJ_DIR)/kernel/blobs/startup_sound_mp3.o
+STARTUP_SOUND_PCM_BLOB := $(OBJ_DIR)/kernel/blobs/startup_sound_pcm.o
 FBTEST_BIN := $(BIN_DIR)/$(PLATFORM)/user/fbtest
 FBTEST_BLOB := $(OBJ_DIR)/kernel/blobs/fbtest_blob.o
 INIT_BIN := $(BIN_DIR)/$(PLATFORM)/user/init
@@ -1488,6 +1493,10 @@ ifneq ($(shell uname -s),Darwin)
 OBJECTS += $(SHELL_BLOB)
 endif
 OBJECTS += $(INIT_BLOB) $(SECOND_STUB_BLOB)
+# Startup sound (both formats — MP3 stays as source-of-truth, PCM is the
+# decode-free 22.05 kHz/stereo/16-bit fade-out clip the kernel can hand
+# straight to whatever audio backend comes up first).
+OBJECTS += $(STARTUP_SOUND_MP3_BLOB) $(STARTUP_SOUND_PCM_BLOB)
 # Diagnostics (optional)
 ifeq ($(ENABLE_FB_DIAGNOSTICS),1)
 OBJECTS += $(FBTEST_BLOB)
@@ -1900,6 +1909,14 @@ $(SHELL_BIN): libfutura
 	@$(MAKE) -C src/user/shell -f Makefile.simple PLATFORM=$(PLATFORM) all
 
 $(SHELL_BLOB): $(SHELL_BIN) | $(OBJ_DIR)/kernel/blobs
+	@echo "OBJCOPY $@"
+	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
+
+$(STARTUP_SOUND_MP3_BLOB): $(STARTUP_SOUND_MP3) | $(OBJ_DIR)/kernel/blobs
+	@echo "OBJCOPY $@"
+	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
+
+$(STARTUP_SOUND_PCM_BLOB): $(STARTUP_SOUND_PCM) | $(OBJ_DIR)/kernel/blobs
 	@echo "OBJCOPY $@"
 	@$(OBJCOPY) -I binary -O $(OBJCOPY_BIN_FMT) -B $(OBJCOPY_BIN_ARCH) $< $@
 

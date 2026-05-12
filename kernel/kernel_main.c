@@ -2623,6 +2623,19 @@ void fut_kernel_main(void) {
         sys_symlink("/bin/shell", "/bin/sh");
     }
 
+    /* Stage startup sound assets at /usr/share/sounds/. The .pcm is a
+     * 10-second 22.05 kHz stereo S16LE clip with a 1-second fade-out —
+     * playable as soon as a working HDA / SST output path lands. The
+     * .mp3 is the full-quality source-of-truth for whenever an MP3
+     * decoder is wired in. */
+    extern int fut_stage_startup_sound(void);
+    int sound_stage = fut_stage_startup_sound();
+    if (sound_stage != 0) {
+        fut_printf("[WARN] Failed to stage startup sound (error %d)\n", sound_stage);
+    } else {
+        fut_printf("[INIT] startup sound staged at /usr/share/sounds/startup.{mp3,pcm}\n");
+    }
+
 #else
     /* Even in non-Wayland (test) mode, stage the shell binary at /bin/shell
      * so that execve("/bin/shell", ...) works for external command execution. */

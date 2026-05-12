@@ -118,11 +118,14 @@ const MAX_DEVICES: usize = 4;
 // the well-known addresses for major Chromebook/laptop touchpad vendors.
 const CANDIDATE_ADDRS: &[u8] = &[0x15, 0x2C, 0x49, 0x2A];
 
-// Candidate HID descriptor register addresses. Chromebooks typically use
-// 0x0020; some Windows tablets use 0x0001. The HID-over-I2C spec doesn't
-// fix this — it's read from ACPI _DSM. Without an ACPI walker we just try
-// each in turn and validate the descriptor we get back.
-const CANDIDATE_HID_REGS: &[u16] = &[0x0020, 0x0001, 0x0021];
+// Candidate HID descriptor register addresses. The HID-over-I2C spec
+// doesn't fix this — it's read from ACPI _DSM. Without an ACPI walker
+// we use 0x0020, which is the universal choice on Chromebook touchpads
+// (the only I2C-HID target we currently care about). Adding the Windows-
+// tablet fallbacks (0x0001 / 0x0021) tripled probe time on hardware where
+// no I2C-HID device exists, and any board that ever needs them can be
+// extended individually rather than paying the cost for all boards.
+const CANDIDATE_HID_REGS: &[u16] = &[0x0020];
 
 // SAFETY: single-CPU boot. Once we restore SMP, this needs a real lock.
 struct State {
@@ -142,10 +145,23 @@ fn state_mut() -> &'static mut State {
 
 // ── HID descriptor probe ──
 
+/// Outcome of one HID descriptor probe attempt.
+enum ProbeResult {
+    /// Bytes returned and validated as a HID descriptor.
+    Found(HidDescriptor),
+    /// Bus responded but no slave ACKed at this address (-6 ENXIO) or the
+    /// bytes returned didn't validate as a HID descriptor. Safe to try the
+    /// next address on the same bus.
+    NoDevice,
+    /// I2C controller failed to complete the transaction (any timeout/abort
+    /// other than a clean NACK). The bus is in a weird state — caller
+    /// should skip it entirely rather than burn another ~500ms per probe.
+    BusError,
+}
+
 /// Attempt to read a HID descriptor from `slave_addr` on `bus_idx` at the
-/// given register address. Returns true if the bytes returned validate as
-/// a HID descriptor (correct bcdVersion + sensible lengths).
-fn probe_hid_descriptor(bus_idx: u32, slave_addr: u8, reg: u16) -> Option<HidDescriptor> {
+/// given register address.
+fn probe_hid_descriptor(bus_idx: u32, slave_addr: u8, reg: u16) -> ProbeResult {
     let wr = [(reg & 0xFF) as u8, ((reg >> 8) & 0xFF) as u8];
     let mut buf = [0u8; 30];
     let rc = unsafe {
@@ -158,8 +174,11 @@ fn probe_hid_descriptor(bus_idx: u32, slave_addr: u8, reg: u16) -> Option<HidDes
             buf.len() as u32,
         )
     };
+    if rc == -6 {
+        return ProbeResult::NoDevice;
+    }
     if rc != 0 {
-        return None;
+        return ProbeResult::BusError;
     }
     let desc = HidDescriptor {
         w_hid_desc_length: u16::from_le_bytes([buf[0], buf[1]]),
@@ -179,19 +198,16 @@ fn probe_hid_descriptor(bus_idx: u32, slave_addr: u8, reg: u16) -> Option<HidDes
     };
     // Validate: bcdVersion must be 0x0100, length must be 30, and the
     // report descriptor length must be plausibly nonzero.
-    if desc.bcd_version != 0x0100 {
-        return None;
+    if desc.bcd_version != 0x0100
+        || desc.w_hid_desc_length != 30
+        || desc.w_report_desc_length == 0
+        || desc.w_report_desc_length > 4096
+        || desc.w_max_input_length == 0
+        || desc.w_max_input_length > 1024
+    {
+        return ProbeResult::NoDevice;
     }
-    if desc.w_hid_desc_length != 30 {
-        return None;
-    }
-    if desc.w_report_desc_length == 0 || desc.w_report_desc_length > 4096 {
-        return None;
-    }
-    if desc.w_max_input_length == 0 || desc.w_max_input_length > 1024 {
-        return None;
-    }
-    Some(desc)
+    ProbeResult::Found(desc)
 }
 
 // ── Init (FFI) ──
@@ -213,49 +229,68 @@ pub extern "C" fn intel_i2c_hid_init() -> i32 {
     let st = state_mut();
     st.count = 0;
 
-    for bus in 0..bus_count {
+    'bus_loop: for bus in 0..bus_count {
         for &addr in CANDIDATE_ADDRS {
-            for &reg in CANDIDATE_HID_REGS {
-                if let Some(desc) = probe_hid_descriptor(bus, addr, reg) {
-                    if (st.count as usize) >= MAX_DEVICES {
+            'reg_loop: for &reg in CANDIDATE_HID_REGS {
+                match probe_hid_descriptor(bus, addr, reg) {
+                    ProbeResult::Found(desc) => {
+                        if (st.count as usize) >= MAX_DEVICES {
+                            unsafe {
+                                fut_printf(
+                                    b"intel_i2c_hid: too many devices (>%u), skipping rest\n\0"
+                                        .as_ptr(),
+                                    MAX_DEVICES as u32,
+                                );
+                            }
+                            return st.count as i32;
+                        }
+                        let slot = st.count as usize;
+                        st.devices[slot] = I2cHidDevice {
+                            valid: true,
+                            bus_idx: bus,
+                            slave_addr: addr,
+                            hid_desc_register: reg,
+                            desc,
+                        };
+                        st.count += 1;
                         unsafe {
                             fut_printf(
-                                b"intel_i2c_hid: too many devices (>%u), skipping rest\n\0"
+                                b"intel_i2c_hid: found device bus=%u addr=0x%02x hid_reg=0x%04x vid=0x%04x pid=0x%04x report_desc_len=%u max_input=%u\n\0"
                                     .as_ptr(),
-                                MAX_DEVICES as u32,
+                                bus,
+                                addr as u32,
+                                reg as u32,
+                                desc.w_vendor_id as u32,
+                                desc.w_product_id as u32,
+                                desc.w_report_desc_length as u32,
+                                desc.w_max_input_length as u32,
                             );
                         }
-                        return st.count as i32;
+                        // First-match-wins per (bus, addr) — stop probing other
+                        // HID descriptor registers on this slave.
+                        break 'reg_loop;
                     }
-                    let slot = st.count as usize;
-                    st.devices[slot] = I2cHidDevice {
-                        valid: true,
-                        bus_idx: bus,
-                        slave_addr: addr,
-                        hid_desc_register: reg,
-                        desc,
-                    };
-                    st.count += 1;
-                    let vid = desc.w_vendor_id;
-                    let pid = desc.w_product_id;
-                    let report_len = desc.w_report_desc_length;
-                    let max_in = desc.w_max_input_length;
-                    unsafe {
-                        fut_printf(
-                            b"intel_i2c_hid: found device bus=%u addr=0x%02x hid_reg=0x%04x vid=0x%04x pid=0x%04x report_desc_len=%u max_input=%u\n\0"
-                                .as_ptr(),
-                            bus,
-                            addr as u32,
-                            reg as u32,
-                            vid as u32,
-                            pid as u32,
-                            report_len as u32,
-                            max_in as u32,
-                        );
+                    ProbeResult::NoDevice => {
+                        // Clean NACK or invalid descriptor — try the next
+                        // (addr, reg) combination on the same bus.
                     }
-                    // First-match-wins per (bus, addr) — stop probing other
-                    // HID descriptor registers on this slave.
-                    break;
+                    ProbeResult::BusError => {
+                        // The controller stalled / timed out. Each timeout
+                        // burns ~500ms of POLL_TIMEOUT iters in intel_lpss;
+                        // if one probe blew, the rest on this bus will too.
+                        // Skip the bus entirely. Without this guard, an
+                        // unresponsive controller burned ~48s on HP boot
+                        // and broke subsequent xhci_init scheduling.
+                        unsafe {
+                            fut_printf(
+                                b"intel_i2c_hid: bus %u stalled at addr 0x%02x, skipping bus\n\0"
+                                    .as_ptr(),
+                                bus,
+                                addr as u32,
+                            );
+                        }
+                        continue 'bus_loop;
+                    }
                 }
             }
         }

@@ -61,8 +61,8 @@ static bool acpi_validate_checksum(const acpi_sdt_header_t *header) {
 extern uint64_t g_multiboot_info_phys;
 uint64_t g_multiboot_info_phys = 0;
 
-static acpi_rsdp_v2_t *acpi_find_rsdp_from_multiboot(void) {
 #if defined(__x86_64__)
+static acpi_rsdp_v2_t *acpi_find_rsdp_from_multiboot(void) {
     if (g_multiboot_info_phys == 0) return NULL;
     const uintptr_t kernel_offset = KERNEL_VIRTUAL_BASE;
     const uint8_t *mb_base = (const uint8_t *)(g_multiboot_info_phys + kernel_offset);
@@ -90,10 +90,8 @@ static acpi_rsdp_v2_t *acpi_find_rsdp_from_multiboot(void) {
         tag_ptr += advance;
     }
     return NULL;
-#else
-    return NULL;
-#endif
 }
+#endif
 
 static acpi_rsdp_v2_t *acpi_find_rsdp(void) {
 #if defined(__x86_64__)

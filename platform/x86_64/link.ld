@@ -67,11 +67,15 @@ SECTIONS
         _boot_end = .;
     } :boot
 
-    /* PVH boot note for QEMU direct boot */
+    /* PVH boot note for QEMU direct boot. Place in both :boot (so the
+     * allocated bytes land in a PT_LOAD segment and get mapped at runtime)
+     * and :note (so the PVH loader finds it via the PT_NOTE program
+     * header). Without :boot, ld emits "allocated section `.note.Xen' not
+     * in segment" because SHF_ALLOC sections need a PT_LOAD home. */
     .note.Xen :
     {
         *(.note.Xen)
-    } :note
+    } :boot :note
 
     /* ============================================================
      *   Kernel Sections (Virtual Addressing)

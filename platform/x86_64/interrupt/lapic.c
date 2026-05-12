@@ -404,6 +404,83 @@ void lapic_timer_calibrate_and_start(uint32_t hz, uint8_t vector) {
     lapic_timer_periodic(count, vector);
 
     fut_printf("[LAPIC-TIMER] Started periodic timer at %u Hz (vector %u), PIT disabled\n", hz, vector);
+
+    /* Step 8: Self-test — verify the timer ISR is actually firing into
+     * system_ticks. On Lenovo L490 (Whiskey Lake) the calibration above
+     * appears to succeed but no LAPIC timer IRQs ever reach vector 32,
+     * so system_ticks never advances. Spin on rdtsc for ~100 ms wall
+     * clock and watch system_ticks. If it didn't advance, screech.
+     *
+     * Why rdtsc instead of a sleep: this is a free-running TSC read with
+     * no dependency on the very thing we're trying to test. */
+    extern uint64_t fut_rdtsc(void);
+    extern uint64_t fut_get_ticks(void);
+    uint64_t ticks_before = fut_get_ticks();
+    uint64_t tsc0 = fut_rdtsc();
+    /* Estimate ~100ms of TSC cycles from the LAPIC calibration just
+     * performed: LAPIC bus clock at DIV_16 = roughly CPU bus, so the
+     * elapsed value above is "LAPIC ticks per 10 ms". The TSC runs at
+     * the nominal CPU clock which is much faster, but we don't have
+     * that calibrated yet — assume 3 GHz for the self-test budget. */
+    const uint64_t TSC_100MS_GUESS = 300ULL * 1000ULL * 1000ULL; /* 3 GHz × 100ms */
+    while (fut_rdtsc() - tsc0 < TSC_100MS_GUESS) {
+        __asm__ volatile("pause" ::: "memory");
+    }
+    uint64_t ticks_after = fut_get_ticks();
+    if (ticks_after == ticks_before) {
+        fut_printf("\n");
+        fut_printf("####################################################################\n");
+        fut_printf("##  WARNING: LAPIC TIMER ISR NOT FIRING — falling back to PIT     ##\n");
+        fut_printf("##  Calibration reported success (elapsed=%u, count=%u)         ##\n", elapsed, count);
+        fut_printf("##  but vector 32 saw 0 IRQs in 100ms. Attempting PIT fallback.  ##\n");
+        fut_printf("####################################################################\n");
+        fut_printf("\n");
+
+        /* Disable LAPIC timer cleanly so it can't interfere. */
+        lapic_timer_disable();
+
+        /* Un-mask the PIT GSI in the IOAPIC. pit_init() in
+         * fut_timer_subsystem_init has already programmed PIT ch0 at
+         * FUT_TIMER_HZ; we just need to let its IRQs through. */
+        {
+            extern void ioapic_unmask_irq(uint8_t irq);
+            extern bool ioapic_is_available(void);
+            extern uint32_t ioapic_get_gsi_for_isa_irq(uint8_t isa_irq);
+            if (ioapic_is_available()) {
+                uint32_t pit_gsi = ioapic_get_gsi_for_isa_irq(0);
+                ioapic_unmask_irq((uint8_t)pit_gsi);
+                fut_printf("[LAPIC-TIMER] PIT fallback: unmasked IOAPIC GSI %u for PIT ch0\n",
+                           pit_gsi);
+            }
+        }
+
+        /* Re-test: did PIT IRQs start landing? */
+        uint64_t retick_before = fut_get_ticks();
+        uint64_t retsc0 = fut_rdtsc();
+        while (fut_rdtsc() - retsc0 < TSC_100MS_GUESS) {
+            __asm__ volatile("pause" ::: "memory");
+        }
+        uint64_t retick_after = fut_get_ticks();
+        if (retick_after == retick_before) {
+            fut_printf("\n");
+            fut_printf("####################################################################\n");
+            fut_printf("##  CRITICAL: PIT FALLBACK ALSO NOT FIRING — system has no timer  ##\n");
+            fut_printf("##  Kernel will continue but nanosleep/select/poll/sleep are all  ##\n");
+            fut_printf("##  on the rdtsc-busy fallback. Preemption disabled. SMP unsafe.  ##\n");
+            fut_printf("####################################################################\n");
+            fut_printf("\n");
+            extern _Atomic int g_timer_ticks_broken;
+            __atomic_store_n(&g_timer_ticks_broken, 1, __ATOMIC_RELEASE);
+        } else {
+            fut_printf("[LAPIC-TIMER] PIT fallback OK: system_ticks advanced %llu -> %llu in ~100ms\n",
+                       (unsigned long long)retick_before,
+                       (unsigned long long)retick_after);
+        }
+    } else {
+        fut_printf("[LAPIC-TIMER] self-test OK: system_ticks advanced from %llu to %llu in ~100ms\n",
+                   (unsigned long long)ticks_before,
+                   (unsigned long long)ticks_after);
+    }
 }
 
 /**

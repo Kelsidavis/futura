@@ -417,15 +417,22 @@ pub extern "C" fn cmos_rtc_init() -> i32 {
 
     // Log current Status B configuration.
     let status_b = cmos_read(REG_STATUS_B);
-    let mode_str = if status_b & STATUS_B_DM != 0 {
-        "binary"
+    // NOTE: fut_printf's "%s" expects a NUL-terminated C string. Rust `&str`
+    // literals are NOT NUL-terminated, so the previous code's
+    // `"binary".as_ptr()` produced output like
+    //     "cmos_rtc: data mode=BCDbinary12h24hcmos_rtc:..."
+    // because printf kept walking off the end of each string until it
+    // happened to find a 0 byte. Use byte-string literals with explicit
+    // \0 terminators so %s sees a real C string.
+    let mode_str: &[u8] = if status_b & STATUS_B_DM != 0 {
+        b"binary\0"
     } else {
-        "BCD"
+        b"BCD\0"
     };
-    let hour_str = if status_b & STATUS_B_24HR != 0 {
-        "24h"
+    let hour_str: &[u8] = if status_b & STATUS_B_24HR != 0 {
+        b"24h\0"
     } else {
-        "12h"
+        b"12h\0"
     };
     unsafe {
         fut_printf(

@@ -196,6 +196,54 @@ bool fb_is_available(void) {
 void *fb_get_virt_addr(void) {
     return (void *)g_fb_virt;
 }
+
+/* fb_boot_splash's early path maps the framebuffer at virt == phys using
+ * the boot identity map (PML4[0] → boot_pdpt → PDPT[0..3] → boot_pd[0..3]).
+ * That works fine for the kernel itself, but PML4[0] is NOT inherited by
+ * user processes' page tables (fut_mm_create only copies PML4[256..511]),
+ * so the very first CR3 swap to init's PT makes the FB virt unreachable
+ * and the kernel silently dies trying to print on the next fut_printf.
+ *
+ * After PMM is fully initialized, call this to remap the FB at a kernel-
+ * high-half virt (via pmap_phys_to_virt — the secondary window at
+ * 0xFFFFFFFF00000000). That new virt lives in boot_pdpt's PDPT[508+],
+ * which IS reachable through PML4[511] in every user PT. */
+void fb_promote_to_high_half_virt(void) {
+    if (!g_fb_available || g_fb_hw.phys == 0 || !g_fb_virt) {
+        return;
+    }
+    /* Already promoted — early-boot path or virtio-gpu path may have
+     * gone through pmap_map already. */
+    if ((uintptr_t)g_fb_virt >= 0xFFFFFFFF00000000ULL) {
+        return;
+    }
+
+    uint64_t phys_base = PAGE_ALIGN_DOWN(g_fb_hw.phys);
+    uint64_t offset = g_fb_hw.phys - phys_base;
+    uint64_t map_size = g_fb_hw.length;
+    uintptr_t virt_base = (uintptr_t)pmap_phys_to_virt(phys_base);
+
+    fut_printf("[FB] promote: low-identity 0x%llx -> high-half 0x%llx (phys=0x%llx size=%llu)\n",
+               (unsigned long long)(uintptr_t)g_fb_virt,
+               (unsigned long long)(virt_base + offset),
+               (unsigned long long)g_fb_hw.phys,
+               (unsigned long long)map_size);
+
+    if (pmap_map((uint64_t)virt_base, phys_base, map_size,
+                 PTE_KERNEL_RW | PTE_WRITE_THROUGH | PTE_CACHE_DISABLE) != 0) {
+        fut_printf("[FB] promote: pmap_map failed; init exec will break the FB console\n");
+        return;
+    }
+
+    g_fb_virt = (volatile uint8_t *)(virt_base + offset);
+
+    /* Update the fb_console cached pointer to match. */
+    extern void fb_console_set_fb_mem(volatile uint8_t *new_addr);
+    fb_console_set_fb_mem(g_fb_virt);
+
+    fut_printf("[FB] promoted, g_fb_virt=%p (now inherited via PML4[511])\n",
+               (void *)g_fb_virt);
+}
 #endif
 
 #ifdef __x86_64__

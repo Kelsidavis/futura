@@ -962,3 +962,10 @@ void fb_console_get_dimensions(int *width, int *height) {
 void fb_console_disable(void) {
     g_fb_console.disabled = 1;
 }
+
+/* Called by fb_promote_to_high_half_virt after pmap_map installs the
+ * framebuffer at a high-half virt that user processes can also reach.
+ * Updates the cached fb_mem pointer so subsequent writes use the new virt. */
+void fb_console_set_fb_mem(volatile uint8_t *new_addr) {
+    g_fb_console.fb_mem = new_addr;
+}

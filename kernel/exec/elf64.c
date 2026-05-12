@@ -1151,16 +1151,7 @@ static int build_user_stack(fut_mm_t *mm,
     fut_printf("[BISECT-TRAMP] CR3 swap+iretq: cur=0x%llx new=0x%llx\n",
                (unsigned long long)current_cr3,
                (unsigned long long)expected_cr3);
-    /* TEMPORARILY SKIP CR3 SWAP: previous boot showed CR3 swap to
-     * init's PT kills the CPU even though pml4[256..511] diff_count=0.
-     * Skip the swap and let IRETQ run against the KERNEL's CR3 — that
-     * has no user mapping for 0x400000, so init's first fetch will
-     * page-fault. If the user-mode trap path is healthy, we'll see
-     * "[TRAP] user exception vec=14 rip=0x400000 ..." on the FB. That
-     * tells us the IRETQ + trap path work and only the CR3 swap is
-     * the cliff. If we still see nothing, the IRETQ itself is broken.
-     */
-    const bool debug_skip_user_cr3_swap = true;
+    const bool debug_skip_user_cr3_swap = false;
     if (!debug_skip_user_cr3_swap && current_cr3 != expected_cr3) {
         extern void fut_write_cr3(uint64_t);
         fut_write_cr3(expected_cr3);
@@ -1223,17 +1214,6 @@ static int build_user_stack(fut_mm_t *mm,
     handoff_frame->rsp = stack;
     handoff_frame->ss = USER_DATA_SELECTOR;
     fut_printf("[BISECT-D] frame populated, calling fut_resume_user_frame\n");
-
-    /* DIAGNOSTIC: fire int3 (#BP) right here. INT3 is a software trap, so
-     * it fires regardless of IF state. If we see "[ISR] vec=3 ..." on the
-     * FB, the IDT entry for #BP routes correctly to fut_isr_handler and
-     * fut_printf still works in that handler. If we don't see [ISR], the
-     * IDT/handler path itself is dead in this context — meaning whatever
-     * exception IRETQ raises also can't be delivered, producing the silent
-     * hang we've been chasing. */
-    fut_printf("[BISECT-E] firing int3 to test IDT path\n");
-    __asm__ volatile("int3");
-    fut_printf("[BISECT-F] returned from int3 (should never see this)\n");
 
     fut_resume_user_frame(handoff_frame, handoff_thread);
 

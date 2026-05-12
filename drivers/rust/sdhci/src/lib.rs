@@ -15,11 +15,9 @@
 // Phase 2 (next round):
 //   - Card init sequence (CMD0 / CMD8 / ACMD41 / CMD2 / CMD3 / CMD9 / CMD7)
 //   - Single-block PIO write (CMD24)
-//   - C-callable sdhci_log_write(buf, len) for the trampoline diagnostic
 //
 // The driver is polled-mode and IRQ-free so it can be safely called from
-// any kernel context — including the post-CR3 trampoline path where
-// fb_console output is suspect and we need an alternative log channel.
+// any kernel context.
 //
 // References:
 //   - SD Host Controller Specification 3.00
@@ -912,25 +910,10 @@ pub extern "C" fn sdhci_write_block(lba: u32, buf: *const u8) -> i32 {
     0
 }
 
-/// Append a message to the SD-card log block. We reserve LBA `lba_base`
-/// for the log; each call rewrites the entire block with the prior
-/// content plus the new message, NUL-padded. ~1 KB total log capacity
-/// (we use 2 blocks). Crude but enough for post-CR3 breadcrumbs.
-static mut LOG_LBA_BASE: u32 = 8192;  /* 4 MiB into card; far from FS metadata */
-static mut LOG_BUF: [u8; 1024] = [0; 1024];
-static mut LOG_USED: usize = 0;
-
-#[unsafe(no_mangle)]
-pub extern "C" fn sdhci_log_set_lba(lba: u32) {
-    unsafe { core::ptr::write(core::ptr::addr_of_mut!(LOG_LBA_BASE), lba); }
-}
-
-/// Re-print the full controller status. Designed to be called near
-/// the trampoline cliff so the user sees SDHCI state on the bottom
-/// of the visible screen instead of having to scroll up through the
-/// boot log. Also re-emits every class-08 PCI hit seen during
-/// sdhci_init's scan so the user can identify the actual SD/eMMC
-/// controller (if any) without scrolling back.
+/// Re-emit a compact controller status summary: the class-08 PCI scan
+/// hits from sdhci_init's probe, plus the current bound controller's
+/// version/caps/card-present state and the last card-init result.
+/// Useful as a one-liner end-of-boot summary on any board.
 #[unsafe(no_mangle)]
 pub extern "C" fn sdhci_dump_status() {
     // Re-emit the PCI scan first.
@@ -981,32 +964,3 @@ pub extern "C" fn sdhci_dump_status() {
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn sdhci_log_write(msg: *const u8, len: usize) -> i32 {
-    if !unsafe { core::ptr::read(core::ptr::addr_of!(SDHCI_CARD_READY)) } { return -1; }
-    if msg.is_null() || len == 0 { return 0; }
-
-    let buf_ptr: *mut u8 = unsafe { core::ptr::addr_of_mut!(LOG_BUF) as *mut u8 };
-    let buf_cap: usize = unsafe { (*core::ptr::addr_of!(LOG_BUF)).len() };
-    let used: usize = unsafe { core::ptr::read(core::ptr::addr_of!(LOG_USED)) };
-    let space = buf_cap.saturating_sub(used);
-    let copy_len = if len > space { space } else { len };
-
-    unsafe {
-        for i in 0..copy_len {
-            core::ptr::write(buf_ptr.add(used + i), *msg.add(i));
-        }
-        core::ptr::write(core::ptr::addr_of_mut!(LOG_USED), used + copy_len);
-    }
-
-    // Flush both 512-byte halves back to the card on every call.
-    // Slow but reliable; trampoline only logs a handful of times.
-    let lba_base = unsafe { core::ptr::read(core::ptr::addr_of!(LOG_LBA_BASE)) };
-    unsafe {
-        let rc = sdhci_write_block(lba_base,     buf_ptr);
-        if rc != 0 { return rc; }
-        let rc = sdhci_write_block(lba_base + 1, buf_ptr.add(512));
-        if rc != 0 { return rc; }
-    }
-    0
-}

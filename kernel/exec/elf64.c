@@ -1118,23 +1118,6 @@ static int build_user_stack(fut_mm_t *mm,
                    *boot_seq_p);
     }
 
-    /* Re-print SDHCI controller status on the bottom of the screen so
-     * the user can see whether the card-based log channel is alive
-     * without scrolling back through the driver-init region. Then
-     * write a marker to the card — if it returns 0, post-cliff
-     * logging is available; the card can be pulled and inspected on
-     * another machine after the hang. */
-    extern void sdhci_dump_status(void) __attribute__((weak));
-    extern int  sdhci_log_write(const unsigned char *msg, size_t len) __attribute__((weak));
-    if (sdhci_dump_status) sdhci_dump_status();
-    if (sdhci_log_write) {
-        const char marker[] = "[SDHCI-LOG] pre-cliff: about to swap CR3 to user task\n";
-        int rc = sdhci_log_write((const unsigned char *)marker, sizeof(marker) - 1);
-        fut_printf("[BISECT-SDHCI] sdhci_log_write rc=%d\n", rc);
-    } else {
-        fut_printf("[BISECT-SDHCI] sdhci_log_write symbol unresolved (driver not linked)\n");
-    }
-
     /* Log BEFORE the CR3 swap — we have no diagnostic prints between
      * here and fut_do_user_iretq. Last-visible-line tells us where
      * in {fut_write_cr3, wrmsr, fut_do_user_iretq} we faulted. */

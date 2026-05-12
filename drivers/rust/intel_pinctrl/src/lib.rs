@@ -29,12 +29,10 @@
 //   - P2SB unhide (write 0 to PCI config 0xE0).
 //   - Map SBREG_BAR (16 MiB).
 //   - Dump the first N pad PAD_CFG_DW0 values for each known
-//     community so we can identify which pad currently drives the
-//     SD slot voltage rail.
+//     community so callers can identify pads of interest.
 //
-// Phase 2 (next iter): actually toggle the identified pad to GPIO
-// output high, drive SD_VDD_EN, and call sdhci_card_init from a
-// fresh power-up state. For now we only OBSERVE.
+// Phase 2 (future): GPIO output / pad-mode toggle API. For now the
+// driver only OBSERVES.
 //
 // References:
 //   - Linux drivers/pinctrl/intel/pinctrl-broxton.c
@@ -431,7 +429,7 @@ pub extern "C" fn intel_pinctrl_init() -> i32 {
         }
         unsafe {
             fut_printf(
-                b"pinctrl:   port=0x%02x summary: %u GPIO-output pads (SD_VDD candidates)\n\0".as_ptr(),
+                b"pinctrl:   port=0x%02x summary: %u GPIO-output pads\n\0".as_ptr(),
                 port as u32, gpio_out_count,
             );
         }

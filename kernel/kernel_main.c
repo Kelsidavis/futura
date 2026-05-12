@@ -2042,13 +2042,11 @@ void fut_kernel_main(void) {
         intel_pinctrl_init();
     }
 
-    /* Storage — SDHCI (Intel Apollo Lake / Gemini Lake on-board SD).
-     * Phase 1: PCI probe + BAR map + soft reset.
-     * Phase 2: SD card init (CMD0/8/55+41/2/3/9/7) + single-block
-     * PIO writes. After this, sdhci_log_write(msg, len) writes a
-     * string to LBA 8192 of the SD card — a fb_console-independent
-     * log channel from any kernel context (including post-CR3 paths
-     * where the framebuffer route is suspect). */
+    /* Storage — SDHCI. Generic Intel/AMD SDHCI controllers; PCI probe
+     * + BAR map + soft reset + card init. Returns nonzero on boards
+     * where no SDHCI controller is present (e.g. meep, whose SD slot
+     * is USB-attached via Genesys 05e3:0747). Kept linked so the
+     * driver is available for boards that do wire SD through SDHCI. */
     {
         extern int sdhci_init(void);
         extern int sdhci_card_init(void);

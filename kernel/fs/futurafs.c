@@ -4702,11 +4702,21 @@ int fut_futurafs_format(struct fut_blockdev *dev, const char *label, uint32_t in
         sb.label[i] = '\0';
     }
 
+    /* Diagnostic checkpoints — the L490 boot log hangs at
+     * "[INIT] formatting ramdisk as FuturaFS..." with no rc print after,
+     * so the cliff is somewhere INSIDE this function. Bracket each step
+     * so we can read the boot log and see which write didn't return. */
+    fut_printf("[FUTURAFS-FMT] step 1: write superblock (%llu blocks total, %llu inode_table_blocks)\n",
+               (unsigned long long)total_blocks,
+               (unsigned long long)inode_table_blocks);
+
     /* Write superblock */
     int ret = fut_blockdev_write(dev, 0, 1, &sb);
     if (ret < 0) {
         return FUTURAFS_EIO;
     }
+    fut_printf("[FUTURAFS-FMT] step 2: zero %llu inode-table blocks\n",
+               (unsigned long long)inode_table_blocks);
 
     /* Initialize inode table (all zeros) */
     uint8_t zero_block[FUTURAFS_BLOCK_SIZE] = {0};
@@ -4716,6 +4726,8 @@ int fut_futurafs_format(struct fut_blockdev *dev, const char *label, uint32_t in
             return FUTURAFS_EIO;
         }
     }
+    fut_printf("[FUTURAFS-FMT] step 3: write root inode\n");
+
     /* Create root inode */
     struct futurafs_inode root_inode = {0};
     root_inode.mode = 0755 | 0040000;  /* S_IFDIR | 0755 */
@@ -4738,6 +4750,8 @@ int fut_futurafs_format(struct fut_blockdev *dev, const char *label, uint32_t in
         return FUTURAFS_EIO;
     }
 
+    fut_printf("[FUTURAFS-FMT] step 4: write inode bitmap\n");
+
     /* Initialize inode bitmap (mark root inode as allocated) */
     size_t inode_bitmap_size = (total_inodes + 7) / 8;
     uint8_t *inode_bitmap = fut_malloc(inode_bitmap_size);
@@ -4757,6 +4771,8 @@ int fut_futurafs_format(struct fut_blockdev *dev, const char *label, uint32_t in
         return FUTURAFS_EIO;
     }
 
+    fut_printf("[FUTURAFS-FMT] step 5: write data bitmap\n");
+
     /* Initialize data bitmap (all free) */
     size_t data_bitmap_size = ((total_blocks - data_blocks_start) + 7) / 8;
     uint8_t *data_bitmap = fut_malloc(data_bitmap_size);
@@ -4774,6 +4790,7 @@ int fut_futurafs_format(struct fut_blockdev *dev, const char *label, uint32_t in
     if (ret < 0) {
         return FUTURAFS_EIO;
     }
+    fut_printf("[FUTURAFS-FMT] format complete\n");
 
     return 0;
 }

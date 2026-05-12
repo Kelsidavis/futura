@@ -516,13 +516,25 @@ unsafe fn mmio_write32_at(base: *mut u8, offset: u32, val: u32) {
 /// Acquire the RENDER forcewake. Sets bit 0 (with mask bit 16 to indicate
 /// we're writing bit 0) and polls the ACK register for the same bit.
 /// Returns true on success; false if the ACK never asserted.
+///
+/// Three Gen9-LP specifics matter here (Apollo Lake / Gemini Lake / Broxton),
+/// without which the ACK never comes back on a cold boot:
+///   1. Posting read on FORCEWAKE_RENDER after the write — flushes the write
+///      through any intermediate posted-write buffers before we start polling.
+///   2. Generous timeout — Linux waits up to 50 ms (50000 µs); on a low-power
+///      N4020/Celeron coming out of RC6 the wake can easily take >10 ms.
+///   3. A tiny `pause` between polls so the loop doesn't hammer the bus and
+///      starve the actual ACK arrival.
 fn forcewake_get_render(mmio: *mut u8) -> bool {
     unsafe { mmio_write32_at(mmio, FORCEWAKE_RENDER, (1u32 << 16) | 1) };
-    for _ in 0..50_000 {
+    /* Posting read — discard the value but ensure the write has drained. */
+    let _ = unsafe { mmio_read32_at(mmio, FORCEWAKE_RENDER) };
+    for _ in 0..1_000_000 {
         let ack = unsafe { mmio_read32_at(mmio, FORCEWAKE_ACK_RENDER) };
         if ack & 1 != 0 {
             return true;
         }
+        unsafe { core::arch::asm!("pause", options(nomem, nostack, preserves_flags)) };
     }
     false
 }

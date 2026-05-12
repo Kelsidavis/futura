@@ -61,7 +61,22 @@ const P2SB_DEVICE_IDS: &[u16] = &[
     0xA0A1, // Tiger Lake
     0x51A1, // Alder/Raptor Lake
     0x7E22, // Meteor Lake
+    0x3192, // Gemini Lake / Apollo Lake (HP Chromebook 11 G7)
+    0x5A92, // Apollo Lake (older Atom)
+    0x31BB, // Gemini Lake refresh
+    0x0BD0, // Tremont (Jasper Lake derivatives)
+    0x1980, // Elkhart Lake
+    0x9D20, // Sunrise Point alt
 ];
+
+// Hidden-bridge unhide: on Apollo/Gemini Lake the P2SB is hidden from
+// PCI enumeration by default (Coreboot leaves it hidden post-boot to
+// match Linux's expected init order). Writing 0 to config byte 0xE1 at
+// 00:0D.0 clears the hide bit — the byte write lands even when the
+// device reads as vendor=0xFFFF. After unhide, re-read the config
+// header to get the real vendor/device ID. This mirrors the logic in
+// intel_pinctrl which had to do the same trick to find the SBREG_BAR.
+const P2SB_E0H_HIDE_BYTE: u8 = 0xE1;
 
 const PCI_CLASS_BRIDGE: u8 = 0x06;
 const PCI_SUBCLASS_OTHER_BRIDGE: u8 = 0x80;
@@ -126,6 +141,15 @@ fn pci_read16(bus: u8, dev: u8, func: u8, offset: u8) -> u16 {
     ((val32 >> ((offset & 2) * 8)) & 0xFFFF) as u16
 }
 
+fn pci_write8(bus: u8, dev: u8, func: u8, offset: u8, val: u8) {
+    let aligned = offset & 0xFC;
+    let shift = (offset & 3) * 8;
+    let mut val32 = pci_read32(bus, dev, func, aligned);
+    val32 &= !(0xFF << shift);
+    val32 |= (val as u32) << shift;
+    pci_write32(bus, dev, func, aligned, val32);
+}
+
 fn pci_write16(bus: u8, dev: u8, func: u8, offset: u8, val: u16) {
     let aligned = offset & 0xFC;
     let shift = (offset & 2) * 8;
@@ -144,6 +168,8 @@ fn mmio_write32(base: *mut u8, offset: usize, val: u32) {
 }
 
 fn find_p2sb() -> Option<PciDevice> {
+    /* First try the normal PCI enumeration result. This works on PCH
+     * generations where firmware leaves P2SB visible. */
     let count = unsafe { pci_device_count() };
     for i in 0..count {
         let dev = unsafe { pci_get_device(i) };
@@ -160,6 +186,40 @@ fn find_p2sb() -> Option<PciDevice> {
         if P2SB_DEVICE_IDS.contains(&dev.device_id) || (dev.bus == 0 && dev.dev == 0x1F && dev.func == 1) {
             return Some(PciDevice { ..*dev });
         }
+    }
+
+    /* Apollo/Gemini Lake hide the P2SB at 00:0D.0 by default — Coreboot
+     * leaves it that way to match Linux's init order. Probe the canonical
+     * location directly: read the config header, and if the device reads
+     * as 0xFFFF (hidden) or a non-P2SB vendor, clear the hide bit by
+     * writing 0 to config byte 0xE1, then re-read. The byte write lands
+     * even when the device reads as 0xFFFF. */
+    let direct = pci_read32(0, 0x0D, 0, 0);
+    let mut vendor = (direct & 0xFFFF) as u16;
+    let mut device = (direct >> 16) as u16;
+    if vendor != INTEL_VENDOR_ID || !P2SB_DEVICE_IDS.contains(&device) {
+        pci_write8(0, 0x0D, 0, P2SB_E0H_HIDE_BYTE, 0);
+        let after = pci_read32(0, 0x0D, 0, 0);
+        vendor = (after & 0xFFFF) as u16;
+        device = (after >> 16) as u16;
+    }
+    if vendor == INTEL_VENDOR_ID && P2SB_DEVICE_IDS.contains(&device) {
+        log("intel_p2sb: unhid P2SB at 00:0D.0");
+        return Some(PciDevice {
+            bus: 0,
+            dev: 0x0D,
+            func: 0,
+            vendor_id: vendor,
+            device_id: device,
+            class_code: PCI_CLASS_BRIDGE,
+            subclass: PCI_SUBCLASS_OTHER_BRIDGE,
+            prog_if: 0,
+            revision: 0,
+            header_type: 0,
+            subsys_vendor: 0,
+            subsys_id: 0,
+            irq_line: 0,
+        });
     }
     None
 }

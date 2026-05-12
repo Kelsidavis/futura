@@ -3009,50 +3009,6 @@ try_ramdisk: (void)0;
     /* NOTE: Compositor is now launched by init via fork+exec.
      * This avoids duplicate compositor instances fighting for resources.
      * The binary is still staged at /sbin/futura-wayland for init to exec. */
-#if 0 && ENABLE_WAYLAND
-    /* DISABLED: init handles compositor launch now */
-    if (wayland_stage == 0) {
-        fut_printf("[INIT] Launching Wayland compositor...\n");
-        char name[] = "futura-wayland";
-        char *args[] = { name, NULL };
-        /* Environment with LD_PRELOAD and runtime parameters */
-        char ld_preload[] = "LD_PRELOAD=/lib/libopen_wrapper.so";
-        char xdg_runtime[] = "XDG_RUNTIME_DIR=/tmp";
-        char wayland_display_env[] = "WAYLAND_DISPLAY=wayland-0";
-        char wayland_multi_env[] = "WAYLAND_MULTI=1";
-        /* Single-buffered mode; heap cannot safely allocate 6 MiB for dual backbuffers.
-         * Wallpaper occlusion culling prevents single-buffer flashing instead. */
-        char wayland_backbuffer_env[] = "WAYLAND_BACKBUFFER=0";
-        char wayland_deco_env[] = "WAYLAND_DECO=1";
-        char wayland_shadow_env[] = "WAYLAND_SHADOW=1";
-        char wayland_resize_env[] = "WAYLAND_RESIZE=1";
-        char wayland_throttle_env[] = "WAYLAND_THROTTLE=1";
-        char wayland_interactive_env[] = "WAYLAND_INTERACTIVE=1";
-        char *envp[] = {
-            ld_preload,
-            xdg_runtime,
-            wayland_display_env,
-            wayland_multi_env,
-            wayland_backbuffer_env,
-            wayland_deco_env,
-            wayland_shadow_env,
-            wayland_resize_env,
-            wayland_throttle_env,
-            wayland_interactive_env,
-            NULL
-        };
-        wayland_exec = fut_exec_elf("/sbin/futura-wayland", args, envp);
-        if (wayland_exec != 0) {
-            fut_printf("[WARN] Failed to launch /sbin/futura-wayland (error %d)\n", wayland_exec);
-#if ENABLE_WAYLAND
-            fut_test_fail(WAYLAND_TEST_EXEC_FAIL);
-#endif
-        } else {
-            fut_printf("[INIT] exec /sbin/futura-wayland -> 0\n");
-        }
-    }
-#endif
-
     /* Pre-init forensic flush: print the late-boot summary and write
      * an initial klog→SD snapshot BEFORE fut_exec_elf("/sbin/init")
      * replaces this context. Also spawn a kernel thread that keeps
@@ -3140,43 +3096,6 @@ try_ramdisk: (void)0;
      * The compositor is launched by init via fork+exec, and test clients
      * would need to be launched after the compositor is ready.
      * This direct kernel launch approach is obsolete. */
-#if 0 && ENABLE_WAYLAND_TEST_CLIENTS
-    /* DISABLED: Direct kernel launch of test clients no longer works.
-     * Test clients should be launched by init or the compositor. */
-    wayland_client_exec = 0;
-    if (wayland_client_stage == 0) {
-        fut_boot_delay_ms(100);
-
-        /* Launch first client: wl-simple */
-        char name1[] = "wl-simple";
-        char *args1[] = { name1, NULL };
-        char ld_preload[] = "LD_PRELOAD=/lib/libopen_wrapper.so";
-        char xdg_runtime[] = "XDG_RUNTIME_DIR=/tmp";
-        char wayland_display_env[] = "WAYLAND_DISPLAY=wayland-0";
-        char *envp[] = { ld_preload, xdg_runtime, wayland_display_env, NULL };
-        wayland_client_exec = fut_exec_elf("/bin/wl-simple", args1, envp);
-        if (wayland_client_exec != 0) {
-            fut_printf("[WARN] Failed to launch /bin/wl-simple (error %d)\n", wayland_client_exec);
-            fut_test_fail(WAYLAND_TEST_CLIENT_FAIL);
-        } else {
-            fut_printf("[INIT] exec /bin/wl-simple -> 0\n");
-        }
-
-        /* Launch second client: wl-colorwheel (if available) */
-        if (wayland_color_stage == 0) {
-            fut_boot_delay_ms(50);
-            char name2[] = "wl-colorwheel";
-            char *args2[] = { name2, NULL };
-            int colorwheel_exec = fut_exec_elf("/bin/wl-colorwheel", args2, envp);
-            if (colorwheel_exec != 0) {
-                fut_printf("[WARN] Failed to launch /bin/wl-colorwheel (error %d), continuing with single client\n", colorwheel_exec);
-            } else {
-                fut_printf("[INIT] exec /bin/wl-colorwheel -> 0 (multi-client Wayland enabled!)\n");
-            }
-        }
-    }
-#endif
-
 #if ENABLE_WAYLAND
     /* Compositor is now launched by init (which forks and execs it).
      * Check init_exec instead of the old wayland_exec variable. */

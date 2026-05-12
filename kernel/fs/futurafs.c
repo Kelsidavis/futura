@@ -210,7 +210,6 @@ static int futurafs_read_superblock(struct futurafs_mount *mount, struct futuraf
     }
 
     /* Validate magic number */
-    /* format debug suppressed */
     if (sb->magic != FUTURAFS_MAGIC) {
         return FUTURAFS_EINVAL;
     }
@@ -4708,7 +4707,6 @@ int fut_futurafs_format(struct fut_blockdev *dev, const char *label, uint32_t in
     if (ret < 0) {
         return FUTURAFS_EIO;
     }
-    /* format debug suppressed */
 
     /* Initialize inode table (all zeros) */
     uint8_t zero_block[FUTURAFS_BLOCK_SIZE] = {0};
@@ -4718,9 +4716,6 @@ int fut_futurafs_format(struct fut_blockdev *dev, const char *label, uint32_t in
             return FUTURAFS_EIO;
         }
     }
-    /* format debug suppressed */
-    /* continuation */
-
     /* Create root inode */
     struct futurafs_inode root_inode = {0};
     root_inode.mode = 0755 | 0040000;  /* S_IFDIR | 0755 */
@@ -4742,7 +4737,6 @@ int fut_futurafs_format(struct fut_blockdev *dev, const char *label, uint32_t in
     if (ret < 0) {
         return FUTURAFS_EIO;
     }
-    /* format debug suppressed */
 
     /* Initialize inode bitmap (mark root inode as allocated) */
     size_t inode_bitmap_size = (total_inodes + 7) / 8;
@@ -4762,7 +4756,6 @@ int fut_futurafs_format(struct fut_blockdev *dev, const char *label, uint32_t in
     if (ret < 0) {
         return FUTURAFS_EIO;
     }
-    /* format debug suppressed */
 
     /* Initialize data bitmap (all free) */
     size_t data_bitmap_size = ((total_blocks - data_blocks_start) + 7) / 8;
@@ -4781,7 +4774,6 @@ int fut_futurafs_format(struct fut_blockdev *dev, const char *label, uint32_t in
     if (ret < 0) {
         return FUTURAFS_EIO;
     }
-    /* format debug suppressed */
 
     return 0;
 }

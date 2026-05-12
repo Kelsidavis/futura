@@ -28,7 +28,13 @@ jobs:
 
   build-arm64:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    # 30 min total: dep-install (~1m) + cross-compile of kernel + Rust drivers
+    # (~10m on a cold cache) + the in-kernel test runner under qemu-arm64 which
+    # itself has a 600s qemu timeout in `make test-arm64`. The previous 20m
+    # cap was leaving zero margin and was tripping intermittently — half of
+    # the recent main pushes got cancelled here even though the kernel was
+    # making forward progress.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 

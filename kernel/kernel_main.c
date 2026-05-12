@@ -1174,26 +1174,15 @@ static void klog_sd_flush_thread(void *arg) {
      * appears in the SD file, the thread isn't being scheduled at all. */
     klog_persist_to_sd_once(0);
     unsigned iter = 0;
-    static unsigned prev_blockdev_count = 0;
     for (;;) {
         fut_thread_sleep(1500);
-        /* Suppress noise: only re-print the "no FAT FS" + registered-
-         * devices summary when the set of registered block devices
-         * actually changes (e.g. usb_storage finally attached a device
-         * we hadn't seen at boot). Otherwise the periodic flusher
-         * silently retries — no spam. */
-        unsigned cur_count = 0;
-        {
-            extern struct fut_blockdev *fut_blockdev_first(void);
-            struct fut_blockdev *bd = fut_blockdev_first();
-            while (bd && cur_count < 32) {
-                cur_count++;
-                bd = bd->next;
-            }
-        }
-        int verbose = (cur_count != prev_blockdev_count) ? 1 : 0;
-        prev_blockdev_count = cur_count;
-        klog_persist_to_sd_once(verbose);
+        /* Periodic verbose attempt every ~30s. Earlier I gated this on
+         * "registered block device count changed since last iter" which
+         * was too aggressive: if SD was present but FAT mount kept
+         * failing for a different reason, the count was stable and we
+         * never re-printed the failure. Reverted to plain time-based
+         * verbose so we always see the current state every 30 seconds. */
+        klog_persist_to_sd_once((iter % 20 == 19) ? 1 : 0);
         iter++;
     }
 }

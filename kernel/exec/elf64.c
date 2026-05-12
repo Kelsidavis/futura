@@ -848,8 +848,16 @@ static int build_user_stack(fut_mm_t *mm,
 }
 
 [[noreturn]] __attribute__((optimize("O0"))) static void fut_user_trampoline(void *arg) {
-    /* Print BEFORE CLI so the print path's I/O is unaffected. */
-    fut_printf("[BISECT-TRAMP] entered, arg=%p\n", arg);
+    /* BISECT-* diagnostics only fire for the first few execs at boot. After
+     * that the trampoline is silent — the kernel boot is well-understood,
+     * the cliff was fixed (early-cli + klog_persist bounds check), and the
+     * per-exec serial/FB overhead was slowing menu-applet launches. The
+     * one-line BISECT-A post-CR3 printf stays for future regression hunts. */
+    static int s_bisect_verbose_remaining = 4;
+    int verbose = (s_bisect_verbose_remaining > 0);
+    if (verbose) s_bisect_verbose_remaining--;
+
+    if (verbose) fut_printf("[BISECT-TRAMP] entered, arg=%p\n", arg);
 
     /* CRITICAL: Disable interrupts IMMEDIATELY to prevent timer interrupts from
      * corrupting our state during the transition to user mode! */
@@ -861,11 +869,8 @@ static int build_user_stack(fut_mm_t *mm,
         fut_thread_exit();
     }
 
-    /* Extract values from the user entry structure BEFORE freeing it.
-     * fb_console_present's BLT path is MMIO-only (no IRQs), so
-     * fut_printf still works after CLI on the i915-accelerated boot. */
     struct fut_user_entry *info = (struct fut_user_entry *)arg;
-    fut_printf("[BISECT-TRAMP] info=%p\n", (void *)info);
+    if (verbose) fut_printf("[BISECT-TRAMP] info=%p\n", (void *)info);
 
 #ifdef DEBUG_USER_TRAMPOLINE
     /* Debug: Print '1' after casting - must use DX form for ports > 255 */
@@ -923,10 +928,12 @@ static int build_user_stack(fut_mm_t *mm,
     __asm__ volatile("movw $0x3F8, %%dx; movb $'5', %%al; outb %%al, %%dx" ::: "al", "dx", "memory");
 #endif
 
-    fut_printf("[BISECT-TRAMP] entry=0x%llx stack=0x%llx argc=%llu argv=0x%llx task=%p mm=%p\n",
-               (unsigned long long)entry, (unsigned long long)stack,
-               (unsigned long long)argc, (unsigned long long)argv_ptr,
-               (void *)task, (void *)mm);
+    if (verbose) {
+        fut_printf("[BISECT-TRAMP] entry=0x%llx stack=0x%llx argc=%llu argv=0x%llx task=%p mm=%p\n",
+                   (unsigned long long)entry, (unsigned long long)stack,
+                   (unsigned long long)argc, (unsigned long long)argv_ptr,
+                   (void *)task, (void *)mm);
+    }
 
     /* Verify we're using the task's CR3, not the kernel CR3 */
     extern uint64_t fut_read_cr3(void);
@@ -938,20 +945,13 @@ static int build_user_stack(fut_mm_t *mm,
 #endif
 
     uint64_t expected_cr3 = mm_context(mm)->cr3_value;
-    fut_printf("[BISECT-TRAMP] current_cr3=0x%llx expected_cr3=0x%llx\n",
-               (unsigned long long)current_cr3,
-               (unsigned long long)expected_cr3);
+    if (verbose) {
+        fut_printf("[BISECT-TRAMP] current_cr3=0x%llx expected_cr3=0x%llx\n",
+                   (unsigned long long)current_cr3,
+                   (unsigned long long)expected_cr3);
 
-    /* Sanity-check that the new pml4 has the same kernel-half
-     * (entries 256..511) as the running kernel's pml4. We previously
-     * spot-checked [256], [510], [511] — extend to a full sweep
-     * because copy_kernel_half ran at fut_mm_create time, and any
-     * kernel mapping added to boot_pml4 since then (e.g. dynamically
-     * mapped MMIO, lazy direct-map extensions) would NOT be in the
-     * new mm.
-     *
-     * Read each entry via phys+KERNEL_VIRTUAL_BASE direct mapping. */
-    {
+        /* Sanity-check that the new pml4 has the same kernel-half
+         * (entries 256..511) as the running kernel's pml4. */
         uint64_t cur_pml4_phys  = current_cr3  & ~0xFFFULL;
         uint64_t new_pml4_phys  = expected_cr3 & ~0xFFFULL;
         uint64_t *cur_pml4 = (uint64_t *)(cur_pml4_phys  | KERNEL_VIRTUAL_BASE);
@@ -964,25 +964,16 @@ static int build_user_stack(fut_mm_t *mm,
                            (unsigned long long)cur_pml4[i],
                            (unsigned long long)new_pml4[i]);
                 diff_count++;
-                if (diff_count >= 16) {  /* clamp output */
+                if (diff_count >= 16) {
                     fut_printf("[BISECT-TRAMP] (stopping after 16 diffs)\n");
                     break;
                 }
             }
         }
         fut_printf("[BISECT-TRAMP] pml4 kernel-half diff_count=%d\n", diff_count);
-    }
 
-    /* Dump the new address space's entry-point page-table chain so we can
-     * tell whether 0x400000 is missing USER, marked NX, or otherwise wrong
-     * before we actually load CR3 and attempt IRETQ. */
-    bisect_walk_target_va("BISECT-TRAMP", expected_cr3, entry);
+        bisect_walk_target_va("BISECT-TRAMP", expected_cr3, entry);
 
-    /* Also report the trampoline's own stack/return-address so we can
-     * confirm both are in pml4[511]'s range (above 0xFFFFFFFF80000000).
-     * If either is in a different kernel-half slot we need to verify
-     * THAT slot matches between cur/new pml4. */
-    {
         uintptr_t cur_rsp;
         __asm__ volatile("mov %%rsp, %0" : "=r"(cur_rsp));
         fut_printf("[BISECT-TRAMP] tramp_fn=0x%lx ret_addr=0x%lx kernel_rsp=0x%lx do_iretq=0x%lx\n",
@@ -990,10 +981,6 @@ static int build_user_stack(fut_mm_t *mm,
                    (unsigned long)(uintptr_t)__builtin_return_address(0),
                    (unsigned long)cur_rsp,
                    (unsigned long)(uintptr_t)&fut_resume_user_frame);
-
-        /* If IRETQ faults before the CPL transition completes, the CPU will
-         * take that exception on the CURRENT ring-0 stack, not TSS.rsp0.
-         * Validate the active trampoline stack in the target CR3 as well. */
         bisect_walk_target_va("BISECT-CRSP", expected_cr3, (uint64_t)cur_rsp - 8);
     }
 
@@ -1034,12 +1021,15 @@ static int build_user_stack(fut_mm_t *mm,
             cur_thread->context.rsp = stack;
             cur_thread->context.rflags = 0x202;
 
-            /* Diagnostic: remove FS_BASE/TLS from the first-user handoff.
-             * If HP only dies when wrmsr(MSR_FS_BASE) participates in the
-             * transition, forcing fs_base=0 and skipping the restore path
-             * should change the failure signature. */
+            /* Force fs_base=0 on every exec — this was originally a HP-only
+             * diagnostic, but it became a real workaround for a path where
+             * MSR_FS_BASE restore at the first user-mode transition
+             * destabilised the boot. userspace re-sets TLS via arch_prctl
+             * before relying on it. */
             cur_thread->fs_base = 0;
-            fut_printf("[BISECT-FS] forcing fs_base=0 and skipping first-user FS_BASE restore\n");
+            if (verbose) {
+                fut_printf("[BISECT-FS] forcing fs_base=0 and skipping first-user FS_BASE restore\n");
+            }
 
             if (cur_thread->stack_base && cur_thread->stack_size) {
                 uintptr_t stack_top = (uintptr_t)cur_thread->stack_base
@@ -1047,13 +1037,12 @@ static int build_user_stack(fut_mm_t *mm,
                 extern void fut_tss_set_kernel_stack(uint64_t);
                 fut_tss_set_kernel_stack((uint64_t)stack_top);
                 handoff_stack_top = (uint64_t)stack_top;
-                fut_printf("[BISECT-TRAMP] TSS.rsp0 set to 0x%lx (kernel stack top)\n",
-                           (unsigned long)stack_top);
-
-                /* The first ring-3 -> ring-0 transition will push onto
-                 * TSS.rsp0-8, so validate that address in the target CR3. */
-                bisect_walk_target_va("BISECT-KSTACK", expected_cr3, (uint64_t)stack_top - 8);
-            } else {
+                if (verbose) {
+                    fut_printf("[BISECT-TRAMP] TSS.rsp0 set to 0x%lx (kernel stack top)\n",
+                               (unsigned long)stack_top);
+                    bisect_walk_target_va("BISECT-KSTACK", expected_cr3, (uint64_t)stack_top - 8);
+                }
+            } else if (verbose) {
                 fut_printf("[BISECT-TRAMP] WARNING: cur_thread has no stack_base/size — TSS.rsp0 left stale!\n");
             }
         }
@@ -1061,15 +1050,16 @@ static int build_user_stack(fut_mm_t *mm,
     if (handoff_stack_top == 0) {
         extern uint64_t fut_tss_get_kernel_stack(void);
         handoff_stack_top = fut_tss_get_kernel_stack();
-        fut_printf("[BISECT-TRAMP] fallback handoff_stack_top=0x%llx from TSS\n",
-                   (unsigned long long)handoff_stack_top);
+        if (verbose) {
+            fut_printf("[BISECT-TRAMP] fallback handoff_stack_top=0x%llx from TSS\n",
+                       (unsigned long long)handoff_stack_top);
+        }
     }
 
     /* Verify the live GDT/GDTR seen by this CPU right before the user-mode
-     * transition. The selector constants are internally consistent, so the
-     * next question is whether the loaded descriptors on this machine are
-     * actually the expected user data/code entries. */
-    {
+     * transition. Gated behind verbose since the trampoline does the same
+     * descriptor look-up on every exec — wasteful per menu-applet launch. */
+    if (verbose) {
         struct {
             uint16_t limit;
             uint64_t base;
@@ -1118,39 +1108,30 @@ static int build_user_stack(fut_mm_t *mm,
             bisect_walk_target_va("BISECT-TSSMAP", expected_cr3, tss_base);
             bisect_walk_target_va("BISECT-TSSMAP", expected_cr3, tss_base + sizeof(tss_t) - 1);
         }
-    }
 
-    /* Print boot_seq so we can tell whether a "same hang" across
-     * iterations is actually a triple-fault reboot loop. boot_seq
-     * lives in the persistent ring buffer at phys 0x10000000 and
-     * survives warm resets on this hardware. If iter N+1 prints
-     * boot_seq=K and iter N+2 prints boot_seq=K+1 across the same
-     * powered session, we have a loop. The +0x18 offset matches
-     * the boot_seq field in struct klog_persist_t. */
-    {
         volatile uint32_t *boot_seq_p =
             (volatile uint32_t *)(0xFFFFFFFF80000000ULL + 0x10000000ULL + 12);
         fut_printf("[BISECT-TRAMP] klog boot_seq=%u (single boot if value stays low)\n",
                    *boot_seq_p);
+
+        fut_printf("[BISECT-IRETQ] frame ss=0x%llx rsp=0x%llx rflags=0x%llx cs=0x%llx rip=0x%llx\n",
+                   (unsigned long long)USER_DATA_SELECTOR,
+                   (unsigned long long)stack,
+                   (unsigned long long)0x202ULL,
+                   (unsigned long long)USER_CODE_SELECTOR,
+                   (unsigned long long)entry);
     }
 
-    /* Log BEFORE the CR3 swap — we have no diagnostic prints between
-     * here and fut_do_user_iretq. Last-visible-line tells us where
-     * in {fut_write_cr3, wrmsr, fut_do_user_iretq} we faulted. */
-    fut_printf("[BISECT-IRETQ] frame ss=0x%llx rsp=0x%llx rflags=0x%llx cs=0x%llx rip=0x%llx\n",
-               (unsigned long long)USER_DATA_SELECTOR,
-               (unsigned long long)stack,
-               (unsigned long long)0x202ULL,
-               (unsigned long long)USER_CODE_SELECTOR,
-               (unsigned long long)entry);
     if (g_bisect_mask_timer_before_first_user) {
         fut_printf("[BISECT-TIMER] masking LAPIC timer before first user handoff\n");
         lapic_timer_disable();
         g_bisect_mask_timer_before_first_user = false;
     }
-    fut_printf("[BISECT-TRAMP] CR3 swap+iretq: cur=0x%llx new=0x%llx\n",
-               (unsigned long long)current_cr3,
-               (unsigned long long)expected_cr3);
+    if (verbose) {
+        fut_printf("[BISECT-TRAMP] CR3 swap+iretq: cur=0x%llx new=0x%llx\n",
+                   (unsigned long long)current_cr3,
+                   (unsigned long long)expected_cr3);
+    }
     const bool debug_skip_user_cr3_swap = false;
     if (!debug_skip_user_cr3_swap && current_cr3 != expected_cr3) {
         extern void fut_write_cr3(uint64_t);
@@ -1159,33 +1140,13 @@ static int build_user_stack(fut_mm_t *mm,
         fut_printf("[BISECT-TRAMP] DEBUG: skipping CR3 switch on purpose; expect immediate user fetch fault if trap path works\n");
     }
 
-    /* DIAGNOSTIC: print waypoints after CR3 swap so we can tell exactly
-     * where execution dies if the box hangs. The historical comment
-     * said "no prints after CR3" — but that assumption hides which
-     * step actually faults. Each of these prints uses kernel-half code
-     * + data + klog ring + fb_console; if any of those isn't mapped in
-     * the new CR3 we'll know which is the first to break. */
-    /* Print g_fb_virt's value alongside the cr3 confirmation so we can
-     * tell at the cliff point whether fb_promote_to_high_half_virt
-     * succeeded: HIGH (0xFFFFFFFF...) = good, fb_poke_* will work;
-     * LOW = bug, fb_poke_* faults silently after CR3 swap.
-     *
-     * Also dump FB geometry so we can tell whether pmap_map covered the
-     * whole framebuffer or only a sliver. HP shows fb_virt=HIGH but no
-     * stripes visible — most likely the mapping is partial. */
-    /* CLI immediately after CR3 swap to keep timer IRQs from preempting
-     * the bootstrap thread mid-trampoline. The IRETQ at the bottom restores
-     * RFLAGS from the user frame (which has IF=1), so this only blocks
-     * interrupts inside the kernel half of the trampoline. Without this,
-     * HP Chromebook reliably hangs between BISECT-A's printf returning and
-     * the next instruction running — most likely a timer IRQ that fires
-     * mid-trampoline, context-switches the bootstrap thread out, and never
-     * picks it again because some scheduler bookkeeping is wrong for a
-     * thread on its way to user mode. */
-    __asm__ volatile("cli" ::: "memory");
-
-    fut_printf("[BISECT-A] post-CR3 fetch+printf OK (cr3=0x%llx)\n",
-               (unsigned long long)fut_read_cr3());
+    /* Interrupts are already disabled from the cli at trampoline entry.
+     * The IRETQ at the bottom restores RFLAGS from the user frame (IF=1),
+     * which re-enables them on the transition to ring 3. */
+    if (verbose) {
+        fut_printf("[BISECT-A] post-CR3 fetch+printf OK (cr3=0x%llx)\n",
+                   (unsigned long long)fut_read_cr3());
+    }
 
     if (g_bisect_probe_kernel_cr3_roundtrip) {
         uint64_t original_cr3 = current_cr3;

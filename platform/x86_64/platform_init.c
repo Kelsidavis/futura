@@ -1171,6 +1171,17 @@ void fut_early_trap_marker(void *regs_ptr) {
 void __attribute__((weak)) fut_isr_handler(void *regs_ptr) {
     fut_interrupt_frame_t *regs = (fut_interrupt_frame_t *)regs_ptr;
 
+    /* DIAGNOSTIC: announce every exception so we know the handler fired at all.
+     * Most exceptions are rare enough that the noise is acceptable; the noise
+     * itself is the most useful signal when the kernel is otherwise silent. */
+    if (regs->vector < 32) {
+        fut_printf("[ISR] vec=%llu rip=0x%llx cs=0x%llx err=0x%llx\n",
+                   (unsigned long long)regs->vector,
+                   (unsigned long long)regs->rip,
+                   (unsigned long long)regs->cs,
+                   (unsigned long long)regs->error_code);
+    }
+
     if (regs->vector == 14) {
         if (fut_trap_handle_page_fault(regs)) {
             return;
@@ -1179,8 +1190,11 @@ void __attribute__((weak)) fut_isr_handler(void *regs_ptr) {
 
     /* User-mode hardware exception: deliver the appropriate POSIX signal
      * rather than halting the kernel.  Mirrors Linux exception→signal mapping.
-     * Check CPL (cs & 3 != 0) to distinguish user exceptions from kernel faults. */
-    if ((regs->cs & 0x3u) != 0 && regs->vector != 14) {
+     * Check CPL (cs & 3 != 0) to distinguish user exceptions from kernel faults.
+     * Note: vec=14 is included here — if fut_trap_handle_page_fault couldn't
+     * satisfy the PF (no vma covers the address, wrong perms), the user task
+     * needs SIGSEGV, not the kernel-panic path. */
+    if ((regs->cs & 0x3u) != 0) {
         int ex_sig  = 0;
         int ex_code = SI_KERNEL;
         void *ex_addr = (void *)(uintptr_t)regs->rip;
@@ -1191,6 +1205,15 @@ void __attribute__((weak)) fut_isr_handler(void *regs_ptr) {
             case 6:  ex_sig = SIGILL;  ex_code = ILL_ILLOPC; break; /* #UD Illegal Opcode */
             case 7:  ex_sig = SIGFPE;  ex_code = FPE_FLTINV; break; /* #NM FPU Unavailable */
             case 13: ex_sig = SIGSEGV; ex_code = SI_KERNEL;  break; /* #GP General Protection */
+            case 14: {                                              /* #PF Page Fault */
+                uint64_t cr2 = 0;
+                __asm__ volatile("mov %%cr2, %0" : "=r"(cr2));
+                ex_sig  = SIGSEGV;
+                /* Distinguish unmapped vs perm violation via error_code bit 0. */
+                ex_code = (regs->error_code & 0x1) ? SEGV_ACCERR : SEGV_MAPERR;
+                ex_addr = (void *)(uintptr_t)cr2;
+                break;
+            }
             case 16: ex_sig = SIGFPE;  ex_code = FPE_FLTINV; break; /* #MF x87 FP Error */
             case 17: ex_sig = SIGBUS;  ex_code = BUS_ADRALN; break; /* #AC Alignment Check */
             case 19: ex_sig = SIGFPE;  ex_code = FPE_FLTINV; break; /* #XM SIMD FP Exception */

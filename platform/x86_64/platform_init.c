@@ -952,6 +952,11 @@ void fut_platform_init(uint32_t multiboot_magic __attribute__((unused)),
     fut_enable_interrupts();
 
     fut_boot_args_init(NULL);
+    /* Save multiboot info pointer for later subsystems (notably acpi_find_rsdp
+     * which needs to walk MB2 tags 14/15 to find the UEFI ACPI RSDP — it
+     * isn't in the legacy 0xE0000-0xFFFFF area on UEFI-booted hardware). */
+    extern uint64_t g_multiboot_info_phys;
+    g_multiboot_info_phys = (uint64_t)multiboot_addr;
     if (multiboot_addr) {
         bool cmdline_found = false;
         const uint8_t *mb_base = (const uint8_t *)(uintptr_t)multiboot_addr;

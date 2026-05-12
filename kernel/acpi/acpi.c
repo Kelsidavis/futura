@@ -50,9 +50,61 @@ static bool acpi_validate_checksum(const acpi_sdt_header_t *header) {
  * machine provides device tree instead. ACPI can be found via EFI on some
  * ARM64 platforms, but that requires EFI support.
  */
+/* Multiboot2 RSDP tag IDs. Tag 14 carries an ACPI 1.0 RSDP (revision 0)
+ * embedded inline; tag 15 carries an ACPI 2.0+ XSDP. GRUB sets these
+ * tags from the UEFI ConfigurationTable when chainloaded from UEFI,
+ * which is the only way to find ACPI on most modern x86_64 hardware
+ * (the legacy 0xE0000-0xFFFFF BIOS search area is empty on UEFI). */
+#define MB2_TAG_ACPI_OLD 14
+#define MB2_TAG_ACPI_NEW 15
+
+extern uint64_t g_multiboot_info_phys;
+uint64_t g_multiboot_info_phys = 0;
+
+static acpi_rsdp_v2_t *acpi_find_rsdp_from_multiboot(void) {
+#if defined(__x86_64__)
+    if (g_multiboot_info_phys == 0) return NULL;
+    const uintptr_t kernel_offset = KERNEL_VIRTUAL_BASE;
+    const uint8_t *mb_base = (const uint8_t *)(g_multiboot_info_phys + kernel_offset);
+    uint32_t total_size = *(const uint32_t *)mb_base;
+    const uint8_t *tag_ptr = mb_base + 8;
+    const uint8_t *end = mb_base + total_size;
+    while (tag_ptr + 8 <= end) {
+        uint32_t type = *(const uint32_t *)tag_ptr;
+        uint32_t size = *(const uint32_t *)(tag_ptr + 4);
+        if (type == 0) break; /* END tag */
+        if ((type == MB2_TAG_ACPI_NEW || type == MB2_TAG_ACPI_OLD)
+            && size > 8) {
+            /* RSDP starts immediately after the 8-byte tag header. */
+            acpi_rsdp_v2_t *rsdp = (acpi_rsdp_v2_t *)(uintptr_t)(tag_ptr + 8);
+            /* Validate the embedded RSDP signature */
+            if (memcmp(rsdp->v1.signature, ACPI_SIG_RSDP, 8) == 0) {
+                fut_printf("[ACPI] Found RSDP via Multiboot2 tag %u at %p\n",
+                           type, (void *)rsdp);
+                return rsdp;
+            }
+        }
+        /* Advance to next tag, rounded up to 8 bytes. */
+        uint32_t advance = (size + 7u) & ~7u;
+        if (advance < 8) advance = 8;
+        tag_ptr += advance;
+    }
+    return NULL;
+#else
+    return NULL;
+#endif
+}
+
 static acpi_rsdp_v2_t *acpi_find_rsdp(void) {
 #if defined(__x86_64__)
-    /* Map BIOS area to higher-half kernel space */
+    /* UEFI path: RSDP is pointed to by the UEFI ConfigurationTable and
+     * passed in via Multiboot2 tag 14/15. Modern x86_64 hardware booted
+     * via UEFI has nothing in the legacy 0xE0000-0xFFFFF area. Try the
+     * multiboot path FIRST before falling back to BIOS-area search. */
+    acpi_rsdp_v2_t *mb_rsdp = acpi_find_rsdp_from_multiboot();
+    if (mb_rsdp) return mb_rsdp;
+
+    /* Legacy BIOS / Coreboot path */
     const uintptr_t bios_start = 0xE0000;
     const uintptr_t bios_end = 0x100000;
     const uintptr_t kernel_offset = KERNEL_VIRTUAL_BASE;

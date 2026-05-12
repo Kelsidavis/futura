@@ -1960,7 +1960,14 @@ void fut_kernel_main(void) {
         }
     }
 
-    /* USB host + device class drivers */
+    /* USB host + device class drivers.
+     *
+     * Class drivers (storage/hub/hid/net/audio) MUST initialize before
+     * the host controller, because xhci_init() now performs USB device
+     * enumeration on every connected port and hands off Mass Storage
+     * interfaces to usb_storage_attach() inline. If usb_storage_init()
+     * hasn't run by then, the attach call fails with -1 and we never
+     * register the disk. Order is class-init first, host-init last. */
     {
         extern int xhci_init(void);
         extern int usb_hub_init(void);
@@ -1969,12 +1976,12 @@ void fut_kernel_main(void) {
         extern int usb_net_init(void);
         extern int usb_audio_init(void);
 
-        xhci_init();
         usb_hub_init();
         usb_hid_init();
         usb_storage_init();
         usb_net_init();
         usb_audio_init();
+        xhci_init();
     }
 
     /* Network — PCIe NICs */

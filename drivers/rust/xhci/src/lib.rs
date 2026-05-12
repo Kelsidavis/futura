@@ -939,6 +939,32 @@ fn default_max_packet_ep0(speed: u32) -> u16 {
     }
 }
 
+/// Per-bulk-endpoint state. Up to two bulk endpoints (one IN, one OUT)
+/// are tracked per slot — enough for Mass Storage (BBB) and for plenty
+/// of other class drivers. Each has its own 4 KiB transfer ring.
+#[derive(Copy, Clone)]
+struct BulkEp {
+    addr: u8,             // bEndpointAddress (0x80 bit = direction IN)
+    max_packet: u16,
+    tring_virt: usize,
+    tring_phys: u64,
+    enqueue: u16,
+    cycle: bool,
+}
+
+impl BulkEp {
+    const fn empty() -> Self {
+        Self { addr: 0, max_packet: 0, tring_virt: 0, tring_phys: 0,
+               enqueue: 0, cycle: false }
+    }
+    fn is_active(&self) -> bool { self.addr != 0 }
+    fn dci(&self) -> u32 {
+        let n = (self.addr & 0x0F) as u32;
+        let is_in = (self.addr & 0x80) != 0;
+        n * 2 + if is_in { 1 } else { 0 }
+    }
+}
+
 #[derive(Copy, Clone)]
 struct DeviceSlot {
     in_use: bool,
@@ -953,6 +979,8 @@ struct DeviceSlot {
     ep0_tring_phys: u64,
     ep0_enqueue: u16,
     ep0_cycle: bool,
+    bulk_in:  BulkEp,
+    bulk_out: BulkEp,
 }
 
 impl DeviceSlot {
@@ -970,6 +998,8 @@ impl DeviceSlot {
             ep0_tring_phys: 0,
             ep0_enqueue: 0,
             ep0_cycle: false,
+            bulk_in: BulkEp::empty(),
+            bulk_out: BulkEp::empty(),
         }
     }
 }
@@ -1135,6 +1165,8 @@ fn setup_slot_for_address(
             ep0_tring_phys,
             ep0_enqueue: 0,
             ep0_cycle: true,
+            bulk_in: BulkEp::empty(),
+            bulk_out: BulkEp::empty(),
         };
     }
     true
@@ -1438,6 +1470,281 @@ fn set_configuration(ctrl: &mut XhciController, slot_id: u32, config_value: u8) 
     }
 }
 
+// EP Context Type field values.
+const EP_TYPE_BULK_OUT: u8 = 2;
+const EP_TYPE_BULK_IN:  u8 = 6;
+
+/// Allocate a transfer ring for a non-EP0 endpoint. Installs the
+/// trailing Link TRB so the HC wraps cleanly. Returns (virt, phys).
+fn alloc_endpoint_tring() -> Option<(usize, u64)> {
+    let page = alloc_page_zeroed();
+    if page.is_null() {
+        return None;
+    }
+    let phys = virt_to_phys(page);
+    // Last TRB is a Link TRB pointing back to the start with TC set so
+    // the cycle bit flips on each pass.
+    unsafe {
+        let trbs = page as *mut Trb;
+        let link = trbs.add(EP0_TRING_SIZE - 1);
+        let link_ctrl = (TRB_TYPE_LINK << TRB_TYPE_SHIFT) | TRB_TC;
+        write_volatile(&mut (*link).param as *mut u64, phys);
+        write_volatile(&mut (*link).status as *mut u32, 0);
+        write_volatile(&mut (*link).control as *mut u32, link_ctrl);
+    }
+    Some((page as usize, phys))
+}
+
+/// Fill in an Endpoint Context inside the slot's input context page.
+/// `dci` is the device-context index (e.g. 2 for EP1 OUT, 3 for EP1 IN).
+fn write_ep_context(
+    cs: usize,
+    input_ctx: *mut u8,
+    dci: u32,
+    ep_type: u8,
+    max_packet: u16,
+    tring_phys: u64,
+    cycle: bool,
+) {
+    // Input Context layout: index 0 = Input Control, 1 = Slot, 2 = EP0 = DCI 1,
+    // 3 = DCI 2, … so the input-context index for DCI d is (d + 1).
+    let ep = unsafe { input_ctx.add(ctx_offset(cs, (dci + 1) as usize)) };
+    let dw1: u32 = ((ep_type as u32) << 3)
+        | (3u32 << 1) // CErr = 3
+        | ((max_packet as u32) << 16);
+    let dcs: u64 = if cycle { 1 } else { 0 };
+    let dq = tring_phys | dcs;
+    unsafe {
+        write_volatile(ep as *mut u32, 0);
+        write_volatile(ep.add(4) as *mut u32, dw1);
+        write_volatile(ep.add(8) as *mut u32, dq as u32);
+        write_volatile(ep.add(12) as *mut u32, (dq >> 32) as u32);
+        // Average TRB Length: rough estimate based on transfer type. For
+        // bulk MS we use a page-sized hint.
+        write_volatile(ep.add(16) as *mut u32, max_packet as u32);
+    }
+}
+
+/// Configure the bulk IN + bulk OUT endpoints discovered on `slot_id`.
+/// Updates the input context, raises Slot Context's Context Entries to
+/// cover the highest DCI in use, sets Add flags A0|A_in|A_out, sends
+/// Configure Endpoint, and waits for completion.
+fn configure_bulk_endpoints(ctrl: &mut XhciController, slot_id: u32) -> bool {
+    let slot = match unsafe { slot_mut(slot_id) } {
+        Some(s) if s.in_use => s,
+        _ => return false,
+    };
+    if !slot.bulk_in.is_active() && !slot.bulk_out.is_active() {
+        return true; // nothing to do
+    }
+
+    let cs = ctrl.context_size;
+    let in_ctx = slot.input_ctx_virt as *mut u8;
+
+    // Zero the input control + endpoint slots we're about to fill so
+    // residual bytes from Address Device's input ctx don't bleed in.
+    unsafe {
+        let icc = in_ctx;
+        write_volatile(icc as *mut u32, 0);          // Drop flags
+        write_volatile(icc.add(4) as *mut u32, 0);   // Add flags (will OR in below)
+    }
+
+    // Required for Configure Endpoint: include Slot Context (A0).
+    let mut add_flags: u32 = 1;
+
+    let mut max_dci: u32 = 1; // EP0 always
+
+    if slot.bulk_out.is_active() {
+        let dci = slot.bulk_out.dci();
+        write_ep_context(
+            cs, in_ctx, dci,
+            EP_TYPE_BULK_OUT,
+            slot.bulk_out.max_packet,
+            slot.bulk_out.tring_phys,
+            slot.bulk_out.cycle,
+        );
+        add_flags |= 1 << dci;
+        if dci > max_dci { max_dci = dci; }
+    }
+    if slot.bulk_in.is_active() {
+        let dci = slot.bulk_in.dci();
+        write_ep_context(
+            cs, in_ctx, dci,
+            EP_TYPE_BULK_IN,
+            slot.bulk_in.max_packet,
+            slot.bulk_in.tring_phys,
+            slot.bulk_in.cycle,
+        );
+        add_flags |= 1 << dci;
+        if dci > max_dci { max_dci = dci; }
+    }
+
+    // Refresh Slot Context: keep the speed/port we set up earlier, but
+    // bump Context Entries to cover the new highest DCI.
+    unsafe {
+        let slot_ctx = in_ctx.add(ctx_offset(cs, 1));
+        let dw0: u32 = (slot.speed << 20) | (max_dci << 27);
+        let dw1: u32 = (slot.root_hub_port & 0xFF) << 16;
+        write_volatile(slot_ctx as *mut u32, dw0);
+        write_volatile(slot_ctx.add(4) as *mut u32, dw1);
+        write_volatile(slot_ctx.add(8) as *mut u32, 0);
+        write_volatile(slot_ctx.add(12) as *mut u32, 0);
+    }
+
+    // Set Add flags. A0 already set; OR in endpoint flags.
+    unsafe {
+        write_volatile(in_ctx.add(4) as *mut u32, add_flags);
+    }
+
+    let in_ctx_phys = slot.input_ctx_phys;
+    let trb = Trb {
+        param: in_ctx_phys,
+        status: 0,
+        control: (TRB_TYPE_CONFIG_EP << TRB_TYPE_SHIFT)
+            | ((slot_id & 0xFF) << 24),
+    };
+    ctrl.cmd_ring.enqueue_trb(&trb);
+    ring_cmd_doorbell(ctrl.bar0, ctrl.db_base);
+
+    match wait_cmd_completion(ctrl) {
+        Some(event) => {
+            let cc = trb_completion_code(event.status);
+            if cc != TRB_CC_SUCCESS {
+                unsafe {
+                    fut_printf(
+                        b"xhci: Configure Endpoint failed (slot %u) cc=%u\n\0".as_ptr(),
+                        slot_id, cc,
+                    );
+                }
+                return false;
+            }
+            true
+        }
+        None => {
+            log("xhci: Configure Endpoint timed out");
+            false
+        }
+    }
+}
+
+/// Enqueue a Normal TRB on the slot's bulk endpoint transfer ring.
+/// Returns the ring at the position the TRB was placed so the caller
+/// can locate the corresponding completion event.
+fn bulk_ring_enqueue(ep: &mut BulkEp, data_phys: u64, len: u32) {
+    let mut control = (TRB_TYPE_NORMAL << TRB_TYPE_SHIFT) | TRB_IOC | TRB_ISP;
+    if ep.cycle { control |= TRB_CYCLE; }
+
+    unsafe {
+        let trbs = ep.tring_virt as *mut Trb;
+        let dst = trbs.add(ep.enqueue as usize);
+        write_volatile(&mut (*dst).param as *mut u64, data_phys);
+        write_volatile(&mut (*dst).status as *mut u32, len);
+        fence(Ordering::Release);
+        write_volatile(&mut (*dst).control as *mut u32, control);
+    }
+    ep.enqueue += 1;
+    if ep.enqueue as usize >= EP0_TRING_SIZE - 1 {
+        // Update Link TRB cycle and wrap.
+        unsafe {
+            let trbs = ep.tring_virt as *mut Trb;
+            let link = trbs.add(EP0_TRING_SIZE - 1);
+            let link_ctrl = (TRB_TYPE_LINK << TRB_TYPE_SHIFT) | TRB_TC
+                | if ep.cycle { TRB_CYCLE } else { 0 };
+            write_volatile(&mut (*link).control as *mut u32, link_ctrl);
+        }
+        ep.cycle = !ep.cycle;
+        ep.enqueue = 0;
+    }
+}
+
+/// Submit a single bulk transfer on `slot_id` to endpoint `ep_addr`
+/// (matches the bEndpointAddress byte, e.g. 0x81 = EP1 IN). Returns
+/// Ok(actual_bytes) or Err(completion_code).
+fn bulk_transfer(
+    ctrl: &mut XhciController,
+    slot_id: u32,
+    ep_addr: u8,
+    data: *mut u8,
+    len: u32,
+) -> Result<u32, u32> {
+    let slot = match unsafe { slot_mut(slot_id) } {
+        Some(s) if s.in_use => s,
+        _ => return Err(0xFF),
+    };
+    let ep = if slot.bulk_in.addr == ep_addr {
+        &mut slot.bulk_in
+    } else if slot.bulk_out.addr == ep_addr {
+        &mut slot.bulk_out
+    } else {
+        return Err(0xFD);
+    };
+
+    let dci = ep.dci();
+    let data_phys = virt_to_phys(data);
+    bulk_ring_enqueue(ep, data_phys, len);
+    ring_doorbell(ctrl.bar0, ctrl.db_base, slot_id, dci);
+
+    match wait_transfer_event(ctrl, slot_id, dci) {
+        Some(ev) => {
+            let cc = trb_completion_code(ev.status);
+            if cc != TRB_CC_SUCCESS && cc != TRB_CC_SHORT_PACKET {
+                return Err(cc);
+            }
+            let residual = ev.status & 0x00FFFFFF;
+            Ok(len.saturating_sub(residual))
+        }
+        None => Err(0xFE),
+    }
+}
+
+// FFI for usb_storage's bulk_fn callback. usb_storage was written with
+// the signature `unsafe extern "C" fn(dev: u32, ep: u8, data: *mut u8,
+// len: u32) -> i32`, where `dev` is whatever opaque id the host driver
+// passes to usb_storage_attach. We pass the slot id.
+unsafe extern "C" {
+    fn usb_storage_attach(
+        dev_id: u32,
+        bulk_in_ep: u8,
+        bulk_out_ep: u8,
+        bulk_fn: unsafe extern "C" fn(dev: u32, ep: u8, data: *mut u8, len: u32) -> i32,
+    ) -> i32;
+}
+
+/// C-callable bulk transfer used by class drivers. Looks up the
+/// xHCI controller and dispatches to bulk_transfer. Returns the
+/// number of bytes transferred (non-negative) or a negative errno
+/// on failure.
+#[unsafe(no_mangle)]
+pub extern "C" fn xhci_bulk_transfer(
+    slot_id: u32,
+    ep_addr: u8,
+    data: *mut u8,
+    len: u32,
+) -> i32 {
+    let ctrl = unsafe {
+        match (*core::ptr::addr_of_mut!(XHCI)).as_mut() {
+            Some(c) => c,
+            None => return -19, // ENODEV
+        }
+    };
+    match bulk_transfer(ctrl, slot_id, ep_addr, data, len) {
+        Ok(n) => n as i32,
+        Err(cc) => {
+            unsafe {
+                fut_printf(
+                    b"xhci: bulk_transfer slot=%u ep=0x%02x len=%u cc=%u\n\0".as_ptr(),
+                    slot_id, ep_addr as u32, len, cc,
+                );
+            }
+            -5 // EIO
+        }
+    }
+}
+
+unsafe extern "C" fn xhci_bulk_thunk(dev: u32, ep: u8, data: *mut u8, len: u32) -> i32 {
+    xhci_bulk_transfer(dev, ep, data, len)
+}
+
 /// Walk every connected/enabled root-hub port and enumerate the device
 /// behind it: Enable Slot → setup input ctx → Address Device → GET_DESCRIPTOR
 /// (device) → GET_DESCRIPTOR (config). The output is logged; future stages
@@ -1532,10 +1839,21 @@ fn enumerate_devices(ctrl: &mut XhciController) {
                 );
             }
         }
-        // Walk descriptors looking for interface (type 4) entries.
+        // Walk descriptors. Track the current interface so endpoint
+        // descriptors get associated with the right class, and capture
+        // the bulk IN/OUT endpoints of any Mass Storage interface we
+        // find so we can wire usb_storage_attach after SET_CONFIGURATION
+        // + Configure Endpoint.
         let mut off = 0usize;
         let buf_end = n2 as usize;
         let cfg_value = unsafe { *cfg_buf.add(5) };
+        let mut cur_if_class: u8 = 0xFF;
+        let mut cur_if_sub:   u8 = 0;
+        let mut cur_if_proto: u8 = 0;
+        let mut msc_bulk_in:  u8 = 0;
+        let mut msc_bulk_in_mps: u16 = 0;
+        let mut msc_bulk_out: u8 = 0;
+        let mut msc_bulk_out_mps: u16 = 0;
         while off + 2 <= buf_end {
             let dlen = unsafe { *cfg_buf.add(off) } as usize;
             let dtype = unsafe { *cfg_buf.add(off + 1) };
@@ -1543,12 +1861,12 @@ fn enumerate_devices(ctrl: &mut XhciController) {
                 break;
             }
             if dtype == 4 && dlen >= 9 {
+                cur_if_class = unsafe { *cfg_buf.add(off + 5) };
+                cur_if_sub   = unsafe { *cfg_buf.add(off + 6) };
+                cur_if_proto = unsafe { *cfg_buf.add(off + 7) };
                 let if_num = unsafe { *cfg_buf.add(off + 2) };
-                let if_class = unsafe { *cfg_buf.add(off + 5) };
-                let if_sub = unsafe { *cfg_buf.add(off + 6) };
-                let if_proto = unsafe { *cfg_buf.add(off + 7) };
-                let n_ep = unsafe { *cfg_buf.add(off + 4) };
-                let class_label: *const u8 = match if_class {
+                let n_ep   = unsafe { *cfg_buf.add(off + 4) };
+                let class_label: *const u8 = match cur_if_class {
                     0x03 => b"HID\0".as_ptr(),
                     0x08 => b"Mass Storage\0".as_ptr(),
                     0x09 => b"Hub\0".as_ptr(),
@@ -1559,21 +1877,86 @@ fn enumerate_devices(ctrl: &mut XhciController) {
                     fut_printf(
                         b"xhci: slot %u: interface %u class=%02x:%02x:%02x (%s) endpoints=%u\n\0".as_ptr(),
                         slot_id, if_num as u32,
-                        if_class as u32, if_sub as u32, if_proto as u32,
+                        cur_if_class as u32, cur_if_sub as u32, cur_if_proto as u32,
                         class_label, n_ep as u32,
                     );
+                }
+            } else if dtype == 5 && dlen >= 7 {
+                // Endpoint descriptor.
+                let ep_addr = unsafe { *cfg_buf.add(off + 2) };
+                let ep_attr = unsafe { *cfg_buf.add(off + 3) };
+                let mps = unsafe {
+                    let lo = *cfg_buf.add(off + 4) as u16;
+                    let hi = *cfg_buf.add(off + 5) as u16;
+                    lo | (hi << 8)
+                } & 0x07FF;
+                let is_bulk = (ep_attr & 0x03) == 2;
+                let is_in   = (ep_addr & 0x80) != 0;
+                if is_bulk && cur_if_class == 0x08
+                    && cur_if_sub == 0x06 && cur_if_proto == 0x50
+                {
+                    if is_in {
+                        msc_bulk_in = ep_addr;
+                        msc_bulk_in_mps = mps;
+                    } else {
+                        msc_bulk_out = ep_addr;
+                        msc_bulk_out_mps = mps;
+                    }
                 }
             }
             off += dlen;
         }
-        // Activate the configuration so endpoints become valid for future
-        // bulk-transfer work.
+        // Activate the configuration so endpoints become valid.
         if !set_configuration(ctrl, slot_id, cfg_value) {
-            unsafe {
-                fut_printf(
-                    b"xhci: slot %u: SET_CONFIGURATION(%u) failed\n\0".as_ptr(),
-                    slot_id, cfg_value as u32,
-                );
+            unsafe { free_page(cfg_buf); }
+            continue;
+        }
+
+        // If this device exposed a Mass Storage (BBB) interface, allocate
+        // transfer rings for its bulk endpoints, issue Configure Endpoint
+        // to make them active in the HC, then hand off to usb_storage.
+        if msc_bulk_in != 0 && msc_bulk_out != 0 {
+            // Attach transfer rings to the slot's BulkEp slots.
+            let setup_ok = unsafe {
+                let s = slot_mut(slot_id).unwrap();
+                let r_in  = alloc_endpoint_tring();
+                let r_out = alloc_endpoint_tring();
+                match (r_in, r_out) {
+                    (Some((iv, ip)), Some((ov, op))) => {
+                        s.bulk_in = BulkEp {
+                            addr: msc_bulk_in, max_packet: msc_bulk_in_mps,
+                            tring_virt: iv, tring_phys: ip,
+                            enqueue: 0, cycle: true,
+                        };
+                        s.bulk_out = BulkEp {
+                            addr: msc_bulk_out, max_packet: msc_bulk_out_mps,
+                            tring_virt: ov, tring_phys: op,
+                            enqueue: 0, cycle: true,
+                        };
+                        true
+                    }
+                    _ => false,
+                }
+            };
+            if setup_ok && configure_bulk_endpoints(ctrl, slot_id) {
+                unsafe {
+                    fut_printf(
+                        b"xhci: slot %u: MSC bulk endpoints ready (in=0x%02x mps=%u out=0x%02x mps=%u)\n\0".as_ptr(),
+                        slot_id,
+                        msc_bulk_in as u32, msc_bulk_in_mps as u32,
+                        msc_bulk_out as u32, msc_bulk_out_mps as u32,
+                    );
+                    let rc = usb_storage_attach(
+                        slot_id,
+                        msc_bulk_in,
+                        msc_bulk_out,
+                        xhci_bulk_thunk,
+                    );
+                    fut_printf(
+                        b"xhci: slot %u: usb_storage_attach rc=%d\n\0".as_ptr(),
+                        slot_id, rc,
+                    );
+                }
             }
         }
         unsafe { free_page(cfg_buf); }
@@ -1837,21 +2220,22 @@ pub extern "C" fn xhci_init() -> i32 {
 
     init_ports(&ctrl);
 
-    // ── Enumerate connected devices ──
+    // ── Store global state before enumeration ──
     //
-    // After port power+reset, each connected device sits in the Default
-    // address state. Walk every Enabled port and bring it through
-    // Enable Slot / Address Device / GET_DESCRIPTOR so the boot log
-    // shows what's actually on the USB bus and so subsequent class
-    // drivers (usb_storage, usb_hub, …) have an addressed device to
-    // attach to. enumerate_devices is best-effort: a failure on one
-    // port doesn't block the others.
-    enumerate_devices(&mut ctrl);
-
-    // ── Store global state ──
-
+    // enumerate_devices() hands MSC interfaces off to usb_storage via
+    // a thunk that re-fetches the controller via XHCI.as_mut(). The
+    // thunk runs synchronously during the SCSI INQUIRY that usb_storage
+    // issues from inside usb_storage_attach -- if XHCI is still None
+    // at that point, every bulk transfer returns -ENODEV and attach
+    // fails. So publish the controller first, then enumerate using a
+    // re-borrow from the static.
     unsafe {
         core::ptr::addr_of_mut!(XHCI).write(Some(ctrl));
+    }
+    unsafe {
+        if let Some(c) = (*core::ptr::addr_of_mut!(XHCI)).as_mut() {
+            enumerate_devices(c);
+        }
     }
 
     log("xhci: initialization complete");

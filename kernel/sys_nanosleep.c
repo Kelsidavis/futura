@@ -265,6 +265,40 @@ long sys_nanosleep(const fut_timespec_t *u_req, fut_timespec_t *u_rem) {
 
         uint64_t deadline_ticks = start_ticks + sleep_ticks;
 
+#ifdef __x86_64__
+        /* Timer-broken fallback: on hardware where the LAPIC timer ISR isn't
+         * incrementing system_ticks (Lenovo L490 in early bring-up), the
+         * timer-driven waitq sleep below never wakes. Use rdtsc to drive a
+         * busy-yield until the requested time has elapsed in real wall-clock
+         * cycles. fut_cycles_per_ms() runs through PERF-CAL and sets the
+         * g_timer_ticks_broken flag when its tick-wait times out.
+         *
+         * Cost: this thread polls rdtsc + fut_schedule() until the deadline,
+         * never sleeping the CPU. Acceptable when the alternative is
+         * deadlock at boot. */
+        extern _Atomic int g_timer_ticks_broken;
+        if (__atomic_load_n(&g_timer_ticks_broken, __ATOMIC_ACQUIRE)) {
+            extern uint64_t fut_rdtsc(void);
+            extern uint64_t fut_cycles_per_ms(void);
+            uint64_t start_tsc = fut_rdtsc();
+            uint64_t cpm = fut_cycles_per_ms();
+            uint64_t target_tsc = start_tsc + cpm * millis;
+            while (fut_rdtsc() < target_tsc) {
+                if (task) {
+                    uint64_t sig = __atomic_load_n(&task->pending_signals,
+                                                   __ATOMIC_ACQUIRE);
+                    fut_thread_t *thr = fut_thread_current();
+                    uint64_t blk = thr ?
+                        __atomic_load_n(&thr->signal_mask, __ATOMIC_ACQUIRE) :
+                        task->signal_mask;
+                    if (sig & ~blk) break;
+                }
+                fut_schedule();
+            }
+            goto sleep_done;
+        }
+#endif
+
         /* If very short sleep (1-2 ticks / 10-20ms), or no task context,
          * just busy-yield to avoid the timer/waitq race entirely. */
         if (sleep_ticks <= 2 || !task) {
@@ -292,6 +326,7 @@ long sys_nanosleep(const fut_timespec_t *u_req, fut_timespec_t *u_rem) {
             }
         }
     }
+sleep_done:;
 
     /* Check if we were woken early by a signal (use thread mask) */
     if (task) {

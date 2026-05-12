@@ -94,13 +94,24 @@ fallback:
      * delta-rdtsc of a fixed-count pause loop. Result will be ~CPU clock, not
      * exact, but lets the kernel proceed past this calibration. We assume a
      * 2 GHz nominal clock — within an order of magnitude of any laptop CPU,
-     * which is enough for the timestamp uses that depend on this. */
+     * which is enough for the timestamp uses that depend on this.
+     *
+     * Set the global "timer broken" flag so other kernel paths (notably
+     * sys_nanosleep) can switch to rdtsc-based busy-yield instead of waiting
+     * on a timer-driven waitq that will never fire. */
     cached = 2000000ULL; /* 2 GHz */
     __atomic_store_n(&calibrated, 1, __ATOMIC_RELEASE);
+    extern _Atomic int g_timer_ticks_broken;
+    __atomic_store_n(&g_timer_ticks_broken, 1, __ATOMIC_RELEASE);
     fut_printf("[PERF-CAL] WARN: timer ticks not advancing during calibration — using fallback cycles_per_ms=%llu\n",
                (unsigned long long)cached);
     return cached;
 }
+
+/* Set by fut_cycles_per_ms when the calibration-time tick wait timed out.
+ * Read by sys_nanosleep / fut_waitq_sleep_timed to decide whether to use
+ * rdtsc-based busy-yield instead of timer-driven waitq sleep. */
+_Atomic int g_timer_ticks_broken = 0;
 
 uint64_t fut_cycles_to_ns(uint64_t cycles) {
     uint64_t cpm = fut_cycles_per_ms();

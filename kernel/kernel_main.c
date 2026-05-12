@@ -1173,9 +1173,15 @@ static void klog_sd_flush_thread(void *arg) {
     /* Immediate flush the moment we're first scheduled. If this never
      * appears in the SD file, the thread isn't being scheduled at all. */
     klog_persist_to_sd_once(0);
+    unsigned iter = 0;
     for (;;) {
         fut_thread_sleep(1500);
-        klog_persist_to_sd_once(0);
+        /* Periodic verbose attempt every ~30s so we see whether a new
+         * block device appeared (e.g. USB storage finally enumerated
+         * after a slow xhci device attach). The initial mount attempt
+         * at boot may have run before usb_storage registered anything. */
+        klog_persist_to_sd_once((iter % 20 == 19) ? 1 : 0);
+        iter++;
     }
 }
 

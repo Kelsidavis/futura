@@ -3008,6 +3008,23 @@ try_ramdisk: (void)0;
                 fut_printf("[INIT] timer health: source=%s, %llu ticks in 100ms self-test (expect ~10)\n",
                            src_name,
                            (unsigned long long)g_lapic_timer_self_test_advance);
+                /* Also echo FB geometry + virt here — the user trampoline
+                 * BISECT-A line was supposed to print this but on HP the
+                 * second fut_printf after CR3 swap hangs, so we never see it.
+                 * Printing in this stable kernel-init context guarantees the
+                 * info reaches the visible boot log. */
+                {
+                    extern int fb_get_info(struct fut_fb_hwinfo *out);
+                    extern void *fb_get_virt_addr(void);
+                    struct fut_fb_hwinfo fbi = {0};
+                    fb_get_info(&fbi);
+                    fut_printf("[INIT] FB: %ux%u pitch=%u bpp=%u phys=0x%llx length=%llu virt=%p\n",
+                               (unsigned)fbi.info.width, (unsigned)fbi.info.height,
+                               (unsigned)fbi.info.pitch, (unsigned)fbi.info.bpp,
+                               (unsigned long long)fbi.phys,
+                               (unsigned long long)fbi.length,
+                               fb_get_virt_addr());
+                }
 #endif
                 if (fmt_rc == 0) {
                     extern struct fut_vnode *fut_vfs_get_root(void);

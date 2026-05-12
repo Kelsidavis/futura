@@ -819,20 +819,36 @@ fn port_reset(ctrl: &XhciController, port: u32) -> bool {
         return false;
     }
 
-    // Issue port reset
+    // Issue port reset by asserting PR (Port Reset). PP is also kept set
+    // in case the port was somehow depowered.
     write_portsc(ctrl.bar0, ctrl.op_base, port, PORTSC_PP | PORTSC_PR);
 
-    // Wait for reset to complete (PRC = Port Reset Change)
-    for _ in 0..100_000u32 {
+    // USB 2.0 spec requires a 50 ms minimum reset assertion window. Give
+    // it that up front (block, not spin) before checking, then poll for
+    // up to ~450 ms more in 10 ms steps. Some on-board USB chips (the
+    // integrated SD card reader hub on octopus Chromebooks in particular)
+    // are slower than typical external devices to come out of reset.
+    thread_sleep(50);
+
+    // Acceptable completion: HC has cleared PR back to 0 OR set PRC.
+    // Either signals "reset finished, port is in Enabled state (PED=1)".
+    for _ in 0..45 {
         let portsc = read_portsc(ctrl.bar0, ctrl.op_base, port);
-        if portsc & PORTSC_PRC != 0 {
-            // Clear the PRC bit
+        let pr_done  = (portsc & PORTSC_PR)  == 0;
+        let prc_seen = (portsc & PORTSC_PRC) != 0;
+        if pr_done || prc_seen {
             clear_portsc_changes(ctrl.bar0, ctrl.op_base, port, PORTSC_PRC);
             return true;
         }
-        thread_yield();
+        thread_sleep(10);
     }
-    log("xhci: port reset timeout");
+    unsafe {
+        fut_printf(
+            b"xhci: port %u: reset timeout (PORTSC=0x%08x)\n\0".as_ptr(),
+            port + 1,
+            read_portsc(ctrl.bar0, ctrl.op_base, port),
+        );
+    }
     false
 }
 
@@ -1779,22 +1795,46 @@ fn enumerate_devices(ctrl: &mut XhciController) {
     let mut enabled = 0u32;
     let mut slotted = 0u32;
     for port in 0..ctrl.max_ports as u32 {
-        let portsc = read_portsc(ctrl.bar0, ctrl.op_base, port);
+        let mut portsc = read_portsc(ctrl.bar0, ctrl.op_base, port);
         let ccs = (portsc & PORTSC_CCS) != 0;
-        let ped = (portsc & PORTSC_PED) != 0;
-        let speed_v = (portsc & PORTSC_SPEED_MASK) >> PORTSC_SPEED_SHIFT;
+        let mut ped = (portsc & PORTSC_PED) != 0;
+        let speed_v0 = (portsc & PORTSC_SPEED_MASK) >> PORTSC_SPEED_SHIFT;
         if ccs {
             connected += 1;
             unsafe {
                 fut_printf(
                     b"xhci: enum port %u: PORTSC=0x%08x CCS=1 PED=%u speed=%u\n\0".as_ptr(),
-                    port + 1, portsc, ped as u32, speed_v,
+                    port + 1, portsc, ped as u32, speed_v0,
                 );
+            }
+        }
+        // If the port is connected but the port reset from init_ports
+        // didn't latch (PED=0), try resetting again now. Some on-board
+        // hubs take longer than the 100 ms settle window in init_ports
+        // to come up after PP=1 -- the integrated SD card reader on
+        // octopus boards is one of those.
+        if ccs && !ped {
+            unsafe {
+                fut_printf(
+                    b"xhci: enum port %u: retrying reset (PED=0)\n\0".as_ptr(),
+                    port + 1,
+                );
+            }
+            if port_reset(ctrl, port) {
+                portsc = read_portsc(ctrl.bar0, ctrl.op_base, port);
+                ped = (portsc & PORTSC_PED) != 0;
+                unsafe {
+                    fut_printf(
+                        b"xhci: enum port %u: after retry PORTSC=0x%08x PED=%u\n\0".as_ptr(),
+                        port + 1, portsc, ped as u32,
+                    );
+                }
             }
         }
         if !ccs || !ped {
             continue;
         }
+        let speed_v = (portsc & PORTSC_SPEED_MASK) >> PORTSC_SPEED_SHIFT;
         enabled += 1;
         let speed = speed_v;
         let slot_id = enable_slot(ctrl);

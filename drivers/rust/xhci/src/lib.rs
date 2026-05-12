@@ -1750,6 +1750,28 @@ unsafe extern "C" fn xhci_bulk_thunk(dev: u32, ep: u8, data: *mut u8, len: u32) 
 /// (device) → GET_DESCRIPTOR (config). The output is logged; future stages
 /// will wire each interface to a class driver based on the bInterfaceClass.
 fn enumerate_devices(ctrl: &mut XhciController) {
+    // Dump every port's PORTSC unconditionally so we can see -- even
+    // for ports with no device attached -- whether power is on (PP=1),
+    // whether a connect change is latched (CSC=1), and the current
+    // link state. This catches the case where a device is electrically
+    // present but the port is in the wrong state to register CCS.
+    for port in 0..ctrl.max_ports as u32 {
+        let portsc = read_portsc(ctrl.bar0, ctrl.op_base, port);
+        let ccs = (portsc & PORTSC_CCS) != 0;
+        let ped = (portsc & PORTSC_PED) != 0;
+        let pp  = (portsc & PORTSC_PP)  != 0;
+        let csc = (portsc & PORTSC_CSC) != 0;
+        let speed_v = (portsc & PORTSC_SPEED_MASK) >> PORTSC_SPEED_SHIFT;
+        let pls = get_port_link_state(portsc);
+        unsafe {
+            fut_printf(
+                b"xhci: dump port %u: PORTSC=0x%08x CCS=%u PED=%u PP=%u CSC=%u PLS=%u speed=%u\n\0".as_ptr(),
+                port + 1, portsc, ccs as u32, ped as u32, pp as u32,
+                csc as u32, pls, speed_v,
+            );
+        }
+    }
+
     // Per-port iteration summary -- one line per visited port so we can
     // tell after the fact whether a missing slot is "port not connected",
     // "port reset failed (PED=0)", or "Enable Slot rejected the port".

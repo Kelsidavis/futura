@@ -969,6 +969,50 @@ static int klog_sd_try_mount(void) {
         fut_printf(" %s", candidates[i]);
     }
     fut_printf("\n");
+    /* Even more useful: enumerate the actual registered block devices so
+     * the user knows what NAMES the system has, regardless of whether
+     * they match our candidate list. */
+    {
+        extern struct fut_blockdev *fut_blockdev_first(void);
+        struct fut_blockdev *bd = fut_blockdev_first();
+        fut_printf("[KLOG-SD] registered block devices:");
+        if (!bd) {
+            fut_printf(" (none)");
+        }
+        int n = 0;
+        while (bd && n < 32) {
+            fut_printf(" %s", bd->name);
+            bd = bd->next;
+            n++;
+        }
+        fut_printf("\n");
+        /* Try each registered device as a vfat mount — last-resort retry
+         * against device names we didn't anticipate. */
+        bd = fut_blockdev_first();
+        n = 0;
+        while (bd && n < 32) {
+            /* Skip ones we already tried by name to avoid duplicate work. */
+            int tried = 0;
+            for (size_t i = 0; i < sizeof(candidates)/sizeof(candidates[0]); i++) {
+                /* Inline strcmp — no <string.h> at file top for this fn */
+                const char *a = bd->name, *b = candidates[i];
+                while (*a && *b && *a == *b) { a++; b++; }
+                if (*a == 0 && *b == 0) { tried = 1; break; }
+            }
+            if (!tried) {
+                int rc = fut_vfs_mount(bd->name, "/mnt/sd", "vfat",
+                                        0, NULL, (uint64_t)-1);
+                if (rc == 0) {
+                    g_klog_sd_mount_idx = 100 + n;
+                    fut_printf("[KLOG-SD] mounted /dev/%s at /mnt/sd (vfat, fallback enum)\n",
+                               bd->name);
+                    return 0;
+                }
+            }
+            bd = bd->next;
+            n++;
+        }
+    }
     return -1;
 }
 

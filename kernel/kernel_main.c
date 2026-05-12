@@ -1077,6 +1077,9 @@ static void klog_persist_to_sd_once(int verbose) {
 
 static void klog_sd_flush_thread(void *arg) {
     (void)arg;
+    /* Immediate flush the moment we're first scheduled. If this never
+     * appears in the SD file, the thread isn't being scheduled at all. */
+    klog_persist_to_sd_once(0);
     for (;;) {
         fut_thread_sleep(1500);
         klog_persist_to_sd_once(0);
@@ -3040,8 +3043,9 @@ try_ramdisk: (void)0;
         fut_printf("----------------------------------\n");
         klog_persist_to_sd_once(1);
         fut_task_t *flush_task = fut_task_create();
+        fut_thread_t *t = NULL;
         if (flush_task) {
-            fut_thread_t *t = fut_thread_create(
+            t = fut_thread_create(
                 flush_task, klog_sd_flush_thread, NULL,
                 16 * 1024, 200);
             if (t) {
@@ -3053,6 +3057,14 @@ try_ramdisk: (void)0;
         } else {
             fut_printf("[KLOG-SD] flusher task create failed\n");
         }
+        /* Synchronous second flush BEFORE init exec — proves O_APPEND
+         * works at all (writes iter 1 to the file with the spawn-result
+         * print included). If user sees iter 1 in the file but no iter
+         * 2+, the issue is the periodic thread not running. If user
+         * sees only iter 0, even the second sync append fails. */
+        fut_printf("[KLOG-SD] sync re-flush before init exec (task=%p thread=%p)\n",
+                   (void *)flush_task, (void *)t);
+        klog_persist_to_sd_once(1);
     }
 
 #if ENABLE_WAYLAND && !defined(__aarch64__)

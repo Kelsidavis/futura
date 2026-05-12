@@ -371,9 +371,25 @@ void fut_sched_init(void) {
 /**
  * Start the scheduler, allowing context switches to occur.
  * Must be called after all kernel initialization is complete.
+ *
+ * The three breadcrumb prints are diagnostic, not load-bearing. L490
+ * was hanging somewhere inside this function and there's nothing else
+ * to anchor "are we past the atomic_store?" against. With the prints
+ * in place the screen makes the cliff point unambiguous — last visible
+ * BCRUMB pins it to one of three two-line ranges.
  */
 void fut_sched_start(void) {
+    /* Sample RFLAGS so we know whether interrupts are armed at entry. */
+#ifdef __x86_64__
+    unsigned long flags = 0;
+    __asm__ volatile("pushfq\n\tpopq %0" : "=r"(flags) :: "memory");
+    int if_set = (flags & (1UL << 9)) ? 1 : 0;
+#else
+    int if_set = -1;
+#endif
+    fut_printf("[SCHED-BCRUMB] fut_sched_start entered, IF=%d\n", if_set);
     atomic_store_explicit(&scheduler_started, true, memory_order_release);
+    fut_printf("[SCHED-BCRUMB] scheduler_started flag set, awaiting first IRQ\n");
     fut_printf("[SCHED] Scheduler started - preemptive scheduling now enabled\n");
 }
 

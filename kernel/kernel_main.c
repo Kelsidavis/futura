@@ -2099,6 +2099,14 @@ void fut_kernel_main(void) {
             intel_gpio_init(0, 0);
             fut_printf("[INIT] Intel: entering intel_lpss_init\n");
             intel_lpss_init();
+            /* Probe LPSS I2C buses for HID-over-I2C devices (Chromebook
+             * touchpads, etc.). Must run AFTER intel_lpss_init so the I2C
+             * controller table is populated. */
+            {
+                extern int intel_i2c_hid_init(void);
+                fut_printf("[INIT] Intel: entering intel_i2c_hid_init\n");
+                intel_i2c_hid_init();
+            }
             fut_printf("[INIT] Intel: entering intel_smbus_init\n");
             intel_smbus_init();
             fut_printf("[INIT] Intel: entering intel_spi_init\n");

@@ -592,7 +592,8 @@ pub extern "C" fn amd_smbus_init() -> i32 {
         }
     };
 
-    let platform = if device_id == AMD_SMBUS_DEVICE_AM4 { "AM4" } else { "AM5" };
+    // %s requires NUL-terminated C string; use byte literals with explicit \0.
+    let platform: &[u8] = if device_id == AMD_SMBUS_DEVICE_AM4 { b"AM4\0" } else { b"AM5\0" };
     unsafe {
         fut_printf(
             b"amd_smbus: found %s controller (device %04x) at PCI %02x:%02x.%x\n\0".as_ptr(),

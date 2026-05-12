@@ -674,7 +674,8 @@ pub extern "C" fn amd_sbtsi_set_offset(millideg: i32) -> i32 {
 
     let rc = sbtsi.set_offset(millideg);
     if rc == 0 {
-        let sign = if millideg < 0 { "-" } else { "" };
+        // %s wants NUL-terminated bytes; use byte literals.
+        let sign: &[u8] = if millideg < 0 { b"-\0" } else { b"\0" };
         let abs_val = if millideg < 0 { -millideg } else { millideg };
         unsafe {
             fut_printf(

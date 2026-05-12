@@ -65,7 +65,7 @@ static bool g_bisect_mask_timer_before_first_user = false;
  * that print, CR3 swap is fine and init/IRETQ is the actual problem. If we
  * see no print and the box still hangs at "CR3 swap+iretq", the CR3 swap
  * itself faults (kernel-half not mapped, etc.). */
-static bool g_bisect_probe_kernel_cr3_roundtrip = true;
+static bool g_bisect_probe_kernel_cr3_roundtrip = false;
 /* Diagnostic: replace the real ELF entry with a synthetic userspace
  * probe (`ud2`) so we can tell whether the CPU retires even a single user
  * instruction on hardware. Now off by default — combined with the post-CR3
@@ -1151,7 +1151,16 @@ static int build_user_stack(fut_mm_t *mm,
     fut_printf("[BISECT-TRAMP] CR3 swap+iretq: cur=0x%llx new=0x%llx\n",
                (unsigned long long)current_cr3,
                (unsigned long long)expected_cr3);
-    const bool debug_skip_user_cr3_swap = false;
+    /* TEMPORARILY SKIP CR3 SWAP: previous boot showed CR3 swap to
+     * init's PT kills the CPU even though pml4[256..511] diff_count=0.
+     * Skip the swap and let IRETQ run against the KERNEL's CR3 — that
+     * has no user mapping for 0x400000, so init's first fetch will
+     * page-fault. If the user-mode trap path is healthy, we'll see
+     * "[TRAP] user exception vec=14 rip=0x400000 ..." on the FB. That
+     * tells us the IRETQ + trap path work and only the CR3 swap is
+     * the cliff. If we still see nothing, the IRETQ itself is broken.
+     */
+    const bool debug_skip_user_cr3_swap = true;
     if (!debug_skip_user_cr3_swap && current_cr3 != expected_cr3) {
         extern void fut_write_cr3(uint64_t);
         fut_write_cr3(expected_cr3);

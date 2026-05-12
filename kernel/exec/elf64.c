@@ -1224,6 +1224,17 @@ static int build_user_stack(fut_mm_t *mm,
     handoff_frame->ss = USER_DATA_SELECTOR;
     fut_printf("[BISECT-D] frame populated, calling fut_resume_user_frame\n");
 
+    /* DIAGNOSTIC: fire int3 (#BP) right here. INT3 is a software trap, so
+     * it fires regardless of IF state. If we see "[ISR] vec=3 ..." on the
+     * FB, the IDT entry for #BP routes correctly to fut_isr_handler and
+     * fut_printf still works in that handler. If we don't see [ISR], the
+     * IDT/handler path itself is dead in this context — meaning whatever
+     * exception IRETQ raises also can't be delivered, producing the silent
+     * hang we've been chasing. */
+    fut_printf("[BISECT-E] firing int3 to test IDT path\n");
+    __asm__ volatile("int3");
+    fut_printf("[BISECT-F] returned from int3 (should never see this)\n");
+
     fut_resume_user_frame(handoff_frame, handoff_thread);
 
     /* Should NEVER reach here */

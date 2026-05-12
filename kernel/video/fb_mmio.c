@@ -229,12 +229,16 @@ void fb_promote_to_high_half_virt(void) {
                (unsigned long long)g_fb_hw.phys,
                (unsigned long long)map_size);
 
-    /* Plain kernel RW — no WT/CD. The firmware's MTRRs already cover the FB
-     * range (typically Write-Combining on GMA-class IGPs), so the cache type
-     * is determined by MTRR, not PTE. Adding WT|CD here forces strong UC and
-     * makes scrolling unbearably slow (each FB write goes straight to MMIO,
-     * memcpy on the scroll buffer becomes O(rows*bytes/dram-latency)). */
-    if (pmap_map((uint64_t)virt_base, phys_base, map_size, PTE_KERNEL_RW) != 0) {
+    /* Mark the new PTEs Write-Combining (PAT slot 1, encoded as PWT=1, PCD=0,
+     * PAT=0). pat_init() during platform bringup already programmed IA32_PAT
+     * so that slot 1 = WC. Without this, the high-half mapping defaults to WB
+     * — and on coreboot's GOP FB that means each pixel write becomes a full
+     * cache-line read/modify/evict, so the scroll memcpy crawls line-by-line.
+     * WC batches sequential FB writes into 64-byte combining buffers. */
+    extern uint64_t pat_choose_page_attr_wc(void);
+    uint64_t wc_flags = pat_choose_page_attr_wc();
+    if (pmap_map((uint64_t)virt_base, phys_base, map_size,
+                 PTE_KERNEL_RW | wc_flags) != 0) {
         fut_printf("[FB] promote: pmap_map failed; init exec will break the FB console\n");
         return;
     }

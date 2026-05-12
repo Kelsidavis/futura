@@ -152,7 +152,6 @@ struct fb_console_state {
     int cols;                        /* Number of columns */
     int rows;                        /* Number of rows */
     int protected_x_start;           /* Start column of protected region (logo area) */
-    int protected_y_end;             /* End row of protected region (logo area) */
     int initialized;                 /* Has been initialized */
     int disabled;                    /* Disabled for GUI mode */
     ansi_state_t ansi;               /* Escape-sequence parser state */
@@ -531,8 +530,8 @@ int fb_console_init(void) {
 
     /* Store protected region info for the logo */
     cons->protected_x_start = cons->cols;  /* Start of protected columns */
-    cons->protected_y_end = logo_rows;     /* End of protected rows */
     cons->initialized = 1;
+    (void)logo_rows;  /* Logo row-count not referenced by scroll logic */
 
     /* One-shot fb_mem validity check. Drawing/scrolling code now skips
      * the per-pixel/per-scanline check and relies on this flag. */

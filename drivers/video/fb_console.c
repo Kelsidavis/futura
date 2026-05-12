@@ -163,6 +163,13 @@ struct fb_console_state {
      * Empty when dirty_y_min >= dirty_y_max. Reset on every flush. */
     uint32_t dirty_y_min;
     uint32_t dirty_y_max;
+
+    /* Pinned line at row 0. Re-painted after every scroll so the version
+     * banner stays visible across the entire boot — invaluable when a
+     * board hangs early and serial scrollback isn't available. */
+    char     pinned_text[128];
+    uint32_t pinned_len;
+    int      pinned_active;
 };
 
 static struct fb_console_state g_fb_console = {
@@ -302,6 +309,8 @@ static void fb_console_draw_char(int char_x, int char_y, char c, uint32_t fg_col
     }
 }
 
+static void fb_console_repaint_pinned(void);
+
 static void fb_console_scroll(void) {
     struct fb_console_state *cons = &g_fb_console;
     if (!g_fb_addr_validated) return;
@@ -365,6 +374,7 @@ static void fb_console_scroll(void) {
                     fb_console_mark_dirty((uint32_t)last_y,
                                           (uint32_t)(last_y + cons->char_height));
                 }
+                fb_console_repaint_pinned();
                 return;
             }
             /* fall through to CPU path on BLT failure */
@@ -409,6 +419,30 @@ static void fb_console_scroll(void) {
      * out of sync with FB. Mark the full screen dirty so flush_full
      * pushes it. */
     fb_console_mark_dirty(0, cons->height);
+
+    fb_console_repaint_pinned();
+}
+
+/* Re-paint the pinned line on row 0. Scrolls always copy the entire
+ * visible region — including row 0 — so without this helper the pin
+ * gets shifted up and clobbered on the first scroll. Called inline
+ * from fb_console_scroll() and once from fb_console_set_pinned_line()
+ * to draw the initial pin. */
+static void fb_console_repaint_pinned(void) {
+    struct fb_console_state *cons = &g_fb_console;
+    if (!cons->pinned_active || cons->pinned_len == 0) return;
+    if (!g_fb_addr_validated) return;
+
+    uint32_t fg = make_color(0xFF, 0xFF, 0xFF, 0xFF);
+    uint32_t bg = make_color(0x00, 0x00, 0x00, 0xFF);
+
+    int max_chars = cons->cols;
+    if (max_chars > (int)cons->pinned_len) max_chars = (int)cons->pinned_len;
+
+    for (int x = 0; x < cons->cols; x++) {
+        char c = (x < max_chars) ? cons->pinned_text[x] : ' ';
+        fb_console_draw_char(x, 0, c, fg, bg);
+    }
 }
 
 /* ============================================================
@@ -521,6 +555,27 @@ int fb_console_init(void) {
     fb_console_clear();
 
     return 0;
+}
+
+/* Stash `text[0..len)` as the pinned row-0 line and immediately draw it.
+ * Subsequent scrolls re-paint the same line after their copy, so the
+ * pin stays visible across the whole boot. Pass len == 0 to clear. */
+void fb_console_set_pinned_line(const char *text, uint32_t len) {
+    struct fb_console_state *cons = &g_fb_console;
+    if (!cons->initialized) return;
+    if (len == 0 || text == NULL) {
+        cons->pinned_active = 0;
+        cons->pinned_len = 0;
+        return;
+    }
+    uint32_t copy_len = len;
+    if (copy_len > sizeof(cons->pinned_text)) {
+        copy_len = sizeof(cons->pinned_text);
+    }
+    memcpy(cons->pinned_text, text, copy_len);
+    cons->pinned_len = copy_len;
+    cons->pinned_active = 1;
+    fb_console_repaint_pinned();
 }
 
 /* Copy the entire back buffer to the real framebuffer. The fb_mem

@@ -176,6 +176,24 @@ void fut_boot_banner(void) {
     fut_printf(" %s\n", FUT_VERSION_STR);
     fut_printf(" Build: %s  by %s@%s\n", FUT_BUILD_DATE, FUT_BUILD_USER, FUT_BUILD_HOST);
 
+    /* Pin the version + build date on row 0 so it stays visible for the
+     * whole boot, regardless of scroll. Critical for real-hardware
+     * diagnosis: when a board hangs, the screen scrolls past the banner
+     * within a few seconds; serial scrollback isn't always available;
+     * SD logging is too late if the hang is before scheduler init. */
+    {
+        extern void fb_console_set_pinned_line(const char *text, uint32_t len);
+        char pin[96];
+        size_t n = 0;
+        const char *parts[] = { " ", FUT_VERSION_STR, "   ", FUT_BUILD_DATE };
+        for (size_t i = 0; i < sizeof(parts) / sizeof(parts[0]); i++) {
+            for (const char *p = parts[i]; *p && n < sizeof(pin) - 1; p++) {
+                pin[n++] = *p;
+            }
+        }
+        fb_console_set_pinned_line(pin, (uint32_t)n);
+    }
+
     fut_printf("\n[CPU] %s\n", (cpu_brand[0] != '\0') ? cpu_brand : "Unknown CPU");
 #ifdef __x86_64__
     fut_printf("[CPU] NX=%u OSXSAVE=%u SSE=%u AVX=%u FSGSBASE=%u PGE=%u\n",

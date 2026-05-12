@@ -1165,8 +1165,14 @@ static int build_user_stack(fut_mm_t *mm,
      * step actually faults. Each of these prints uses kernel-half code
      * + data + klog ring + fb_console; if any of those isn't mapped in
      * the new CR3 we'll know which is the first to break. */
-    fut_printf("[BISECT-A] post-CR3 fetch+printf OK (cr3=0x%llx)\n",
-               (unsigned long long)fut_read_cr3());
+    /* Print g_fb_virt's value alongside the cr3 confirmation so we can
+     * tell at the cliff point whether fb_promote_to_high_half_virt
+     * succeeded: HIGH (0xFFFFFFFF...) = good, fb_poke_* will work;
+     * LOW = bug, fb_poke_* faults silently after CR3 swap. */
+    extern void *fb_get_virt_addr(void);
+    fut_printf("[BISECT-A] post-CR3 fetch+printf OK (cr3=0x%llx) fb_virt=%p\n",
+               (unsigned long long)fut_read_cr3(),
+               fb_get_virt_addr());
 
     /* The BIG SURPRISE on HP Chromebook real hardware: the SECOND
      * fut_printf after CR3 swap hangs, even though the first one

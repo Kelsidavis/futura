@@ -54,8 +54,10 @@ static bool g_bisect_mask_timer_before_first_user = true;
 static bool g_bisect_probe_kernel_cr3_roundtrip = false;
 /* Diagnostic: replace the real ELF entry with a synthetic userspace
  * probe (`ud2`) so we can tell whether the CPU retires even a single user
- * instruction on hardware. */
-static bool g_bisect_user_ud2_probe = true;
+ * instruction on hardware. Now off by default — combined with the post-CR3
+ * waypoints in this file, we get enough visibility to chase a real-init
+ * hang without the probe getting in the way. */
+static bool g_bisect_user_ud2_probe = false;
 
 #define BISECT_USER_INT3_VA 0x0000000000500000ULL
 

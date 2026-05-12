@@ -1032,14 +1032,19 @@ static int fat_vnode_truncate(struct fut_vnode *v, uint64_t length) {
  * marks each cluster free, then marks the dir entry as deleted (0xE5)
  * which is the standard FAT "free dir slot" sentinel.
  *
- * Limitations versus a full POSIX unlink:
- *   - LFN slots that prefix the 8.3 entry are NOT marked deleted (so
- *     listing the directory may still see the long name pointing at a
- *     deleted entry). The next O_CREAT may need to overwrite them. For
- *     our use case (the klog SD log path L0000.LOG — 8.3-friendly), this
- *     is acceptable; a fuller implementation can come later.
+ * Also walks BACKWARDS from the 8.3 entry looking for LFN (long-filename)
+ * slots that prefix it, marking each as deleted too. Without this, Linux's
+ * vfat mount sees orphan LFN entries pointing at a deleted 8.3 and flags
+ * the FS as inconsistent — observed when the user removed the SD card
+ * mid-write; chkdsk eventually fixed it but the boot-time log writes were
+ * scary. LFN entries always have attr == 0x0F and immediately precede
+ * their 8.3 entry; sequence numbers count down to 1 (with 0x40 set on the
+ * last/first-by-name slot).
+ *
+ * Remaining limitations versus a full POSIX unlink:
  *   - No support for unlinking directories (must be empty).
- *   - Does not update FSInfo free-cluster hint.
+ *   - Does not update FSInfo free-cluster hint (Linux recomputes it on
+ *     next mount — chkdsk does NOT flag this).
  */
 static int fat_vnode_unlink(struct fut_vnode *dir, const char *name) {
     struct fat_vnode_info *dvi = (struct fat_vnode_info *)dir->fs_data;
@@ -1065,9 +1070,36 @@ static int fat_vnode_unlink(struct fut_vnode *dir, const char *name) {
         if (rc < 0) return rc;
     }
 
-    /* Mark the dir entry's first byte as 0xE5 = "deleted slot". The rest
-     * of the entry can stay — FAT scanners treat 0xE5 as the sentinel. */
+    /* Walk backwards through preceding LFN slots and mark each deleted.
+     * Each dir entry is exactly 32 bytes; LFN slots have attr=0x0F at byte
+     * offset 11. Stop when we hit a non-LFN entry, the start of the
+     * containing cluster, or the start of the FAT volume — whichever
+     * comes first. Up to 20 LFN slots are allowed per name (max 255 chars
+     * × 13 chars per slot ≈ 20); cap at 20 here as a safety bound. */
     uint8_t deleted = 0xE5;
+    uint64_t entry_off = tvi->dir_entry_disk_off;
+    for (int i = 0; i < 20; ++i) {
+        if (entry_off < 32) break;
+        uint64_t prev_off = entry_off - 32;
+        struct fat_dir_entry prev_de;
+        ssize_t r = fut_blockdev_read_bytes(fi->dev, prev_off, sizeof(prev_de), &prev_de);
+        if (r < 0) break;
+        /* Stop if this isn't an LFN slot, or if it's already deleted
+         * (0xE5 in the first byte). */
+        if (prev_de.attr != FAT_ATTR_LFN) break;
+        if ((uint8_t)prev_de.name[0] == 0xE5) break;
+        /* Don't cross a cluster boundary — LFN slots and their 8.3 must
+         * live in the same cluster, but we still defensively check. */
+        if ((entry_off & ~((uint64_t)fi->cluster_size - 1)) !=
+            (prev_off  & ~((uint64_t)fi->cluster_size - 1))) {
+            break;
+        }
+        ssize_t lw = fut_blockdev_write_bytes(fi->dev, prev_off, 1, &deleted);
+        if (lw < 0) break;
+        entry_off = prev_off;
+    }
+
+    /* Mark the dir entry's first byte as 0xE5 = "deleted slot". */
     ssize_t w = fut_blockdev_write_bytes(fi->dev, tvi->dir_entry_disk_off,
                                           1, &deleted);
     if (w < 0) return (int)w;

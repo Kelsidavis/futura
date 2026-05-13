@@ -2492,14 +2492,14 @@ pub extern "C" fn xhci_init() -> i32 {
         log("xhci: warning: command ring test failed");
     }
 
-    // DEBUG: skip port init + enumeration to bisect hang
-    log("xhci: DEBUG returning after cmd ring test (no port init)");
-    unsafe { XHCI = Some(ctrl); }
-    return 0;
-
     // ── Initialize root hub ports ──
 
     init_ports(&ctrl);
+
+    // DEBUG: skip enumeration to bisect hang
+    log("xhci: DEBUG returning after init_ports (no enumeration)");
+    unsafe { XHCI = Some(ctrl); }
+    return 0;
 
     // ── Store global state before enumeration ──
     //

@@ -511,6 +511,13 @@ long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
              * an I/O event (or timer) wakes us — avoids the 10ms polling spin. */
             fut_waitq_t poll_wq;
             fut_waitq_init(&poll_wq);
+
+            /* Wait-mark snapshot: take BEFORE wiring + scan. If wake_seq
+             * advances by the time we've enqueued, a wake fired in the
+             * window between snapshot and enqueue (lost on empty waitq).
+             * Replaces the O(N) double-rescan with an O(1) atomic load. */
+            uint64_t poll_wq_seq_before = fut_waitq_wake_seq(&poll_wq);
+
             poll_wire_fds(kfds, nfds, task, &poll_wq);
 
             /* Rescan after wiring: catches events that arrived during setup */
@@ -520,25 +527,9 @@ long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
                 /* Use caller's deadline; fall back to 50ms for infinite-timeout */
                 uint64_t wake_ticks = (timeout > 0 && deadline > now)
                                       ? (deadline - now) : 5u;
-                /* Enqueue the thread into poll_wq while holding its lock,
-                 * then release the lock BEFORE starting the timer.
-                 *
-                 * The original pattern (lock → timer_start → sleep_locked)
-                 * causes a single-CPU IRQ-spinlock deadlock: FD callbacks
-                 * (e.g. timerfd_timer_cb) call fut_waitq_wake_one(poll_wq)
-                 * from timer IRQ context, which spins on poll_wq.lock.
-                 * If we hold poll_wq.lock when that IRQ fires, the IRQ
-                 * handler spins forever on a lock the preempted thread holds
-                 * but can never release while the CPU is in the IRQ handler.
-                 *
-                 * Fix: enqueue under poll_wq.lock, release the lock, THEN
-                 * start the timer. The callback can now always acquire
-                 * poll_wq.lock safely from IRQ context. */
                 fut_thread_t *poll_thr = fut_thread_current();
                 if (poll_thr) {
-                    /* Disable IRQs early — the FD wake callbacks fire from
-                     * timer ISR context. We need to enqueue + re-scan under
-                     * CLI so a wake firing in the window can't be lost. */
+                    /* Disable IRQs while modifying waitq linkage. */
 #ifdef __x86_64__
                     __asm__ volatile("cli" ::: "memory");
 #elif defined(__aarch64__)
@@ -556,15 +547,11 @@ long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
                     poll_wq.tail = poll_thr;
                     fut_spinlock_release(&poll_wq.lock);
 
-                    /* CRITICAL: re-scan AFTER enqueue, still under CLI.
-                     * This closes the lost-wakeup race: if an FD became
-                     * ready between the earlier scan (line 517) and our
-                     * enqueue, the wake_one fired on an empty waitq and
-                     * was lost. The re-scan catches the event before we
-                     * actually sleep. */
-                    stats = poll_scan_fds(kfds, nfds, task);
-                    if (stats.ready_count > 0) {
-                        /* Race detected — dequeue and skip the sleep. */
+                    /* Wait-mark re-check: if wake_seq advanced since our
+                     * snapshot, a wake fired between snapshot and enqueue
+                     * (lost on empty waitq). Skip the sleep — the outer
+                     * loop will rescan and find the event. */
+                    if (fut_waitq_wake_seq(&poll_wq) != poll_wq_seq_before) {
                         fut_spinlock_acquire(&poll_wq.lock);
                         if (poll_wq.head == poll_thr) poll_wq.head = poll_thr->wait_next;
                         if (poll_wq.tail == poll_thr) poll_wq.tail = NULL;

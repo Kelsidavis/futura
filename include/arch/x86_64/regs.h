@@ -105,29 +105,18 @@ typedef struct fut_cpu_context {
     uint64_t fs;
     uint64_t gs;
 
-    /* Caller-saved registers — saved on every cooperative and IRQ-driven
-     * context switch. Even though System V ABI marks these as scratch,
-     * the IRQ-preempt → cooperative-restore cycle means a thread can be
-     * preempted at an arbitrary point and later restored via the
-     * cooperative context (which unwinds through the ISR chain). If any
-     * caller-saved reg leaks between threads during this cycle, the
-     * ISR-restored values are stale and user-mode gets wrong state.
-     * Saving all 9 caller-saved regs makes the context self-contained. */
+    /* Caller-saved registers captured for bootstrap/debug */
     uint64_t rdi;
     uint64_t rsi;
     uint64_t rdx;
     uint64_t rcx;
-    uint64_t r8;
-    uint64_t r9;
-    uint64_t r10;
-    uint64_t r11;
     uint64_t rax;
 
     /* Saved SIMD/FPU state (must be 16-byte aligned for FXSAVE) */
     alignas(16) uint8_t fx_area[512];
 } __attribute__((aligned(16))) fut_cpu_context_t;
 
-static_assert(sizeof(fut_cpu_context_t) == 704, "CPU context must be 704 bytes");
+static_assert(sizeof(fut_cpu_context_t) == 672, "CPU context must be 672 bytes");
 
 /* ============================================================
  *   Register Accessors

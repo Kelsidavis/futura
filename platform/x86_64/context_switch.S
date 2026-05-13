@@ -42,12 +42,8 @@
 .equ CTX_RSI,     128
 .equ CTX_RDX,     136
 .equ CTX_RCX,     144
-.equ CTX_R8,      152
-.equ CTX_R9,      160
-.equ CTX_R10,     168
-.equ CTX_R11,     176
-.equ CTX_RAX,     184
-.equ CTX_FX,      192
+.equ CTX_RAX,     152
+.equ CTX_FX,      160
 
 /*
  * fut_switch_context
@@ -87,10 +83,6 @@ fut_switch_context:
     movq %rax, CTX_RAX(%rdi)
     movq %rcx, CTX_RCX(%rdi)
     movq %rdx, CTX_RDX(%rdi)
-    movq %r8,  CTX_R8(%rdi)
-    movq %r9,  CTX_R9(%rdi)
-    movq %r10, CTX_R10(%rdi)
-    movq %r11, CTX_R11(%rdi)
     movq %rdi, CTX_RDI(%rdi)
     movq %rsi, CTX_RSI(%rdi)
 
@@ -146,8 +138,6 @@ fut_switch_context:
     movq CTX_RSI(%r11), %rsi
     movq CTX_RDX(%r11), %rdx
     movq CTX_RCX(%r11), %rcx
-    movq CTX_R8(%r11),  %r8
-    movq CTX_R9(%r11),  %r9
     movq CTX_RAX(%r11), %rax
 
     /* Jump to saved RIP using ret for proper stack alignment */
@@ -241,7 +231,7 @@ fut_switch_context_irq:
     testq %r12, %r12
     jz 1f                   /* Skip if prev is NULL */
 
-    movq 752(%r12), %r15    /* r15 = prev->irq_frame (pre-allocated) */
+    movq 720(%r12), %r15    /* r15 = prev->irq_frame (pre-allocated) */
     testq %r15, %r15
     jz 1f                   /* Skip if NULL (should never happen) */
     /* Copy current frame to prev->irq_frame */
@@ -280,7 +270,7 @@ fut_switch_context_irq:
     /* IMPORTANT: Clear prev->irq_frame to prevent restoring stale zero-RIP frame */
     testq %r12, %r12        /* Check if we have a prev thread */
     jz .skip_rip_zero_clear /* No prev thread, skip to restore next */
-    movq $0, 752(%r12)      /* prev->irq_frame = NULL (offset 720) */
+    movq $0, 720(%r12)      /* prev->irq_frame = NULL (offset 720) */
 
 .skip_rip_zero_clear:
     /* CRITICAL: Must pop rdx/rax before jumping - they were pushed at line 227-228 */
@@ -356,7 +346,7 @@ fut_switch_context_irq:
     /* Clear prev->irq_frame to prevent using stale frame */
     testq %r12, %r12
     jz .skip_corrupted_clear
-    movq $0, 752(%r12)      /* prev->irq_frame = NULL */
+    movq $0, 720(%r12)      /* prev->irq_frame = NULL */
 
 .skip_corrupted_clear:
     /* CRITICAL: Must pop rdx/rax before jumping - they were pushed at line 227-228 */
@@ -436,19 +426,15 @@ fut_switch_context_irq:
     movq $0, (48 + 128)(%r12)     /* context.rsi */
     movq $0, (48 + 136)(%r12)     /* context.rdx */
     movq $0, (48 + 144)(%r12)     /* context.rcx */
-    movq $0, (48 + 152)(%r12)     /* context.r8  */
-    movq $0, (48 + 160)(%r12)     /* context.r9  */
-    movq $0, (48 + 168)(%r12)     /* context.r10 */
-    movq $0, (48 + 176)(%r12)     /* context.r11 */
-    movq $0, (48 + 184)(%r12)     /* context.rax */
+    movq $0, (48 + 152)(%r12)     /* context.rax */
 
     /* Save FX state so FPU registers are preserved on cooperative restore */
-    leaq (48 + 192)(%r12), %rax
+    leaq (48 + 160)(%r12), %rax
     fxsave64 (%rax)
 
 .get_next_frame:
     /* Step 2: Get next thread's saved frame pointer */
-    movq 752(%r13), %r11
+    movq 720(%r13), %r11
 
     /* Debug: Check if we have a saved frame */
     testq %r11, %r11
@@ -493,7 +479,7 @@ fut_switch_context_irq:
      * we jumped here from validation failure (line 468) */
     testq %r13, %r13        /* Check if we have a next thread */
     jz .skip_clear_next
-    movq $0, 752(%r13)      /* next->irq_frame = NULL */
+    movq $0, 720(%r13)      /* next->irq_frame = NULL */
 .skip_clear_next:
 
     /* If next->irq_frame is NULL, construct frame from context */
@@ -531,7 +517,7 @@ fut_switch_context_irq:
     movq %rax, 24(%rdi)     /* frame->ds */
 
     /* Copy general purpose registers */
-    movq 184(%rsi), %rax    /* context.rax (CTX_RAX=184) */
+    movq 152(%rsi), %rax    /* context.rax */
     movq %rax, 32(%rdi)     /* frame->rax */
     movq 32(%rsi), %rax     /* context.rbx */
     movq %rax, 40(%rdi)     /* frame->rbx */
@@ -547,14 +533,10 @@ fut_switch_context_irq:
     movq %rax, 80(%rdi)     /* frame->rbp */
 
     /* Copy r8-r15 (set to context values) */
-    movq 152(%rsi), %rax    /* context.r8 (CTX_R8=152) */
-    movq %rax, 88(%rdi)     /* frame->r8 */
-    movq 160(%rsi), %rax    /* context.r9 (CTX_R9=160) */
-    movq %rax, 96(%rdi)     /* frame->r9 */
-    movq 168(%rsi), %rax    /* context.r10 (CTX_R10=168) */
-    movq %rax, 104(%rdi)    /* frame->r10 */
-    movq 176(%rsi), %rax    /* context.r11 (CTX_R11=176) */
-    movq %rax, 112(%rdi)    /* frame->r11 */
+    movq $0, 88(%rdi)       /* frame->r8 = 0 */
+    movq $0, 96(%rdi)       /* frame->r9 = 0 */
+    movq $0, 104(%rdi)      /* frame->r10 = 0 */
+    movq $0, 112(%rdi)      /* frame->r11 = 0 */
     movq 24(%rsi), %rax     /* context.r12 */
     movq %rax, 120(%rdi)    /* frame->r12 */
     movq 16(%rsi), %rax     /* context.r13 */
@@ -740,7 +722,7 @@ fut_switch_context_irq:
     popq %rdx
 
     /* Clear next->irq_frame so we don't use this corrupted frame again */
-    movq $0, 752(%r13)      /* next->irq_frame = NULL */
+    movq $0, 720(%r13)      /* next->irq_frame = NULL */
     jmp .no_saved_frame     /* Construct from context instead */
 
 .restore_frame_ok:
@@ -974,12 +956,12 @@ fut_switch_context_irq:
      *
      * Without this fix, threads can get "stuck" with old RIP values because the saved
      * frame never gets updated when they make progress. */
-    movq $0, 752(%r13)      /* next->irq_frame = NULL */
+    movq $0, 720(%r13)      /* next->irq_frame = NULL */
 
 2:
     /* Step 4: Restore FPU state from next thread's context */
-    /* context is at offset 48, fx_area is at offset 192 within context */
-    /* So fx_area is at 48 + 192 = 240 */
+    /* context is at offset 48, fx_area is at offset 160 within context */
+    /* So fx_area is at 48 + 160 = 208 */
 
     /* Debug: Check if R13 (next thread pointer) is valid */
     testq %r13, %r13
@@ -993,7 +975,7 @@ fut_switch_context_irq:
     hlt
 .r13_ok:
 
-    leaq 240(%r13), %rax    /* rax = &next->context.fx_area */
+    leaq 208(%r13), %rax    /* rax = &next->context.fx_area */
 
     /* Debug: Check if RAX is valid after calculation */
     testq %rax, %rax
@@ -1096,7 +1078,7 @@ fut_switch_context_irq:
     pushq %rax
     pushq %rcx
     pushq %rdx
-    movq 760(%r13), %rax    /* Load fs_base from thread struct (offset 728) */
+    movq 728(%r13), %rax    /* Load fs_base from thread struct (offset 728) */
     movl $0xC0000100, %ecx  /* MSR_FS_BASE */
     movq %rax, %rdx
     shrq $32, %rdx          /* EDX = high 32 bits */
@@ -1419,17 +1401,17 @@ fut_switch_context_irq:
     popq %rdx
 
     /* Clear next->irq_frame so the stale saved frame is not reused. */
-    movq $0, 752(%r13)      /* next->irq_frame = NULL */
+    movq $0, 720(%r13)      /* next->irq_frame = NULL */
 
     /* Restore next thread's FPU/SSE state from context.fx_area (thread+208). */
-    leaq 240(%r13), %rax
+    leaq 208(%r13), %rax
     fxrstor64 (%rax)
 
     /* Write FS_BASE MSR for next thread's TLS (thread.fs_base at offset 728). */
     pushq %rax
     pushq %rcx
     pushq %rdx
-    movq 760(%r13), %rax
+    movq 728(%r13), %rax
     movl $0xC0000100, %ecx  /* MSR_FS_BASE */
     movq %rax, %rdx
     shrq $32, %rdx
@@ -1497,16 +1479,15 @@ fut_switch_context_irq:
      *   r15(+48) r14(+56) r13(+64) r12(+72) rbx(+80) rbp(+88)
      *   rip(+96) rsp(+104) rflags(+112) cs(+120) ss(+128)
      *   ds(+136) es(+144) fs(+152) gs(+160)
-     *   rdi(+168) rsi(+176) rdx(+184) rcx(+192)
-     *   r8(+200) r9(+208) r10(+216) r11(+224) rax(+232)
+     *   rdi(+168) rsi(+176) rdx(+184) rcx(+192) rax(+200)
      *
      * We keep r13 (thread ptr) alive until after we've read everything, then
-     * overwrite it last. r10/r11 are used as temporaries until loaded at end. */
+     * overwrite it last. r10/r11 are used as temporaries. */
     leaq 48(%r13), %r11     /* r11 = &next->context */
 
-    /* Stash rip, rsp, r8, r9 before we overwrite r13/r14/r10/r11. */
-    movq 48(%r11), %r10     /* r10 = context.rip (temp) */
-    movq 56(%r11), %r14     /* r14 = context.rsp (temp) */
+    /* Stash rip and rsp before we overwrite r13/r14. */
+    movq 48(%r11), %r10     /* r10 = context.rip */
+    movq 56(%r11), %r14     /* r14 = context.rsp (caller's RSP as after a ret) */
 
     /* Load RFLAGS with IF cleared; sti just before ret re-enables interrupts. */
     movq 64(%r11), %rax
@@ -1514,7 +1495,7 @@ fut_switch_context_irq:
     pushq %rax
     popfq
 
-    /* Restore callee-saved and caller-saved registers. */
+    /* Restore callee-saved and argument registers. */
     movq  0(%r11), %r15
     movq 24(%r11), %r12
     movq 32(%r11), %rbx
@@ -1523,22 +1504,22 @@ fut_switch_context_irq:
     movq 128(%r11), %rsi
     movq 136(%r11), %rdx
     movq 144(%r11), %rcx
-    movq 152(%r11), %r8
-    movq 160(%r11), %r9
-    movq 184(%r11), %rax
+    movq 152(%r11), %rax
 
     /* Switch to next thread's kernel stack. */
     movq %r14, %rsp
 
-    /* Push context.rip so that `ret` jumps to it. */
+    /* Push context.rip so that `ret` jumps to it (the return point from
+     * fut_switch_context_irq inside next's fut_schedule call). */
     pushq %r10
 
-    /* Load r14, r13, r10, r11 last (they were used as temporaries). */
+    /* Load r14 and r13 now that we no longer need them as temporaries. */
     movq  8(%r11), %r14     /* context.r14 */
-    movq 168(%r11), %r10    /* context.r10 */
-    /* r11 loaded last since it holds the context pointer */
-    movq 16(%r11), %r13     /* context.r13 */
-    movq 176(%r11), %r11    /* context.r11 — self-overwrite, must be last */
+    movq 16(%r11), %r13     /* context.r13 — destroys thread ptr, no longer needed */
+
+    /* Zero caller-saved scratch registers. */
+    xorq %r10, %r10
+    xorq %r11, %r11
 
     /* Re-enable interrupts and return to context.rip.
      * The sti-shadow guarantees the ret instruction executes before any
@@ -1725,7 +1706,7 @@ fut_resume_user_frame:
     pushq %rax
     pushq %rcx
     pushq %rdx
-    movq 760(%r13), %rax
+    movq 728(%r13), %rax
     testq %rax, %rax
     jz .resume_fsbase_done
     movl $0xC0000100, %ecx

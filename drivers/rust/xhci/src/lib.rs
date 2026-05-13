@@ -2162,20 +2162,13 @@ fn enumerate_devices(ctrl: &mut XhciController) {
                         msc_bulk_in as u32, msc_bulk_in_mps as u32,
                         msc_bulk_out as u32, msc_bulk_out_mps as u32,
                     );
-                    let rc = usb_storage_attach(
-                        slot_id,
-                        msc_bulk_in,
-                        msc_bulk_out,
-                        xhci_bulk_thunk,
-                    );
-                    fut_printf(
-                        b"xhci: slot %u: usb_storage_attach rc=%d\n\0".as_ptr(),
-                        slot_id, rc,
-                    );
+                    // DISABLED: usb_storage_attach bulk transfers hang L490
+                    // scheduler. Bisect confirmed: configure_endpoint alone
+                    // boots; adding usb_storage_attach hangs. The SCSI bulk
+                    // transfer DMA path corrupts something. Skip for now so
+                    // L490 boots; HP loses SD logging until this is fixed.
                     if let Some(s) = slot_mut(slot_id) {
-                        s.attach_stage = if rc == 0 { 5 } else { 4 };
-                        s.attach_rc = rc;
-                        if rc == 0 { s.storage_attached = true; }
+                        s.attach_stage = 3;
                     }
                 }
             }

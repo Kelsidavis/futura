@@ -133,21 +133,32 @@ static inline ssize_t fut_input_queue_read(fut_input_queue_t *q,
         unsigned long irqflags = _input_irq_save();
         fut_spinlock_acquire(&q->lock);
         while (fut_input_queue_empty(q)) {
-            fut_spinlock_release(&q->lock);
-            _input_irq_restore(irqflags);
             if (copied > 0) {
+                fut_spinlock_release(&q->lock);
+                _input_irq_restore(irqflags);
                 return (ssize_t)(copied * ev_size);
             }
             if (flags & O_NONBLOCK) {
+                fut_spinlock_release(&q->lock);
+                _input_irq_restore(irqflags);
                 return -EAGAIN;
             }
             /* Check for pending unblocked signals → EINTR */
             fut_task_t *_t = fut_task_current();
             if (_t) {
                 uint64_t _p = __atomic_load_n(&_t->pending_signals, __ATOMIC_ACQUIRE);
-                if (_p & ~_t->signal_mask)
+                if (_p & ~_t->signal_mask) {
+                    fut_spinlock_release(&q->lock);
+                    _input_irq_restore(irqflags);
                     return -EINTR;
+                }
             }
+            /* CRITICAL: hold q->lock through sleep_locked. sleep_locked will
+             * release q->lock atomically with the enqueue+state-transition,
+             * closing the lost-wakeup race window. If we released the lock
+             * first, a wake could fire between release and sleep_locked,
+             * find the waitq empty, and the event would be queued with no
+             * sleeper to wake until the NEXT event arrives. */
             fut_waitq_sleep_locked(&q->wait, &q->lock, FUT_THREAD_BLOCKED);
             irqflags = _input_irq_save();
             fut_spinlock_acquire(&q->lock);

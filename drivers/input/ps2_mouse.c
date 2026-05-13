@@ -172,12 +172,14 @@ static struct fut_file_ops mouse_fops;
 
 void ps2_mouse_drain_deferred_wake(void) {
     if (g_ps2_mouse.active) {
-        static int dbg_once = 0;
-        if (!dbg_once && g_ps2_mouse.queue.wake_pending) {
-            dbg_once = 1;
-            fut_printf("[MOUSE-WAKE] deferred wake firing\n");
+        /* Only drain every 10th call (= every 100ms at 100Hz timer).
+         * Tests whether the compositor hang is proportional to wake
+         * rate (accumulation) or fixed-time (event pattern). */
+        static uint32_t drain_counter = 0;
+        drain_counter++;
+        if ((drain_counter % 10) == 0) {
+            fut_input_queue_drain_wake(&g_ps2_mouse.queue);
         }
-        fut_input_queue_drain_wake(&g_ps2_mouse.queue);
     }
 }
 

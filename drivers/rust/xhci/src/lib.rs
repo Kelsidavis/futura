@@ -2410,14 +2410,47 @@ pub extern "C" fn xhci_init() -> i32 {
     // Enable all notification types (bits [15:0])
     mmio_write32(bar0, op_base + XHCI_OP_DNCTRL, 0xFFFF);
 
+    // ── Disable MSI / MSI-X before starting the controller ──
+    //
+    // UEFI firmware typically enables MSI for xhci during its own USB
+    // boot-services phase. HCRST (host controller reset) resets the
+    // controller's internal state but does NOT clear PCI-level MSI/MSI-X
+    // capability enable bits. When the controller starts running and
+    // generates events, MSI writes fire into the LAPIC address range
+    // (0xFEExxxxx) on whatever vector firmware configured. Without a
+    // registered ISR, the LAPIC ISR bit stays set and blocks all lower-
+    // priority vectors — including the timer (vec 32).
+    //
+    // Walk the PCI capability list and clear MSI enable (cap 0x05, control
+    // bit 0) and MSI-X enable (cap 0x11, control bit 15).
+    {
+        let status = pci_read16(bus, dev, func, 0x06);
+        if status & (1 << 4) != 0 {
+            let mut cap_ptr = (pci_read32(bus, dev, func, 0x34) & 0xFF) as u8;
+            while cap_ptr != 0 {
+                let cap_id = pci_read32(bus, dev, func, cap_ptr) & 0xFF;
+                if cap_id == 0x05 {
+                    // MSI capability — control register at cap_ptr + 2
+                    let msi_ctrl = pci_read16(bus, dev, func, cap_ptr + 2);
+                    if msi_ctrl & 1 != 0 {
+                        pci_write16(bus, dev, func, cap_ptr + 2, msi_ctrl & !1);
+                        log("xhci: disabled MSI (was enabled by firmware)");
+                    }
+                } else if cap_id == 0x11 {
+                    // MSI-X capability — control register at cap_ptr + 2
+                    let msix_ctrl = pci_read16(bus, dev, func, cap_ptr + 2);
+                    if msix_ctrl & (1 << 15) != 0 {
+                        pci_write16(bus, dev, func, cap_ptr + 2, msix_ctrl & !(1u16 << 15));
+                        log("xhci: disabled MSI-X (was enabled by firmware)");
+                    }
+                }
+                cap_ptr = ((pci_read32(bus, dev, func, cap_ptr) >> 8) & 0xFF) as u8;
+            }
+        }
+    }
+
     // ── Start the controller ──
 
-    // DEBUG: return here to test if the hang is in controller-run + DMA
-    // vs just setup. If L490 boots with this, DMA activity is the cliff.
-    log("xhci: DEBUG early return before USBCMD_RUN");
-    return -99;
-
-    // Start the controller WITHOUT enabling the interrupter (USBCMD_INTE).
     let usbcmd = mmio_read32(bar0, op_base + XHCI_OP_USBCMD);
     mmio_write32(bar0, op_base + XHCI_OP_USBCMD, (usbcmd | USBCMD_RUN) & !USBCMD_INTE);
 

@@ -433,7 +433,7 @@ void fut_thread_yield(void) {
      * line, which on real hardware drowns the screen and looked like a
      * fatal loop. */
     fut_thread_t *yt = fut_thread_current();
-    if (yt && (uintptr_t)yt >= 0xFFFFFFFF80000000ULL && yt->stack_base) {
+    if (yt && (uintptr_t)yt >= KERNEL_VIRTUAL_BASE && yt->stack_base) {
         uint64_t canary = *(volatile uint64_t *)yt->stack_base;
         if (canary != FUT_STACK_CANARY && canary != 0) {
             fut_printf("[THREAD] *** STACK OVERFLOW *** tid=%llu at yield\n",

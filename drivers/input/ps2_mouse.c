@@ -172,6 +172,11 @@ static struct fut_file_ops mouse_fops;
 
 void ps2_mouse_drain_deferred_wake(void) {
     if (g_ps2_mouse.active) {
+        static int dbg_once = 0;
+        if (!dbg_once && g_ps2_mouse.queue.wake_pending) {
+            dbg_once = 1;
+            fut_printf("[MOUSE-WAKE] deferred wake firing\n");
+        }
         fut_input_queue_drain_wake(&g_ps2_mouse.queue);
     }
 }

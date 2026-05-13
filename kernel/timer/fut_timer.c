@@ -376,10 +376,8 @@ void fut_timer_tick(void) {
      * instead of calling fut_waitq_wake_one from the PS/2 IRQ handler
      * (which destabilized the scheduler on L490). */
     {
-        extern void ps2_mouse_drain_deferred_wake(void) __attribute__((weak));
-        if (ps2_mouse_drain_deferred_wake) {
-            ps2_mouse_drain_deferred_wake();
-        }
+        extern void ps2_mouse_drain_deferred_wake(void);
+        ps2_mouse_drain_deferred_wake();
     }
 
     // Check for expired alarms and deliver SIGALRM

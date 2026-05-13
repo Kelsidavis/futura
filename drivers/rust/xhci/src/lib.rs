@@ -2470,6 +2470,12 @@ pub extern "C" fn xhci_init() -> i32 {
     }
     log("xhci: controller running");
 
+    // DEBUG: stop after controller start, no enumeration.
+    // If L490 boots, DMA-idle controller is fine; cliff is in enumeration.
+    log("xhci: DEBUG early return after USBCMD_RUN (no enumeration)");
+    unsafe { XHCI = Some(ctrl); }
+    return 0;
+
     // ── Verify command ring with No-Op ──
 
     if !test_cmd_ring(&mut ctrl) {

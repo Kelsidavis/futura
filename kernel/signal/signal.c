@@ -215,15 +215,31 @@ int fut_signal_send(struct fut_task *task, int signum) {
      * SIGKILL and SIGSTOP cannot be caught or blocked.
      * For signals with SIG_DFL whose default is terminate, mark the task. */
     if (signum == 9 /* SIGKILL */) {
-        /* SIGKILL: unconditional termination */
+        /* SIGKILL: unconditional termination. Set term_signal so wait4
+         * sees the kill cause, but do NOT set state=FUT_THREAD_TERMINATED
+         * on the threads here — that's the job of fut_thread_exit when
+         * each thread runs and notices SIGKILL in pending_signals.
+         *
+         * Setting TERMINATED prematurely would:
+         *   - Confuse the wake loop below: it checks state==BLOCKED to
+         *     find waitq-blocked threads. A thread we just marked
+         *     TERMINATED would be skipped, leaving it stuck on its
+         *     waitq forever (unable to process the SIGKILL).
+         *   - Make fut_thread_make_ready skip the wake (it guards
+         *     against state==TERMINATED).
+         *   - Cause the scheduler to not save state for an arbitrary
+         *     RUNNING thread (prev_terminated check) — potentially
+         *     losing useful context.
+         *
+         * The actual termination is initiated by:
+         *   1. This call sets pending_signals |= SIGKILL_BIT (done above)
+         *   2. The wake loop below removes blocked/sleeping threads from
+         *      their waitqs and makes them ready
+         *   3. Each thread, when next scheduled, returns from its
+         *      syscall, checks pending_signals, sees SIGKILL, and calls
+         *      fut_thread_exit which properly cleans up. */
         task->exit_code = 0;
         task->term_signal = 9;
-        /* Mark all threads for termination so they exit at next opportunity */
-        fut_thread_t *kt = task->threads;
-        while (kt) {
-            kt->state = FUT_THREAD_TERMINATED;
-            kt = kt->task_next;
-        }
     } else if (task->signal_handlers[signum - 1] == SIG_DFL) {
         /* Check if blocked — blocked signals defer default action */
         uint64_t blocked = task->signal_mask;

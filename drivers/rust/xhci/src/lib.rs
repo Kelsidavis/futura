@@ -2106,11 +2106,6 @@ fn enumerate_devices(ctrl: &mut XhciController) {
             }
             off += dlen;
         }
-        // DEBUG: stop after descriptors, skip set_configuration + storage
-        log("xhci: DEBUG skipping set_configuration onward");
-        unsafe { free_page(cfg_buf); }
-        continue;
-
         // Activate the configuration so endpoints become valid.
         if !set_configuration(ctrl, slot_id, cfg_value) {
             unsafe { free_page(cfg_buf); }
@@ -2128,9 +2123,11 @@ fn enumerate_devices(ctrl: &mut XhciController) {
                 }
             }
         }
-        // If this device exposed a Mass Storage (BBB) interface, allocate
-        // transfer rings for its bulk endpoints, issue Configure Endpoint
-        // to make them active in the HC, then hand off to usb_storage.
+        // DEBUG: skip MSC attach to bisect hang
+        log("xhci: DEBUG skipping MSC attach");
+        unsafe { free_page(cfg_buf); }
+        continue;
+
         if msc_bulk_in != 0 && msc_bulk_out != 0 {
             // Attach transfer rings to the slot's BulkEp slots.
             let setup_ok = unsafe {

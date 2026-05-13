@@ -144,8 +144,7 @@ static void futex_timeout_callback(void *arg) {
     if (found) {
         /* Thread was still waiting - wake it with timeout indication */
         thread->futex_addr = NULL;
-        thread->state = FUT_THREAD_READY;
-        fut_sched_add_thread(thread);
+        fut_thread_make_ready(thread);
         fut_printf("[FUTEX] timeout - woke thread %p\n", (void*)thread);
     }
 
@@ -191,8 +190,7 @@ int futex_wake_one(uint32_t *uaddr) {
             thread->wait_next = NULL;
 
             /* Wake up the thread - set state to READY and add to run queue */
-            thread->state = FUT_THREAD_READY;
-            fut_sched_add_thread(thread);
+            fut_thread_make_ready(thread);
             woken++;
 
             fut_printf("[FUTEX] futex_wake_one(%p) - woke thread %p (clear_child_tid)\n",
@@ -586,8 +584,7 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
                     thread->wait_next = NULL;
 
                     /* Wake up the thread - set state to READY and add to run queue */
-                    thread->state = FUT_THREAD_READY;
-                    fut_sched_add_thread(thread);
+                    fut_thread_make_ready(thread);
                     woken++;
                 } else {
                     prev = thread;
@@ -669,8 +666,7 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
 
                     if (woken < (int)max_wake) {
                         /* Wake this thread */
-                        thread->state = FUT_THREAD_READY;
-                        fut_sched_add_thread(thread);
+                        fut_thread_make_ready(thread);
                         woken++;
                         fut_printf("[FUTEX] FUTEX_REQUEUE - woke thread %p\n", (void*)thread);
                     } else if (requeued < (int)max_requeue) {
@@ -807,8 +803,7 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
 
                     if (woken < (int)max_wake) {
                         /* Wake this thread */
-                        thread->state = FUT_THREAD_READY;
-                        fut_sched_add_thread(thread);
+                        fut_thread_make_ready(thread);
                         woken++;
                     } else if (requeued < (int)max_requeue) {
                         /* Requeue to uaddr2 */
@@ -973,8 +968,7 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
                         wq1->tail = prev;
                     }
                     thread->wait_next = NULL;
-                    thread->state = FUT_THREAD_READY;
-                    fut_sched_add_thread(thread);
+                    fut_thread_make_ready(thread);
                     woken1++;
                 } else {
                     prev = thread;
@@ -1017,8 +1011,7 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
                             wq2->tail = prev;
                         }
                         thread->wait_next = NULL;
-                        thread->state = FUT_THREAD_READY;
-                        fut_sched_add_thread(thread);
+                        fut_thread_make_ready(thread);
                         woken2++;
                     } else {
                         prev = thread;
@@ -1304,8 +1297,7 @@ long sys_futex(uint32_t *uaddr, int op, uint32_t val,
                                             false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
 
                 if (woken_thread) {
-                    woken_thread->state = FUT_THREAD_READY;
-                    fut_sched_add_thread(woken_thread);
+                    fut_thread_make_ready(woken_thread);
                 }
 
                 fut_spinlock_release(&bucket->lock);

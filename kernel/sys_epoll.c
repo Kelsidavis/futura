@@ -1801,12 +1801,19 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
             }
         }
 
-        /* Release lock before user-space copy or sleep */
-        fut_spinlock_release(&epoll_lock);
+        /* CRITICAL: do NOT release epoll_lock here. The check-events vs sleep
+         * sequence must be atomic w.r.t. wake notifications. If we released
+         * the lock before sleep_locked, an FD becoming ready (e.g.,
+         * eventfd_write at sys_eventfd.c:786 calling wake_one on this set's
+         * epoll_waitq) could fire BETWEEN the release and the sleep,
+         * finding an empty waitq — the wake is lost and we sleep with
+         * events already pending. The lock is released atomically by
+         * sleep_{locked,timed} after enqueuing the thread on the waitq,
+         * closing the race. */
 
-        /* If we have events, copy to user and return */
+        /* If we have events, release the lock and copy to user */
         if (ready_count > 0) {
-            /* Copy ready events to userspace (or kernel buffer) */
+            fut_spinlock_release(&epoll_lock);
             size_t copy_size = ready_count * sizeof(struct epoll_event);
 #ifdef KERNEL_VIRTUAL_BASE
             if ((uintptr_t)events >= KERNEL_VIRTUAL_BASE) {
@@ -1822,15 +1829,18 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
         /* Check timeout */
         if (timeout == 0) {
             /* Non-blocking mode - no events ready */
+            fut_spinlock_release(&epoll_lock);
             return 0;
         }
 
         /* Check positive timeout before sleeping */
         if (timeout > 0 && fut_get_ticks() >= deadline_ticks) {
+            fut_spinlock_release(&epoll_lock);
             return 0;  /* Timeout expired */
         }
 
-        /* Check for pending unblocked signals before blocking → EINTR */
+        /* Check for pending unblocked signals before blocking → EINTR.
+         * Atomic loads only — no kernel locks taken, safe under epoll_lock. */
         {
             fut_task_t *sig_task = fut_task_current();
             if (sig_task) {
@@ -1842,26 +1852,24 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
                     __atomic_load_n(&scur_thr->signal_mask, __ATOMIC_ACQUIRE) :
                     __atomic_load_n(&sig_task->signal_mask, __ATOMIC_ACQUIRE);
                 if (pending & ~blocked) {
+                    fut_spinlock_release(&epoll_lock);
                     return -EINTR;
                 }
             }
         }
 
-        /* Sleep on epoll waitqueue - socket sends and new connections will wake us.
-         * For positive timeouts, start a timer to wake us if no events arrive. */
+        /* Sleep on epoll waitqueue with epoll_lock held — released atomically
+         * by sleep_{locked,timed} after enqueue, closing the lost-wakeup window. */
         if (timeout > 0) {
             uint64_t now = fut_get_ticks();
-            /* Guard against underflow if ticks raced past deadline */
             if (now >= deadline_ticks) {
-                return 0;  /* Timeout already expired */
+                fut_spinlock_release(&epoll_lock);
+                return 0;
             }
             uint64_t remaining = deadline_ticks - now;
-            /* Use sleep_timed to avoid lost-wakeup race: thread is enqueued
-             * BEFORE the timer starts, so the callback always finds us. */
-            fut_waitq_sleep_timed(&set->epoll_waitq, remaining, NULL);
+            fut_waitq_sleep_timed(&set->epoll_waitq, remaining, &epoll_lock);
         } else {
-            /* timeout == -1: block indefinitely until an event wakes us */
-            fut_waitq_sleep_locked(&set->epoll_waitq, NULL, FUT_THREAD_BLOCKED);
+            fut_waitq_sleep_locked(&set->epoll_waitq, &epoll_lock, FUT_THREAD_BLOCKED);
         }
 
         /* Check for pending unblocked signals → EINTR */
@@ -2259,10 +2267,12 @@ long sys_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
             }
         }
 
-        /* Release lock before user-space copy or sleep */
-        fut_spinlock_release(&epoll_lock);
+        /* CRITICAL: do NOT release epoll_lock here. The check-events vs sleep
+         * sequence must be atomic w.r.t. wake notifications (lost-wakeup race).
+         * The lock is released atomically by sleep_{locked,timed} after enqueue. */
 
         if (ready_count > 0) {
+            fut_spinlock_release(&epoll_lock);
             size_t copy_size = ready_count * sizeof(struct epoll_event);
 #ifdef KERNEL_VIRTUAL_BASE
             if ((uintptr_t)events >= KERNEL_VIRTUAL_BASE)
@@ -2279,6 +2289,7 @@ long sys_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
 
         /* Non-blocking poll: return immediately */
         if (is_poll) {
+            fut_spinlock_release(&epoll_lock);
             ret = 0;
             goto out_restore;
         }
@@ -2289,6 +2300,7 @@ long sys_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
         if (has_timeout) {
             uint64_t now_ns = fut_get_time_ns();
             if (now_ns >= deadline_ns) {
+                fut_spinlock_release(&epoll_lock);
                 ret = 0;  /* timeout expired */
                 goto out_restore;
             }
@@ -2304,16 +2316,19 @@ long sys_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
                 __atomic_load_n(&scur_thr->signal_mask, __ATOMIC_ACQUIRE) :
                 __atomic_load_n(&task->signal_mask, __ATOMIC_ACQUIRE);
             if (pending & ~blocked) {
+                fut_spinlock_release(&epoll_lock);
                 ret = -EINTR;
                 goto out_restore;
             }
         }
 
-        /* Sleep on epoll waitqueue with timer-based wakeup.
-         * Recompute remaining ticks from the ns deadline for accuracy. */
+        /* Sleep on epoll waitqueue — sleep_{locked,timed} releases
+         * epoll_lock atomically with the enqueue, closing the lost-wakeup
+         * race window. */
         if (has_timeout) {
             uint64_t now_ns = fut_get_time_ns();
             if (now_ns >= deadline_ns) {
+                fut_spinlock_release(&epoll_lock);
                 ret = 0;
                 goto out_restore;
             }
@@ -2321,9 +2336,9 @@ long sys_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
             uint64_t remaining_ticks = remaining_ns / 10000000ULL;
             if (remaining_ns % 10000000ULL != 0) remaining_ticks++;
             if (remaining_ticks == 0) remaining_ticks = 1;
-            fut_waitq_sleep_timed(&set->epoll_waitq, remaining_ticks, NULL);
+            fut_waitq_sleep_timed(&set->epoll_waitq, remaining_ticks, &epoll_lock);
         } else {
-            fut_waitq_sleep_locked(&set->epoll_waitq, NULL, FUT_THREAD_BLOCKED);
+            fut_waitq_sleep_locked(&set->epoll_waitq, &epoll_lock, FUT_THREAD_BLOCKED);
         }
 
         /* Check for pending signals after wakeup → EINTR */

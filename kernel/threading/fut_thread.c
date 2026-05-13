@@ -533,6 +533,45 @@ void fut_thread_sleep(uint64_t millis) {
         return;
     }
 
+    /* Before the scheduler starts, fut_sleep_until + fut_schedule is
+     * destructive: it sets the bootstrap thread's state to SLEEPING and
+     * inserts it into the sleep queue, but fut_schedule returns
+     * immediately (scheduler_started == false) so nobody ever wakes it.
+     * The thread continues executing with corrupted state; when the
+     * scheduler later starts, bootstrap is lost in the sleep queue and
+     * the first context switch hangs.
+     *
+     * Fall back to a TSC-based busy-wait in pre-scheduler context.
+     * Assumes ~1 GHz base TSC (conservative for any modern x86). */
+    extern bool fut_sched_is_started(void);
+    if (!fut_sched_is_started()) {
+#if defined(__x86_64__)
+        uint64_t target = millis * 1000000ULL; /* ~1ms per 1M TSC ticks at 1GHz */
+        uint64_t start;
+        __asm__ volatile("rdtsc" : "=A"(start));
+        /* rdtsc returns EDX:EAX; on x86_64, "=A" constraint only gives
+         * EAX. Use the proper two-register form. */
+        {
+            uint32_t lo, hi;
+            __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
+            start = ((uint64_t)hi << 32) | lo;
+        }
+        for (;;) {
+            uint32_t lo2, hi2;
+            __asm__ volatile("rdtsc" : "=a"(lo2), "=d"(hi2));
+            uint64_t now = ((uint64_t)hi2 << 32) | lo2;
+            if (now - start >= target) break;
+            __asm__ volatile("pause" ::: "memory");
+        }
+#else
+        /* ARM64 / generic: simple yield loop, ~10 iterations per ms */
+        for (uint64_t i = 0; i < millis * 10000; i++) {
+            __asm__ volatile("" ::: "memory");
+        }
+#endif
+        return;
+    }
+
     fut_thread_t *self = fut_thread_current();
     if (!self) {
         return;

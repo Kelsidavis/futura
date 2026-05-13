@@ -18,6 +18,7 @@
 #include "../../include/kernel/errno.h"
 #include <kernel/signal.h>
 #include "../../include/kernel/uaccess.h"
+#include <kernel/fut_irq.h>
 #if defined(__x86_64__)
 #include <platform/x86_64/memory/paging.h>
 #elif defined(__aarch64__)
@@ -271,6 +272,12 @@ fut_task_t *fut_task_create(void) {
     }
     task->next_fd = 0;
 
+    /* Disable IRQs around task list modification: timer ISR walks
+     * fut_task_list without taking the lock to deliver SIGALRM. If the
+     * timer fires mid-modification, the walk can see torn pointers
+     * (next pointing to partially-initialized memory or freed nodes),
+     * potentially causing #GP or an infinite loop. */
+    unsigned long _tl_add_flags = fut_irqsave();
     fut_spinlock_acquire(&task_list_lock);
     if (parent) {
         task_attach_child(parent, task);
@@ -279,6 +286,7 @@ fut_task_t *fut_task_create(void) {
     fut_task_list = task;
     atomic_fetch_add_explicit(&global_task_count, 1, memory_order_relaxed);
     fut_spinlock_release(&task_list_lock);
+    fut_irqrestore(_tl_add_flags);
 
     return task;
 }
@@ -385,6 +393,8 @@ void fut_task_destroy(fut_task_t *task) {
         task->fd_flags = NULL;
     }
 
+    /* IRQ-safe: timer ISR walks fut_task_list lockless for SIGALRM. */
+    unsigned long _tl_remove_flags = fut_irqsave();
     fut_spinlock_acquire(&task_list_lock);
     if (task->parent) {
         task_detach_child(task->parent, task);
@@ -402,6 +412,7 @@ void fut_task_destroy(fut_task_t *task) {
     }
     atomic_fetch_sub_explicit(&global_task_count, 1, memory_order_relaxed);
     fut_spinlock_release(&task_list_lock);
+    fut_irqrestore(_tl_remove_flags);
 
     if (task->mm) {
         fut_mm_release(task->mm);
@@ -560,7 +571,9 @@ static void task_mark_exit(fut_task_t *task, int status, int signal) {
         if (suppress_chld) {
             /* Mark for lazy free in fut_thread_exit() */
             task->auto_reap = 1;
-            /* Detach from parent now so waitpid() returns ECHILD */
+            /* Detach from parent now so waitpid() returns ECHILD.
+             * IRQ-safe: timer ISR walks fut_task_list lockless for SIGALRM. */
+            unsigned long _tl_detach_flags = fut_irqsave();
             fut_spinlock_acquire(&task_list_lock);
             task_detach_child(parent, task);
             /* Remove from global task list so fut_task_by_pid() returns NULL */
@@ -576,6 +589,7 @@ static void task_mark_exit(fut_task_t *task, int status, int signal) {
             atomic_fetch_sub_explicit(&global_task_count, 1, memory_order_relaxed);
             task->next = NULL;
             fut_spinlock_release(&task_list_lock);
+            fut_irqrestore(_tl_detach_flags);
             /* Wake any blocked waitpid() — it will return ECHILD */
             fut_waitq_wake_all(&parent->child_waiters);
         } else {

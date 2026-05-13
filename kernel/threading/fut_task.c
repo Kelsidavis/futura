@@ -308,16 +308,26 @@ void fut_task_add_thread(fut_task_t *task, fut_thread_t *thread) {
                task, thread, task->threads, task->thread_count);
 #endif
 
-    // Link thread into task's thread list using task_next/task_prev.
-    // (next/prev are owned by the scheduler's ready queue.)
+    /* IRQ-safe: the timer ISR walks task->threads (via fut_signal_send
+     * for SIGALRM/itimer delivery, and from process_timer_events for
+     * POSIX timers). Without IRQ disable, the ISR can observe a torn
+     * doubly-linked list mid-modification:
+     *   - thread->task_next set, but task->threads not yet swung →
+     *     ISR walks an OLD list missing the new thread (benign)
+     *   - task->threads->task_prev being written when ISR walks
+     *     backward (currently no backward walks, but defensive)
+     *   - thread_count incremented before the link is complete →
+     *     stat readers see N threads but only N-1 reachable
+     */
+    unsigned long _add_flags = fut_irqsave();
     thread->task_next = task->threads;
     if (task->threads) {
         task->threads->task_prev = thread;
     }
     thread->task_prev = NULL;
     task->threads = thread;
-
     task->thread_count++;
+    fut_irqrestore(_add_flags);
 }
 
 /**
@@ -328,7 +338,8 @@ void fut_task_remove_thread(fut_task_t *task, fut_thread_t *thread) {
         return;
     }
 
-    // Unlink thread from task's thread list (use task_next/task_prev)
+    /* IRQ-safe unlink: see fut_task_add_thread for rationale. */
+    unsigned long _rm_flags = fut_irqsave();
     if (thread->task_prev) {
         thread->task_prev->task_next = thread->task_next;
     } else {
@@ -343,6 +354,7 @@ void fut_task_remove_thread(fut_task_t *task, fut_thread_t *thread) {
     thread->task_prev = NULL;
 
     task->thread_count--;
+    fut_irqrestore(_rm_flags);
 }
 
 /**

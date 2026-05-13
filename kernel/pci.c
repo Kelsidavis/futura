@@ -91,13 +91,21 @@ void pci_enumerate(void) {
 
     fut_printf("[PCI] Enumerated %d device(s)\n", g_pci_count);
 
-    /* Dump all discovered devices for hardware bring-up diagnosis */
+    /* Dump all discovered devices + PCIe bridge secondary bus info */
     for (int i = 0; i < g_pci_count; i++) {
         struct pci_device *d = &g_pci_devices[i];
-        fut_printf("[PCI] %02x:%02x.%x vendor=%04x device=%04x class=%02x%02x%02x\n",
+        fut_printf("[PCI] %02x:%02x.%x vendor=%04x device=%04x class=%02x%02x%02x",
                    d->bus, d->dev, d->func,
                    d->vendor_id, d->device_id,
                    d->class_code, d->subclass, d->prog_if);
+        /* For PCI-to-PCI bridges (class 06:04), print secondary bus */
+        if (d->class_code == 0x06 && d->subclass == 0x04) {
+            uint32_t busreg = pci_cfg_read32(d->bus, d->dev, d->func, 0x18);
+            uint8_t sec = (busreg >> 8) & 0xFF;
+            uint8_t sub = (busreg >> 16) & 0xFF;
+            fut_printf(" [bridge sec=%02x sub=%02x]", sec, sub);
+        }
+        fut_printf("\n");
     }
 }
 

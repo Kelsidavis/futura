@@ -1961,13 +1961,12 @@ fn enumerate_devices(ctrl: &mut XhciController) {
             }
             continue;
         }
-        // DEBUG: stop after Enable Slot + setup_slot, skip Address Device onward
-        log("xhci: DEBUG skipping address_device onward");
-        continue;
-
         if !address_device(ctrl, slot_id) {
             continue;
         }
+        // DEBUG: stop after address_device, skip descriptors onward
+        log("xhci: DEBUG skipping get_descriptor onward");
+        continue;
         let mut dev = UsbDeviceDescriptor {
             b_length: 0, b_descriptor_type: 0, bcd_usb: 0,
             b_device_class: 0, b_device_subclass: 0, b_device_protocol: 0,

@@ -1964,9 +1964,6 @@ fn enumerate_devices(ctrl: &mut XhciController) {
         if !address_device(ctrl, slot_id) {
             continue;
         }
-        // DEBUG: stop after address_device, skip descriptors onward
-        log("xhci: DEBUG skipping get_descriptor onward");
-        continue;
         let mut dev = UsbDeviceDescriptor {
             b_length: 0, b_descriptor_type: 0, bcd_usb: 0,
             b_device_class: 0, b_device_subclass: 0, b_device_protocol: 0,
@@ -2109,6 +2106,11 @@ fn enumerate_devices(ctrl: &mut XhciController) {
             }
             off += dlen;
         }
+        // DEBUG: stop after descriptors, skip set_configuration + storage
+        log("xhci: DEBUG skipping set_configuration onward");
+        unsafe { free_page(cfg_buf); }
+        continue;
+
         // Activate the configuration so endpoints become valid.
         if !set_configuration(ctrl, slot_id, cfg_value) {
             unsafe { free_page(cfg_buf); }

@@ -120,12 +120,20 @@ void fut_sleep_until(fut_thread_t *thread, uint64_t millis) {
     // Calculate absolute wake time
     uint64_t current = atomic_load_explicit(&system_ticks, memory_order_relaxed);
     thread->wake_time = current + ticks;
-    thread->state = FUT_THREAD_SLEEPING;
 
-
-    // Insert into sleep queue (sorted by wake_time)
-    // IRQ-safe: sleep_lock is also acquired from wake_sleeping_threads()
-    // which runs in timer ISR context.
+    // Insert into sleep queue (sorted by wake_time). CRITICAL ORDERING:
+    // the state transition to SLEEPING must happen UNDER the sleep_lock
+    // AFTER enqueue. Setting state=SLEEPING before holding the lock
+    // creates a race: a timer IRQ fires in the window before enqueue,
+    // and fut_schedule sees state=SLEEPING (not RUNNING), refuses to
+    // re-add to the ready queue. The thread is then on no queue at
+    // all — permanent loss. By moving the state change inside the lock
+    // and AFTER enqueue, the timer ISR is guaranteed to either:
+    //   (a) Not see the thread yet (state still RUNNING, gets re-added
+    //       to ready queue by fut_schedule normally), or
+    //   (b) See it fully enqueued (state SLEEPING, on sleep queue —
+    //       fut_schedule correctly skips re-add, sleep_lock processing
+    //       will wake it at the right time).
     unsigned long slflags = timer_irq_save();
     fut_spinlock_acquire(&sleep_lock);
 
@@ -152,6 +160,9 @@ void fut_sleep_until(fut_thread_t *thread, uint64_t millis) {
         }
         curr->next = thread;
     }
+
+    /* State transition AFTER enqueue, still under sleep_lock. */
+    thread->state = FUT_THREAD_SLEEPING;
 
     fut_spinlock_release(&sleep_lock);
     timer_irq_restore(slflags);

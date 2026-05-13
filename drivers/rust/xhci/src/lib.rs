@@ -823,8 +823,15 @@ fn port_power_on(ctrl: &XhciController, port: u32) {
     let portsc = read_portsc(ctrl.bar0, ctrl.op_base, port);
     if portsc & PORTSC_PP == 0 {
         write_portsc(ctrl.bar0, ctrl.op_base, port, PORTSC_PP);
-        // Wait 20ms for power to stabilize (USB spec TATTDB)
-        thread_sleep(20);
+        // Wait 20ms for power to stabilize (USB spec TATTDB).
+        // Must NOT use thread_sleep — xhci_init runs before the scheduler
+        // starts; thread_sleep poisons the bootstrap thread's state
+        // (sets state=SLEEPING + inserts into sleep queue) causing the
+        // first post-scheduler context switch to lose the bootstrap
+        // thread from the ready queue. Busy-yield instead.
+        for _ in 0..2_000_000u32 {
+            thread_yield();
+        }
     }
 }
 
@@ -889,8 +896,12 @@ fn init_ports(ctrl: &XhciController) {
         port_power_on(ctrl, port);
     }
 
-    // Allow time for devices to connect and signal (100ms)
-    thread_sleep(100);
+    // Allow time for devices to connect and signal (~100ms).
+    // Busy-yield — same reason as port_power_on: thread_sleep before
+    // scheduler start corrupts bootstrap thread state.
+    for _ in 0..10_000_000u32 {
+        thread_yield();
+    }
 
     for port in 0..ctrl.max_ports as u32 {
         let portsc = read_portsc(ctrl.bar0, ctrl.op_base, port);

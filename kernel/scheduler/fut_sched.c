@@ -864,8 +864,14 @@ void fut_schedule(void) {
      * select_next_thread(). The timer ISR calls wake_sleeping_threads()
      * which calls fut_sched_add_thread() which also acquires queue_lock.
      * If the timer fires while we hold queue_lock, the ISR deadlocks
-     * trying to acquire it, permanently halting the system with IF=0. */
-    sched_irq_disable();
+     * trying to acquire it, permanently halting the system with IF=0.
+     *
+     * Use save/restore so we preserve the caller's IF state on the
+     * no-switch return paths below. Unconditional sti would re-enable
+     * IRQs even when called from an ISR (IF was 0), causing nested
+     * interrupt delivery before the ISR's IRETQ — a subtle bug that
+     * compounds under high IRQ rates (e.g. PS/2 mouse on L490). */
+    unsigned long sched_irq_flags = sched_irqsave();
 
     fut_thread_t *next = select_next_thread();
 
@@ -878,7 +884,7 @@ void fut_schedule(void) {
 
     /* If scheduler not initialized yet (no idle thread), just return. */
     if (!next) {
-        sched_irq_enable();
+        sched_irqrestore(sched_irq_flags);
         return;
     }
 
@@ -896,7 +902,7 @@ void fut_schedule(void) {
         /* Don't context-switch with a corrupt current-thread pointer:
          * we can't safely save state or re-queue prev.  Skip this tick
          * and let the timer IRQ retry on the next tick. */
-        sched_irq_enable();
+        sched_irqrestore(sched_irq_flags);
         return;
     }
 
@@ -942,8 +948,8 @@ void fut_schedule(void) {
 
     // Context switch if different thread
     if (prev == next) {
-        /* No switch needed — re-enable interrupts that we disabled above. */
-        sched_irq_enable();
+        /* No switch needed — restore caller's IF state. */
+        sched_irqrestore(sched_irq_flags);
         return;
     }
     if (prev != next) {

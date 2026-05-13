@@ -2299,10 +2299,7 @@ void fut_kernel_main(void) {
         usb_storage_init();
         usb_net_init();
         usb_audio_init();
-        /* TEMPORARILY DISABLED: isolating whether xhci_init is the cause
-         * of L490 scheduler hang when USB devices are present. If L490
-         * boots with this off + USB plugged, the issue is inside xhci. */
-        // xhci_init();
+        xhci_init();
     }
 
     /* Network — PCIe NICs */

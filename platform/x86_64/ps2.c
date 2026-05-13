@@ -146,7 +146,7 @@ void ps2_irq_mouse(void) {
     {
         extern uint64_t fut_get_ticks(void);
         uint64_t now = fut_get_ticks();
-        if (now - last_mouse_ticks < 5) {  /* < 50ms since last = drop */
+        if (now - last_mouse_ticks < 2) {  /* < 20ms since last = drop */
             /* Still must read the data byte to clear the controller */
             while (hal_inb(PS2_STATUS_PORT) & 0x01u) {
                 (void)hal_inb(PS2_DATA_PORT);

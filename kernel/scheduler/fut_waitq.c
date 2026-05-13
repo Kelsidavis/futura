@@ -201,6 +201,13 @@ bool fut_waitq_remove_thread(fut_waitq_t *q, fut_thread_t *thread) {
         prev = curr;
         curr = curr->wait_next;
     }
+    /* Bump wake-mark counter if we removed anyone — this lets wait-mark
+     * sleepers detect signal-driven removals (fut_signal_send removes
+     * blocked threads from their waitqs via this function) and timeout
+     * cancellations. Symmetric with wake_one/wake_all. */
+    if (removed) {
+        __atomic_fetch_add(&q->wake_seq, 1, __ATOMIC_ACQ_REL);
+    }
     fut_spinlock_release(&q->lock);
     wq_irq_restore(flags);
     return removed;

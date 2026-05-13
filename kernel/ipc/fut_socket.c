@@ -30,6 +30,33 @@
 #define SOCKET_LOG(...) ((void)0)
 #endif
 
+/* IRQ-safe save/restore helpers: waitq locks are acquired from both
+ * thread context (socket recv/send) and IRQ context (sock_timeout_callback
+ * runs in the timer ISR). Without disabling IRQs around the lock hold,
+ * a timer firing during the brief hold would deadlock on single-CPU
+ * (timer ISR spins on lock held by preempted main thread). */
+static inline unsigned long sock_irq_save(void) {
+    unsigned long flags;
+#if defined(__x86_64__)
+    __asm__ volatile("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
+#elif defined(__aarch64__)
+    __asm__ volatile("mrs %0, daif; msr daifset, #2" : "=r"(flags) :: "memory");
+#else
+    flags = 0;
+#endif
+    return flags;
+}
+
+static inline void sock_irq_restore(unsigned long flags) {
+#if defined(__x86_64__)
+    __asm__ volatile("pushq %0; popfq" :: "r"(flags) : "memory", "cc");
+#elif defined(__aarch64__)
+    __asm__ volatile("msr daif, %0" :: "r"(flags) : "memory");
+#else
+    (void)flags;
+#endif
+}
+
 /* Inline string functions for freestanding kernel environment */
 static inline size_t socket_strlen(const char *s) {
     size_t len = 0;
@@ -1197,11 +1224,18 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
             /* Don't set BLOCKED until timer is armed — avoids preemption hang */
             snd_thr->blocked_waitq = pair->send_waitq;
             snd_thr->wait_next     = NULL;
+            /* IRQ-safe locking required: sock_timeout_callback runs in
+             * timer-ISR context and acquires this same waitq lock. If the
+             * timer fires while we hold it without IRQ disable, single-CPU
+             * deadlocks (timer ISR spins forever on a lock held by the
+             * preempted main thread). */
+            unsigned long sndwq_flags = sock_irq_save();
             fut_spinlock_acquire(&pair->send_waitq->lock);
             if (pair->send_waitq->tail) pair->send_waitq->tail->wait_next = snd_thr;
             else                        pair->send_waitq->head = snd_thr;
             pair->send_waitq->tail = snd_thr;
             fut_spinlock_release(&pair->send_waitq->lock);
+            sock_irq_restore(sndwq_flags);
             /* Release outer lock BEFORE starting timer — callback acquires waitq lock */
             fut_spinlock_release(&pair->lock);
             if (snd_has_timeout) {
@@ -1210,6 +1244,7 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
                 int trc = fut_timer_start(rem, sock_timeout_callback, &snd_tmo_ctx);
                 if (trc != 0) {
                     /* Timer alloc failed (OOM) — dequeue from waitq and bail */
+                    unsigned long oom_flags = sock_irq_save();
                     fut_spinlock_acquire(&pair->send_waitq->lock);
                     fut_thread_t *wc = pair->send_waitq->head, *wp = NULL;
                     while (wc) {
@@ -1223,6 +1258,7 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
                         wp = wc; wc = wc->wait_next;
                     }
                     fut_spinlock_release(&pair->send_waitq->lock);
+                    sock_irq_restore(oom_flags);
                     return -EAGAIN;
                 }
                 if (snd_tmo_ctx.fired) {
@@ -1429,11 +1465,14 @@ ssize_t fut_socket_recv(fut_socket_t *socket, void *buf, size_t len) {
             /* Don't set BLOCKED until timer is armed — avoids preemption hang */
             rcv_thr->blocked_waitq = pair->recv_waitq;
             rcv_thr->wait_next     = NULL;
+            /* IRQ-safe locking required (see send path for rationale). */
+            unsigned long rcvwq_flags = sock_irq_save();
             fut_spinlock_acquire(&pair->recv_waitq->lock);
             if (pair->recv_waitq->tail) pair->recv_waitq->tail->wait_next = rcv_thr;
             else                        pair->recv_waitq->head = rcv_thr;
             pair->recv_waitq->tail = rcv_thr;
             fut_spinlock_release(&pair->recv_waitq->lock);
+            sock_irq_restore(rcvwq_flags);
             fut_spinlock_release(&pair->lock);
             if (rcv_has_timeout) {
                 uint64_t now = fut_get_ticks();
@@ -1441,6 +1480,7 @@ ssize_t fut_socket_recv(fut_socket_t *socket, void *buf, size_t len) {
                 int trc = fut_timer_start(rem, sock_timeout_callback, &rcv_tmo_ctx);
                 if (trc != 0) {
                     /* Timer alloc failed (OOM) — dequeue from waitq and bail */
+                    unsigned long oom_flags = sock_irq_save();
                     fut_spinlock_acquire(&pair->recv_waitq->lock);
                     fut_thread_t *wc = pair->recv_waitq->head, *wp = NULL;
                     while (wc) {
@@ -1454,6 +1494,7 @@ ssize_t fut_socket_recv(fut_socket_t *socket, void *buf, size_t len) {
                         wp = wc; wc = wc->wait_next;
                     }
                     fut_spinlock_release(&pair->recv_waitq->lock);
+                    sock_irq_restore(oom_flags);
                     return -EAGAIN;
                 }
                 if (rcv_tmo_ctx.fired) {
@@ -2085,11 +2126,14 @@ ssize_t fut_socket_recvfrom_dgram(fut_socket_t *socket, void *buf, size_t len,
              * is armed, causing a permanent hang on single-vCPU. */
             dg_thr->blocked_waitq = dq->recv_waitq;
             dg_thr->wait_next     = NULL;
+            /* IRQ-safe locking (timer callback shares this lock). */
+            unsigned long dgwq_flags = sock_irq_save();
             fut_spinlock_acquire(&dq->recv_waitq->lock);
             if (dq->recv_waitq->tail) dq->recv_waitq->tail->wait_next = dg_thr;
             else                      dq->recv_waitq->head = dg_thr;
             dq->recv_waitq->tail = dg_thr;
             fut_spinlock_release(&dq->recv_waitq->lock);
+            sock_irq_restore(dgwq_flags);
             fut_spinlock_release(&dq->lock);
             if (dg_has_timeout) {
                 uint64_t now = fut_get_ticks();
@@ -2097,6 +2141,7 @@ ssize_t fut_socket_recvfrom_dgram(fut_socket_t *socket, void *buf, size_t len,
                 int trc = fut_timer_start(rem, sock_timeout_callback, &dg_tmo_ctx);
                 if (trc != 0) {
                     /* Timer alloc failed (OOM) — dequeue from waitq and bail */
+                    unsigned long oom_flags = sock_irq_save();
                     fut_spinlock_acquire(&dq->recv_waitq->lock);
                     fut_thread_t *wc = dq->recv_waitq->head, *wp = NULL;
                     while (wc) {
@@ -2110,6 +2155,7 @@ ssize_t fut_socket_recvfrom_dgram(fut_socket_t *socket, void *buf, size_t len,
                         wp = wc; wc = wc->wait_next;
                     }
                     fut_spinlock_release(&dq->recv_waitq->lock);
+                    sock_irq_restore(oom_flags);
                     return -EAGAIN;
                 }
                 /* If timeout already fired while we were arming, skip sleep */

@@ -803,9 +803,13 @@ fn setup_event_ring(ctrl: &mut XhciController) -> bool {
     let erstba = virt_to_phys(erst as *const u8);
     mmio_write64(ctrl.bar0, ir_base + XHCI_IR_ERSTBA, erstba);
 
-    // Enable interrupter 0 (IMAN bit 1 = IE)
+    // Clear interrupter 0 enable (IMAN bit 1 = IE = 0) and clear any
+    // pending interrupt (IP, bit 0, write-1-to-clear). The event ring is
+    // polled — IE is not needed. Leaving IE=1 can cause interrupt
+    // assertion on some Intel xhci implementations even with
+    // USBCMD.INTE=0, blocking the LAPIC timer on L490.
     let iman = mmio_read32(ctrl.bar0, ir_base + XHCI_IR_IMAN);
-    mmio_write32(ctrl.bar0, ir_base + XHCI_IR_IMAN, iman | 0x2);
+    mmio_write32(ctrl.bar0, ir_base + XHCI_IR_IMAN, (iman & !0x2) | 0x1);
 
     // Set interrupt moderation interval (default: 4000 = 1ms at 250ns per count)
     mmio_write32(ctrl.bar0, ir_base + XHCI_IR_IMOD, 4000);
@@ -2469,12 +2473,6 @@ pub extern "C" fn xhci_init() -> i32 {
         return -9;
     }
     log("xhci: controller running");
-
-    // DEBUG: stop after controller start, no enumeration.
-    // If L490 boots, DMA-idle controller is fine; cliff is in enumeration.
-    log("xhci: DEBUG early return after USBCMD_RUN (no enumeration)");
-    unsafe { XHCI = Some(ctrl); }
-    return 0;
 
     // ── Verify command ring with No-Op ──
 

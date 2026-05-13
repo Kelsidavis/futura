@@ -2123,11 +2123,6 @@ fn enumerate_devices(ctrl: &mut XhciController) {
                 }
             }
         }
-        // DEBUG: skip MSC attach to bisect hang
-        log("xhci: DEBUG skipping MSC attach");
-        unsafe { free_page(cfg_buf); }
-        continue;
-
         if msc_bulk_in != 0 && msc_bulk_out != 0 {
             // Attach transfer rings to the slot's BulkEp slots.
             let setup_ok = unsafe {
@@ -2167,20 +2162,10 @@ fn enumerate_devices(ctrl: &mut XhciController) {
                         msc_bulk_in as u32, msc_bulk_in_mps as u32,
                         msc_bulk_out as u32, msc_bulk_out_mps as u32,
                     );
-                    let rc = usb_storage_attach(
-                        slot_id,
-                        msc_bulk_in,
-                        msc_bulk_out,
-                        xhci_bulk_thunk,
-                    );
-                    fut_printf(
-                        b"xhci: slot %u: usb_storage_attach rc=%d\n\0".as_ptr(),
-                        slot_id, rc,
-                    );
+                    // DEBUG: skip usb_storage_attach to bisect L490 hang
+                    fut_printf(b"xhci: DEBUG skipping usb_storage_attach\n\0".as_ptr());
                     if let Some(s) = slot_mut(slot_id) {
-                        s.attach_stage = if rc == 0 { 5 } else { 4 };
-                        s.attach_rc = rc;
-                        if rc == 0 { s.storage_attached = true; }
+                        s.attach_stage = 3;
                     }
                 }
             }

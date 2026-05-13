@@ -174,8 +174,7 @@ static void fut_net_wait_timeout_cb(void *arg) {
 
     if (fut_waitq_remove_thread(waiter->queue, thread)) {
         atomic_store_explicit(&waiter->timed_out, true, memory_order_release);
-        thread->state = FUT_THREAD_READY;
-        fut_sched_add_thread(thread);
+        fut_thread_make_ready(thread);
     }
 }
 

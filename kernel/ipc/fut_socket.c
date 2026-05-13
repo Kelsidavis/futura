@@ -167,8 +167,7 @@ static void sock_timeout_callback(void *arg) {
 
     if (found) {
         ctx->fired = true;
-        thread->state = FUT_THREAD_READY;
-        fut_sched_add_thread(thread);
+        fut_thread_make_ready(thread);
     }
 
     fut_spinlock_release(ctx->lock);

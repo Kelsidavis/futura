@@ -260,8 +260,7 @@ int fut_signal_send(struct fut_task *task, int signum) {
             extern bool fut_waitq_remove_thread(fut_waitq_t *q, fut_thread_t *thread);
             if (fut_waitq_remove_thread(t->blocked_waitq, t)) {
                 t->blocked_waitq = NULL;
-                t->state = FUT_THREAD_READY;
-                fut_sched_add_thread(t);
+                fut_thread_make_ready(t);
             }
         }
         t = t->task_next;
@@ -371,8 +370,7 @@ int fut_signal_send_thread(struct fut_thread *thread, int signum) {
         extern bool fut_waitq_remove_thread(fut_waitq_t *q, fut_thread_t *t);
         if (fut_waitq_remove_thread(thread->blocked_waitq, thread)) {
             thread->blocked_waitq = NULL;
-            thread->state = FUT_THREAD_READY;
-            fut_sched_add_thread(thread);
+            fut_thread_make_ready(thread);
         }
     }
 

@@ -180,6 +180,17 @@ struct fut_thread {
 void fut_thread_yield(void);
 
 /**
+ * Atomic transition: set state = READY and add to ready queue.
+ *
+ * Centralizes the wake-side state+enqueue sequence. Skips no-op
+ * transitions for RUNNING (already current) and TERMINATED (exiting)
+ * threads. Use this whenever waking a thread from BLOCKED/SLEEPING.
+ *
+ * @param thread  Thread to make ready (NULL → no-op)
+ */
+void fut_thread_make_ready(fut_thread_t *thread);
+
+/**
  * Exit the current thread (does not return).
  */
 [[noreturn]] void fut_thread_exit(void);

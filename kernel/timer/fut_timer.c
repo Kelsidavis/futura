@@ -190,12 +190,10 @@ static void wake_sleeping_threads(void) {
         thread->next = nullptr;
         thread->prev = nullptr;
 
-        // Mark as ready and add to scheduler
-        thread->state = FUT_THREAD_READY;
-
         fut_spinlock_release(&sleep_lock);
         timer_irq_restore(slflags);
-        fut_sched_add_thread(thread);
+        /* Mark ready + add to scheduler atomically via helper. */
+        fut_thread_make_ready(thread);
         slflags = timer_irq_save();
         fut_spinlock_acquire(&sleep_lock);
     }
@@ -235,12 +233,12 @@ int fut_thread_wake_sleeping(fut_thread_t *target) {
     }
     target->next = nullptr;
     target->prev = nullptr;
-    target->state = FUT_THREAD_READY;
 
     fut_spinlock_release(&sleep_lock);
     timer_irq_restore(slflags);
 
-    fut_sched_add_thread(target);
+    /* Atomic state + ready-queue transition via helper. */
+    fut_thread_make_ready(target);
     return 1;
 }
 

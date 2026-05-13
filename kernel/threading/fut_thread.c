@@ -386,6 +386,42 @@ fut_thread_t *fut_thread_create(
  * ============================================================ */
 
 /**
+ * Atomic transition: set state = READY and add to ready queue.
+ *
+ * Centralizes the open-coded sequence:
+ *     thread->state = FUT_THREAD_READY;
+ *     fut_sched_add_thread(thread);
+ *
+ * Use this whenever waking a thread (from waitq, sleep queue, signal
+ * delivery, timer callback, etc.) instead of writing the two lines
+ * directly. fut_sched_add_thread requires state == READY on entry, so
+ * the order matters; the helper enforces it.
+ *
+ * Skips no-op transitions:
+ *   - NULL thread → silent no-op
+ *   - state == RUNNING → don't change (thread is the current running
+ *     thread; setting READY would be a state regression and the
+ *     subsequent add would corrupt the ready queue, since RUNNING
+ *     threads aren't in the queue)
+ *   - state == TERMINATED → don't resurrect a dying thread
+ *
+ * For state == BLOCKED, SLEEPING, READY: transitions to READY and adds
+ * to queue. fut_sched_add_thread internally dedup-checks the queue, so
+ * adding a thread that's already in the queue is benign.
+ */
+void fut_thread_make_ready(fut_thread_t *thread) {
+    if (!thread) {
+        return;
+    }
+    if (thread->state == FUT_THREAD_RUNNING ||
+        thread->state == FUT_THREAD_TERMINATED) {
+        return;
+    }
+    thread->state = FUT_THREAD_READY;
+    fut_sched_add_thread(thread);
+}
+
+/**
  * Voluntarily yield CPU to another thread.
  */
 void fut_thread_yield(void) {

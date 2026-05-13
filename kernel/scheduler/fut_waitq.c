@@ -132,8 +132,7 @@ static void fut_waitq_make_ready(fut_thread_t *thread) {
         return;
     }
     thread->blocked_waitq = NULL;
-    thread->state = FUT_THREAD_READY;
-    fut_sched_add_thread(thread);
+    fut_thread_make_ready(thread);
 }
 
 void fut_waitq_wake_one(fut_waitq_t *q) {

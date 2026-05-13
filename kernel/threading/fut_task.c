@@ -300,16 +300,13 @@ void fut_task_add_thread(fut_task_t *task, fut_thread_t *thread) {
                task, thread, task->threads, task->thread_count);
 #endif
 
-    // Link thread into task's thread list
-    thread->next = task->threads;
+    // Link thread into task's thread list using task_next/task_prev.
+    // (next/prev are owned by the scheduler's ready queue.)
+    thread->task_next = task->threads;
     if (task->threads) {
-#ifdef DEBUG_TASK
-        fut_printf("[ADD-THREAD-DBG] About to write prev: task->threads=%p task->threads->prev_addr=%p\n",
-                   task->threads, &task->threads->prev);
-#endif
-        task->threads->prev = thread;
+        task->threads->task_prev = thread;
     }
-    thread->prev = NULL;
+    thread->task_prev = NULL;
     task->threads = thread;
 
     task->thread_count++;
@@ -323,19 +320,19 @@ void fut_task_remove_thread(fut_task_t *task, fut_thread_t *thread) {
         return;
     }
 
-    // Unlink thread from task's thread list
-    if (thread->prev) {
-        thread->prev->next = thread->next;
+    // Unlink thread from task's thread list (use task_next/task_prev)
+    if (thread->task_prev) {
+        thread->task_prev->task_next = thread->task_next;
     } else {
-        task->threads = thread->next;
+        task->threads = thread->task_next;
     }
 
-    if (thread->next) {
-        thread->next->prev = thread->prev;
+    if (thread->task_next) {
+        thread->task_next->task_prev = thread->task_prev;
     }
 
-    thread->next = NULL;
-    thread->prev = NULL;
+    thread->task_next = NULL;
+    thread->task_prev = NULL;
 
     task->thread_count--;
 }
@@ -350,7 +347,7 @@ void fut_task_destroy(fut_task_t *task) {
 
     fut_thread_t *thread = task->threads;
     while (thread) {
-        fut_thread_t *next = thread->next;
+        fut_thread_t *next = thread->task_next;
         fut_free(thread->stack_base);
         fut_free(thread->alloc_base);  // Free original pointer, not aligned one
         thread = next;
@@ -987,7 +984,7 @@ int fut_task_waitpid(int pid, int *status_out, int flags, uint64_t *child_ticks_
             uint64_t child_stime = 0;
             uint64_t child_switches = 0;
             uint64_t child_voluntary = 0;
-            for (fut_thread_t *t = match->threads; t; t = t->next) {
+            for (fut_thread_t *t = match->threads; t; t = t->task_next) {
                 child_utime += t->stats.utime_ticks;
                 child_stime += t->stats.stime_ticks;
                 child_switches += t->stats.context_switches;
@@ -1160,7 +1157,7 @@ int fut_task_waitpid_ex(int pid, int *status_out, int flags, uint32_t *uid_out) 
             uint64_t child_ticks = 0;
             uint64_t child_switches = 0;
             uint64_t child_voluntary = 0;
-            for (fut_thread_t *t = match->threads; t; t = t->next) {
+            for (fut_thread_t *t = match->threads; t; t = t->task_next) {
                 child_ticks += t->stats.cpu_ticks;
                 child_switches += t->stats.context_switches;
                 child_voluntary += t->stats.voluntary_yields;

@@ -222,7 +222,7 @@ int fut_signal_send(struct fut_task *task, int signum) {
         fut_thread_t *kt = task->threads;
         while (kt) {
             kt->state = FUT_THREAD_TERMINATED;
-            kt = kt->next;
+            kt = kt->task_next;
         }
     } else if (task->signal_handlers[signum - 1] == SIG_DFL) {
         /* Check if blocked — blocked signals defer default action */
@@ -264,7 +264,7 @@ int fut_signal_send(struct fut_task *task, int signum) {
                 fut_sched_add_thread(t);
             }
         }
-        t = t->next;
+        t = t->task_next;
     }
 
     return 0;

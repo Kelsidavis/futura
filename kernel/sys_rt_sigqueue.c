@@ -228,7 +228,7 @@ long sys_rt_tgsigqueueinfo(int tgid, int tid, int sig, const void *uinfo) {
     while (thr) {
         if ((int)thr->tid == tid)
             break;
-        thr = thr->next;
+        thr = thr->task_next;
     }
     if (!thr)
         return -ESRCH;

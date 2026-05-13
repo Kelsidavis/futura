@@ -296,7 +296,7 @@ void fut_process_terminate(fut_process_t *process) {
     /* Terminate all threads */
     fut_thread_t *thread = process->threads;
     while (thread) {
-        fut_thread_t *next = thread->next;
+        fut_thread_t *next = thread->task_next;
         fut_thread_terminate(thread);
         thread = next;
     }

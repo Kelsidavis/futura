@@ -996,7 +996,7 @@ static size_t gen_status(char *buf, size_t cap, fut_task_t *task, uint64_t tid) 
     const char *comm_name = task->comm[0] ? task->comm : "?";
     if (tid != 0) {
         /* Find the thread with this TID and use its per-thread comm */
-        for (fut_thread_t *t = task->threads; t; t = t->next) {
+        for (fut_thread_t *t = task->threads; t; t = t->task_next) {
             if (t->tid == tid && t->comm[0]) { comm_name = t->comm; break; }
         }
     }
@@ -1159,7 +1159,7 @@ static size_t gen_status(char *buf, size_t cap, fut_task_t *task, uint64_t tid) 
     /* Context switch counters: sum across all threads */
     {
         uint64_t total_vol = 0, total_sw = 0;
-        for (fut_thread_t *t = task->threads; t; t = t->next) {
+        for (fut_thread_t *t = task->threads; t; t = t->task_next) {
             total_vol += t->stats.voluntary_yields;
             total_sw  += t->stats.context_switches;
         }
@@ -1825,7 +1825,7 @@ static size_t gen_stat(char *buf, size_t cap, fut_task_t *task, uint64_t tid) {
     uint64_t pending_sig  = task->pending_signals;
     uint64_t blocked_sig  = task->signal_mask;
     if (tid) {
-        for (fut_thread_t *t = task->threads; t; t = t->next) {
+        for (fut_thread_t *t = task->threads; t; t = t->task_next) {
             if (t->tid == tid) {
                 pending_sig = t->thread_pending_signals;
                 blocked_sig = t->signal_mask;
@@ -1850,7 +1850,7 @@ static size_t gen_stat(char *buf, size_t cap, fut_task_t *task, uint64_t tid) {
     pb_char(&b, '(');
     const char *stat_comm = task->comm[0] ? task->comm : "?";
     if (tid) {
-        for (fut_thread_t *t = task->threads; t; t = t->next) {
+        for (fut_thread_t *t = task->threads; t; t = t->task_next) {
             if (t->tid == tid && t->comm[0]) { stat_comm = t->comm; break; }
         }
     }
@@ -2372,7 +2372,7 @@ static size_t gen_schedstat(char *buf, size_t cap, fut_task_t *task) {
 
     uint64_t cpu_ticks = 0;
     uint64_t nr_switches = 0;
-    for (fut_thread_t *t = task->threads; t; t = t->next) {
+    for (fut_thread_t *t = task->threads; t; t = t->task_next) {
         cpu_ticks  += t->stats.cpu_ticks;
         nr_switches += t->stats.context_switches;
     }
@@ -3045,7 +3045,7 @@ static size_t gen_comm(char *buf, size_t cap, fut_task_t *task, uint64_t tid) {
     if (!task) return 0;
     const char *name = task->comm[0] ? task->comm : "?";
     if (tid) {
-        for (fut_thread_t *t = task->threads; t; t = t->next) {
+        for (fut_thread_t *t = task->threads; t; t = t->task_next) {
             if (t->tid == tid && t->comm[0]) { name = t->comm; break; }
         }
     }
@@ -6671,7 +6671,7 @@ static int procfs_dir_lookup(struct fut_vnode *dir, const char *name,
         fut_task_t *task = fut_task_by_pid(pid);
         if (!task) return -ENOENT;
         bool found = false;
-        for (fut_thread_t *t = task->threads; t; t = t->next) {
+        for (fut_thread_t *t = task->threads; t; t = t->task_next) {
             if (t->tid == tid) { found = true; break; }
         }
         if (!found) return -ENOENT;

@@ -42,7 +42,7 @@ extern fut_task_t *fut_task_list;
 static uint32_t count_runnable_threads(void) {
     uint32_t nr = 0;
     for (fut_task_t *task = fut_task_list; task != NULL; task = task->next) {
-        for (fut_thread_t *t = task->threads; t != NULL; t = t->next) {
+        for (fut_thread_t *t = task->threads; t != NULL; t = t->task_next) {
             if (t->priority == 255) continue;  /* skip idle thread */
             if (t->state == FUT_THREAD_RUNNING || t->state == FUT_THREAD_READY)
                 nr++;
@@ -265,7 +265,7 @@ void fut_debug_dump_stats(void) {
     /* Walk all tasks and their threads */
     extern fut_task_t *fut_task_list;
     for (fut_task_t *task = fut_task_list; task != NULL; task = task->next) {
-        for (fut_thread_t *t = task->threads; t != NULL; t = t->next) {
+        for (fut_thread_t *t = task->threads; t != NULL; t = t->task_next) {
         uint64_t switches = t->stats.context_switches;
         uint64_t ticks = t->stats.cpu_ticks;
 

@@ -156,7 +156,7 @@ long sys_getrusage(int who, struct rusage *usage) {
             }
         } else {
             /* All threads of the task — use per-task ->next link, not global list */
-            for (fut_thread_t *t = task->threads; t != NULL; t = t->next) {
+            for (fut_thread_t *t = task->threads; t != NULL; t = t->task_next) {
                 total_ticks     += t->stats.cpu_ticks;
                 total_switches  += t->stats.context_switches;
                 total_voluntary += t->stats.voluntary_yields;

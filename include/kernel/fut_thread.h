@@ -102,6 +102,12 @@ struct fut_thread {
     fut_thread_t *wait_next;              // Next in wait queue (also used by futex)
     struct fut_waitq *blocked_waitq;      // Wait queue this thread is blocked on (for signal EINTR)
     fut_thread_t *global_next;            // Next in global thread list
+    /* Separate pointers for the task's thread list — previously shared with
+     * the scheduler's next/prev which silently corrupted the task list
+     * whenever a thread entered the ready queue. Signal delivery walking
+     * task->threads would then iterate through the ready queue instead. */
+    fut_thread_t *task_next;
+    fut_thread_t *task_prev;
 
     /* POSIX scheduling policy and RT priority */
     int sched_policy;                     // SCHED_OTHER/SCHED_FIFO/SCHED_RR/etc.

@@ -161,7 +161,7 @@ long sys_timer_create(int clockid, struct sigevent *sevp, timer_t *timerid) {
                 return -EINVAL;
             uint64_t want = (uint64_t)sev.sigev_notify_thread_id;
             bool in_group = false;
-            for (fut_thread_t *t = task->threads; t; t = t->next) {
+            for (fut_thread_t *t = task->threads; t; t = t->task_next) {
                 if (t->tid == want) { in_group = true; break; }
             }
             if (!in_group)

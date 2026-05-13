@@ -153,7 +153,7 @@ long sys_getpriority(int which, int who) {
             /* Find the task that owns a thread with TID == who */
             for (fut_task_t *t = fut_task_list; t; t = t->next) {
                 if (t->state == FUT_TASK_ZOMBIE) continue;
-                for (fut_thread_t *th = t->threads; th; th = th->next) {
+                for (fut_thread_t *th = t->threads; th; th = th->task_next) {
                     if (th->tid == (uint64_t)who) {
                         if (t->nice < best_nice) best_nice = t->nice;
                         break;
@@ -272,7 +272,7 @@ long sys_setpriority(int which, int who, int prio) {
         } else {
             for (fut_task_t *t = fut_task_list; t; t = t->next) {
                 if (t->state == FUT_TASK_ZOMBIE) continue;
-                for (fut_thread_t *th = t->threads; th; th = th->next) {
+                for (fut_thread_t *th = t->threads; th; th = th->task_next) {
                     if (th->tid == (uint64_t)who) {
                         target_task = t;
                         break;

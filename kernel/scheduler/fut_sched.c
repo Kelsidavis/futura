@@ -900,9 +900,19 @@ void fut_schedule(void) {
         return;
     }
 
-    // If current thread is still runnable, put it back in ready queue
-    if (prev && prev != idle && prev->state == FUT_THREAD_RUNNING) {
-        prev->state = FUT_THREAD_READY;
+    // Put prev back in the ready queue if it can still run.
+    //
+    // CRITICAL: check for READY as well as RUNNING. A thread that called
+    // fut_waitq_sleep_locked transitions to BLOCKED, but a concurrent
+    // wake (from a timer-deferred input event) can flip it to READY and
+    // add it to the ready queue BEFORE we get here. select_next_thread
+    // then dequeues it. If we only re-add on RUNNING, the thread falls
+    // off all queues and is never scheduled again — permanent hang.
+    if (prev && prev != idle && prev->state != FUT_THREAD_TERMINATED
+                             && prev->state != FUT_THREAD_BLOCKED) {
+        if (prev->state != FUT_THREAD_READY) {
+            prev->state = FUT_THREAD_READY;
+        }
         fut_sched_add_thread(prev);
     }
 

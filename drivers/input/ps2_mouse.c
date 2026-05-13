@@ -172,14 +172,7 @@ static struct fut_file_ops mouse_fops;
 
 void ps2_mouse_drain_deferred_wake(void) {
     if (g_ps2_mouse.active) {
-        /* Drain at 1Hz to isolate: if hang time scales with wake rate,
-         * the issue is accumulation in the wake→switch cycle.
-         * If 1Hz hangs after the same wall-clock time, it's time-based. */
-        static uint32_t counter = 0;
-        counter++;
-        if ((counter % 100) == 0) {
-            fut_input_queue_drain_wake(&g_ps2_mouse.queue);
-        }
+        fut_input_queue_drain_wake(&g_ps2_mouse.queue);
     }
 }
 

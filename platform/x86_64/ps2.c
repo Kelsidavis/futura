@@ -136,11 +136,27 @@ void ps2_irq_mouse(void) {
         return;
     }
 
-    /* Diagnostic: count mouse IRQs to detect flood / hang correlation */
-    static uint32_t mouse_irq_count = 0;
-    mouse_irq_count++;
-    if (mouse_irq_count <= 3 || (mouse_irq_count % 500) == 0) {
-        fut_printf("[MOUSE-IRQ] #%u\n", mouse_irq_count);
+    /* Rate-limit mouse IRQs: Synaptics touchpads in PS/2 mode can
+     * generate 80-200 reports/sec. Each report triggers an IRQ12, a
+     * waitq wake, and a compositor context switch. On L490 with
+     * busy-yield idle (g_timer_ticks_broken=1), the rapid-fire wake
+     * cycles may starve the timer or hit a scheduling race. Throttle
+     * to ~20 reports/sec by dropping intermediate IRQs. */
+    static uint64_t last_mouse_ticks = 0;
+    {
+        extern uint64_t fut_get_ticks(void);
+        uint64_t now = fut_get_ticks();
+        if (now - last_mouse_ticks < 5) {  /* < 50ms since last = drop */
+            /* Still must read the data byte to clear the controller */
+            while (hal_inb(PS2_STATUS_PORT) & 0x01u) {
+                (void)hal_inb(PS2_DATA_PORT);
+            }
+            hal_outb(0xA0, 0x20);
+            hal_outb(0x20, 0x20);
+            fut_irq_send_eoi(12);
+            return;
+        }
+        last_mouse_ticks = now;
     }
 
     for (;;) {

@@ -2238,8 +2238,15 @@ pub extern "C" fn xhci_init() -> i32 {
     }
 
     // Enable bus mastering and memory space in PCI command register
+    // Enable bus mastering (bit 1) + memory space (bit 2), and set
+    // Interrupt Disable (bit 10 = 0x0400). All xhci operations are polled
+    // via the event ring; leaving PCI INTx live lets the controller assert
+    // its interrupt pin on pending events (hub status change, device
+    // attach). Without a registered ISR the LAPIC in-service bit for that
+    // vector stays set and blocks all lower-priority vectors — on L490
+    // this starves the timer (vec 32) and hangs the scheduler.
     let cmd = pci_read16(bus, dev, func, 0x04);
-    pci_write16(bus, dev, func, 0x04, cmd | 0x06);
+    pci_write16(bus, dev, func, 0x04, cmd | 0x0406);
 
     // Read BAR0 (64-bit MMIO)
     let bar0_lo = pci_read32(bus, dev, func, 0x10) & !0xF;

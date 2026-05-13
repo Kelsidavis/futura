@@ -3199,11 +3199,8 @@ try_ramdisk: (void)0;
 
     /* Start console input thread - reads from serial and feeds line discipline.
      * Now uses scheduler yield instead of busy-spinning. */
-    /* DISABLED: console input thread busy-loops on non-existent serial,
-     * adding a third thread to the busy-yield scheduling mix. Isolating
-     * whether its fut_schedule calls hit the intermittent hang. */
-    // fut_printf("[INIT] Starting console input thread...\n");
-    // fut_console_start_input_thread();
+    fut_printf("[INIT] Starting console input thread...\n");
+    fut_console_start_input_thread();
 
     /* ========================================
      *   Wayland Compositor Launch (DISABLED)

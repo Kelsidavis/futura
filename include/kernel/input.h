@@ -32,6 +32,7 @@ typedef struct fut_input_queue {
     uint32_t tail;
     fut_spinlock_t lock;
     fut_waitq_t wait;
+    volatile int wake_pending;
 } fut_input_queue_t;
 
 static inline void fut_input_queue_init(fut_input_queue_t *q) {
@@ -40,8 +41,17 @@ static inline void fut_input_queue_init(fut_input_queue_t *q) {
     }
     q->head = 0;
     q->tail = 0;
+    q->wake_pending = 0;
     fut_spinlock_init(&q->lock);
     fut_waitq_init(&q->wait);
+}
+
+/* Called from timer tick to deliver deferred mouse-move wakes. */
+static inline void fut_input_queue_drain_wake(fut_input_queue_t *q) {
+    if (!q) return;
+    if (__atomic_exchange_n(&q->wake_pending, 0, __ATOMIC_ACQ_REL)) {
+        fut_waitq_wake_one(&q->wait);
+    }
 }
 
 static inline bool fut_input_queue_empty(const fut_input_queue_t *q) {
@@ -92,11 +102,20 @@ static inline void fut_input_queue_push(fut_input_queue_t *q,
     fut_spinlock_release(&q->lock);
     _input_irq_restore(flags);
 
-    /* Skip wake for mouse-move events entirely. The compositor will
-     * pick up queued mouse events on its next natural wake (timer-driven
-     * scheduling or button event). This tests whether the waitq wake
-     * itself is what causes the L490 post-desktop freeze. */
-    if (ev->type != FUT_EV_MOUSE_MOVE) {
+    /* Defer mouse-move wakes: calling fut_waitq_wake_one from the PS/2
+     * mouse IRQ handler causes a freeze on L490 (confirmed by disabling
+     * wake entirely — no freeze). The wake adds the compositor to the
+     * ready queue and triggers a context-switch cycle that, at 80-200
+     * reports/sec from a Synaptics touchpad, destabilizes the scheduler.
+     *
+     * Instead of waking immediately, set a per-queue flag and let the
+     * timer tick (100Hz, in fut_timer_tick) call the deferred wakes.
+     * This bounds wake rate to timer frequency and moves the wake out
+     * of the mouse-ISR call chain. Button/non-mouse events still wake
+     * immediately. */
+    if (ev->type == FUT_EV_MOUSE_MOVE) {
+        __atomic_store_n(&q->wake_pending, 1, __ATOMIC_RELEASE);
+    } else {
         fut_waitq_wake_one(&q->wait);
     }
 }

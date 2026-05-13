@@ -267,22 +267,19 @@ void fut_waitq_sleep_timed(fut_waitq_t *q, uint64_t timeout_ticks,
         }
     }
 
-    /* Step 2: Acquire q->lock with IRQ-safe locking, then check the
-     * fired flag and enqueue atomically.  IRQ-safe locking prevents
-     * deadlock: no thread can be preempted while holding q->lock. */
-    thread->state = FUT_THREAD_BLOCKED;
-    thread->blocked_waitq = q;
-
+    /* Step 2: Acquire q->lock with IRQ-safe locking BEFORE setting state.
+     * The state transition to BLOCKED and the enqueue must happen
+     * atomically under the lock with IRQs disabled. Setting state=BLOCKED
+     * outside the lock creates a race: a timer IRQ can fire, observe
+     * state=BLOCKED + thread on no queue, refuse to re-add, and the
+     * thread becomes permanently lost from all scheduling queues. */
     int lock_already_held = (released_lock == &q->lock);
     unsigned long flags = wq_irq_save();
     if (!lock_already_held)
         fut_spinlock_acquire(&q->lock);
 
-    /* Step 3: Check if the timer already fired before we got the lock.
-     * If so, undo the BLOCKED state and bail out. */
+    /* Step 3: Check if the timer already fired before we got the lock. */
     if (timeout_ticks > 0 && ctx.fired) {
-        thread->state = FUT_THREAD_RUNNING;
-        thread->blocked_waitq = NULL;
         if (!lock_already_held)
             fut_spinlock_release(&q->lock);
         wq_irq_restore(flags);
@@ -291,8 +288,10 @@ void fut_waitq_sleep_timed(fut_waitq_t *q, uint64_t timeout_ticks,
         return;
     }
 
-    /* Step 4: Enqueue (still holding lock with IRQs off). */
+    /* Step 4: Enqueue and transition state atomically under the lock. */
     fut_waitq_enqueue(q, thread);
+    thread->blocked_waitq = q;
+    thread->state = FUT_THREAD_BLOCKED;
     if (!lock_already_held)
         fut_spinlock_release(&q->lock);
     wq_irq_restore(flags);

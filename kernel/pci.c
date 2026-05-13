@@ -90,6 +90,15 @@ void pci_enumerate(void) {
     }
 
     fut_printf("[PCI] Enumerated %d device(s)\n", g_pci_count);
+
+    /* Dump all discovered devices for hardware bring-up diagnosis */
+    for (int i = 0; i < g_pci_count; i++) {
+        struct pci_device *d = &g_pci_devices[i];
+        fut_printf("[PCI] %02x:%02x.%x vendor=%04x device=%04x class=%02x%02x%02x\n",
+                   d->bus, d->dev, d->func,
+                   d->vendor_id, d->device_id,
+                   d->class_code, d->subclass, d->prog_if);
+    }
 }
 
 #else /* ARM64 */

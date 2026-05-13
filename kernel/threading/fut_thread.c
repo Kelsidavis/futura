@@ -612,7 +612,7 @@ void fut_thread_init_bootstrap(void) {
     static bool bootstrap_ready = false;
     static fut_task_t bootstrap_task;
     static fut_thread_t bootstrap_thread;
-    static uint8_t bootstrap_stack[8192] __attribute__((aligned(16)));
+    static uint8_t bootstrap_stack[65536] __attribute__((aligned(16)));
 
     if (!bootstrap_ready) {
         memset(&bootstrap_task, 0, sizeof(bootstrap_task));
@@ -683,7 +683,7 @@ void fut_thread_init_bootstrap(void) {
     static bool bootstrap_ready = false;
     static fut_task_t bootstrap_task;
     static fut_thread_t bootstrap_thread;
-    static uint8_t bootstrap_stack[8192] __attribute__((aligned(16)));
+    static uint8_t bootstrap_stack[65536] __attribute__((aligned(16)));
 
     if (!bootstrap_ready) {
         memset(&bootstrap_task, 0, sizeof(bootstrap_task));

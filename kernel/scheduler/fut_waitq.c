@@ -45,6 +45,7 @@ void fut_waitq_init(fut_waitq_t *q) {
     }
     q->head = NULL;
     q->tail = NULL;
+    __atomic_store_n(&q->wake_seq, 0, __ATOMIC_RELAXED);
     fut_spinlock_init(&q->lock);
 }
 
@@ -142,6 +143,10 @@ void fut_waitq_wake_one(fut_waitq_t *q) {
     unsigned long flags = wq_irq_save();
     fut_spinlock_acquire(&q->lock);
     fut_thread_t *thread = fut_waitq_dequeue(q);
+    /* Bump wake-mark counter under lock so sleepers using the
+     * wait-mark pattern (snapshot-then-recheck) detect the wake even
+     * if it fired on an empty waitq before they enqueued. */
+    __atomic_fetch_add(&q->wake_seq, 1, __ATOMIC_ACQ_REL);
     fut_spinlock_release(&q->lock);
     wq_irq_restore(flags);
     fut_waitq_make_ready(thread);
@@ -156,6 +161,8 @@ void fut_waitq_wake_all(fut_waitq_t *q) {
     fut_thread_t *thread = q->head;
     q->head = NULL;
     q->tail = NULL;
+    /* Bump wake-mark counter — see fut_waitq_wake_one. */
+    __atomic_fetch_add(&q->wake_seq, 1, __ATOMIC_ACQ_REL);
     fut_spinlock_release(&q->lock);
     wq_irq_restore(flags);
 

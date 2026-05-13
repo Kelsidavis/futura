@@ -45,7 +45,30 @@ typedef struct fut_waitq {
     fut_thread_t *head;     /**< First thread in the queue (NULL if empty) */
     fut_thread_t *tail;     /**< Last thread in the queue (NULL if empty) */
     fut_spinlock_t lock;    /**< Spinlock protecting queue operations */
+    /* Wake-mark sequence counter — incremented by every wake (one or all)
+     * UNDER the waitq's lock. Sleepers that can't use the standard
+     * "hold an outer lock through sleep_locked" pattern can snapshot this
+     * before their condition check, then re-check after enqueueing on the
+     * waitq. If the counter changed, a wake happened in the race window
+     * and the sleeper should not actually yield (the wake found an empty
+     * waitq and was lost). This is the wait-mark pattern that closes the
+     * lost-wakeup race class without requiring lock-coordination. */
+    _Atomic uint64_t wake_seq;
 } fut_waitq_t;
+
+/**
+ * Snapshot the wake-mark sequence counter of a waitq.
+ *
+ * Take a snapshot BEFORE checking the condition you're sleeping for.
+ * After enqueueing yourself on the waitq, re-check the condition AND
+ * call fut_waitq_wake_seq() again. If the value changed, a wake fired
+ * in the window between your initial check and your enqueue — that
+ * wake was lost on the empty waitq and you must not sleep (the
+ * condition has changed). Dequeue yourself and re-check the condition.
+ */
+static inline uint64_t fut_waitq_wake_seq(const fut_waitq_t *q) {
+    return __atomic_load_n(&q->wake_seq, __ATOMIC_ACQUIRE);
+}
 
 /**
  * Initialize a wait queue.

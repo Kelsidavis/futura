@@ -515,6 +515,11 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
             extern void fut_inotify_set_epoll_notify(struct fut_file *f, fut_waitq_t *wq);
             fut_waitq_t sel_wq;
             fut_waitq_init(&sel_wq);
+            /* Wait-mark snapshot: take BEFORE wiring + scan. After enqueue,
+             * re-check this value. If it changed, an FD wake fired during
+             * the wire-and-scan window and was lost (empty waitq) — we
+             * must not sleep, the condition is stale. */
+            uint64_t sel_wq_seq_before = fut_waitq_wake_seq(&sel_wq);
             for (int wfd = 0; wfd < local_nfds; wfd++) {
                 int want = (local_readfds  && fd_isset(wfd, &k_readfds))
                         || (local_writefds && fd_isset(wfd, &k_writefds));
@@ -640,6 +645,43 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
                     }
                     sel_wq.tail = sel_thr;
                     fut_spinlock_release(&sel_wq.lock);
+
+                    /* Wait-mark re-check: if wake_seq advanced since our
+                     * snapshot, an FD wake fired between our scan and
+                     * enqueue — was lost on the empty waitq. Dequeue and
+                     * skip sleep so we re-scan and pick up the event. */
+                    if (fut_waitq_wake_seq(&sel_wq) != sel_wq_seq_before) {
+                        fut_spinlock_acquire(&sel_wq.lock);
+                        if (sel_wq.head == sel_thr) sel_wq.head = sel_thr->wait_next;
+                        if (sel_wq.tail == sel_thr) sel_wq.tail = NULL;
+                        sel_thr->wait_next = NULL;
+                        fut_spinlock_release(&sel_wq.lock);
+                        sel_thr->state = FUT_THREAD_RUNNING;
+                        sel_thr->blocked_waitq = NULL;
+#ifdef __x86_64__
+                        __asm__ volatile("sti" ::: "memory");
+#elif defined(__aarch64__)
+                        __asm__ volatile("msr daifclr, #2" ::: "memory");
+#endif
+                        /* Unwire and continue outer loop — next iteration
+                         * will re-scan and find the event. */
+                        for (int ufd = 0; ufd < local_nfds; ufd++) {
+                            if (ufd >= (int)task->max_fds || !task->fd_table || !task->fd_table[ufd]) continue;
+                            struct fut_file *uf = task->fd_table[ufd];
+                            fut_eventfd_set_epoll_notify(uf, NULL);
+                            fut_timerfd_set_epoll_notify(uf, NULL);
+                            fut_signalfd_set_epoll_notify(uf, NULL);
+                            fut_pipe_set_epoll_notify(uf, NULL);
+                            fut_pidfd_set_epoll_notify(uf, NULL);
+                            { extern void fut_inotify_set_epoll_notify(struct fut_file *, fut_waitq_t *); fut_inotify_set_epoll_notify(uf, NULL); }
+                            fut_socket_t *us = get_socket_from_fd(ufd);
+                            if (us) {
+                                if (us->pair_reverse && us->pair_reverse->epoll_notify == &sel_wq) us->pair_reverse->epoll_notify = NULL;
+                                if (us->listener    && us->listener->epoll_notify    == &sel_wq) us->listener->epoll_notify = NULL;
+                            }
+                        }
+                        continue;
+                    }
 #ifdef __x86_64__
                     __asm__ volatile("sti" ::: "memory");
 #elif defined(__aarch64__)

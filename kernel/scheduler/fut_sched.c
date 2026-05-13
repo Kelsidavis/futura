@@ -906,13 +906,20 @@ void fut_schedule(void) {
         return;
     }
 
-    // If current thread is still runnable, put it back in ready queue
-    if (prev && prev != idle && prev->state == FUT_THREAD_RUNNING) {
+    // If current thread is still runnable AND we're actually switching
+    // to a different thread, put it back in the ready queue.
+    //
+    // Skip the re-add when prev == next (no-switch path): otherwise we'd
+    // leave prev in the queue, set its state back to RUNNING (line below),
+    // and end up with the invariant violation "thread in ready queue with
+    // state=RUNNING". On the next timer tick this would cause wasted
+    // dup-check work in fut_sched_add_thread.
+    if (prev && prev != idle && prev != next && prev->state == FUT_THREAD_RUNNING) {
         prev->state = FUT_THREAD_READY;
         fut_sched_add_thread(prev);
     }
 
-    // Mark next thread as running
+    // Mark next thread as running (no-op if prev==next and already RUNNING)
     next->state = FUT_THREAD_RUNNING;
 
     // Debug: Log first few context switches (disabled for perf)

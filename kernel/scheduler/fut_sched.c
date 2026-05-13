@@ -900,25 +900,10 @@ void fut_schedule(void) {
         return;
     }
 
-    // Put prev back in the ready queue if it can still run.
-    //
-    // Two cases:
-    //   RUNNING: normal preemption — mark READY and re-add.
-    //   READY:   race between fut_waitq_sleep_locked and a concurrent
-    //            wake. The wake set state=READY and added to the ready
-    //            queue, but select_next_thread above may have dequeued
-    //            it. Re-add so it isn't lost.
-    //
-    // Do NOT re-add BLOCKED (on a waitq, wake will handle it),
-    // SLEEPING (on the sleep queue, timer wake will handle it), or
-    // TERMINATED (exiting).
-    if (prev && prev != idle) {
-        if (prev->state == FUT_THREAD_RUNNING) {
-            prev->state = FUT_THREAD_READY;
-            fut_sched_add_thread(prev);
-        } else if (prev->state == FUT_THREAD_READY) {
-            fut_sched_add_thread(prev);
-        }
+    // If current thread is still runnable, put it back in ready queue
+    if (prev && prev != idle && prev->state == FUT_THREAD_RUNNING) {
+        prev->state = FUT_THREAD_READY;
+        fut_sched_add_thread(prev);
     }
 
     // Mark next thread as running

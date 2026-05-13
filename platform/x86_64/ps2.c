@@ -136,6 +136,13 @@ void ps2_irq_mouse(void) {
         return;
     }
 
+    /* Diagnostic: count mouse IRQs to detect flood / hang correlation */
+    static uint32_t mouse_irq_count = 0;
+    mouse_irq_count++;
+    if (mouse_irq_count <= 3 || (mouse_irq_count % 500) == 0) {
+        fut_printf("[MOUSE-IRQ] #%u\n", mouse_irq_count);
+    }
+
     for (;;) {
         uint8_t status = hal_inb(PS2_STATUS_PORT);
         if ((status & 0x01u) == 0) {

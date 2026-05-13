@@ -536,18 +536,17 @@ long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
                  * poll_wq.lock safely from IRQ context. */
                 fut_thread_t *poll_thr = fut_thread_current();
                 if (poll_thr) {
-                    poll_thr->state         = FUT_THREAD_BLOCKED;
-                    poll_thr->blocked_waitq = &poll_wq;
-                    poll_thr->wait_next     = NULL;
-                    /* Disable IRQs while holding poll_wq.lock: wired FD
-                     * callbacks (e.g. timerfd_timer_cb) wake this waitq from
-                     * timer IRQ context — if the IRQ fires while the lock is
-                     * held, the handler spins forever (single-CPU deadlock). */
+                    /* Disable IRQs early — the FD wake callbacks fire from
+                     * timer ISR context. We need to enqueue + re-scan under
+                     * CLI so a wake firing in the window can't be lost. */
 #ifdef __x86_64__
                     __asm__ volatile("cli" ::: "memory");
 #elif defined(__aarch64__)
                     __asm__ volatile("msr daifset, #2" ::: "memory");
 #endif
+                    poll_thr->state         = FUT_THREAD_BLOCKED;
+                    poll_thr->blocked_waitq = &poll_wq;
+                    poll_thr->wait_next     = NULL;
                     fut_spinlock_acquire(&poll_wq.lock);
                     if (poll_wq.tail) {
                         poll_wq.tail->wait_next = poll_thr;
@@ -556,21 +555,45 @@ long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
                     }
                     poll_wq.tail = poll_thr;
                     fut_spinlock_release(&poll_wq.lock);
-#ifdef __x86_64__
-                    __asm__ volatile("sti" ::: "memory");
-#elif defined(__aarch64__)
-                    __asm__ volatile("msr daifclr, #2" ::: "memory");
-#endif
-                    if (fut_timer_start(wake_ticks, poll_waitq_wakeup, &poll_wq) != 0) {
-                        /* OOM: dequeue thread, restore state, clean up and fail */
-                        fut_waitq_remove_thread(&poll_wq, poll_thr);
+
+                    /* CRITICAL: re-scan AFTER enqueue, still under CLI.
+                     * This closes the lost-wakeup race: if an FD became
+                     * ready between the earlier scan (line 517) and our
+                     * enqueue, the wake_one fired on an empty waitq and
+                     * was lost. The re-scan catches the event before we
+                     * actually sleep. */
+                    stats = poll_scan_fds(kfds, nfds, task);
+                    if (stats.ready_count > 0) {
+                        /* Race detected — dequeue and skip the sleep. */
+                        fut_spinlock_acquire(&poll_wq.lock);
+                        if (poll_wq.head == poll_thr) poll_wq.head = poll_thr->wait_next;
+                        if (poll_wq.tail == poll_thr) poll_wq.tail = NULL;
+                        poll_thr->wait_next = NULL;
+                        fut_spinlock_release(&poll_wq.lock);
                         poll_thr->state = FUT_THREAD_RUNNING;
-                        poll_unwire_fds(kfds, nfds, task, &poll_wq);
-                        fut_free(kfds);
-                        return -EAGAIN;
+                        poll_thr->blocked_waitq = NULL;
+#ifdef __x86_64__
+                        __asm__ volatile("sti" ::: "memory");
+#elif defined(__aarch64__)
+                        __asm__ volatile("msr daifclr, #2" ::: "memory");
+#endif
+                    } else {
+#ifdef __x86_64__
+                        __asm__ volatile("sti" ::: "memory");
+#elif defined(__aarch64__)
+                        __asm__ volatile("msr daifclr, #2" ::: "memory");
+#endif
+                        if (fut_timer_start(wake_ticks, poll_waitq_wakeup, &poll_wq) != 0) {
+                            /* OOM: dequeue thread, restore state, clean up and fail */
+                            fut_waitq_remove_thread(&poll_wq, poll_thr);
+                            poll_thr->state = FUT_THREAD_RUNNING;
+                            poll_unwire_fds(kfds, nfds, task, &poll_wq);
+                            fut_free(kfds);
+                            return -EAGAIN;
+                        }
+                        fut_schedule();
+                        fut_timer_cancel(poll_waitq_wakeup, &poll_wq);
                     }
-                    fut_schedule();
-                    fut_timer_cancel(poll_waitq_wakeup, &poll_wq);
                 }
             }
             poll_unwire_fds(kfds, nfds, task, &poll_wq);

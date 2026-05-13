@@ -998,14 +998,11 @@ void fut_schedule(void) {
         // Only set current_thread if we're actually going to context switch
         fut_thread_set_current(next);
 
-        // NOTE: Previous comment said "idle threads must NEVER use IRETQ-based switching"
-        // but this was incorrect. Idle threads ARE properly initialized via fut_thread_create()
-        // with valid context structures. The issue was confusion with the bootstrap thread.
-        //
-        // CRITICAL FIX: When in IRQ context, we MUST use IRETQ-based switching for ALL threads
-        // including idle. Cooperative switching in IRQ context saves the ISR's stack pointer
-        // instead of the preempted thread's actual RSP, causing corruption.
-        bool idle_involved = false;  // Allow IRQ-based switching for idle
+        // Idle threads ARE properly initialized via fut_thread_create() with valid
+        // context structures. When in IRQ context, we use IRETQ-based switching for
+        // ALL threads including idle. Cooperative switching in IRQ context would
+        // save the ISR's stack pointer instead of the preempted thread's actual
+        // RSP, causing corruption.
 
         // CRITICAL: Don't save state for terminated threads!
         // When a thread calls fut_thread_exit(), it marks itself as TERMINATED and then
@@ -1059,7 +1056,7 @@ void fut_schedule(void) {
         //
         // This is REQUIRED for user threads because their irq_frame contains the
         // correct user-space RIP/RSP, while their context structure may be stale.
-        if (in_irq && fut_current_frame && !idle_involved) {
+        if (in_irq && fut_current_frame) {
             // IRQ-safe context switch (uses IRET)
             // Pass NULL for prev when terminated to skip saving its state
 #if defined(__aarch64__) && defined(DEBUG_SCHED)

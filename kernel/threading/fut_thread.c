@@ -545,6 +545,12 @@ void fut_thread_sleep(uint64_t millis) {
      * Assumes ~1 GHz base TSC (conservative for any modern x86). */
     extern bool fut_sched_is_started(void);
     if (!fut_sched_is_started()) {
+        static int dbg_sleep_bypass = 0;
+        if (dbg_sleep_bypass < 5) {
+            dbg_sleep_bypass++;
+            fut_printf("[SLEEP-BYPASS] pre-sched sleep(%llu) -> busy-wait\n",
+                       (unsigned long long)millis);
+        }
 #if defined(__x86_64__)
         uint64_t target = millis * 1000000ULL; /* ~1ms per 1M TSC ticks at 1GHz */
         uint64_t start;
@@ -578,6 +584,13 @@ void fut_thread_sleep(uint64_t millis) {
     }
 
     // Let timer subsystem handle sleep
+    {
+        extern bool fut_sched_is_started(void);
+        if (!fut_sched_is_started()) {
+            fut_printf("[SLEEP-BUG] sleep(%llu) reached sleep queue path pre-sched!\n",
+                       (unsigned long long)millis);
+        }
+    }
     fut_sleep_until(self, millis);
 
     // This will context switch to another thread

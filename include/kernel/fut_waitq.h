@@ -185,3 +185,69 @@ bool fut_waitq_remove_thread(fut_waitq_t *q, fut_thread_t *thread);
  */
 void fut_waitq_sleep_timed(fut_waitq_t *q, uint64_t timeout_ticks,
                            fut_spinlock_t *released_lock);
+
+/**
+ * THREE PATTERNS FOR LOST-WAKEUP RACE PREVENTION
+ * ==============================================
+ *
+ * The lost-wakeup race: a sleeper checks a condition, then sleeps. If a
+ * wake fires AFTER the check but BEFORE the sleeper is enqueued on the
+ * waitq, the wake hits an empty queue and is lost — the sleeper waits
+ * forever (or until another wake happens).
+ *
+ * Choose ONE of these patterns based on your sleep site's structure:
+ *
+ * 1. LOCK-COORDINATION (preferred when a single lock covers both the
+ *    condition check and the wake site):
+ *
+ *      lock(L);
+ *      while (!condition) {
+ *          fut_waitq_sleep_locked(&waitq, &L, FUT_THREAD_BLOCKED);
+ *          lock(L);  // re-acquire after wake
+ *      }
+ *      // condition true, proceed under L
+ *      unlock(L);
+ *
+ *    The waitq helpers atomically release L AFTER the enqueue, so the
+ *    wake side (which also takes L) can either see L held → wait until
+ *    we enqueue, or see L free → find us on the waitq.
+ *
+ * 2. DOUBLE-RESCAN UNDER CLI (for small condition checks where the wake
+ *    fires from IRQ context):
+ *
+ *      check_condition();
+ *      if (!ready) {
+ *          cli();
+ *          enqueue_self_on_waitq();
+ *          recheck_condition();   // CLI prevents wake from firing here
+ *          if (ready) {
+ *              dequeue_self();
+ *              sti();
+ *              // skip sleep
+ *          } else {
+ *              sti();
+ *              fut_schedule();
+ *          }
+ *      }
+ *
+ * 3. WAIT-MARK COUNTER (for expensive condition checks or when no single
+ *    coordinating lock exists):
+ *
+ *      uint64_t seq = fut_waitq_wake_seq(&waitq);
+ *      check_condition();
+ *      if (!ready) {
+ *          cli();
+ *          enqueue_self_on_waitq();
+ *          if (fut_waitq_wake_seq(&waitq) != seq) {
+ *              // Wake fired in window; skip sleep
+ *              dequeue_self();
+ *              sti();
+ *          } else {
+ *              sti();
+ *              fut_schedule();
+ *          }
+ *      }
+ *
+ *    wake_one, wake_all, and remove_thread all bump wake_seq under the
+ *    waitq lock, so ANY wake-like event is detectable.
+ */

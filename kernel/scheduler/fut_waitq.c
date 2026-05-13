@@ -102,16 +102,22 @@ void fut_waitq_sleep_locked(fut_waitq_t *q, fut_spinlock_t *released_lock,
         fut_spinlock_release(&q->lock);
     }
 
-    /* Release the caller's lock BEFORE restoring IRQs.  This prevents a
-     * deadlock: if we restored IRQs first, a timer ISR could fire and
-     * spin on released_lock (still held by this thread) → deadlock.
-     * With this ordering, released_lock is free before any ISR can run. */
+    /* Release the caller's lock BEFORE scheduling.  This prevents a
+     * deadlock: the timer ISR might need released_lock. */
     if (released_lock) {
         fut_spinlock_release(released_lock);
     }
-    wq_irq_restore(flags);
 
+    /* Call fut_schedule BEFORE restoring IRQs. This closes a race where
+     * a timer-driven wake fires between wq_irq_restore and fut_schedule,
+     * flipping this thread to READY and adding it to the ready queue.
+     * fut_schedule's select_next_thread then dequeues it, but the re-add
+     * check (prev->state == RUNNING) fails because state is READY — the
+     * thread falls off all queues permanently. Keeping IRQs disabled
+     * through the schedule call ensures the state transition (BLOCKED →
+     * scheduled out) is atomic from the timer's perspective. */
     fut_schedule();
+    wq_irq_restore(flags);
 }
 
 static fut_thread_t *fut_waitq_dequeue(fut_waitq_t *q) {

@@ -32,7 +32,6 @@ typedef struct fut_input_queue {
     uint32_t tail;
     fut_spinlock_t lock;
     fut_waitq_t wait;
-    volatile int wake_pending;
 } fut_input_queue_t;
 
 static inline void fut_input_queue_init(fut_input_queue_t *q) {
@@ -41,28 +40,12 @@ static inline void fut_input_queue_init(fut_input_queue_t *q) {
     }
     q->head = 0;
     q->tail = 0;
-    q->wake_pending = 0;
     fut_spinlock_init(&q->lock);
     fut_waitq_init(&q->wait);
 }
 
 static inline bool fut_input_queue_empty(const fut_input_queue_t *q) {
     return q->head == q->tail;
-}
-
-/* Called from timer tick to deliver deferred mouse-move wakes.
- *
- * IMPORTANT: do NOT clear wake_pending here. The compositor may be
- * running (not on the waitq) when we fire — wake_one returns without
- * waking anyone, but if we clear the flag, the compositor later blocks
- * with no flag set and sleeps forever. Instead, wake_pending stays set
- * until the compositor reads events (the read path clears it). Each
- * timer tick retries the wake — a no-op if the waitq is empty. */
-static inline void fut_input_queue_drain_wake(fut_input_queue_t *q) {
-    if (!q) return;
-    if (__atomic_load_n(&q->wake_pending, __ATOMIC_ACQUIRE)) {
-        fut_waitq_wake_one(&q->wait);
-    }
 }
 
 /* IRQ-safe lock helpers for the input queue lock.  This lock is acquired
@@ -176,9 +159,6 @@ static inline ssize_t fut_input_queue_read(fut_input_queue_t *q,
         copied++;
 
         if (fut_input_queue_empty(q)) {
-            /* Queue drained — clear wake_pending so the timer tick
-             * stops retrying wakes until new events arrive. */
-            __atomic_store_n(&q->wake_pending, 0, __ATOMIC_RELEASE);
             break;
         }
     }

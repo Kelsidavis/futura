@@ -170,12 +170,6 @@ static bool ps2_mouse_poll(void *inode, void *priv, uint32_t req, uint32_t *read
 
 static struct fut_file_ops mouse_fops;
 
-void ps2_mouse_drain_deferred_wake(void) {
-    if (g_ps2_mouse.active) {
-        fut_input_queue_drain_wake(&g_ps2_mouse.queue);
-    }
-}
-
 int ps2_mouse_init(void) {
     fut_input_queue_init(&g_ps2_mouse.queue);
     g_ps2_mouse.open_count = 0;

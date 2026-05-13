@@ -109,22 +109,7 @@ static inline void fut_input_queue_push(fut_input_queue_t *q,
     fut_spinlock_release(&q->lock);
     _input_irq_restore(flags);
 
-    /* Defer mouse-move wakes: calling fut_waitq_wake_one from the PS/2
-     * mouse IRQ handler causes a freeze on L490 (confirmed by disabling
-     * wake entirely — no freeze). The wake adds the compositor to the
-     * ready queue and triggers a context-switch cycle that, at 80-200
-     * reports/sec from a Synaptics touchpad, destabilizes the scheduler.
-     *
-     * Instead of waking immediately, set a per-queue flag and let the
-     * timer tick (100Hz, in fut_timer_tick) call the deferred wakes.
-     * This bounds wake rate to timer frequency and moves the wake out
-     * of the mouse-ISR call chain. Button/non-mouse events still wake
-     * immediately. */
-    if (ev->type == FUT_EV_MOUSE_MOVE) {
-        __atomic_store_n(&q->wake_pending, 1, __ATOMIC_RELEASE);
-    } else {
-        fut_waitq_wake_one(&q->wait);
-    }
+    fut_waitq_wake_one(&q->wait);
 }
 
 static inline ssize_t fut_input_queue_read(fut_input_queue_t *q,

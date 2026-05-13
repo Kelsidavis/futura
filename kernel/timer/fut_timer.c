@@ -372,13 +372,15 @@ void fut_timer_tick(void) {
         getrandom_add_entropy();
     }
 
-    /* Drain deferred mouse input wakes. Mouse-move events set a flag
-     * instead of calling fut_waitq_wake_one from the PS/2 IRQ handler
-     * (which destabilized the scheduler on L490). */
+    /* Drain deferred mouse input wakes (x86 PS/2 mouse only). */
+#if defined(__x86_64__)
     {
-        extern void ps2_mouse_drain_deferred_wake(void);
-        ps2_mouse_drain_deferred_wake();
+        extern void ps2_mouse_drain_deferred_wake(void) __attribute__((weak));
+        if (ps2_mouse_drain_deferred_wake) {
+            ps2_mouse_drain_deferred_wake();
+        }
     }
+#endif
 
     // Check for expired alarms and deliver SIGALRM
     extern fut_task_t *fut_task_list;

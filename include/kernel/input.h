@@ -91,6 +91,22 @@ static inline void fut_input_queue_push(fut_input_queue_t *q,
     q->tail = next;
     fut_spinlock_release(&q->lock);
     _input_irq_restore(flags);
+
+    /* Throttle wake-ups for mouse-move events. Each wake triggers a
+     * compositor context switch; at 80-200 reports/sec from a Synaptics
+     * touchpad, the rapid-fire scheduling starves the timer tick and
+     * hangs the system on L490 (busy-yield idle). Coalesce by only
+     * waking if enough ticks elapsed since the last wake. Button and
+     * non-mouse events always wake immediately. */
+    if (ev->type == FUT_EV_MOUSE_MOVE) {
+        static uint64_t last_wake_tick = 0;
+        extern uint64_t fut_get_ticks(void);
+        uint64_t now = fut_get_ticks();
+        if (now - last_wake_tick < 3) {
+            return;  /* events queued, compositor will drain on next wake */
+        }
+        last_wake_tick = now;
+    }
     fut_waitq_wake_one(&q->wait);
 }
 

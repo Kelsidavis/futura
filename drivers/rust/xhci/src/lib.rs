@@ -1961,6 +1961,10 @@ fn enumerate_devices(ctrl: &mut XhciController) {
             }
             continue;
         }
+        // DEBUG: stop after Enable Slot + setup_slot, skip Address Device onward
+        log("xhci: DEBUG skipping address_device onward");
+        continue;
+
         if !address_device(ctrl, slot_id) {
             continue;
         }
@@ -2496,10 +2500,7 @@ pub extern "C" fn xhci_init() -> i32 {
 
     init_ports(&ctrl);
 
-    // DEBUG: skip enumeration to bisect hang
-    log("xhci: DEBUG returning after init_ports (no enumeration)");
-    unsafe { XHCI = Some(ctrl); }
-    return 0;
+    // Full path — enumeration enabled
 
     // ── Store global state before enumeration ──
     //

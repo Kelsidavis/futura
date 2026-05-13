@@ -2162,10 +2162,20 @@ fn enumerate_devices(ctrl: &mut XhciController) {
                         msc_bulk_in as u32, msc_bulk_in_mps as u32,
                         msc_bulk_out as u32, msc_bulk_out_mps as u32,
                     );
-                    // DEBUG: skip usb_storage_attach to bisect L490 hang
-                    fut_printf(b"xhci: DEBUG skipping usb_storage_attach\n\0".as_ptr());
+                    let rc = usb_storage_attach(
+                        slot_id,
+                        msc_bulk_in,
+                        msc_bulk_out,
+                        xhci_bulk_thunk,
+                    );
+                    fut_printf(
+                        b"xhci: slot %u: usb_storage_attach rc=%d\n\0".as_ptr(),
+                        slot_id, rc,
+                    );
                     if let Some(s) = slot_mut(slot_id) {
-                        s.attach_stage = 3;
+                        s.attach_stage = if rc == 0 { 5 } else { 4 };
+                        s.attach_rc = rc;
+                        if rc == 0 { s.storage_attached = true; }
                     }
                 }
             }

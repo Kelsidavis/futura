@@ -2944,12 +2944,7 @@ void fut_kernel_main(void) {
     fut_enable_interrupts();  /* Platform-neutral interrupt enable */
 
     /* Start the scheduler to enable preemptive context switches */
-    {
-        extern fut_thread_t *fut_thread_current(void);
-        fut_thread_t *bt = fut_thread_current();
-        fut_printf("[INIT] Starting scheduler... (bootstrap state=%d)\n",
-                   bt ? (int)bt->state : -1);
-    }
+    fut_printf("[INIT] Starting scheduler...\n");
     fut_sched_start();  /* Enable scheduling on timer IRQs */
 
     /* Console input thread will be started after kernel init completes */

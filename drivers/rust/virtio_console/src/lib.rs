@@ -309,11 +309,12 @@ impl VirtQueue {
                 next: 0,
             });
 
-            let avail = &mut *self.avail;
-            let slot = avail.idx % self.size;
-            avail.ring[slot as usize] = desc_idx;
+            // Use raw-pointer accesses for device-shared ring memory.
+            let avail_idx = read_volatile(ptr::addr_of!((*self.avail).idx));
+            let slot = avail_idx % self.size;
+            write_volatile(ptr::addr_of_mut!((*self.avail).ring[slot as usize]), desc_idx);
             fence(Ordering::SeqCst);
-            avail.idx = avail.idx.wrapping_add(1);
+            write_volatile(ptr::addr_of_mut!((*self.avail).idx), avail_idx.wrapping_add(1));
         }
 
         self.next_avail.fetch_add(1, Ordering::Release);
@@ -336,11 +337,12 @@ impl VirtQueue {
                 next: 0,
             });
 
-            let avail = &mut *self.avail;
-            let slot = avail.idx % self.size;
-            avail.ring[slot as usize] = desc_idx;
+            // Use raw-pointer accesses for device-shared ring memory.
+            let avail_idx = read_volatile(ptr::addr_of!((*self.avail).idx));
+            let slot = avail_idx % self.size;
+            write_volatile(ptr::addr_of_mut!((*self.avail).ring[slot as usize]), desc_idx);
             fence(Ordering::SeqCst);
-            avail.idx = avail.idx.wrapping_add(1);
+            write_volatile(ptr::addr_of_mut!((*self.avail).idx), avail_idx.wrapping_add(1));
         }
 
         self.next_avail.fetch_add(1, Ordering::Release);

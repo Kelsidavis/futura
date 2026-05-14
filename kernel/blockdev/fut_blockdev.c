@@ -500,8 +500,12 @@ ssize_t fut_blockdev_write_bytes(struct fut_blockdev *dev, uint64_t offset, size
         return BLOCKDEV_EIO;
     }
 
-    /* verbose suppressed */
-    /* continuation */
+    /* Success path — release the canary-guarded scratch buffer. The
+     * previous version returned without this free, leaking ~4 KiB per
+     * call. With FuturaFS metadata writes (superblock, bitmaps) hitting
+     * this on every flush, the 8 KiB slab class exhausted ~2000 tests
+     * into a long run. */
+    fut_free(alloc_buffer);
     return (ssize_t)size;
 }
 

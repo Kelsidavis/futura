@@ -55484,7 +55484,10 @@ __attribute__((noinline)) static void test_futurafs_links(void) {
                 fut_test_fail(1925);
             }
             sys_unlink("/mnt/nlink_test.txt");
-        } else { fut_test_fail(1925); }
+        } else {
+            fut_printf("[MISC-TEST] ✗ Test 1925: open=%ld\n", fd);
+            fut_test_fail(1925);
+        }
     }
 }
 
@@ -55535,7 +55538,10 @@ __attribute__((noinline)) static void test_futurafs_advanced(void) {
     fut_printf("[MISC-TEST] Test 1911: FuturaFS flock\n");
     {
         long fd = sys_open("/mnt/lock_test.txt", 0x0042, 0644);
-        if (fd >= 0) {
+        if (fd < 0) {
+            fut_printf("[MISC-TEST] ✗ Test 1911: open=%ld\n", fd);
+            fut_test_fail(1911);
+        } else if (fd >= 0) {
             sys_write((int)fd, "locked", 6);
             long rc = sys_flock((int)fd, 2 /* LOCK_EX */);
             if (rc == 0) {

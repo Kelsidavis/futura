@@ -22,6 +22,7 @@
 #include <kernel/fut_socket.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 #include <kernel/kprintf.h>
 
@@ -489,13 +490,22 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
         return -EFAULT;
     }
 
-    /* Allocate kernel buffer */
-    void *kbuf = fut_malloc(local_len);
-    if (!kbuf) {
-        fut_printf("[RECVFROM] recvfrom(sockfd=%d [%s], len=%zu [%s], pid=%u) -> ENOMEM "
-                   "(kernel buffer allocation failed)\n",
-                   local_sockfd, fd_category, local_len, size_category, task->pid);
-        return -ENOMEM;
+    /* Kernel buffer: small receives use a stack buffer to avoid hammering
+     * the slab allocator. Large receives still fall back to fut_malloc. */
+    uint8_t stack_buf[2048];
+    void *kbuf;
+    bool kbuf_on_heap = false;
+    if (local_len <= sizeof(stack_buf)) {
+        kbuf = stack_buf;
+    } else {
+        kbuf = fut_malloc(local_len);
+        if (!kbuf) {
+            fut_printf("[RECVFROM] recvfrom(sockfd=%d [%s], len=%zu [%s], pid=%u) -> ENOMEM "
+                       "(kernel buffer allocation failed)\n",
+                       local_sockfd, fd_category, local_len, size_category, task->pid);
+            return -ENOMEM;
+        }
+        kbuf_on_heap = true;
     }
 
     /* AF_NETLINK: drain pending response buffer directly */
@@ -507,10 +517,10 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
                                                void *out_buf, size_t out_len);
             ssize_t got = netlink_handle_recv(nlsock, kbuf, local_len);
             if (got > 0 && recv_copy_to_user(local_buf, kbuf, (size_t)got) != 0) {
-                fut_free(kbuf);
+                if (kbuf_on_heap) fut_free(kbuf);
                 return -EFAULT;
             }
-            fut_free(kbuf);
+            if (kbuf_on_heap) fut_free(kbuf);
             return got;
         }
     }
@@ -545,16 +555,16 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
             if ((local_flags & MSG_DONTWAIT) && dg_task)
                 dg_task->msg_dontwait = dg_saved;
             if (dg_ret < 0) {
-                fut_free(kbuf);
+                if (kbuf_on_heap) fut_free(kbuf);
                 return dg_ret;
             }
             if (dg_ret > 0) {
                 if (recv_copy_to_user(local_buf, kbuf, (size_t)dg_ret) != 0) {
-                    fut_free(kbuf);
+                    if (kbuf_on_heap) fut_free(kbuf);
                     return -EFAULT;
                 }
             }
-            fut_free(kbuf);
+            if (kbuf_on_heap) fut_free(kbuf);
             /* Fill src_addr with sender address if requested */
             if (local_src_addr && local_addrlen) {
                 socklen_t alen = 0;
@@ -671,7 +681,7 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
                 break;
         }
 
-        fut_free(kbuf);
+        if (kbuf_on_heap) fut_free(kbuf);
         fut_printf("[RECVFROM] recvfrom(sockfd=%d [%s], len=%zu [%s], "
                    "flags=0x%x [%s], pid=%u) -> %zd (%s)\n",
                    local_sockfd, fd_category, local_len, size_category,
@@ -682,7 +692,7 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
     /* Copy to userspace */
     if (ret > 0) {
         if (recv_copy_to_user(local_buf, kbuf, (size_t)ret) != 0) {
-            fut_free(kbuf);
+            if (kbuf_on_heap) fut_free(kbuf);
             fut_printf("[RECVFROM] recvfrom(sockfd=%d [%s], len=%zu [%s], pid=%u) -> EFAULT "
                        "(copy_to_user failed)\n",
                        local_sockfd, fd_category, local_len, size_category, task->pid);
@@ -690,7 +700,7 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
         }
     }
 
-    fut_free(kbuf);
+    if (kbuf_on_heap) fut_free(kbuf);
 
     /* Phase 4: Return peer address if requested (for connected sockets like SOCK_STREAM)
      * For connection-oriented protocols, recvfrom() returns the same address as getpeername()

@@ -705,6 +705,9 @@ void fut_thread_init_bootstrap(void) {
         bootstrap_task.fd_flags = fut_malloc(sizeof(int) * bootstrap_task.max_fds);
         if (bootstrap_task.fd_flags)
             memset(bootstrap_task.fd_flags, 0, sizeof(int) * bootstrap_task.max_fds);
+        /* fd_table/fd_flags came from fut_malloc — alloc_fd_for_task may
+         * fut_free them on resize. */
+        bootstrap_task.fd_table_dynamic = true;
         bootstrap_task.next_fd = 0;
 
         memset(&bootstrap_thread, 0, sizeof(bootstrap_thread));
@@ -776,6 +779,9 @@ void fut_thread_init_bootstrap(void) {
         bootstrap_task.fd_flags = fut_malloc(sizeof(int) * bootstrap_task.max_fds);
         if (bootstrap_task.fd_flags)
             memset(bootstrap_task.fd_flags, 0, sizeof(int) * bootstrap_task.max_fds);
+        /* fd_table/fd_flags came from fut_malloc — alloc_fd_for_task may
+         * fut_free them on resize. */
+        bootstrap_task.fd_table_dynamic = true;
         bootstrap_task.next_fd = 0;
 
         memset(&bootstrap_thread, 0, sizeof(bootstrap_thread));

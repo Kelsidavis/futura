@@ -265,6 +265,10 @@ fut_task_t *fut_task_create(void) {
         fut_free(task);
         return NULL;
     }
+    /* Both tables came from fut_malloc here — they must be fut_free'd on
+     * resize/destroy. The ARM64 early-boot static fallback (see
+     * arm64_threading.c) is the only caller that leaves this false. */
+    task->fd_table_dynamic = true;
     /* Zero out the FD table and flags */
     for (int i = 0; i < FUT_FD_TABLE_INITIAL_SIZE; i++) {
         task->fd_table[i] = NULL;

@@ -69,6 +69,9 @@ void arm64_init_boot_thread(void) {
             boot_task->fd_flags[i] = 0;
         }
     }
+    /* Tables came from fut_malloc — mark them as such so alloc_fd_for_task's
+     * resize path knows it's safe to fut_free the previous allocation. */
+    boot_task->fd_table_dynamic = true;
     boot_task->next_fd = 0;
 
     /* Allocate minimal thread structure directly */

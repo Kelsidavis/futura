@@ -140,8 +140,10 @@ static int alloc_fd_for_task(fut_task_t *task, struct fut_file *file) {
         if (new_size > (1 << 20)) new_size = (1 << 20);  /* Hard cap: 1M FDs */
         if (new_size <= old_max) return -EMFILE;
 
-        /* Allocate larger tables.  Deliberately do NOT free the old tables:
-         * they may be static (ARM64 early-boot) memory, not PMM heap. */
+        /* Allocate larger tables. The previous tables are only fut_free'd
+         * if task->fd_table_dynamic is set — initial/static tables (e.g.
+         * the ARM64 early-boot table) live in non-heap memory and must
+         * not be passed to fut_free. */
         struct fut_file **new_table =
             fut_malloc((size_t)new_size * sizeof(struct fut_file *));
         if (!new_table) return -EMFILE;
@@ -162,9 +164,17 @@ static int alloc_fd_for_task(fut_task_t *task, struct fut_file *file) {
         __builtin_memset(new_flags + old_max, 0,
                          (size_t)(new_size - old_max) * sizeof(int));
 
+        struct fut_file **old_table = task->fd_table;
+        int *old_flags = task->fd_flags;
+        bool was_dynamic = task->fd_table_dynamic;
         task->fd_table = new_table;
         task->fd_flags = new_flags;
         task->max_fds  = new_size;
+        task->fd_table_dynamic = true;
+        if (was_dynamic) {
+            if (old_table) fut_free(old_table);
+            if (old_flags) fut_free(old_flags);
+        }
 
         /* First free slot is the first extended entry */
         task->fd_table[old_max] = file;

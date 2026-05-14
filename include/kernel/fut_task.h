@@ -11,6 +11,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <stdbool.h>
 #include "fut_thread.h"
 #include "fut_waitq.h"
 #include "signal.h"
@@ -219,6 +220,8 @@ struct fut_task {
     int *fd_flags;                     // Per-FD flags (FD_CLOEXEC), parallel to fd_table
     int max_fds;                       // Allocated size of fd_table
     int next_fd;                       // Next FD index to allocate
+    bool fd_table_dynamic;             // True if fd_table/fd_flags are from fut_malloc
+                                       // (false for static/early-boot tables we must not free)
 
     /* Resource limits (POSIX rlimits) */
     struct rlimit64 {

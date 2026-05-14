@@ -192,6 +192,8 @@ static inline ssize_t futurafs_blk_write_bytes(struct futurafs_mount *mnt,
  * ============================================================ */
 
 static int futurafs_alloc_block(struct futurafs_mount *mount, uint64_t *block_out);
+static int futurafs_write_inode(struct futurafs_mount *mount, uint64_t ino,
+                                struct futurafs_inode *inode);
 static int futurafs_free_block(struct futurafs_mount *mount, uint64_t block_num);
 
 /* ============================================================
@@ -2643,10 +2645,105 @@ static ssize_t futurafs_file_read_sync(struct futurafs_inode_info *inode_info,
  * @param offset     File offset to write to
  * @return Number of bytes written on success, negative error code on failure
  */
+/* Direct synchronous file write for writes that fit entirely within the
+ * inode's direct-block range. Performs the I/O with a stack-allocated
+ * 4KiB block buffer so no heap allocation is needed per write — the
+ * file_write_async ctx struct (4096-byte block_buffer + state) is what
+ * was previously exhausting the slab allocator during long test runs.
+ * Returns 1 if it handled the write, 0 if the request lies in indirect
+ * tiers and needs the full async path. */
+static ssize_t futurafs_file_write_direct(struct futurafs_inode_info *inode_info,
+                                          const void *buffer,
+                                          size_t size,
+                                          uint64_t offset,
+                                          int *handled) {
+    *handled = 0;
+    uint64_t end_offset = offset + size;
+    uint64_t direct_limit = (uint64_t)FUTURAFS_DIRECT_BLOCKS * FUTURAFS_BLOCK_SIZE;
+    if (end_offset > direct_limit) {
+        return 0;  /* needs indirect tiers — fall through to async path */
+    }
+
+    *handled = 1;
+    uint8_t block_buf[FUTURAFS_BLOCK_SIZE];
+    size_t bytes_written = 0;
+    const uint8_t *src = (const uint8_t *)buffer;
+    bool inode_dirtied = false;
+
+    while (bytes_written < size) {
+        uint64_t current_offset = offset + bytes_written;
+        uint64_t file_block = current_offset / FUTURAFS_BLOCK_SIZE;
+        uint64_t block_offset = current_offset % FUTURAFS_BLOCK_SIZE;
+        size_t remaining = size - bytes_written;
+        size_t to_write = FUTURAFS_BLOCK_SIZE - block_offset;
+        if (to_write > remaining) to_write = remaining;
+
+        uint64_t block_num = inode_info->disk_inode.direct[file_block];
+        bool newly_allocated = false;
+        if (block_num == 0) {
+            int aret = futurafs_alloc_block(inode_info->mount, &block_num);
+            if (aret < 0) {
+                return bytes_written > 0 ? (ssize_t)bytes_written : (ssize_t)aret;
+            }
+            inode_info->disk_inode.direct[file_block] = block_num;
+            inode_info->disk_inode.blocks++;
+            inode_dirtied = true;
+            newly_allocated = true;
+        }
+
+        bool need_read = !newly_allocated &&
+                         (block_offset != 0 || to_write != FUTURAFS_BLOCK_SIZE);
+        if (need_read) {
+            if (futurafs_blk_read(inode_info->mount, block_num, 1, block_buf) < 0) {
+                return bytes_written > 0 ? (ssize_t)bytes_written : (ssize_t)FUTURAFS_EIO;
+            }
+        } else if (newly_allocated && (block_offset != 0 || to_write != FUTURAFS_BLOCK_SIZE)) {
+            /* Newly allocated block holds whatever stale data was on disk;
+             * zero the parts we won't overwrite so we don't expose it. */
+            for (size_t i = 0; i < FUTURAFS_BLOCK_SIZE; i++) block_buf[i] = 0;
+        }
+
+        for (size_t i = 0; i < to_write; i++) {
+            block_buf[block_offset + i] = src[bytes_written + i];
+        }
+
+        if (futurafs_blk_write(inode_info->mount, block_num, 1, block_buf) < 0) {
+            return bytes_written > 0 ? (ssize_t)bytes_written : (ssize_t)FUTURAFS_EIO;
+        }
+
+        bytes_written += to_write;
+    }
+
+    uint64_t new_size = offset + bytes_written;
+    if (new_size > inode_info->disk_inode.size) {
+        inode_info->disk_inode.size = new_size;
+        inode_dirtied = true;
+    }
+
+    if (inode_dirtied) {
+        uint64_t now = fut_get_time_ns();
+        inode_info->disk_inode.mtime = now;
+        inode_info->disk_inode.ctime = now;
+        int wret = futurafs_write_inode(inode_info->mount, inode_info->ino,
+                                        &inode_info->disk_inode);
+        if (wret < 0) {
+            return bytes_written > 0 ? (ssize_t)bytes_written : (ssize_t)wret;
+        }
+    }
+
+    return (ssize_t)bytes_written;
+}
+
 static ssize_t futurafs_file_write_sync(struct futurafs_inode_info *inode_info,
                                          const void *buffer,
                                          size_t size,
                                          uint64_t offset) {
+    /* Fast path: writes that stay within direct blocks avoid the 4KiB
+     * heap ctx allocation. */
+    int handled = 0;
+    ssize_t fast_ret = futurafs_file_write_direct(inode_info, buffer, size, offset, &handled);
+    if (handled) return fast_ret;
+
     struct futurafs_sync_ctx sync_ctx = {
         .completed = false,
         .result = 0
@@ -2677,63 +2774,69 @@ static ssize_t futurafs_file_write_sync(struct futurafs_inode_info *inode_info,
  * ============================================================ */
 
 /**
- * Read inode from disk (synchronous wrapper over async operation).
- * Routes all inode reads through the async I/O path.
+ * Read inode from disk.
+ *
+ * The underlying block I/O (fut_blk_read_sync) is already synchronous, so
+ * skip the futurafs_read_inode_async heap-allocated ctx (~4KiB per call)
+ * and do the read directly with a stack-allocated buffer. The async ctx
+ * path was burning ~4KiB of heap per inode op and bottoming out the slab
+ * allocator after a few thousand FS ops in a single test run.
  */
 static int futurafs_read_inode(struct futurafs_mount *mount, uint64_t ino,
                                struct futurafs_inode *inode) {
-    struct futurafs_sync_ctx sync_ctx = {
-        .completed = false,
-        .result = 0
-    };
+    if (ino == 0 || ino > mount->sb->total_inodes) {
+        return FUTURAFS_EINVAL;
+    }
 
-    /* Submit async read operation */
-    int ret = futurafs_read_inode_async(mount, ino, inode,
-                                       futurafs_sync_completion, &sync_ctx);
+    uint64_t inode_index = ino - 1;
+    uint64_t block_num = mount->sb->inode_table_block + (inode_index / mount->inodes_per_block);
+
+    uint8_t block_buf[FUTURAFS_BLOCK_SIZE];
+    int ret = futurafs_blk_read(mount, block_num, 1, block_buf);
     if (ret < 0) {
-        return ret;
+        return FUTURAFS_EIO;
     }
 
-    /* Busy-wait until async operation completes */
-    while (!sync_ctx.completed) {
-        #ifdef __x86_64__
-        __asm__ volatile("pause" ::: "memory");
-#elif defined(__aarch64__)
-        __asm__ volatile("yield" ::: "memory");
-#endif
+    uint64_t block_offset = (inode_index % mount->inodes_per_block) * FUTURAFS_INODE_SIZE;
+    for (size_t i = 0; i < sizeof(struct futurafs_inode); i++) {
+        ((uint8_t *)inode)[i] = block_buf[block_offset + i];
     }
-
-    return sync_ctx.result;
+    return 0;
 }
 
 /**
- * Write inode to disk (synchronous wrapper over async operation).
- * Routes all inode writes through the async I/O path.
+ * Write inode to disk.
+ *
+ * As with futurafs_read_inode: bypass the async ctx allocation and perform
+ * a stack-buffered read-modify-write directly. Eliminates the per-call
+ * 4128-byte heap allocation that was exhausting the kernel slab during
+ * long test runs (~2000 ops → ENOMEM cluster failures).
  */
 static int futurafs_write_inode(struct futurafs_mount *mount, uint64_t ino,
                                 struct futurafs_inode *inode) {
-    struct futurafs_sync_ctx sync_ctx = {
-        .completed = false,
-        .result = 0
-    };
+    if (ino == 0 || ino > mount->sb->total_inodes) {
+        return FUTURAFS_EINVAL;
+    }
 
-    /* Submit async write operation */
-    int ret = futurafs_write_inode_async(mount, ino, inode,
-                                        futurafs_sync_completion, &sync_ctx);
+    uint64_t inode_index = ino - 1;
+    uint64_t block_num = mount->sb->inode_table_block + (inode_index / mount->inodes_per_block);
+
+    uint8_t block_buf[FUTURAFS_BLOCK_SIZE];
+    int ret = futurafs_blk_read(mount, block_num, 1, block_buf);
     if (ret < 0) {
-        return ret;
+        return FUTURAFS_EIO;
     }
 
-    /* Busy-wait until async operation completes */
-    while (!sync_ctx.completed) {
-        #ifdef __x86_64__
-        __asm__ volatile("pause" ::: "memory");
-#elif defined(__aarch64__)
-        __asm__ volatile("yield" ::: "memory");
-#endif
+    uint64_t block_offset = (inode_index % mount->inodes_per_block) * FUTURAFS_INODE_SIZE;
+    for (size_t i = 0; i < sizeof(struct futurafs_inode); i++) {
+        block_buf[block_offset + i] = ((const uint8_t *)inode)[i];
     }
 
-    return sync_ctx.result;
+    ret = futurafs_blk_write(mount, block_num, 1, block_buf);
+    if (ret < 0) {
+        return FUTURAFS_EIO;
+    }
+    return 0;
 }
 
 /**

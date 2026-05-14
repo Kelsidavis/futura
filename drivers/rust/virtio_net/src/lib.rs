@@ -381,11 +381,15 @@ impl VirtQueue {
                 next: 0,
             });
 
-            let avail = &mut *self.avail;
-            let slot = avail.idx % self.size;
-            avail.ring[slot as usize] = desc_idx;
+            // Use raw-pointer accesses instead of creating an &mut to
+            // device-shared ring memory. Volatile keeps the device/CPU
+            // views consistent across the DMA boundary; addr_of avoids
+            // the &mut deref that CodeQL flagged as access-invalid-pointer.
+            let avail_idx = ptr::read_volatile(addr_of!((*self.avail).idx));
+            let slot = avail_idx % self.size;
+            write_volatile(addr_of_mut!((*self.avail).ring[slot as usize]), desc_idx);
             core::sync::atomic::fence(Ordering::SeqCst);
-            avail.idx = avail.idx.wrapping_add(1);
+            write_volatile(addr_of_mut!((*self.avail).idx), avail_idx.wrapping_add(1));
         }
 
         self.next_avail.fetch_add(1, Ordering::Release);
@@ -394,7 +398,7 @@ impl VirtQueue {
 
     fn has_used(&self) -> bool {
         let last = self.last_used.load(Ordering::Acquire);
-        let used_idx = unsafe { (*self.used).idx };
+        let used_idx = unsafe { ptr::read_volatile(addr_of!((*self.used).idx)) };
         used_idx != last
     }
 

@@ -441,11 +441,13 @@ impl VirtioConsoleDevice {
         // Set DRIVER_OK to tell the device we are ready
         unsafe {
             let common = dev.common;
-            let status = read_volatile(ptr::addr_of!((*common).device_status));
-            write_volatile(
-                ptr::addr_of_mut!((*common).device_status),
-                status | VIRTIO_STATUS_DRIVER_OK,
-            );
+            if !common.is_null() {
+                let status = read_volatile(ptr::addr_of!((*common).device_status));
+                write_volatile(
+                    ptr::addr_of_mut!((*common).device_status),
+                    status | VIRTIO_STATUS_DRIVER_OK,
+                );
+            }
         }
 
         log("virtio-console: device ready");
@@ -560,6 +562,9 @@ impl VirtioConsoleDevice {
     fn negotiate_features(&mut self) -> Result<(), i32> {
         unsafe {
             let common = self.common;
+            if common.is_null() {
+                return Err(ENODEV);
+            }
 
             // Reset then acknowledge
             write_volatile(ptr::addr_of_mut!((*common).device_status), 0);
@@ -631,6 +636,9 @@ impl VirtioConsoleDevice {
     fn init_queues(&mut self) -> Result<(), i32> {
         unsafe {
             let common = self.common;
+            if common.is_null() {
+                return Err(ENODEV);
+            }
 
             // RX queue (queue 0)
             write_volatile(ptr::addr_of_mut!((*common).queue_select), RX_QUEUE_IDX);

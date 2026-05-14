@@ -687,6 +687,9 @@ impl VirtioNetDevice {
     fn negotiate_features(&mut self) -> Result<(), FutStatus> {
         unsafe {
             let common = self.common;
+            if common.is_null() {
+                return Err(ENODEV);
+            }
 
             // Acknowledge device
             write_volatile(addr_of_mut!((*common).device_status), VIRTIO_STATUS_ACKNOWLEDGE);
@@ -763,6 +766,9 @@ impl VirtioNetDevice {
     fn init_queues(&mut self) -> Result<(), FutStatus> {
         unsafe {
             let common = self.common;
+            if common.is_null() {
+                return Err(ENODEV);
+            }
 
             // Setup RX queue
             write_volatile(addr_of_mut!((*common).queue_select), RX_QUEUE_IDX);
@@ -841,8 +847,10 @@ impl VirtioNetDevice {
         // Mark driver OK - device can now start DMA
         unsafe {
             let common = self.common;
-            write_volatile(addr_of_mut!((*common).device_status),
-                VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK | VIRTIO_STATUS_DRIVER_OK);
+            if !common.is_null() {
+                write_volatile(addr_of_mut!((*common).device_status),
+                    VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK | VIRTIO_STATUS_DRIVER_OK);
+            }
         }
 
         Ok(())

@@ -3188,6 +3188,27 @@ static uint8_t futurafs_filetype_to_vdir_type(uint8_t file_type) {
     }
 }
 
+/* Free every data block pointed to by an indirect block, then free the
+ * indirect block itself.  Used during unlink to fully release a file's
+ * single-indirect tier.  Errors are logged but block freeing continues so
+ * we don't leak blocks on partial-failure paths. */
+static int futurafs_free_indirect_block(struct futurafs_mount *mount,
+                                        uint64_t indirect_block_num) {
+    uint8_t buf[FUTURAFS_BLOCK_SIZE];
+    if (futurafs_blk_read(mount, indirect_block_num, 1, buf) < 0) {
+        return FUTURAFS_EIO;
+    }
+
+    uint64_t *entries = (uint64_t *)buf;
+    size_t n_entries = FUTURAFS_BLOCK_SIZE / sizeof(uint64_t);
+    for (size_t i = 0; i < n_entries; ++i) {
+        if (entries[i] != 0) {
+            futurafs_free_block(mount, entries[i]);
+        }
+    }
+    return futurafs_free_block(mount, indirect_block_num);
+}
+
 static int futurafs_inode_release_blocks(struct futurafs_mount *mount,
                                          struct futurafs_inode *inode) {
     for (int i = 0; i < FUTURAFS_DIRECT_BLOCKS; ++i) {
@@ -3203,8 +3224,50 @@ static int futurafs_inode_release_blocks(struct futurafs_mount *mount,
         inode->direct[i] = 0;
     }
 
+    /* Single indirect tier: indirect block holds 512 data-block pointers. */
     if (inode->indirect != 0) {
-        return FUTURAFS_EIO;
+        futurafs_free_indirect_block(mount, inode->indirect);
+        inode->indirect = 0;
+    }
+
+    /* Double indirect tier: pointer to a block of 512 single-indirect pointers. */
+    if (inode->double_indirect != 0) {
+        uint8_t buf[FUTURAFS_BLOCK_SIZE];
+        if (futurafs_blk_read(mount, inode->double_indirect, 1, buf) == 0) {
+            uint64_t *entries = (uint64_t *)buf;
+            size_t n_entries = FUTURAFS_BLOCK_SIZE / sizeof(uint64_t);
+            for (size_t i = 0; i < n_entries; ++i) {
+                if (entries[i] != 0) {
+                    futurafs_free_indirect_block(mount, entries[i]);
+                }
+            }
+        }
+        futurafs_free_block(mount, inode->double_indirect);
+        inode->double_indirect = 0;
+    }
+
+    /* Triple indirect tier: pointer to a block of 512 double-indirect pointers. */
+    if (inode->triple_indirect != 0) {
+        uint8_t outer[FUTURAFS_BLOCK_SIZE];
+        if (futurafs_blk_read(mount, inode->triple_indirect, 1, outer) == 0) {
+            uint64_t *outer_entries = (uint64_t *)outer;
+            size_t n_outer = FUTURAFS_BLOCK_SIZE / sizeof(uint64_t);
+            for (size_t i = 0; i < n_outer; ++i) {
+                if (outer_entries[i] == 0) continue;
+                uint8_t inner[FUTURAFS_BLOCK_SIZE];
+                if (futurafs_blk_read(mount, outer_entries[i], 1, inner) == 0) {
+                    uint64_t *inner_entries = (uint64_t *)inner;
+                    for (size_t j = 0; j < n_outer; ++j) {
+                        if (inner_entries[j] != 0) {
+                            futurafs_free_indirect_block(mount, inner_entries[j]);
+                        }
+                    }
+                }
+                futurafs_free_block(mount, outer_entries[i]);
+            }
+        }
+        futurafs_free_block(mount, inode->triple_indirect);
+        inode->triple_indirect = 0;
     }
 
     inode->blocks = 0;

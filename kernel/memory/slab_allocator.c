@@ -589,24 +589,15 @@ void *slab_realloc(void *ptr, size_t new_size) {
  * ============================================================ */
 
 void slab_print_stats(void) {
-    uint64_t total_allocated = 0;
-    uint64_t total_freed = 0;
-    uint64_t total_slabs = 0;
-
+    fut_printf("[SLAB-STATS] per-cache breakdown:\n");
     for (size_t i = 0; i < NUM_SLAB_SIZES; i++) {
         slab_cache_t *cache = &slab_caches[i];
-
-        if (cache->num_slabs > 0) {
-            total_allocated += cache->total_allocated;
-            total_freed += cache->total_freed;
-            total_slabs += cache->num_slabs;
-        }
+        if (cache->num_slabs == 0 && cache->total_allocated == 0) continue;
+        size_t outstanding = cache->total_allocated - cache->total_freed;
+        fut_printf("[SLAB-STATS] size=%zu alloc=%zu freed=%zu out=%zu slabs=%zu\n",
+                   cache->obj_size, (size_t)cache->total_allocated,
+                   (size_t)cache->total_freed, outstanding, (size_t)cache->num_slabs);
     }
-
-    /* Future: Add logging/debug output */
-    (void)total_allocated;  /* Suppress unused warning */
-    (void)total_freed;
-    (void)total_slabs;
 }
 
 void slab_get_stats(uint64_t *out_total_bytes, uint64_t *out_free_bytes) {

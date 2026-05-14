@@ -386,6 +386,7 @@ void *fut_malloc(size_t size) {
     void *result = slab_malloc(size);
 
     fut_restore_interrupts(irq_state);
+
     return result;
 }
 

@@ -394,8 +394,27 @@ static ssize_t ramfs_write(struct fut_vnode *vnode, const void *buf, size_t size
 #endif
 
         uint8_t *new_data = fut_malloc(new_capacity);
+        if (!new_data && new_capacity > required) {
+            /* Padded allocation failed — retry at the exact required size.
+             * Avoids the failure case where a multi-megabyte file's 10%
+             * growth overhead pushes the allocation just past what the
+             * buddy allocator can satisfy as a single contiguous chunk.
+             * Sacrifices future-realloc amortization to ensure progress. */
+            new_data = fut_malloc(required);
+            if (new_data) {
+                new_capacity = required;
+            }
+        }
         if (!new_data) {
-            fut_printf("[RAMFS-REALLOC] FAILED to allocate %llu bytes\n", (unsigned long long)new_capacity);
+            /* Caller (write/truncate path) propagates ENOMEM; userspace
+             * sees -ENOMEM via the syscall and can adapt. The log message
+             * stays in case investigation is needed but isn't alarmist:
+             * stage_blob etc. handle the failure by falling back to other
+             * sources (initramfs). */
+            fut_printf("[RAMFS-REALLOC] could not grow file buffer to %llu bytes "
+                       "(required=%llu); returning -ENOMEM\n",
+                       (unsigned long long)new_capacity,
+                       (unsigned long long)required);
             return -ENOMEM;
         }
 

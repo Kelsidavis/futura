@@ -19,6 +19,8 @@
 #include <kernel/errno.h>
 #include <kernel/fut_fd_util.h>
 #include <stddef.h>
+#include <stdbool.h>
+#include <stdint.h>
 
 #include <platform/platform.h>
 static inline int write_copy_from_user(void *dst, const void *src, size_t n) {
@@ -229,19 +231,30 @@ ssize_t sys_write(int fd, const void *buf, size_t count) {
         local_count = MAX_WRITE_SIZE;
     }
 
-    /* Allocate kernel buffer */
-    void *kbuf = fut_malloc(local_count);
-    if (!kbuf) {
-        write_printf("[WRITE] write(fd=%d, count=%lu [%s]) -> ENOMEM (failed to allocate kernel buffer)\n",
-                   local_fd, local_count, size_category);
-        return -ENOMEM;
+    /* Kernel buffer: small writes go through a stack buffer to avoid
+     * hammering the slab allocator on every syscall (long test runs
+     * exhausted the 4 KiB+ slab class after a few thousand ops). Larger
+     * writes still fall back to fut_malloc. */
+    uint8_t stack_buf[2048];
+    void *kbuf;
+    bool kbuf_on_heap = false;
+    if (local_count <= sizeof(stack_buf)) {
+        kbuf = stack_buf;
+    } else {
+        kbuf = fut_malloc(local_count);
+        if (!kbuf) {
+            write_printf("[WRITE] write(fd=%d, count=%lu [%s]) -> ENOMEM (failed to allocate kernel buffer)\n",
+                       local_fd, local_count, size_category);
+            return -ENOMEM;
+        }
+        kbuf_on_heap = true;
     }
 
     /* Copy from userspace */
     if (write_copy_from_user(kbuf, local_buf, local_count) != 0) {
         write_printf("[WRITE] write(fd=%d, count=%lu [%s]) -> EFAULT (copy_from_user failed)\n",
                    local_fd, local_count, size_category);
-        fut_free(kbuf);
+        if (kbuf_on_heap) fut_free(kbuf);
         return -EFAULT;
     }
 
@@ -287,11 +300,11 @@ ssize_t sys_write(int fd, const void *buf, size_t count) {
         }
         write_printf("[WRITE] write(fd=%d, count=%lu [%s]) -> %ld (%s)\n",
                    local_fd, local_count, size_category, ret, error_desc);
-        fut_free(kbuf);
+        if (kbuf_on_heap) fut_free(kbuf);
         return ret;
     }
 
-    fut_free(kbuf);
+    if (kbuf_on_heap) fut_free(kbuf);
 
     /* POSIX setuid/setgid clear after successful write to a regular file.
      * Only effective if we wrote data (ret > 0) and the caller doesn't

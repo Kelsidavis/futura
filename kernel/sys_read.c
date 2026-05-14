@@ -19,6 +19,8 @@
 #include <kernel/errno.h>
 #include <kernel/fut_fd_util.h>
 #include <stddef.h>
+#include <stdbool.h>
+#include <stdint.h>
 
 #include <platform/platform.h>
 static inline int read_copy_to_user(void *dst, const void *src, size_t n) {
@@ -230,12 +232,19 @@ ssize_t sys_read(int fd, void *buf, size_t count) {
         local_count = MAX_READ_SIZE;
     }
 
-    /* Allocate kernel buffer */
-    void *kbuf = fut_malloc(local_count);
-    if (!kbuf) {
-        /* fut_printf("[READ] read(fd=%d, count=%zu [%s]) -> ENOMEM (failed to allocate kernel buffer)\n",
-                   local_fd, local_count, size_category); */
-        return -ENOMEM;
+    /* Kernel buffer: small reads use a stack buffer to avoid hammering the
+     * slab allocator. Larger reads still fall back to fut_malloc. */
+    uint8_t stack_buf[2048];
+    void *kbuf;
+    bool kbuf_on_heap = false;
+    if (local_count <= sizeof(stack_buf)) {
+        kbuf = stack_buf;
+    } else {
+        kbuf = fut_malloc(local_count);
+        if (!kbuf) {
+            return -ENOMEM;
+        }
+        kbuf_on_heap = true;
     }
 
     /* Read from VFS */
@@ -269,7 +278,7 @@ ssize_t sys_read(int fd, void *buf, size_t count) {
         (void)error_desc;  /* Unused when verbose logging disabled */
         /* fut_printf("[READ] read(fd=%d, count=%zu [%s]) -> %ld (%s)\n",
                    local_fd, local_count, size_category, ret, error_desc); */
-        fut_free(kbuf);
+        if (kbuf_on_heap) fut_free(kbuf);
         return ret;
     }
 
@@ -277,7 +286,7 @@ ssize_t sys_read(int fd, void *buf, size_t count) {
     if (ret == 0) {
         /* fut_printf("[READ] read(fd=%d, count=%zu [%s]) -> 0 (EOF)\n",
                    local_fd, local_count, size_category); */
-        fut_free(kbuf);
+        if (kbuf_on_heap) fut_free(kbuf);
         return 0;
     }
 
@@ -285,11 +294,11 @@ ssize_t sys_read(int fd, void *buf, size_t count) {
     if (read_copy_to_user(local_buf, kbuf, (size_t)ret) != 0) {
         /* fut_printf("[READ] read(fd=%d, count=%zu [%s], read=%ld) -> EFAULT (copy_to_user failed)\n",
                    local_fd, local_count, size_category, ret); */
-        fut_free(kbuf);
+        if (kbuf_on_heap) fut_free(kbuf);
         return -EFAULT;
     }
 
-    fut_free(kbuf);
+    if (kbuf_on_heap) fut_free(kbuf);
 
     /* I/O accounting for /proc/<pid>/io */
     task->io_rchar += (uint64_t)ret;

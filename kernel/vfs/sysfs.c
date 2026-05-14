@@ -1269,12 +1269,10 @@ static int sysfs_mount(const char *device, int flags, void *data,
 
 static int sysfs_unmount(struct fut_mount *mount) {
     if (!mount) return -EINVAL;
-    if (mount->root) {
-        sysfs_node_t *n = (sysfs_node_t *)mount->root->fs_data;
-        if (n) fut_free(n);
-        fut_free(mount->root);
-    }
-    fut_free(mount);
+    /* fut_vfs_unmount() unrefs mount->root (which frees fs_data via
+     * fut_vnode_unref) and then frees the mount struct itself.  Freeing
+     * them again here was triggering a double-free on every umount2
+     * of sysfs — same pattern as procfs_unmount. */
     return 0;
 }
 

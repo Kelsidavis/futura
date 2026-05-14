@@ -19,6 +19,7 @@
 #include <fcntl.h>
 #include <kernel/fut_fd_util.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
@@ -242,8 +243,16 @@ long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset
      * Seekable chr_ops files (memfd, devfs) support positional I/O. */
     if (file->chr_ops) {
         if (file->chr_ops->write) {
-            void *kbuf = fut_malloc(local_count);
-            if (!kbuf) return -ENOMEM;
+            uint8_t chr_stack_buf[2048];
+            void *kbuf;
+            bool chr_kbuf_on_heap = false;
+            if (local_count <= sizeof(chr_stack_buf)) {
+                kbuf = chr_stack_buf;
+            } else {
+                kbuf = fut_malloc(local_count);
+                if (!kbuf) return -ENOMEM;
+                chr_kbuf_on_heap = true;
+            }
             int cp_ret;
 #ifdef KERNEL_VIRTUAL_BASE
             if ((uintptr_t)local_buf >= KERNEL_VIRTUAL_BASE) {
@@ -253,13 +262,13 @@ long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset
 #endif
             cp_ret = fut_copy_from_user(kbuf, local_buf, local_count);
             if (cp_ret != 0) {
-                fut_free(kbuf);
+                if (chr_kbuf_on_heap) fut_free(kbuf);
                 return -EFAULT;
             }
             off_t pos = (off_t)local_offset;
             ssize_t ret = file->chr_ops->write(file->chr_inode, file->chr_private,
                                                 kbuf, local_count, &pos);
-            fut_free(kbuf);
+            if (chr_kbuf_on_heap) fut_free(kbuf);
             return ret;
         }
         return -EINVAL;
@@ -282,14 +291,23 @@ long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset
         return -EINVAL;
     }
 
-    /* Allocate kernel buffer */
-    void *kbuf = fut_malloc(local_count);
-    if (!kbuf) {
-        fut_printf("[PWRITE64] pwrite64(fd=%u [%s], ino=%lu, count=%zu [%s], offset=%ld [%s]) -> ENOMEM "
-                   "(kernel buffer allocation failed, pid=%d)\n",
-                   local_fd, fd_category, file->vnode->ino, local_count, count_category,
-                   local_offset, offset_category, task->pid);
-        return -ENOMEM;
+    /* Kernel buffer: small writes use a stack buffer to avoid hammering
+     * the slab allocator. Larger writes still fall back to fut_malloc. */
+    uint8_t stack_buf[2048];
+    void *kbuf;
+    bool kbuf_on_heap = false;
+    if (local_count <= sizeof(stack_buf)) {
+        kbuf = stack_buf;
+    } else {
+        kbuf = fut_malloc(local_count);
+        if (!kbuf) {
+            fut_printf("[PWRITE64] pwrite64(fd=%u [%s], ino=%lu, count=%zu [%s], offset=%ld [%s]) -> ENOMEM "
+                       "(kernel buffer allocation failed, pid=%d)\n",
+                       local_fd, fd_category, file->vnode->ino, local_count, count_category,
+                       local_offset, offset_category, task->pid);
+            return -ENOMEM;
+        }
+        kbuf_on_heap = true;
     }
 
     /* Copy from userspace (with kernel-pointer bypass for selftests) */
@@ -303,7 +321,7 @@ long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset
                    "(copy_from_user failed, pid=%d)\n",
                    local_fd, fd_category, file->vnode->ino, local_count, count_category,
                    local_offset, offset_category, task->pid);
-        fut_free(kbuf);
+        if (kbuf_on_heap) fut_free(kbuf);
         return -EFAULT;
     }
 
@@ -331,11 +349,11 @@ long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset
                    "(%s, pid=%d)\n",
                    local_fd, fd_category, file->vnode->ino, local_count, count_category,
                    local_offset, offset_category, (int)ret, error_desc, task->pid);
-        fut_free(kbuf);
+        if (kbuf_on_heap) fut_free(kbuf);
         return ret;
     }
 
-    fut_free(kbuf);
+    if (kbuf_on_heap) fut_free(kbuf);
 
     /* POSIX/Linux: clear setuid/setgid bits after successful write */
     if (file->vnode->type == VN_REG) {

@@ -19,6 +19,7 @@
 #include <fcntl.h>
 #include <kernel/fut_fd_util.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
@@ -285,8 +286,16 @@ long sys_pread64(unsigned int fd, void *buf, size_t count, int64_t offset) {
     /* Handle chr_ops files (memfd, etc.) — call chr_ops->read with given offset */
     if (file->chr_ops && file->chr_ops->read) {
         off_t pos = (off_t)offset;
-        void *kbuf = fut_malloc(count);
-        if (!kbuf) return -ENOMEM;
+        uint8_t chr_stack_buf[2048];
+        void *kbuf;
+        bool chr_kbuf_on_heap = false;
+        if (count <= sizeof(chr_stack_buf)) {
+            kbuf = chr_stack_buf;
+        } else {
+            kbuf = fut_malloc(count);
+            if (!kbuf) return -ENOMEM;
+            chr_kbuf_on_heap = true;
+        }
         ssize_t ret = file->chr_ops->read(file->chr_inode, file->chr_private,
                                            kbuf, count, &pos);
         if (ret > 0) {
@@ -299,11 +308,11 @@ long sys_pread64(unsigned int fd, void *buf, size_t count, int64_t offset) {
 #endif
             cp_ret = fut_copy_to_user(buf, kbuf, (size_t)ret);
             if (cp_ret != 0) {
-                fut_free(kbuf);
+                if (chr_kbuf_on_heap) fut_free(kbuf);
                 return -EFAULT;
             }
         }
-        fut_free(kbuf);
+        if (chr_kbuf_on_heap) fut_free(kbuf);
         return ret;
     }
 
@@ -312,10 +321,19 @@ long sys_pread64(unsigned int fd, void *buf, size_t count, int64_t offset) {
         return -EINVAL;
     }
 
-    /* Allocate kernel buffer */
-    void *kbuf = fut_malloc(count);
-    if (!kbuf) {
-        return -ENOMEM;
+    /* Kernel buffer: small reads use a stack buffer to avoid hammering
+     * the slab allocator. Larger reads still fall back to fut_malloc. */
+    uint8_t stack_buf[2048];
+    void *kbuf;
+    bool kbuf_on_heap = false;
+    if (count <= sizeof(stack_buf)) {
+        kbuf = stack_buf;
+    } else {
+        kbuf = fut_malloc(count);
+        if (!kbuf) {
+            return -ENOMEM;
+        }
+        kbuf_on_heap = true;
     }
 
     /* Read from file at the specified offset without changing file->offset */
@@ -339,7 +357,7 @@ long sys_pread64(unsigned int fd, void *buf, size_t count, int64_t offset) {
                    "(%s, pid=%d)\n",
                    fd, fd_category, file->vnode->ino, count, count_category,
                    offset, offset_category, (int)ret, error_desc, task->pid);
-        fut_free(kbuf);
+        if (kbuf_on_heap) fut_free(kbuf);
         return ret;
     }
 
@@ -355,12 +373,12 @@ long sys_pread64(unsigned int fd, void *buf, size_t count, int64_t offset) {
                        "bytes_read=%zd) -> EFAULT (copy_to_user failed, pid=%d)\n",
                        fd, fd_category, file->vnode->ino, count, count_category,
                        offset, offset_category, ret, task->pid);
-            fut_free(kbuf);
+            if (kbuf_on_heap) fut_free(kbuf);
             return -EFAULT;
         }
     }
 
-    fut_free(kbuf);
+    if (kbuf_on_heap) fut_free(kbuf);
 
     /* I/O accounting for /proc/<pid>/io */
     if (ret > 0) {

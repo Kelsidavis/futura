@@ -893,7 +893,7 @@ int virtio_gpu_init(uint64_t *out_fb_phys, uint32_t width, uint32_t height) {
     volatile uint32_t *fb = (volatile uint32_t *)g_framebuffer_guest;
     uint32_t pixel = 0xFFFFFFFF;  /* White - all channels max */
 
-    for (size_t i = 0; i < width * height; i++) {
+    for (size_t i = 0; i < (size_t)width * height; i++) {
         fb[i] = pixel;
     }
 

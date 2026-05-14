@@ -808,11 +808,10 @@ static struct fut_mount *find_mount_for_path(
         return NULL;
     }
 
-    /* Allocate scratch buffer on heap to avoid stack overflow */
-    char (*mount_components)[FUT_VFS_NAME_MAX + 1] = fut_malloc(MAX_PATH_COMPONENTS * (FUT_VFS_NAME_MAX + 1));
-    if (!mount_components) {
-        return NULL;  /* OOM - no mount */
-    }
+    /* Stack-allocate scratch — 4 KiB (16*256) is well within the 64 KiB
+     * kernel stack and avoids hammering the slab allocator on every
+     * mount-aware path lookup. */
+    char mount_components[MAX_PATH_COMPONENTS][FUT_VFS_NAME_MAX + 1];
 
     struct fut_mount *mount = mount_list;
     while (mount) {
@@ -844,14 +843,12 @@ static struct fut_mount *find_mount_for_path(
         }
 
         if (match) {
-            fut_free(mount_components);
             return mount;
         }
 
         mount = mount->next;
     }
 
-    fut_free(mount_components);
     return NULL;
 }
 
@@ -943,32 +940,23 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
     const char *orig_path = path;
 #endif
 
-    /* Use heap allocation to avoid stack overflow - each component array is 1KB */
-    size_t alloc_size = MAX_PATH_COMPONENTS * (FUT_VFS_NAME_MAX + 1);
-    char (*components)[FUT_VFS_NAME_MAX + 1] = fut_malloc(alloc_size);
-    VFSDBG("[vfs-heap] lookup_vnode malloc(%llu) = %p\n",
-           (unsigned long long)alloc_size, (void*)components);
-    if (!components) {
-        return -ENOMEM;
-    }
+    /* Stack-allocate the components scratch — 4 KiB (16*256) fits in the
+     * 64 KiB kernel stack and avoids a fut_malloc per path lookup, which
+     * was hammering the slab allocator (sys_open/sys_stat/sys_unlink each
+     * hit this path). */
+    char components[MAX_PATH_COMPONENTS][FUT_VFS_NAME_MAX + 1];
 
     int num_components = parse_path(path, components, MAX_PATH_COMPONENTS);
     if (num_components < 0) {
-        VFSDBG("[vfs-heap] lookup_vnode freeing %p (parse_path failed)\n", (void*)components);
-        fut_free(components);
         return num_components;
     }
 
     if (num_components == 0) {
-        VFSDBG("[vfs-heap] lookup_vnode freeing %p (num==0)\n", (void*)components);
-        fut_free(components);
         return -EINVAL;
     }
 
     /* Start from effective root (global root or chroot jail) */
     if (!effective_root) {
-        VFSDBG("[vfs-heap] lookup_vnode freeing %p (no root)\n", (void*)components);
-        fut_free(components);
         return -ENOENT;
     }
 
@@ -1006,7 +994,6 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
         if (++steps > max_steps) {
             VFSDBG("[vfs] ELOOP: exceeded step budget walking '%s'\n", path);
             release_lookup_ref(current);
-            fut_free(components);
             return -ELOOP;
         }
 
@@ -1066,7 +1053,6 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
                        current ? (unsigned long long)current->ino : 0ULL);
                 if (effective_root == root_vnode)
                     vfs_dcache_insert(path, current);
-                fut_free(components);
                 return 0;
             }
 
@@ -1082,14 +1068,12 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
                    (void *)current,
                    current ? (int)current->type : -1);
             release_lookup_ref(current);
-            fut_free(components);
             return -ENOTDIR;
         }
 
         /* Lookup next component */
         if (!current->ops || !current->ops->lookup) {
             release_lookup_ref(current);
-            fut_free(components);
             return -ENOENT;
         }
 
@@ -1102,7 +1086,6 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
             VFSDBG("[vfs]  about to release_lookup_ref(%p)\n", (void*)current);
             release_lookup_ref(current);
             VFSDBG("[vfs]  released OK, about to free components=%p\n", (void*)components);
-            fut_free(components);
             VFSDBG("[vfs]  freed OK, returning %d\n", ret);
             return ret;
         }
@@ -1111,7 +1094,6 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
         if (next == NULL) {
             release_lookup_ref(current);
             VFSDBG("[vfs]  -> lookup('%s') = NULL (not found)\n", component);
-            fut_free(components);
             return -ENOENT;
         }
 
@@ -1130,8 +1112,7 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
                 if (_t && _t->vfs_no_symlinks) {
                     release_lookup_ref(current);
                     release_lookup_ref(next);
-                    fut_free(components);
-                    return -ELOOP;
+                            return -ELOOP;
                 }
             }
             /* Check if there's a readlink operation */
@@ -1170,15 +1151,13 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
                     int symlink_ret = lookup_vnode(resolve_path, &next);
                     if (symlink_ret < 0) {
                         release_lookup_ref(current);
-                        fut_free(components);
-                        VFSDBG("[vfs] ELOOP: failed to resolve symlink target '%s' ret=%d\n", link_target, symlink_ret);
+                                    VFSDBG("[vfs] ELOOP: failed to resolve symlink target '%s' ret=%d\n", link_target, symlink_ret);
                         return symlink_ret;
                     }
 
                     if (!next) {
                         release_lookup_ref(current);
-                        fut_free(components);
-                        VFSDBG("[vfs] ELOOP: symlink target '%s' resolved to NULL\n", link_target);
+                                    VFSDBG("[vfs] ELOOP: symlink target '%s' resolved to NULL\n", link_target);
                         return -ENOENT;
                     }
 
@@ -1188,16 +1167,14 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
                     /* readlink failed */
                     release_lookup_ref(current);
                     release_lookup_ref(next);
-                    fut_free(components);
-                    VFSDBG("[vfs] ELOOP: readlink failed ret=%d\n", link_ret);
+                            VFSDBG("[vfs] ELOOP: readlink failed ret=%d\n", link_ret);
                     return link_ret;
                 }
             } else {
                 /* No readlink operation - treat symlink as broken */
                 release_lookup_ref(current);
                 release_lookup_ref(next);
-                fut_free(components);
-                VFSDBG("[vfs] ELOOP: symlink has no readlink operation\n");
+                    VFSDBG("[vfs] ELOOP: symlink has no readlink operation\n");
                 return -ELOOP;
             }
         }
@@ -1213,9 +1190,6 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
            current ? (unsigned long long)current->ino : 0ULL);
     if (effective_root == root_vnode)
         vfs_dcache_insert(path, current);
-    VFSDBG("[vfs-heap] lookup_vnode freeing %p\n", (void*)components);
-    fut_free(components);
-    VFSDBG("[vfs-heap] lookup_vnode freed %p OK\n", (void*)components);
     return 0;
 }
 
@@ -1231,31 +1205,25 @@ static int lookup_parent_and_name(const char *path,
     char abs_buf[FUT_VFS_PATH_BUFFER_SIZE];
     path = resolve_path_to_abs(path, abs_buf);
 
-    vfs_debug_stage = 2;  /* Before malloc */
-    /* Use heap allocation to avoid stack overflow */
-    char (*components)[FUT_VFS_NAME_MAX + 1] = fut_malloc(MAX_PATH_COMPONENTS * (FUT_VFS_NAME_MAX + 1));
-    vfs_debug_stage = 3;  /* After malloc */
-    if (!components) {
-        return -ENOMEM;
-    }
+    vfs_debug_stage = 2;
+    /* Stack-allocate components scratch — see comment in lookup_vnode. */
+    char components[MAX_PATH_COMPONENTS][FUT_VFS_NAME_MAX + 1];
+    vfs_debug_stage = 3;
 
-    vfs_debug_stage = 4;  /* Before parse_path */
+    vfs_debug_stage = 4;
     int num_components = parse_path(path, components, MAX_PATH_COMPONENTS);
-    vfs_debug_stage = 5;  /* After parse_path */
+    vfs_debug_stage = 5;
     if (num_components < 0) {
-        fut_free(components);
         return num_components;
     }
 
-    vfs_debug_stage = 6;  /* After num_components check */
+    vfs_debug_stage = 6;
     if (num_components == 0) {
-        fut_free(components);
         return -EINVAL;
     }
 
-    vfs_debug_stage = 7;  /* Before root_vnode check */
+    vfs_debug_stage = 7;
     if (!root_vnode) {
-        fut_free(components);
         return -ENOENT;
     }
 
@@ -1291,7 +1259,6 @@ static int lookup_parent_and_name(const char *path,
 
         if (current->type != VN_DIR || !current->ops || !current->ops->lookup) {
             release_lookup_ref(current);
-            fut_free(components);
             return -ENOTDIR;
         }
 
@@ -1301,7 +1268,6 @@ static int lookup_parent_and_name(const char *path,
             if (current != root_vnode_base) {
                 release_lookup_ref(current);
             }
-            fut_free(components);
             return ret;
         }
 
@@ -1310,7 +1276,6 @@ static int lookup_parent_and_name(const char *path,
             if (current != root_vnode_base) {
                 release_lookup_ref(current);
             }
-            fut_free(components);
             return -ENOENT;
         }
 
@@ -1323,8 +1288,7 @@ static int lookup_parent_and_name(const char *path,
                 if (_t && _t->vfs_no_symlinks) {
                     release_lookup_ref(next);
                     if (current != root_vnode_base) release_lookup_ref(current);
-                    fut_free(components);
-                    return -ELOOP;
+                            return -ELOOP;
                 }
             }
             if (next->ops && next->ops->readlink) {
@@ -1356,21 +1320,18 @@ static int lookup_parent_and_name(const char *path,
                     int sym_ret = lookup_vnode(resolve_path, &sym_resolved);
                     if (sym_ret < 0 || !sym_resolved) {
                         if (current != root_vnode_base) release_lookup_ref(current);
-                        fut_free(components);
-                        return sym_ret < 0 ? sym_ret : -ENOENT;
+                                    return sym_ret < 0 ? sym_ret : -ENOENT;
                     }
                     next = sym_resolved;
                 } else {
                     release_lookup_ref(next);
                     if (current != root_vnode_base) release_lookup_ref(current);
-                    fut_free(components);
-                    return link_ret < 0 ? link_ret : -ENOENT;
+                            return link_ret < 0 ? link_ret : -ENOENT;
                 }
             } else {
                 release_lookup_ref(next);
                 if (current != root_vnode_base) release_lookup_ref(current);
-                fut_free(components);
-                return -ELOOP;
+                    return -ELOOP;
             }
         }
 
@@ -1380,22 +1341,20 @@ static int lookup_parent_and_name(const char *path,
         current = next;
     }
 
-    vfs_debug_stage = 30;  /* After loop */
+    vfs_debug_stage = 30;
     if (current == NULL || current->type != VN_DIR) {
         if (current != root_vnode_base) {
             release_lookup_ref(current);
         }
-        fut_free(components);
         return -ENOTDIR;
     }
 
-    vfs_debug_stage = 31;  /* Before str_copy */
+    vfs_debug_stage = 31;
     str_copy(name_out, components[num_components - 1], FUT_VFS_NAME_MAX + 1);
-    vfs_debug_stage = 32;  /* Before free */
+    vfs_debug_stage = 32;
     *parent_out = current;
     /* Return current with reference held - only release if not root */
-    fut_free(components);
-    vfs_debug_stage = 33;  /* Success */
+    vfs_debug_stage = 33;
     return 0;
 }
 

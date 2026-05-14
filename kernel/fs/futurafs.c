@@ -2606,10 +2606,73 @@ static void futurafs_sync_completion(int result, void *ctx) {
  * @param offset     File offset to read from
  * @return Number of bytes read on success, negative error code on failure
  */
+/* Direct synchronous file read for reads that fit within the direct-block
+ * tier — mirrors futurafs_file_write_direct. Avoids the 4 KiB
+ * futurafs_file_read_ctx heap alloc that was leaking the 8 KiB slab
+ * class over long test runs (file_read_sync was the dominant 4128-byte
+ * allocator after the write path was converted). */
+static ssize_t futurafs_file_read_direct(struct futurafs_inode_info *inode_info,
+                                         void *buffer,
+                                         size_t size,
+                                         uint64_t offset,
+                                         int *handled) {
+    *handled = 0;
+
+    /* EOF handling */
+    if (offset >= inode_info->disk_inode.size) {
+        *handled = 1;
+        return 0;
+    }
+    if (offset + size > inode_info->disk_inode.size) {
+        size = inode_info->disk_inode.size - offset;
+    }
+
+    uint64_t end_offset = offset + size;
+    uint64_t direct_limit = (uint64_t)FUTURAFS_DIRECT_BLOCKS * FUTURAFS_BLOCK_SIZE;
+    if (end_offset > direct_limit) {
+        return 0;  /* needs indirect tiers — fall through to async path */
+    }
+
+    *handled = 1;
+    uint8_t block_buf[FUTURAFS_BLOCK_SIZE];
+    size_t bytes_read = 0;
+    uint8_t *dst = (uint8_t *)buffer;
+
+    while (bytes_read < size) {
+        uint64_t current_offset = offset + bytes_read;
+        uint64_t file_block = current_offset / FUTURAFS_BLOCK_SIZE;
+        uint64_t block_offset = current_offset % FUTURAFS_BLOCK_SIZE;
+        size_t remaining = size - bytes_read;
+        size_t to_read = FUTURAFS_BLOCK_SIZE - block_offset;
+        if (to_read > remaining) to_read = remaining;
+
+        uint64_t block_num = inode_info->disk_inode.direct[file_block];
+        if (block_num == 0) {
+            /* Sparse block — return zeros */
+            for (size_t i = 0; i < to_read; i++) dst[bytes_read + i] = 0;
+        } else {
+            if (futurafs_blk_read(inode_info->mount, block_num, 1, block_buf) < 0) {
+                return bytes_read > 0 ? (ssize_t)bytes_read : (ssize_t)FUTURAFS_EIO;
+            }
+            for (size_t i = 0; i < to_read; i++) {
+                dst[bytes_read + i] = block_buf[block_offset + i];
+            }
+        }
+        bytes_read += to_read;
+    }
+    return (ssize_t)bytes_read;
+}
+
 static ssize_t futurafs_file_read_sync(struct futurafs_inode_info *inode_info,
                                         void *buffer,
                                         size_t size,
                                         uint64_t offset) {
+    /* Fast path: reads that stay within direct blocks avoid the 4 KiB
+     * heap ctx allocation. */
+    int handled = 0;
+    ssize_t fast_ret = futurafs_file_read_direct(inode_info, buffer, size, offset, &handled);
+    if (handled) return fast_ret;
+
     struct futurafs_sync_ctx sync_ctx = {
         .completed = false,
         .result = 0

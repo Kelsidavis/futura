@@ -1606,10 +1606,10 @@ impl VirtioBlkDevice {
             if self.config.is_null() {
                 return;
             }
-            self.capacity_sectors = (*self.config).capacity;
-            let blk_size = (*self.config).blk_size;
+            self.capacity_sectors = read_volatile(ptr::addr_of!((*self.config).capacity));
+            let blk_size = read_volatile(ptr::addr_of!((*self.config).blk_size));
             self.block_size = if blk_size == 0 { 512 } else { blk_size };
-            self.has_flush = (*self.config).writeback != 0;
+            self.has_flush = read_volatile(ptr::addr_of!((*self.config).writeback)) != 0;
         }
     }
 

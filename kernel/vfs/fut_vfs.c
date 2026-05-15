@@ -219,7 +219,13 @@ static void close_fd_in_task(fut_task_t *task, int fd) {
         return;
     }
 
-    struct fut_file *file = task->fd_table[fd];
+    /* Atomically take ownership of the slot. Two threads in the same
+     * task calling close(fd) concurrently would otherwise both read
+     * fd_table[fd], both reach the per-fd cleanup, and double-free
+     * the underlying file struct. With exchange, only the first thread
+     * sees a non-NULL value; the second sees NULL and returns. */
+    struct fut_file *file = __atomic_exchange_n(&task->fd_table[fd], NULL,
+                                                 __ATOMIC_ACQ_REL);
     if (file == NULL) {
         return;
     }
@@ -258,7 +264,8 @@ static void close_fd_in_task(fut_task_t *task, int fd) {
         }
     }
 
-    task->fd_table[fd] = NULL;
+    /* Slot already cleared by atomic exchange above; just clear the
+     * parallel flags entry. */
     if (task->fd_flags) task->fd_flags[fd] = 0;
 
     /* Notify epoll instances that this fd is closing */

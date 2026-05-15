@@ -32,6 +32,9 @@ typedef struct fut_input_queue {
     uint32_t tail;
     fut_spinlock_t lock;
     fut_waitq_t wait;
+    /* Pending-wake flag for deferred mouse-move wakes.  See the wake
+     * policy comment in fut_input_queue_push. */
+    volatile int wake_pending;
 } fut_input_queue_t;
 
 static inline void fut_input_queue_init(fut_input_queue_t *q) {
@@ -40,12 +43,29 @@ static inline void fut_input_queue_init(fut_input_queue_t *q) {
     }
     q->head = 0;
     q->tail = 0;
+    q->wake_pending = 0;
     fut_spinlock_init(&q->lock);
     fut_waitq_init(&q->wait);
 }
 
 static inline bool fut_input_queue_empty(const fut_input_queue_t *q) {
     return q->head == q->tail;
+}
+
+/* Timer-tick drain hook: deliver any deferred mouse-move wake.  Called
+ * from fut_timer_tick at 100 Hz on x86_64.  Cheap when no wake is
+ * pending or the waitq has no sleepers.  wake_pending is NOT cleared
+ * here — only the read path clears it once the queue empties.  The
+ * reason: the compositor may be running (not on the waitq) at the
+ * moment we fire, so wake_one wakes nobody and returns; clearing the
+ * flag here would lose the wake permanently if the compositor then
+ * blocks before the next event.  Letting each tick retry the wake is
+ * effectively free if there is no sleeper. */
+static inline void fut_input_queue_drain_wake(fut_input_queue_t *q) {
+    if (!q) return;
+    if (__atomic_load_n(&q->wake_pending, __ATOMIC_ACQUIRE)) {
+        fut_waitq_wake_one(&q->wait);
+    }
 }
 
 /* IRQ-safe lock helpers for the input queue lock.  This lock is acquired
@@ -82,6 +102,7 @@ static inline void fut_input_queue_push(fut_input_queue_t *q,
     }
     unsigned long flags = _input_irq_save();
     fut_spinlock_acquire(&q->lock);
+    bool was_empty = (q->head == q->tail);
     uint32_t next = (q->tail + 1u) & FUT_INPUT_QUEUE_MASK;
     if (next == q->head) {
         /* Drop oldest entry to keep queue bounded. */
@@ -92,7 +113,21 @@ static inline void fut_input_queue_push(fut_input_queue_t *q,
     fut_spinlock_release(&q->lock);
     _input_irq_restore(flags);
 
-    fut_waitq_wake_one(&q->wait);
+    /* Wake policy.  Direct wake from a PS/2 mouse IRQ at 80-200
+     * reports/sec destabilises the L490 scheduler — the wake adds the
+     * compositor to the ready queue and the resulting context-switch
+     * churn locks the whole machine (clock stops).  So:
+     *   - non-MOUSE_MOVE events (keys, buttons): wake immediately.
+     *   - MOUSE_MOVE on a previously empty queue: wake immediately
+     *     so a sleeping compositor never waits up to one tick for
+     *     the first event of a motion burst.
+     *   - MOUSE_MOVE on a non-empty queue: defer to the next 100 Hz
+     *     timer tick via wake_pending, capping wake rate. */
+    if (ev->type != FUT_EV_MOUSE_MOVE || was_empty) {
+        fut_waitq_wake_one(&q->wait);
+    } else {
+        __atomic_store_n(&q->wake_pending, 1, __ATOMIC_RELEASE);
+    }
 }
 
 static inline ssize_t fut_input_queue_read(fut_input_queue_t *q,
@@ -159,6 +194,10 @@ static inline ssize_t fut_input_queue_read(fut_input_queue_t *q,
         copied++;
 
         if (fut_input_queue_empty(q)) {
+            /* Queue fully drained — clear wake_pending so the timer
+             * tick stops issuing no-op wakes until the next event
+             * arrives. */
+            __atomic_store_n(&q->wake_pending, 0, __ATOMIC_RELEASE);
             break;
         }
     }

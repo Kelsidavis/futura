@@ -170,6 +170,17 @@ static bool ps2_mouse_poll(void *inode, void *priv, uint32_t req, uint32_t *read
 
 static struct fut_file_ops mouse_fops;
 
+/* Timer-tick drain hook (called weakly from fut_timer_tick on x86_64).
+ * Pairs with the deferred-wake path in fut_input_queue_push: mouse-move
+ * events on a non-empty queue set wake_pending instead of waking
+ * directly from IRQ context, and this drain converts that flag into a
+ * waitq wake at the 100 Hz tick rate.  See input.h for the policy. */
+void ps2_mouse_drain_deferred_wake(void) {
+    if (g_ps2_mouse.active) {
+        fut_input_queue_drain_wake(&g_ps2_mouse.queue);
+    }
+}
+
 int ps2_mouse_init(void) {
     fut_input_queue_init(&g_ps2_mouse.queue);
     g_ps2_mouse.open_count = 0;

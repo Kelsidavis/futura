@@ -381,6 +381,18 @@ void fut_timer_tick(void) {
         getrandom_add_entropy();
     }
 
+    /* Drain any pending PS/2 mouse-move wake.  Direct waking from the
+     * IRQ at high report rate locks up the L490 scheduler; the push
+     * path defers movement wakes to this 100 Hz tick to bound the
+     * context-switch rate. */
+#if defined(__x86_64__)
+    {
+        extern void ps2_mouse_drain_deferred_wake(void) __attribute__((weak));
+        if (ps2_mouse_drain_deferred_wake) {
+            ps2_mouse_drain_deferred_wake();
+        }
+    }
+#endif
 
     // Check for expired alarms and deliver SIGALRM
     extern fut_task_t *fut_task_list;

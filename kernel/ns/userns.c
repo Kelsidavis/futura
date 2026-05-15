@@ -39,24 +39,26 @@ struct user_namespace *userns_create(struct user_namespace *parent) {
     struct user_namespace *ns = fut_malloc(sizeof(struct user_namespace));
     if (!ns) return NULL;
     memset(ns, 0, sizeof(*ns));
-    ns->id = g_next_userns_id++;
+    ns->id = __atomic_fetch_add(&g_next_userns_id, 1, __ATOMIC_ACQ_REL);
     ns->parent = parent;
     ns->refcount = 1;
     /* Default: identity mapping (filled in by writing /proc/pid/uid_map) */
     ns->uid_map_count = 0;
     ns->gid_map_count = 0;
-    parent->refcount++;
+    /* Atomic refcount: see utsns_create. */
+    __atomic_add_fetch(&parent->refcount, 1, __ATOMIC_ACQ_REL);
     fut_printf("[USERNS] Created user namespace id=%llu\n", (unsigned long long)ns->id);
     return ns;
 }
 
 void userns_ref(struct user_namespace *ns) {
-    if (ns && ns != &g_init_userns) ns->refcount++;
+    if (ns && ns != &g_init_userns)
+        __atomic_add_fetch(&ns->refcount, 1, __ATOMIC_ACQ_REL);
 }
 
 void userns_unref(struct user_namespace *ns) {
     if (!ns || ns == &g_init_userns) return;
-    if (--ns->refcount <= 0) {
+    if (__atomic_sub_fetch(&ns->refcount, 1, __ATOMIC_ACQ_REL) == 0) {
         if (ns->parent) userns_unref(ns->parent);
         fut_free(ns);
     }

@@ -44,12 +44,13 @@ struct pid_namespace *pidns_create(struct pid_namespace *parent) {
     if (!ns) return NULL;
     memset(ns, 0, sizeof(*ns));
 
-    ns->id = g_next_ns_id++;
+    ns->id = __atomic_fetch_add(&g_next_ns_id, 1, __ATOMIC_ACQ_REL);
     ns->next_pid = 1;
     ns->parent = parent;
     ns->level = parent->level + 1;
     ns->refcount = 1;
-    parent->refcount++;
+    /* Atomic refcount: see utsns_create. */
+    __atomic_add_fetch(&parent->refcount, 1, __ATOMIC_ACQ_REL);
 
     fut_printf("[PIDNS] Created namespace id=%llu level=%d\n",
                (unsigned long long)ns->id, ns->level);
@@ -58,17 +59,19 @@ struct pid_namespace *pidns_create(struct pid_namespace *parent) {
 
 uint64_t pidns_alloc_pid(struct pid_namespace *ns) {
     if (!ns) ns = &g_init_pidns;
-    return ns->next_pid++;
+    /* Atomic so concurrent fork()/clone() in the same pidns can't hand
+     * two children the same pid. */
+    return __atomic_fetch_add(&ns->next_pid, 1, __ATOMIC_ACQ_REL);
 }
 
 void pidns_ref(struct pid_namespace *ns) {
-    if (ns && ns != &g_init_pidns) ns->refcount++;
+    if (ns && ns != &g_init_pidns)
+        __atomic_add_fetch(&ns->refcount, 1, __ATOMIC_ACQ_REL);
 }
 
 void pidns_unref(struct pid_namespace *ns) {
     if (!ns || ns == &g_init_pidns) return;
-    ns->refcount--;
-    if (ns->refcount <= 0) {
+    if (__atomic_sub_fetch(&ns->refcount, 1, __ATOMIC_ACQ_REL) == 0) {
         if (ns->parent) pidns_unref(ns->parent);
         fut_free(ns);
     }

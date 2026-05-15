@@ -31,25 +31,27 @@ struct net_namespace *netns_create(struct net_namespace *parent) {
     struct net_namespace *ns = fut_malloc(sizeof(struct net_namespace));
     if (!ns) return NULL;
     memset(ns, 0, sizeof(*ns));
-    ns->id = g_next_netns_id++;
+    ns->id = __atomic_fetch_add(&g_next_netns_id, 1, __ATOMIC_ACQ_REL);
     ns->refcount = 1;
     if (netif_netns_init(ns) != 0) {
         fut_free(ns);
         return NULL;
     }
-    parent->refcount++;
+    /* Atomic refcount: see utsns_create. */
+    __atomic_add_fetch(&parent->refcount, 1, __ATOMIC_ACQ_REL);
     fut_printf("[NETNS] Created network namespace id=%llu\n",
                (unsigned long long)ns->id);
     return ns;
 }
 
 void netns_ref(struct net_namespace *ns) {
-    if (ns && ns != &g_init_netns) ns->refcount++;
+    if (ns && ns != &g_init_netns)
+        __atomic_add_fetch(&ns->refcount, 1, __ATOMIC_ACQ_REL);
 }
 
 void netns_unref(struct net_namespace *ns) {
     if (!ns || ns == &g_init_netns) return;
-    if (--ns->refcount <= 0) {
+    if (__atomic_sub_fetch(&ns->refcount, 1, __ATOMIC_ACQ_REL) == 0) {
         if (ns->ifaces) fut_free(ns->ifaces);
         if (ns->routes) fut_free(ns->routes);
         fut_free(ns);

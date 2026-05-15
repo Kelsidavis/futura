@@ -31,20 +31,27 @@ struct uts_namespace *utsns_create(struct uts_namespace *parent) {
     struct uts_namespace *ns = fut_malloc(sizeof(struct uts_namespace));
     if (!ns) return NULL;
     *ns = *parent;  /* Copy hostname/domainname */
-    ns->id = g_next_utsns_id++;
+    ns->id = __atomic_fetch_add(&g_next_utsns_id, 1, __ATOMIC_ACQ_REL);
     ns->refcount = 1;
-    parent->refcount++;
+    /* Refcount mutations must be atomic. Concurrent unshare(CLONE_NEWUTS)
+     * + setns() + namespace exits previously raced this counter, either
+     * leaking namespaces (lost increments) or freeing one prematurely
+     * (the racing decrements both saw refcount=1 and one called free
+     * after the other already had). */
+    __atomic_add_fetch(&parent->refcount, 1, __ATOMIC_ACQ_REL);
     fut_printf("[UTSNS] Created UTS namespace id=%llu\n", (unsigned long long)ns->id);
     return ns;
 }
 
 void utsns_ref(struct uts_namespace *ns) {
-    if (ns && ns != &g_init_utsns) ns->refcount++;
+    if (ns && ns != &g_init_utsns)
+        __atomic_add_fetch(&ns->refcount, 1, __ATOMIC_ACQ_REL);
 }
 
 void utsns_unref(struct uts_namespace *ns) {
     if (!ns || ns == &g_init_utsns) return;
-    if (--ns->refcount <= 0) fut_free(ns);
+    if (__atomic_sub_fetch(&ns->refcount, 1, __ATOMIC_ACQ_REL) == 0)
+        fut_free(ns);
 }
 
 const char *utsns_get_hostname(struct uts_namespace *ns) {

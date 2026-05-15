@@ -40,13 +40,14 @@ struct mount_namespace *mntns_create(struct mount_namespace *parent) {
     if (!ns) return NULL;
     memset(ns, 0, sizeof(*ns));
 
-    ns->id = g_next_mntns_id++;
+    ns->id = __atomic_fetch_add(&g_next_mntns_id, 1, __ATOMIC_ACQ_REL);
     ns->refcount = 1;
 
     /* Clone the parent's mount list (shallow copy — shared mount structures) */
     ns->mount_list = parent->mount_list;
 
-    parent->refcount++;
+    /* Atomic refcount: see utsns_create. */
+    __atomic_add_fetch(&parent->refcount, 1, __ATOMIC_ACQ_REL);
 
     fut_printf("[MNTNS] Created mount namespace id=%llu\n",
                (unsigned long long)ns->id);
@@ -54,15 +55,14 @@ struct mount_namespace *mntns_create(struct mount_namespace *parent) {
 }
 
 void mntns_ref(struct mount_namespace *ns) {
-    if (ns && ns != &g_init_mntns) ns->refcount++;
+    if (ns && ns != &g_init_mntns)
+        __atomic_add_fetch(&ns->refcount, 1, __ATOMIC_ACQ_REL);
 }
 
 void mntns_unref(struct mount_namespace *ns) {
     if (!ns || ns == &g_init_mntns) return;
-    ns->refcount--;
-    if (ns->refcount <= 0) {
+    if (__atomic_sub_fetch(&ns->refcount, 1, __ATOMIC_ACQ_REL) == 0)
         fut_free(ns);
-    }
 }
 
 struct mount_namespace *mntns_get_init(void) {

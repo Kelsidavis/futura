@@ -24,7 +24,7 @@ struct ipc_namespace *ipcns_create(struct ipc_namespace *parent) {
     (void)parent;
     struct ipc_namespace *ns = fut_malloc(sizeof(*ns));
     if (!ns) return NULL;
-    ns->id = g_next_ipcns_id++;
+    ns->id = __atomic_fetch_add(&g_next_ipcns_id, 1, __ATOMIC_ACQ_REL);
     ns->refcount = 1;
     return ns;
 }

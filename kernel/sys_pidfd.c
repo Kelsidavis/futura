@@ -406,30 +406,28 @@ long sys_pidfd_getfd(int pidfd, int targetfd, unsigned int flags) {
     if (!file)
         return -EBADF;
 
-    /* Find a free FD slot in the current task, respecting RLIMIT_NOFILE.
-     * Treat rlim_cur == 0 as 'unset' so kernel tasks with uninitialized
-     * rlimits still get an fd. */
-    int max = cur->max_fds;
-    {
-        uint64_t lim = cur->rlimits[7].rlim_cur; /* RLIMIT_NOFILE */
-        if (lim > 0 && lim < (uint64_t)max)
-            max = (int)lim;
-    }
-    int newfd = -1;
-    for (int i = 0; i < max; i++) {
-        if (!cur->fd_table[i]) { newfd = i; break; }
-    }
-    if (newfd < 0)
-        return -EMFILE;
-
-    /* Install a reference to the file in the current task. Linux's
-     * pidfd_getfd(2) returns the fd with FD_CLOEXEC set ('the file
-     * descriptor returned ... has the close-on-exec flag set'); without
-     * it, an exec across the duplicated fd would silently leak it into
-     * the new program. Mirror sys_pidfd_open's CLOEXEC default. */
+    /* Bump the file ref before publishing the fd. vfs_alloc_fd_for_task
+     * already CAS-installs the slot atomically and honours
+     * RLIMIT_NOFILE, so the previous scan-then-store could pick the
+     * same slot as a concurrent open() from another thread of the
+     * same task. */
     vfs_file_ref(file);
-    cur->fd_table[newfd] = file;
-    if (cur->fd_flags) cur->fd_flags[newfd] = 1 /* FD_CLOEXEC */;
+    int newfd = vfs_alloc_fd_for_task((struct fut_task *)cur, file);
+    if (newfd < 0) {
+        /* Roll back the speculative ref via vfs_file_unref so the file
+         * struct is released if a parallel close raced us to the last
+         * surviving reference. */
+        vfs_file_unref(file);
+        return newfd;
+    }
+
+    /* Linux's pidfd_getfd(2) returns the fd with FD_CLOEXEC set
+     * ('the file descriptor returned ... has the close-on-exec flag
+     * set'); without it, an exec across the duplicated fd would
+     * silently leak it into the new program. Mirror sys_pidfd_open's
+     * CLOEXEC default. */
+    if (cur->fd_flags && newfd < cur->max_fds)
+        cur->fd_flags[newfd] = 1 /* FD_CLOEXEC */;
 
     return newfd;
 }

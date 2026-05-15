@@ -10,7 +10,7 @@
 #![forbid(unsafe_op_in_unsafe_fn)]
 
 use core::ffi::c_void;
-use core::ptr::{read_volatile, write_volatile};
+use core::ptr::{self, read_volatile, write_volatile};
 use common::{log, SpinLock};
 
 /* PCI capability types (virtio 1.0 spec) */
@@ -525,18 +525,21 @@ impl VirtioGpuDevice {
 
         /* Response descriptor */
         unsafe {
-            let desc = &mut *self.desc_table.add(resp_desc_idx as usize);
-            desc.addr = self.resp_buffer as u64;
-            desc.len = 4096;
-            desc.flags = VIRTQ_DESC_F_WRITE;
-            desc.next = 0;
+            write_volatile(self.desc_table.add(resp_desc_idx as usize), VirtqDesc {
+                addr: self.resp_buffer as u64,
+                len: 4096,
+                flags: VIRTQ_DESC_F_WRITE,
+                next: 0,
+            });
         }
 
-        /* Add to available ring */
-        let avail_idx = unsafe { ((*self.avail).idx % VIRTIO_RING_SIZE as u16) as usize };
-        unsafe { (*self.avail).ring[avail_idx] = cmd_desc_idx; }
+        /* Add to available ring. Volatile reads/writes through addr_of
+         * avoid materializing & references over device-shared DMA memory. */
+        let avail_idx_val = unsafe { read_volatile(ptr::addr_of!((*self.avail).idx)) };
+        let avail_slot = (avail_idx_val % VIRTIO_RING_SIZE as u16) as usize;
+        unsafe { write_volatile(ptr::addr_of_mut!((*self.avail).ring[avail_slot]), cmd_desc_idx); }
         unsafe { core::arch::asm!("dsb sy"); }
-        unsafe { (*self.avail).idx = (*self.avail).idx.wrapping_add(1); }
+        unsafe { write_volatile(ptr::addr_of_mut!((*self.avail).idx), avail_idx_val.wrapping_add(1)); }
         unsafe { core::arch::asm!("dsb sy"); }
 
         /* Notify device via notify region */
@@ -545,9 +548,9 @@ impl VirtioGpuDevice {
         }
 
         /* Wait for response */
-        let last_used_idx = unsafe { (*self.used).idx };
+        let last_used_idx = unsafe { read_volatile(ptr::addr_of!((*self.used).idx)) };
         let mut timeout = 1000000;
-        while unsafe { (*self.used).idx } == last_used_idx && timeout > 0 {
+        while unsafe { read_volatile(ptr::addr_of!((*self.used).idx)) } == last_used_idx && timeout > 0 {
             unsafe { core::arch::asm!("dsb sy"); }
             timeout -= 1;
         }

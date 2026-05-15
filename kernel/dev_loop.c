@@ -173,7 +173,13 @@ int loop_clr_fd(int loop_idx) {
         return -EINVAL;
 
     struct loop_device *loop = &g_loops[loop_idx];
-    if (!loop->active)
+    /* CAS active from true to false to mutually exclude with
+     * loop_set_fd. The previous plain read could observe active=true
+     * before loop_set_fd had finished writing loop->blkdev, leading
+     * fut_blockdev_unregister to dereference an uninitialised pointer. */
+    bool expected = true;
+    if (!__atomic_compare_exchange_n(&loop->active, &expected, false,
+                                     false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
         return -ENXIO;
 
     if (loop->blkdev) {

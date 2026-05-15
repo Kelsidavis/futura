@@ -1739,7 +1739,12 @@ static struct fut_file *get_file(int fd) {
 
 static void free_fd(int fd) {
     if (fd >= 0 && fd < MAX_OPEN_FILES) {
-        file_table[fd] = NULL;
+        /* Atomic store to pair with the __atomic_compare_exchange_n in
+         * alloc_fd / vfs_alloc_specific_fd; the value happens to be
+         * naturally atomic on x86_64 but ARM64 wants the explicit
+         * release ordering so a concurrent CAS observes NULL once we
+         * publish the free here. */
+        __atomic_store_n(&file_table[fd], NULL, __ATOMIC_RELEASE);
     }
 }
 

@@ -276,15 +276,26 @@ long sys_seccomp(unsigned int operation, unsigned int flags, const void *uargs) 
         if (prog_len == 0 || prog_len > MAX_SECCOMP_INSNS) return -EINVAL;
         if (!prog_filter) return -EFAULT;
 
-        /* Allocate or grow filter chain */
+        /* Allocate or grow filter chain. CAS the install so two
+         * concurrent SECCOMP_FILTER calls from the same task can't both
+         * observe seccomp_filter==NULL and overwrite each other's
+         * fresh chain — losing one allocation and one filter set. */
         struct seccomp_filter_chain *chain =
             (struct seccomp_filter_chain *)task->seccomp_filter;
         if (!chain) {
             extern void *fut_malloc(size_t);
+            extern void fut_free(void *);
             chain = (struct seccomp_filter_chain *)fut_malloc(sizeof(*chain));
             if (!chain) return -ENOMEM;
             memset(chain, 0, sizeof(*chain));
-            task->seccomp_filter = chain;
+            void *expected = NULL;
+            if (!__atomic_compare_exchange_n((void **)&task->seccomp_filter,
+                                             &expected, chain,
+                                             false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+                /* Another thread installed first; discard ours and use theirs. */
+                fut_free(chain);
+                chain = (struct seccomp_filter_chain *)task->seccomp_filter;
+            }
         }
 
         if (chain->count >= MAX_SECCOMP_FILTERS) return -ENOMEM;

@@ -236,9 +236,6 @@ long sys_landlock_add_rule(int ruleset_fd, unsigned int rule_type,
     if (slot < 0 || slot >= LANDLOCK_MAX_RULESETS || !g_rulesets[slot].active)
         return -EBADF;
 
-    if (g_rulesets[slot].rule_count >= LANDLOCK_MAX_RULES)
-        return -E2BIG;
-
     /* Linux's landlock_add_rule rejects a NULL rule_attr with -EFAULT
      * (copy_from_user-style pointer fault) before any further work.
      * Silently treating NULL as 'rule with allowed_access=0' (as the
@@ -249,63 +246,49 @@ long sys_landlock_add_rule(int ruleset_fd, unsigned int rule_type,
     if (!rule_attr)
         return -EFAULT;
 
-    /* Accept the rule (details in rule_attr are acknowledged) */
-    struct landlock_rule *r = &g_rulesets[slot].rules[g_rulesets[slot].rule_count];
-    r->allowed_access = 0;
-    r->parent_fd = -1;
+    /* Validate the rule on a local copy first; only after it passes do
+     * we atomically reserve a slot. Avoids leaking rule_count
+     * increments on validation failures. */
+    struct { uint64_t allowed; int32_t parent; } __attribute__((packed)) ra;
     {
-        /* First 8 bytes are allowed_access, next 4 bytes are parent_fd.
-         * Copy through the standard helper: a kernel-pointer rule_attr
-         * is allowed (self-tests), but a user-pointer copy failure must
-         * return -EFAULT instead of crashing the kernel. The previous
-         * direct memcpy let any caller pass a kernel address as
-         * rule_attr and have the rule populated from kernel memory. */
-        struct { uint64_t allowed; int32_t parent; } __attribute__((packed)) ra;
         extern int fut_copy_from_user(void *, const void *, size_t);
 #ifdef KERNEL_VIRTUAL_BASE
         if ((uintptr_t)rule_attr >= KERNEL_VIRTUAL_BASE) {
             __builtin_memcpy(&ra, rule_attr, sizeof(ra));
         } else
 #endif
-        if (fut_copy_from_user(&ra, rule_attr, sizeof(ra)) != 0) {
+        if (fut_copy_from_user(&ra, rule_attr, sizeof(ra)) != 0)
             return -EFAULT;
-        }
-        /* Linux's add_rule_path_beneath validates the rule's access mask
-         * against the ruleset's handled_access_fs:
-         *   if (!attr.allowed_access)               return -ENOMSG;
-         *   if (attr.allowed_access & ~handled_fs)  return -EINVAL;
-         * An empty mask is a no-op rule that the caller almost certainly
-         * didn't mean; bits outside the ruleset's handled set make no
-         * sense because the ruleset isn't enforcing those bits in the
-         * first place.  Both checks let userspace probe support without
-         * silently building a bogus ruleset.  Skip for net rules — the
-         * net-port rule has its own handled-access validation that we
-         * don't model yet. */
         if (rule_type == LANDLOCK_RULE_PATH_BENEATH) {
             if (ra.allowed == 0)
                 return -ENOMSG;
             if (ra.allowed & ~g_rulesets[slot].handled_access_fs)
                 return -EINVAL;
         } else if (rule_type == LANDLOCK_RULE_NET_PORT) {
-            /* Linux's add_rule_net_port validates the rule's
-             * allowed_access against the ruleset's handled_access_net:
-             *   if (!attr.allowed_access) return -ENOMSG;
-             *   if (attr.allowed_access & ~ruleset_access_net)
-             *       return -EINVAL;
-             * The previous Futura code only validated the FS rule's
-             * mask and silently accepted any net-port allowed_access
-             * value — including bits the ruleset wasn't enforcing —
-             * which masks 'kernel-too-old' and 'misconfigured rule'
-             * from libnet/landlock probes. */
             if (ra.allowed == 0)
                 return -ENOMSG;
             if (ra.allowed & ~g_rulesets[slot].handled_access_net)
                 return -EINVAL;
         }
-        r->allowed_access = ra.allowed;
-        r->parent_fd = ra.parent;
     }
-    g_rulesets[slot].rule_count++;
+
+    /* CAS-loop reservation so two concurrent landlock_add_rule callers
+     * don't both pick the same g_rulesets[slot].rules[i] index. */
+    int rule_idx;
+    {
+        int cur, next;
+        do {
+            cur = __atomic_load_n(&g_rulesets[slot].rule_count, __ATOMIC_ACQUIRE);
+            if (cur >= LANDLOCK_MAX_RULES) return -E2BIG;
+            next = cur + 1;
+        } while (!__atomic_compare_exchange_n(&g_rulesets[slot].rule_count, &cur, next,
+                                              false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE));
+        rule_idx = cur;
+    }
+
+    struct landlock_rule *r = &g_rulesets[slot].rules[rule_idx];
+    r->allowed_access = ra.allowed;
+    r->parent_fd = ra.parent;
     return 0;
 }
 

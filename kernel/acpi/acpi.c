@@ -555,39 +555,64 @@ void acpi_shutdown(void) {
 }
 
 /**
- * Reboot system via ACPI.
- * For now, falls back to keyboard controller reset.
+ * Reboot the system, trying every method we know.
+ *
+ * Order is chosen for reliability on modern hardware (ICH/PCH chipsets):
+ *   1. Intel reset control register at I/O port 0xCF9.  Standard on
+ *      every ICH/PCH-class part since the late 1990s.  Bit 1 + bit 2
+ *      drives the PCH's HARD_RESET line into the CPU.  Confirmed
+ *      working on L490 (Whiskey Lake / Cannon Lake PCH).
+ *   2. i8042 controller reset (port 0x64 cmd 0xFE).  Older but still
+ *      works on most desktops.  Quietly ignored on some laptops
+ *      (L490 confirmed: command accepted, no reset).
+ *   3. Triple fault via null IDT.  Universal last-resort -- the CPU
+ *      itself resets on a third fault, no chipset involvement.
+ *
+ * Print before each attempt so a stuck reboot is locatable from the
+ * boot log / klog ring.  acpi_reboot is declared noreturn at its
+ * call sites; control should not get past method 3.
  */
 void acpi_reboot(void) {
-    fut_printf("[ACPI] Reboot via keyboard controller (port 0x64)\n");
-
-    /* Try keyboard controller reset (8042) - x86_64 only */
 #ifdef __x86_64__
+    /* Method 1: Intel PCH reset control register (0xCF9).  Writing
+     * 0x06 = RST_CPU (bit 1) + SYS_RST (bit 2) triggers a warm reset
+     * that preserves DRAM contents.  Some firmware traps the write
+     * and routes it via SMI; some respond immediately.  Either way
+     * if it's going to work the CPU never returns from the outb. */
+    fut_printf("[ACPI] Reboot try 1: PCH reset (port 0xCF9 = 0x06)\n");
+    hal_outb(0xCF9, 0x02);  /* RST_CPU only, prep step */
+    hal_outb(0xCF9, 0x06);  /* RST_CPU | SYS_RST -- pulls reset line */
+
+    /* If we got here, the chipset ignored the reset write. */
+    fut_printf("[ACPI] Reboot try 2: i8042 controller (port 0x64 = 0xFE)\n");
     hal_outb(0x64, 0xFE);
 
-    /* If that didn't work, try triple fault */
-    fut_printf("[ACPI] Keyboard reset failed, attempting triple fault\n");
-
-    /* Disable interrupts and load invalid IDT to cause triple fault */
+    /* Both chipset methods failed.  Force a triple fault.  This is
+     * universal on x86 -- the CPU itself reacts to a #DF inside the
+     * #DF handler by transitioning to RESET state.  We arrange that
+     * by loading an empty IDT and then issuing int3, which has no
+     * handler so it raises #UD, which (with the empty IDT) raises
+     * #DF, which (also empty) is the third fault and resets. */
+    fut_printf("[ACPI] Reboot try 3: triple fault\n");
     __asm__ volatile("cli");
-    __asm__ volatile("lidt %0" :: "m"((struct { uint16_t limit; uint64_t base; }){0, 0}));
-    __asm__ volatile("int $0x03");  /* Trigger breakpoint, should triple fault */
+    struct { uint16_t limit; uint64_t base; } __attribute__((packed))
+        null_idt = { 0, 0 };
+    __asm__ volatile("lidt %0" :: "m"(null_idt));
+    __asm__ volatile("int $0x03");
 #elif defined(__aarch64__)
-    fut_printf("[ACPI] Keyboard reset failed, halting system\n");
-
-    /* ARM64: Disable interrupts and halt */
+    fut_printf("[ACPI] No reboot method on ARM64 yet; halting\n");
     fut_disable_interrupts();
     while (1) {
-        __asm__ volatile("wfi");  /* Wait for interrupt */
+        __asm__ volatile("wfi");
     }
 #else
-    /* Generic fallback: just loop */
     fut_printf("[ACPI] Reboot method unavailable, halting\n");
-    while (1) {
-        ;
-    }
+    while (1) { ; }
 #endif
 
-    /* Should never reach here */
-    fut_printf("[ACPI] Reboot failed\n");
+    /* Should never reach here -- if we do, every reset method failed. */
+    fut_printf("[ACPI] All reboot methods failed; spinning\n");
+    for (;;) {
+        __asm__ volatile("pause");
+    }
 }

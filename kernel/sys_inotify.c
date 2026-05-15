@@ -514,13 +514,19 @@ long sys_inotify_init1(int flags) {
     /* Phase 4: Register this instance for VFS event dispatch */
     inotify_registry_add(inst);
 
-    /* Store back-pointer and set O_NONBLOCK/O_CLOEXEC on the file */
-    if (task->fd_table && fd < task->max_fds && task->fd_table[fd]) {
-        inst->file = task->fd_table[fd];
-        if (flags & IN_NONBLOCK) inst->file->flags |= O_NONBLOCK;
-        if (flags & IN_CLOEXEC) {
-            if (task->fd_flags && fd < task->max_fds)
-                task->fd_flags[fd] |= FD_CLOEXEC;
+    /* Store back-pointer and set O_NONBLOCK/O_CLOEXEC on the file.
+     * Atomic-load + atomic OR to coexist with concurrent F_SETFL /
+     * FIONBIO writers and ensure full visibility of the newly-installed fd. */
+    if (task->fd_table && fd < task->max_fds) {
+        struct fut_file *f = __atomic_load_n(&task->fd_table[fd], __ATOMIC_ACQUIRE);
+        if (f) {
+            inst->file = f;
+            if (flags & IN_NONBLOCK)
+                __atomic_or_fetch(&f->flags, O_NONBLOCK, __ATOMIC_ACQ_REL);
+            if (flags & IN_CLOEXEC) {
+                if (task->fd_flags && fd < task->max_fds)
+                    task->fd_flags[fd] |= FD_CLOEXEC;
+            }
         }
     }
 

@@ -1095,8 +1095,9 @@ long sys_eventfd2(unsigned int initval, int flags) {
     }
     efile->file = file;
 
+    /* Atomic to coexist with fcntl(F_SETFL) / ioctl(FIONBIO) writers. */
     if (flags & EFD_NONBLOCK) {
-        file->flags |= O_NONBLOCK;
+        __atomic_or_fetch(&file->flags, O_NONBLOCK, __ATOMIC_ACQ_REL);
     }
     if (flags & EFD_CLOEXEC) {
         fut_task_t *efd_task = fut_task_current();
@@ -1409,8 +1410,9 @@ long sys_timerfd_create(int clockid, int flags) {
     }
     tfile->file = file;
 
+    /* Atomic to coexist with concurrent fcntl(F_SETFL) / ioctl(FIONBIO) writers. */
     if (flags & TFD_NONBLOCK) {
-        file->flags |= O_NONBLOCK;
+        __atomic_or_fetch(&file->flags, O_NONBLOCK, __ATOMIC_ACQ_REL);
     }
     if (flags & TFD_CLOEXEC) {
         fut_task_t *tfd_task = fut_task_current();

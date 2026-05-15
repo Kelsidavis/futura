@@ -363,18 +363,17 @@ long sys_socket(int domain, int type, int protocol) {
         fut_task_t *stask = fut_task_current();
         if (stask && sockfd < stask->max_fds) {
             if (type_flags & SOCK_NONBLOCK) {
-                /* Guard fd_table non-NULL: in symmetry with the back-pointer
-                 * write above (line 319) which already gates on it. The
-                 * previous bare index would NULL-deref the kernel for any
-                 * caller without a populated fd_table. */
+                /* Atomic to coexist with concurrent fcntl(F_SETFL) /
+                 * ioctl(FIONBIO) writers (see da66992b / 59807b40). */
                 if (stask->fd_table) {
-                    struct fut_file *sfile = stask->fd_table[sockfd];
+                    struct fut_file *sfile = __atomic_load_n(&stask->fd_table[sockfd],
+                                                             __ATOMIC_ACQUIRE);
                     if (sfile)
-                        sfile->flags |= O_NONBLOCK;
+                        __atomic_or_fetch(&sfile->flags, O_NONBLOCK, __ATOMIC_ACQ_REL);
                 }
                 /* Also set on the socket struct so socket_nonblock()
                  * returns true in fut_socket_recv/send. */
-                socket->flags |= O_NONBLOCK;
+                __atomic_or_fetch(&socket->flags, O_NONBLOCK, __ATOMIC_ACQ_REL);
             }
             if (type_flags & SOCK_CLOEXEC) {
                 /* Guard fd_flags non-NULL: lazily allocated, may be NULL

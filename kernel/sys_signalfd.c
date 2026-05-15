@@ -414,16 +414,21 @@ long sys_signalfd4(int ufd, const void *mask, size_t sizemask, int flags) {
         return fd;
     }
 
-    /* Attach fut_file pointer back into context */
+    /* Attach fut_file pointer back into context. Acquire-load to pair
+     * with the CAS-allocator that just installed the fd. */
     if (task->fd_table && fd >= 0 && fd < task->max_fds)
-        sfile->file = task->fd_table[fd];
+        sfile->file = __atomic_load_n(&task->fd_table[fd], __ATOMIC_ACQUIRE);
 
     if (!sfile->file) {
         fut_vfs_close(fd);
         return -EFAULT;
     }
 
-    if (flags & SFD_NONBLOCK) sfile->file->flags    |= O_NONBLOCK;
+    /* Atomic OR to coexist with concurrent fcntl(F_SETFL) / ioctl(FIONBIO)
+     * writers — same pattern as the other O_NONBLOCK installers in
+     * sys_eventfd, sys_pipe, etc. */
+    if (flags & SFD_NONBLOCK)
+        __atomic_or_fetch(&sfile->file->flags, O_NONBLOCK, __ATOMIC_ACQ_REL);
     if (flags & SFD_CLOEXEC) {
         if (task->fd_flags && fd < task->max_fds)
             task->fd_flags[fd] |= FD_CLOEXEC;

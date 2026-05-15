@@ -541,8 +541,12 @@ long sys_io_pgetevents(unsigned long ctx_id, long min_nr, long nr,
                          (1ULL << (19 - 1)));   /* SIGSTOP */
             fut_task_t *task = fut_task_current();
             if (task) {
-                old_mask = task->signal_mask;
-                task->signal_mask = newmask;
+                /* Atomic exchange: pair with the acquire-loads of
+                 * signal_mask in signal.c / fut_futex / fut_poll etc.
+                 * so a signal sender on another CPU sees our installed
+                 * mask before deciding to deliver. */
+                old_mask = __atomic_exchange_n(&task->signal_mask, newmask,
+                                               __ATOMIC_ACQ_REL);
                 mask_installed = true;
             }
         }
@@ -554,7 +558,7 @@ long sys_io_pgetevents(unsigned long ctx_id, long min_nr, long nr,
     if (mask_installed) {
         fut_task_t *task = fut_task_current();
         if (task)
-            task->signal_mask = old_mask;
+            __atomic_store_n(&task->signal_mask, old_mask, __ATOMIC_RELEASE);
     }
 
     return ret;

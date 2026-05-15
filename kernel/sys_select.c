@@ -361,7 +361,7 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
                 pending |= __atomic_load_n(&thr0->thread_pending_signals, __ATOMIC_ACQUIRE);
             uint64_t blocked0 = thr0 ?
                 __atomic_load_n(&thr0->signal_mask, __ATOMIC_ACQUIRE) :
-                task->signal_mask;
+                __atomic_load_n(&task->signal_mask, __ATOMIC_ACQUIRE);
             if (pending & ~blocked0)
                 return -EINTR;
             uint64_t now = fut_get_ticks();
@@ -497,7 +497,7 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
             pending |= __atomic_load_n(&sel_thr->thread_pending_signals, __ATOMIC_ACQUIRE);
         uint64_t blocked = sel_thr ?
             __atomic_load_n(&sel_thr->signal_mask, __ATOMIC_ACQUIRE) :
-            task->signal_mask;
+            __atomic_load_n(&task->signal_mask, __ATOMIC_ACQUIRE);
         if (pending & ~blocked)
             return -EINTR;
 
@@ -1085,7 +1085,7 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
             pending |= __atomic_load_n(&psel_thr->thread_pending_signals, __ATOMIC_ACQUIRE);
         uint64_t blocked = psel_thr ?
             __atomic_load_n(&psel_thr->signal_mask, __ATOMIC_ACQUIRE) :
-            task->signal_mask;
+            __atomic_load_n(&task->signal_mask, __ATOMIC_ACQUIRE);
         if (pending & ~blocked) {
             ret = -EINTR;
             goto out_restore_sigmask;

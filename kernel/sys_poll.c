@@ -497,7 +497,7 @@ long sys_poll(struct pollfd *fds, unsigned long nfds, int timeout) {
                 pending |= __atomic_load_n(&poll_thr->thread_pending_signals, __ATOMIC_ACQUIRE);
             uint64_t blocked = poll_thr ?
                 __atomic_load_n(&poll_thr->signal_mask, __ATOMIC_ACQUIRE) :
-                task->signal_mask;
+                __atomic_load_n(&task->signal_mask, __ATOMIC_ACQUIRE);
             if (pending & ~blocked) {
                 fut_free(kfds);
                 return -EINTR;

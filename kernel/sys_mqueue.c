@@ -550,7 +550,7 @@ long sys_mq_timedsend(int mqdes, const char *msg_ptr, size_t msg_len,
             if (thr)
                 pending |= __atomic_load_n(&thr->thread_pending_signals, __ATOMIC_ACQUIRE);
             uint64_t blocked = thr ? __atomic_load_n(&thr->signal_mask, __ATOMIC_ACQUIRE)
-                                   : task->signal_mask;
+                                   : __atomic_load_n(&task->signal_mask, __ATOMIC_ACQUIRE);
             if (pending & ~blocked) {
                 fut_spinlock_release(&mq->lock);
                 fut_free(node);
@@ -662,7 +662,7 @@ long sys_mq_timedreceive(int mqdes, char *msg_ptr, size_t msg_len,
             if (thr)
                 pending |= __atomic_load_n(&thr->thread_pending_signals, __ATOMIC_ACQUIRE);
             uint64_t blocked = thr ? __atomic_load_n(&thr->signal_mask, __ATOMIC_ACQUIRE)
-                                   : task->signal_mask;
+                                   : __atomic_load_n(&task->signal_mask, __ATOMIC_ACQUIRE);
             if (pending & ~blocked) {
                 fut_spinlock_release(&mq->lock);
                 return -EINTR;

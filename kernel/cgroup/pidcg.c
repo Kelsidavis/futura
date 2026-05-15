@@ -46,16 +46,18 @@ static int pidcg_find(const char *path) {
 int pidcg_create(const char *path) {
     if (!path) return -EINVAL;
     if (pidcg_find(path) >= 0) return -EEXIST;
+    /* Atomic claim — see project_slot_claim_pattern.md. */
     for (int i = 1; i < PIDCG_MAX; i++) {
-        if (!g_pidcg[i].active) {
-            g_pidcg[i].active = true;
-            size_t pl = 0;
-            while (path[pl] && pl < 31) { g_pidcg[i].name[pl] = path[pl]; pl++; }
-            g_pidcg[i].name[pl] = '\0';
-            g_pidcg[i].pids_max = 0;
-            g_pidcg[i].pids_current = 0;
-            return 0;
-        }
+        bool expected = false;
+        if (!__atomic_compare_exchange_n(&g_pidcg[i].active, &expected, true,
+                                         false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+            continue;
+        size_t pl = 0;
+        while (path[pl] && pl < 31) { g_pidcg[i].name[pl] = path[pl]; pl++; }
+        g_pidcg[i].name[pl] = '\0';
+        g_pidcg[i].pids_max = 0;
+        g_pidcg[i].pids_current = 0;
+        return 0;
     }
     return -ENOSPC;
 }

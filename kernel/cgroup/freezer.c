@@ -45,15 +45,17 @@ static int freezer_find(const char *path) {
 int freezer_create(const char *path) {
     if (!path) return -EINVAL;
     if (freezer_find(path) >= 0) return -EEXIST;
+    /* Atomic claim — see project_slot_claim_pattern.md. */
     for (int i = 1; i < FREEZER_MAX; i++) {
-        if (!g_freezer[i].active) {
-            g_freezer[i].active = true;
-            size_t pl = 0;
-            while (path[pl] && pl < 31) { g_freezer[i].name[pl] = path[pl]; pl++; }
-            g_freezer[i].name[pl] = '\0';
-            g_freezer[i].frozen = false;
-            return 0;
-        }
+        bool expected = false;
+        if (!__atomic_compare_exchange_n(&g_freezer[i].active, &expected, true,
+                                         false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+            continue;
+        size_t pl = 0;
+        while (path[pl] && pl < 31) { g_freezer[i].name[pl] = path[pl]; pl++; }
+        g_freezer[i].name[pl] = '\0';
+        g_freezer[i].frozen = false;
+        return 0;
     }
     return -ENOSPC;
 }

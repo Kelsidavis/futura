@@ -49,13 +49,20 @@ int cpucg_create(const char *path) {
         while (*a && *b && *a == *b) { a++; b++; }
         if (*a == '\0' && *b == '\0') return -EEXIST;
     }
+    /* Atomic claim — see project_slot_claim_pattern.md. */
     int slot = -1;
-    for (int i = 1; i < CPUCG_MAX_GROUPS; i++)
-        if (!g_cpucg[i].active) { slot = i; break; }
+    for (int i = 1; i < CPUCG_MAX_GROUPS; i++) {
+        bool expected = false;
+        if (__atomic_compare_exchange_n(&g_cpucg[i].active, &expected, true,
+                                        false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+            slot = i;
+            break;
+        }
+    }
     if (slot < 0) return -ENOSPC;
 
     struct cpucg_group *g = &g_cpucg[slot];
-    g->active = true;
+    /* active set by the CAS above */
     size_t pl = 0;
     while (path[pl] && pl < 31) { g->name[pl] = path[pl]; pl++; }
     g->name[pl] = '\0';

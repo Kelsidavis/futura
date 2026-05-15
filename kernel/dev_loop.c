@@ -105,30 +105,37 @@ int loop_set_fd(int loop_idx, int fd) {
         return -EINVAL;
 
     struct loop_device *loop = &g_loops[loop_idx];
-    if (loop->active)
+
+    /* Claim the device atomically. Two concurrent loop_set_fd(loop_idx,...)
+     * calls previously could both observe !active, both proceed to memset
+     * + setup, and the second would overwrite the first's backing_fd /
+     * blkdev pointer (leaking the first blkdev). */
+    bool expected = false;
+    if (!__atomic_compare_exchange_n(&loop->active, &expected, true,
+                                     false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
         return -EBUSY;
+    }
 
     /* Get the file size via fstat using the proper struct */
     extern long sys_fstat(int fd, void *statbuf);
     struct fut_stat st;
     memset(&st, 0, sizeof(st));
     long sr = sys_fstat(fd, &st);
-    if (sr < 0) return (int)sr;
-    if (st.st_size == 0) return -EINVAL;
+    if (sr < 0) { loop->active = false; return (int)sr; }
+    if (st.st_size == 0) { loop->active = false; return -EINVAL; }
 
     /* Allocate block device structure */
     struct fut_blockdev *blkdev = fut_malloc(sizeof(struct fut_blockdev));
-    if (!blkdev) return -ENOMEM;
+    if (!blkdev) { loop->active = false; return -ENOMEM; }
 
     memset(blkdev, 0, sizeof(*blkdev));
-    memset(loop, 0, sizeof(*loop));
+    /* Note: do NOT memset(loop) here — that would re-clear the active
+     * flag we just claimed and re-open the window for a second claimer. */
 
     /* Build name */
     loop->name[0] = 'l'; loop->name[1] = 'o'; loop->name[2] = 'o';
     loop->name[3] = 'p'; loop->name[4] = (char)('0' + loop_idx);
     loop->name[5] = '\0';
-
-    loop->active = true;
     loop->backing_fd = fd;
     loop->file_size = st.st_size;
     loop->offset = 0;

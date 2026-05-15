@@ -133,8 +133,16 @@ int memcg_set_low(const char *path, uint64_t low_bytes) {
 int memcg_add_pid(const char *path, int pid) {
     struct memcg_group *g = memcg_find(path);
     if (!g) return -ENOENT;
-    if (g->pid_count >= 64) return -ENOSPC;
-    g->pids[g->pid_count++] = pid;
+    /* CAS-loop the index reservation so two concurrent memcg_add_pid
+     * callers can't both pick the same g->pids[] slot. */
+    int cur, next;
+    do {
+        cur = __atomic_load_n(&g->pid_count, __ATOMIC_ACQUIRE);
+        if (cur >= 64) return -ENOSPC;
+        next = cur + 1;
+    } while (!__atomic_compare_exchange_n(&g->pid_count, &cur, next,
+                                          false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE));
+    g->pids[cur] = pid;
     return 0;
 }
 

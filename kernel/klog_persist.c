@@ -117,16 +117,25 @@ void klog_persist_init(void) {
      * recoverable later via a debug hook — just not splashed onto
      * the framebuffer at startup. */
     if (valid_previous) {
-        fut_printf("[KLOG-PERSIST] Previous-boot log present (seq=%u, %llu bytes); not auto-dumped\n",
+        fut_printf("[KLOG-PERSIST] Previous-boot log present (seq=%u, %llu bytes)\n",
                    prev_seq,
                    (unsigned long long)g_klog->total_written);
+        /* Dump the previous boot's log on demand via `klog_dump_prev`
+         * on the kernel cmdline.  This is the only way to see what
+         * happened on a machine whose framebuffer was taken over by
+         * the compositor before the bug fired: power-cycle quickly
+         * after the hang (DRAM retains the ring buffer for several
+         * seconds without power), boot with this flag, and the
+         * previous session's full kernel log replays into the
+         * current framebuffer console. */
+        extern bool fut_boot_arg_flag(const char *key);
+        if (fut_boot_arg_flag("klog_dump_prev")) {
+            klog_persist_dump_previous();
+        }
     } else {
         fut_printf("[KLOG-PERSIST] No previous log (magic=0x%llx) — fresh start\n",
                    (unsigned long long)g_klog->magic);
     }
-    /* Keep the dump function reachable for a future debug hook so the
-     * symbol isn't DCE'd. */
-    if (0) klog_persist_dump_previous();
 
     /* Reset header for this boot. Do magic LAST so a partially-written
      * header from this point onward doesn't get mistaken for valid by

@@ -63,6 +63,51 @@ static inline bool ps2_irq_log_threshold(uint32_t c) {
            c == 4096 || c == 16384;
 }
 
+/* QEMU emulator for the L490 trackpad byte stream.  Captured from a
+ * real boot (build 4383469f) while the user wiggled the TrackPoint.
+ * Pumped at the 100 Hz timer tick from ps2_irq_stats_poll once the
+ * scheduler is running, this reproduces the L490's sustained input
+ * load in QEMU so we can attack the post-desktop hang without flash
+ * cycles.  Enable with `mouse_replay` on the kernel cmdline. */
+static const uint8_t l490_replay_bytes[] = {
+    0x18, 0xff, 0x00, 0x28, 0xfe, 0x28, 0x01, 0xfe,
+    0x28, 0x02, 0xfc, 0x28, 0x00, 0x18, 0xff, 0x00,
+    0xfc, 0xff, 0x18, 0xfb, 0x00, 0x38, 0xfd, 0x18,
+    0xfe, 0x00, 0x18, 0xff, 0x00, 0x18, 0xfb, 0x00,
+    0x38, 0xfd, 0x18, 0xfe, 0x00, 0x18, 0xff, 0x00,
+    0x18, 0xfb, 0x00, 0x38, 0xfd, 0x18, 0xfe, 0x00,
+    0x18, 0xff, 0x00, 0x18, 0xfb, 0x00, 0x38,
+};
+
+/* Tick-driven replay.  ~3 bytes/tick × 100 Hz = 300 bytes/sec = 100
+ * packets/sec, slightly above the L490's observed ~120 b/s peak.  No
+ * locking needed: cursor advance is single-tick / single-CPU and
+ * ps2_mouse_handle_byte is reentrant by design. */
+static void ps2_mouse_replay_tick(void) {
+    /* Don't cache the flag check: the first timer tick fires after
+     * fut_enable_interrupts() but BEFORE the multiboot2 walk hands
+     * off the real cmdline, so a static cache would lock the result
+     * in at "disabled" forever.  fut_boot_arg_flag is O(strlen), so
+     * checking every tick at 100 Hz is in the noise. */
+    static int announced = 0;
+    static size_t cursor = 0;
+    if (!fut_boot_arg_flag("mouse_replay")) {
+        return;
+    }
+    if (!announced) {
+        announced = 1;
+        fut_printf("[PS2 REPLAY] tick-driven L490 byte injection enabled\n");
+    }
+    for (int i = 0; i < 3; ++i) {
+        ps2_mouse_handle_byte(l490_replay_bytes[cursor]);
+        cursor = (cursor + 1) % sizeof(l490_replay_bytes);
+    }
+    /* Bump IRQ12 counter so the heartbeat in ps2_irq_stats_poll fires
+     * on threshold crossings and we see the full pipeline-stage
+     * snapshot (bytes/pkts/pushed/reads/opens) as it advances. */
+    __atomic_add_fetch(&g_ps2_irq12_count, 1, __ATOMIC_RELAXED);
+}
+
 /* Called from fut_timer_tick (weak link) at 100 Hz.  Picks up any
  * threshold crossings since the last tick and prints them safely in
  * thread/interrupt-context-without-CLI.  Also dumps the full mouse
@@ -71,6 +116,7 @@ static inline bool ps2_irq_log_threshold(uint32_t c) {
  * etc.) is visible while the desktop is running and the framebuffer
  * console is still mirroring kernel output. */
 void ps2_irq_stats_poll(void) {
+    ps2_mouse_replay_tick();
     uint32_t c1 = __atomic_load_n(&g_ps2_irq1_count, __ATOMIC_RELAXED);
     if (c1 != g_ps2_irq1_last_logged && ps2_irq_log_threshold(c1)) {
         fut_printf("[PS2] IRQ1 count=%u\n", c1);

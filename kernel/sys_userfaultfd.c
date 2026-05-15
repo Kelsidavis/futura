@@ -378,12 +378,20 @@ long uffd_ioctl(int fd, unsigned int cmd, unsigned long arg) {
                                sizeof(krange)) != 0)
             return -EFAULT;
 
+        /* Two concurrent UFFDIO_UNREGISTER ioctls on the same region
+         * could otherwise both observe .active==true and both decrement
+         * nr_regions, racing it negative. Claim the deactivation via CAS
+         * so exactly one caller succeeds. */
         for (int i = 0; i < MAX_UFFD_REGIONS; i++) {
-            if (!ctx->regions[i].active) continue;
+            if (!__atomic_load_n(&ctx->regions[i].active, __ATOMIC_ACQUIRE))
+                continue;
             if (ctx->regions[i].start == krange.start &&
                 ctx->regions[i].len == krange.len) {
-                ctx->regions[i].active = false;
-                ctx->nr_regions--;
+                bool expected = true;
+                if (!__atomic_compare_exchange_n(&ctx->regions[i].active, &expected, false,
+                                                 false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+                    continue;  /* lost the race — another thread cleared it */
+                __atomic_sub_fetch(&ctx->nr_regions, 1, __ATOMIC_ACQ_REL);
                 return 0;
             }
         }

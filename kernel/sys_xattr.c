@@ -17,6 +17,7 @@
 #include <kernel/fut_vfs.h>
 #include <kernel/fut_memory.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <string.h>
 
@@ -730,19 +731,30 @@ long sys_getxattr(const char *path, const char *name, void *value, size_t size) 
     if (size == 0) return (long)attr_size;
     if ((size_t)attr_size > size) return -ERANGE;
 
-    void *kbuf = fut_malloc((size_t)attr_size + 1);
-    if (!kbuf) return -ENOMEM;
+    /* Small attribute values use a stack buffer (typical xattrs are
+     * <512 bytes — security.* labels, user.* metadata, etc.). */
+    uint8_t stack_buf[2048];
+    void *kbuf;
+    bool kbuf_on_heap = false;
+    if ((size_t)attr_size + 1 <= sizeof(stack_buf)) {
+        kbuf = stack_buf;
+    } else {
+        kbuf = fut_malloc((size_t)attr_size + 1);
+        if (!kbuf) return -ENOMEM;
+        kbuf_on_heap = true;
+    }
     ssize_t got = vnode_getxattr_by_path(path_buf, name_buf, kbuf, (size_t)attr_size);
-    if (got < 0) { fut_free(kbuf); return (long)got; }
+    if (got < 0) { if (kbuf_on_heap) fut_free(kbuf); return (long)got; }
     /* Clamp against TOCTOU: a concurrent setxattr could swap the value
      * for a longer one between the size query and this fetch, leaving
      * got > the kbuf we allocated and the copy_to_user reading past the
      * heap allocation into adjacent memory. */
     if ((size_t)got > (size_t)attr_size) got = (ssize_t)attr_size;
     if (value && xattr_copy_to_user(value, kbuf, (size_t)got) != 0) {
-        fut_free(kbuf); return -EFAULT;
+        if (kbuf_on_heap) fut_free(kbuf);
+        return -EFAULT;
     }
-    fut_free(kbuf);
+    if (kbuf_on_heap) fut_free(kbuf);
     return (long)got;
 }
 

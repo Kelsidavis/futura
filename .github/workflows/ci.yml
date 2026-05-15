@@ -12,6 +12,8 @@ permissions:
 jobs:
   build-x86_64:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     # 25 min: build is consistently ~6 min, but the kernel-test phase
     # (2659 tests via qemu's isa-debug-exit harness) trips the 20-min cap
     # on slow runner days — observed cancellations mid-test on otherwise-
@@ -35,6 +37,8 @@ jobs:
 
   build-arm64:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     # 30 min total: dep-install (~1m) + cross-compile of kernel + Rust drivers
     # (~10m on a cold cache) + the in-kernel test runner under qemu-arm64 which
     # itself has a 600s qemu timeout in `make test-arm64`. The previous 20m
@@ -62,6 +66,8 @@ jobs:
 
   build-rpi:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -94,6 +100,8 @@ jobs:
 
   security-checks:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4

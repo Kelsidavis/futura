@@ -1083,6 +1083,7 @@ ifeq ($(PLATFORM),x86_64)
         kernel/kernel_main.c \
         kernel/arch/x86_64/hal_halt.c \
         kernel/arch/x86_64/hal_interrupts.c \
+        kernel/arch/x86_64/cpu_power.c \
         kernel/video/fb_mmio.c \
         kernel/video/pci_vga.c \
         kernel/video/cirrus_vga.c \
@@ -1143,6 +1144,7 @@ else ifeq ($(PLATFORM),arm64)
         platform/arm64/pci_ecam.c \
         kernel/arch/arm64/hal_halt.c \
         kernel/arch/arm64/hal_interrupts.c \
+        kernel/arch/arm64/cpu_power.c \
         kernel/arch/arm64/arm64_threading.c \
         kernel/mm/arm64_paging.c \
         kernel/dtb/arm64_dtb.c \

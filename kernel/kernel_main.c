@@ -1401,59 +1401,19 @@ void fut_kernel_main(void) {
         lapic_timer_calibrate_and_start(100, 32);  /* 100 Hz on vector 32 (same as PIT) */
     }
 
-#ifdef __x86_64__
-    /* Cap autonomous C-state entry at C1.
-     *
-     * The L490's Whiskey Lake CPU has aggressive autonomous power
-     * management: its Power Control Unit can transition cores into
-     * deep package C-states (C3/C6/C7) on its own, without the OS
-     * issuing HLT, when it observes low memory traffic and few
-     * outstanding requests.  In those deep states the LAPIC timer
-     * stops counting and never delivers another IRQ -- the symptom
-     * we see as "system hangs hard, fan spins down" after sustained
-     * cursor motion.
-     *
-     * Our existing busy-yield-in-idle workaround prevents the HLT
-     * promotion path, but does nothing about the PCU's autonomous
-     * transitions.  Cap C-states via MSR_PKG_CST_CONFIG_CONTROL
-     * (0xE2) and disable C1E via IA32_POWER_CTL (0x1FC) so the PCU
-     * never goes below C1.  CFG_LOCK on E2 may reject the write;
-     * we log either way.  IA32_POWER_CTL is always writable. */
-    {
-        const uint32_t MSR_PKG_CST_CONFIG_CONTROL = 0xE2;
-        const uint32_t IA32_POWER_CTL            = 0x1FC;
-        uint32_t lo, hi;
-        uint64_t cst_before, cst_after, pwr_before, pwr_after;
-
-        __asm__ volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(MSR_PKG_CST_CONFIG_CONTROL));
-        cst_before = ((uint64_t)hi << 32) | lo;
-        bool cfg_locked = (cst_before & (1ULL << 15)) != 0;
-        if (!cfg_locked) {
-            uint64_t cst_new = (cst_before & ~0xFULL) | 0x1ULL; /* limit = C1 */
-            lo = (uint32_t)cst_new;
-            hi = (uint32_t)(cst_new >> 32);
-            __asm__ volatile("wrmsr" :: "a"(lo), "d"(hi), "c"(MSR_PKG_CST_CONFIG_CONTROL));
-            __asm__ volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(MSR_PKG_CST_CONFIG_CONTROL));
-            cst_after = ((uint64_t)hi << 32) | lo;
-            fut_printf("[CSTATE] MSR_PKG_CST_CONFIG_CONTROL: 0x%llx -> 0x%llx (limit=C1)\n",
-                       (unsigned long long)cst_before, (unsigned long long)cst_after);
-        } else {
-            fut_printf("[CSTATE] MSR_PKG_CST_CONFIG_CONTROL locked by BIOS (0x%llx), can't cap\n",
-                       (unsigned long long)cst_before);
-        }
-
-        __asm__ volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(IA32_POWER_CTL));
-        pwr_before = ((uint64_t)hi << 32) | lo;
-        uint64_t pwr_new = pwr_before & ~(1ULL << 1); /* clear C1E_ENABLE */
-        lo = (uint32_t)pwr_new;
-        hi = (uint32_t)(pwr_new >> 32);
-        __asm__ volatile("wrmsr" :: "a"(lo), "d"(hi), "c"(IA32_POWER_CTL));
-        __asm__ volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(IA32_POWER_CTL));
-        pwr_after = ((uint64_t)hi << 32) | lo;
-        fut_printf("[CSTATE] IA32_POWER_CTL: 0x%llx -> 0x%llx (C1E disabled)\n",
-                   (unsigned long long)pwr_before, (unsigned long long)pwr_after);
+    /* Optional C-state cap (universal API; x86 backend gates by CPU
+     * vendor internally and returns -ENOSYS on AMD/ARM/etc).  Opt-in
+     * via cstate_cap on the cmdline -- intended for systems where the
+     * CPU power control unit transitions deep enough that the kernel
+     * timer source stops counting.  Default off so a universal kernel
+     * doesn't pessimise machines that don't need the workaround. */
+    if (boot_flag_enabled("cstate_cap", false)) {
+        extern int cpu_power_cap_cstates(unsigned int max_cstate);
+        extern int cpu_power_disable_c1e(void);
+        int rc_cap = cpu_power_cap_cstates(1);
+        int rc_c1e = cpu_power_disable_c1e();
+        fut_printf("[CSTATE] cap_cstates(1)=%d disable_c1e=%d\n", rc_cap, rc_c1e);
     }
-#endif
 
     /* Provide a bootstrap task/thread context so VFS/syscalls work before scheduler */
     fut_thread_init_bootstrap();

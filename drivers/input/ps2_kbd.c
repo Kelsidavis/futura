@@ -9,6 +9,7 @@
 #include <kernel/errno.h>
 #include <kernel/fut_memory.h>
 #include <kernel/fut_vfs.h>
+#include <kernel/boot_args.h>
 #include <platform/platform.h>
 
 #define KBD_MAJOR 30u
@@ -93,17 +94,18 @@ void ps2_kbd_handle_byte(uint8_t data) {
     bool released = (data & 0x80u) != 0;
     uint8_t code = data & 0x7Fu;
 
-    /* Emergency reset trigger: F12 press, non-extended, scan code 0x58.
-     * Used to capture the klog ring across a hang when the compositor
-     * has stopped rendering but the kernel IRQ path is still alive.
-     * acpi_reboot() drives the i8042 0xFE controller reset which most
-     * BIOSes treat as a warm reset (DRAM preserved), so klog_persist
-     * on the next boot replays the previous session's full log. */
-    if (!released && !extended && code == 0x58u) {
+    /* Optional emergency warm reset on F12 press (scan code 0x58,
+     * non-extended).  Gated behind the f12_warm_reset cmdline flag so
+     * the universal kernel doesn't ambush anyone who casually presses
+     * F12.  Enabled only by debug menuentries that intend to capture
+     * a klog snapshot across a hang -- acpi_reboot() drives i8042
+     * 0xFE which most BIOSes treat as a warm reset, preserving DRAM
+     * for the next boot's klog_persist replay. */
+    if (!released && !extended && code == 0x58u
+        && fut_boot_arg_flag("f12_warm_reset")) {
         fut_printf("\n[EMERGENCY] F12 pressed -- triggering warm reset (klog will replay on next boot)\n");
         extern void acpi_reboot(void);
         acpi_reboot();
-        /* acpi_reboot doesn't return; loop in case it ever does. */
         for (;;) { __asm__ volatile("hlt"); }
     }
 

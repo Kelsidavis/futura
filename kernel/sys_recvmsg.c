@@ -444,11 +444,20 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
             goto iov_loop_done;
         }
 
-        /* Allocate kernel buffer */
-        void *kbuf = fut_malloc(iov.iov_len);
-        if (!kbuf) {
-            if (total_received == 0) total_received = -ENOMEM;
-            goto iov_loop_done;
+        /* Bounce buffer: small segments use stack (most recvmsg calls
+         * are sub-2 KiB per segment). Larger fall back to fut_malloc. */
+        uint8_t recv_stack_buf[2048];
+        void *kbuf;
+        bool kbuf_on_heap = false;
+        if (iov.iov_len <= sizeof(recv_stack_buf)) {
+            kbuf = recv_stack_buf;
+        } else {
+            kbuf = fut_malloc(iov.iov_len);
+            if (!kbuf) {
+                if (total_received == 0) total_received = -ENOMEM;
+                goto iov_loop_done;
+            }
+            kbuf_on_heap = true;
         }
 
         /* Read from socket.
@@ -506,7 +515,7 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
         if (ret > 0) {
             /* Copy to userspace */
             if (recvmsg_copy_to_user(iov.iov_base, kbuf, (size_t)ret) != 0) {
-                fut_free(kbuf);
+                if (kbuf_on_heap) fut_free(kbuf);
                 if (total_received == 0) total_received = -EFAULT;
                 goto iov_loop_done;
             }
@@ -514,7 +523,7 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
             iovecs_filled++;
         }
 
-        fut_free(kbuf);
+        if (kbuf_on_heap) fut_free(kbuf);
 
         if (ret < 0) {
             if (total_received == 0) total_received = ret;

@@ -728,7 +728,15 @@ fn setup_scratchpad(ctrl: &mut XhciController) -> bool {
     ctrl.scratchpad_bufs = virt_array;
     ctrl.scratchpad_count = count;
 
-    // DCBAA[0] points to the scratchpad buffer array
+    // DCBAA[0] points to the scratchpad buffer array. Guard against a
+    // missing-allocation race where ctrl.dcbaa was never populated —
+    // setup_dcbaa() runs earlier and should leave dcbaa non-null, but if
+    // it failed and the caller missed the error, writing a null pointer
+    // would crash the host. Skip gracefully.
+    if ctrl.dcbaa.is_null() {
+        log("xhci: dcbaa not initialized, skipping scratchpad install");
+        return false;
+    }
     let array_phys = virt_to_phys(array_page as *const u8);
     unsafe {
         write_volatile(ctrl.dcbaa, array_phys);

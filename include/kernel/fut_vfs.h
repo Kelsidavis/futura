@@ -1047,6 +1047,15 @@ void vfs_close_fd_in_task(struct fut_task *task, int fd);
 /* File reference counting */
 void vfs_file_ref(struct fut_file *file);
 
+/* Drop one ref on a fut_file. If the count reaches zero, run the
+ * release path (chr_ops->release / vnode close + unref, free path,
+ * free struct). Use this on speculative-ref rollback paths where the
+ * file pointer is not attached to any fd (e.g., dup/dup2/fcntl
+ * F_DUPFD failure rollback, SCM_RIGHTS install failure) so the
+ * struct doesn't leak when the in-flight ref turns out to be the
+ * last surviving reference. */
+void vfs_file_unref(struct fut_file *file);
+
 /* Permission checking */
 int vfs_check_read_perm(struct fut_vnode *vnode);
 int vfs_check_write_perm(struct fut_vnode *vnode);

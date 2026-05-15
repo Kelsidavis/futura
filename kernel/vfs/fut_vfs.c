@@ -1847,6 +1847,28 @@ void vfs_file_ref(struct fut_file *file) {
     }
 }
 
+/* Drop a ref on a detached fut_file. If we hit zero, run the release
+ * path so the struct (and any held vnode / chr_private state) is
+ * actually freed. Mirrors the last-ref logic in fut_vfs_close /
+ * release_detached_file for callers that don't have a fd. */
+void vfs_file_unref(struct fut_file *file) {
+    if (!file) return;
+    if (file->refcount == 0) return;  /* defensive: never underflow */
+    uint32_t after = __atomic_sub_fetch(&file->refcount, 1, __ATOMIC_ACQ_REL);
+    if (after > 0) return;
+
+    if (file->chr_ops) {
+        if (file->chr_ops->release)
+            file->chr_ops->release(file->chr_inode, file->chr_private);
+    } else if (file->vnode) {
+        if (file->vnode->ops && file->vnode->ops->close)
+            file->vnode->ops->close(file->vnode);
+        fut_vnode_unref(file->vnode);
+    }
+    if (file->path) fut_free(file->path);
+    fut_free(file);
+}
+
 int vfs_alloc_specific_fd(int target_fd, struct fut_file *file) {
     if (target_fd < 0 || target_fd >= MAX_OPEN_FILES) {
         return -EBADF;

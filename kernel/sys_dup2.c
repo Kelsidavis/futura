@@ -261,10 +261,11 @@ long sys_dup2(int oldfd, int newfd) {
     /* alloc_specific_fd_for_task handles closing existing FD if needed */
     int ret = vfs_alloc_specific_fd_for_task(task, local_newfd, old_file);
     if (ret < 0) {
-        /* Failed to allocate, decrement ref count
-         * Validate refcount > 0 before decrementing to prevent underflow */
+        /* Failed to allocate — drop the speculative ref via
+         * vfs_file_unref so the file is released if a parallel close
+         * raced us to the last reference. */
         if (old_file) {
-            __atomic_sub_fetch(&old_file->refcount, 1, __ATOMIC_ACQ_REL);
+            vfs_file_unref(old_file);
         }
 
         /* Phase 2: Detailed error logging */
@@ -417,10 +418,11 @@ long sys_dup3(int oldfd, int newfd, int flags) {
     /* Allocate newfd pointing to the same file */
     int ret = vfs_alloc_specific_fd_for_task(task, local_newfd, old_file);
     if (ret < 0) {
-        /* Failed to allocate, decrement ref count
-         * Validate refcount > 0 before decrementing to prevent underflow */
+        /* Failed to allocate — drop the speculative ref via
+         * vfs_file_unref so the file is released if a parallel close
+         * raced us to the last reference. */
         if (old_file) {
-            __atomic_sub_fetch(&old_file->refcount, 1, __ATOMIC_ACQ_REL);
+            vfs_file_unref(old_file);
         }
 
         const char *error_desc;

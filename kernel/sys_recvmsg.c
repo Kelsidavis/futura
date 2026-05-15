@@ -617,33 +617,12 @@ iov_loop_done:
                         RECVMSG_LOG("[RECVMSG] SCM_RIGHTS: installed file=%p as fd=%d in receiver\n",
                                    file, newfd);
                     } else {
-                        /* Failed to allocate FD — drop the in-flight reference
-                         * that was added by sendmsg when it queued this file.
-                         * If the sender already closed before recvmsg ran the
-                         * in-flight ref may be the LAST one, in which case we
-                         * own the cleanup. Inline the release path here so the
-                         * fut_file isn't leaked. */
+                        /* Failed to allocate FD — drop the in-flight ref via
+                         * vfs_file_unref so the file is released if a parallel
+                         * sender close already left this in-flight ref as the
+                         * only surviving reference. */
                         RECVMSG_LOG("[RECVMSG] SCM_RIGHTS: fd table full, dropping file=%p\n", file);
-                        uint32_t after = file->refcount > 0
-                            ? __atomic_sub_fetch(&file->refcount, 1, __ATOMIC_ACQ_REL)
-                            : 0;
-                        if (after == 0) {
-                            /* Mirror fut_vfs_close's release-last-ref logic. */
-                            if (file->chr_ops) {
-                                if (file->chr_ops->release)
-                                    file->chr_ops->release(file->chr_inode, file->chr_private);
-                                if (file->path) fut_free(file->path);
-                                fut_free(file);
-                            } else {
-                                if (file->vnode) {
-                                    if (file->vnode->ops && file->vnode->ops->close)
-                                        file->vnode->ops->close(file->vnode);
-                                    fut_vnode_unref(file->vnode);
-                                }
-                                if (file->path) fut_free(file->path);
-                                fut_free(file);
-                            }
-                        }
+                        vfs_file_unref(file);
                     }
                 }
             }

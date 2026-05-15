@@ -778,8 +778,9 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
 
         /* Check against task's actual max_fds */
         if (newfd >= (int)task->max_fds) {
-            /* Decrement refcount on failure path */
-            __atomic_sub_fetch(&file->refcount, 1, __ATOMIC_ACQ_REL);
+            /* Drop the speculative ref via vfs_file_unref so the file
+             * is released if a parallel close raced us to the last ref. */
+            vfs_file_unref(file);
             fut_printf("[FCNTL] fcntl(fd=%d [%s], cmd=%s [%s], minfd=%d [%s]) -> EMFILE "
                        "(no FDs available >= minfd (reached task max_fds=%u))\n",
                        local_fd, fd_category, cmd_name, cmd_category, minfd, minfd_category, task->max_fds);
@@ -789,8 +790,9 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
         /* Allocate newfd pointing to same file in task's FD table */
         int ret = vfs_alloc_specific_fd_for_task(task, newfd, file);
         if (ret < 0) {
-            /* Failed to allocate, decrement ref count */
-            __atomic_sub_fetch(&file->refcount, 1, __ATOMIC_ACQ_REL);
+            /* Drop the speculative ref via vfs_file_unref so the file
+             * is released if a parallel close raced us to the last ref. */
+            vfs_file_unref(file);
 
             /* Phase 2: Detailed error logging */
             const char *error_desc;

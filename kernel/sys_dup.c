@@ -215,11 +215,10 @@ long sys_dup(int oldfd) {
     vfs_file_ref(old_file);
     int newfd = vfs_alloc_fd_for_task(task, old_file);
     if (newfd < 0) {
-        /* Slot not installed — drop the speculative reference. The original
-         * oldfd reference keeps the file alive, so this can't be the last
-         * one in any non-racy scenario. */
-        if (old_file->refcount > 0)
-            __atomic_sub_fetch(&old_file->refcount, 1, __ATOMIC_ACQ_REL);
+        /* Slot not installed — drop the speculative reference via
+         * vfs_file_unref so the file struct is released if a parallel
+         * close(oldfd) raced us to the last reference. */
+        vfs_file_unref(old_file);
         fut_printf("[DUP] dup(oldfd=%d [%s], max_fds=%d) -> %d "
                    "(fd allocation failed)\n",
                    local_oldfd, oldfd_category, task->max_fds, newfd);

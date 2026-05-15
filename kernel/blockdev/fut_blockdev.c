@@ -150,15 +150,6 @@ int fut_blockdev_register(struct fut_blockdev *dev) {
         return BLOCKDEV_EINVAL;
     }
 
-    /* Check for duplicate name */
-    struct fut_blockdev *existing = device_list;
-    while (existing) {
-        if (str_cmp(existing->name, dev->name) == 0) {
-            return BLOCKDEV_EINVAL;  /* Device already exists */
-        }
-        existing = existing->next;
-    }
-
     /* Calculate capacity if not set */
     if (dev->capacity == 0 && dev->num_blocks > 0 && dev->block_size > 0) {
         dev->capacity = dev->num_blocks * dev->block_size;
@@ -176,10 +167,23 @@ int fut_blockdev_register(struct fut_blockdev *dev) {
     dev->io_time_ms = 0;
     dev->weighted_io_ms = 0;
 
-    /* Add to device list */
-    dev->next = device_list;
-    device_list = dev;
-
+    /* Atomic head insert with duplicate-name check inside the CAS loop.
+     * Without the loop the duplicate check + list push raced two
+     * concurrent register calls — both could observe no duplicate and
+     * one would overwrite the other's ->next link, dropping the loser's
+     * chain off the device list. */
+    for (;;) {
+        struct fut_blockdev *prev_head = __atomic_load_n(&device_list, __ATOMIC_ACQUIRE);
+        for (struct fut_blockdev *e = prev_head; e; e = e->next) {
+            if (str_cmp(e->name, dev->name) == 0)
+                return BLOCKDEV_EINVAL;  /* Device already exists */
+        }
+        dev->next = prev_head;
+        if (__atomic_compare_exchange_n(&device_list, &prev_head, dev,
+                                        false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+            break;
+        /* CAS lost — head moved. Re-check duplicate against the new head. */
+    }
     return 0;
 }
 

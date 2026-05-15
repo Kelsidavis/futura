@@ -103,10 +103,15 @@ static struct mqueue  *mq_table[MAX_MQUEUES];
 static fut_spinlock_t  mq_global_lock;
 static bool            mq_global_init_done = false;
 
+/* Two concurrent mq_open()s could otherwise both pass the !init_done
+ * check; the first sets init_done=true before its spinlock_init() has
+ * actually run, and the second proceeds to acquire a half-initialised
+ * spinlock. Use release-on-publish so init_done=true implies init has
+ * completed on every CPU. */
 static void mq_global_init(void) {
-    if (!mq_global_init_done) {
+    if (!__atomic_load_n(&mq_global_init_done, __ATOMIC_ACQUIRE)) {
         fut_spinlock_init(&mq_global_lock);
-        mq_global_init_done = true;
+        __atomic_store_n(&mq_global_init_done, true, __ATOMIC_RELEASE);
     }
 }
 

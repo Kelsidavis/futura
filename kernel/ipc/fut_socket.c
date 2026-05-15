@@ -552,6 +552,14 @@ void fut_socket_unref(fut_socket_t *socket) {
             fut_free(socket->close_waitq);
         }
 
+        /* connect_waitq is lazily allocated by the client side on the first
+         * connect() that needs to block. The previous unref path missed it,
+         * leaking ~sizeof(fut_waitq_t) per ever-connected socket. */
+        if (socket->connect_waitq) {
+            fut_free(socket->connect_waitq);
+            socket->connect_waitq = NULL;
+        }
+
         if (socket->dgram_queue) {
             if (socket->dgram_queue->recv_waitq)
                 fut_free(socket->dgram_queue->recv_waitq);
@@ -1026,14 +1034,22 @@ int fut_socket_connect(fut_socket_t *socket, const char *target_path, size_t pat
         return -ECONNREFUSED;
     }
 
-    /* Allocate connect wait queue if needed (for blocking connect) */
+    /* Allocate connect wait queue if needed (for blocking connect). Use
+     * atomic CAS to install so two concurrent connects can't both observe
+     * NULL, both allocate, and one overwrite the other (leaking a waitq). */
     if (!socket->connect_waitq) {
-        socket->connect_waitq = fut_malloc(sizeof(fut_waitq_t));
-        if (!socket->connect_waitq) {
+        fut_waitq_t *wq = fut_malloc(sizeof(fut_waitq_t));
+        if (!wq) {
             fut_socket_unref(listener);
             return -ENOMEM;
         }
-        fut_waitq_init(socket->connect_waitq);
+        fut_waitq_init(wq);
+        fut_waitq_t *expected = NULL;
+        if (!__atomic_compare_exchange_n(&socket->connect_waitq, &expected, wq,
+                                         false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+            /* Another caller installed a waitq first — discard ours. */
+            fut_free(wq);
+        }
     }
 
     /* Queue pending connection */

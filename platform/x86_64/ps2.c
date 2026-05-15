@@ -463,6 +463,55 @@ static void ps2_diag_pause_and_poll(void) {
     fut_printf("[PS2 DIAG] pause complete, continuing boot\n");
 }
 
+/* QEMU emulator for the L490 trackpad byte stream.
+ *
+ * On real L490 hardware the Synaptics chip emits non-standard PS/2
+ * packets (overflow bits constantly set, periodic cyclic patterns,
+ * no clean 3-byte alignment).  Our 3-byte parser misreads them as a
+ * flood of contradictory tiny motions that net out to ~zero pixels
+ * of cursor travel.  Capturing those exact bytes is the only way to
+ * reproduce the bug in QEMU since QEMU's i8042 model emits clean
+ * 3-byte packets.
+ *
+ * Bytes below are the verbatim ps2_mouse_handle_byte() input stream
+ * from a real boot of build 4383469f on a ThinkPad L490 while the
+ * user wiggled the TrackPoint nub.  Pumped through the live parser,
+ * they reproduce the same drop_sync=0 / pkts=N / pushed=N counters.
+ *
+ * Enable with `mouse_replay` on the kernel cmdline. */
+static const uint8_t l490_replay_bytes[] = {
+    0x18, 0xff, 0x00, 0x28, 0xfe, 0x28, 0x01, 0xfe,
+    0x28, 0x02, 0xfc, 0x28, 0x00, 0x18, 0xff, 0x00,
+    0xfc, 0xff, 0x18, 0xfb, 0x00, 0x38, 0xfd, 0x18,
+    0xfe, 0x00, 0x18, 0xff, 0x00, 0x18, 0xfb, 0x00,
+    0x38, 0xfd, 0x18, 0xfe, 0x00, 0x18, 0xff, 0x00,
+    0x18, 0xfb, 0x00, 0x38, 0xfd, 0x18, 0xfe, 0x00,
+    0x18, 0xff, 0x00, 0x18, 0xfb, 0x00, 0x38,
+};
+
+static void ps2_mouse_replay_l490(void) {
+    if (!fut_boot_arg_flag("mouse_replay")) {
+        return;
+    }
+    fut_printf("[PS2 REPLAY] feeding %zu L490-captured bytes through ps2_mouse_handle_byte\n",
+               sizeof(l490_replay_bytes));
+    extern uint64_t fut_rdtsc(void);
+    /* Run several passes with realistic pacing so the compositor can
+     * keep up; ~100 ms between passes mirrors the rate the real chip
+     * spits out a full cycle. */
+    for (int pass = 0; pass < 30; ++pass) {
+        for (size_t i = 0; i < sizeof(l490_replay_bytes); ++i) {
+            ps2_mouse_handle_byte(l490_replay_bytes[i]);
+        }
+        uint64_t t0 = fut_rdtsc();
+        while (fut_rdtsc() - t0 < 300000000ULL) {  /* ~100 ms @ 3 GHz */
+            __asm__ volatile("pause" ::: "memory");
+        }
+    }
+    fut_printf("[PS2 REPLAY] done -- 30 passes (%zu bytes total)\n",
+               sizeof(l490_replay_bytes) * 30);
+}
+
 int fut_input_hw_init(bool want_keyboard, bool want_mouse) {
     int rc = 0;
     if (want_keyboard) {
@@ -495,5 +544,8 @@ int fut_input_hw_init(bool want_keyboard, bool want_mouse) {
      * land and bump our counters.  Enabled only with input_diag=1
      * on the boot command line. */
     ps2_diag_pause_and_poll();
+    /* Optional: replay an L490-captured byte stream into the parser
+     * to reproduce the bug in QEMU.  Gated behind mouse_replay flag. */
+    ps2_mouse_replay_l490();
     return rc;
 }

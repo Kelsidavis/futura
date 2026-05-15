@@ -1765,10 +1765,13 @@ int fut_socket_close(fut_socket_t *socket) {
         }
     }
 
-    /* If this is a listening socket, wake all pending connect() callers.
-     * They will see the socket is not CONNECTED and return ECONNREFUSED. */
+    /* If this is a listening socket, wake all pending connect() callers
+     * under queue_lock so a parallel connect()/accept() can't race the
+     * walk. They will see the socket is not CONNECTED and return
+     * ECONNREFUSED. */
     if (socket->listener) {
         fut_socket_listener_t *lq = socket->listener;
+        fut_spinlock_acquire(&lq->queue_lock);
         for (uint32_t i = 0; i < lq->queue_count; i++) {
             uint32_t idx = (lq->queue_head + i) % FUT_SOCKET_QUEUE_MAX;
             fut_socket_t *pending = lq->queue[idx].peer_socket;
@@ -1779,6 +1782,7 @@ int fut_socket_close(fut_socket_t *socket) {
             }
         }
         lq->queue_count = 0;
+        fut_spinlock_release(&lq->queue_lock);
     }
 
     /* Nullify peer pointers under lock so send/recv see the close atomically */

@@ -64,28 +64,42 @@ void userns_unref(struct user_namespace *ns) {
     }
 }
 
+/* Atomically reserve a map slot, returning -EINVAL if full. The CAS
+ * loop closes the TOCTOU window between the limit check and the
+ * post-write increment that two concurrent /proc/PID/uid_map writers
+ * could otherwise race through, both writing to the same uid_map[N]
+ * and one losing its mapping. */
+static int userns_map_reserve_slot(int *counter) {
+    int cur, next;
+    do {
+        cur = __atomic_load_n(counter, __ATOMIC_ACQUIRE);
+        if (cur >= USERNS_MAP_MAX) return -EINVAL;
+        next = cur + 1;
+    } while (!__atomic_compare_exchange_n(counter, &cur, next,
+                                          false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE));
+    return cur;
+}
+
 /* Set UID mapping: "ns_first host_first count" */
 int userns_set_uid_map(struct user_namespace *ns, uint32_t ns_first,
                        uint32_t host_first, uint32_t count) {
     if (!ns || ns == &g_init_userns) return -EPERM;
-    if (ns->uid_map_count >= USERNS_MAP_MAX) return -EINVAL;
-    int i = ns->uid_map_count;
+    int i = userns_map_reserve_slot(&ns->uid_map_count);
+    if (i < 0) return i;
     ns->uid_map[i].ns_id = ns_first;
     ns->uid_map[i].host_id = host_first;
     ns->uid_map[i].count = count;
-    ns->uid_map_count++;
     return 0;
 }
 
 int userns_set_gid_map(struct user_namespace *ns, uint32_t ns_first,
                        uint32_t host_first, uint32_t count) {
     if (!ns || ns == &g_init_userns) return -EPERM;
-    if (ns->gid_map_count >= USERNS_MAP_MAX) return -EINVAL;
-    int i = ns->gid_map_count;
+    int i = userns_map_reserve_slot(&ns->gid_map_count);
+    if (i < 0) return i;
     ns->gid_map[i].ns_id = ns_first;
     ns->gid_map[i].host_id = host_first;
     ns->gid_map[i].count = count;
-    ns->gid_map_count++;
     return 0;
 }
 

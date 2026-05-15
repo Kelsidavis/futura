@@ -286,6 +286,15 @@ long sys_unshare(unsigned long flags) {
         userns_unref(old);
     }
 
+    /* CLONE_NEWTIME (Linux 5.6+): increment the caller's time-namespace
+     * nesting level so child clocks (CLOCK_MONOTONIC / CLOCK_BOOTTIME)
+     * can be offset independently. Matches sys_clone3's handling at
+     * lines 510-515. */
+    if (flags & CLONE_NEWTIME) {
+        task->time_ns_level = (task->time_ns_level > 0
+                               ? task->time_ns_level : 0) + 1;
+    }
+
     /* Remaining flags (IPC/CGROUP) accepted as no-ops */
     return 0;
 }

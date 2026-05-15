@@ -790,15 +790,28 @@ long sys_lgetxattr(const char *path, const char *name, void *value, size_t size)
     if (size == 0) return (long)attr_size;
     if ((size_t)attr_size > size) return -ERANGE;
 
-    void *kbuf = fut_malloc((size_t)attr_size + 1);
-    if (!kbuf) return -ENOMEM;
+    /* Small xattr values use stack buffer (see 9cb78449). */
+    uint8_t l_stack_buf[2048];
+    void *kbuf;
+    bool kbuf_on_heap = false;
+    if ((size_t)attr_size + 1 <= sizeof(l_stack_buf)) {
+        kbuf = l_stack_buf;
+    } else {
+        kbuf = fut_malloc((size_t)attr_size + 1);
+        if (!kbuf) return -ENOMEM;
+        kbuf_on_heap = true;
+    }
     ssize_t got = vnode_getxattr_nofollow(path_buf, name_buf, kbuf, (size_t)attr_size);
-    if (got < 0) { fut_free(kbuf); return (long)got; }
+    if (got < 0) {
+        if (kbuf_on_heap) fut_free(kbuf);
+        return (long)got;
+    }
     if ((size_t)got > (size_t)attr_size) got = (ssize_t)attr_size;
     if (value && xattr_copy_to_user(value, kbuf, (size_t)got) != 0) {
-        fut_free(kbuf); return -EFAULT;
+        if (kbuf_on_heap) fut_free(kbuf);
+        return -EFAULT;
     }
-    fut_free(kbuf);
+    if (kbuf_on_heap) fut_free(kbuf);
     return (long)got;
 }
 
@@ -850,20 +863,33 @@ long sys_fgetxattr(int fd, const char *name, void *value, size_t size) {
     if (size == 0) return (long)attr_size;
     if ((size_t)attr_size > size) return -ERANGE;
 
-    void *kbuf = fut_malloc((size_t)attr_size + 1);
-    if (!kbuf) return -ENOMEM;
+    /* Small xattr values use stack buffer (see 9cb78449). */
+    uint8_t f_stack_buf[2048];
+    void *kbuf;
+    bool kbuf_on_heap = false;
+    if ((size_t)attr_size + 1 <= sizeof(f_stack_buf)) {
+        kbuf = f_stack_buf;
+    } else {
+        kbuf = fut_malloc((size_t)attr_size + 1);
+        if (!kbuf) return -ENOMEM;
+        kbuf_on_heap = true;
+    }
     ssize_t got;
     if (vnode->ops && vnode->ops->getxattr) {
         got = vnode->ops->getxattr(vnode, name_buf, kbuf, (size_t)attr_size);
     } else {
         got = vnode_generic_getxattr(vnode, name_buf, kbuf, (size_t)attr_size);
     }
-    if (got < 0) { fut_free(kbuf); return (long)got; }
+    if (got < 0) {
+        if (kbuf_on_heap) fut_free(kbuf);
+        return (long)got;
+    }
     if ((size_t)got > (size_t)attr_size) got = (ssize_t)attr_size;
     if (value && xattr_copy_to_user(value, kbuf, (size_t)got) != 0) {
-        fut_free(kbuf); return -EFAULT;
+        if (kbuf_on_heap) fut_free(kbuf);
+        return -EFAULT;
     }
-    fut_free(kbuf);
+    if (kbuf_on_heap) fut_free(kbuf);
     return (long)got;
 }
 

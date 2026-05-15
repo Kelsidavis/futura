@@ -217,7 +217,11 @@ static struct fut_file *get_file_from_task(fut_task_t *task, int fd) {
     if (!task || !task->fd_table || fd < 0 || fd >= task->max_fds) {
         return NULL;
     }
-    return task->fd_table[fd];
+    /* Acquire-load to pair with the CAS in alloc_fd_for_task /
+     * alloc_specific_fd_for_task / close_fd_in_task. On ARM64 the
+     * plain read could observe a stale or torn pointer between a
+     * concurrent open()/dup() install and the file's full init. */
+    return __atomic_load_n(&task->fd_table[fd], __ATOMIC_ACQUIRE);
 }
 
 /**
@@ -1765,7 +1769,9 @@ static struct fut_file *get_file(int fd) {
     if (fd >= MAX_OPEN_FILES) {
         return NULL;
     }
-    return file_table[fd];
+    /* Acquire-load to pair with the release-stores from alloc_fd /
+     * vfs_alloc_specific_fd / free_fd. */
+    return __atomic_load_n(&file_table[fd], __ATOMIC_ACQUIRE);
 }
 
 static void free_fd(int fd) {

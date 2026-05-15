@@ -19,6 +19,7 @@
 #include <sys/socket.h>  /* For struct msghdr, cmsghdr, socklen_t, SCM_* */
 #include <stddef.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 #include <kernel/kprintf.h>
 #include <kernel/debug_config.h>
@@ -420,15 +421,25 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
             return total_sent > 0 ? total_sent : -EFAULT;
         }
 
-        /* Allocate kernel buffer */
-        void *kbuf = fut_malloc(iov.iov_len);
-        if (!kbuf) {
-            return total_sent > 0 ? total_sent : -ENOMEM;
+        /* Bounce buffer: small segments use stack to avoid per-segment
+         * slab churn (most sendmsg() payloads are <2 KiB).
+         * Same pattern as 0e82afc1 for recvmsg. */
+        uint8_t stack_buf[2048];
+        void *kbuf;
+        bool kbuf_on_heap = false;
+        if (iov.iov_len <= sizeof(stack_buf)) {
+            kbuf = stack_buf;
+        } else {
+            kbuf = fut_malloc(iov.iov_len);
+            if (!kbuf) {
+                return total_sent > 0 ? total_sent : -ENOMEM;
+            }
+            kbuf_on_heap = true;
         }
 
         /* Copy from userspace */
         if (sendmsg_copy_from_user(kbuf, iov.iov_base, iov.iov_len) != 0) {
-            fut_free(kbuf);
+            if (kbuf_on_heap) fut_free(kbuf);
             return total_sent > 0 ? total_sent : -EFAULT;
         }
 
@@ -454,7 +465,7 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
             if (local_flags & MSG_DONTWAIT)
                 sm_task->msg_dontwait = 0;
         }
-        fut_free(kbuf);
+        if (kbuf_on_heap) fut_free(kbuf);
 
         if (ret < 0) {
             /* SIGPIPE on broken connection (unless MSG_NOSIGNAL) */

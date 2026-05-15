@@ -18,6 +18,7 @@
 #include <kernel/uaccess.h>
 #include <kernel/syscalls.h>
 #include <kernel/fut_vfs.h>
+#include <stdbool.h>
 #include <fcntl.h>
 #include <kernel/fut_memory.h>
 #include <kernel/chrdev.h>
@@ -533,19 +534,29 @@ long sys_vmsplice(int fd, const void *iov, size_t nr_segs, unsigned int flags) {
         if (seg.iov_len > MAX_IOV_LEN) return (total > 0) ? total : -EINVAL;
         if (!seg.iov_base) return (total > 0) ? total : -EFAULT;
 
-        /* Copy user data into a kernel buffer then write to pipe */
-        uint8_t *kbuf = (uint8_t *)fut_malloc(seg.iov_len);
-        if (!kbuf) return (total > 0) ? total : -ENOMEM;
+        /* Copy user data into a kernel buffer then write to pipe.
+         * Small segments use a stack buffer to avoid hammering the slab
+         * allocator on common shell/log-pipe patterns. */
+        uint8_t stack_kbuf[2048];
+        uint8_t *kbuf;
+        bool kbuf_on_heap = false;
+        if (seg.iov_len <= sizeof(stack_kbuf)) {
+            kbuf = stack_kbuf;
+        } else {
+            kbuf = (uint8_t *)fut_malloc(seg.iov_len);
+            if (!kbuf) return (total > 0) ? total : -ENOMEM;
+            kbuf_on_heap = true;
+        }
 
         if (splice_copy_from(kbuf, seg.iov_base, seg.iov_len) != 0) {
-            fut_free(kbuf);
+            if (kbuf_on_heap) fut_free(kbuf);
             return (total > 0) ? total : -EFAULT;
         }
 
         off_t pos = 0;
         ssize_t nwritten = file->chr_ops->write(file->chr_inode, file->chr_private,
                                                  kbuf, seg.iov_len, &pos);
-        fut_free(kbuf);
+        if (kbuf_on_heap) fut_free(kbuf);
 
         if (nwritten < 0) return (total > 0) ? total : (long)nwritten;
         total += nwritten;

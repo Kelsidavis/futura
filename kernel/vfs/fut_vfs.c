@@ -329,7 +329,8 @@ static __attribute__((unused)) void free_fd_in_task(fut_task_t *task, int fd) {
     if (!task || !task->fd_table || fd < 0 || fd >= task->max_fds) {
         return;
     }
-    task->fd_table[fd] = NULL;
+    /* Release-store to pair with get_file_from_task's acquire-load. */
+    __atomic_store_n(&task->fd_table[fd], NULL, __ATOMIC_RELEASE);
 }
 
 /**
@@ -2977,9 +2978,11 @@ int fut_vfs_close(int fd) {
     }
 
     /* Remove FD from task table first, then handle refcount.
-     * This prevents other threads from accessing the FD during cleanup. */
+     * This prevents other threads from accessing the FD during cleanup.
+     * Release-store pairs with the acquire-load in get_file_from_task
+     * so a concurrent reader on ARM64 reliably observes the NULL. */
     if (task->fd_table && fd >= 0 && fd < task->max_fds) {
-        task->fd_table[fd] = NULL;
+        __atomic_store_n(&task->fd_table[fd], NULL, __ATOMIC_RELEASE);
         /* Clear per-FD flags (FD_CLOEXEC) so stale flags don't leak to
          * a future FD reusing this slot.  alloc_fd_for_task() also clears
          * fd_flags on allocation, but clearing here is defense-in-depth. */

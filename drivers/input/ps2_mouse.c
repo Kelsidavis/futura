@@ -38,6 +38,36 @@ struct ps2_mouse_device {
 
 static struct ps2_mouse_device g_ps2_mouse = {0};
 
+/* Pipeline-stage atomic counters.  Bumped from IRQ + syscall contexts
+ * without locks; surfaced via ps2_mouse_get_stats() so the timer-tick
+ * heartbeat in ps2.c can print whichever stage stopped advancing.
+ *
+ * Walking from byte arrival to cursor pixel:
+ *   irq_bytes_recv    - bytes ps2_mouse_handle_byte received from ISR
+ *   irq_bytes_dropped - bytes rejected by the bit-3 sync check
+ *   irq_packets       - 3-byte packets fully assembled
+ *   irq_events_pushed - events pushed into the input queue
+ *   reads_serviced    - successful ps2_mouse_read syscalls (compositor)
+ *   opens             - times /dev/input/mouse0 was opened
+ */
+static uint32_t g_stat_bytes_recv;
+static uint32_t g_stat_bytes_dropped;
+static uint32_t g_stat_packets;
+static uint32_t g_stat_events_pushed;
+static uint32_t g_stat_reads_serviced;
+static uint32_t g_stat_opens;
+
+void ps2_mouse_get_stats(uint32_t *bytes_recv, uint32_t *bytes_dropped,
+                         uint32_t *packets, uint32_t *events_pushed,
+                         uint32_t *reads_serviced, uint32_t *opens) {
+    if (bytes_recv)     *bytes_recv     = __atomic_load_n(&g_stat_bytes_recv,     __ATOMIC_RELAXED);
+    if (bytes_dropped)  *bytes_dropped  = __atomic_load_n(&g_stat_bytes_dropped,  __ATOMIC_RELAXED);
+    if (packets)        *packets        = __atomic_load_n(&g_stat_packets,        __ATOMIC_RELAXED);
+    if (events_pushed)  *events_pushed  = __atomic_load_n(&g_stat_events_pushed,  __ATOMIC_RELAXED);
+    if (reads_serviced) *reads_serviced = __atomic_load_n(&g_stat_reads_serviced, __ATOMIC_RELAXED);
+    if (opens)          *opens          = __atomic_load_n(&g_stat_opens,          __ATOMIC_RELAXED);
+}
+
 static void emit_move_event(struct ps2_mouse_device *dev, int rel_x, int rel_y) {
     if (!rel_x && !rel_y) {
         return;
@@ -50,6 +80,7 @@ static void emit_move_event(struct ps2_mouse_device *dev, int rel_x, int rel_y) 
             .value = rel_x,
         };
         fut_input_queue_push(&dev->queue, &ev);
+        __atomic_add_fetch(&g_stat_events_pushed, 1, __ATOMIC_RELAXED);
     }
     if (rel_y) {
         struct fut_input_event ev = {
@@ -59,6 +90,7 @@ static void emit_move_event(struct ps2_mouse_device *dev, int rel_x, int rel_y) 
             .value = rel_y,
         };
         fut_input_queue_push(&dev->queue, &ev);
+        __atomic_add_fetch(&g_stat_events_pushed, 1, __ATOMIC_RELAXED);
     }
 }
 
@@ -70,6 +102,7 @@ static void emit_button_event(struct ps2_mouse_device *dev, uint16_t code, bool 
         .value = pressed ? 1 : 0,
     };
     fut_input_queue_push(&dev->queue, &ev);
+    __atomic_add_fetch(&g_stat_events_pushed, 1, __ATOMIC_RELAXED);
 }
 
 /* Allow VirtIO input driver to inject events into the PS/2 mouse queue.
@@ -85,9 +118,11 @@ void ps2_mouse_handle_byte(uint8_t data) {
     if (!dev->active) {
         return;
     }
+    __atomic_add_fetch(&g_stat_bytes_recv, 1, __ATOMIC_RELAXED);
 
     /* Synchronize packets: the first byte always has bit 3 set. */
     if (dev->index == 0 && (data & 0x08u) == 0) {
+        __atomic_add_fetch(&g_stat_bytes_dropped, 1, __ATOMIC_RELAXED);
         INPUT_MDBG("dropping out-of-sync byte 0x%02x\n", data);
         return;
     }
@@ -97,6 +132,7 @@ void ps2_mouse_handle_byte(uint8_t data) {
         return;
     }
     dev->index = 0;
+    __atomic_add_fetch(&g_stat_packets, 1, __ATOMIC_RELAXED);
 
     uint8_t status = dev->packet[0];
     int rel_x = (int8_t)dev->packet[1];
@@ -129,6 +165,7 @@ static int ps2_mouse_open(void *inode, int flags, void **priv) {
     file->dev = &g_ps2_mouse;
     file->flags = flags;
     g_ps2_mouse.open_count++;
+    __atomic_add_fetch(&g_stat_opens, 1, __ATOMIC_RELAXED);
     if (priv) {
         *priv = file;
     }
@@ -155,7 +192,11 @@ static ssize_t ps2_mouse_read(void *inode, void *priv, void *u_buf, size_t n, of
     if (!file || !file->dev) {
         return -ENODEV;
     }
-    return fut_input_queue_read(&file->dev->queue, file->flags, u_buf, n);
+    ssize_t rc = fut_input_queue_read(&file->dev->queue, file->flags, u_buf, n);
+    if (rc > 0) {
+        __atomic_add_fetch(&g_stat_reads_serviced, 1, __ATOMIC_RELAXED);
+    }
+    return rc;
 }
 
 static bool ps2_mouse_poll(void *inode, void *priv, uint32_t req, uint32_t *ready) {

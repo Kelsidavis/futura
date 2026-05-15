@@ -65,7 +65,11 @@ static inline bool ps2_irq_log_threshold(uint32_t c) {
 
 /* Called from fut_timer_tick (weak link) at 100 Hz.  Picks up any
  * threshold crossings since the last tick and prints them safely in
- * thread/interrupt-context-without-CLI. */
+ * thread/interrupt-context-without-CLI.  Also dumps the full mouse
+ * pipeline-stage counters when IRQ12 crosses a threshold, so a
+ * stuck pipeline (bytes in, no packets / packets but no reads /
+ * etc.) is visible while the desktop is running and the framebuffer
+ * console is still mirroring kernel output. */
 void ps2_irq_stats_poll(void) {
     uint32_t c1 = __atomic_load_n(&g_ps2_irq1_count, __ATOMIC_RELAXED);
     if (c1 != g_ps2_irq1_last_logged && ps2_irq_log_threshold(c1)) {
@@ -74,7 +78,15 @@ void ps2_irq_stats_poll(void) {
     }
     uint32_t c12 = __atomic_load_n(&g_ps2_irq12_count, __ATOMIC_RELAXED);
     if (c12 != g_ps2_irq12_last_logged && ps2_irq_log_threshold(c12)) {
-        fut_printf("[PS2] IRQ12 count=%u\n", c12);
+        extern void ps2_mouse_get_stats(uint32_t *, uint32_t *, uint32_t *,
+                                        uint32_t *, uint32_t *, uint32_t *)
+            __attribute__((weak));
+        uint32_t bytes = 0, dropped = 0, packets = 0, pushed = 0, reads = 0, opens = 0;
+        if (ps2_mouse_get_stats) {
+            ps2_mouse_get_stats(&bytes, &dropped, &packets, &pushed, &reads, &opens);
+        }
+        fut_printf("[PS2] IRQ12=%u  bytes=%u  drop_sync=%u  pkts=%u  pushed=%u  reads=%u  opens=%u\n",
+                   c12, bytes, dropped, packets, pushed, reads, opens);
         g_ps2_irq12_last_logged = c12;
     }
 }

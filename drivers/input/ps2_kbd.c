@@ -92,6 +92,21 @@ void ps2_kbd_handle_byte(uint8_t data) {
     dev->extended = false;
     bool released = (data & 0x80u) != 0;
     uint8_t code = data & 0x7Fu;
+
+    /* Emergency reset trigger: F12 press, non-extended, scan code 0x58.
+     * Used to capture the klog ring across a hang when the compositor
+     * has stopped rendering but the kernel IRQ path is still alive.
+     * acpi_reboot() drives the i8042 0xFE controller reset which most
+     * BIOSes treat as a warm reset (DRAM preserved), so klog_persist
+     * on the next boot replays the previous session's full log. */
+    if (!released && !extended && code == 0x58u) {
+        fut_printf("\n[EMERGENCY] F12 pressed -- triggering warm reset (klog will replay on next boot)\n");
+        extern void acpi_reboot(void);
+        acpi_reboot();
+        /* acpi_reboot doesn't return; loop in case it ever does. */
+        for (;;) { __asm__ volatile("hlt"); }
+    }
+
     uint16_t keycode = translate_scancode(code, extended);
     INPUT_KDBG("scancode=0x%02X keycode=%u %s\n", code, keycode, released ? "release" : "press");
     emit_key_event(dev, keycode, !released);

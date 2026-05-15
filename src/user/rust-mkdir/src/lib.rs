@@ -29,6 +29,7 @@ mod sysn {
     pub const MKDIR: u64 = 83;
 }
 
+#[cfg(target_arch = "aarch64")]
 const AT_FDCWD: i64 = -100;
 const STDOUT: i32 = 1;
 const STDERR: i32 = 2;

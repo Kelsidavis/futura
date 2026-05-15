@@ -707,7 +707,17 @@ int fut_socket_listen(fut_socket_t *socket, int backlog) {
     }
     fut_waitq_init(listener->accept_waitq);
 
-    socket->listener = listener;
+    /* Atomically install the listener. Two concurrent listen() calls on the
+     * same socket would otherwise both pass the upfront !socket->listener
+     * check, both allocate, and the second would overwrite the first —
+     * leaking the loser's listener + accept_waitq. */
+    fut_socket_listener_t *expected = NULL;
+    if (!__atomic_compare_exchange_n(&socket->listener, &expected, listener,
+                                     false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        fut_free(listener->accept_waitq);
+        fut_free(listener);
+        return -EINVAL;
+    }
     socket->state = FUT_SOCK_LISTENING;
     socket->tcp_state = TCP_LISTEN;
     SOCKET_LOG("[SOCKET] Socket %u now listening (backlog=%d)\n",

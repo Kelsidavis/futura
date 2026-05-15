@@ -1141,6 +1141,15 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
         return -EINVAL;
     }
 
+    /* Reject lengths that would overflow the uint32_t framing header
+     * (4-byte little-endian) below. Without this cap, a user-provided
+     * len > UINT32_MAX truncates when cast to uint32_t (line 1340),
+     * desyncing the framing — the header advertises a small message
+     * while the writer copies the full size_t bytes into the ring. */
+    if (len > 0xFFFFFFFFu) {
+        return -EMSGSIZE;
+    }
+
     /* Wait for connection to complete if socket is still connecting */
     if (socket->state == FUT_SOCK_CONNECTING) {
         if (socket_nonblock(socket)) {

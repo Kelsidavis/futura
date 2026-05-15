@@ -22,6 +22,7 @@
 #include <kernel/fut_timer.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 #include <kernel/kprintf.h>
 
@@ -493,18 +494,28 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
         return -EAGAIN;
     }
 
-    /* Allocate kernel buffer */
-    void *kbuf = fut_malloc(local_len);
-    if (!kbuf) {
-        fut_printf("[SENDTO] sendto(sockfd=%d [%s], len=%zu [%s], pid=%u) -> ENOMEM "
-                   "(kernel buffer allocation failed)\n",
-                   local_sockfd, fd_category, local_len, size_category, task->pid);
-        return -ENOMEM;
+    /* Kernel buffer: small messages use a stack buffer to avoid
+     * hammering the slab allocator. Larger sends still fall back to
+     * fut_malloc. Same pattern as 3730f997 / 8e412f00 / e2bd8bcf. */
+    uint8_t stack_buf[2048];
+    void *kbuf;
+    bool kbuf_on_heap = false;
+    if (local_len <= sizeof(stack_buf)) {
+        kbuf = stack_buf;
+    } else {
+        kbuf = fut_malloc(local_len);
+        if (!kbuf) {
+            fut_printf("[SENDTO] sendto(sockfd=%d [%s], len=%zu [%s], pid=%u) -> ENOMEM "
+                       "(kernel buffer allocation failed)\n",
+                       local_sockfd, fd_category, local_len, size_category, task->pid);
+            return -ENOMEM;
+        }
+        kbuf_on_heap = true;
     }
 
     /* Copy from userspace */
     if (sendto_copy_from_user(kbuf, local_buf, local_len) != 0) {
-        fut_free(kbuf);
+        if (kbuf_on_heap) fut_free(kbuf);
         fut_printf("[SENDTO] sendto(sockfd=%d [%s], len=%zu [%s], pid=%u) -> EFAULT "
                    "(copy_from_user failed)\n",
                    local_sockfd, fd_category, local_len, size_category, task->pid);
@@ -520,7 +531,7 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
                                                const void *iov_base, size_t iov_len,
                                                ssize_t total_len);
             ssize_t r = netlink_handle_send(nl_sock, kbuf, local_len, (ssize_t)local_len);
-            fut_free(kbuf);
+            if (kbuf_on_heap) fut_free(kbuf);
             return r;
         }
     }
@@ -533,7 +544,7 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
             (raw_sock->address_family == AF_INET || raw_sock->address_family == AF_INET6)) {
             struct { uint16_t sin_family; uint16_t sin_port; uint32_t sin_addr; } sin;
             if (sendto_copy_from_user(&sin, local_dest_addr, 8) != 0) {
-                fut_free(kbuf);
+                if (kbuf_on_heap) fut_free(kbuf);
                 return -EFAULT;
             }
 
@@ -547,10 +558,10 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
                     const void *data, size_t data_len);
                 ssize_t ret = fut_socket_sendto_inet_raw(
                     sin.sin_addr, raw_sock->protocol, kbuf, local_len);
-                fut_free(kbuf);
+                if (kbuf_on_heap) fut_free(kbuf);
                 return ret;
             }
-            fut_free(kbuf);
+            if (kbuf_on_heap) fut_free(kbuf);
             return -ENETUNREACH;
         }
     }
@@ -562,7 +573,7 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
         if (src_sock && src_sock->socket_type == 2 /* SOCK_DGRAM */) {
             /* Enforce shutdown(SHUT_WR) on DGRAM sockets */
             if (src_sock->shutdown_wr) {
-                fut_free(kbuf);
+                if (kbuf_on_heap) fut_free(kbuf);
                 if (!(local_flags & 0x4000 /* MSG_NOSIGNAL */)) {
                     fut_task_t *t = fut_task_current();
                     if (t) fut_signal_send(t, 13 /* SIGPIPE */);
@@ -576,15 +587,15 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
             } dest_sun;
             size_t copy_sz = local_addrlen < sizeof(dest_sun) ? local_addrlen : sizeof(dest_sun);
             if (sendto_copy_from_user(&dest_sun, local_dest_addr, copy_sz) != 0) {
-                fut_free(kbuf);
+                if (kbuf_on_heap) fut_free(kbuf);
                 return -EFAULT;
             }
             if (dest_sun.sun_family == 2 /* AF_INET */) {
                 /* AF_INET DGRAM: route to locally bound AF_INET socket */
-                if (local_addrlen < 8) { fut_free(kbuf); return -EINVAL; }
+                if (local_addrlen < 8) { if (kbuf_on_heap) fut_free(kbuf); return -EINVAL; }
                 struct { uint16_t sin_family; uint16_t sin_port; uint32_t sin_addr; } sin;
                 if (sendto_copy_from_user(&sin, local_dest_addr, 8) != 0) {
-                    fut_free(kbuf);
+                    if (kbuf_on_heap) fut_free(kbuf);
                     return -EFAULT;
                 }
                 /* SO_BROADCAST enforcement: reject broadcast destination address
@@ -595,7 +606,7 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
                  * caught by checking the host-order all-ones pattern. */
                 if (sin.sin_addr == 0xFFFFFFFFU &&
                     !(src_sock->so_flags & FUT_SO_F_BROADCAST)) {
-                    fut_free(kbuf);
+                    if (kbuf_on_heap) fut_free(kbuf);
                     return -EACCES;
                 }
                 /* Set TTL/TOS overrides from socket options for this send */
@@ -611,15 +622,15 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
                     sin.sin_addr, sin.sin_port,
                     src_sock->inet_addr, src_sock->inet_port,
                     kbuf, local_len);
-                fut_free(kbuf);
+                if (kbuf_on_heap) fut_free(kbuf);
                 return ret;
             }
             if (dest_sun.sun_family == 10 /* AF_INET6 */) {
-                fut_free(kbuf);
+                if (kbuf_on_heap) fut_free(kbuf);
                 return -ENETUNREACH;
             }
             if (dest_sun.sun_family != 1 /* AF_UNIX */) {
-                fut_free(kbuf);
+                if (kbuf_on_heap) fut_free(kbuf);
                 return -EAFNOSUPPORT;
             }
             /* Compute dest path length: abstract sockets use full addrlen - 2 */
@@ -633,7 +644,7 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
                 dest_path_len = i;
             }
             if (dest_path_len == 0) {
-                fut_free(kbuf);
+                if (kbuf_on_heap) fut_free(kbuf);
                 return -EINVAL;
             }
 
@@ -648,7 +659,7 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
             ssize_t ret = fut_socket_sendto_dgram(dest_sun.sun_path, dest_path_len,
                                                   sender_path, sender_path_len,
                                                   kbuf, local_len);
-            fut_free(kbuf);
+            if (kbuf_on_heap) fut_free(kbuf);
             return ret;
         }
     }
@@ -662,7 +673,7 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
              * which handles framed send via the pair's circular buffer). */
             /* Enforce shutdown(SHUT_WR) on DGRAM sockets */
             if (dgsock->shutdown_wr) {
-                fut_free(kbuf);
+                if (kbuf_on_heap) fut_free(kbuf);
                 if (!(local_flags & 0x4000 /* MSG_NOSIGNAL */)) {
                     fut_task_t *t = fut_task_current();
                     if (t) fut_signal_send(t, 13 /* SIGPIPE */);
@@ -680,7 +691,7 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
                     /* SO_BROADCAST enforcement for connected DGRAM */
                     if (peer_addr == 0xFFFFFFFFU &&
                         !(dgsock->so_flags & FUT_SO_F_BROADCAST)) {
-                        fut_free(kbuf);
+                        if (kbuf_on_heap) fut_free(kbuf);
                         return -EACCES;
                     }
                     if (dgsock->ip_ttl > 0 && dgsock->ip_ttl != 64) {
@@ -695,7 +706,7 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
                         peer_addr, peer_port,
                         dgsock->inet_addr, dgsock->inet_port,
                         kbuf, local_len);
-                    fut_free(kbuf);
+                    if (kbuf_on_heap) fut_free(kbuf);
                     return ret;
                 }
                 const char *sender_path = "";
@@ -708,11 +719,11 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
                                                       dgsock->dgram_peer_path_len,
                                                       sender_path, sender_path_len,
                                                       kbuf, local_len);
-                fut_free(kbuf);
+                if (kbuf_on_heap) fut_free(kbuf);
                 return ret;
             } else {
                 /* Unconnected DGRAM, no dest: EDESTADDRREQ */
-                fut_free(kbuf);
+                if (kbuf_on_heap) fut_free(kbuf);
                 return -EDESTADDRREQ;
             }
         }
@@ -731,7 +742,7 @@ ssize_t sys_sendto(int sockfd, const void *buf, size_t len, int flags,
 
     /* Write to socket via VFS */
     ssize_t ret = fut_vfs_write(local_sockfd, kbuf, local_len);
-    fut_free(kbuf);
+    if (kbuf_on_heap) fut_free(kbuf);
 
     task->suppress_sigpipe = 0;
 

@@ -199,19 +199,24 @@ long sys_semget(long key, int nsems, int semflg) {
     if (nsems == 0)
         return -EINVAL;
 
+    /* Atomically claim a free semaphore-set slot. Two concurrent
+     * semget(IPC_CREAT) callers would otherwise both find the same .used==0
+     * entry and clobber each other's id/key/nsems. See
+     * project_slot_claim_pattern.md. */
     for (int i = 0; i < SEMMNI; i++) {
-        if (!semtable[i].used) {
-            semtable[i].used  = 1;
-            semtable[i].key   = key;
-            semtable[i].id    = sem_next_id++;
-            semtable[i].nsems = nsems;
-            semtable[i].mode  = (unsigned int)(semflg & 0777);
-            __builtin_memset(semtable[i].sems, 0,
-                             (size_t)nsems * sizeof(struct sem_entry));
-            fut_spinlock_init(&semtable[i].lock);
-            fut_waitq_init(&semtable[i].waitq);
-            return semtable[i].id;
-        }
+        int expected = 0;
+        if (!__atomic_compare_exchange_n(&semtable[i].used, &expected, 1,
+                                         false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+            continue;
+        semtable[i].key   = key;
+        semtable[i].id    = __atomic_fetch_add(&sem_next_id, 1, __ATOMIC_ACQ_REL);
+        semtable[i].nsems = nsems;
+        semtable[i].mode  = (unsigned int)(semflg & 0777);
+        __builtin_memset(semtable[i].sems, 0,
+                         (size_t)nsems * sizeof(struct sem_entry));
+        fut_spinlock_init(&semtable[i].lock);
+        fut_waitq_init(&semtable[i].waitq);
+        return semtable[i].id;
     }
     return -ENOSPC;
 }

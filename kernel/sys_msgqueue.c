@@ -157,19 +157,22 @@ long sys_msgget(long key, int msgflg) {
             return -ENOENT;
     }
 
-    /* Create new queue */
+    /* Atomically claim a free queue slot. Two concurrent msgget(IPC_CREAT)
+     * calls would otherwise both find the same .used==0 slot and clobber
+     * each other's id/key/mode. See project_slot_claim_pattern.md. */
     for (int i = 0; i < MSGMNI; i++) {
-        if (!mqtable[i].used) {
-            mqtable[i].used   = 1;
-            mqtable[i].key    = key;
-            mqtable[i].id     = mq_next_id++;
-            mqtable[i].mode   = (unsigned int)(msgflg & 0777);
-            mqtable[i].qbytes = 0;
-            mqtable[i].qnum   = 0;
-            mqtable[i].head   = NULL;
-            mqtable[i].tail   = NULL;
-            return mqtable[i].id;
-        }
+        int expected = 0;
+        if (!__atomic_compare_exchange_n(&mqtable[i].used, &expected, 1,
+                                         false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+            continue;
+        mqtable[i].key    = key;
+        mqtable[i].id     = __atomic_fetch_add(&mq_next_id, 1, __ATOMIC_ACQ_REL);
+        mqtable[i].mode   = (unsigned int)(msgflg & 0777);
+        mqtable[i].qbytes = 0;
+        mqtable[i].qnum   = 0;
+        mqtable[i].head   = NULL;
+        mqtable[i].tail   = NULL;
+        return mqtable[i].id;
     }
     return -ENOSPC;
 }

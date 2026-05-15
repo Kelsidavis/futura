@@ -178,14 +178,17 @@ long sys_io_setup(unsigned int nr_events, void *ctxp) {
             return -EINVAL;
     }
 
-    /* Find a free context slot */
+    /* Atomically claim a free context slot. Two concurrent io_setup
+     * callers would otherwise race the !active check then both write
+     * over the same aio_contexts[] entry. See
+     * project_slot_claim_pattern.md. */
     struct aio_context *ctx = NULL;
     unsigned long ctx_id = 0;
     for (int i = 0; i < MAX_AIO_CONTEXTS; i++) {
-        if (!aio_contexts[i].active) {
+        bool expected = false;
+        if (__atomic_compare_exchange_n(&aio_contexts[i].active, &expected, true,
+                                        false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
             ctx = &aio_contexts[i];
-            /* Context IDs start at 1 (0 = invalid) and are offset by 0x10000
-             * to avoid confusion with small integers or pointers */
             ctx_id = (unsigned long)(0x10000 + i);
             break;
         }
@@ -193,8 +196,11 @@ long sys_io_setup(unsigned int nr_events, void *ctxp) {
     if (!ctx)
         return -EAGAIN;  /* Too many contexts */
 
+    /* Zero the rest of the struct without re-clearing the active flag we
+     * just claimed; otherwise the slot becomes reclaimable mid-init. */
+    bool active_save = ctx->active;
     memset(ctx, 0, sizeof(*ctx));
-    ctx->active = true;
+    ctx->active = active_save;
     ctx->owner_pid = fut_task_current() ? fut_task_current()->pid : 0;
     ctx->max_events = nr_events < MAX_AIO_EVENTS ? nr_events : MAX_AIO_EVENTS;
     ctx->event_head = 0;
@@ -1091,10 +1097,15 @@ long sys_io_uring_setup(unsigned int entries, void *params) {
         if (cq_entries < sq_entries) return -EINVAL;
     }
 
-    /* Find free slot */
+    /* Atomically claim a free uring slot. Concurrent io_uring_setup
+     * callers would otherwise both see the same .active==false entry and
+     * one would overwrite the other's sqes/cqes pointers, leaking the
+     * loser's allocations. See project_slot_claim_pattern.md. */
     struct io_uring_ctx *ctx = NULL;
     for (int i = 0; i < MAX_URING_INSTANCES; i++) {
-        if (!uring_instances[i].active) {
+        bool expected = false;
+        if (__atomic_compare_exchange_n(&uring_instances[i].active, &expected, true,
+                                        false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
             ctx = &uring_instances[i];
             break;
         }
@@ -1103,15 +1114,16 @@ long sys_io_uring_setup(unsigned int entries, void *params) {
 
     /* Allocate SQ entries */
     extern void *fut_malloc(size_t);
+    extern void fut_free(void *);
     ctx->sqes = (struct io_uring_sqe *)fut_malloc(sq_entries * sizeof(struct io_uring_sqe));
-    if (!ctx->sqes) return -ENOMEM;
+    if (!ctx->sqes) { ctx->active = false; return -ENOMEM; }
     memset(ctx->sqes, 0, sq_entries * sizeof(struct io_uring_sqe));
 
     ctx->sq_array = (uint32_t *)fut_malloc(sq_entries * sizeof(uint32_t));
     if (!ctx->sq_array) {
-        extern void fut_free(void *);
         fut_free(ctx->sqes);
         ctx->sqes = NULL;
+        ctx->active = false;
         return -ENOMEM;
     }
     for (uint32_t i = 0; i < sq_entries; i++)
@@ -1120,11 +1132,11 @@ long sys_io_uring_setup(unsigned int entries, void *params) {
     /* Allocate CQ entries */
     ctx->cqes = (struct io_uring_cqe *)fut_malloc(cq_entries * sizeof(struct io_uring_cqe));
     if (!ctx->cqes) {
-        extern void fut_free(void *);
         fut_free(ctx->sqes);
         fut_free(ctx->sq_array);
         ctx->sqes = NULL;
         ctx->sq_array = NULL;
+        ctx->active = false;
         return -ENOMEM;
     }
     memset(ctx->cqes, 0, cq_entries * sizeof(struct io_uring_cqe));
@@ -1146,12 +1158,11 @@ long sys_io_uring_setup(unsigned int entries, void *params) {
 
     fut_task_t *task = fut_task_current();
     ctx->owner_pid = task ? task->pid : 0;
-    ctx->active = true;
+    /* active was set by the CAS above; no second store needed. */
 
     /* Allocate fd in task's fd_table */
     int fd = chrdev_alloc_fd(&uring_fops, NULL, ctx);
     if (fd < 0) {
-        extern void fut_free(void *);
         fut_free(ctx->sqes);
         fut_free(ctx->sq_array);
         fut_free(ctx->cqes);

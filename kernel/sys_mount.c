@@ -877,6 +877,21 @@ static struct fs_context *fsctx_find_fd(int fd) {
     return NULL;
 }
 
+/* Atomically claim a free fs_context slot. Returns NULL if the table is
+ * full. The previous scan-then-set pattern in open_tree / fsopen / fsmount
+ * / fspick let two concurrent callers observe the same slot as inactive
+ * and one overwrite the other's freshly-initialised context. */
+static struct fs_context *fsctx_claim_slot(void) {
+    for (int i = 0; i < MAX_FS_CONTEXTS; i++) {
+        bool expected = false;
+        if (__atomic_compare_exchange_n(&fs_contexts[i].active, &expected, true,
+                                        false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+            return &fs_contexts[i];
+        }
+    }
+    return NULL;
+}
+
 static int fsctx_release(void *inode, void *priv) {
     (void)inode;
     struct fs_context *ctx = (struct fs_context *)priv;
@@ -995,14 +1010,14 @@ long sys_open_tree(int dirfd, const char *pathname, unsigned int flags) {
     }
 
     /* Allocate a context that represents the mount point */
-    struct fs_context *ctx = NULL;
-    for (int i = 0; i < MAX_FS_CONTEXTS; i++) {
-        if (!fs_contexts[i].active) { ctx = &fs_contexts[i]; break; }
-    }
+    struct fs_context *ctx = fsctx_claim_slot();
     if (!ctx) return -ENOMEM;
 
+    /* Slot is already active=true from the CAS. Zero the rest of the
+     * struct without touching active, then set the per-call fields. */
+    bool was_active = ctx->active;
     memset(ctx, 0, sizeof(*ctx));
-    ctx->active = true;
+    ctx->active = was_active;
     ctx->created = true; /* Already mounted — just a reference */
     {
         int i = 0;
@@ -1180,14 +1195,12 @@ long sys_fsopen(const char *fsname, unsigned int flags) {
         k_fstype[MAX_FS_NAME - 1] = '\0';
     }
 
-    struct fs_context *ctx = NULL;
-    for (int i = 0; i < MAX_FS_CONTEXTS; i++) {
-        if (!fs_contexts[i].active) { ctx = &fs_contexts[i]; break; }
-    }
+    struct fs_context *ctx = fsctx_claim_slot();
     if (!ctx) return -ENOMEM;
 
+    bool was_active = ctx->active;
     memset(ctx, 0, sizeof(*ctx));
-    ctx->active = true;
+    ctx->active = was_active;
     {
         int i = 0;
         while (k_fstype[i] && i < MAX_FS_NAME - 1) { ctx->fstype[i] = k_fstype[i]; i++; }
@@ -1386,13 +1399,11 @@ long sys_fsmount(int fs_fd, unsigned int flags, unsigned int attr_flags) {
 
     /* Allocate a new "mount fd" — this is the detached mount.
      * The actual VFS mount happens when move_mount() is called. */
-    struct fs_context *mnt_ctx = NULL;
-    for (int i = 0; i < MAX_FS_CONTEXTS; i++) {
-        if (!fs_contexts[i].active) { mnt_ctx = &fs_contexts[i]; break; }
-    }
+    struct fs_context *mnt_ctx = fsctx_claim_slot();
     if (!mnt_ctx) return -ENOMEM;
 
-    /* Copy the configuration to the mount context */
+    /* Copy the configuration to the mount context. memcpy from ctx would
+     * overwrite the active flag we just claimed; restore it afterwards. */
     memcpy(mnt_ctx, ctx, sizeof(*ctx));
     mnt_ctx->active = true;
 
@@ -1473,14 +1484,12 @@ long sys_fspick(int dirfd, const char *pathname, unsigned int flags) {
         target_buf[sizeof(target_buf) - 1] = '\0';
     }
 
-    struct fs_context *ctx = NULL;
-    for (int i = 0; i < MAX_FS_CONTEXTS; i++) {
-        if (!fs_contexts[i].active) { ctx = &fs_contexts[i]; break; }
-    }
+    struct fs_context *ctx = fsctx_claim_slot();
     if (!ctx) return -ENOMEM;
 
+    bool was_active = ctx->active;
     memset(ctx, 0, sizeof(*ctx));
-    ctx->active = true;
+    ctx->active = was_active;
     ctx->is_reconfigure = true;
     ctx->created = true;
     {

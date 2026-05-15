@@ -391,6 +391,13 @@ void fut_timer_tick(void) {
         if (ps2_mouse_drain_deferred_wake) {
             ps2_mouse_drain_deferred_wake();
         }
+        /* Surface PS/2 IRQ counters from outside ISR context — printing
+         * from the ISR walks the framebuffer with CLI held and locks
+         * the box under sustained mouse motion. */
+        extern void ps2_irq_stats_poll(void) __attribute__((weak));
+        if (ps2_irq_stats_poll) {
+            ps2_irq_stats_poll();
+        }
     }
 #endif
 

@@ -44,17 +44,37 @@ static bool g_ps2_keyboard_enabled = false;
 static bool g_ps2_mouse_enabled = false;
 static bool g_ps2_ready = false;
 
-/* IRQ heartbeat counters — visible from the boot log so a bare-metal
- * tester can tell whether the IRQ line is firing at all without
- * needing a debugger.  Updated unconditionally; printed on the first
- * arrival and then on power-of-two boundaries to bound log spam. */
+/* IRQ counters — incremented from the ISRs without printing, then
+ * read by ps2_irq_stats_poll() at timer-tick context for the boot-log
+ * heartbeat.  Printing from inside the ISR is unsafe on HEADFUL
+ * builds: fut_printf -> fb_console_putc walks the framebuffer, which
+ * is tens of milliseconds of pixel work with interrupts disabled, and
+ * sustained mouse IRQs pile up faster than each one drains → timer
+ * IRQs starve → clock stops → whole machine locks.  Counters alone
+ * are atomic and cheap. */
 static uint32_t g_ps2_irq1_count = 0;
 static uint32_t g_ps2_irq12_count = 0;
+static uint32_t g_ps2_irq1_last_logged = 0;
+static uint32_t g_ps2_irq12_last_logged = 0;
 
-static void ps2_irq_heartbeat(uint32_t *counter, uint8_t irq) {
-    uint32_t c = ++(*counter);
-    if (c == 1 || c == 4 || c == 16 || c == 64 || c == 256 || c == 1024) {
-        fut_printf("[PS2] IRQ%u count=%u\n", irq, c);
+static inline bool ps2_irq_log_threshold(uint32_t c) {
+    return c == 1 || c == 4 || c == 16 || c == 64 || c == 256 || c == 1024 ||
+           c == 4096 || c == 16384;
+}
+
+/* Called from fut_timer_tick (weak link) at 100 Hz.  Picks up any
+ * threshold crossings since the last tick and prints them safely in
+ * thread/interrupt-context-without-CLI. */
+void ps2_irq_stats_poll(void) {
+    uint32_t c1 = __atomic_load_n(&g_ps2_irq1_count, __ATOMIC_RELAXED);
+    if (c1 != g_ps2_irq1_last_logged && ps2_irq_log_threshold(c1)) {
+        fut_printf("[PS2] IRQ1 count=%u\n", c1);
+        g_ps2_irq1_last_logged = c1;
+    }
+    uint32_t c12 = __atomic_load_n(&g_ps2_irq12_count, __ATOMIC_RELAXED);
+    if (c12 != g_ps2_irq12_last_logged && ps2_irq_log_threshold(c12)) {
+        fut_printf("[PS2] IRQ12 count=%u\n", c12);
+        g_ps2_irq12_last_logged = c12;
     }
 }
 
@@ -121,7 +141,7 @@ void ps2_irq_keyboard(void) {
         return;
     }
 
-    ps2_irq_heartbeat(&g_ps2_irq1_count, 1);
+    __atomic_add_fetch(&g_ps2_irq1_count, 1, __ATOMIC_RELAXED);
     for (;;) {
         uint8_t status = hal_inb(PS2_STATUS_PORT);
         if ((status & 0x01u) == 0) {
@@ -151,7 +171,7 @@ void ps2_irq_mouse(void) {
         return;
     }
 
-    ps2_irq_heartbeat(&g_ps2_irq12_count, 12);
+    __atomic_add_fetch(&g_ps2_irq12_count, 1, __ATOMIC_RELAXED);
     for (;;) {
         uint8_t status = hal_inb(PS2_STATUS_PORT);
         if ((status & 0x01u) == 0) {

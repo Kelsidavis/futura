@@ -325,30 +325,44 @@ long uffd_ioctl(int fd, unsigned int cmd, unsigned long arg) {
             return -EINVAL;
         if (kreg.mode == 0) return -EINVAL;
 
-        /* Find free region slot */
+        /* Atomically claim a free region slot. Two concurrent UFFDIO_REGISTER
+         * ioctls on the same uffd context could previously both observe the
+         * same slot as inactive and one would clobber the other's range.
+         * Match the slot-claim pattern documented in
+         * project_slot_claim_pattern.md. */
         if (ctx->nr_regions >= MAX_UFFD_REGIONS) return -ENOMEM;
+        int claimed = -1;
         for (int i = 0; i < MAX_UFFD_REGIONS; i++) {
-            if (ctx->regions[i].active) continue;
-            ctx->regions[i].active = true;
-            ctx->regions[i].start = kreg.range.start;
-            ctx->regions[i].len = kreg.range.len;
-            ctx->regions[i].mode = kreg.mode;
-            ctx->nr_regions++;
-
-            /* Report available per-region ioctls.  Commit through
-             * copy_to_user — never write the response field directly. */
-            kreg.ioctls = (1ULL << 3) | (1ULL << 4) | (1ULL << 6);
-#ifdef KERNEL_VIRTUAL_BASE
-            if (arg >= KERNEL_VIRTUAL_BASE) {
-                __builtin_memcpy((void *)(uintptr_t)arg, &kreg, sizeof(kreg));
-            } else
-#endif
-            if (fut_copy_to_user((void *)(uintptr_t)arg, &kreg,
-                                 sizeof(kreg)) != 0)
-                return -EFAULT;
-            return 0;
+            bool expected = false;
+            if (__atomic_compare_exchange_n(&ctx->regions[i].active, &expected, true,
+                                            false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+                claimed = i;
+                break;
+            }
         }
-        return -ENOMEM;
+        if (claimed < 0) return -ENOMEM;
+        ctx->regions[claimed].start = kreg.range.start;
+        ctx->regions[claimed].len = kreg.range.len;
+        ctx->regions[claimed].mode = kreg.mode;
+        __atomic_add_fetch(&ctx->nr_regions, 1, __ATOMIC_ACQ_REL);
+
+        /* Report available per-region ioctls.  Commit through
+         * copy_to_user — never write the response field directly. */
+        kreg.ioctls = (1ULL << 3) | (1ULL << 4) | (1ULL << 6);
+#ifdef KERNEL_VIRTUAL_BASE
+        if (arg >= KERNEL_VIRTUAL_BASE) {
+            __builtin_memcpy((void *)(uintptr_t)arg, &kreg, sizeof(kreg));
+        } else
+#endif
+        if (fut_copy_to_user((void *)(uintptr_t)arg, &kreg,
+                             sizeof(kreg)) != 0) {
+            /* Release the slot back to inactive so the userspace caller
+             * can retry without leaking the region entry. */
+            ctx->regions[claimed].active = false;
+            __atomic_sub_fetch(&ctx->nr_regions, 1, __ATOMIC_ACQ_REL);
+            return -EFAULT;
+        }
+        return 0;
     }
 
     case UFFDIO_UNREGISTER: {

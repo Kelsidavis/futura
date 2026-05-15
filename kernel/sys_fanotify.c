@@ -518,27 +518,35 @@ long sys_fanotify_mark(int fanotify_fd, unsigned int flags,
             }
         }
 
-        /* Create new mark */
+        /* Create new mark. Atomically claim the slot via CAS on .active so
+         * two concurrent fanotify_mark(ADD) ioctls on the same group can't
+         * both observe the same slot as inactive and clobber each other's
+         * path/mask. See project_slot_claim_pattern.md. */
         if (grp->nr_marks >= MAX_FANOTIFY_MARKS) return -ENOSPC;
+        int claimed = -1;
         for (uint32_t i = 0; i < MAX_FANOTIFY_MARKS; i++) {
-            if (grp->marks[i].active) continue;
-            grp->marks[i].active = true;
-            grp->marks[i].mask = mask;
-            grp->marks[i].ignored_mask = 0;
-            grp->marks[i].flags = flags;
-            if (have_path) {
-                size_t j = 0;
-                while (kpath[j] && j < sizeof(grp->marks[i].path) - 1) {
-                    grp->marks[i].path[j] = kpath[j]; j++;
-                }
-                grp->marks[i].path[j] = '\0';
-            } else {
-                grp->marks[i].path[0] = '\0';
+            bool expected = false;
+            if (__atomic_compare_exchange_n(&grp->marks[i].active, &expected, true,
+                                            false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+                claimed = (int)i;
+                break;
             }
-            grp->nr_marks++;
-            return 0;
         }
-        return -ENOMEM;
+        if (claimed < 0) return -ENOMEM;
+        grp->marks[claimed].mask = mask;
+        grp->marks[claimed].ignored_mask = 0;
+        grp->marks[claimed].flags = flags;
+        if (have_path) {
+            size_t j = 0;
+            while (kpath[j] && j < sizeof(grp->marks[claimed].path) - 1) {
+                grp->marks[claimed].path[j] = kpath[j]; j++;
+            }
+            grp->marks[claimed].path[j] = '\0';
+        } else {
+            grp->marks[claimed].path[0] = '\0';
+        }
+        __atomic_add_fetch(&grp->nr_marks, 1, __ATOMIC_ACQ_REL);
+        return 0;
     }
 
     return -EINVAL;

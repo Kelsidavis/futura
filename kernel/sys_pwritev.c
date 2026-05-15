@@ -583,21 +583,29 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
             continue;  /* Skip zero-length buffers */
         }
 
-        /* Allocate kernel buffer for this iovec */
-        void *kbuf = fut_malloc(kernel_iov[i].iov_len);
-        if (!kbuf) {
-            if (total_written > 0) {
-                break;  /* Return bytes written so far */
+        /* Per-segment bounce buffer: small segments use stack. */
+        uint8_t per_iov_stack[2048];
+        void *kbuf;
+        bool kbuf_on_heap = false;
+        if (kernel_iov[i].iov_len <= sizeof(per_iov_stack)) {
+            kbuf = per_iov_stack;
+        } else {
+            kbuf = fut_malloc(kernel_iov[i].iov_len);
+            if (!kbuf) {
+                if (total_written > 0) {
+                    break;  /* Return bytes written so far */
+                }
+                fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> ENOMEM (malloc failed at iovec %d)\n",
+                           fd, iov, iovcnt, offset, i);
+                if (kernel_iov_on_heap) fut_free(kernel_iov);
+                return -ENOMEM;
             }
-            fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> ENOMEM (malloc failed at iovec %d)\n",
-                       fd, iov, iovcnt, offset, i);
-            if (kernel_iov_on_heap) fut_free(kernel_iov);
-            return -ENOMEM;
+            kbuf_on_heap = true;
         }
 
         /* Copy from userspace */
         if (pwritev_copy_from_user(kbuf, kernel_iov[i].iov_base, kernel_iov[i].iov_len) != 0) {
-            fut_free(kbuf);
+            if (kbuf_on_heap) fut_free(kbuf);
             if (total_written > 0) {
                 break;  /* Return bytes written so far */
             }
@@ -610,7 +618,7 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
         /* Write to file at specified offset without changing file->offset */
         ssize_t n = file->vnode->ops->write(file->vnode, kbuf, kernel_iov[i].iov_len, (uint64_t)current_offset);
 
-        fut_free(kbuf);
+        if (kbuf_on_heap) fut_free(kbuf);
 
         if (n < 0) {
             /* Error on write */

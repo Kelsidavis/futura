@@ -592,16 +592,25 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
             return -EOVERFLOW;
         }
 
-        /* Allocate kernel buffer for this iovec */
-        void *kbuf = fut_malloc(kernel_iov[i].iov_len);
-        if (!kbuf) {
-            if (total_read > 0) {
-                break;  /* Return bytes read so far */
+        /* Per-segment bounce buffer: small segments use stack to avoid
+         * slab churn per iovec. Larger fall back to fut_malloc. */
+        uint8_t per_iov_stack[2048];
+        void *kbuf;
+        bool kbuf_on_heap = false;
+        if (kernel_iov[i].iov_len <= sizeof(per_iov_stack)) {
+            kbuf = per_iov_stack;
+        } else {
+            kbuf = fut_malloc(kernel_iov[i].iov_len);
+            if (!kbuf) {
+                if (total_read > 0) {
+                    break;  /* Return bytes read so far */
+                }
+                fut_printf("[PREADV] preadv(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> ENOMEM (malloc failed at iovec %d)\n",
+                           fd, iov, iovcnt, offset, i);
+                if (kernel_iov_on_heap) fut_free(kernel_iov);
+                return -ENOMEM;
             }
-            fut_printf("[PREADV] preadv(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> ENOMEM (malloc failed at iovec %d)\n",
-                       fd, iov, iovcnt, offset, i);
-            if (kernel_iov_on_heap) fut_free(kernel_iov);
-            return -ENOMEM;
+            kbuf_on_heap = true;
         }
 
         /* Read from file at specified offset without changing file->offset */
@@ -609,7 +618,7 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
 
         if (n < 0) {
             /* Error on read */
-            fut_free(kbuf);
+            if (kbuf_on_heap) fut_free(kbuf);
             if (total_read > 0) {
                 /* Return bytes read so far */
                 break;
@@ -625,7 +634,7 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
         /* Copy to userspace if successful */
         if (n > 0) {
             if (preadv_copy_to_user(kernel_iov[i].iov_base, kbuf, (size_t)n) != 0) {
-                fut_free(kbuf);
+                if (kbuf_on_heap) fut_free(kbuf);
                 if (total_read > 0) {
                     break;  /* Return bytes read so far */
                 }
@@ -636,7 +645,7 @@ ssize_t sys_preadv(int fd, const struct iovec *iov, int iovcnt, int64_t offset) 
             }
         }
 
-        fut_free(kbuf);
+        if (kbuf_on_heap) fut_free(kbuf);
         total_read += n;
 
         /* Update offset (overflow already checked before read at line 355) */

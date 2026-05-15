@@ -140,13 +140,25 @@ static int netif_register_ns(struct net_namespace *ns, const char *name, const e
 
 int netif_netns_init(struct net_namespace *ns) {
     ns = netif_ns_or_init(ns);
+    bool ifaces_owned_here = false;
     if (!ns->ifaces) {
         ns->ifaces = fut_malloc(sizeof(struct net_iface) * NET_IFACE_MAX);
         if (!ns->ifaces) return -ENOMEM;
+        ifaces_owned_here = true;
     }
     if (!ns->routes) {
         ns->routes = fut_malloc(sizeof(struct net_route) * NET_ROUTE_MAX);
-        if (!ns->routes) return -ENOMEM;
+        if (!ns->routes) {
+            /* Release the ifaces table we just allocated so the caller's
+             * fut_free(ns) doesn't leak it. Only do this if we were the
+             * ones who allocated it on this call — pre-existing ifaces
+             * is the caller's to manage. */
+            if (ifaces_owned_here) {
+                fut_free(ns->ifaces);
+                ns->ifaces = NULL;
+            }
+            return -ENOMEM;
+        }
     }
     memset(ns->ifaces, 0, sizeof(struct net_iface) * NET_IFACE_MAX);
     memset(ns->routes, 0, sizeof(struct net_route) * NET_ROUTE_MAX);

@@ -12,6 +12,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/fut_vfs.h>
 #include <kernel/fut_memory.h>
+#include <kernel/chrdev.h>  /* struct fut_file_ops */
 #include <kernel/uaccess.h>
 #include <kernel/errno.h>
 #include <kernel/fut_socket.h>
@@ -618,10 +619,31 @@ iov_loop_done:
                     } else {
                         /* Failed to allocate FD — drop the in-flight reference
                          * that was added by sendmsg when it queued this file.
-                         * Use the same atomic pattern as vfs_file_ref() in reverse. */
+                         * If the sender already closed before recvmsg ran the
+                         * in-flight ref may be the LAST one, in which case we
+                         * own the cleanup. Inline the release path here so the
+                         * fut_file isn't leaked. */
                         RECVMSG_LOG("[RECVMSG] SCM_RIGHTS: fd table full, dropping file=%p\n", file);
-                        if (file->refcount > 0)
-                            __atomic_sub_fetch(&file->refcount, 1, __ATOMIC_ACQ_REL);
+                        uint32_t after = file->refcount > 0
+                            ? __atomic_sub_fetch(&file->refcount, 1, __ATOMIC_ACQ_REL)
+                            : 0;
+                        if (after == 0) {
+                            /* Mirror fut_vfs_close's release-last-ref logic. */
+                            if (file->chr_ops) {
+                                if (file->chr_ops->release)
+                                    file->chr_ops->release(file->chr_inode, file->chr_private);
+                                if (file->path) fut_free(file->path);
+                                fut_free(file);
+                            } else {
+                                if (file->vnode) {
+                                    if (file->vnode->ops && file->vnode->ops->close)
+                                        file->vnode->ops->close(file->vnode);
+                                    fut_vnode_unref(file->vnode);
+                                }
+                                if (file->path) fut_free(file->path);
+                                fut_free(file);
+                            }
+                        }
                     }
                 }
             }

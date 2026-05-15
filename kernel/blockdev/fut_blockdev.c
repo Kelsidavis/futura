@@ -194,7 +194,9 @@ int fut_blockdev_register(struct fut_blockdev *dev) {
         }
     }
     dev->next = device_list;
-    device_list = dev;
+    /* Release-store so lock-free readers via fut_blockdev_first see a
+     * fully-linked entry. */
+    __atomic_store_n(&device_list, dev, __ATOMIC_RELEASE);
     fut_spinlock_release(&blockdev_list_lock);
     return 0;
 }

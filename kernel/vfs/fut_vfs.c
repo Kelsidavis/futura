@@ -527,11 +527,12 @@ int fut_vfs_mount(const char *device, const char *mountpoint,
 
     /* Insert under mount_list_lock so a concurrent unmount-remove
      * doesn't overwrite our new head with curr->next from a stale
-     * walk. */
+     * walk. Release-store the new head so lock-free readers via
+     * fut_vfs_first_mount also observe a fully-published mount. */
     mount_list_lock_ensure();
     fut_spinlock_acquire(&mount_list_lock);
     mount->next = mount_list;
-    mount_list = mount;
+    __atomic_store_n(&mount_list, mount, __ATOMIC_RELEASE);
     fut_spinlock_release(&mount_list_lock);
 
     /* If mounting at root, set root vnode */
@@ -594,11 +595,12 @@ int fut_vfs_bind_mount(const char *source, char *target) {
     mount->block_device_handle = ((fut_handle_t)0); /* FUT_INVALID_HANDLE */
 
     /* Insert under mount_list_lock so concurrent unmount-remove doesn't
-     * trample the new head. */
+     * trample the new head. Release-store so fut_vfs_first_mount's
+     * acquire-load picks up a fully-linked entry. */
     mount_list_lock_ensure();
     fut_spinlock_acquire(&mount_list_lock);
     mount->next = mount_list;
-    mount_list = mount;
+    __atomic_store_n(&mount_list, mount, __ATOMIC_RELEASE);
     fut_spinlock_release(&mount_list_lock);
 
     return 0;
@@ -3820,8 +3822,13 @@ int fut_vfs_rename(const char *oldpath, const char *newpath) {
 }
 
 
-/* Iterate the mount list — used by procfs to generate /proc/mounts */
-struct fut_mount *fut_vfs_first_mount(void) { return mount_list; }
+/* Iterate the mount list — used by procfs to generate /proc/mounts.
+ * Acquire-load so callers walking via mount->next start from a fully
+ * published head; the mount_list_lock-protected insert in fut_vfs_mount
+ * stores the head with release ordering. */
+struct fut_mount *fut_vfs_first_mount(void) {
+    return __atomic_load_n(&mount_list, __ATOMIC_ACQUIRE);
+}
 
 struct fut_mount *fut_vfs_find_mount(const char *mountpoint) {
     if (!mountpoint) return NULL;

@@ -117,11 +117,13 @@ static struct shm_seg *shmtable_find_by_key(long key) {
     return NULL;
 }
 
-/* Record a new attachment */
+/* Record a new attachment. Atomically claim the slot so two concurrent
+ * shmat()s can't both bind to the same shm_attachments entry. */
 static int shm_record_attach(void *addr, int shmid) {
     for (int i = 0; i < SHMATTACH_MAX; i++) {
-        if (!shm_attachments[i].used) {
-            shm_attachments[i].used  = 1;
+        int expected = 0;
+        if (__atomic_compare_exchange_n(&shm_attachments[i].used, &expected, 1,
+                                        false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
             shm_attachments[i].addr  = addr;
             shm_attachments[i].shmid = shmid;
             return 0;
@@ -177,24 +179,32 @@ long sys_shmget(long key, size_t size, int shmflg) {
     /* Round up to page boundary */
     size_t alloc_size = (size + (SHMLBA - 1)) & ~(size_t)(SHMLBA - 1);
 
-    /* Find free slot */
+    /* Atomically claim a free segment slot. Two concurrent shmget(IPC_CREAT)
+     * calls would otherwise observe the same slot as unused and both write
+     * key/id/size/data into it, leaking one of the two backing buffers.
+     * See project_slot_claim_pattern.md. */
     for (int i = 0; i < SHMMNI; i++) {
-        if (!shmtable[i].used) {
-            void *data = fut_malloc(alloc_size);
-            if (!data)
-                return -ENOMEM;
-            __builtin_memset(data, 0, alloc_size);
+        int expected = 0;
+        if (!__atomic_compare_exchange_n(&shmtable[i].used, &expected, 1,
+                                         false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+            continue;
 
-            shmtable[i].used         = 1;
-            shmtable[i].key          = key;
-            shmtable[i].id           = shm_next_id++;
-            shmtable[i].size         = alloc_size;
-            shmtable[i].mode         = (unsigned int)(shmflg & 0777);
-            shmtable[i].nattach      = 0;
-            shmtable[i].pending_rmid = 0;
-            shmtable[i].data         = data;
-            return shmtable[i].id;
+        void *data = fut_malloc(alloc_size);
+        if (!data) {
+            /* Release the slot back to unused on alloc failure. */
+            __atomic_store_n(&shmtable[i].used, 0, __ATOMIC_RELEASE);
+            return -ENOMEM;
         }
+        __builtin_memset(data, 0, alloc_size);
+
+        shmtable[i].key          = key;
+        shmtable[i].id           = __atomic_fetch_add(&shm_next_id, 1, __ATOMIC_ACQ_REL);
+        shmtable[i].size         = alloc_size;
+        shmtable[i].mode         = (unsigned int)(shmflg & 0777);
+        shmtable[i].nattach      = 0;
+        shmtable[i].pending_rmid = 0;
+        shmtable[i].data         = data;
+        return shmtable[i].id;
     }
     return -ENOSPC;
 }

@@ -206,36 +206,28 @@ long sys_dup(int oldfd) {
         return -EBADF;
     }
 
-    /* Phase 2: Find the lowest available FD, respecting RLIMIT_NOFILE.
-     * Treat rlim_cur == 0 as 'unset / no separate limit' to keep kernel
-     * tasks with uninitialized rlimits working. */
-    int max = task->max_fds;
-    uint64_t nofile_limit = task->rlimits[7].rlim_cur;  /* RLIMIT_NOFILE */
-    if (nofile_limit > 0 && nofile_limit < (uint64_t)max) {
-        max = (int)nofile_limit;
-    }
-    int newfd = -1;
-    for (int i = 0; i < max; i++) {
-        if (task->fd_table[i] == NULL) {
-            newfd = i;
-            break;
-        }
-    }
-
-    /* Phase 2: Handle FD exhaustion with detailed logging */
-    if (newfd < 0) {
-        fut_printf("[DUP] dup(oldfd=%d [%s], max_fds=%d) -> EMFILE "
-                   "(all FDs in use, no available slots)\n",
-                   local_oldfd, oldfd_category, task->max_fds);
-        return -EMFILE;
-    }
-
-    /* Increment reference count on the file since we're creating another reference */
+    /* Take the new reference before publishing the file pointer in another
+     * slot. If two threads of the same task open()/dup() concurrently, the
+     * prior scan-and-store pattern allowed both to observe the same NULL
+     * slot and one to silently overwrite the other's just-installed fd.
+     * vfs_alloc_fd_for_task uses an atomic CAS that closes that window and
+     * also enforces RLIMIT_NOFILE / grows the table when permitted. */
     vfs_file_ref(old_file);
+    int newfd = vfs_alloc_fd_for_task(task, old_file);
+    if (newfd < 0) {
+        /* Slot not installed — drop the speculative reference. The original
+         * oldfd reference keeps the file alive, so this can't be the last
+         * one in any non-racy scenario. */
+        if (old_file->refcount > 0)
+            __atomic_sub_fetch(&old_file->refcount, 1, __ATOMIC_ACQ_REL);
+        fut_printf("[DUP] dup(oldfd=%d [%s], max_fds=%d) -> %d "
+                   "(fd allocation failed)\n",
+                   local_oldfd, oldfd_category, task->max_fds, newfd);
+        return newfd;
+    }
 
-    /* Assign the file to the new FD (dup() clears FD_CLOEXEC per POSIX) */
-    task->fd_table[newfd] = old_file;
-    if (task->fd_flags) task->fd_flags[newfd] = 0;
+    /* dup() clears FD_CLOEXEC per POSIX; vfs_alloc_fd_for_task already
+     * zeroed fd_flags[newfd] when installing. */
 
     /* Propagate socket ownership if oldfd is a socket */
     propagate_socket_dup(local_oldfd, newfd);

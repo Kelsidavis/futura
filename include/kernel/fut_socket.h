@@ -263,6 +263,7 @@ typedef struct fut_socket_listener {
     struct fut_waitq *accept_waitq;         /* Wait queue for accept() */
     int backlog;                            /* Maximum pending connections */
     struct fut_waitq *epoll_notify;         /* Epoll wakeup on new connection */
+    fut_spinlock_t queue_lock;              /* Protects queue/queue_head/queue_count */
 } fut_socket_listener_t;
 
 /* ============================================================

@@ -714,6 +714,7 @@ int fut_socket_listen(fut_socket_t *socket, int backlog) {
         return -ENOMEM;
     }
     fut_waitq_init(listener->accept_waitq);
+    fut_spinlock_init(&listener->queue_lock);
 
     /* Atomically install the listener. Two concurrent listen() calls on the
      * same socket would otherwise both pass the upfront !socket->listener
@@ -743,19 +744,24 @@ int fut_socket_accept(fut_socket_t *listener, fut_socket_t **out_socket) {
 
     fut_socket_listener_t *queue = listener->listener;
 
-    /* Try to get pending connection */
+    /* Atomically dequeue under queue_lock so two concurrent accept() calls
+     * on the same listener can't both observe queue_count > 0, both pick
+     * the same queue_head entry, and both decrement queue_count — handing
+     * the same peer socket to both accepters. */
+    fut_spinlock_acquire(&queue->queue_lock);
     if (queue->queue_count == 0) {
-        /* No pending connections */
+        fut_spinlock_release(&queue->queue_lock);
         return -EAGAIN;  /* Caller must retry or use blocking I/O */
     }
-
-    /* Dequeue pending connection */
-    fut_socket_connection_entry_t *entry =
-        &queue->queue[queue->queue_head];
-    fut_socket_t *peer = entry->peer_socket;  /* The connecting (client) socket */
-
+    fut_socket_connection_entry_t local_entry = queue->queue[queue->queue_head];
     queue->queue_head = (queue->queue_head + 1) % FUT_SOCKET_QUEUE_MAX;
     queue->queue_count--;
+    fut_spinlock_release(&queue->queue_lock);
+
+    /* Operate on the snapshot — entry slot can be overwritten by the next
+     * connect() once we release the lock. */
+    fut_socket_connection_entry_t *entry = &local_entry;
+    fut_socket_t *peer = entry->peer_socket;
 
     /* Peer becomes connected, create TWO bidirectional pairs for proper communication */
     if (!peer->pair) {
@@ -1027,13 +1033,6 @@ int fut_socket_connect(fut_socket_t *socket, const char *target_path, size_t pat
         return -ENOENT;
     }
 
-    /* Check if listener has space in backlog */
-    fut_socket_listener_t *queue = listener->listener;
-    if ((int)queue->queue_count >= queue->backlog) {
-        fut_socket_unref(listener);
-        return -ECONNREFUSED;
-    }
-
     /* Allocate connect wait queue if needed (for blocking connect). Use
      * atomic CAS to install so two concurrent connects can't both observe
      * NULL, both allocate, and one overwrite the other (leaking a waitq). */
@@ -1052,7 +1051,15 @@ int fut_socket_connect(fut_socket_t *socket, const char *target_path, size_t pat
         }
     }
 
-    /* Queue pending connection */
+    /* Enqueue under queue_lock so concurrent connects can't double-fill a
+     * slot and inflate queue_count past backlog (or wrap queue_head). */
+    fut_socket_listener_t *queue = listener->listener;
+    fut_spinlock_acquire(&queue->queue_lock);
+    if ((int)queue->queue_count >= queue->backlog) {
+        fut_spinlock_release(&queue->queue_lock);
+        fut_socket_unref(listener);
+        return -ECONNREFUSED;
+    }
     uint32_t tail = (queue->queue_head + queue->queue_count) % FUT_SOCKET_QUEUE_MAX;
     queue->queue[tail].peer_socket = socket;
     queue->queue[tail].flags = 0;
@@ -1068,6 +1075,7 @@ int fut_socket_connect(fut_socket_t *socket, const char *target_path, size_t pat
     }
 
     queue->queue_count++;
+    fut_spinlock_release(&queue->queue_lock);
 
     socket->state = FUT_SOCK_CONNECTING;
     socket->tcp_state = TCP_SYN_SENT;
@@ -2546,12 +2554,6 @@ int fut_socket_connect_inet(fut_socket_t *socket, uint32_t addr, uint16_t port) 
     fut_socket_t *listener = fut_socket_find_inet_listener_ns(socket_netns_or_init(socket), addr, port);
     if (!listener) return -ECONNREFUSED;
 
-    fut_socket_listener_t *queue = listener->listener;
-    if ((int)queue->queue_count >= queue->backlog) {
-        fut_socket_unref(listener);
-        return -ECONNREFUSED;
-    }
-
     /* Allocate connect wait queue if needed. Atomic CAS install so two
      * concurrent connects can't double-allocate; see the AF_UNIX site
      * for the same fix. */
@@ -2569,7 +2571,14 @@ int fut_socket_connect_inet(fut_socket_t *socket, uint32_t addr, uint16_t port) 
         }
     }
 
-    /* Queue pending connection */
+    /* Enqueue under queue_lock — see AF_UNIX connect path for rationale. */
+    fut_socket_listener_t *queue = listener->listener;
+    fut_spinlock_acquire(&queue->queue_lock);
+    if ((int)queue->queue_count >= queue->backlog) {
+        fut_spinlock_release(&queue->queue_lock);
+        fut_socket_unref(listener);
+        return -ECONNREFUSED;
+    }
     uint32_t tail = (queue->queue_head + queue->queue_count) % FUT_SOCKET_QUEUE_MAX;
     queue->queue[tail].peer_socket = socket;
     queue->queue[tail].flags = 0;
@@ -2582,6 +2591,7 @@ int fut_socket_connect_inet(fut_socket_t *socket, uint32_t addr, uint16_t port) 
         queue->queue[tail].peer_gid = ct ? ct->gid : 0;
     }
     queue->queue_count++;
+    fut_spinlock_release(&queue->queue_lock);
 
     socket->state = FUT_SOCK_CONNECTING;
     socket->tcp_state = TCP_SYN_SENT;

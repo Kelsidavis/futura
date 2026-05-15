@@ -1809,13 +1809,14 @@ int vfs_alloc_specific_fd(int target_fd, struct fut_file *file) {
         return -EBADF;
     }
 
-    /* Close existing file if any */
-    if (file_table[target_fd] != NULL) {
-        /* Should have been closed by caller, but be safe */
+    /* Atomically claim the slot when it is currently NULL. The prior
+     * check-then-store pattern allowed two concurrent installers to both
+     * observe NULL and one to silently overwrite the other's file pointer. */
+    struct fut_file *expected = NULL;
+    if (!__atomic_compare_exchange_n(&file_table[target_fd], &expected, file,
+                                     false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
         return -EBUSY;
     }
-
-    file_table[target_fd] = file;
     return target_fd;
 }
 

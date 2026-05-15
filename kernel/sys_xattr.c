@@ -547,19 +547,27 @@ long sys_setxattr(const char *path, const char *name, const void *value,
         return ret;
     }
 
-    /* Copy value from userspace if needed */
+    /* Copy value from userspace if needed. Small values use stack
+     * buffer (most xattrs are <512 bytes). */
+    uint8_t s_stack_buf[2048];
     void *kvalue = NULL;
+    bool kvalue_on_heap = false;
     if (size > 0 && value) {
-        kvalue = fut_malloc(size);
-        if (!kvalue) return -ENOMEM;
+        if (size <= sizeof(s_stack_buf)) {
+            kvalue = s_stack_buf;
+        } else {
+            kvalue = fut_malloc(size);
+            if (!kvalue) return -ENOMEM;
+            kvalue_on_heap = true;
+        }
         if (xattr_copy_from_user(kvalue, value, size) != 0) {
-            fut_free(kvalue);
+            if (kvalue_on_heap) fut_free(kvalue);
             return -EFAULT;
         }
     }
 
     ret = vnode_setxattr_by_path(path_buf, name_buf, kvalue, size, flags);
-    if (kvalue) fut_free(kvalue);
+    if (kvalue_on_heap) fut_free(kvalue);
     return ret;
 }
 
@@ -598,17 +606,24 @@ long sys_lsetxattr(const char *path, const char *name, const void *value,
     }
 
     /* lsetxattr operates on the symlink itself — use nofollow lookup. */
+    uint8_t l_stack_buf[2048];
     void *kvalue = NULL;
+    bool kvalue_on_heap = false;
     if (size > 0 && value) {
-        kvalue = fut_malloc(size);
-        if (!kvalue) return -ENOMEM;
+        if (size <= sizeof(l_stack_buf)) {
+            kvalue = l_stack_buf;
+        } else {
+            kvalue = fut_malloc(size);
+            if (!kvalue) return -ENOMEM;
+            kvalue_on_heap = true;
+        }
         if (xattr_copy_from_user(kvalue, value, size) != 0) {
-            fut_free(kvalue);
+            if (kvalue_on_heap) fut_free(kvalue);
             return -EFAULT;
         }
     }
     ret = vnode_setxattr_nofollow(path_buf, name_buf, kvalue, size, flags);
-    if (kvalue) fut_free(kvalue);
+    if (kvalue_on_heap) fut_free(kvalue);
     return ret;
 }
 
@@ -661,12 +676,19 @@ long sys_fsetxattr(int fd, const char *name, const void *value,
     struct fut_vnode *vnode = vnode_from_fd(task, fd);
     if (!vnode) return -EBADF;
 
+    uint8_t f_stack_buf[2048];
     void *kvalue = NULL;
+    bool kvalue_on_heap = false;
     if (size > 0 && value) {
-        kvalue = fut_malloc(size);
-        if (!kvalue) return -ENOMEM;
+        if (size <= sizeof(f_stack_buf)) {
+            kvalue = f_stack_buf;
+        } else {
+            kvalue = fut_malloc(size);
+            if (!kvalue) return -ENOMEM;
+            kvalue_on_heap = true;
+        }
         if (xattr_copy_from_user(kvalue, value, size) != 0) {
-            fut_free(kvalue);
+            if (kvalue_on_heap) fut_free(kvalue);
             return -EFAULT;
         }
     }
@@ -675,7 +697,7 @@ long sys_fsetxattr(int fd, const char *name, const void *value,
     } else {
         ret = vnode_generic_setxattr(vnode, name_buf, kvalue, size, flags);
     }
-    if (kvalue) fut_free(kvalue);
+    if (kvalue_on_heap) fut_free(kvalue);
     return ret;
 }
 

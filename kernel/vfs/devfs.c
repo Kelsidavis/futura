@@ -41,9 +41,6 @@ int devfs_create_chr(const char *path, unsigned major, unsigned minor) {
     if (!path) {
         return -EINVAL;
     }
-    if (g_dev_count >= DEVFS_MAX_NODES) {
-        return -ENOSPC;
-    }
 
     size_t len = 0;
     while (path[len]) {
@@ -59,7 +56,25 @@ int devfs_create_chr(const char *path, unsigned major, unsigned minor) {
         stored[i] = path[i];
     }
 
-    g_dev_nodes[g_dev_count++] = (dev_node_t){
+    /* CAS-loop reservation so concurrent devfs_create_chr calls don't
+     * both pick the same g_dev_nodes index. See
+     * project_slot_claim_pattern.md. */
+    size_t idx;
+    {
+        size_t cur, next;
+        do {
+            cur = __atomic_load_n(&g_dev_count, __ATOMIC_ACQUIRE);
+            if (cur >= DEVFS_MAX_NODES) {
+                fut_free(stored);
+                return -ENOSPC;
+            }
+            next = cur + 1;
+        } while (!__atomic_compare_exchange_n(&g_dev_count, &cur, next,
+                                              false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE));
+        idx = cur;
+    }
+
+    g_dev_nodes[idx] = (dev_node_t){
         .path = stored,
         .major = major,
         .minor = minor,
@@ -73,7 +88,9 @@ int devfs_lookup_chr(const char *path, unsigned *major, unsigned *minor) {
         return -EINVAL;
     }
 
-    for (size_t i = 0; i < g_dev_count; ++i) {
+    /* Acquire-load matches the release-CAS in devfs_create_chr. */
+    size_t count = __atomic_load_n(&g_dev_count, __ATOMIC_ACQUIRE);
+    for (size_t i = 0; i < count; ++i) {
         if (devfs_path_equal(g_dev_nodes[i].path, path)) {
             if (major) {
                 *major = g_dev_nodes[i].major;

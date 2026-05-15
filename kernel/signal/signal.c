@@ -241,8 +241,9 @@ int fut_signal_send(struct fut_task *task, int signum) {
         task->exit_code = 0;
         task->term_signal = 9;
     } else if (task->signal_handlers[signum - 1] == SIG_DFL) {
-        /* Check if blocked — blocked signals defer default action */
-        uint64_t blocked = task->signal_mask;
+        /* Check if blocked — blocked signals defer default action.
+         * Atomic-load matches the other signal_mask readers. */
+        uint64_t blocked = __atomic_load_n(&task->signal_mask, __ATOMIC_ACQUIRE);
         if (!(blocked & signal_bit)) {
             int action = signal_default_action[signum];
             if (action == SIG_ACTION_TERM || action == SIG_ACTION_CORE) {

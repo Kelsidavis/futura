@@ -59,6 +59,18 @@ static const struct fut_fs_type *registered_fs[MAX_FS_TYPES];
 static int num_fs_types = 0;
 
 static struct fut_mount *mount_list = NULL;
+/* Serialises mount_list insert + unmount-remove. Walks elsewhere
+ * (find / first / foreach) remain lock-free for now — they were
+ * already that way and adding the lock to every walk has too much
+ * deadlock surface given fs callbacks. */
+static fut_spinlock_t mount_list_lock;
+static bool mount_list_lock_initialized = false;
+static inline void mount_list_lock_ensure(void) {
+    if (!__atomic_load_n(&mount_list_lock_initialized, __ATOMIC_ACQUIRE)) {
+        fut_spinlock_init(&mount_list_lock);
+        __atomic_store_n(&mount_list_lock_initialized, true, __ATOMIC_RELEASE);
+    }
+}
 
 /* Debug counter for ARM64 - non-allocating trace */
 volatile int vfs_debug_stage = 0;
@@ -513,17 +525,14 @@ int fut_vfs_mount(const char *device, const char *mountpoint,
         }
     }
 
-    /* Atomic head insert so concurrent mount() calls (during container
-     * setup or rapid tmpfs creation) don't overwrite each other's
-     * ->next link. */
-    {
-        struct fut_mount *prev_head;
-        do {
-            prev_head = __atomic_load_n(&mount_list, __ATOMIC_ACQUIRE);
-            mount->next = prev_head;
-        } while (!__atomic_compare_exchange_n(&mount_list, &prev_head, mount,
-                                              false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE));
-    }
+    /* Insert under mount_list_lock so a concurrent unmount-remove
+     * doesn't overwrite our new head with curr->next from a stale
+     * walk. */
+    mount_list_lock_ensure();
+    fut_spinlock_acquire(&mount_list_lock);
+    mount->next = mount_list;
+    mount_list = mount;
+    fut_spinlock_release(&mount_list_lock);
 
     /* If mounting at root, set root vnode */
     if (is_root_mount) {
@@ -584,24 +593,30 @@ int fut_vfs_bind_mount(const char *source, char *target) {
     mount->st_dev         = __atomic_fetch_add(&next_device_id, 1, __ATOMIC_ACQ_REL);
     mount->block_device_handle = ((fut_handle_t)0); /* FUT_INVALID_HANDLE */
 
-    /* Atomic head insert so concurrent bind-mounts don't overwrite each
-     * other's ->next link. */
-    struct fut_mount *prev_head;
-    do {
-        prev_head = __atomic_load_n(&mount_list, __ATOMIC_ACQUIRE);
-        mount->next = prev_head;
-    } while (!__atomic_compare_exchange_n(&mount_list, &prev_head, mount,
-                                          false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE));
+    /* Insert under mount_list_lock so concurrent unmount-remove doesn't
+     * trample the new head. */
+    mount_list_lock_ensure();
+    fut_spinlock_acquire(&mount_list_lock);
+    mount->next = mount_list;
+    mount_list = mount;
+    fut_spinlock_release(&mount_list_lock);
 
     return 0;
 }
 
 int fut_vfs_unmount(const char *mountpoint) {
+    /* Walk + unlink under mount_list_lock so a concurrent mount can't
+     * publish a new head that we then overwrite with stale curr->next.
+     * Release the lock BEFORE calling fs->unmount because some fs
+     * unmount callbacks (overlay, fuse, futurafs) recurse back into
+     * VFS lookups, and Linux's vfs_kern_umount uses the same pattern:
+     * detach from the list first, then run the cleanup off-lock. */
+    mount_list_lock_ensure();
+    fut_spinlock_acquire(&mount_list_lock);
     struct fut_mount **prev = &mount_list;
     struct fut_mount *mount = mount_list;
 
     while (mount) {
-        /* Simple string comparison */
         const char *a = mount->mountpoint;
         const char *b = mountpoint;
         while (*a && *b && *a == *b) {
@@ -610,8 +625,8 @@ int fut_vfs_unmount(const char *mountpoint) {
         }
 
         if (*a == *b) {
-            /* Found mount point */
             *prev = mount->next;
+            fut_spinlock_release(&mount_list_lock);
 
             bool is_root_mount = (mount->mountpoint && mount->mountpoint[0] == '/' && mount->mountpoint[1] == '\0');
             struct fut_vnode *root = mount->root;
@@ -638,6 +653,7 @@ int fut_vfs_unmount(const char *mountpoint) {
         prev = &mount->next;
         mount = mount->next;
     }
+    fut_spinlock_release(&mount_list_lock);
 
     return -ENOENT;
 }

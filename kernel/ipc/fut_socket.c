@@ -2552,14 +2552,21 @@ int fut_socket_connect_inet(fut_socket_t *socket, uint32_t addr, uint16_t port) 
         return -ECONNREFUSED;
     }
 
-    /* Allocate connect wait queue if needed */
+    /* Allocate connect wait queue if needed. Atomic CAS install so two
+     * concurrent connects can't double-allocate; see the AF_UNIX site
+     * for the same fix. */
     if (!socket->connect_waitq) {
-        socket->connect_waitq = fut_malloc(sizeof(fut_waitq_t));
-        if (!socket->connect_waitq) {
+        fut_waitq_t *wq = fut_malloc(sizeof(fut_waitq_t));
+        if (!wq) {
             fut_socket_unref(listener);
             return -ENOMEM;
         }
-        fut_waitq_init(socket->connect_waitq);
+        fut_waitq_init(wq);
+        fut_waitq_t *expected = NULL;
+        if (!__atomic_compare_exchange_n(&socket->connect_waitq, &expected, wq,
+                                         false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+            fut_free(wq);
+        }
     }
 
     /* Queue pending connection */

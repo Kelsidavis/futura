@@ -99,9 +99,10 @@ int pidcg_check_fork(int parent_pid) {
     for (int i = 1; i < PIDCG_MAX; i++) {
         if (!g_pidcg[i].active || g_pidcg[i].pids_max == 0)
             continue;
-        /* In a real implementation, check if parent_pid is in this cgroup.
-         * For now, enforce limits on any non-root cgroup with a limit set. */
-        if (g_pidcg[i].pids_current >= g_pidcg[i].pids_max) {
+        /* Atomic load: pids_current is incremented/decremented by
+         * fork/exit notifies, which can race with this check. */
+        uint32_t cur = __atomic_load_n(&g_pidcg[i].pids_current, __ATOMIC_ACQUIRE);
+        if (cur >= g_pidcg[i].pids_max) {
             fut_printf("[PIDCG] Fork denied: cgroup '%s' at pids.max=%u\n",
                        g_pidcg[i].name, g_pidcg[i].pids_max);
             return -EAGAIN;
@@ -113,11 +114,17 @@ int pidcg_check_fork(int parent_pid) {
 
 /**
  * pidcg_fork_notify — Called after successful fork to update counters.
+ *
+ * Increments under atomic so concurrent forks don't lose updates.
+ * Note: there's still a TOCTOU between pidcg_check_fork and
+ * pidcg_fork_notify — N parallel forks can each pass the check and
+ * push pids_current past pids_max by up to N. Tightening that
+ * requires atomically reserving the slot inside check_fork.
  */
 void pidcg_fork_notify(void) {
     for (int i = 1; i < PIDCG_MAX; i++) {
         if (g_pidcg[i].active && g_pidcg[i].pids_max > 0)
-            g_pidcg[i].pids_current++;
+            __atomic_add_fetch(&g_pidcg[i].pids_current, 1, __ATOMIC_ACQ_REL);
     }
 }
 
@@ -126,7 +133,15 @@ void pidcg_fork_notify(void) {
  */
 void pidcg_exit_notify(void) {
     for (int i = 1; i < PIDCG_MAX; i++) {
-        if (g_pidcg[i].active && g_pidcg[i].pids_current > 0)
-            g_pidcg[i].pids_current--;
+        if (!g_pidcg[i].active) continue;
+        /* CAS-loop the decrement so we never go negative even if a
+         * parallel exit raced us; otherwise we'd underflow uint32_t. */
+        uint32_t cur, want;
+        do {
+            cur = __atomic_load_n(&g_pidcg[i].pids_current, __ATOMIC_ACQUIRE);
+            if (cur == 0) break;
+            want = cur - 1;
+        } while (!__atomic_compare_exchange_n(&g_pidcg[i].pids_current, &cur, want,
+                                              false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE));
     }
 }

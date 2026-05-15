@@ -513,11 +513,24 @@ static int ptmx_open(void *inode, int flags, void **private_data) {
     if (!p) return -ENOSPC;
 
     struct pty_priv *pp = fut_malloc(sizeof(*pp));
-    if (!pp) { p->active = false; return -ENOMEM; }
+    if (!pp) {
+        /* Release the allocated pair under p->lock to match the same lock
+         * discipline used by ptmx_close, which holds p->lock while toggling
+         * p->active. */
+        fut_spinlock_acquire(&p->lock);
+        p->active = false;
+        fut_spinlock_release(&p->lock);
+        return -ENOMEM;
+    }
     pp->tag      = PTY_MASTER_TAG;
     pp->pair     = p;
     pp->nonblock = false;
+
+    /* master_refcnt is read/written under p->lock by ptmx_close and
+     * pty_open_slave; honour the same discipline on the increment side. */
+    fut_spinlock_acquire(&p->lock);
     p->master_refcnt++;
+    fut_spinlock_release(&p->lock);
 
     *private_data = pp;
     return 0;
@@ -735,7 +748,15 @@ int pty_open_slave(int index) {
     fut_spinlock_release(&p->lock);
 
     struct pty_priv *pp = fut_malloc(sizeof(*pp));
-    if (!pp) { if (p->slave_refcnt > 0) p->slave_refcnt--; return -ENOMEM; }
+    if (!pp) {
+        /* Rollback the speculative refcount under the same lock that
+         * pts_release uses; otherwise a concurrent close could observe a
+         * torn or stale slave_refcnt and mis-handle last-slave cleanup. */
+        fut_spinlock_acquire(&p->lock);
+        if (p->slave_refcnt > 0) p->slave_refcnt--;
+        fut_spinlock_release(&p->lock);
+        return -ENOMEM;
+    }
     pp->tag      = PTY_SLAVE_TAG;
     pp->pair     = p;
     pp->nonblock = false;
@@ -743,7 +764,9 @@ int pty_open_slave(int index) {
     int fd = chrdev_alloc_fd(&pts_fops, NULL, pp);
     if (fd < 0) {
         fut_free(pp);
+        fut_spinlock_acquire(&p->lock);
         if (p->slave_refcnt > 0) p->slave_refcnt--;
+        fut_spinlock_release(&p->lock);
         return fd;
     }
 

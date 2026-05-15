@@ -513,15 +513,19 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
         /* Set file status flags. Per Linux, F_SETFL only modifies O_APPEND,
          * O_ASYNC, O_DIRECT, O_NOATIME, O_NONBLOCK. Unsupported flags are
          * silently ignored (not EINVAL). Access mode bits are never changed. */
-        int old_flags = file->flags;
-        int new_flags = file->flags;
+        const int settable = (O_NONBLOCK | O_APPEND | O_ASYNC | O_NOATIME | O_DIRECT);
+        const int set_bits = (int)local_arg & settable;
 
-        /* Preserve access mode, update only supported changeable flags.
-         * O_ASYNC/FASYNC is stored so F_GETOWN/F_SETSIG work correctly. */
-        new_flags &= ~(O_NONBLOCK | O_APPEND | O_ASYNC | O_NOATIME | O_DIRECT);
-        new_flags |= ((int)local_arg & (O_NONBLOCK | O_APPEND | O_ASYNC | O_NOATIME | O_DIRECT));
-
-        file->flags = new_flags;
+        /* CAS-loop the flags update so two concurrent F_SETFL calls (or
+         * F_SETFL racing with the OR-based ioctl(FIONBIO) path that sets
+         * O_NONBLOCK) don't lose updates through the read-modify-write
+         * window. Preserve all non-settable bits. */
+        int old_flags, new_flags;
+        do {
+            old_flags = __atomic_load_n(&file->flags, __ATOMIC_ACQUIRE);
+            new_flags = (old_flags & ~settable) | set_bits;
+        } while (!__atomic_compare_exchange_n(&file->flags, &old_flags, new_flags,
+                                              false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE));
 
         /* Propagate flags to device drivers (pipes, sockets, etc.)
          * via private ioctl so they can update internal state (e.g., O_NONBLOCK). */

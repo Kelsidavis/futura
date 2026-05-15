@@ -11,6 +11,7 @@
 #include <kernel/errno.h>
 #include <sys/uio.h>  /* For struct iovec, UIO_MAXIOV, ssize_t */
 #include <stdint.h>
+#include <stdbool.h>
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
@@ -432,12 +433,22 @@ ssize_t sys_readv(int fd, const struct iovec *iov, int iovcnt) {
         return -EINVAL;
     }
 
-    /* Copy iovec array from userspace using heap instead of stack */
-    struct iovec *kernel_iov = (struct iovec *)fut_malloc(iov_alloc_size);
-    if (!kernel_iov) {
-        fut_printf("[READV] readv(fd=%d, iov=%p, iovcnt=%d) -> ENOMEM (malloc failed for iovec array)\n",
-                   fd, iov, iovcnt);
-        return -ENOMEM;
+    /* Small iovcnt typical for readv (1-4 segments) uses a stack
+     * buffer to avoid per-syscall slab churn. 32-entry cap (512 bytes)
+     * covers ~all realistic callers; larger fall back to fut_malloc. */
+    struct iovec stack_iov[32];
+    struct iovec *kernel_iov;
+    bool kernel_iov_on_heap = false;
+    if (iov_alloc_size <= sizeof(stack_iov)) {
+        kernel_iov = stack_iov;
+    } else {
+        kernel_iov = (struct iovec *)fut_malloc(iov_alloc_size);
+        if (!kernel_iov) {
+            fut_printf("[READV] readv(fd=%d, iov=%p, iovcnt=%d) -> ENOMEM (malloc failed for iovec array)\n",
+                       fd, iov, iovcnt);
+            return -ENOMEM;
+        }
+        kernel_iov_on_heap = true;
     }
 
     int rv_copy_ret;
@@ -451,7 +462,7 @@ ssize_t sys_readv(int fd, const struct iovec *iov, int iovcnt) {
     if (rv_copy_ret != 0) {
         fut_printf("[READV] readv(fd=%d, iov=%p, iovcnt=%d) -> EFAULT (copy_from_user failed)\n",
                    fd, iov, iovcnt);
-        fut_free(kernel_iov);
+        if (kernel_iov_on_heap) fut_free(kernel_iov);
         return -EFAULT;
     }
 
@@ -464,7 +475,7 @@ ssize_t sys_readv(int fd, const struct iovec *iov, int iovcnt) {
                 fut_printf("[READV] readv(fd=%d, iov=%p, iovcnt=%d) -> EFAULT "
                            "(iov_base[%d] is NULL with non-zero length)\n",
                            fd, iov, iovcnt, i);
-                fut_free(kernel_iov);
+                if (kernel_iov_on_heap) fut_free(kernel_iov);
                 return -EFAULT;
             }
             /* Verify buffer is writable (skip for kernel buffers) */
@@ -472,7 +483,7 @@ ssize_t sys_readv(int fd, const struct iovec *iov, int iovcnt) {
             if ((uintptr_t)kernel_iov[i].iov_base < KERNEL_VIRTUAL_BASE)
 #endif
             if (fut_access_ok(kernel_iov[i].iov_base, kernel_iov[i].iov_len, 1) != 0) {
-                fut_free(kernel_iov);
+                if (kernel_iov_on_heap) fut_free(kernel_iov);
                 return -EFAULT;
             }
         }
@@ -528,7 +539,7 @@ ssize_t sys_readv(int fd, const struct iovec *iov, int iovcnt) {
             fut_printf("[READV] readv(fd=%d, iovcnt=%d) -> EINVAL "
                        "(iovec %d: iov_len %zu exceeds per-iovec limit %zu)\n",
                        fd, iovcnt, i, kernel_iov[i].iov_len, MAX_IOVEC_SIZE);
-            fut_free(kernel_iov);
+            if (kernel_iov_on_heap) fut_free(kernel_iov);
             return -EINVAL;
         }
 
@@ -538,7 +549,7 @@ ssize_t sys_readv(int fd, const struct iovec *iov, int iovcnt) {
             fut_printf("[READV] readv(fd=%d, iov=%p, iovcnt=%d) -> EINVAL "
                        "(size overflow at iovec %d, total=%zu, iov_len=%zu, integer overflow protection)\n",
                        fd, iov, iovcnt, i, total_size, kernel_iov[i].iov_len);
-            fut_free(kernel_iov);
+            if (kernel_iov_on_heap) fut_free(kernel_iov);
             return -EINVAL;
         }
         total_size += kernel_iov[i].iov_len;
@@ -548,7 +559,7 @@ ssize_t sys_readv(int fd, const struct iovec *iov, int iovcnt) {
             fut_printf("[READV] readv(fd=%d, iov=%p, iovcnt=%d) -> EINVAL "
                        "(total size %zu exceeds limit %zu MB, DoS protection)\n",
                        fd, iov, iovcnt, total_size, MAX_TOTAL_SIZE / (1024 * 1024));
-            fut_free(kernel_iov);
+            if (kernel_iov_on_heap) fut_free(kernel_iov);
             return -EINVAL;
         }
 
@@ -583,7 +594,7 @@ ssize_t sys_readv(int fd, const struct iovec *iov, int iovcnt) {
                 /* No bytes read yet, return error */
                 fut_printf("[READV] readv(fd=%d, iov=%p, iovcnt=%d) -> %ld (read error on iovec %d)\n",
                            fd, iov, iovcnt, n, i);
-                fut_free(kernel_iov);
+                if (kernel_iov_on_heap) fut_free(kernel_iov);
                 return n;
             }
         }
@@ -598,7 +609,7 @@ ssize_t sys_readv(int fd, const struct iovec *iov, int iovcnt) {
         }
     }
 
-    fut_free(kernel_iov);
+    if (kernel_iov_on_heap) fut_free(kernel_iov);
 
     /* Phase 3 implementation with VFS optimization:
      *

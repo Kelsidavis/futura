@@ -11,6 +11,7 @@
 #include <kernel/errno.h>
 #include <sys/uio.h>  /* For struct iovec, UIO_MAXIOV, ssize_t */
 #include <stdint.h>
+#include <stdbool.h>
 #include <string.h>   /* memcpy */
 
 #include <kernel/kprintf.h>
@@ -406,12 +407,22 @@ ssize_t sys_writev(int fd, const struct iovec *iov, int iovcnt) {
         return -EINVAL;
     }
 
-    /* Copy iovec array from userspace using heap instead of stack */
-    struct iovec *kernel_iov = (struct iovec *)fut_malloc(iov_alloc_size);
-    if (!kernel_iov) {
-        fut_printf("[WRITEV] writev(fd=%d, iov=%p, iovcnt=%d) -> ENOMEM (malloc failed for iovec array)\n",
-                   fd, iov, iovcnt);
-        return -ENOMEM;
+    /* Small iovcnt (typical: writev with 1-4 segments) uses a stack
+     * buffer to avoid the slab pair per syscall. The 32-entry cap
+     * (512 bytes) covers ~all real callers; larger iovecs fall back. */
+    struct iovec stack_iov[32];
+    struct iovec *kernel_iov;
+    bool kernel_iov_on_heap = false;
+    if (iov_alloc_size <= sizeof(stack_iov)) {
+        kernel_iov = stack_iov;
+    } else {
+        kernel_iov = (struct iovec *)fut_malloc(iov_alloc_size);
+        if (!kernel_iov) {
+            fut_printf("[WRITEV] writev(fd=%d, iov=%p, iovcnt=%d) -> ENOMEM (malloc failed for iovec array)\n",
+                       fd, iov, iovcnt);
+            return -ENOMEM;
+        }
+        kernel_iov_on_heap = true;
     }
 
     int iov_copy_ret;
@@ -423,7 +434,7 @@ ssize_t sys_writev(int fd, const struct iovec *iov, int iovcnt) {
 #endif
     iov_copy_ret = fut_copy_from_user(kernel_iov, iov, iovcnt * sizeof(struct iovec));
     if (iov_copy_ret != 0) {
-        fut_free(kernel_iov);
+        if (kernel_iov_on_heap) fut_free(kernel_iov);
         return -EFAULT;
     }
 
@@ -436,7 +447,7 @@ ssize_t sys_writev(int fd, const struct iovec *iov, int iovcnt) {
                 fut_printf("[WRITEV] writev(fd=%d, iov=%p, iovcnt=%d) -> EFAULT "
                            "(iov_base[%d] is NULL with non-zero length)\n",
                            fd, iov, iovcnt, i);
-                fut_free(kernel_iov);
+                if (kernel_iov_on_heap) fut_free(kernel_iov);
                 return -EFAULT;
             }
             /* Verify buffer is readable (skip for kernel buffers) */
@@ -444,7 +455,7 @@ ssize_t sys_writev(int fd, const struct iovec *iov, int iovcnt) {
             if ((uintptr_t)kernel_iov[i].iov_base < KERNEL_VIRTUAL_BASE)
 #endif
             if (fut_access_ok(kernel_iov[i].iov_base, kernel_iov[i].iov_len, 0) != 0) {
-                fut_free(kernel_iov);
+                if (kernel_iov_on_heap) fut_free(kernel_iov);
                 return -EFAULT;
             }
         }
@@ -500,7 +511,7 @@ ssize_t sys_writev(int fd, const struct iovec *iov, int iovcnt) {
             fut_printf("[WRITEV] writev(fd=%d, iovcnt=%d) -> EINVAL "
                        "(iovec %d: iov_len %zu exceeds per-iovec limit %zu)\n",
                        fd, iovcnt, i, kernel_iov[i].iov_len, MAX_IOVEC_SIZE);
-            fut_free(kernel_iov);
+            if (kernel_iov_on_heap) fut_free(kernel_iov);
             return -EINVAL;
         }
 
@@ -509,7 +520,7 @@ ssize_t sys_writev(int fd, const struct iovec *iov, int iovcnt) {
             fut_printf("[WRITEV] writev(fd=%d, iov=%p, iovcnt=%d) -> EINVAL "
                        "(size overflow at iovec %d, total=%zu, iov_len=%zu, integer overflow protection)\n",
                        fd, iov, iovcnt, i, total_size, kernel_iov[i].iov_len);
-            fut_free(kernel_iov);
+            if (kernel_iov_on_heap) fut_free(kernel_iov);
             return -EINVAL;
         }
         total_size += kernel_iov[i].iov_len;
@@ -519,7 +530,7 @@ ssize_t sys_writev(int fd, const struct iovec *iov, int iovcnt) {
             fut_printf("[WRITEV] writev(fd=%d, iov=%p, iovcnt=%d) -> EINVAL "
                        "(total size %zu exceeds limit %zu MB, DoS protection)\n",
                        fd, iov, iovcnt, total_size, MAX_TOTAL_SIZE / (1024 * 1024));
-            fut_free(kernel_iov);
+            if (kernel_iov_on_heap) fut_free(kernel_iov);
             return -EINVAL;
         }
 
@@ -542,7 +553,7 @@ ssize_t sys_writev(int fd, const struct iovec *iov, int iovcnt) {
      * Gathering first ensures a single atomic write in all cases. */
     ssize_t total_written;
     if (total_size == 0) {
-        fut_free(kernel_iov);
+        if (kernel_iov_on_heap) fut_free(kernel_iov);
         /* I/O accounting */
         task->io_syscw++;
         return 0;
@@ -550,7 +561,7 @@ ssize_t sys_writev(int fd, const struct iovec *iov, int iovcnt) {
 
     uint8_t *flat_buf = fut_malloc(total_size);
     if (!flat_buf) {
-        fut_free(kernel_iov);
+        if (kernel_iov_on_heap) fut_free(kernel_iov);
         return -ENOMEM;
     }
 
@@ -565,12 +576,12 @@ ssize_t sys_writev(int fd, const struct iovec *iov, int iovcnt) {
         if (fut_copy_from_user(flat_buf + flat_off, kernel_iov[i].iov_base,
                                kernel_iov[i].iov_len) != 0) {
             fut_free(flat_buf);
-            fut_free(kernel_iov);
+            if (kernel_iov_on_heap) fut_free(kernel_iov);
             return -EFAULT;
         }
         flat_off += kernel_iov[i].iov_len;
     }
-    fut_free(kernel_iov);
+    if (kernel_iov_on_heap) fut_free(kernel_iov);
 
     total_written = fut_vfs_write(fd, flat_buf, total_size);
     fut_free(flat_buf);

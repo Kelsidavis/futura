@@ -1129,25 +1129,29 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
 #endif
             if (fut_copy_from_user(&nb_flag, argp, sizeof(int)) != 0)
                 return -EFAULT;
+            /* Atomic to pair with the F_SETFL CAS loop and the other
+             * O_NONBLOCK toggles. Without it a concurrent F_SETFL could
+             * clobber this toggle, or vice versa. */
+            int new_flags;
             if (nb_flag)
-                file->flags |= O_NONBLOCK;
+                new_flags = __atomic_or_fetch(&file->flags, O_NONBLOCK, __ATOMIC_ACQ_REL);
             else
-                file->flags &= ~O_NONBLOCK;
+                new_flags = __atomic_and_fetch(&file->flags, ~O_NONBLOCK, __ATOMIC_ACQ_REL);
             /* Propagate to chr_ops devices (pipes, FIFOs) via private ioctl
              * so they update internal nonblock state. Matches fcntl(F_SETFL)
              * propagation path at sys_fcntl.c:487-490. */
             if (file->chr_ops && file->chr_ops->ioctl) {
                 file->chr_ops->ioctl(file->chr_inode, file->chr_private,
                                      0xFE01 /* PIPE_IOC_SETFLAGS */,
-                                     (unsigned long)file->flags);
+                                     (unsigned long)new_flags);
             }
             /* Propagate to socket object so socket-layer checks see the flag */
             fut_socket_t *sock = get_socket_from_fd(fd);
             if (sock) {
                 if (nb_flag)
-                    sock->flags |= O_NONBLOCK;
+                    __atomic_or_fetch(&sock->flags, O_NONBLOCK, __ATOMIC_ACQ_REL);
                 else
-                    sock->flags &= ~O_NONBLOCK;
+                    __atomic_and_fetch(&sock->flags, ~O_NONBLOCK, __ATOMIC_ACQ_REL);
             }
             return 0;
         }
@@ -1167,17 +1171,18 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
 #endif
             if (fut_copy_from_user(&async_flag, argp, sizeof(int)) != 0)
                 return -EFAULT;
+            /* Atomic to coexist with F_SETFL/FIONBIO toggling file->flags. */
             if (async_flag)
-                file->flags |= O_ASYNC;
+                __atomic_or_fetch(&file->flags, O_ASYNC, __ATOMIC_ACQ_REL);
             else
-                file->flags &= ~O_ASYNC;
+                __atomic_and_fetch(&file->flags, ~O_ASYNC, __ATOMIC_ACQ_REL);
             /* Propagate to socket if applicable */
             fut_socket_t *sock = get_socket_from_fd(fd);
             if (sock) {
                 if (async_flag)
-                    sock->flags |= O_ASYNC;
+                    __atomic_or_fetch(&sock->flags, O_ASYNC, __ATOMIC_ACQ_REL);
                 else
-                    sock->flags &= ~O_ASYNC;
+                    __atomic_and_fetch(&sock->flags, ~O_ASYNC, __ATOMIC_ACQ_REL);
             }
             return 0;
         }

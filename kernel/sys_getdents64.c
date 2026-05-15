@@ -19,6 +19,7 @@
 #include <kernel/fut_fd_util.h>
 #include <fcntl.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include <string.h>
 
 #include <kernel/kprintf.h>
@@ -457,13 +458,23 @@ long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
         return -ENOTDIR;
     }
 
-    /* Allocate kernel buffer for directory entries */
-    void *kbuf = fut_malloc(count);
-    if (!kbuf) {
-        fut_printf("[GETDENTS64] getdents64(fd=%u [%s], ino=%lu, count=%u [%s]) -> ENOMEM "
-                   "(kernel buffer allocation failed, pid=%d)\n",
-                   fd, fd_category, file->vnode->ino, count, count_category, task->pid);
-        return -ENOMEM;
+    /* Stack-allocate the dirent buffer for the typical 4 KiB count.
+     * Larger requests fall back to fut_malloc. Same shape as the
+     * stack-buffer fast path elsewhere in the syscall layer. */
+    uint8_t stack_buf[4096];
+    void *kbuf;
+    bool kbuf_on_heap = false;
+    if (count <= sizeof(stack_buf)) {
+        kbuf = stack_buf;
+    } else {
+        kbuf = fut_malloc(count);
+        if (!kbuf) {
+            fut_printf("[GETDENTS64] getdents64(fd=%u [%s], ino=%lu, count=%u [%s]) -> ENOMEM "
+                       "(kernel buffer allocation failed, pid=%d)\n",
+                       fd, fd_category, file->vnode->ino, count, count_category, task->pid);
+            return -ENOMEM;
+        }
+        kbuf_on_heap = true;
     }
 
     uint64_t cookie = 0;
@@ -489,7 +500,7 @@ long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
         if (rc < 0) {
             /* readdir returns -ENOENT at end of directory, other negatives are errors */
             if (total_bytes == 0 && rc != -ENOENT && rc != -2) {
-                fut_free(kbuf);
+                if (kbuf_on_heap) fut_free(kbuf);
                 return rc;  /* Error on first entry */
             }
             break;  /* End of directory or error after partial read */
@@ -508,7 +519,7 @@ long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
             fut_printf("[GETDENTS64] getdents64(fd=%u) -> EOVERFLOW "
                        "(directory offset wrapped, Phase 4)\n",
                        fd);
-            fut_free(kbuf);
+            if (kbuf_on_heap) fut_free(kbuf);
             return total_bytes > 0 ? (long)total_bytes : -EOVERFLOW;
         }
 
@@ -531,7 +542,7 @@ long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
             fut_printf("[GETDENTS64] getdents64(fd=%u) -> EINVAL "
                        "(name_len %zu would overflow reclen calculation)\n",
                        fd, name_len);
-            fut_free(kbuf);
+            if (kbuf_on_heap) fut_free(kbuf);
             return total_bytes > 0 ? (long)total_bytes : -EINVAL;
         }
 
@@ -544,7 +555,7 @@ long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
             fut_printf("[GETDENTS64] getdents64(fd=%u) -> EINVAL "
                        "(reclen %zu too large for 8-byte alignment)\n",
                        fd, reclen);
-            fut_free(kbuf);
+            if (kbuf_on_heap) fut_free(kbuf);
             return total_bytes > 0 ? (long)total_bytes : -EINVAL;
         }
         reclen = (reclen + 7) & ~7;
@@ -584,7 +595,7 @@ long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
             fut_printf("[GETDENTS64] getdents64(fd=%u, entry='%s') -> EINVAL "
                        "(aligned reclen %zu exceeds uint16_t max 65535)\n",
                        fd, vdirent.d_name, reclen);
-            fut_free(kbuf);
+            if (kbuf_on_heap) fut_free(kbuf);
             return total_bytes > 0 ? (long)total_bytes : -EINVAL;
         }
 
@@ -620,12 +631,12 @@ long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
 #endif
         copy_ret = fut_copy_to_user(dirp, kbuf, total_bytes);
         if (copy_ret != 0) {
-            fut_free(kbuf);
+            if (kbuf_on_heap) fut_free(kbuf);
             return -EFAULT;
         }
     }
 
-    fut_free(kbuf);
+    if (kbuf_on_heap) fut_free(kbuf);
 
     return (long)total_bytes;
 }

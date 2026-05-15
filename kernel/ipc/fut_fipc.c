@@ -575,7 +575,12 @@ int fut_fipc_cap_revoke(struct fut_fipc_channel *channel, uint32_t revoke_flags)
     if (!channel) {
         return FIPC_EINVAL;
     }
-    channel->cap_ledger.revoke_flags |= revoke_flags;
+    /* Atomic OR: two concurrent revokes with disjoint flag sets would
+     * otherwise race the read-modify-write and lose one set of bits.
+     * Readers in fipc_send (and the cap-check fast path) need to see
+     * all revoke bits as eventually visible. */
+    __atomic_or_fetch(&channel->cap_ledger.revoke_flags, revoke_flags,
+                      __ATOMIC_ACQ_REL);
     return 0;
 }
 

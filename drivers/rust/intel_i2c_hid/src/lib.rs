@@ -51,6 +51,12 @@ unsafe extern "C" {
         rd: *mut u8,
         rd_len: u32,
     ) -> i32;
+
+    /// Monotonic tick counter — used to bound total probe time so a
+    /// stalled controller can't wedge boot for more than a few seconds
+    /// even if the per-call timeout misbehaves.  Ticks at 100 Hz on
+    /// x86_64 once the LAPIC timer is running.
+    fn fut_get_ticks() -> u64;
 }
 
 // ── HID Descriptor (Microsoft HID over I2C, §5.1) ──
@@ -214,9 +220,28 @@ fn probe_hid_descriptor(bus_idx: u32, slave_addr: u8, reg: u16) -> ProbeResult {
 
 /// Probe every I2C-HID candidate on every LPSS I2C bus. Records each match
 /// into the module's STATE array. Returns the number of devices found.
+///
+/// **Diagnostic-heavy:** the L490 used to hang somewhere between the end of
+/// this routine and the first scheduler tick, with no clue which step
+/// corrupted state.  Every transition gets a banner print so the next
+/// real-hardware boot log pinpoints the exact suspect.  Total probe time
+/// is also capped (`MAX_PROBE_TICKS`) so a runaway controller can't wedge
+/// boot even if individual `intel_lpss_i2c_write_read` calls misbehave.
 #[unsafe(no_mangle)]
 pub extern "C" fn intel_i2c_hid_init() -> i32 {
+    // 500 ticks @ 100 Hz = 5 s.  Generous enough that a slow but working
+    // probe finishes; tight enough that a wedged controller doesn't make
+    // the user reboot.
+    const MAX_PROBE_TICKS: u64 = 500;
+
+    let t_start = unsafe { fut_get_ticks() };
     let bus_count = unsafe { intel_lpss_i2c_count() };
+    unsafe {
+        fut_printf(
+            b"intel_i2c_hid: probe begin, lpss_i2c_count=%u\n\0".as_ptr(),
+            bus_count,
+        );
+    }
     if bus_count == 0 {
         unsafe {
             fut_printf(
@@ -230,8 +255,33 @@ pub extern "C" fn intel_i2c_hid_init() -> i32 {
     st.count = 0;
 
     'bus_loop: for bus in 0..bus_count {
+        if unsafe { fut_get_ticks() }.saturating_sub(t_start) > MAX_PROBE_TICKS {
+            unsafe {
+                fut_printf(
+                    b"intel_i2c_hid: total probe budget exhausted at bus %u, aborting\n\0"
+                        .as_ptr(),
+                    bus,
+                );
+            }
+            break 'bus_loop;
+        }
+        unsafe {
+            fut_printf(
+                b"intel_i2c_hid: bus %u -- probing candidate addrs\n\0".as_ptr(),
+                bus,
+            );
+        }
         for &addr in CANDIDATE_ADDRS {
             'reg_loop: for &reg in CANDIDATE_HID_REGS {
+                unsafe {
+                    fut_printf(
+                        b"intel_i2c_hid:   bus=%u addr=0x%02x reg=0x%04x -> write_read...\n\0"
+                            .as_ptr(),
+                        bus,
+                        addr as u32,
+                        reg as u32,
+                    );
+                }
                 match probe_hid_descriptor(bus, addr, reg) {
                     ProbeResult::Found(desc) => {
                         if (st.count as usize) >= MAX_DEVICES {
@@ -273,6 +323,14 @@ pub extern "C" fn intel_i2c_hid_init() -> i32 {
                     ProbeResult::NoDevice => {
                         // Clean NACK or invalid descriptor — try the next
                         // (addr, reg) combination on the same bus.
+                        unsafe {
+                            fut_printf(
+                                b"intel_i2c_hid:   bus=%u addr=0x%02x -> NoDevice\n\0"
+                                    .as_ptr(),
+                                bus,
+                                addr as u32,
+                            );
+                        }
                     }
                     ProbeResult::BusError => {
                         // The controller stalled / timed out. Each timeout
@@ -303,6 +361,14 @@ pub extern "C" fn intel_i2c_hid_init() -> i32 {
                 bus_count,
             );
         }
+    }
+    let elapsed = unsafe { fut_get_ticks() }.saturating_sub(t_start);
+    unsafe {
+        fut_printf(
+            b"intel_i2c_hid: probe end, found=%u elapsed_ticks=%u\n\0".as_ptr(),
+            st.count,
+            elapsed as u32,
+        );
     }
     st.count as i32
 }

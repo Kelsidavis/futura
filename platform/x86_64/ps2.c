@@ -44,6 +44,20 @@ static bool g_ps2_keyboard_enabled = false;
 static bool g_ps2_mouse_enabled = false;
 static bool g_ps2_ready = false;
 
+/* IRQ heartbeat counters — visible from the boot log so a bare-metal
+ * tester can tell whether the IRQ line is firing at all without
+ * needing a debugger.  Updated unconditionally; printed on the first
+ * arrival and then on power-of-two boundaries to bound log spam. */
+static uint32_t g_ps2_irq1_count = 0;
+static uint32_t g_ps2_irq12_count = 0;
+
+static void ps2_irq_heartbeat(uint32_t *counter, uint8_t irq) {
+    uint32_t c = ++(*counter);
+    if (c == 1 || c == 4 || c == 16 || c == 64 || c == 256 || c == 1024) {
+        fut_printf("[PS2] IRQ%u count=%u\n", irq, c);
+    }
+}
+
 static void ps2_wait_input_clear(void) {
     for (int i = 0; i < 100000; ++i) {
         if ((hal_inb(PS2_STATUS_PORT) & 0x02u) == 0) {
@@ -107,6 +121,7 @@ void ps2_irq_keyboard(void) {
         return;
     }
 
+    ps2_irq_heartbeat(&g_ps2_irq1_count, 1);
     for (;;) {
         uint8_t status = hal_inb(PS2_STATUS_PORT);
         if ((status & 0x01u) == 0) {
@@ -136,7 +151,7 @@ void ps2_irq_mouse(void) {
         return;
     }
 
-
+    ps2_irq_heartbeat(&g_ps2_irq12_count, 12);
     for (;;) {
         uint8_t status = hal_inb(PS2_STATUS_PORT);
         if ((status & 0x01u) == 0) {
@@ -196,12 +211,38 @@ int ps2_controller_init(bool enable_keyboard, bool enable_mouse) {
 
     if (enable_mouse) {
         ps2_write_cmd(PS2_CMD_ENABLE_SECOND);
-        ps2_write_second(0xF6); /* defaults */
+
+        /* Reset (0xFF) — bring the AUX device to a known state.  On
+         * laptops the firmware may have left the device in absolute
+         * mode, four-byte mode, or sleep; sending F6/F4 against that
+         * yields garbage packets that fail the bit-3 sync check in
+         * ps2_mouse_handle_byte and the cursor never moves.  After
+         * the reset command the device replies ACK, then 0xAA (BAT
+         * pass), then 0x00 (standard PS/2 mouse ID). */
+        ps2_write_second(0xFF);
+        int rc = ps2_expect_ack();
+        uint8_t bat = ps2_read_data();
+        uint8_t devid = ps2_read_data();
+        fut_printf("[PS2] mouse reset: ack=%d BAT=0x%02x ID=0x%02x\n",
+                   rc, bat, devid);
+
+        /* Sample rate 100 Hz — sane default cursor smoothness. */
+        ps2_write_second(0xF3);
         (void)ps2_expect_ack();
-        ps2_write_second(0xF4); /* enable streaming */
+        ps2_write_second(100);
         (void)ps2_expect_ack();
+
+        ps2_write_second(0xF6);
+        rc = ps2_expect_ack();
+        fut_printf("[PS2] mouse set defaults (0xF6): ack=%d\n", rc);
+
+        ps2_write_second(0xF4);
+        rc = ps2_expect_ack();
+        fut_printf("[PS2] mouse enable streaming (0xF4): ack=%d\n", rc);
+
         g_ps2_mouse_enabled = true;
         fut_irq_enable(12);
+        fut_printf("[PS2] mouse IRQ 12 enabled\n");
     } else {
         fut_irq_disable(12);
     }

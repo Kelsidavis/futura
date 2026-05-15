@@ -2159,23 +2159,20 @@ void fut_kernel_main(void) {
             intel_gpio_init(0, 0);
             fut_printf("[INIT] Intel: entering intel_lpss_init\n");
             intel_lpss_init();
-            /* Probe LPSS I2C buses for HID-over-I2C devices (Chromebook
-             * touchpads, etc.). DISABLED again — re-enabled in 3a12b8af
-             * after bounding the probe (801ab5c6), and HP booted fine,
-             * but L490 hangs at "Starting scheduler..." with the probe
-             * enabled. af1bc096 (LPSS function-reset deassert for combined-
-             * BAR layouts) didn't fix it. Symptom is between fut_enable_
-             * interrupts() and the fut_printf inside fut_sched_start —
-             * something we touch during the probe corrupts state that
-             * bites once the first timer IRQ fires. Needs proper bisection
-             * with SD logging; keep disabled until then. */
-            #if 0
+            /* Probe LPSS I2C buses for HID-over-I2C devices (laptop
+             * trackpads, etc.).  Previously gated off because the L490
+             * hung between fut_enable_interrupts() and the first
+             * fut_printf inside fut_sched_start — re-enabled with
+             * per-step prints and a total-time budget inside
+             * intel_i2c_hid_init.  If the L490 hangs again, the boot
+             * log will pinpoint the offending call so the corruption
+             * window can be bisected without flying blind. */
             {
                 extern int intel_i2c_hid_init(void);
                 fut_printf("[INIT] Intel: entering intel_i2c_hid_init\n");
                 intel_i2c_hid_init();
+                fut_printf("[INIT] Intel: returned from intel_i2c_hid_init\n");
             }
-            #endif
             fut_printf("[INIT] Intel: entering intel_smbus_init\n");
             intel_smbus_init();
             fut_printf("[INIT] Intel: entering intel_spi_init\n");

@@ -220,13 +220,20 @@ long sys_unshare(unsigned long flags) {
      * The calling process stays in its current namespace, but its next
      * fork/clone will place the child in a new PID namespace where it
      * gets PID 1. This matches Linux unshare(CLONE_NEWPID) semantics. */
+    /* When swapping the task's namespace pointer to a freshly created one,
+     * drop the task's reference on the old namespace — otherwise every
+     * unshare leaks one ref on the old ns (and on its parent chain via
+     * the new ns now holding a parent ref). Mirrors sys_clone3.c's
+     * post-fork namespace fixup. */
     if (flags & CLONE_NEWPID) {
         extern struct pid_namespace *pidns_create(struct pid_namespace *);
-        struct pid_namespace *new_ns = pidns_create(task->pid_ns);
+        extern void pidns_unref(struct pid_namespace *);
+        struct pid_namespace *old = task->pid_ns;
+        struct pid_namespace *new_ns = pidns_create(old);
         if (!new_ns) return -ENOMEM;
-        /* Store new namespace — next fork will use it for the child */
         task->pid_ns = new_ns;
         task->pid_ns_level = new_ns->level;
+        pidns_unref(old);
         fut_printf("[UNSHARE] unshare(CLONE_NEWPID, pid=%d) -> new pidns level=%d\n",
                    (int)task->pid, new_ns->level);
     }
@@ -236,9 +243,12 @@ long sys_unshare(unsigned long flags) {
      * other tasks in the parent namespace. */
     if (flags & CLONE_NEWNS) {
         extern struct mount_namespace *mntns_create(struct mount_namespace *);
-        struct mount_namespace *new_mntns = mntns_create(task->mnt_ns);
+        extern void mntns_unref(struct mount_namespace *);
+        struct mount_namespace *old = task->mnt_ns;
+        struct mount_namespace *new_mntns = mntns_create(old);
         if (!new_mntns) return -ENOMEM;
         task->mnt_ns = new_mntns;
+        mntns_unref(old);
         fut_printf("[UNSHARE] unshare(CLONE_NEWNS, pid=%d) -> new mntns id=%llu\n",
                    (int)task->pid, (unsigned long long)new_mntns->id);
     }
@@ -246,25 +256,34 @@ long sys_unshare(unsigned long flags) {
     /* CLONE_NEWUTS: per-container hostname/domainname */
     if (flags & CLONE_NEWUTS) {
         extern struct uts_namespace *utsns_create(struct uts_namespace *);
-        struct uts_namespace *new_utsns = utsns_create(task->uts_ns);
+        extern void utsns_unref(struct uts_namespace *);
+        struct uts_namespace *old = task->uts_ns;
+        struct uts_namespace *new_utsns = utsns_create(old);
         if (!new_utsns) return -ENOMEM;
         task->uts_ns = new_utsns;
+        utsns_unref(old);
     }
 
     /* CLONE_NEWNET: per-container network stack */
     if (flags & CLONE_NEWNET) {
         extern struct net_namespace *netns_create(struct net_namespace *);
-        struct net_namespace *new_netns = netns_create(task->net_ns);
+        extern void netns_unref(struct net_namespace *);
+        struct net_namespace *old = task->net_ns;
+        struct net_namespace *new_netns = netns_create(old);
         if (!new_netns) return -ENOMEM;
         task->net_ns = new_netns;
+        netns_unref(old);
     }
 
     /* CLONE_NEWUSER: per-container UID/GID mapping */
     if (flags & CLONE_NEWUSER) {
         extern struct user_namespace *userns_create(struct user_namespace *);
-        struct user_namespace *new_userns = userns_create(task->user_ns);
+        extern void userns_unref(struct user_namespace *);
+        struct user_namespace *old = task->user_ns;
+        struct user_namespace *new_userns = userns_create(old);
         if (!new_userns) return -ENOMEM;
         task->user_ns = new_userns;
+        userns_unref(old);
     }
 
     /* Remaining flags (IPC/CGROUP) accepted as no-ops */

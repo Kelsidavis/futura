@@ -895,7 +895,9 @@ static struct fs_context *fsctx_claim_slot(void) {
 static int fsctx_release(void *inode, void *priv) {
     (void)inode;
     struct fs_context *ctx = (struct fs_context *)priv;
-    if (ctx) ctx->active = false;
+    /* Release-store so a subsequent fsctx_claim_slot's acquire-CAS
+     * observes the slot as inactive once the file's release ran. */
+    if (ctx) __atomic_store_n(&ctx->active, false, __ATOMIC_RELEASE);
     return 0;
 }
 

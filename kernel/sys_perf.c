@@ -140,14 +140,16 @@ static struct perf_event perf_events[MAX_PERF_EVENTS];
 static int perf_release(void *inode, void *priv) {
     (void)inode;
     struct perf_event *ev = (struct perf_event *)priv;
-    if (ev) ev->active = false;
+    /* Release-store: pair with the acquire-CAS in perf_event_open's
+     * slot claim so a subsequent open sees the slot free. */
+    if (ev) __atomic_store_n(&ev->active, false, __ATOMIC_RELEASE);
     return 0;
 }
 
 static ssize_t perf_read(void *inode, void *priv, void *buf, size_t n, off_t *pos) {
     (void)inode; (void)pos;
     struct perf_event *ev = (struct perf_event *)priv;
-    if (!ev || !ev->active) return -EBADF;
+    if (!ev || !__atomic_load_n(&ev->active, __ATOMIC_ACQUIRE)) return -EBADF;
 
     /* Update counter value based on event type */
     extern uint64_t fut_get_ticks(void);

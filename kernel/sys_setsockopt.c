@@ -530,10 +530,13 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                     case SO_DONTROUTE:  bit = FUT_SO_F_DONTROUTE; break;
                     case SO_DEBUG:      bit = FUT_SO_F_DEBUG;     break;
                 }
+                /* Atomic or/and so two concurrent setsockopt calls
+                 * setting different SO_* bits don't lose updates via
+                 * the read-modify-write window. */
                 if (val)
-                    socket->so_flags |= bit;
+                    __atomic_or_fetch(&socket->so_flags, bit, __ATOMIC_ACQ_REL);
                 else
-                    socket->so_flags &= ~bit;
+                    __atomic_and_fetch(&socket->so_flags, ~bit, __ATOMIC_ACQ_REL);
                 return 0;
             }
 
@@ -629,13 +632,15 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                 if (optlen < sizeof(int)) return -EINVAL;
                 int val = 0;
                 if (sso_copy_from_user(&val, optval, sizeof(int)) != 0) return -EFAULT;
-                if (val)
-                    socket->so_flags |= FUT_SO_F_TIMESTAMP;
-                else
-                    socket->so_flags &= ~FUT_SO_F_TIMESTAMP;
-                /* SO_TIMESTAMP and SO_TIMESTAMPNS are mutually exclusive */
-                if (val)
-                    socket->so_flags &= ~FUT_SO_F_TIMESTAMPNS;
+                /* Atomic to pair with the other concurrent setsockopt
+                 * paths setting different bits in so_flags. */
+                if (val) {
+                    __atomic_or_fetch(&socket->so_flags, FUT_SO_F_TIMESTAMP, __ATOMIC_ACQ_REL);
+                    /* SO_TIMESTAMP and SO_TIMESTAMPNS are mutually exclusive */
+                    __atomic_and_fetch(&socket->so_flags, ~FUT_SO_F_TIMESTAMPNS, __ATOMIC_ACQ_REL);
+                } else {
+                    __atomic_and_fetch(&socket->so_flags, ~FUT_SO_F_TIMESTAMP, __ATOMIC_ACQ_REL);
+                }
                 return 0;
             }
 
@@ -643,13 +648,13 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                 if (optlen < sizeof(int)) return -EINVAL;
                 int val = 0;
                 if (sso_copy_from_user(&val, optval, sizeof(int)) != 0) return -EFAULT;
-                if (val)
-                    socket->so_flags |= FUT_SO_F_TIMESTAMPNS;
-                else
-                    socket->so_flags &= ~FUT_SO_F_TIMESTAMPNS;
-                /* Mutually exclusive with SO_TIMESTAMP */
-                if (val)
-                    socket->so_flags &= ~FUT_SO_F_TIMESTAMP;
+                if (val) {
+                    __atomic_or_fetch(&socket->so_flags, FUT_SO_F_TIMESTAMPNS, __ATOMIC_ACQ_REL);
+                    /* Mutually exclusive with SO_TIMESTAMP */
+                    __atomic_and_fetch(&socket->so_flags, ~FUT_SO_F_TIMESTAMP, __ATOMIC_ACQ_REL);
+                } else {
+                    __atomic_and_fetch(&socket->so_flags, ~FUT_SO_F_TIMESTAMPNS, __ATOMIC_ACQ_REL);
+                }
                 return 0;
             }
 

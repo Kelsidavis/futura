@@ -422,25 +422,12 @@ int fut_vfs_close_cap(fut_handle_t handle) {
 
     struct fut_file *file = (struct fut_file *)obj->data;
 
-    /* Decrement our reference to the file atomically.
-     * The previous non-atomic read of refcount > 0 was a TOCTOU race:
-     * two threads could both see refcount > 0 and both decrement,
-     * causing a double-free. Use only the atomic result to decide. */
+    /* Decrement our reference via the shared helper. The previous
+     * inlined logic skipped file->path free; vfs_file_unref handles
+     * the full release path (chr_ops->release / vnode close+unref /
+     * path free / struct free). */
     if (file) {
-        uint32_t remaining = __atomic_sub_fetch(&file->refcount, 1, __ATOMIC_ACQ_REL);
-
-        /* If this was the last reference, close the file properly */
-        if (remaining == 0) {
-            if (file->chr_ops && file->chr_ops->release) {
-                file->chr_ops->release(file->chr_inode, file->chr_private);
-            } else if (file->vnode) {
-                if (file->vnode->ops && file->vnode->ops->close) {
-                    file->vnode->ops->close(file->vnode);
-                }
-                fut_vnode_unref(file->vnode);
-            }
-            fut_free(file);
-        }
+        vfs_file_unref(file);
     }
 
     /* Release object reference and destroy the handle */

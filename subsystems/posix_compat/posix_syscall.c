@@ -815,17 +815,20 @@ int propagate_socket_dup(int oldfd, int newfd) {
         return 0;  /* Out of range for socket table, not an error */
     }
 
-    /* Check if oldfd is a socket */
-    if (socket_fd_table[oldfd] == NULL) {
+    /* Snapshot the slot once so a concurrent close()/release_socket_fd on
+     * oldfd between the NULL check and the propagation doesn't leave newfd
+     * holding a stale or torn pointer (or feed NULL into fut_socket_ref). */
+    fut_socket_t *sock = __atomic_load_n(&socket_fd_table[oldfd], __ATOMIC_ACQUIRE);
+    if (sock == NULL) {
         return 0;  /* Not a socket, nothing to propagate */
     }
 
     /* Propagate socket and ownership to newfd */
-    socket_fd_table[newfd] = socket_fd_table[oldfd];
+    socket_fd_table[newfd] = sock;
     socket_fd_owner[newfd] = socket_fd_owner[oldfd];
 
     /* Increment socket refcount since we now have two FDs referring to it */
-    fut_socket_ref(socket_fd_table[oldfd]);
+    fut_socket_ref(sock);
 
     return 0;
 }

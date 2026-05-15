@@ -16,6 +16,7 @@
 #include <kernel/errno.h>
 #include <fcntl.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include <stddef.h>
 
 /* Maximum copy size per call (4MB) */
@@ -166,11 +167,22 @@ long sys_copy_file_range(int fd_in, int64_t *off_in,
         }
     }
 
-    /* Allocate kernel bounce buffer */
+    /* Kernel bounce buffer. Small ranges (most caller usage) use a
+     * stack buffer to avoid the slab pair per syscall — same pattern as
+     * sys_read/sys_write (commit 8e412f00). The cap at 65 KiB still
+     * applies; larger copies allocate. */
+    uint8_t stack_buf[4096];
     size_t buf_size = (len < 65536) ? len : 65536;
-    void *kbuf = fut_malloc(buf_size);
-    if (!kbuf) {
-        return -ENOMEM;
+    void *kbuf;
+    bool kbuf_on_heap = false;
+    if (buf_size <= sizeof(stack_buf)) {
+        kbuf = stack_buf;
+    } else {
+        kbuf = fut_malloc(buf_size);
+        if (!kbuf) {
+            return -ENOMEM;
+        }
+        kbuf_on_heap = true;
     }
 
     /*
@@ -214,7 +226,7 @@ long sys_copy_file_range(int fd_in, int64_t *off_in,
 
         if (nwritten <= 0) {
             if (total_copied == 0) {
-                fut_free(kbuf);
+                if (kbuf_on_heap) fut_free(kbuf);
                 return nwritten < 0 ? nwritten : -EIO;
             }
             break;  /* Partial copy — return bytes copied so far */
@@ -230,7 +242,7 @@ long sys_copy_file_range(int fd_in, int64_t *off_in,
         }
     }
 
-    fut_free(kbuf);
+    if (kbuf_on_heap) fut_free(kbuf);
 
     /*
      * Update file positions and caller's offset pointers.

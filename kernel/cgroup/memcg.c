@@ -82,12 +82,17 @@ int memcg_create(const char *path) {
 
     int slot = -1;
     for (int i = 1; i < MEMCG_MAX_GROUPS; i++) {
-        if (!g_memcg[i].active) { slot = i; break; }
+        bool expected = false;
+        if (__atomic_compare_exchange_n(&g_memcg[i].active, &expected, true,
+                                        false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+            slot = i;
+            break;
+        }
     }
     if (slot < 0) return -ENOSPC;
 
     struct memcg_group *g = &g_memcg[slot];
-    g->active = true;
+    /* active set by the CAS above */
     size_t pl = 0;
     while (path[pl] && pl < 31) { g->name[pl] = path[pl]; pl++; }
     g->name[pl] = '\0';

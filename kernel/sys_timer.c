@@ -175,10 +175,15 @@ long sys_timer_create(int clockid, struct sigevent *sevp, timer_t *timerid) {
         sigev_value = (long)sev.sigev_value.sival_int;
     }
 
-    /* Find a free timer slot */
+    /* Atomically claim a free timer slot. Without the CAS, two threads
+     * in the same task creating timers concurrently could both observe
+     * the same .active==0 slot and one would overwrite the other's
+     * signo / notify / clockid. See project_slot_claim_pattern.md. */
     int slot = -1;
     for (int i = 0; i < FUT_POSIX_TIMER_MAX; i++) {
-        if (!task->posix_timers[i].active) {
+        int expected = 0;
+        if (__atomic_compare_exchange_n(&task->posix_timers[i].active, &expected, 1,
+                                        false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
             slot = i;
             break;
         }
@@ -186,9 +191,8 @@ long sys_timer_create(int clockid, struct sigevent *sevp, timer_t *timerid) {
     if (slot < 0)
         return -EAGAIN;  /* No free timer slots */
 
-    /* Initialize timer */
+    /* Initialize timer (active was set by the CAS above) */
     fut_posix_timer_t *pt = &task->posix_timers[slot];
-    pt->active = 1;
     pt->armed = 0;
     pt->clockid = local_clockid;
     pt->signo = signo;

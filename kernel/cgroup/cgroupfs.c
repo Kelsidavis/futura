@@ -462,15 +462,22 @@ int cgfs_mkdir(struct fut_vnode *dir, const char *name, uint32_t mode) {
 
     int parent = nd->cgroup_idx;
 
-    /* Find free slot */
+    /* Atomically claim a free cgroup slot. Two concurrent mkdir's inside
+     * the cgroup tree could otherwise both observe the same slot as
+     * inactive and clobber each other's name/parent. See
+     * project_slot_claim_pattern.md. */
     int slot = -1;
     for (int i = 1; i < MAX_CGROUPS; i++) {
-        if (!g_cgroups[i].active) { slot = i; break; }
+        bool expected = false;
+        if (__atomic_compare_exchange_n(&g_cgroups[i].active, &expected, true,
+                                        false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+            slot = i;
+            break;
+        }
     }
     if (slot < 0) return -ENOSPC;
 
-    /* Build path */
-    g_cgroups[slot].active = true;
+    /* Build path. active is already true from the CAS above. */
     g_cgroups[slot].parent = parent;
     g_cgroups[slot].nr_children = 0;
 

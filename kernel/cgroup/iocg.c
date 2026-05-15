@@ -58,21 +58,22 @@ int iocg_create(const char *path) {
     if (!path) return -EINVAL;
     if (iocg_find(path) >= 0) return -EEXIST;
     for (int i = 1; i < IOCG_MAX; i++) {
-        if (!g_iocg[i].active) {
-            g_iocg[i].active = true;
-            size_t pl = 0;
-            while (path[pl] && pl < 31) { g_iocg[i].name[pl] = path[pl]; pl++; }
-            g_iocg[i].name[pl] = '\0';
-            g_iocg[i].rbps_max = 0;
-            g_iocg[i].wbps_max = 0;
-            g_iocg[i].riops_max = 0;
-            g_iocg[i].wiops_max = 0;
-            g_iocg[i].bytes_read = 0;
-            g_iocg[i].bytes_written = 0;
-            g_iocg[i].ios_read = 0;
-            g_iocg[i].ios_written = 0;
-            return 0;
-        }
+        bool expected = false;
+        if (!__atomic_compare_exchange_n(&g_iocg[i].active, &expected, true,
+                                         false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+            continue;
+        size_t pl = 0;
+        while (path[pl] && pl < 31) { g_iocg[i].name[pl] = path[pl]; pl++; }
+        g_iocg[i].name[pl] = '\0';
+        g_iocg[i].rbps_max = 0;
+        g_iocg[i].wbps_max = 0;
+        g_iocg[i].riops_max = 0;
+        g_iocg[i].wiops_max = 0;
+        g_iocg[i].bytes_read = 0;
+        g_iocg[i].bytes_written = 0;
+        g_iocg[i].ios_read = 0;
+        g_iocg[i].ios_written = 0;
+        return 0;
     }
     return -ENOSPC;
 }

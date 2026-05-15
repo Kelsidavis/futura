@@ -88,12 +88,17 @@ int ipsec_sa_add(uint32_t spi, uint32_t src, uint32_t dst, uint8_t proto,
     }
     int slot = -1;
     for (int i = 0; i < IPSEC_SA_MAX; i++) {
-        if (!g_sas[i].active) { slot = i; break; }
+        bool expected = false;
+        if (__atomic_compare_exchange_n(&g_sas[i].active, &expected, true,
+                                        false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+            slot = i;
+            break;
+        }
     }
     if (slot < 0) return -ENOSPC;
 
     struct ipsec_sa *sa = &g_sas[slot];
-    sa->active = true;
+    /* active set by the CAS above */
     sa->spi = spi;
     sa->src_ip = src;
     sa->dst_ip = dst;
@@ -124,12 +129,17 @@ int ipsec_sp_add(uint32_t src_net, uint32_t src_mask, uint32_t dst_net,
                  uint32_t dst_mask, uint8_t direction, uint8_t action, uint32_t spi) {
     int slot = -1;
     for (int i = 0; i < IPSEC_SP_MAX; i++) {
-        if (!g_sps[i].active) { slot = i; break; }
+        bool expected = false;
+        if (__atomic_compare_exchange_n(&g_sps[i].active, &expected, true,
+                                        false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+            slot = i;
+            break;
+        }
     }
     if (slot < 0) return -ENOSPC;
 
     struct ipsec_sp *sp = &g_sps[slot];
-    sp->active = true;
+    /* active set by the CAS above */
     sp->src_net = src_net;
     sp->src_mask = src_mask;
     sp->dst_net = dst_net;

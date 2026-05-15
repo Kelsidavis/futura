@@ -15,6 +15,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/errno.h>
 #include <kernel/fut_vfs.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -260,10 +261,21 @@ long sys_readlink(const char *path, char *buf, size_t bufsiz) {
      * Use VFS readlink helper so final component is not followed.
      */
 
-    /* Allocate kernel buffer for readlink result */
-    char *target_buf = fut_malloc(local_bufsiz);
-    if (!target_buf) {
-        return -ENOMEM;
+    /* Allocate kernel buffer for readlink result. Typical callers pass
+     * PATH_MAX (4 KiB); use a 4 KiB stack buffer in the common case to
+     * avoid the slab pair per readlink syscall (`ls -l` and similar
+     * tools hit this on every symlink). */
+    char stack_buf[4096];
+    char *target_buf;
+    bool target_on_heap = false;
+    if (local_bufsiz <= sizeof(stack_buf)) {
+        target_buf = stack_buf;
+    } else {
+        target_buf = fut_malloc(local_bufsiz);
+        if (!target_buf) {
+            return -ENOMEM;
+        }
+        target_on_heap = true;
     }
 
     /* Read symbolic link target without following the final component */
@@ -294,7 +306,7 @@ long sys_readlink(const char *path, char *buf, size_t bufsiz) {
         fut_printf("[READLINK] readlink(path='%s' [%s, %s], bufsiz=%zu [%s]) -> %d (%s, Phase 3: VFS readlink operation)\n",
                    path_buf, path_type, length_category, local_bufsiz, bufsiz_category,
                    (int)len, error_desc);
-        fut_free(target_buf);
+        if (target_on_heap) fut_free(target_buf);
         return len;
     }
 
@@ -325,7 +337,7 @@ long sys_readlink(const char *path, char *buf, size_t bufsiz) {
         fut_printf("[READLINK] readlink(path='%s', bufsiz=%zu) -> ENAMETOOLONG "
                    "(returned length %zd exceeds buffer size)\n",
                    path_buf, local_bufsiz, len);
-        fut_free(target_buf);
+        if (target_on_heap) fut_free(target_buf);
         return -ENAMETOOLONG;
     }
 
@@ -338,18 +350,18 @@ long sys_readlink(const char *path, char *buf, size_t bufsiz) {
         fut_printf("[READLINK] readlink(path='%s') -> ENAMETOOLONG "
                    "(symlink target length %zd exceeds PATH_MAX %d)\n",
                    path_buf, len, PATH_MAX);
-        fut_free(target_buf);
+        if (target_on_heap) fut_free(target_buf);
         return -ENAMETOOLONG;
     }
 
     /* Copy result to userspace buffer */
     if (readlink_copy_to_user(local_buf, target_buf, len) != 0) {
-        fut_free(target_buf);
+        if (target_on_heap) fut_free(target_buf);
         return -EFAULT;
     }
 
     /* Clean up and return bytes read */
-    fut_free(target_buf);
+    if (target_on_heap) fut_free(target_buf);
 
     fut_printf("[READLINK] readlink(path='%s' [%s, %s], bufsiz=%zu [%s], "
                "target_len=%zd) -> %zd (Phase 3: VFS readlink operation)\n",

@@ -337,18 +337,27 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
                 if (recvmsg_copy_from_user(&iov, &kmsg.msg_iov[i], sizeof(iov)) != 0)
                     break;
                 if (!iov.iov_base || iov.iov_len == 0) continue;
-                /* Allocate a kernel bounce buffer */
-                void *kbuf = fut_malloc(iov.iov_len);
-                if (!kbuf) break;
+                /* Bounce buffer: small segments use stack to avoid slab
+                 * churn on every netlink RTM_* response. */
+                uint8_t stack_buf[2048];
+                void *kbuf;
+                bool kbuf_on_heap = false;
+                if (iov.iov_len <= sizeof(stack_buf)) {
+                    kbuf = stack_buf;
+                } else {
+                    kbuf = fut_malloc(iov.iov_len);
+                    if (!kbuf) break;
+                    kbuf_on_heap = true;
+                }
                 ssize_t got = netlink_handle_recv(nl_sock, kbuf, iov.iov_len);
                 if (got > 0) {
                     if (recvmsg_copy_to_user(iov.iov_base, kbuf, (size_t)got) != 0) {
-                        fut_free(kbuf);
+                        if (kbuf_on_heap) fut_free(kbuf);
                         break;
                     }
                     total_nl += got;
                 }
-                fut_free(kbuf);
+                if (kbuf_on_heap) fut_free(kbuf);
                 if (got <= 0) break;
             }
             return total_nl;

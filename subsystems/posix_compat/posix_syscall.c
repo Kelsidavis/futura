@@ -740,9 +740,12 @@ fut_socket_t *get_socket_from_fd(int fd) {
     if (file && file->chr_ops == &socket_fops && file->chr_private) {
         return (fut_socket_t *)file->chr_private;
     }
-    /* Fallback to global table for edge cases (kernel-internal sockets) */
-    if (fd >= 0 && fd < MAX_SOCKET_FDS && socket_fd_table[fd] != NULL) {
-        return socket_fd_table[fd];
+    /* Fallback to global table. Atomic-load so a concurrent
+     * propagate_socket_dup or release_socket_fd write doesn't appear
+     * torn — the writes have been atomic since 8e9007b3 and this
+     * reader needs to pair with them. */
+    if (fd >= 0 && fd < MAX_SOCKET_FDS) {
+        return __atomic_load_n(&socket_fd_table[fd], __ATOMIC_ACQUIRE);
     }
     return NULL;
 }
@@ -755,7 +758,9 @@ static inline int set_socket_for_fd(int fd, fut_socket_t *socket) {
     if (fd < 0 || fd >= MAX_SOCKET_FDS) {
         return -1;
     }
-    socket_fd_table[fd] = socket;
+    /* Release-store: pair with the acquire-load in get_socket_from_fd
+     * and the CAS in propagate_socket_dup. */
+    __atomic_store_n(&socket_fd_table[fd], socket, __ATOMIC_RELEASE);
     return 0;
 }
 
@@ -794,8 +799,11 @@ int release_socket_fd(int fd) {
         return -EBADF;
     }
 
-    /* Just clear the tracking table entry - VFS handles actual socket close */
-    socket_fd_table[fd] = NULL;
+    /* Release-store so get_socket_from_fd's acquire-load observes the
+     * cleared slot once we've published the release. Without an
+     * atomic write a concurrent reader on a weak-memory architecture
+     * could keep observing the stale socket pointer. */
+    __atomic_store_n(&socket_fd_table[fd], NULL, __ATOMIC_RELEASE);
     socket_fd_owner[fd] = 0;
 
     return 0;

@@ -515,8 +515,18 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
         extern fut_socket_t *get_socket_from_fd(int fd);
         fut_socket_t *sock = get_socket_from_fd(local_sockfd);
         if (sock && sock->pair) {
-            /* Copy control data from userspace */
-            void *kcontrol = fut_malloc(kmsg.msg_controllen);
+            /* Copy control data from userspace. Small cmsg payloads
+             * (typical SCM_RIGHTS: 24 bytes header + a few fds) use a
+             * stack buffer to avoid per-syscall slab churn. */
+            uint8_t cmsg_stack_buf[1024];
+            void *kcontrol;
+            bool kcontrol_on_heap = false;
+            if (kmsg.msg_controllen <= sizeof(cmsg_stack_buf)) {
+                kcontrol = cmsg_stack_buf;
+            } else {
+                kcontrol = fut_malloc(kmsg.msg_controllen);
+                kcontrol_on_heap = (kcontrol != NULL);
+            }
             if (kcontrol) {
                 if (sendmsg_copy_from_user(kcontrol, kmsg.msg_control, kmsg.msg_controllen) == 0) {
                     /* Parse control messages */
@@ -542,7 +552,7 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
                             /* POSIX limits SCM_RIGHTS to a reasonable count.
                              * Linux uses sysctl_optmem_max / sizeof(int); we cap at 253 like BSD. */
                             if (nfds > 253) {
-                                fut_free(kcontrol);
+                                if (kcontrol_on_heap) fut_free(kcontrol);
                                 return -EINVAL;
                             }
 
@@ -555,7 +565,7 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
                                 if (!file) { scm_err = 1; break; }
                             }
                             if (scm_err) {
-                                fut_free(kcontrol);
+                                if (kcontrol_on_heap) fut_free(kcontrol);
                                 return -EBADF;
                             }
 
@@ -564,7 +574,7 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
                             fut_spinlock_acquire(&sock->pair->lock);
                             if (sock->pair->fd_queue_count + (uint32_t)nfds > FUT_SOCKET_FD_QUEUE_MAX) {
                                 fut_spinlock_release(&sock->pair->lock);
-                                fut_free(kcontrol);
+                                if (kcontrol_on_heap) fut_free(kcontrol);
                                 SENDMSG_LOG("[SENDMSG] SCM_RIGHTS: fd queue full (%u + %d > %d)\n",
                                            sock->pair->fd_queue_count, nfds, FUT_SOCKET_FD_QUEUE_MAX);
                                 return -ENOBUFS;
@@ -589,7 +599,7 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
                         cmsg = CMSG_NXTHDR(&ctrl_msg, cmsg);
                     }
                 }
-                fut_free(kcontrol);
+                if (kcontrol_on_heap) fut_free(kcontrol);
             }
         }
     }

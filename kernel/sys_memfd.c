@@ -13,6 +13,7 @@
 #include <kernel/fut_mm.h>
 #include <kernel/chrdev.h>
 #include <kernel/fut_vfs.h>
+#include <kernel/fut_sched.h>  /* fut_spinlock_t */
 #include <kernel/errno.h>
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
@@ -32,13 +33,19 @@
 /* Maximum name length (Linux uses 249) */
 #define MEMFD_NAME_MAX 249
 
-/* memfd private data: dynamic buffer */
+/* memfd private data: dynamic buffer.
+ * The lock serialises buffer growth/shrink in memfd_write and the
+ * MEMFD_IOC_TRUNCATE ioctl with concurrent reads. Without it, two
+ * writers could each grow the buffer, swap mf->data, and one would
+ * UAF on the other's freshly-freed old buffer; a concurrent reader
+ * would see a torn (mf->data, mf->size, mf->capacity) tuple. */
 struct memfd {
     char    name[MEMFD_NAME_MAX + 1];
     uint8_t *data;
     size_t  size;      /* current file size (as set by ftruncate) */
     size_t  capacity;  /* allocated buffer capacity */
     unsigned int flags;
+    fut_spinlock_t lock;
 };
 
 #define MEMFD_INIT_CAP 4096
@@ -49,9 +56,12 @@ static ssize_t memfd_read(void *inode, void *priv, void *buf, size_t n, off_t *p
     if (!mf || !pos)
         return -EINVAL;
 
+    fut_spinlock_acquire(&mf->lock);
     off_t offset = *pos;
-    if (offset < 0 || (size_t)offset >= mf->size)
+    if (offset < 0 || (size_t)offset >= mf->size) {
+        fut_spinlock_release(&mf->lock);
         return 0;  /* EOF */
+    }
 
     size_t avail = mf->size - (size_t)offset;
     if (n > avail)
@@ -59,6 +69,7 @@ static ssize_t memfd_read(void *inode, void *priv, void *buf, size_t n, off_t *p
 
     memcpy(buf, mf->data + offset, n);
     *pos += (off_t)n;
+    fut_spinlock_release(&mf->lock);
     return (ssize_t)n;
 }
 
@@ -81,6 +92,7 @@ static ssize_t memfd_write(void *inode, void *priv, const void *buf, size_t n, o
 
     size_t end = (size_t)offset + n;
 
+    fut_spinlock_acquire(&mf->lock);
     /* Grow buffer if needed */
     if (end > mf->capacity) {
         size_t new_cap = mf->capacity;
@@ -88,8 +100,10 @@ static ssize_t memfd_write(void *inode, void *priv, const void *buf, size_t n, o
             new_cap = new_cap ? new_cap * 2 : MEMFD_INIT_CAP;
 
         uint8_t *new_data = fut_malloc(new_cap);
-        if (!new_data)
+        if (!new_data) {
+            fut_spinlock_release(&mf->lock);
             return -ENOMEM;
+        }
 
         if (mf->data) {
             memcpy(new_data, mf->data, mf->size);
@@ -109,6 +123,7 @@ static ssize_t memfd_write(void *inode, void *priv, const void *buf, size_t n, o
     if (end > mf->size)
         mf->size = end;
 
+    fut_spinlock_release(&mf->lock);
     return (ssize_t)n;
 }
 
@@ -159,14 +174,17 @@ static int memfd_ioctl(void *inode, void *priv, unsigned long req, unsigned long
 
     if (req == MEMFD_IOC_TRUNCATE) {
         size_t new_size = (size_t)arg;
+        fut_spinlock_acquire(&mf->lock);
         if (new_size > mf->capacity) {
             /* Grow */
             size_t new_cap = mf->capacity;
             while (new_cap < new_size)
                 new_cap = new_cap ? new_cap * 2 : MEMFD_INIT_CAP;
             uint8_t *new_data = fut_malloc(new_cap);
-            if (!new_data)
+            if (!new_data) {
+                fut_spinlock_release(&mf->lock);
                 return -ENOMEM;
+            }
             if (mf->data) {
                 memcpy(new_data, mf->data, mf->size);
                 fut_free(mf->data);
@@ -180,6 +198,7 @@ static int memfd_ioctl(void *inode, void *priv, unsigned long req, unsigned long
             memset(mf->data + new_size, 0, mf->size - new_size);
         }
         mf->size = new_size;
+        fut_spinlock_release(&mf->lock);
         return 0;
     }
 
@@ -269,6 +288,7 @@ long sys_memfd_create(const char *uname, unsigned int flags) {
 
     memset(mf, 0, sizeof(*mf));
     mf->flags = flags;
+    fut_spinlock_init(&mf->lock);
 
     /* Copy name. Linux's memfd_create routes through strndup_user() which
      * returns -EFAULT for a NULL or unreadable pointer; the previous

@@ -230,27 +230,52 @@ int ps2_controller_init(bool enable_keyboard, bool enable_mouse) {
     }
 
     if (enable_mouse) {
+        extern uint64_t fut_rdtsc(void);
         ps2_write_cmd(PS2_CMD_ENABLE_SECOND);
+        /* Drain anything the firmware/BIOS left in the AUX buffer so
+         * our reset ACK isn't confused with a pre-existing byte. */
+        ps2_flush_output();
 
-        /* Reset (0xFF) — bring the AUX device to a known state.  On
-         * laptops the firmware may have left the device in absolute
-         * mode, four-byte mode, or sleep; sending F6/F4 against that
-         * yields garbage packets that fail the bit-3 sync check in
-         * ps2_mouse_handle_byte and the cursor never moves.  After
-         * the reset command the device replies ACK, then 0xAA (BAT
-         * pass), then 0x00 (standard PS/2 mouse ID). */
+        /* Reset the mouse (0xFF).  The device returns ACK (0xFA)
+         * within microseconds, then runs Basic Assurance Test for
+         * 500-700 ms before sending the BAT result (0xAA) and the
+         * device ID (0x00 for a standard PS/2 mouse).  The original
+         * implementation tried to read BAT/ID synchronously with the
+         * short ps2_wait_output_full timeout (~100 µs), got 0xFF
+         * back from a timeout, and proceeded into F3/F6/F4 while
+         * the device was still BAT'ing — those commands rode on top
+         * of the eventual BAT+ID bytes, the packet parser saw 0xAA
+         * (bit-3 set!) as a packet header on the next IRQ, and the
+         * cursor sat dead because every "packet" was misaligned. */
         ps2_write_second(0xFF);
         int rc = ps2_expect_ack();
-        uint8_t bat = ps2_read_data();
-        uint8_t devid = ps2_read_data();
-        fut_printf("[PS2] mouse reset: ack=%d BAT=0x%02x ID=0x%02x\n",
-                   rc, bat, devid);
+        fut_printf("[PS2] mouse reset (0xFF): ack=%d\n", rc);
 
-        /* Sample rate 100 Hz — sane default cursor smoothness. */
-        ps2_write_second(0xF3);
-        (void)ps2_expect_ack();
-        ps2_write_second(100);
-        (void)ps2_expect_ack();
+        /* Wait ~1 s for BAT to complete.  Three billion TSC cycles is
+         * 1 s at 3 GHz, ~770 ms at 3.9 GHz (L490 turbo), and 3 s on
+         * a slow 1 GHz core — all comfortably past the 700 ms BAT
+         * spec ceiling.  This is a busy loop, but it runs once per
+         * boot, before scheduler start, so nothing else cares. */
+        uint64_t t0 = fut_rdtsc();
+        while (fut_rdtsc() - t0 < 3000000000ULL) {
+            __asm__ volatile("pause" ::: "memory");
+        }
+
+        /* Drain whatever the mouse posted during BAT — should be BAT
+         * pass (0xAA) followed by device ID (0x00).  Print it so the
+         * boot log confirms the device responded; on real hardware
+         * the BAT/ID values reveal Synaptics passthrough, Elan
+         * extensions, etc., even if we don't act on them yet. */
+        uint8_t drained[8] = {0};
+        int n_drained = 0;
+        while (n_drained < (int)sizeof(drained) &&
+               (hal_inb(PS2_STATUS_PORT) & 0x01u) != 0) {
+            drained[n_drained++] = hal_inb(PS2_DATA_PORT);
+        }
+        fut_printf("[PS2] mouse post-reset drained %d byte(s): %02x %02x %02x %02x %02x %02x %02x %02x\n",
+                   n_drained,
+                   drained[0], drained[1], drained[2], drained[3],
+                   drained[4], drained[5], drained[6], drained[7]);
 
         ps2_write_second(0xF6);
         rc = ps2_expect_ack();
@@ -259,6 +284,18 @@ int ps2_controller_init(bool enable_keyboard, bool enable_mouse) {
         ps2_write_second(0xF4);
         rc = ps2_expect_ack();
         fut_printf("[PS2] mouse enable streaming (0xF4): ack=%d\n", rc);
+
+        /* Final settle + drain.  The mouse may post a stray byte or
+         * two between F4 ACK and entering streaming mode; flushing
+         * here guarantees the IRQ12 path sees a clean byte boundary
+         * and ps2_mouse_handle_byte's bit-3 sync check locks onto the
+         * very first real movement packet instead of treating leftover
+         * garbage as packet headers. */
+        t0 = fut_rdtsc();
+        while (fut_rdtsc() - t0 < 50000000ULL) {  /* ~16 ms @ 3 GHz */
+            __asm__ volatile("pause" ::: "memory");
+        }
+        ps2_flush_output();
 
         g_ps2_mouse_enabled = true;
         fut_irq_enable(12);

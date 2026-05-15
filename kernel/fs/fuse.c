@@ -159,27 +159,43 @@ static int fuse_mount_impl(const char *device, int flags, void *data,
                             fut_handle_t bh, struct fut_mount **mount_out) {
     (void)device; (void)flags; (void)data; (void)bh;
 
-    /* Find a free connection slot */
+    /* Atomically claim a free connection slot. The previous scan-and-set
+     * had a TOCTOU window between observing !active and storing active=true
+     * that two concurrent mount() callers could race through, both binding
+     * to the same connection entry. */
     int slot = -1;
     for (int i = 0; i < FUSE_MAX_CONNECTIONS; i++) {
-        if (!g_fuse_conns[i].active) { slot = i; break; }
+        bool expected = false;
+        if (__atomic_compare_exchange_n(&g_fuse_conns[i].active, &expected, true,
+                                        false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+            slot = i;
+            break;
+        }
     }
     if (slot < 0) return -ENOSPC;
 
-    g_fuse_conns[slot].active = true;
     g_fuse_conns[slot].unique_counter = 1;
 
     struct fut_mount *mnt = fut_malloc(sizeof(struct fut_mount));
-    if (!mnt) return -ENOMEM;
+    if (!mnt) { g_fuse_conns[slot].active = false; return -ENOMEM; }
     memset(mnt, 0, sizeof(*mnt));
 
     /* Create root vnode for FUSE mount */
     struct fut_vnode *root = fut_malloc(sizeof(struct fut_vnode));
-    if (!root) { fut_free(mnt); return -ENOMEM; }
+    if (!root) {
+        fut_free(mnt);
+        g_fuse_conns[slot].active = false;
+        return -ENOMEM;
+    }
     memset(root, 0, sizeof(*root));
 
     struct fuse_vnode_info *vi = fut_malloc(sizeof(struct fuse_vnode_info));
-    if (!vi) { fut_free(root); fut_free(mnt); return -ENOMEM; }
+    if (!vi) {
+        fut_free(root);
+        fut_free(mnt);
+        g_fuse_conns[slot].active = false;
+        return -ENOMEM;
+    }
     vi->nodeid = 1;  /* FUSE_ROOT_ID */
     vi->file_size = 0;
     vi->mode = 0040755;

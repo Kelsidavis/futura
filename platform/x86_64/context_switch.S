@@ -145,15 +145,24 @@ fut_switch_context:
     testq %r10, %r10
     jnz .coop_rip_ok
 
-    /* NULL RIP in cooperative context! Print diagnostic and halt.
+    /* NULL RIP in cooperative context!  Print diagnostic and halt.
      * This catches corruption where a thread's context.rip was zeroed
-     * after being saved, preventing a jump to address 0. */
+     * after being saved, preventing a jump to address 0.
+     *
+     * IMPORTANT: keep interrupts enabled while halting.  The original
+     * cli;hlt;jmp pattern made the panic fatal on systems without a
+     * working serial console (like the L490) -- the diag char goes
+     * to 0x3F8 which isn't wired, leaving the user with a hard CPU
+     * death and no recovery.  sti+hlt loop lets the timer / keyboard
+     * IRQs still service, so the f12_warm_reset hook can capture the
+     * klog ring across the panic. */
     movw $0x3F8, %dx
     movb $'Z', %al          /* Z = zero RIP in cooperative switch */
     outb %al, %dx
-    cli
+    sti
+.Lpanic_Z_loop:
     hlt
-    jmp .                   /* Infinite loop if NMI wakes hlt */
+    jmp .Lpanic_Z_loop
 
 .coop_rip_ok:
     pushq %r10
@@ -638,13 +647,16 @@ fut_switch_context_irq:
     /* Debug: Check if RIP is NULL */
     testq %rax, %rax
     jnz .rip_ok
-    /* RIP is NULL! Print '!' and halt */
+    /* RIP is NULL!  Print '!' and halt -- IRQ-recoverable so F12 can fire. */
     pushq %rdx
     movw $SERIAL_PORT, %dx
     movb $'!', %al
     outb %al, %dx
     popq %rdx
+    sti
+.Lpanic_excl_loop:
     hlt
+    jmp .Lpanic_excl_loop
 .rip_ok:
 
     movq %rax, 168(%rdi)    /* frame->rip */
@@ -966,13 +978,16 @@ fut_switch_context_irq:
     /* Debug: Check if R13 (next thread pointer) is valid */
     testq %r13, %r13
     jnz .r13_ok
-    /* R13 is NULL! Print '?' and halt */
+    /* R13 is NULL!  Print '?' and halt -- IRQ-recoverable. */
     pushq %rdx
     movw $SERIAL_PORT, %dx
     movb $'?', %al
     outb %al, %dx
     popq %rdx
+    sti
+.Lpanic_qmark_loop:
     hlt
+    jmp .Lpanic_qmark_loop
 .r13_ok:
 
     leaq 208(%r13), %rax    /* rax = &next->context.fx_area */
@@ -980,13 +995,16 @@ fut_switch_context_irq:
     /* Debug: Check if RAX is valid after calculation */
     testq %rax, %rax
     jnz .rax_ok
-    /* RAX is NULL after leaq! Print '@' and halt */
+    /* RAX is NULL after leaq!  Print '@' and halt -- IRQ-recoverable. */
     pushq %rdx
     movw $SERIAL_PORT, %dx
     movb $'@', %al
     outb %al, %dx
     popq %rdx
+    sti
+.Lpanic_at_loop:
     hlt
+    jmp .Lpanic_at_loop
 .rax_ok:
 
     fxrstor64 (%rax)
@@ -1211,10 +1229,13 @@ fut_switch_context_irq:
     /* Check if RIP is NULL */
     testq %rax, %rax
     jnz .rip_not_null
-    /* RIP IS NULL! Print 'Z' and halt */
+    /* RIP IS NULL!  Print 'Z' and halt -- IRQ-recoverable. */
     movb $'Z', %al
     outb %al, %dx
+    sti
+.Lpanic_Z2_loop:
     hlt
+    jmp .Lpanic_Z2_loop
 .rip_not_null:
 
     /* CRITICAL: Validate and fix CS value in IRETQ frame */

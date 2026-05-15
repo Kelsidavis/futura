@@ -16,6 +16,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/fut_waitq.h>
 #include <kernel/fut_memory.h>
+#include <kernel/fut_sched.h>  /* fut_spinlock_t */
 #include <kernel/errno.h>
 
 #include <kernel/kprintf.h>
@@ -32,11 +33,28 @@
 static struct fut_file_lock g_lock_table[FUT_MAX_FILE_LOCKS];
 static int g_lock_count = 0;
 static int g_lock_initialized = 0;
+/* Serialises register/unregister/enumerate of g_lock_table and the
+ * per-vnode file_lock_list it splices into. Without it two concurrent
+ * flock()/fcntl(F_SETLK) calls could pick the same slot and clobber
+ * each other's fl_type / fl_vnode. */
+static fut_spinlock_t g_lock_registry_lock;
+static inline void g_lock_registry_lock_ensure(void) {
+    /* g_lock_registry_lock is BSS-zero (locked=0) which is the valid
+     * "unlocked" state, so explicit init is not strictly required —
+     * but call init the first time we enter the registry so the
+     * existing fut_lock_registry_init() boot path stays in charge. */
+    if (!__atomic_load_n(&g_lock_initialized, __ATOMIC_ACQUIRE)) {
+        fut_spinlock_init(&g_lock_registry_lock);
+        /* fut_lock_registry_init writes the rest and toggles
+         * g_lock_initialized → 1 with release ordering below. */
+    }
+}
 
 /**
  * fut_lock_registry_init() - Initialize the global file lock registry
  */
 void fut_lock_registry_init(void) {
+    fut_spinlock_init(&g_lock_registry_lock);
     for (int i = 0; i < FUT_MAX_FILE_LOCKS; i++) {
         g_lock_table[i].fl_type = 0;
         g_lock_table[i].fl_pid = 0;
@@ -44,7 +62,9 @@ void fut_lock_registry_init(void) {
         g_lock_table[i].fl_next = NULL;
     }
     g_lock_count = 0;
-    g_lock_initialized = 1;
+    /* Release ordering so other CPUs that see initialized=1 also see
+     * the table contents (and the spinlock) fully initialised. */
+    __atomic_store_n(&g_lock_initialized, 1, __ATOMIC_RELEASE);
 }
 
 /**
@@ -56,10 +76,14 @@ void fut_lock_registry_init(void) {
 void fut_lock_register(struct fut_vnode *vnode, uint32_t pid,
                        uint8_t fl_class, uint8_t fl_type,
                        int64_t start, int64_t end) {
-    if (!g_lock_initialized)
+    g_lock_registry_lock_ensure();
+    if (!__atomic_load_n(&g_lock_initialized, __ATOMIC_ACQUIRE))
         fut_lock_registry_init();
 
-    /* Find a free slot */
+    /* Serialise slot pick + per-vnode list splice. Two concurrent
+     * flock()/F_SETLK calls would otherwise both see the same slot as
+     * fl_type==0/fl_vnode==NULL and clobber each other's entries. */
+    fut_spinlock_acquire(&g_lock_registry_lock);
     for (int i = 0; i < FUT_MAX_FILE_LOCKS; i++) {
         if (g_lock_table[i].fl_type == 0 && g_lock_table[i].fl_vnode == NULL) {
             g_lock_table[i].fl_class = fl_class;
@@ -78,9 +102,11 @@ void fut_lock_register(struct fut_vnode *vnode, uint32_t pid,
                 g_lock_table[i].fl_next = vnode->file_lock_list;
                 vnode->file_lock_list = &g_lock_table[i];
             }
+            fut_spinlock_release(&g_lock_registry_lock);
             return;
         }
     }
+    fut_spinlock_release(&g_lock_registry_lock);
     /* Table full -- lock works but is not visible in /proc/locks */
 }
 
@@ -91,9 +117,10 @@ void fut_lock_register(struct fut_vnode *vnode, uint32_t pid,
  * If pid==0, removes any one entry for the vnode (used for shared lock decrement).
  */
 void fut_lock_unregister(struct fut_vnode *vnode, uint32_t pid) {
-    if (!g_lock_initialized)
+    if (!__atomic_load_n(&g_lock_initialized, __ATOMIC_ACQUIRE))
         return;
 
+    fut_spinlock_acquire(&g_lock_registry_lock);
     for (int i = 0; i < FUT_MAX_FILE_LOCKS; i++) {
         if (g_lock_table[i].fl_vnode == vnode &&
             (pid == 0 || g_lock_table[i].fl_pid == pid)) {
@@ -116,9 +143,11 @@ void fut_lock_unregister(struct fut_vnode *vnode, uint32_t pid) {
             g_lock_table[i].fl_end = 0;
             g_lock_table[i].fl_ino = 0;
             if (g_lock_count > 0) g_lock_count--;
+            fut_spinlock_release(&g_lock_registry_lock);
             return; /* Remove one entry at a time */
         }
     }
+    fut_spinlock_release(&g_lock_registry_lock);
 }
 
 /**
@@ -159,7 +188,7 @@ static int lock_append_str(char *buf, size_t bufsz, int pos, const char *s) {
 int fut_lock_enumerate(char *buf, size_t bufsz) {
     if (!buf || bufsz == 0)
         return 0;
-    if (!g_lock_initialized) {
+    if (!__atomic_load_n(&g_lock_initialized, __ATOMIC_ACQUIRE)) {
         buf[0] = '\0';
         return 0;
     }
@@ -167,6 +196,7 @@ int fut_lock_enumerate(char *buf, size_t bufsz) {
     int pos = 0;
     int entry_num = 0;
 
+    fut_spinlock_acquire(&g_lock_registry_lock);
     for (int i = 0; i < FUT_MAX_FILE_LOCKS && pos < (int)bufsz - 80; i++) {
         if (g_lock_table[i].fl_vnode == NULL || g_lock_table[i].fl_type == 0)
             continue;
@@ -214,6 +244,7 @@ int fut_lock_enumerate(char *buf, size_t bufsz) {
 
         pos = lock_append_str(buf, bufsz, pos, "\n");
     }
+    fut_spinlock_release(&g_lock_registry_lock);
 
     buf[pos] = '\0';
     return pos;

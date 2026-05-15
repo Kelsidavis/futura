@@ -122,10 +122,18 @@ static int alloc_fd_for_task(fut_task_t *task, struct fut_file *file) {
         max = (int)nofile_limit;
     }
 
-    /* Find first available FD within limit */
+    /* Find first available FD within limit.
+     *
+     * Uses CAS (compare-and-swap) so two threads in the same task
+     * calling open() concurrently can't both claim the same slot.
+     * The previous "if(table[i]==NULL) table[i]=file;" had a TOCTOU
+     * window between the load and the store — one thread could
+     * silently overwrite another thread's just-installed fd, leaking
+     * the latter's file struct. */
     for (int i = 0; i < max; i++) {
-        if (task->fd_table[i] == NULL) {
-            task->fd_table[i] = file;
+        struct fut_file *expected = NULL;
+        if (__atomic_compare_exchange_n(&task->fd_table[i], &expected, file,
+                                        false, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
             if (task->fd_flags) task->fd_flags[i] = 0;
             return i;
         }

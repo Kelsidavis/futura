@@ -13,6 +13,7 @@
 #include <kernel/fut_hmac.h>
 #include <kernel/fut_waitq.h>
 #include <kernel/fut_thread.h>
+#include <kernel/fut_sched.h>  /* fut_spinlock_t */
 #include <stddef.h>
 #include <string.h>
 #include <stdatomic.h>
@@ -41,6 +42,19 @@ static struct fut_fipc_region *region_list = NULL;
 static struct fut_fipc_channel *channel_list = NULL;
 static uint64_t next_region_id = 1;
 static uint64_t next_channel_id = 1;
+/* Serialises region_list and channel_list mutations (insert + remove +
+ * lookup walks). Without it, a concurrent remove walking the list
+ * unlinks an entry while a concurrent insert's CAS publishes a new head
+ * — the remove's *prev = curr->next can then overwrite the just-installed
+ * head, dropping the new entry. */
+static fut_spinlock_t fipc_list_lock;
+static bool fipc_list_lock_initialized = false;
+static inline void fipc_list_lock_ensure(void) {
+    if (!__atomic_load_n(&fipc_list_lock_initialized, __ATOMIC_ACQUIRE)) {
+        fut_spinlock_init(&fipc_list_lock);
+        __atomic_store_n(&fipc_list_lock_initialized, true, __ATOMIC_RELEASE);
+    }
+}
 
 struct fut_fipc_transport_state {
     const struct fut_fipc_transport_ops *ops;
@@ -305,16 +319,15 @@ int fut_fipc_region_create(size_t size, uint32_t flags, struct fut_fipc_region *
     region->owner = NULL;  /* Set by caller */
     region->permissions = FIPC_REGION_READ | FIPC_REGION_WRITE;
 
-    /* Add to region list via atomic head insert: prev = read head; store
-     * region->next = prev; CAS head from prev to region. Without this,
-     * two concurrent inserts could both read the same head and one's
-     * region->next link would be overwritten, dropping the loser's chain. */
-    struct fut_fipc_region *prev_head;
-    do {
-        prev_head = __atomic_load_n(&region_list, __ATOMIC_ACQUIRE);
-        region->next = prev_head;
-    } while (!__atomic_compare_exchange_n(&region_list, &prev_head, region,
-                                          false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE));
+    /* Add to region list under fipc_list_lock so concurrent inserts and
+     * removes serialise. Two concurrent inserts could otherwise drop one
+     * off the head, and an insert racing with a remove could resurrect
+     * a freed entry. */
+    fipc_list_lock_ensure();
+    fut_spinlock_acquire(&fipc_list_lock);
+    region->next = region_list;
+    region_list = region;
+    fut_spinlock_release(&fipc_list_lock);
 
     *region_out = region;
     return 0;
@@ -336,7 +349,10 @@ void fut_fipc_region_destroy(struct fut_fipc_region *region) {
     }
 
     {
-        /* Remove from region list */
+        /* Remove from region list under fipc_list_lock so a concurrent
+         * lookup or insert sees a consistent view. */
+        fipc_list_lock_ensure();
+        fut_spinlock_acquire(&fipc_list_lock);
         struct fut_fipc_region **prev = &region_list;
         struct fut_fipc_region *curr = region_list;
 
@@ -348,6 +364,7 @@ void fut_fipc_region_destroy(struct fut_fipc_region *region) {
             prev = &curr->next;
             curr = curr->next;
         }
+        fut_spinlock_release(&fipc_list_lock);
 
         /* Free backing memory */
         if (region->base) {
@@ -461,13 +478,12 @@ int fut_fipc_channel_create(struct fut_task *sender, struct fut_task *receiver,
     channel->owner_pi_active = false;
     channel->pi_client_tid = 0;
 
-    /* Atomic head insert: see fipc_region_create for the same pattern. */
-    struct fut_fipc_channel *prev_head;
-    do {
-        prev_head = __atomic_load_n(&channel_list, __ATOMIC_ACQUIRE);
-        channel->next = prev_head;
-    } while (!__atomic_compare_exchange_n(&channel_list, &prev_head, channel,
-                                          false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE));
+    /* Add to channel list under fipc_list_lock: see fipc_region_create. */
+    fipc_list_lock_ensure();
+    fut_spinlock_acquire(&fipc_list_lock);
+    channel->next = channel_list;
+    channel_list = channel;
+    fut_spinlock_release(&fipc_list_lock);
 
     fipc_ring_check(channel);
 
@@ -476,23 +492,30 @@ int fut_fipc_channel_create(struct fut_task *sender, struct fut_task *receiver,
 }
 
 struct fut_fipc_channel *fut_fipc_channel_lookup(uint64_t id) {
+    fipc_list_lock_ensure();
+    fut_spinlock_acquire(&fipc_list_lock);
     struct fut_fipc_channel *curr = channel_list;
     while (curr) {
         if (curr->id == id) {
+            fut_spinlock_release(&fipc_list_lock);
             return curr;
         }
         curr = curr->next;
     }
+    fut_spinlock_release(&fipc_list_lock);
     return NULL;
 }
 
 uint64_t fut_fipc_channel_count(void) {
+    fipc_list_lock_ensure();
+    fut_spinlock_acquire(&fipc_list_lock);
     uint64_t count = 0;
     struct fut_fipc_channel *curr = channel_list;
     while (curr) {
         ++count;
         curr = curr->next;
     }
+    fut_spinlock_release(&fipc_list_lock);
     return count;
 }
 
@@ -609,7 +632,9 @@ void fut_fipc_channel_destroy(struct fut_fipc_channel *channel) {
         return;
     }
 
-    /* Remove from channel list */
+    /* Remove from channel list under fipc_list_lock. */
+    fipc_list_lock_ensure();
+    fut_spinlock_acquire(&fipc_list_lock);
     struct fut_fipc_channel **prev = &channel_list;
     struct fut_fipc_channel *curr = channel_list;
 
@@ -621,6 +646,7 @@ void fut_fipc_channel_destroy(struct fut_fipc_channel *channel) {
         prev = &curr->next;
         curr = curr->next;
     }
+    fut_spinlock_release(&fipc_list_lock);
 
     /* Free message queue */
     if (channel->msg_queue) {
@@ -1414,6 +1440,10 @@ int fut_fipc_publish_kernel_metrics(void) {
     uint64_t total_rl_tokens = 0;
     uint64_t drops_ratelimit = 0;
 
+    /* Walk channel_list under fipc_list_lock so a concurrent destroy
+     * doesn't free a channel while we read its stats. */
+    fipc_list_lock_ensure();
+    fut_spinlock_acquire(&fipc_list_lock);
     for (struct fut_fipc_channel *c = channel_list; c; c = c->next) {
         channel_count++;
         msgs_sent += c->msgs_sent;
@@ -1432,6 +1462,7 @@ int fut_fipc_publish_kernel_metrics(void) {
         }
         drops_ratelimit += c->drops_ratelimit;
     }
+    fut_spinlock_release(&fipc_list_lock);
 
     uint64_t pmm_total = fut_pmm_total_pages();
     uint64_t pmm_free = fut_pmm_free_pages();

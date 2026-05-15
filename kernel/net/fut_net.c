@@ -195,14 +195,19 @@ static fut_net_waiter_t *fut_net_waiter_create(fut_waitq_t *queue) {
 /* -------------------------------------------------------------------------- */
 
 void fut_net_init(void) {
-    if (net_initialized) {
+    /* Atomic load on net_initialized so a thread observing init=true
+     * also sees the completed net_lock + subsystem state. Without
+     * release-ordering on the store, a second concurrent fut_net_init
+     * could observe init=true before fut_spinlock_init has completed
+     * and proceed to acquire an uninitialised net_lock. */
+    if (__atomic_load_n(&net_initialized, __ATOMIC_ACQUIRE)) {
         return;
     }
 
     fut_spinlock_init(&net_lock);
     fut_net_dev_system_init();
     fut_net_loopback_init();
-    net_initialized = true;
+    __atomic_store_n(&net_initialized, true, __ATOMIC_RELEASE);
     NETDBG("[net] subsystem initialized\n");
 }
 

@@ -78,16 +78,21 @@ static inline uint32_t futex_hash_key(uint32_t *uaddr) {
     return (uint32_t)((addr >> 2) % FUTEX_HASH_SIZE);
 }
 
-/* Initialize futex subsystem */
+/* Initialize futex subsystem. Atomic load/store on futex_initialized
+ * so concurrent first-callers don't both run the init loop while a
+ * third caller observes init=true with the waitq still being written.
+ * The hash buckets themselves are idempotent to initialise (BSS-zero
+ * already gives them a valid locked=0 state), but fut_waitq_init may
+ * publish non-zero fields that a racing reader could see mid-write. */
 static void futex_init_once(void) {
-    if (futex_initialized) {
+    if (__atomic_load_n(&futex_initialized, __ATOMIC_ACQUIRE)) {
         return;
     }
     for (int i = 0; i < FUTEX_HASH_SIZE; i++) {
         futex_hash[i].lock.locked = 0;
         fut_waitq_init(&futex_hash[i].waiters);
     }
-    futex_initialized = true;
+    __atomic_store_n(&futex_initialized, true, __ATOMIC_RELEASE);
 }
 
 /* Get hash bucket for a futex address */

@@ -127,12 +127,12 @@ static struct cgroup_node g_cgroups[MAX_CGROUPS];
 static bool g_cgfs_initialized = false;
 
 static void cgfs_ensure_init(void) {
-    if (g_cgfs_initialized) return;
+    if (__atomic_load_n(&g_cgfs_initialized, __ATOMIC_ACQUIRE)) return;
     memset(g_cgroups, 0, sizeof(g_cgroups));
     g_cgroups[0].active = true;
     g_cgroups[0].name[0] = '\0'; /* Root cgroup */
     g_cgroups[0].parent = -1;
-    g_cgfs_initialized = true;
+    __atomic_store_n(&g_cgfs_initialized, true, __ATOMIC_RELEASE);
 }
 
 /* ── Public helpers for /proc/<pid>/cgroup ── */

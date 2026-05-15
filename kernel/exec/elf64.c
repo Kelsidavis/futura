@@ -889,6 +889,13 @@ static int build_user_stack(fut_mm_t *mm,
     uint64_t argv_ptr = info->argv_ptr;
     fut_task_t *task = info->task;
 
+    /* The trampoline doesn't return, so the heap-allocated entry struct
+     * would otherwise leak ~40 bytes per execve. All fields captured above
+     * — release the heap allocation before continuing to user mode. */
+    fut_free(info);
+    info = NULL;
+    arg = NULL;
+
 #ifdef DEBUG_USER_TRAMPOLINE
     /* Debug: Print '3' after reading task */
     __asm__ volatile("movw $0x3F8, %%dx; movb $'3', %%al; outb %%al, %%dx" ::: "al", "dx", "memory");
@@ -3962,6 +3969,11 @@ static int build_user_stack(fut_mm_t *mm,
     uint64_t entry = info->entry;
     uint64_t sp = info->stack;
     fut_task_t *task = info->task;
+    /* The trampoline doesn't return, so the heap-allocated entry struct
+     * would otherwise leak ~40 bytes per execve. The locals captured
+     * above are everything we need; release the heap allocation before
+     * the ERET. */
+    fut_free(info);
 
     (void)arg; /* Suppress unused warning */
 

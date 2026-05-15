@@ -103,35 +103,6 @@ static inline void fut_input_queue_push(fut_input_queue_t *q,
     unsigned long flags = _input_irq_save();
     fut_spinlock_acquire(&q->lock);
     bool was_empty = (q->head == q->tail);
-
-    /* Coalesce consecutive MOUSE_MOVE events on the same axis.  At
-     * Synaptics-grade ~80 pkts/sec the parser produces ~100-200 raw
-     * REL_X/REL_Y events/sec; the compositor only renders the cursor
-     * at the framebuffer's refresh rate, so summing the deltas instead
-     * of queuing each report:
-     *   - Cuts wake density to roughly the compositor's read rate.
-     *   - Cuts context-switch density that triggers the known
-     *     scheduler caller-saved register race on L490.
-     *   - Loses zero information -- the compositor wants net dx, dy.
-     * Only coalesce if the last queued event is the same type+axis
-     * AND we haven't crossed an axis or event-type boundary (so a
-     * MOUSE_BTN between two MOVEs still flushes the queue properly
-     * for click-while-dragging). */
-    if (ev->type == FUT_EV_MOUSE_MOVE && !was_empty) {
-        uint32_t last_idx = (q->tail - 1u) & FUT_INPUT_QUEUE_MASK;
-        struct fut_input_event *last = &q->events[last_idx];
-        if (last->type == FUT_EV_MOUSE_MOVE && last->code == ev->code) {
-            last->value += ev->value;
-            last->ts_ns = ev->ts_ns;
-            fut_spinlock_release(&q->lock);
-            _input_irq_restore(flags);
-            /* No queue-state change → no wake.  The existing pending
-             * wake (or the next non-MOVE event) will deliver the
-             * accumulated delta. */
-            return;
-        }
-    }
-
     uint32_t next = (q->tail + 1u) & FUT_INPUT_QUEUE_MASK;
     if (next == q->head) {
         /* Drop oldest entry to keep queue bounded. */

@@ -125,10 +125,19 @@ long sys_landlock_create_ruleset(const void *attr, size_t size,
     if (size < sizeof(struct landlock_ruleset_attr))
         return -EINVAL;
 
-    /* Find free ruleset slot */
+    /* Atomically claim a free ruleset slot. The previous scan-and-set
+     * left a TOCTOU window between observing !active and the eventual
+     * active=true store that two concurrent landlock_create_ruleset
+     * callers could race through, both binding to the same g_rulesets
+     * entry and clobbering each other's handled_access_* fields. */
     int slot = -1;
     for (int i = 0; i < LANDLOCK_MAX_RULESETS; i++) {
-        if (!g_rulesets[i].active) { slot = i; break; }
+        bool expected = false;
+        if (__atomic_compare_exchange_n(&g_rulesets[i].active, &expected, true,
+                                        false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+            slot = i;
+            break;
+        }
     }
     if (slot < 0) return -ENOMEM;
 
@@ -145,6 +154,7 @@ long sys_landlock_create_ruleset(const void *attr, size_t size,
     } else
 #endif
     if (fut_copy_from_user(&ka, attr, sizeof(ka)) != 0) {
+        g_rulesets[slot].active = false;  /* release the claimed slot */
         return -EFAULT;
     }
 
@@ -180,14 +190,20 @@ long sys_landlock_create_ruleset(const void *attr, size_t size,
      * The previous Futura code rejected fs==0 unconditionally,
      * preventing net-only rulesets that libnet/landlock supports for
      * sandboxing TCP without touching the filesystem. */
-    if (ka.handled_access_fs == 0 && ka.handled_access_net == 0)
+    if (ka.handled_access_fs == 0 && ka.handled_access_net == 0) {
+        g_rulesets[slot].active = false;
         return -ENOMSG;
-    if (ka.handled_access_fs & ~LANDLOCK_MASK_ACCESS_FS)
+    }
+    if (ka.handled_access_fs & ~LANDLOCK_MASK_ACCESS_FS) {
+        g_rulesets[slot].active = false;
         return -EINVAL;
-    if (ka.handled_access_net & ~LANDLOCK_MASK_ACCESS_NET)
+    }
+    if (ka.handled_access_net & ~LANDLOCK_MASK_ACCESS_NET) {
+        g_rulesets[slot].active = false;
         return -EINVAL;
+    }
 
-    g_rulesets[slot].active = true;
+    /* Slot was already claimed atomically above; just populate it. */
     g_rulesets[slot].handled_access_fs = ka.handled_access_fs;
     g_rulesets[slot].handled_access_net = ka.handled_access_net;
     g_rulesets[slot].rule_count = 0;

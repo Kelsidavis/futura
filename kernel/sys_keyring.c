@@ -170,11 +170,19 @@ static struct kernel_key *key_find_serial(int32_t serial) {
 }
 
 static struct kernel_key *key_alloc(void) {
+    /* Atomically claim a free key slot. The previous scan-then-set let
+     * two concurrent keyctl() callers both observe the same slot as
+     * inactive and one to overwrite the other's freshly-initialised key
+     * (memset + serial bump). */
     for (int i = 0; i < MAX_KEYS; i++) {
-        if (!keys[i].active) {
+        bool expected = false;
+        if (__atomic_compare_exchange_n(&keys[i].active, &expected, true,
+                                        false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+            /* Reset everything except active (which is already true). */
+            bool active_save = keys[i].active;
             memset(&keys[i], 0, sizeof(keys[i]));
-            keys[i].active = true;
-            keys[i].serial = next_serial++;
+            keys[i].active = active_save;
+            keys[i].serial = __atomic_fetch_add(&next_serial, 1, __ATOMIC_ACQ_REL);
             return &keys[i];
         }
     }

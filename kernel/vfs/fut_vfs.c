@@ -214,21 +214,13 @@ static struct fut_file *get_file_from_task(fut_task_t *task, int fd) {
  * @param task  Task whose FD to close
  * @param fd    File descriptor to close
  */
-static void close_fd_in_task(fut_task_t *task, int fd) {
-    if (!task || !task->fd_table || fd < 0 || fd >= task->max_fds) {
-        return;
-    }
-
-    /* Atomically take ownership of the slot. Two threads in the same
-     * task calling close(fd) concurrently would otherwise both read
-     * fd_table[fd], both reach the per-fd cleanup, and double-free
-     * the underlying file struct. With exchange, only the first thread
-     * sees a non-NULL value; the second sees NULL and returns. */
-    struct fut_file *file = __atomic_exchange_n(&task->fd_table[fd], NULL,
-                                                 __ATOMIC_ACQ_REL);
-    if (file == NULL) {
-        return;
-    }
+/* Release a fut_file struct that's already been detached from its fd_table
+ * slot. Used by close_fd_in_task and alloc_specific_fd_for_task (dup2)
+ * to share the file-state teardown. Caller must have atomically removed
+ * the slot reference before invoking this — `fd` is just the index used
+ * for epoll/socket-table notifications. */
+static void release_detached_file(fut_task_t *task, int fd, struct fut_file *file) {
+    if (!file) return;
 
     /* Dispatch inotify IN_CLOSE_WRITE or IN_CLOSE_NOWRITE before releasing the file.
      * Guard against vnodes with NULL name (procfs, sysfs synthetic vnodes). */
@@ -236,8 +228,6 @@ static void close_fd_in_task(fut_task_t *task, int fd) {
         extern void inotify_dispatch_event(const char *, uint32_t, const char *, uint32_t);
         char close_dir[256];
         const char *vname = file->vnode->name;
-        /* Build parent directory path using fut_vnode_build_path (consistent with
-         * all other inotify dispatch sites in ramfs/VFS) */
         struct fut_vnode *pv = file->vnode->parent;
         if (pv) {
             if (!fut_vnode_build_path(pv, close_dir, sizeof(close_dir))) {
@@ -251,7 +241,6 @@ static void close_fd_in_task(fut_task_t *task, int fd) {
             : 0x00000010 /* IN_CLOSE_NOWRITE */;
         inotify_dispatch_event(close_dir, close_mask, vname, 0);
 
-        /* Dispatch fanotify FAN_CLOSE_WRITE on close of writable files */
         if (close_mask == 0x00000008) {
             extern void fanotify_notify(const char *, uint64_t, int32_t);
             char fpath[512]; int fp = 0;
@@ -264,9 +253,9 @@ static void close_fd_in_task(fut_task_t *task, int fd) {
         }
     }
 
-    /* Slot already cleared by atomic exchange above; just clear the
-     * parallel flags entry. */
-    if (task->fd_flags) task->fd_flags[fd] = 0;
+    /* Clear parallel flags entry for this slot. */
+    if (task && task->fd_flags && fd >= 0 && fd < task->max_fds)
+        task->fd_flags[fd] = 0;
 
     /* Notify epoll instances that this fd is closing */
     extern void epoll_notify_fd_close(int fd);
@@ -298,6 +287,22 @@ static void close_fd_in_task(fut_task_t *task, int fd) {
     fut_free(file);
 }
 
+static void close_fd_in_task(fut_task_t *task, int fd) {
+    if (!task || !task->fd_table || fd < 0 || fd >= task->max_fds) {
+        return;
+    }
+
+    /* Atomically take ownership of the slot. Two threads in the same
+     * task calling close(fd) concurrently would otherwise both read
+     * fd_table[fd], both reach the per-fd cleanup, and double-free
+     * the underlying file struct. With exchange, only the first thread
+     * sees a non-NULL value; the second sees NULL and returns. */
+    struct fut_file *file = __atomic_exchange_n(&task->fd_table[fd], NULL,
+                                                 __ATOMIC_ACQ_REL);
+    release_detached_file(task, fd, file);
+}
+
+
 /**
  * Free an FD entry without closing (used internally).
  *
@@ -328,13 +333,21 @@ static int alloc_specific_fd_for_task(fut_task_t *task, int target_fd, struct fu
         return -EBADF;
     }
 
-    /* Close existing file if any */
-    if (task->fd_table[target_fd] != NULL) {
-        close_fd_in_task(task, target_fd);
-    }
-
-    task->fd_table[target_fd] = file;
+    /* Atomically install the new file and capture whatever was there
+     * before. Without exchange, two threads racing dup2()→same fd would
+     * each call close_fd_in_task (atomic-exchange empties slot for one,
+     * sees NULL for the other), then both store their new file —
+     * leaking one of them. Exchange-then-release-prev fixes that race. */
+    struct fut_file *prev = __atomic_exchange_n(&task->fd_table[target_fd], file,
+                                                 __ATOMIC_ACQ_REL);
     if (task->fd_flags) task->fd_flags[target_fd] = 0;
+
+    if (prev != NULL) {
+        release_detached_file(task, target_fd, prev);
+        /* release_detached_file clobbers fd_flags[target_fd]; restore the
+         * clear we wanted for the new file. */
+        if (task->fd_flags) task->fd_flags[target_fd] = 0;
+    }
     return target_fd;
 }
 

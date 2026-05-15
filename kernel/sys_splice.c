@@ -678,16 +678,26 @@ long sys_tee(int fd_in, int fd_out, size_t len, unsigned int flags) {
     if (peek_len > src_cap)
         peek_len = src_cap;
 
-    uint8_t *kbuf = (uint8_t *)fut_malloc(peek_len);
-    if (!kbuf) return -ENOMEM;
+    /* Small peeks use a stack buffer to avoid the slab allocator churn
+     * on the common tee()-in-a-shell-pipeline pattern. */
+    uint8_t stack_kbuf[2048];
+    uint8_t *kbuf;
+    bool kbuf_on_heap = false;
+    if (peek_len <= sizeof(stack_kbuf)) {
+        kbuf = stack_kbuf;
+    } else {
+        kbuf = (uint8_t *)fut_malloc(peek_len);
+        if (!kbuf) return -ENOMEM;
+        kbuf_on_heap = true;
+    }
 
     ssize_t got = pipe_peek(file_in->chr_private, kbuf, peek_len);
     if (got < 0) {
-        fut_free(kbuf);
+        if (kbuf_on_heap) fut_free(kbuf);
         return got;
     }
     if (got == 0) {
-        fut_free(kbuf);
+        if (kbuf_on_heap) fut_free(kbuf);
         /* SPLICE_F_NONBLOCK: return -EAGAIN when source pipe is empty */
         if (local_flags & SPLICE_F_NONBLOCK)
             return -EAGAIN;
@@ -699,7 +709,7 @@ long sys_tee(int fd_in, int fd_out, size_t len, unsigned int flags) {
     off_t pos = 0;
     ssize_t nwritten = file_out->chr_ops->write(
         file_out->chr_inode, file_out->chr_private, kbuf, (size_t)got, &pos);
-    fut_free(kbuf);
+    if (kbuf_on_heap) fut_free(kbuf);
 
     if (nwritten < 0)
         return nwritten;

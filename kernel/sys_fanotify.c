@@ -492,8 +492,12 @@ long sys_fanotify_mark(int fanotify_fd, unsigned int flags,
             } else {
                 grp->marks[i].mask &= ~mask;
                 if (grp->marks[i].mask == 0) {
-                    grp->marks[i].active = false;
-                    grp->nr_marks--;
+                    /* CAS the deactivation so two concurrent removes that
+                     * both observed mask==0 can't both decrement nr_marks. */
+                    bool expected = true;
+                    if (__atomic_compare_exchange_n(&grp->marks[i].active, &expected, false,
+                                                    false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+                        __atomic_sub_fetch(&grp->nr_marks, 1, __ATOMIC_ACQ_REL);
                 }
             }
             return 0;

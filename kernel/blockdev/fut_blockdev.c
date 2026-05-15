@@ -246,7 +246,13 @@ struct fut_blockdev *fut_blockdev_find(const char *name) {
 }
 
 struct fut_blockdev *fut_blockdev_first(void) {
-    return device_list;
+    /* Atomic load so callers that walk the list (typically with
+     * device->next, also atomic on x86_64) start from a head that's
+     * either fully linked or NULL — never a torn pointer mid-insert.
+     * Note: the returned pointer can still be unregistered/freed by
+     * a concurrent fut_blockdev_unregister; callers iterating the
+     * list rely on blockdev_list_lock semantics for that. */
+    return __atomic_load_n(&device_list, __ATOMIC_ACQUIRE);
 }
 
 /* ============================================================

@@ -2296,7 +2296,19 @@ void fut_kernel_main(void) {
         usb_storage_init();
         usb_net_init();
         usb_audio_init();
-        xhci_init();
+        /* xhci_init walks every connected port and runs SET_CONFIGURATION
+         * etc. inline; on the L490 a USB HID or hub device's enumeration
+         * has been observed to hang the boot.  The pre-existing
+         * usb_storage_attach disable only covers MSC bulk transfers, not
+         * the rest of the enumeration path.  no_xhci=1 on the cmdline
+         * skips the host-controller init entirely so we can boot to
+         * desktop and exercise the input pipeline without the USB
+         * suspect.  Keyboard/mouse still work since they're PS/2. */
+        if (boot_flag_enabled("no_xhci", false)) {
+            fut_printf("[INIT] xhci_init SKIPPED (no_xhci=1 on cmdline)\n");
+        } else {
+            xhci_init();
+        }
     }
 
     /* Network — PCIe NICs */

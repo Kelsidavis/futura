@@ -590,12 +590,25 @@ void fut_irq_send_eoi(uint8_t irq) {
 }
 
 void fut_irq_enable(uint8_t irq) {
-    /* Use IO-APIC if available (APIC mode), otherwise use legacy PIC */
+    /* Use IO-APIC if available (APIC mode), otherwise use legacy PIC.
+     *
+     * IMPORTANT: ioapic_{mask,unmask}_irq use their argument as the
+     * IOAPIC pin index (== GSI), not as the ISA IRQ.  The ACPI MADT
+     * parse may install an interrupt-source override that maps an
+     * ISA IRQ to a different GSI (commonly IRQ0 -> GSI 2 for the PIT,
+     * sometimes IRQ12 on laptops).  ioapic_set_irq was already called
+     * with the translated GSI in acpi.c, so this side has to translate
+     * too -- otherwise we touch the wrong pin and the device IRQ stays
+     * masked forever.  Visible symptom on the L490: keyboard works
+     * (IRQ1 has no override -> GSI 1), trackpoint/trackpad totally
+     * dead (IRQ12 overridden -> different GSI, never unmasked). */
     extern bool ioapic_is_available(void);
     extern void ioapic_unmask_irq(uint8_t irq);
+    extern uint32_t ioapic_get_gsi_for_isa_irq(uint8_t isa_irq);
 
     if (ioapic_is_available()) {
-        ioapic_unmask_irq(irq);
+        uint32_t gsi = ioapic_get_gsi_for_isa_irq(irq);
+        ioapic_unmask_irq((uint8_t)gsi);
         return;
     }
 
@@ -615,12 +628,15 @@ void fut_irq_enable(uint8_t irq) {
 }
 
 void fut_irq_disable(uint8_t irq) {
-    /* Use IO-APIC if available (APIC mode), otherwise use legacy PIC */
+    /* Use IO-APIC if available (APIC mode), otherwise use legacy PIC.
+     * See fut_irq_enable for why we translate ISA IRQ -> GSI. */
     extern bool ioapic_is_available(void);
     extern void ioapic_mask_irq(uint8_t irq);
+    extern uint32_t ioapic_get_gsi_for_isa_irq(uint8_t isa_irq);
 
     if (ioapic_is_available()) {
-        ioapic_mask_irq(irq);
+        uint32_t gsi = ioapic_get_gsi_for_isa_irq(irq);
+        ioapic_mask_irq((uint8_t)gsi);
         return;
     }
 

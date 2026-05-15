@@ -293,15 +293,22 @@ long sys_fanotify_init(unsigned int flags, unsigned int event_f_flags) {
     if ((flags & FAN_ENABLE_AUDIT) && !audit_write)
         return -EPERM;
 
-    /* Find free slot */
+    /* Atomically claim a free group slot. See project_slot_claim_pattern.md. */
     struct fanotify_group *grp = NULL;
     for (int i = 0; i < MAX_FANOTIFY_GROUPS; i++) {
-        if (!fan_groups[i].active) { grp = &fan_groups[i]; break; }
+        bool expected = false;
+        if (__atomic_compare_exchange_n(&fan_groups[i].active, &expected, true,
+                                        false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+            grp = &fan_groups[i];
+            break;
+        }
     }
     if (!grp) return -EMFILE;
 
+    /* Zero the rest without re-clearing the active flag we just claimed. */
+    bool active_save = grp->active;
     memset(grp, 0, sizeof(*grp));
-    grp->active = true;
+    grp->active = active_save;
     grp->init_flags = flags;
     grp->event_f_flags = event_f_flags;
 

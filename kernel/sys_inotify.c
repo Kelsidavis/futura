@@ -153,11 +153,21 @@ static struct inotify_registry_entry *g_inotify_registry = NULL;
 static fut_spinlock_t                 g_inotify_registry_lock;
 static bool                           g_inotify_registry_init = false;
 
-static void inotify_registry_add(struct inotify_instance *inst) {
-    if (!g_inotify_registry_init) {
+/* Initialise the global registry lock exactly once. The previous
+ * lazy-init was a plain `if (!init) init++; spinlock_init();` race —
+ * two concurrent inotify_init1() callers could both skip spinlock_init
+ * (one set init=true before the other called init), then take a lock
+ * that was never initialised. Order with acquire/release semantics so
+ * a thread that sees init=true also sees the completed spinlock_init. */
+static inline void inotify_registry_ensure_init(void) {
+    if (!__atomic_load_n(&g_inotify_registry_init, __ATOMIC_ACQUIRE)) {
         fut_spinlock_init(&g_inotify_registry_lock);
-        g_inotify_registry_init = true;
+        __atomic_store_n(&g_inotify_registry_init, true, __ATOMIC_RELEASE);
     }
+}
+
+static void inotify_registry_add(struct inotify_instance *inst) {
+    inotify_registry_ensure_init();
     struct inotify_registry_entry *entry = fut_malloc(sizeof(*entry));
     if (!entry) return;
     entry->inst = inst;
@@ -168,7 +178,7 @@ static void inotify_registry_add(struct inotify_instance *inst) {
 }
 
 static void inotify_registry_remove(struct inotify_instance *inst) {
-    if (!g_inotify_registry_init) return;
+    if (!__atomic_load_n(&g_inotify_registry_init, __ATOMIC_ACQUIRE)) return;
     fut_spinlock_acquire(&g_inotify_registry_lock);
     struct inotify_registry_entry **pp = &g_inotify_registry;
     while (*pp) {
@@ -206,7 +216,7 @@ uint32_t inotify_next_rename_cookie(void) {
  */
 void inotify_dispatch_event(const char *dir_path, uint32_t mask, const char *filename,
                             uint32_t cookie) {
-    if (!g_inotify_registry_init || !g_inotify_registry) return;
+    if (!__atomic_load_n(&g_inotify_registry_init, __ATOMIC_ACQUIRE)) return;
     if (!dir_path) return;
 
     fut_spinlock_acquire(&g_inotify_registry_lock);

@@ -13,6 +13,7 @@
 #include <fcntl.h>
 #include <sys/uio.h>  /* For struct iovec, UIO_MAXIOV, ssize_t */
 #include <stdint.h>
+#include <stdbool.h>
 
 #include <kernel/kprintf.h>
 #include <kernel/uaccess.h>
@@ -399,18 +400,26 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
         return -EINVAL;
     }
 
-    /* Copy iovec array from userspace using heap instead of stack */
-    struct iovec *kernel_iov = (struct iovec *)fut_malloc(iov_alloc_size);
-    if (!kernel_iov) {
-        fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> ENOMEM (malloc failed for iovec array)\n",
-                   fd, iov, iovcnt, offset);
-        return -ENOMEM;
+    /* Small iovcnt uses a stack buffer (see 0557f524). */
+    struct iovec stack_iov[32];
+    struct iovec *kernel_iov;
+    bool kernel_iov_on_heap = false;
+    if (iov_alloc_size <= sizeof(stack_iov)) {
+        kernel_iov = stack_iov;
+    } else {
+        kernel_iov = (struct iovec *)fut_malloc(iov_alloc_size);
+        if (!kernel_iov) {
+            fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> ENOMEM (malloc failed for iovec array)\n",
+                       fd, iov, iovcnt, offset);
+            return -ENOMEM;
+        }
+        kernel_iov_on_heap = true;
     }
 
     if (pwritev_copy_from_user(kernel_iov, iov, iovcnt * sizeof(struct iovec)) != 0) {
         fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EFAULT (copy_from_user iovec failed)\n",
                    fd, iov, iovcnt, offset);
-        fut_free(kernel_iov);
+        if (kernel_iov_on_heap) fut_free(kernel_iov);
         return -EFAULT;
     }
 
@@ -423,7 +432,7 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
                 fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EFAULT "
                            "(iov_base[%d] is NULL with non-zero length)\n",
                            fd, iov, iovcnt, offset, i);
-                fut_free(kernel_iov);
+                if (kernel_iov_on_heap) fut_free(kernel_iov);
                 return -EFAULT;
             }
             /* Verify buffer is readable before doing any I/O */
@@ -431,7 +440,7 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
                 fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EFAULT "
                            "(iov_base[%d] not readable, fail-fast)\n",
                            fd, iov, iovcnt, offset, i);
-                fut_free(kernel_iov);
+                if (kernel_iov_on_heap) fut_free(kernel_iov);
                 return -EFAULT;
             }
         }
@@ -452,7 +461,7 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
             fut_printf("[PWRITEV] pwritev(fd=%d, iovcnt=%d) -> EINVAL "
                        "(iovec %d: iov_len %zu exceeds per-iovec limit %zu)\n",
                        fd, iovcnt, i, kernel_iov[i].iov_len, MAX_IOVEC_SIZE);
-            fut_free(kernel_iov);
+            if (kernel_iov_on_heap) fut_free(kernel_iov);
             return -EINVAL;
         }
 
@@ -461,7 +470,7 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
             fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EINVAL "
                        "(size overflow at iovec %d)\n",
                        fd, iov, iovcnt, offset, i);
-            fut_free(kernel_iov);
+            if (kernel_iov_on_heap) fut_free(kernel_iov);
             return -EINVAL;
         }
         total_size += kernel_iov[i].iov_len;
@@ -471,7 +480,7 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
             fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EINVAL "
                        "(total size %zu exceeds limit %zu MB)\n",
                        fd, iov, iovcnt, offset, total_size, MAX_TOTAL_SIZE / (1024 * 1024));
-            fut_free(kernel_iov);
+            if (kernel_iov_on_heap) fut_free(kernel_iov);
             return -EINVAL;
         }
 
@@ -506,7 +515,7 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
     if (fd < 0) {
         fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EBADF (negative fd)\n",
                    fd, iov, iovcnt, offset);
-        fut_free(kernel_iov);
+        if (kernel_iov_on_heap) fut_free(kernel_iov);
         return -EBADF;
     }
 
@@ -514,7 +523,7 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
         fut_printf("[PWRITEV] pwritev(fd=%d, max_fds=%d, iov=%p, iovcnt=%d, offset=%ld) -> EBADF "
                    "(fd exceeds max_fds, FD bounds validation)\n",
                    fd, task->max_fds, iov, iovcnt, offset);
-        fut_free(kernel_iov);
+        if (kernel_iov_on_heap) fut_free(kernel_iov);
         return -EBADF;
     }
 
@@ -523,19 +532,19 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
     if (!file) {
         fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EBADF (fd not open)\n",
                    fd, iov, iovcnt, offset);
-        fut_free(kernel_iov);
+        if (kernel_iov_on_heap) fut_free(kernel_iov);
         return -EBADF;
     }
 
     /* O_PATH fds cannot be used for I/O */
     if (file->flags & O_PATH) {
-        fut_free(kernel_iov);
+        if (kernel_iov_on_heap) fut_free(kernel_iov);
         return -EBADF;
     }
 
     /* Check that fd was opened for writing (not read-only) */
     if ((file->flags & O_ACCMODE) == O_RDONLY) {
-        fut_free(kernel_iov);
+        if (kernel_iov_on_heap) fut_free(kernel_iov);
         return -EBADF;
     }
 
@@ -543,7 +552,7 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
     if (file->chr_ops) {
         fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> ESPIPE (chrdev)\n",
                    fd, iov, iovcnt, offset);
-        fut_free(kernel_iov);
+        if (kernel_iov_on_heap) fut_free(kernel_iov);
         return -ESPIPE;
     }
 
@@ -551,7 +560,7 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
     if (file->vnode && file->vnode->type == VN_DIR) {
         fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EISDIR\n",
                    fd, iov, iovcnt, offset);
-        fut_free(kernel_iov);
+        if (kernel_iov_on_heap) fut_free(kernel_iov);
         return -EISDIR;
     }
 
@@ -559,7 +568,7 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
     if (!file->vnode || !file->vnode->ops || !file->vnode->ops->write) {
         fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EINVAL (no write op)\n",
                    fd, iov, iovcnt, offset);
-        fut_free(kernel_iov);
+        if (kernel_iov_on_heap) fut_free(kernel_iov);
         return -EINVAL;
     }
 
@@ -582,7 +591,7 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
             }
             fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> ENOMEM (malloc failed at iovec %d)\n",
                        fd, iov, iovcnt, offset, i);
-            fut_free(kernel_iov);
+            if (kernel_iov_on_heap) fut_free(kernel_iov);
             return -ENOMEM;
         }
 
@@ -594,7 +603,7 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
             }
             fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EFAULT (copy_from_user data failed at iovec %d)\n",
                        fd, iov, iovcnt, offset, i);
-            fut_free(kernel_iov);
+            if (kernel_iov_on_heap) fut_free(kernel_iov);
             return -EFAULT;
         }
 
@@ -612,7 +621,7 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
                 /* No bytes written yet, return error */
                 fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> %ld (write error on iovec %d)\n",
                            fd, iov, iovcnt, offset, n, i);
-                fut_free(kernel_iov);
+                if (kernel_iov_on_heap) fut_free(kernel_iov);
                 return n;
             }
         }
@@ -630,7 +639,7 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
             fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EOVERFLOW "
                        "(offset would overflow INT64_MAX after writing %zd bytes)\n",
                        fd, iov, iovcnt, offset, n);
-            fut_free(kernel_iov);
+            if (kernel_iov_on_heap) fut_free(kernel_iov);
             return -EOVERFLOW;
         }
         current_offset += n;
@@ -658,7 +667,7 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
     (void)total_written; (void)completion_status; (void)iovecs_written;
     (void)min_iov_len; (void)max_iov_len;
 
-    fut_free(kernel_iov);
+    if (kernel_iov_on_heap) fut_free(kernel_iov);
 
     /* POSIX/Linux: clear setuid/setgid bits after successful write */
     if (total_written > 0 && file->vnode && file->vnode->type == VN_REG) {

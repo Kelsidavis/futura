@@ -459,7 +459,7 @@ int fut_vfs_mount(const char *device, const char *mountpoint,
     mount->fs = fs;
     mount->flags = flags;
     mount->expire_marked = false;
-    mount->st_dev = next_device_id++;  /* Assign unique device ID */
+    mount->st_dev = __atomic_fetch_add(&next_device_id, 1, __ATOMIC_ACQ_REL);
     mount->block_device_handle = block_device_handle;  /* Store capability handle */
 
     bool is_root_mount = (mountpoint && mountpoint[0] == '/' && mountpoint[1] == '\0');
@@ -513,9 +513,17 @@ int fut_vfs_mount(const char *device, const char *mountpoint,
         }
     }
 
-    /* Add to mount list */
-    mount->next = mount_list;
-    mount_list = mount;
+    /* Atomic head insert so concurrent mount() calls (during container
+     * setup or rapid tmpfs creation) don't overwrite each other's
+     * ->next link. */
+    {
+        struct fut_mount *prev_head;
+        do {
+            prev_head = __atomic_load_n(&mount_list, __ATOMIC_ACQUIRE);
+            mount->next = prev_head;
+        } while (!__atomic_compare_exchange_n(&mount_list, &prev_head, mount,
+                                              false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE));
+    }
 
     /* If mounting at root, set root vnode */
     if (is_root_mount) {
@@ -573,12 +581,17 @@ int fut_vfs_bind_mount(const char *source, char *target) {
     mount->flags          = 4096;    /* MS_BIND */
     mount->expire_marked  = false;
     mount->fs_data        = NULL;
-    mount->st_dev         = next_device_id++;
+    mount->st_dev         = __atomic_fetch_add(&next_device_id, 1, __ATOMIC_ACQ_REL);
     mount->block_device_handle = ((fut_handle_t)0); /* FUT_INVALID_HANDLE */
 
-    /* Prepend to mount list */
-    mount->next = mount_list;
-    mount_list  = mount;
+    /* Atomic head insert so concurrent bind-mounts don't overwrite each
+     * other's ->next link. */
+    struct fut_mount *prev_head;
+    do {
+        prev_head = __atomic_load_n(&mount_list, __ATOMIC_ACQUIRE);
+        mount->next = prev_head;
+    } while (!__atomic_compare_exchange_n(&mount_list, &prev_head, mount,
+                                          false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE));
 
     return 0;
 }

@@ -295,8 +295,9 @@ int fut_fipc_region_create(size_t size, uint32_t flags, struct fut_fipc_region *
         return FIPC_ENOMEM;
     }
 
-    /* Initialize region */
-    region->id = next_region_id++;
+    /* Initialize region. Atomic id allocation so two concurrent
+     * fipc_region_create callers don't hand out duplicate region ids. */
+    region->id = __atomic_fetch_add(&next_region_id, 1, __ATOMIC_ACQ_REL);
     region->base = base;
     region->size = size;
     region->flags = flags;
@@ -304,9 +305,16 @@ int fut_fipc_region_create(size_t size, uint32_t flags, struct fut_fipc_region *
     region->owner = NULL;  /* Set by caller */
     region->permissions = FIPC_REGION_READ | FIPC_REGION_WRITE;
 
-    /* Add to region list */
-    region->next = region_list;
-    region_list = region;
+    /* Add to region list via atomic head insert: prev = read head; store
+     * region->next = prev; CAS head from prev to region. Without this,
+     * two concurrent inserts could both read the same head and one's
+     * region->next link would be overwritten, dropping the loser's chain. */
+    struct fut_fipc_region *prev_head;
+    do {
+        prev_head = __atomic_load_n(&region_list, __ATOMIC_ACQUIRE);
+        region->next = prev_head;
+    } while (!__atomic_compare_exchange_n(&region_list, &prev_head, region,
+                                          false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE));
 
     *region_out = region;
     return 0;
@@ -407,8 +415,9 @@ int fut_fipc_channel_create(struct fut_task *sender, struct fut_task *receiver,
         return FIPC_ENOMEM;
     }
 
-    /* Initialize channel */
-    channel->id = next_channel_id++;
+    /* Initialize channel. Atomic id allocation so concurrent
+     * fipc_channel_create callers don't hand out duplicate channel ids. */
+    channel->id = __atomic_fetch_add(&next_channel_id, 1, __ATOMIC_ACQ_REL);
     channel->sender = sender;
     channel->receiver = receiver;
     channel->msg_queue = queue;
@@ -452,9 +461,13 @@ int fut_fipc_channel_create(struct fut_task *sender, struct fut_task *receiver,
     channel->owner_pi_active = false;
     channel->pi_client_tid = 0;
 
-    /* Add to channel list */
-    channel->next = channel_list;
-    channel_list = channel;
+    /* Atomic head insert: see fipc_region_create for the same pattern. */
+    struct fut_fipc_channel *prev_head;
+    do {
+        prev_head = __atomic_load_n(&channel_list, __ATOMIC_ACQUIRE);
+        channel->next = prev_head;
+    } while (!__atomic_compare_exchange_n(&channel_list, &prev_head, channel,
+                                          false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE));
 
     fipc_ring_check(channel);
 

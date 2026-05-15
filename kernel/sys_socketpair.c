@@ -238,18 +238,21 @@ pair_alloc_fail:
         fut_task_t *task = fut_task_current();
         if (task) {
             if (type_flags & SOCK_NONBLOCK) {
+                /* Atomic to coexist with concurrent fcntl(F_SETFL) /
+                 * ioctl(FIONBIO) writers — same pattern as the other
+                 * O_NONBLOCK installers (e7392bed). */
                 if (fd0 < task->max_fds) {
-                    struct fut_file *f = task->fd_table[fd0];
-                    if (f) f->flags |= O_NONBLOCK;
+                    struct fut_file *f = __atomic_load_n(&task->fd_table[fd0], __ATOMIC_ACQUIRE);
+                    if (f) __atomic_or_fetch(&f->flags, O_NONBLOCK, __ATOMIC_ACQ_REL);
                 }
                 if (fd1 < task->max_fds) {
-                    struct fut_file *f = task->fd_table[fd1];
-                    if (f) f->flags |= O_NONBLOCK;
+                    struct fut_file *f = __atomic_load_n(&task->fd_table[fd1], __ATOMIC_ACQUIRE);
+                    if (f) __atomic_or_fetch(&f->flags, O_NONBLOCK, __ATOMIC_ACQ_REL);
                 }
                 /* Also propagate to socket structs so socket_nonblock()
                  * returns true in fut_socket_recv/send. */
-                s0->flags |= O_NONBLOCK;
-                s1->flags |= O_NONBLOCK;
+                __atomic_or_fetch(&s0->flags, O_NONBLOCK, __ATOMIC_ACQ_REL);
+                __atomic_or_fetch(&s1->flags, O_NONBLOCK, __ATOMIC_ACQ_REL);
             }
             if (type_flags & SOCK_CLOEXEC) {
                 /* Guard against tasks that haven't allocated fd_flags

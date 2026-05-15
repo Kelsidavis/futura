@@ -493,14 +493,17 @@ static fut_spinlock_t uid_table_lock;
 /* Initialise the UID table (called lazily; safe to call multiple times) */
 static void eventfd_uid_table_init(void) {
     static bool initialised = false;
-    if (initialised) return;
-    initialised = true;
+    /* Acquire-load so a second concurrent caller doesn't observe
+     * initialised=true before the spinlock_init below has actually run.
+     * Same pattern as fipc/blockdev/mount lazy-init ensures. */
+    if (__atomic_load_n(&initialised, __ATOMIC_ACQUIRE)) return;
     fut_spinlock_init(&uid_table_lock);
     for (int i = 0; i < EVENTFD_UID_SLOTS; i++) {
         uid_table[i].active = false;
         uid_table[i].uid    = 0;
         uid_table[i].count  = 0;
     }
+    __atomic_store_n(&initialised, true, __ATOMIC_RELEASE);
 }
 
 /* Atomically check and increment per-UID count.

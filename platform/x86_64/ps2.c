@@ -137,13 +137,35 @@ static void ps2_write_second(uint8_t value) {
     ps2_write_data(value);
 }
 
-static int ps2_expect_ack(void) {
-    uint8_t resp = ps2_read_data();
-    if (resp == PS2_ACK) {
-        return 0;
-    }
-    if (resp == PS2_RESEND) {
-        return -EAGAIN;
+/* Tolerant ACK reader -- mirrors Linux's ps2_handle_ack() behaviour.
+ * After a long-latency command (reset, in particular), the AUX device
+ * may emit stale bytes that arrived later than the controller's short
+ * 100 us read window: a late BAT result, the device ID following BAT,
+ * a stray 0x00 from a Synaptics ID query, etc.  Reading a single byte
+ * and demanding 0xFA fails on the very first one and the rest of init
+ * runs against a misaligned byte stream.  Spin reading up to N bytes;
+ * accept the first 0xFA, treat 0xFE as resend, and treat 0x00 / 0x03
+ * / 0x04 as benign stragglers (these are documented device-ID values
+ * that the libps2 ack handler also skips).  Anything else aborts.  */
+static int ps2_expect_ack_tolerant(int max_bytes) {
+    for (int i = 0; i < max_bytes; ++i) {
+        if (!ps2_wait_output_full()) {
+            return -EIO;
+        }
+        uint8_t resp = hal_inb(PS2_DATA_PORT);
+        if (resp == PS2_ACK) {
+            return 0;
+        }
+        if (resp == PS2_RESEND) {
+            return -EAGAIN;
+        }
+        /* Stray bytes we know how to ignore: standard PS/2 ID (0x00),
+         * IntelliMouse ID (0x03), IntelliMouse Explorer ID (0x04),
+         * and BAT result (0xAA) when it arrives after our timeout. */
+        if (resp == 0x00 || resp == 0x03 || resp == 0x04 || resp == 0xAAu) {
+            continue;
+        }
+        return -EIO;
     }
     return -EIO;
 }
@@ -261,24 +283,32 @@ int ps2_controller_init(bool enable_keyboard, bool enable_mouse) {
          * (bit-3 set!) as a packet header on the next IRQ, and the
          * cursor sat dead because every "packet" was misaligned. */
         ps2_write_second(0xFF);
-        int rc = ps2_expect_ack();
+        /* Linux's libps2 gives reset a 4000 ms response window because
+         * the slow path is: command ACK -> ~700 ms BAT -> 0xAA -> ID
+         * byte, and some firmware (Synaptics on certain ThinkPads
+         * confirmed) lays the BAT/ID response down asynchronously
+         * after the ACK.  Use the same budget here; this is a one-
+         * shot at boot.  Read with the tolerant ACK reader so the
+         * very first byte (which is the reset ACK) is accepted even
+         * if a stray byte from prior firmware activity beat it. */
+        int rc = ps2_expect_ack_tolerant(4);
         fut_printf("[PS2] mouse reset (0xFF): ack=%d\n", rc);
 
-        /* Wait ~1 s for BAT to complete.  Three billion TSC cycles is
-         * 1 s at 3 GHz, ~770 ms at 3.9 GHz (L490 turbo), and 3 s on
-         * a slow 1 GHz core — all comfortably past the 700 ms BAT
-         * spec ceiling.  This is a busy loop, but it runs once per
-         * boot, before scheduler start, so nothing else cares. */
+        /* 4 s busy wait (~12 billion cycles at 3 GHz) -- the L490's
+         * post-1 s drain only caught the BAT result (0xAA) without
+         * the device ID (0x00), confirming this device finishes its
+         * self-test late.  Mirror Linux's 4000 ms reset response
+         * timeout so the ID byte has time to land. */
         uint64_t t0 = fut_rdtsc();
-        while (fut_rdtsc() - t0 < 3000000000ULL) {
+        while (fut_rdtsc() - t0 < 12000000000ULL) {
             __asm__ volatile("pause" ::: "memory");
         }
 
-        /* Drain whatever the mouse posted during BAT — should be BAT
-         * pass (0xAA) followed by device ID (0x00).  Print it so the
-         * boot log confirms the device responded; on real hardware
-         * the BAT/ID values reveal Synaptics passthrough, Elan
-         * extensions, etc., even if we don't act on them yet. */
+        /* Drain whatever the mouse posted during BAT.  After the
+         * extended wait we should now see BAT pass (0xAA) followed
+         * by device ID (0x00 for standard mice, 0x03 for IntelliMouse,
+         * 0x04 for Explorer).  Print every byte so the boot log
+         * identifies the device unambiguously. */
         uint8_t drained[8] = {0};
         int n_drained = 0;
         while (n_drained < (int)sizeof(drained) &&
@@ -291,11 +321,11 @@ int ps2_controller_init(bool enable_keyboard, bool enable_mouse) {
                    drained[4], drained[5], drained[6], drained[7]);
 
         ps2_write_second(0xF6);
-        rc = ps2_expect_ack();
+        rc = ps2_expect_ack_tolerant(4);
         fut_printf("[PS2] mouse set defaults (0xF6): ack=%d\n", rc);
 
         ps2_write_second(0xF4);
-        rc = ps2_expect_ack();
+        rc = ps2_expect_ack_tolerant(4);
         fut_printf("[PS2] mouse enable streaming (0xF4): ack=%d\n", rc);
 
         /* Final settle + drain.  The mouse may post a stray byte or
@@ -377,26 +407,51 @@ static void ps2_diag_pause_and_poll(void) {
     fut_printf("##  the per-second counter dump below.                            ##\n");
     fut_printf("####################################################################\n");
 
+    extern void ps2_mouse_get_stats(uint32_t *bytes_recv, uint32_t *bytes_dropped,
+                                    uint32_t *packets, uint32_t *events_pushed,
+                                    uint32_t *reads_serviced, uint32_t *opens)
+        __attribute__((weak));
+    extern void ps2_mouse_get_byte_capture(uint8_t *out, uint32_t *out_count)
+        __attribute__((weak));
+
     /* 30 one-second steps so we get fresh counters/data each second. */
     for (int sec = 0; sec < 30; ++sec) {
-        /* Drain whatever the controller has in its output buffer
-         * right now.  Note: this races with the IRQ handler -- if an
-         * IRQ fires while we're polling, it'll grab bytes first.
-         * That's fine: we only print what we manage to grab here,
-         * and the counter dump tells us what the IRQ side saw. */
         uint8_t snap[8] = {0};
         int n = 0;
         while (n < (int)sizeof(snap) && (hal_inb(PS2_STATUS_PORT) & 0x01u)) {
             snap[n++] = hal_inb(PS2_DATA_PORT);
         }
-        fut_printf("[PS2 DIAG t=%2ds] IRQ1=%u IRQ12=%u STATUS=0x%02x polled=%d: %02x %02x %02x %02x %02x %02x %02x %02x\n",
+        uint32_t bytes = 0, dropped = 0, packets = 0, pushed = 0;
+        if (ps2_mouse_get_stats) {
+            uint32_t r = 0, o = 0;
+            ps2_mouse_get_stats(&bytes, &dropped, &packets, &pushed, &r, &o);
+        }
+        fut_printf("[PS2 DIAG t=%2ds] IRQ1=%u IRQ12=%u STATUS=0x%02x polled=%d bytes=%u drop=%u pkts=%u pushed=%u\n",
                    sec,
                    __atomic_load_n(&g_ps2_irq1_count, __ATOMIC_RELAXED),
                    __atomic_load_n(&g_ps2_irq12_count, __ATOMIC_RELAXED),
                    hal_inb(PS2_STATUS_PORT),
-                   n,
-                   snap[0], snap[1], snap[2], snap[3],
-                   snap[4], snap[5], snap[6], snap[7]);
+                   n, bytes, dropped, packets, pushed);
+
+        /* Dump the captured byte stream so we can identify the L490's
+         * packet format from a screenshot.  Printed every second; the
+         * count only grows over time so a later photo strictly
+         * supersedes an earlier one. */
+        if (ps2_mouse_get_byte_capture) {
+            uint8_t cap[64];
+            uint32_t cap_count = 0;
+            ps2_mouse_get_byte_capture(cap, &cap_count);
+            if (cap_count > 0) {
+                fut_printf("[PS2 DIAG] cap[%u]:", cap_count);
+                for (uint32_t i = 0; i < cap_count; ++i) {
+                    if (i % 16 == 0 && i != 0) {
+                        fut_printf("\n           ");
+                    }
+                    fut_printf(" %02x", cap[i]);
+                }
+                fut_printf("\n");
+            }
+        }
 
         /* Busy-wait ~1 s via TSC -- safe before scheduler start, and
          * we want IRQs to be able to fire during the wait. */

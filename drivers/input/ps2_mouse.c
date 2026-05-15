@@ -68,6 +68,23 @@ void ps2_mouse_get_stats(uint32_t *bytes_recv, uint32_t *bytes_dropped,
     if (opens)          *opens          = __atomic_load_n(&g_stat_opens,          __ATOMIC_RELAXED);
 }
 
+/* Raw byte capture for diagnosing L490-style mouse-pipeline bugs.
+ * We don't know the byte format the L490 actually emits; the only way
+ * to find out without a serial console is to log the first 64 bytes
+ * received and surface them in the boot-time framebuffer console. */
+#define PS2_BYTE_CAP_MAX 64u
+static volatile uint8_t g_byte_capture[PS2_BYTE_CAP_MAX];
+static volatile uint32_t g_byte_capture_count;
+
+void ps2_mouse_get_byte_capture(uint8_t *out, uint32_t *out_count) {
+    uint32_t c = __atomic_load_n(&g_byte_capture_count, __ATOMIC_RELAXED);
+    if (c > PS2_BYTE_CAP_MAX) c = PS2_BYTE_CAP_MAX;
+    for (uint32_t i = 0; i < c; i++) {
+        out[i] = g_byte_capture[i];
+    }
+    *out_count = c;
+}
+
 static void emit_move_event(struct ps2_mouse_device *dev, int rel_x, int rel_y) {
     if (!rel_x && !rel_y) {
         return;
@@ -119,6 +136,20 @@ void ps2_mouse_handle_byte(uint8_t data) {
         return;
     }
     __atomic_add_fetch(&g_stat_bytes_recv, 1, __ATOMIC_RELAXED);
+
+    /* Capture the first 64 bytes we see for the diagnostic dump.
+     * Doing it before any parser logic means we record exactly what
+     * the device sent, independent of how (mis-)interpreted bytes
+     * affect the synced state.  Stop after 64 so we don't churn a
+     * ring buffer; that's enough to identify the packet format
+     * (standard 3-byte vs IntelliMouse 4-byte vs Synaptics 6-byte). */
+    {
+        uint32_t c = __atomic_load_n(&g_byte_capture_count, __ATOMIC_RELAXED);
+        if (c < PS2_BYTE_CAP_MAX) {
+            g_byte_capture[c] = data;
+            __atomic_store_n(&g_byte_capture_count, c + 1, __ATOMIC_RELAXED);
+        }
+    }
 
     /* Synchronize packets: the first byte always has bit 3 set. */
     if (dev->index == 0 && (data & 0x08u) == 0) {

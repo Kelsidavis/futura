@@ -534,15 +534,18 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
                                  0xFE01 /* IOC_SETFLAGS */, (unsigned long)new_flags);
         }
 
-        /* Propagate O_NONBLOCK to kernel socket object if this FD is a socket */
+        /* Propagate O_NONBLOCK to kernel socket object if this FD is a socket.
+         * Atomic update — pair with the ioctl(FIONBIO) sock->flags atomic
+         * (da66992b) so concurrent F_SETFL + FIONBIO doesn't clobber each
+         * other's other flag bits. */
         {
             extern fut_socket_t *get_socket_from_fd(int fd);
             fut_socket_t *sock = get_socket_from_fd(local_fd);
             if (sock) {
                 if (new_flags & O_NONBLOCK) {
-                    sock->flags |= O_NONBLOCK;
+                    __atomic_or_fetch(&sock->flags, O_NONBLOCK, __ATOMIC_ACQ_REL);
                 } else {
-                    sock->flags &= ~O_NONBLOCK;
+                    __atomic_and_fetch(&sock->flags, ~O_NONBLOCK, __ATOMIC_ACQ_REL);
                 }
             }
         }

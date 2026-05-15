@@ -823,13 +823,14 @@ long sys_accept4(int sockfd, void *addr, socklen_t *addrlen, int flags) {
                 if (atask->fd_table) {
                     struct fut_file *afile = atask->fd_table[newfd];
                     if (afile)
-                        afile->flags |= O_NONBLOCK;
+                        __atomic_or_fetch(&afile->flags, O_NONBLOCK, __ATOMIC_ACQ_REL);
                 }
                 /* Also propagate to socket struct so socket_nonblock()
-                 * returns true in fut_socket_recv/send. */
+                 * returns true in fut_socket_recv/send. Atomic to pair
+                 * with the F_SETFL/FIONBIO writers (da66992b/7f5da717). */
                 fut_socket_t *asock = get_socket_from_fd((int)newfd);
                 if (asock)
-                    asock->flags |= O_NONBLOCK;
+                    __atomic_or_fetch(&asock->flags, O_NONBLOCK, __ATOMIC_ACQ_REL);
             }
             if (local_flags & SOCK_CLOEXEC) {
                 /* Guard fd_flags non-NULL: lazily allocated, may be NULL

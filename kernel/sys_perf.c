@@ -424,15 +424,23 @@ long sys_perf_event_open(const void *attr, int pid, int cpu,
             return -ESRCH;
     }
 
-    /* Find free slot */
+    /* Atomically claim a free perf-event slot. The previous scan-then-set
+     * left a TOCTOU window two concurrent perf_event_open callers could
+     * race through, both binding to the same perf_events[] entry. */
     struct perf_event *ev = NULL;
     for (int i = 0; i < MAX_PERF_EVENTS; i++) {
-        if (!perf_events[i].active) { ev = &perf_events[i]; break; }
+        bool expected = false;
+        if (__atomic_compare_exchange_n(&perf_events[i].active, &expected, true,
+                                        false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+            ev = &perf_events[i];
+            break;
+        }
     }
     if (!ev) return -EMFILE;
 
+    bool was_active = ev->active;  /* preserve our claim across memset */
     memset(ev, 0, sizeof(*ev));
-    ev->active = true;
+    ev->active = was_active;
     ev->type = a->type;
     ev->config = a->config;
     ev->target_pid = pid;

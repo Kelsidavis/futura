@@ -382,21 +382,17 @@ void fut_task_destroy(fut_task_t *task) {
      * file's release handler and free the struct. Without this, PTY
      * pairs, pipe buffers, and file structs leak when processes exit. */
     if (task->fd_table) {
+        /* Route through vfs_file_unref so the release path is identical
+         * to fut_vfs_close (chr_ops->release / vnode->ops->close +
+         * fut_vnode_unref / path free / struct free). The previous
+         * inlined logic skipped vnode->ops->close, so any dirty-state
+         * flush hooks never ran for files still open at task exit. */
+        extern void vfs_file_unref(struct fut_file *);
         for (int i = 0; i < task->max_fds; i++) {
             if (task->fd_table[i] != NULL) {
                 struct fut_file *file = task->fd_table[i];
                 task->fd_table[i] = NULL;
-                if (file->refcount > 0) {
-                    uint32_t old = __atomic_sub_fetch(&file->refcount, 1, __ATOMIC_ACQ_REL);
-                    if (old == 0) {
-                        /* Last reference — release resources */
-                        if (file->chr_ops && file->chr_ops->release)
-                            file->chr_ops->release(file->chr_inode, file->chr_private);
-                        if (file->path) fut_free(file->path);
-                        if (file->vnode) fut_vnode_unref(file->vnode);
-                        fut_free(file);
-                    }
-                }
+                vfs_file_unref(file);
             }
         }
         fut_free(task->fd_table);

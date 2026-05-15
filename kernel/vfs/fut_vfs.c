@@ -1690,9 +1690,14 @@ int fut_vfs_mknod(const char *path, uint32_t mode) {
  * ============================================================ */
 
 static int alloc_fd(struct fut_file *file) {
+    /* Use CAS to claim the first free slot atomically. Without it,
+     * concurrent open()s would both see slot i as NULL, both write
+     * their file pointer, and one would silently leak. Same pattern
+     * as 3c66b81e for the per-task fd_table. */
     for (int i = 0; i < MAX_OPEN_FILES; i++) {
-        if (file_table[i] == NULL) {
-            file_table[i] = file;
+        struct fut_file *expected = NULL;
+        if (__atomic_compare_exchange_n(&file_table[i], &expected, file,
+                                        false, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
             return i;
         }
     }

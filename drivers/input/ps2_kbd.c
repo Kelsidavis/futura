@@ -33,6 +33,11 @@ struct ps2_kbd_device {
     uint32_t open_count;
     bool active;
     bool extended;
+    /* Modifier tracking for SysRq-style emergency reset combos.  Set
+     * on press, cleared on release.  Read from the same IRQ context
+     * that sets them, so no atomicity needed. */
+    bool ctrl_down;
+    bool alt_down;
 };
 
 static struct ps2_kbd_device g_ps2_kbd = {0};
@@ -94,19 +99,34 @@ void ps2_kbd_handle_byte(uint8_t data) {
     bool released = (data & 0x80u) != 0;
     uint8_t code = data & 0x7Fu;
 
-    /* Optional emergency warm reset on F12 press (scan code 0x58,
-     * non-extended).  Gated behind the f12_warm_reset cmdline flag so
-     * the universal kernel doesn't ambush anyone who casually presses
-     * F12.  Enabled only by debug menuentries that intend to capture
-     * a klog snapshot across a hang -- acpi_reboot() drives i8042
-     * 0xFE which most BIOSes treat as a warm reset, preserving DRAM
-     * for the next boot's klog_persist replay. */
-    if (!released && !extended && code == 0x58u
-        && fut_boot_arg_flag("f12_warm_reset")) {
-        fut_printf("\n[EMERGENCY] F12 pressed -- triggering warm reset (klog will replay on next boot)\n");
-        extern void acpi_reboot(void);
-        acpi_reboot();
-        for (;;) { __asm__ volatile("hlt"); }
+    /* Track Ctrl/Alt state for the Ctrl+Alt+Del emergency reset combo.
+     * Left/Right Ctrl share the same set-1 scan code 0x1D (the
+     * extended-prefix bit tells you which side -- we don't care, any
+     * Ctrl counts).  Same for Alt (0x38). */
+    if (code == 0x1Du) {
+        dev->ctrl_down = !released;
+    } else if (code == 0x38u) {
+        dev->alt_down = !released;
+    }
+
+    /* Optional emergency warm reset.  Two triggers, both gated behind
+     * the f12_warm_reset cmdline flag so a universal kernel never
+     * ambushes anyone who happens to press these keys:
+     *   - F12 (scan code 0x58, non-extended)
+     *   - Ctrl+Alt+Del (Del = extended 0x53)
+     * Either drives acpi_reboot() which uses the CMOS warm-reboot
+     * hint + PCH 0xCF9 path so DRAM (and our klog ring) survives. */
+    if (fut_boot_arg_flag("f12_warm_reset")) {
+        bool is_f12 = !released && !extended && code == 0x58u;
+        bool is_ctrl_alt_del = !released && extended && code == 0x53u
+                            && dev->ctrl_down && dev->alt_down;
+        if (is_f12 || is_ctrl_alt_del) {
+            fut_printf("\n[EMERGENCY] %s pressed -- warm reset (klog will replay on next boot)\n",
+                       is_f12 ? "F12" : "Ctrl+Alt+Del");
+            extern void acpi_reboot(void);
+            acpi_reboot();
+            for (;;) { __asm__ volatile("hlt"); }
+        }
     }
 
     uint16_t keycode = translate_scancode(code, extended);

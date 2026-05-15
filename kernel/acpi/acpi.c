@@ -574,6 +574,17 @@ void acpi_shutdown(void) {
  */
 void acpi_reboot(void) {
 #ifdef __x86_64__
+    /* Set CMOS Shutdown Status byte (offset 0x0F) to 0x0A before
+     * triggering any reset.  This is the classic IBM PC convention
+     * for "next boot is warm" -- BIOS POST reads CMOS 0x0F early and
+     * skips memory training / extensive POST when it sees the warm
+     * marker.  Without this, even a 0xCF9 reset triggers full memory
+     * training on most ThinkPad BIOSes, which wipes DRAM and
+     * destroys our klog_persist ring.  CMOS is battery-backed so
+     * the byte survives whatever happens to power/reset lines. */
+    hal_outb(0x70, 0x0F);
+    hal_outb(0x71, 0x0A);
+
     /* Method 1: Intel PCH reset control register (0xCF9).  Writing
      * 0x06 = RST_CPU (bit 1) + SYS_RST (bit 2) triggers a warm reset
      * that preserves DRAM contents.  Some firmware traps the write

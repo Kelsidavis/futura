@@ -6,6 +6,7 @@
 #include <platform/platform.h>
 #include <platform/x86_64/regs.h>
 #include <kernel/errno.h>
+#include <kernel/boot_args.h>
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -329,6 +330,72 @@ void fut_irq_handler(void *frame_ptr) {
     }
 }
 
+/* Forward declarations for symbols defined later in this file but
+ * used by the diagnostic dump below. */
+extern void hal_outb(uint16_t port, uint8_t value);
+extern uint8_t hal_inb(uint16_t port);
+
+/* One-shot diagnostic: after PS/2 init, pause for ~30 s while we
+ * manually poll the i8042 output buffer.  Goals:
+ *   - Slow the boot log enough to read the [ACPI]/[IOAPIC]/[PS2]
+ *     lines that scroll past instantaneously on a live framebuffer.
+ *   - Tell whether the controller has any data at all (port 0x60 /
+ *     STATUS bit 0) without depending on IRQ delivery -- if data is
+ *     present here but IRQ counters stay at zero, the bug is in
+ *     IRQ routing / vector setup.  If no data appears at all, the
+ *     controller or the AUX device itself isn't producing anything.
+ *   - Report IRQ1/IRQ12 counters every second so a stray IRQ that
+ *     does land becomes immediately visible.
+ *
+ * Tap from outside in the meantime: every loop iteration is one
+ * status read + maybe one data read, all from a busy-loop with IRQs
+ * *enabled* (we want IRQs to be able to fire so the counters move).
+ *
+ * Enable by passing input_diag on the boot command line.  Stays off
+ * by default so production boots aren't gated on a 30 s pause. */
+static void ps2_diag_pause_and_poll(void) {
+    if (!fut_boot_arg_flag("input_diag")) {
+        return;
+    }
+    extern uint64_t fut_rdtsc(void);
+    fut_printf("\n");
+    fut_printf("####################################################################\n");
+    fut_printf("##  [PS2 DIAG] 30 s pause -- read the input init log above        ##\n");
+    fut_printf("##  Polling port 0x60 directly; any IRQ1/IRQ12 firing shows in    ##\n");
+    fut_printf("##  the per-second counter dump below.                            ##\n");
+    fut_printf("####################################################################\n");
+
+    /* 30 one-second steps so we get fresh counters/data each second. */
+    for (int sec = 0; sec < 30; ++sec) {
+        /* Drain whatever the controller has in its output buffer
+         * right now.  Note: this races with the IRQ handler -- if an
+         * IRQ fires while we're polling, it'll grab bytes first.
+         * That's fine: we only print what we manage to grab here,
+         * and the counter dump tells us what the IRQ side saw. */
+        uint8_t snap[8] = {0};
+        int n = 0;
+        while (n < (int)sizeof(snap) && (hal_inb(PS2_STATUS_PORT) & 0x01u)) {
+            snap[n++] = hal_inb(PS2_DATA_PORT);
+        }
+        fut_printf("[PS2 DIAG t=%2ds] IRQ1=%u IRQ12=%u STATUS=0x%02x polled=%d: %02x %02x %02x %02x %02x %02x %02x %02x\n",
+                   sec,
+                   __atomic_load_n(&g_ps2_irq1_count, __ATOMIC_RELAXED),
+                   __atomic_load_n(&g_ps2_irq12_count, __ATOMIC_RELAXED),
+                   hal_inb(PS2_STATUS_PORT),
+                   n,
+                   snap[0], snap[1], snap[2], snap[3],
+                   snap[4], snap[5], snap[6], snap[7]);
+
+        /* Busy-wait ~1 s via TSC -- safe before scheduler start, and
+         * we want IRQs to be able to fire during the wait. */
+        uint64_t t0 = fut_rdtsc();
+        while (fut_rdtsc() - t0 < 3000000000ULL) {
+            __asm__ volatile("pause" ::: "memory");
+        }
+    }
+    fut_printf("[PS2 DIAG] pause complete, continuing boot\n");
+}
+
 int fut_input_hw_init(bool want_keyboard, bool want_mouse) {
     int rc = 0;
     if (want_keyboard) {
@@ -356,5 +423,10 @@ int fut_input_hw_init(bool want_keyboard, bool want_mouse) {
     }
 
     ps2_controller_init(want_keyboard, want_mouse);
+    /* IRQs are now unmasked.  Fire the diagnostic pause AFTER unmask
+     * so any IRQs the controller wants to deliver have a chance to
+     * land and bump our counters.  Enabled only with input_diag=1
+     * on the boot command line. */
+    ps2_diag_pause_and_poll();
     return rc;
 }

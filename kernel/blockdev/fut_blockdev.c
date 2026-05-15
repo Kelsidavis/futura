@@ -13,6 +13,7 @@
 #include <kernel/fut_timer.h>
 #include <kernel/kprintf.h>
 #include <kernel/errno.h>
+#include <kernel/fut_sched.h>  /* fut_spinlock_t */
 #include <stddef.h>
 
 /* ============================================================
@@ -20,6 +21,18 @@
  * ============================================================ */
 
 static struct fut_blockdev *device_list = NULL;
+/* Serialises device_list register/unregister/find. Without it the
+ * walks in unregister/find can race with concurrent register +
+ * unregister and either splice the wrong ->next or read a freed
+ * struct. */
+static fut_spinlock_t blockdev_list_lock;
+static bool blockdev_list_lock_initialized = false;
+static inline void blockdev_list_lock_ensure(void) {
+    if (!__atomic_load_n(&blockdev_list_lock_initialized, __ATOMIC_ACQUIRE)) {
+        fut_spinlock_init(&blockdev_list_lock);
+        __atomic_store_n(&blockdev_list_lock_initialized, true, __ATOMIC_RELEASE);
+    }
+}
 
 /* ============================================================
  *   String Utilities
@@ -167,23 +180,22 @@ int fut_blockdev_register(struct fut_blockdev *dev) {
     dev->io_time_ms = 0;
     dev->weighted_io_ms = 0;
 
-    /* Atomic head insert with duplicate-name check inside the CAS loop.
-     * Without the loop the duplicate check + list push raced two
-     * concurrent register calls — both could observe no duplicate and
-     * one would overwrite the other's ->next link, dropping the loser's
-     * chain off the device list. */
-    for (;;) {
-        struct fut_blockdev *prev_head = __atomic_load_n(&device_list, __ATOMIC_ACQUIRE);
-        for (struct fut_blockdev *e = prev_head; e; e = e->next) {
-            if (str_cmp(e->name, dev->name) == 0)
-                return BLOCKDEV_EINVAL;  /* Device already exists */
+    /* Register under blockdev_list_lock so the duplicate-name scan and
+     * the head push are atomic with concurrent unregister + find. The
+     * earlier CAS-only insert raced with unregister's pointer-to-pointer
+     * walk and could lose the new device when an unregister overwrote
+     * the head with a stale curr->next. */
+    blockdev_list_lock_ensure();
+    fut_spinlock_acquire(&blockdev_list_lock);
+    for (struct fut_blockdev *e = device_list; e; e = e->next) {
+        if (str_cmp(e->name, dev->name) == 0) {
+            fut_spinlock_release(&blockdev_list_lock);
+            return BLOCKDEV_EINVAL;  /* Device already exists */
         }
-        dev->next = prev_head;
-        if (__atomic_compare_exchange_n(&device_list, &prev_head, dev,
-                                        false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
-            break;
-        /* CAS lost — head moved. Re-check duplicate against the new head. */
     }
+    dev->next = device_list;
+    device_list = dev;
+    fut_spinlock_release(&blockdev_list_lock);
     return 0;
 }
 
@@ -192,18 +204,21 @@ void fut_blockdev_unregister(struct fut_blockdev *dev) {
         return;
     }
 
-    /* Remove from device list */
+    /* Remove under blockdev_list_lock. */
+    blockdev_list_lock_ensure();
+    fut_spinlock_acquire(&blockdev_list_lock);
     struct fut_blockdev **prev = &device_list;
     struct fut_blockdev *curr = device_list;
 
     while (curr) {
         if (curr == dev) {
             *prev = curr->next;
-            return;
+            break;
         }
         prev = &curr->next;
         curr = curr->next;
     }
+    fut_spinlock_release(&blockdev_list_lock);
 }
 
 struct fut_blockdev *fut_blockdev_find(const char *name) {
@@ -211,13 +226,21 @@ struct fut_blockdev *fut_blockdev_find(const char *name) {
         return NULL;
     }
 
+    /* Walk under blockdev_list_lock so a concurrent unregister can't
+     * free the returned dev mid-walk. The pointer can still be freed
+     * by the time the caller dereferences it, but at least the walk
+     * itself doesn't read freed memory. */
+    blockdev_list_lock_ensure();
+    fut_spinlock_acquire(&blockdev_list_lock);
     struct fut_blockdev *dev = device_list;
     while (dev) {
         if (str_cmp(dev->name, name) == 0) {
+            fut_spinlock_release(&blockdev_list_lock);
             return dev;
         }
         dev = dev->next;
     }
+    fut_spinlock_release(&blockdev_list_lock);
 
     return NULL;
 }

@@ -695,11 +695,19 @@ static __attribute__((noreturn)) void fork_child_return(void *arg) {
         fut_thread_exit();
     }
 
+    /* Copy the heap-allocated frame onto our local kernel stack, then
+     * free the heap allocation before the IRETQ — without this, every
+     * fork() leaks ~sizeof(fut_interrupt_frame_t). The IRETQ sequence
+     * uses RSP as a register-pop source, so the source has to outlive
+     * the iretq itself; the local frame on the kernel stack does. */
+    fut_interrupt_frame_t local_frame = *saved;
+    fut_free(saved);
+
     /* Enable interrupts — trampoline starts with IF=0. */
     __asm__ volatile("sti");
 
     /* Ensure IF is set in the saved RFLAGS so user mode gets preempted. */
-    saved->rflags |= 0x200;
+    local_frame.rflags |= 0x200;
 
     /* Load FS_BASE MSR from the child thread before returning to user mode.
      * Without this, FS_BASE retains the kernel's value (often 0x23 =
@@ -719,9 +727,10 @@ static __attribute__((noreturn)) void fork_child_return(void *arg) {
         }
     }
 
-    /* Set RSP to point at the saved frame and pop registers + IRETQ.
-     * This is the same register restore sequence used by the ISR return path.
-     * After IRETQ, RSP is replaced by the user RSP from the frame. */
+    /* Set RSP to point at the (now local-stack) frame and pop registers
+     * + IRETQ. This is the same register restore sequence used by the
+     * ISR return path. After IRETQ, RSP is replaced by the user RSP
+     * from the frame. */
     __asm__ volatile(
         "movq %0, %%rsp\n"
         "addq $32, %%rsp\n"        /* skip GS, FS, ES, DS */
@@ -743,7 +752,7 @@ static __attribute__((noreturn)) void fork_child_return(void *arg) {
         "addq $16, %%rsp\n"        /* skip vector, error_code */
         "iretq\n"
         :
-        : "r" ((uint64_t)saved)
+        : "r" ((uint64_t)&local_frame)
         : "memory"
     );
     __builtin_unreachable();

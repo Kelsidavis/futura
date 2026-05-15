@@ -638,8 +638,19 @@ iov_loop_done:
                 }
 
                 if (orig_controllen >= cmsg_size) {
-                    /* Build the control message in kernel memory */
-                    void *kcontrol = fut_malloc(cmsg_size);
+                    /* Build the control message in kernel memory. Up to
+                     * 253 fds (BSD-style cap) = ~1024 bytes of payload,
+                     * so a 1280-byte stack buffer covers the worst case
+                     * — avoids per-recvmsg slab churn for SCM_RIGHTS. */
+                    uint8_t scm_stack_buf[1280];
+                    void *kcontrol;
+                    bool kcontrol_on_heap = false;
+                    if (cmsg_size <= sizeof(scm_stack_buf)) {
+                        kcontrol = scm_stack_buf;
+                    } else {
+                        kcontrol = fut_malloc(cmsg_size);
+                        kcontrol_on_heap = (kcontrol != NULL);
+                    }
                     if (kcontrol) {
                         /* Zero-fill for alignment padding */
                         for (size_t z = 0; z < cmsg_size; z++)
@@ -659,7 +670,7 @@ iov_loop_done:
                         if (recvmsg_copy_to_user(kmsg.msg_control, kcontrol, cmsg_size) == 0) {
                             kmsg.msg_controllen = cmsg_size;
                         }
-                        fut_free(kcontrol);
+                        if (kcontrol_on_heap) fut_free(kcontrol);
                     }
                 } else {
                     /* Buffer too small - set MSG_CTRUNC to indicate
@@ -705,8 +716,10 @@ iov_loop_done:
             }
             size_t cred_offset = kmsg.msg_controllen;  /* Append after any SCM_RIGHTS */
             if (orig_controllen2 >= cred_offset + cred_cmsg_size) {
-                void *kcred_cmsg = fut_malloc(cred_cmsg_size);
-                if (kcred_cmsg) {
+                /* ucred cmsg is small (~28 bytes); stack-allocate. */
+                uint8_t cred_stack_buf[64];
+                if (cred_cmsg_size <= sizeof(cred_stack_buf)) {
+                    void *kcred_cmsg = cred_stack_buf;
                     for (size_t z = 0; z < cred_cmsg_size; z++) ((uint8_t *)kcred_cmsg)[z] = 0;
                     struct cmsghdr *cc = (struct cmsghdr *)kcred_cmsg;
                     cc->cmsg_len   = CMSG_LEN(sizeof(struct ucred_t));
@@ -718,7 +731,6 @@ iov_loop_done:
                                              kcred_cmsg, cred_cmsg_size) == 0) {
                         kmsg.msg_controllen = cred_offset + cred_cmsg_size;
                     }
-                    fut_free(kcred_cmsg);
                 }
             }
         }
@@ -747,8 +759,10 @@ iov_loop_done:
             }
             size_t ts_offset = kmsg.msg_controllen;  /* Append after SCM_RIGHTS / SCM_CREDENTIALS */
             if (ts_orig_controllen >= ts_offset + ts_cmsg_size) {
-                void *kts_cmsg = fut_malloc(ts_cmsg_size);
-                if (kts_cmsg) {
+                /* Timestamp cmsg is small (~32 bytes); stack-allocate. */
+                uint8_t ts_stack_buf[64];
+                if (ts_cmsg_size <= sizeof(ts_stack_buf)) {
+                    void *kts_cmsg = ts_stack_buf;
                     for (size_t z = 0; z < ts_cmsg_size; z++) ((uint8_t *)kts_cmsg)[z] = 0;
                     struct cmsghdr *tc = (struct cmsghdr *)kts_cmsg;
                     tc->cmsg_level = SOL_SOCKET;
@@ -771,7 +785,6 @@ iov_loop_done:
                                              kts_cmsg, ts_cmsg_size) == 0) {
                         kmsg.msg_controllen = ts_offset + ts_cmsg_size;
                     }
-                    fut_free(kts_cmsg);
                 }
             }
         }

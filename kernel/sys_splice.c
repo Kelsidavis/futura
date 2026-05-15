@@ -300,14 +300,14 @@ long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
         write_off = (int64_t)file_out->offset;
     }
 
-    /* Transfer via a temporary kernel buffer (PIPE_BUF_SIZE chunks) */
+    /* Transfer via a stack-allocated kernel buffer (PIPE_BUF_SIZE chunks).
+     * 4 KiB on the 64 KiB kernel stack avoids a fut_malloc/fut_free pair
+     * per splice() — same pattern as sys_read/sys_write small-syscall
+     * stack buffer (commit 8e412f00). */
     long result;
     const size_t CHUNK = 4096;
-    uint8_t *kbuf = (uint8_t *)fut_malloc(CHUNK);
-    if (!kbuf) {
-        result = -ENOMEM;
-        goto restore_nb;
-    }
+    uint8_t kbuf_storage[4096];
+    uint8_t *kbuf = kbuf_storage;
 
     size_t transferred = 0;
     long splice_err = 0;
@@ -371,7 +371,7 @@ long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
         transferred += (size_t)nwritten;
     }
 
-    fut_free(kbuf);
+    /* kbuf is stack-allocated — no free needed */
 
     /* Update file offsets */
     if (!local_off_in)  file_in->offset  = (uint64_t)read_off;

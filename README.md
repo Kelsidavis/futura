@@ -16,7 +16,7 @@ Licensed under Mozilla Public License 2.0 — see [LICENSE](LICENSE)
 
 Futura OS is a capability-based nanokernel that keeps the core minimal (time, scheduling, IPC, and hardware mediation) and pushes policy into userland services connected via FIPC (Futura Inter-Process Communication). The repository includes the kernel, userland services, host tooling, and test harnesses used to validate the end-to-end stack.
 
-### Status Snapshot — v1.0.0 (Mar 28 2026)
+### Status Snapshot — v1.0.0 (May 16 2026)
 
 - **Kernel core**: 400+ Linux-compatible syscalls across 260+ implementation files, 280K+ lines of kernel C. PI futex, OOM killer, seccomp-BPF filter chaining, POSIX file locking, real xattr per-vnode, mprotect PROT_NONE, rlimit enforcement (6 limits), ChaCha20 CSPRNG, kernel_oops(), pivot_root(), CLONE_NEWPID/NEWTIME, mremap MAYMOVE, SA_RESTART signals, epoll thread safety, SCM_RIGHTS fd passing, PMM double-free detection.
 - **Testing**: **2659 automated kernel self-tests** across 11 test groups, with **2654/2654 passing** on ARM64 QEMU virt (`make test-arm64` exits `[HARNESS] PASS` cleanly).  CI: GitHub Actions with x86_64 + ARM64 QEMU test runners.

@@ -891,6 +891,28 @@ long sys_fork(void) {
         return -ESRCH;
     }
 
+    /* fork() is only meaningful from a user-mode syscall context — the
+     * child needs a saved interrupt frame to ERET back to user mode.
+     * When invoked from a kernel thread (e.g. selftest_sequential_runner
+     * issuing sys_clone3()), there's no user state to clone and
+     * fut_current_frame may be stale from whichever user task happened to
+     * be in a syscall last.  Detect this via the parent task having no
+     * user mm (fut_mm_current() returns the kernel mm) or having
+     * task->mm == kernel_mm, and refuse early with -ENOMEM instead of
+     * cloning bogus state into a child that would crash on its first
+     * ERET. */
+    extern struct fut_mm *fut_mm_kernel(void);
+    if (!parent_thread->task ||
+        !parent_thread->task->mm ||
+        parent_thread->task->mm == fut_mm_kernel()) {
+        FORK_LOG("[FORK] fork() -> ENOMEM (kernel-thread caller has no user mm)\n");
+        return -ENOMEM;
+    }
+    if (!saved_frame) {
+        FORK_LOG("[FORK] fork() -> ENOMEM (no saved interrupt frame)\n");
+        return -ENOMEM;
+    }
+
     fut_task_t *parent_task = parent_thread->task;
     if (!parent_task) {
         FORK_LOG("[FORK] fork() -> ESRCH (no parent task)\n");

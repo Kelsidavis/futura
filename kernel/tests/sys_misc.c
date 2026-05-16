@@ -51228,6 +51228,19 @@ static void test_mprotect_vma_merge(void) {
 
     fut_printf("[MISC-TEST] Test 1591: mprotect VMA merge after restoring prot\n");
 
+    /* This test touches the mmap'd user-VA to fault pages in; skip on
+     * kernel-thread runners (same pattern as 1588-1590). */
+    {
+        extern struct fut_mm *fut_mm_kernel(void);
+        fut_task_t *t1591_task = fut_task_current();
+        fut_mm_t *t1591_mm = t1591_task ? t1591_task->mm : NULL;
+        if (!t1591_mm || t1591_mm == fut_mm_kernel()) {
+            fut_printf("[MISC-TEST] ✓ Test 1591: skipped (kernel-thread context)\n");
+            fut_test_pass();
+            return;
+        }
+    }
+
     /* Map 3 contiguous pages as RW */
     long addr = sys_mmap(NULL, 4096 * 3, 3 /* PROT_RW */,
                           0x02 | 0x20 /* MAP_PRIVATE|MAP_ANONYMOUS */, -1, 0);

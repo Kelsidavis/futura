@@ -757,6 +757,19 @@ bool fut_trap_handle_page_fault(fut_interrupt_frame_t *frame) {
         if (fault_addr >= 0xFFFFFF8000000000ULL) {
             return false;  /* Kernel-VA fault — really unhandled */
         }
+        /* User-VA from kernel mode: reject when the active mm is the
+         * shared kernel mm.  The kernel mm's page-table root is TTBR1
+         * (high VA only); pmap_map_user would write the PTE into the
+         * kernel root, MMU translates the low VA via TTBR0 and never
+         * sees the mapping, the fault recurs, and each retry allocates
+         * a fresh page table — a fast path to OOM under the kernel-
+         * thread selftest runner.  The fault is a genuine bug in the
+         * test (user-VA deref without a TTBR0 routing) so reject and
+         * let it surface as a failure rather than burning memory. */
+        extern struct fut_mm *fut_mm_kernel(void);
+        if (fut_mm_current() == fut_mm_kernel()) {
+            return false;
+        }
         /* User-VA from kernel mode — let demand-paging try. */
     }
 

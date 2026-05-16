@@ -41,7 +41,7 @@ Futura OS supports multiple hardware architectures with platform-specific abstra
 - MMU with 4-level paging, COW fork, file-backed mmap
 - Virtio drivers (virtio-blk, virtio-net) in Rust
 - AHCI/SATA support
-- Wayland compositor stack (futura-wayland + demo clients)
+- Wayland compositor stack (futura-wayland + first-party clients)
 
 **ARM64 (Rapid Development)**
 - 177 working syscalls with Linux-compatible ABI
@@ -133,7 +133,7 @@ mechanism, ensuring services such as fsd can multiplex work without busy loops.
   - **posixd** – POSIX compatibility layer over FIPC
   - **netd** – UDP bridge for distributed FIPC
   - **registryd** – Service discovery with HMAC-SHA256 capability protection
-- **Client demos** – wl-simple, wl-colorwheel (Wayland clients), fbtest (framebuffer demo)
+- **Wayland clients** – wl-term, wl-panel, wl-settings, wl-files, wl-edit, wl-sysmon, wl-wallpaper, wl-colorwheel, wl-simple. **Framebuffer test client** – fbtest.
 - **Host tooling** – registry/netd utilities, mkfutfs, fsck.futfs, and kernel self-tests that validate end-to-end flows.
 
 ## Security & Performance Objectives

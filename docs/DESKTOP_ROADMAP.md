@@ -116,7 +116,7 @@
 
 **Acceptance Criteria**
 - Desktop boots to a terminal window within 10s (headless or VNC).
-- Clipboard copy/paste works between two demo apps.
+- Clipboard copy/paste works between two first-party clients (e.g. wl-edit ↔ wl-term).
 
 **Suggested Work**
 - Add a session config file and startup scripts.

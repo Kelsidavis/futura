@@ -22,17 +22,6 @@ struct seat_client {
     bool keyboard_entered;
     bool offer_has_mime;
     char offer_mime[64];
-    /* Throttle wl_pointer_send_motion / send_frame to at most one
-     * delivery per ~16 ms (60 Hz) per client.  Raw mouse-move events
-     * arrive at 80-200 Hz; firing send_motion + send_frame on every
-     * one floods the client's libwayland socket buffer faster than
-     * it can drain it, eventually wedging wl_display_flush_clients
-     * inside the compositor and freezing the cursor (clock still
-     * ticks because it doesn't issue per-event client writes). */
-    uint32_t last_pointer_motion_msec;
-    int32_t pending_motion_sx;
-    int32_t pending_motion_sy;
-    bool pending_motion;
     struct wl_list link;
 };
 

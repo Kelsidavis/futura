@@ -29,7 +29,13 @@
  */
 
 /* Kernel physical base — QEMU virt places DTB at RAM base (0x40000000) and
- * loads the kernel Image at the next 2MB boundary (0x40200000). */
+ * loads the kernel Image at the next 2MB boundary (0x40200000).
+ *
+ * Compile-time literal; correct for QEMU virt only.  The runtime
+ * actual load PA is also published by boot.S in `g_kernel_load_pa`
+ * (see below) — once all callers of KERNEL_VIRT_OFFSET migrate to the
+ * runtime accessor, this #define can drop and the kernel will be
+ * relocatable in PA (Apple Silicon bring-up blocker #3). */
 #define KERN_PA_BASE      0x40200000ULL
 
 /* Kernel virtual base (where kernel is linked) */
@@ -37,6 +43,22 @@
 
 /* Kernel virtual offset (VA - PA) */
 #define KERNEL_VIRT_OFFSET (KERN_VA_BASE - KERN_PA_BASE)
+
+/* Runtime load metadata published by platform/arm64/boot.S.  These
+ * are populated before any C code runs, from `adr x21, _start`:
+ *
+ *   g_kernel_load_pa   = 2 MiB-aligned-down _start PA  (the kernel
+ *                        high-VA mapping's target PA)
+ *   g_kernel_dram_pa   = 1 GiB-aligned-down identity DRAM base
+ *   g_kernel_l1_index  = g_kernel_dram_pa >> 30        (boot L1 idx)
+ *
+ * On QEMU virt these are exactly 0x40200000 / 0x40000000 / 1 — the
+ * same literals KERN_PA_BASE / 1 GiB-floor / L1[1] use today.  On
+ * relocated boots (m1n1, future m1n1-loaded ARM64 hardware) they
+ * carry the real load metadata so the runtime can adapt. */
+extern uint64_t g_kernel_load_pa;
+extern uint64_t g_kernel_dram_pa;
+extern uint64_t g_kernel_l1_index;
 
 /* Convert physical address to kernel virtual address */
 static inline void *pmap_phys_to_virt(uint64_t pa) {

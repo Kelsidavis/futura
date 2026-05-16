@@ -232,6 +232,14 @@ void fut_apple_irq_init(const fut_platform_info_t *info) {
         return;
     }
 
+    /* Hook AIC dispatch into the platform-agnostic IRQ entry.  After
+     * this, the asm trampoline in boot.S/fut_irq_handler delegates
+     * to apple_aic_handle_irq() instead of the GICv2 IAR/EOI flow.
+     * Closes the kernel-side half of Apple Silicon bring-up
+     * blocker #5 (docs/APPLE_SILICON_BRINGUP_PLAN.md). */
+    extern void fut_irq_set_dispatch_backend(void (*fn)(void));
+    fut_irq_set_dispatch_backend(apple_aic_handle_irq);
+
     /* Enable ARM Generic Timer interrupt (routed through FIQ, not AIC) */
     /* Timer initialization will be done separately */
 

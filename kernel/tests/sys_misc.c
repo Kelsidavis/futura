@@ -75659,17 +75659,22 @@ __attribute__((noinline)) static void test_miscellaneous_extended(void) {
         }
     }
 
-    /* ---- Test 2726: uname sysname = "Futura" ---- */
+    /* ---- Test 2726: uname sysname = "Linux" (ABI compatibility) ----
+     *
+     * sys_uname intentionally returns "Linux" for sysname (see
+     * kernel/sys_uname.c) so userspace programs that gate on
+     * uname().sysname == "Linux" recognize the platform as Linux-
+     * compatible.  The "Futura" branding lives in info.version /
+     * info.release ("6.8.0-futura") instead. */
     fut_printf("[MISC-TEST] Test 2726: uname sysname\n");
     {
         struct utsname buf;
         __builtin_memset(&buf, 0, sizeof(buf));
         long ret = sys_uname(&buf);
         if (ret == 0) {
-            /* Check that sysname starts with "Futura" */
-            int match = (buf.sysname[0] == 'F' && buf.sysname[1] == 'u' &&
-                         buf.sysname[2] == 't' && buf.sysname[3] == 'u' &&
-                         buf.sysname[4] == 'r' && buf.sysname[5] == 'a');
+            int match = (buf.sysname[0] == 'L' && buf.sysname[1] == 'i' &&
+                         buf.sysname[2] == 'n' && buf.sysname[3] == 'u' &&
+                         buf.sysname[4] == 'x');
             if (match) {
                 fut_printf("[MISC-TEST] PASS 2726: sysname='%s'\n", buf.sysname);
                 fut_test_pass();

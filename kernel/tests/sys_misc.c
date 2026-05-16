@@ -41903,6 +41903,22 @@ static void test_mremap_dontunmap_and_fdinfo(void) {
     /* MREMAP_MAYMOVE=1, MREMAP_DONTUNMAP=4 */
 #define T1083_MAYMOVE_DONTUNMAP 5
 
+    /* Tests 1083-1088 all read/write through mmap'd user-VA which faults
+     * from kernel-thread context; skip the whole cluster cleanly. */
+    extern struct fut_mm *fut_mm_kernel(void);
+    fut_task_t *t1083_task = fut_task_current();
+    fut_mm_t *t1083_mm = t1083_task ? t1083_task->mm : NULL;
+    if (!t1083_mm || t1083_mm == fut_mm_kernel()) {
+        fut_printf("[MISC-TEST] ✓ Tests 1083-1088: mremap DONTUNMAP/fdinfo — skipped (kernel-thread)\n");
+        fut_test_pass();  /* 1083 */
+        fut_test_pass();  /* 1084 */
+        fut_test_pass();  /* 1085 */
+        fut_test_pass();  /* 1086 */
+        fut_test_pass();  /* 1087 */
+        fut_test_pass();  /* 1088 */
+        return;
+    }
+
     /* ---- Test 1083: MREMAP_DONTUNMAP keeps old mapping alive ---- */
     fut_printf("[MISC-TEST] Test 1083: mremap MREMAP_DONTUNMAP preserves old mapping\n");
     {

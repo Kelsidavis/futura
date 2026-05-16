@@ -123,15 +123,24 @@ on Apple hardware).  The remaining work is either to probe MIDR_EL1
 before the early write and skip on Apple, or to add a minimum-
 viable assembly shim for the s5l-uart base.
 
-### 5. AIC wiring in the IRQ entry path
+### 5. AIC wiring in the IRQ entry path ✅ LANDED (commits `a48210a3`, `942ee205`)
 
-`platform/arm64/boot.S:fut_irq_handler` and the post-MMU IRQ
-dispatch (`gic_irq_handler.c`) currently assume GICv2 at
-`0x08000000/0x08010000`.  Apple Silicon uses the Apple Interrupt
-Controller (AIC); `platform/arm64/interrupt/apple_aic.c` has the
-register-level driver but the boot path never wires it in.  Once
-the kernel runs C code on Apple Silicon, swap the dispatch based on
-`fut_platform_info_t::has_aic`.
+Two-step landing:
+
+1. **boot.S → C trampoline + pluggable backend** (`a48210a3`).  The
+   asm `fut_irq_handler` now shrinks to a thin `bl fut_irq_main`,
+   moving the GICv2 IAR/spurious-check/timer/EOI flow into C.
+   Adds `fut_irq_set_dispatch_backend()` so platform-init can swap
+   the entire IRQ flow with a single function pointer.
+2. **AIC registers itself as the backend** (`942ee205`).
+   `fut_apple_irq_init()` calls
+   `fut_irq_set_dispatch_backend(apple_aic_handle_irq)` after the
+   AIC driver comes up; from that point boot.S delegates to the
+   AIC's event-bitmap scan + auto-clear instead of poking at
+   non-existent GICC/GICD MMIO on Apple hardware.
+
+QEMU virt's `has_aic` is false, so the AIC hook never runs and the
+GIC default stays in place.  2654/2654 selftest PASS unchanged.
 
 ## Verification Strategy
 

@@ -3,7 +3,10 @@
 > **Note**: This document contains historical path/line references from the original author environment; adjust paths for the current tree.
 
 **Generated**: 2025-11-12
-**Status**: Ready to implement
+**Status**: ✅ Largely landed — signal delivery, sigaction, sigprocmask,
+kill, pause, rt_sigreturn, and the timer/alarm path all exercise on
+ARM64 in the 2654/2654 selftest run (May 2026).  Retained for the
+historical priority breakdown.
 
 ---
 

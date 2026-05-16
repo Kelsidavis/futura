@@ -1,5 +1,11 @@
 # Futura OS ARM64 Platform-Agnostic Refactoring Report
 
+> **Status (2026-05-16): ✅ All three blockers below are resolved.**  ARM64
+> userland builds and runs end-to-end: `make PLATFORM=arm64 kernel`
+> succeeds, `make test-arm64` exits `[HARNESS] PASS` with 2654/2654, and
+> the ENABLE_WAYLAND=1 ARM64 kernel build links clean as well.  Retained
+> for the historical refactoring narrative.
+
 ## Executive Summary
 
 The Futura OS codebase is **well-architected for cross-platform ARM64 support**. Most code is already platform-agnostic, with inline assembly properly isolated behind conditional compilation directives. However, **3 critical issues** remain that will prevent ARM64 userland builds from succeeding:

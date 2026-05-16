@@ -25,7 +25,6 @@ extern volatile uint32_t *gic_cpu_base;
  * one timer interrupt and then nothing — system_ticks stuck at 1. */
 extern void fut_timer_irq_handler(void);
 
-/* ARM Generic Timer interrupt ID on QEMU virt machine */
 /* ARM Generic Timer PPI assignments on the GIC (QEMU virt + most boards):
  *   26 = hypervisor physical timer
  *   27 = virtual timer       (used when running as a guest under EL2)
@@ -35,10 +34,7 @@ extern void fut_timer_irq_handler(void);
  * platform_init.c configures CNTP_CTL_EL0 / CNTP_TVAL_EL0 (non-secure
  * physical timer), so the matching GIC PPI is 30.  The previous value
  * of 27 (virtual timer) meant the GIC never raised an IRQ for the
- * physical timer the kernel actually programmed — fut_timer_tick never
- * ran, system_ticks stayed at 0, and every ticks-based syscall
- * (sys_times, clock_gettime relative, scheduler timeslicing) was
- * broken on ARM64. */
+ * physical timer the kernel actually programmed. */
 #define ARM_TIMER_IRQ   30  /* Non-secure EL1 physical timer (CNTP_*) */
 
 /**

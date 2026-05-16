@@ -876,19 +876,8 @@ void fut_timer_init(uint32_t frequency) {
     /* Set timer compare value */
     write_sysreg(cntp_tval_el0, timer_interval);
 
-    /* CRITICAL FIX: Timer IRQs must be disabled during early boot.
-     * Timer IRQ handler calls fut_printf(), which creates reentrancy issues
-     * when printf is called from both main thread and IRQ context during
-     * early boot initialization. This causes serial output corruption and deadlocks.
-     *
-     * Timer IRQs will be enabled later after:
-     * 1. Console input thread is created and running
-     * 2. TCP/IP stack is initialized
-     * 3. All early boot printf-heavy initialization completes
-     */
-    /* Enable timer: ENABLE=1 (interrupts NOT masked)
-     * The GIC will be configured to route this interrupt in kernel_main.c
-     * after all subsystems are initialized */
+    /* Enable timer: ENABLE=1 (interrupts NOT masked).
+     * The GIC will route this interrupt once subsystems are initialized. */
     write_sysreg(cntp_ctl_el0, CNTP_CTL_ENABLE);  /* No IMASK bit set */
 }
 
@@ -901,15 +890,17 @@ uint32_t fut_timer_get_frequency(void) {
 }
 
 void fut_timer_irq_handler(void) {
-    /* Call common timer tick handler (updates system time, wakes threads, etc.) */
+    /* Re-arm the physical timer before the common tick handler runs.
+     * Writing TVAL recomputes CVAL = CNTPCT + interval, clearing
+     * ISTATUS and de-asserting the level-triggered line. */
+    uint32_t timer_interval = timer_frequency / CONFIG_TIMER_HZ;
+    write_sysreg(cntp_tval_el0, timer_interval);
+    write_sysreg(cntp_ctl_el0, CNTP_CTL_ENABLE);
+
     extern void fut_timer_tick(void);
     fut_timer_tick();
 
     timer_ticks++;
-
-    /* Reset timer for next interrupt */
-    uint32_t timer_interval = timer_frequency / CONFIG_TIMER_HZ;
-    write_sysreg(cntp_tval_el0, timer_interval);
 }
 
 /* ============================================================

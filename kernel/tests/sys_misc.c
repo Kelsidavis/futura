@@ -17262,8 +17262,15 @@ static void test_process_madvise_basic(void) {
                 sys_close(pidfd);
                 fut_test_fail(1296);
             } else {
-                /* Write to it first */
-                *(volatile char *)page = 42;
+                /* Writing to user-VA only works from a real user mm.
+                 * Skip the data write on kernel-thread context to avoid
+                 * faulting through, but still exercise the
+                 * process_madvise syscall path. */
+                extern struct fut_mm *fut_mm_kernel(void);
+                fut_mm_t *t1296_mm = self ? self->mm : NULL;
+                if (t1296_mm && t1296_mm != fut_mm_kernel()) {
+                    *(volatile char *)page = 42;
+                }
                 /* Apply MADV_DONTNEED via process_madvise */
                 struct { void *iov_base; size_t iov_len; } iov;
                 iov.iov_base = page;

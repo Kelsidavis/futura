@@ -8,6 +8,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <stdbool.h>
 #include <kernel/signal.h>
 #include <kernel/fut_siginfo.h>
 #include <kernel/kprintf.h>
@@ -275,10 +276,22 @@ static void handle_unknown(fut_interrupt_frame_t *frame) {
 static volatile int exception_depth = 0;
 
 void arm64_exception_dispatch(fut_interrupt_frame_t *frame) {
-    /* Double-fault detection: if we take an exception while already
-     * handling one at EL1, print diagnostics and halt immediately. */
-    int depth = __atomic_add_fetch(&exception_depth, 1, __ATOMIC_SEQ_CST);
-    if (depth > 1 && (frame->pstate & 0xF) != 0) {
+    /* Double-fault detection: only track exceptions that come from EL1
+     * (kernel mode).  An EL0-origin exception (e.g. an SVC syscall) may
+     * legitimately context-switch away without ever returning to this
+     * dispatch frame — when sys_exit calls fut_thread_exit which calls
+     * fut_schedule, control never returns from handle_svc.  If we
+     * counted those, exception_depth would accumulate by 1 on every
+     * thread exit and the next IRQ (in a different thread, at EL1)
+     * would falsely trip the depth>1 check.  Counting only EL1-origin
+     * exceptions matches the semantics the check actually wants:
+     * "did a kernel-mode fault happen while we were already inside
+     * another kernel-mode fault handler". */
+    bool count_depth = (frame->pstate & 0xF) != 0;
+    int depth = count_depth
+        ? __atomic_add_fetch(&exception_depth, 1, __ATOMIC_SEQ_CST)
+        : 1;
+    if (depth > 1) {
         /* Nested exception from EL1.  If there's an active uaccess window
          * (copy_from/to_user in progress), this is an expected fault that
          * the page fault handler can recover from — not a real double fault. */
@@ -492,7 +505,13 @@ void arm64_exception_dispatch(fut_interrupt_frame_t *frame) {
             break;
     }
 
-    __atomic_sub_fetch(&exception_depth, 1, __ATOMIC_SEQ_CST);
+    /* Mirror the increment: only decrement for EL1-origin exceptions
+     * (matching the gate at entry).  Note: by the time we get here,
+     * frame->pstate may have been modified by signal delivery if this
+     * was an SVC — but we keyed on the original origin in count_depth. */
+    if (count_depth) {
+        __atomic_sub_fetch(&exception_depth, 1, __ATOMIC_SEQ_CST);
+    }
 }
 
 /* Safe idle loop to return to after SVC */

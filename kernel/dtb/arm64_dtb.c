@@ -36,8 +36,15 @@ bool fut_dtb_validate(uint64_t dtb_ptr) {
 
     dtb_header_t *header = (dtb_header_t *)dtb_ptr;
 
-    /* Validate magic number (big-endian: 0xd00dfeed in memory) */
-    if (header->magic != 0xd00dfeed) {
+    /* Validate magic number.  The DTB stores 0xd00dfeed in *big-endian*
+     * byte order on disk (bytes d0 0d fe ed).  On little-endian ARM64
+     * a direct uint32_t read gives the host-native value 0xedfe0dd0;
+     * comparing that against the literal 0xd00dfeed never matched, so
+     * every call to fut_dtb_validate() silently returned false and
+     * fut_dtb_parse() handed back default values (PLATFORM_UNKNOWN,
+     * no /chosen/bootargs, no real reg values).  Byte-swap the magic
+     * before comparing so the DTB is actually validated. */
+    if (be32_to_cpu(header->magic) != 0xd00dfeed) {
         return false;
     }
 
@@ -499,6 +506,107 @@ fut_platform_info_t fut_dtb_parse(uint64_t dtb_ptr) {
     }
 
     return info;
+}
+
+/* ============================================================
+ *   Boot-arguments extraction
+ * ============================================================ */
+
+/* Walk the flattened device tree looking for /chosen/bootargs and copy
+ * its value (a NUL-terminated string) into out.  Returns the number of
+ * bytes written (excluding the terminator), or 0 if the property was
+ * not found.
+ *
+ * Implemented as a focused walker rather than going through
+ * fut_dtb_get_property() because that helper doesn't advance past
+ * FDT_BEGIN_NODE's variable-length name correctly and silently misses
+ * nested properties — symptom on QEMU virt was that `-append "X=Y"`
+ * landed in /chosen/bootargs but the kernel saw no cmdline at all. */
+size_t fut_dtb_get_bootargs(uint64_t dtb_ptr, char *out, size_t max_len) {
+    if (!fut_dtb_validate(dtb_ptr) || !out || max_len == 0) {
+        return 0;
+    }
+
+    dtb_header_t *header = (dtb_header_t *)dtb_ptr;
+    uint32_t totalsize    = be32_to_cpu(header->totalsize);
+    uint32_t off_struct   = be32_to_cpu(header->off_dt_struct);
+    uint32_t off_strings  = be32_to_cpu(header->off_dt_strings);
+    uint32_t size_strings = be32_to_cpu(header->size_dt_strings);
+
+    if (off_struct >= totalsize || off_strings >= totalsize) {
+        return 0;
+    }
+
+    const char *strings_base = (const char *)(dtb_ptr + off_strings);
+    uint32_t *p              = (uint32_t *)(dtb_ptr + off_struct);
+    uint32_t *struct_end     = (uint32_t *)(dtb_ptr + totalsize);
+
+    /* Track whether we are currently inside the "chosen" node.  We bump
+     * a depth counter on each FDT_BEGIN_NODE and decrement on
+     * FDT_END_NODE so we can correctly detect leaving the chosen node
+     * even when it contains its own children. */
+    bool   in_chosen      = false;
+    int    chosen_depth   = 0;
+    int    depth          = 0;
+
+    while (p < struct_end) {
+        uint32_t token = be32_to_cpu(p[0]);
+
+        if (token == FDT_END) {
+            break;
+        } else if (token == FDT_BEGIN_NODE) {
+            const char *node_name = (const char *)&p[1];
+            size_t max_name = (size_t)((char *)struct_end - node_name);
+            size_t name_len = 0;
+            while (name_len < max_name && node_name[name_len] != '\0') {
+                name_len++;
+            }
+            depth++;
+            if (!in_chosen && strcmp(node_name, "chosen") == 0) {
+                in_chosen    = true;
+                chosen_depth = depth;
+            }
+            size_t aligned = align_offset(name_len + 1);
+            p = (uint32_t *)((char *)&p[1] + aligned);
+        } else if (token == FDT_END_NODE) {
+            if (in_chosen && depth == chosen_depth) {
+                in_chosen = false;
+            }
+            depth--;
+            p += 1;
+        } else if (token == FDT_NOP) {
+            p += 1;
+        } else if (token == FDT_PROP) {
+            dtb_prop_t *prop  = (dtb_prop_t *)&p[1];
+            uint32_t prop_len = be32_to_cpu(prop->len);
+            uint32_t name_off = be32_to_cpu(prop->nameoff);
+            if (name_off >= size_strings) {
+                break;
+            }
+            const char *prop_name = strings_base + name_off;
+            if (in_chosen && strcmp(prop_name, "bootargs") == 0) {
+                size_t copy_len = (prop_len < max_len - 1) ? prop_len : (max_len - 1);
+                memcpy(out, &prop[1], copy_len);
+                /* The FDT stores bootargs as a NUL-terminated C string;
+                 * strip any trailing NUL inside the property length so
+                 * the caller sees just the payload. */
+                while (copy_len > 0 && out[copy_len - 1] == '\0') {
+                    copy_len--;
+                }
+                out[copy_len] = '\0';
+                return copy_len;
+            }
+            size_t advance = sizeof(uint32_t) + sizeof(dtb_prop_t) + prop_len;
+            p = (uint32_t *)((char *)p + advance);
+            p = (uint32_t *)align_offset((size_t)p);
+        } else {
+            /* Unknown token — abort to avoid running off into garbage. */
+            break;
+        }
+    }
+
+    out[0] = '\0';
+    return 0;
 }
 
 /* ============================================================

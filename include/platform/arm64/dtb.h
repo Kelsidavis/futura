@@ -108,6 +108,16 @@ fut_platform_info_t fut_dtb_parse(uint64_t dtb_ptr);
 fut_platform_type_t fut_dtb_detect_platform(uint64_t dtb_ptr);
 
 /**
+ * Extract /chosen/bootargs from the DTB into @out.
+ * @param dtb_ptr: Virtual address of the DTB blob
+ * @param out:     Caller-provided buffer for the NUL-terminated cmdline
+ * @param max_len: Size of @out in bytes (including the NUL terminator)
+ * @return:        Number of bytes written excluding the terminator, or 0
+ *                 if /chosen/bootargs is absent / DTB is invalid.
+ */
+size_t fut_dtb_get_bootargs(uint64_t dtb_ptr, char *out, size_t max_len);
+
+/**
  * Get property value from DTB node.
  * @param dtb_ptr: Physical address of DTB
  * @param node_name: Full path to node (e.g., "/soc/serial@fe201000")

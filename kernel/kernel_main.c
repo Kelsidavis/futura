@@ -3557,8 +3557,11 @@ try_ramdisk: (void)0;
     }
 #elif defined(__aarch64__)
     /* ARM64: Enable timer IRQ and start scheduling */
-    /* The timer IRQ must be enabled explicitly here for alarm() delivery */
-    fut_irq_enable(27);  /* Enable ARM Generic Timer virtual timer interrupt */
+    /* The timer IRQ must be enabled explicitly here for alarm() delivery.
+     * Use PPI 30 (non-secure EL1 physical timer) to match what
+     * platform_init programs via CNTP_CTL_EL0 / CNTP_TVAL_EL0; PPI 27
+     * is the *virtual* timer and would never fire here. */
+    fut_irq_enable(30);  /* Enable ARM Generic Timer physical timer interrupt */
 
     /* Enable interrupts and start scheduling */
     /* entering idle */

@@ -475,6 +475,33 @@ extern void exit_robust_list(fut_thread_t *thread);
         }  // Should never happen
     }
 
+    /* Quick sanity check on the current_thread pointer.  When a thread
+     * struct gets freed (e.g. via fut_task_destroy on the auto-reap
+     * branch or in the waitpid zombie reaper) without percpu->current_thread
+     * being cleared first, fut_thread_current() returns a stale pointer
+     * to memory the allocator may have reused.  Symptoms: tid field
+     * decoded as a kernel-heap address, task / stack_base pointing at
+     * unrelated kernel objects, and the next field deref triggers a
+     * data abort.  Catch the obvious case (tid not a small positive
+     * integer) and bail out via fut_schedule before any of the cleanup
+     * code touches the bogus fields — the corrupt struct is leaked,
+     * but the rest of the kernel keeps making progress instead of
+     * crashing the whole VM. */
+    if (self->tid == 0 || self->tid > (1ULL << 32)) {
+        fut_printf("[THREAD-EXIT] stale/corrupt current_thread self=%p "
+                   "tid=%llu task=%p stack_base=%p — bailing to scheduler\n",
+                   self, (unsigned long long)self->tid, self->task,
+                   self->stack_base);
+        fut_schedule();
+        for (;;) {
+#ifdef __aarch64__
+            __asm__ volatile("wfi");
+#else
+            __asm__ volatile("pause");
+#endif
+        }
+    }
+
     /* Check stack canary — detect overflow before it causes mysterious crashes.
      * The canary was placed at the bottom of the stack during thread creation.
      * Skip check if canary is 0 (boot/idle thread whose stack was not set up

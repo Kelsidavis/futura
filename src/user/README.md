@@ -18,7 +18,7 @@ src/user/
 ├── compositor/           # Wayland compositor (futura-wayland)
 ├── services/winsrv/      # Legacy window server
 ├── apps/winstub/         # Legacy window client
-├── clients/              # Wayland demo clients (wl-simple, wl-colorwheel, wl-term)
+├── clients/              # Wayland clients (wl-simple, wl-colorwheel, wl-term)
 ├── apps/                 # Additional app stubs
 ├── sys/                  # Generated FIPC glue + syscall shims
 ├── stubs/                # Init/ELF stub binaries

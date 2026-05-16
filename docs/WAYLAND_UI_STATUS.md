@@ -10,7 +10,7 @@ Futura OS has a **functional Wayland compositor and client infrastructure** with
 
 ### Location & Status
 - **Path**: `src/user/compositor/futura-wayland/`
-- **Binary**: `futura-wayland` (started by init when Wayland demos are enabled)
+- **Binary**: `futura-wayland` (started by init when Wayland is enabled)
 - **Status**: FUNCTIONAL - boots and handles clients
 
 ### Architecture

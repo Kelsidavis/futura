@@ -3,7 +3,7 @@
 ## Audit Snapshot (Jan 2026)
 - `third_party/wayland/` vendors Wayland 1.23.0 and builds static libs + `wayland-scanner` via `make third_party-wayland`.
 - `include/futura/compat/posix_shm.h` / `src/user/libfutura/posix_shm.c` expose placeholder APIs that do not interoperate with upstream libwayland expectations (no name unlink, zero-fill only).
-- Makefile ships a `third_party-wayland` target; winsrv/winstub remain the default desktop payload unless Wayland demos are enabled.
+- Makefile ships a `third_party-wayland` target; winsrv/winstub remain the default desktop payload unless Wayland is enabled.
 
 ## Vendor Strategy Decision
 - **Approach**: vendor the official Wayland 1.23.x release under `third_party/wayland/`, build static `libwayland-client.a`, `libwayland-server.a`, and the `wayland-scanner` tool using Meson/Ninja.

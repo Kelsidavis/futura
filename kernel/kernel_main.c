@@ -1450,7 +1450,7 @@ void fut_kernel_main(void) {
 #if defined(__aarch64__)
     bool fb_enabled = true;  /* Display always on for ARM64 */
 #else
-    /* Enable framebuffer by default when Wayland demo is enabled, since the
+    /* Enable framebuffer by default when Wayland is enabled, since the
      * compositor needs /dev/fb0 for hardware-accelerated rendering.
      * Can be disabled via boot flag fb=0 if needed. */
     #if ENABLE_WAYLAND
@@ -1951,7 +1951,7 @@ void fut_kernel_main(void) {
 
     /* VFS and exec double tests are DISABLED (too much memory), don't count them */
     uint16_t planned_tests = 0u;
-    /* FB and input tests are only for Wayland demo mode */
+    /* FB and input tests are only counted in Wayland builds */
 #if ENABLE_WAYLAND
     if (fb_enabled) {
         planned_tests += 1u;
@@ -1959,7 +1959,7 @@ void fut_kernel_main(void) {
     if (input_enabled) {
         planned_tests += 1u;
     }
-    planned_tests += 1u; /* Wayland demo sentinel */
+    planned_tests += 1u; /* Wayland session sentinel */
 #endif
     if (run_async_selftests) {
         planned_tests += 5u; /* multiprocess: fork isolation, FD inheritance, per-task isolation, cloexec, shared offset */

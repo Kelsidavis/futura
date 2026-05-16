@@ -60,7 +60,7 @@ int fut_stage_second_stub_binary(void);
 /** Stage Wayland compositor (futurawayd) */
 int fut_stage_wayland_compositor_binary(void);
 
-/** Stage Wayland demo client */
+/** Stage the diagnostic Wayland client (wl-simple) */
 int fut_stage_wayland_client_binary(void);
 
 /** Stage Wayland terminal emulator */

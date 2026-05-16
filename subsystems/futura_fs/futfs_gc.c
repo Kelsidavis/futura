@@ -158,7 +158,7 @@ fut_status_t futfs_gc_compact_dir(struct futfs_inode_mem *dir,
 
     /* Calculate size required for compacted stream */
     size_t new_bytes = 0;
-    size_t live_entries = 0;
+    __attribute__((unused)) size_t live_entries = 0;  /* tracking only — not consumed in release */
     for (size_t i = 0; i < count; ++i) {
         const struct futfs_gc_entry *e = &entries[i];
         if (!e->seen || e->ino == 0 || e->name_len == 0) {

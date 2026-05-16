@@ -23134,7 +23134,6 @@ static void test_proc_maps_anon_devino(void) {
      * Verify every line has a colon in the dev field (not the old "00:00 0" stuck-together format).
      * Parse field 3 (0-indexed, space-delimited) — that's the dev field. */
     int lines_checked = 0;
-    int lines_ok = 0;
     char *line = buf;
     while (line && *line) {
         char *nl = line;
@@ -23152,7 +23151,7 @@ static void test_proc_maps_anon_devino(void) {
         if (p < nl && (nl - p) >= 5) {
             /* Verify colon at position 2 */
             if (p[2] == ':') {
-                lines_ok++;
+                /* OK */
             } else {
                 fut_printf("[MISC-TEST] ✗ Test 356: dev field has no colon: %.5s\n", p);
                 fut_test_fail(356);

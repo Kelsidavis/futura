@@ -3374,62 +3374,70 @@ try_ramdisk: (void)0;
      *   Step 6: Create Test Task and FIPC Channel
      * ======================================== */
 
-#if defined(__aarch64__)
-    /* ARM64 skips the FIPC demo task entirely — it's a kernel-only
-     * self-test that adds startup latency without any user-visible
-     * value, and on emulated ARM64 the FIPC channel allocation
-     * appeared to delay arch_late_init by minutes.  The wayland
-     * desktop is what the user actually wants. */
     fut_task_t *test_task = NULL;
     (void)test_task;
-#else
+
+#if !defined(__aarch64__)
+    /* On x86 the FIPC demonstration task + channel are always created at
+     * boot.  ARM64 skips this path — on emulated ARM64 the FIPC channel
+     * allocation appeared to delay arch_late_init by minutes, and the
+     * Wayland desktop is what the user actually wants from this arch. */
     fut_printf("[INIT] Creating test task for FIPC demonstration...\n");
 
-    /* Create a test task (process container) */
-    fut_task_t *test_task = fut_task_create();
+    test_task = fut_task_create();
     if (!test_task) {
         fut_printf("[ERROR] Failed to create test task!\n");
         fut_platform_panic("Failed to create test task");
     }
-
     fut_printf("[INIT] Test task created (PID %llu)\n", test_task->pid);
 
     /* Create FIPC channel BEFORE starting test thread to avoid concurrent
-     * heap allocation races between the boot thread and test thread.
-     * The allocator is not fully thread-safe, so all init-time allocations
-     * must complete before the test thread begins its work. */
+     * heap allocation races between the boot thread and test thread. */
     fut_printf("[INIT] Creating FIPC test channel...\n");
     int ret = fut_fipc_channel_create(
-        test_task,              /* Sender task */
-        test_task,              /* Receiver task (same task, different threads) */
-        4096,                   /* 4KB message queue */
+        test_task,                 /* Sender task */
+        test_task,                 /* Receiver task (same task, different threads) */
+        4096,                      /* 4KB message queue */
         FIPC_CHANNEL_NONBLOCKING,  /* Non-blocking mode */
         &g_test_channel
     );
-
     if (ret != 0) {
         fut_printf("[ERROR] Failed to create FIPC channel (error %d)\n", ret);
         fut_platform_panic("Failed to create FIPC channel");
     }
-
     fut_printf("[INIT] FIPC channel created (ID %llu)\n", g_test_channel->id);
+#endif /* !__aarch64__ */
 
+    /* Async-selftest scheduling is architecture-independent: when the
+     * cmdline carries `async-tests=1` we spawn a dedicated kernel task
+     * to run the test suite sequentially.  On ARM64 this is the only
+     * path that can drive the test framework to its qemu_exit(0) — the
+     * x86 FIPC demo task above used to also serve as the host for the
+     * selftest thread, but ARM64 doesn't create one, so make ourselves
+     * one here when tests are requested. */
     if (run_async_selftests) {
-        /* Run all test suites sequentially in a single thread to prevent
-         * concurrent access to shared kernel state (ramfs directories,
-         * task signal fields, etc.) from corrupting data structures. */
-        fut_thread_t *test_thread = fut_thread_create(
-            test_task,
-            selftest_sequential_runner,
-            NULL,
-            48 * 1024,  /* 48 KB stack (test suite has grown to 2200+ tests) */
-            180         /* Priority */
-        );
-        if (test_thread) {
-            fut_printf("[INIT] Created sequential test thread (tid=%llu)\n", test_thread->tid);
+        fut_task_t *selftest_task = test_task;
+        if (!selftest_task) {
+            selftest_task = fut_task_create();
+        }
+        if (selftest_task) {
+            fut_thread_t *test_thread = fut_thread_create(
+                selftest_task,
+                selftest_sequential_runner,
+                NULL,
+                48 * 1024,  /* 48 KB stack (test suite has grown to 2200+ tests) */
+                180         /* Priority */
+            );
+            if (test_thread) {
+                fut_printf("[INIT] Created sequential test thread (tid=%llu)\n",
+                           (unsigned long long)test_thread->tid);
+            } else {
+                fut_printf("[ERROR] Failed to create sequential test thread\n");
+            }
+        } else {
+            fut_printf("[ERROR] Failed to create task for async selftests\n");
         }
     }
-#endif /* !__aarch64__ */
 
     /* ========================================
      *   Step 7: Create FIPC Test Threads

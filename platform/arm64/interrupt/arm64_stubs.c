@@ -11,27 +11,17 @@
 #include <generated/feature_flags.h>
 
 /* ============================================================
- *   Test Framework Stubs (x86-64 specific)
- * ============================================================ */
-
-void fut_tests_completed(void) {
-    /* Test framework not implemented for ARM64 */
-}
-
-void fut_test_fail(const char *fmt, ...) {
-    (void)fmt;
-    /* Test framework not implemented for ARM64 */
-}
-
-void fut_test_pass(const char *fmt, ...) {
-    (void)fmt;
-    /* Test framework not implemented for ARM64 */
-}
-
-void fut_test_plan(int count) {
-    (void)count;
-    /* Test framework not implemented for ARM64 */
-}
+ *   Test Framework — implemented in kernel/stubs_missing.c
+ *
+ * The real fut_test_plan / fut_test_pass / fut_test_fail /
+ * fut_tests_completed are defined in kernel/stubs_missing.c and
+ * call qemu_exit() through <platform/arm64/qemu_exit.h>.  The
+ * varargs stubs that used to live here silently swallowed every
+ * test_pass call, so `make test-arm64 async-tests=1` never reached
+ * qemu_exit(0) and always timed out the harness at 600 s.
+ * fut_perf_selftest_schedule is the only one that legitimately stays
+ * stubbed on ARM64 (the perf suite depends on x86 qemu_exit and
+ * cycle-counter plumbing that isn't wired here yet). */
 
 void fut_perf_selftest_schedule(void) {
     /* Performance self-test not implemented for ARM64 */

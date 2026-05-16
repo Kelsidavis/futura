@@ -1116,6 +1116,7 @@ ifeq ($(PLATFORM),x86_64)
         subsystems/futura_fs/futfs_gc.c
 else ifeq ($(PLATFORM),arm64)
     PLATFORM_SOURCES := \
+        kernel/stubs_missing.c \
         platform/arm64/boot.S \
         platform/arm64/arm64_exception_entry.S \
         platform/arm64/arm64_vectors.S \
@@ -3395,13 +3396,18 @@ qemu-arm64: platform-arm64
 	@echo "Running ARM64 kernel in QEMU (virt 10.0 with VirtIO GPU)..."
 	@qemu-system-aarch64 -M virt-10.0 -cpu cortex-a53 -m 512M -kernel $(BIN_DIR)/futura_kernel.bin -device virtio-gpu-pci -display cocoa -serial stdio -no-reboot
 
-# ARM64 test target (headless, semihosting for exit codes)
+# ARM64 test target (headless, semihosting for exit codes).
+# async-tests=1 schedules the sequential selftest runner;
+# futura.runtests=1 arms the test counter so qemu_exit(0) actually
+# fires when the planned-test total is reached.  Both are read from
+# /chosen/bootargs which QEMU populates from -append.
 test-arm64:
 	@$(MAKE) PLATFORM=arm64 ENABLE_WAYLAND=0 kernel
-	@echo "Testing ARM64 kernel under QEMU (semihosting exit, 180s timeout)..."
+	@echo "Testing ARM64 kernel under QEMU (semihosting exit, 600s timeout)..."
 	@timeout 600 qemu-system-aarch64 \
 		-M virt -cpu cortex-a53 -m 512M \
 		-kernel $(BIN_DIR)/futura_kernel.bin \
+		-append "async-tests=1 futura.runtests=1" \
 		-semihosting-config enable=on,target=native \
 		-display none -serial stdio -no-reboot \
 	; \

@@ -838,22 +838,33 @@ void fut_irq_disable(uint8_t irq) {
     mmio_write32(&gicd[(GICD_ICENABLER + reg * 4) / 4], 1U << bit);
 }
 
-void fut_irq_send_eoi(uint8_t irq) {
-    (void)irq;  /* IRQ number from IAR */
-    /* End of interrupt - write to GICC_EOIR */
-    mmio_write32(&gicc[GICC_EOIR / 4], irq);
+void fut_irq_send_eoi(uint32_t iar_value) {
+    /* GICv2: EOIR must be written with the same value read from IAR
+     * (interrupt ID *and* CPU ID).  Writing just the IRQ ID leaves the
+     * CPU's running-priority register pointing at the wrong entry, and
+     * the GIC will refuse to deliver the next instance of the same
+     * IRQ.  Symptom on QEMU virt was the ARM Generic Timer firing
+     * exactly once at boot and never again. */
+    mmio_write32(&gicc[GICC_EOIR / 4], iar_value);
 }
 
-/* Get pending interrupt number */
+/* Read the GIC's Interrupt Acknowledge Register.  Returns the raw IAR
+ * value (interrupt ID in low 10 bits, CPU ID in next 3 bits for SGIs).
+ * Callers must pass this value verbatim to fut_irq_send_eoi.  A value
+ * with low 10 bits == 1023 indicates a spurious interrupt. */
+uint32_t fut_irq_acknowledge_raw(void) {
+    return mmio_read32(&gicc[GICC_IAR / 4]);
+}
+
+/* Legacy helper that returns just the IRQ ID (or -1 on spurious).
+ * Kept for callers that don't need the raw IAR value, but cannot be
+ * paired with fut_irq_send_eoi any more — use the raw API. */
 int fut_irq_acknowledge(void) {
-    uint32_t intack = mmio_read32(&gicc[GICC_IAR / 4]);
+    uint32_t intack = fut_irq_acknowledge_raw();
     int irq = intack & 0x3FF;
-
-    /* Check for spurious interrupt */
     if (irq == 1023) {
-        return -1;  /* Spurious interrupt */
+        return -1;
     }
-
     return irq;
 }
 

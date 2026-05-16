@@ -147,7 +147,7 @@ int fut_irq_acknowledge(void);
  * Send end-of-interrupt signal to GIC.
  * @param irq IRQ number to acknowledge
  */
-void fut_irq_send_eoi(uint8_t irq);
+void fut_irq_send_eoi(uint32_t iar_value);
 
 /**
  * Get current GIC interrupt priority.

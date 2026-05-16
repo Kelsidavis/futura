@@ -161,7 +161,7 @@ void fut_irq_disable(uint8_t irq);
  *
  * @param irq IRQ number
  */
-void fut_irq_send_eoi(uint8_t irq);
+void fut_irq_send_eoi(uint32_t iar_value);
 
 /* ============================================================
  *   Timer Management

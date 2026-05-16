@@ -886,39 +886,40 @@ irq_handler_entry:
  */
 .type fut_irq_handler, @function
 fut_irq_handler:
-    /* Get interrupt number from GIC */
-    bl      fut_irq_acknowledge
-    mov     x19, x0                   /* Save IRQ number */
+    /* Read the GIC's IAR.  x0 returns the *raw* IAR value (IRQ ID in
+     * low 10 bits + CPU ID in bits 12:10).  Save it whole so we can
+     * echo it back to EOIR — GICv2 requires that. */
+    stp     x29, x30, [sp, #-16]!
+    bl      fut_irq_acknowledge_raw
+    mov     x19, x0                   /* x19 = raw IAR value */
+    and     x20, x0, #0x3FF           /* x20 = IRQ ID */
 
-    /* Check if timer interrupt (IRQ 30) */
-    cmp     x19, #30
-    beq     handle_timer_irq
+    /* Spurious (IRQ ID == 1023)? Just return — IAR auto-deactivates
+     * spurious reads, no EOI needed. */
+    mov     x1, #1023
+    cmp     x20, x1
+    beq     fut_irq_handler_done
 
-    /* For non-timer IRQs, just acknowledge and return */
-    /* Phase 1: No registered handler dispatch framework yet (see above) */
+    /* Timer (IRQ 30)? */
+    cmp     x20, #30
+    beq     1f
+
+    /* Other IRQ: no dispatch framework yet, just EOI. */
     mov     x0, x19
     bl      fut_irq_send_eoi
-    ret
+    b       fut_irq_handler_done
 
-handle_timer_irq:
-    /* Call timer handler */
-    bl      fut_timer_irq_handler
-
-    /* Send EOI */
-    mov     x0, #30
+1:  bl      fut_timer_irq_handler
+    mov     x0, x19                   /* EOI with raw IAR value */
     bl      fut_irq_send_eoi
+    /* Intentionally no cooperative fut_thread_yield from here — that
+     * snapshots PSTATE.I=1 (hardware-set on exception entry) into the
+     * suspended thread and stops further timer ticks dead.  Tick-driven
+     * preemption still works via the IRET-style path on exception
+     * return. */
 
-    /* Check if reschedule needed */
-    bl      fut_reschedule_pending
-    cbz     x0, no_reschedule
-
-    /* Clear reschedule flag */
-    bl      fut_clear_reschedule
-
-    /* Trigger scheduler */
-    bl      fut_thread_yield
-
-no_reschedule:
+fut_irq_handler_done:
+    ldp     x29, x30, [sp], #16
     ret
 
 /*

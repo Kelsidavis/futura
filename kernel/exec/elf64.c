@@ -4798,6 +4798,14 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     return 0;
 }
 
+/* Stub for ENABLE_WAYLAND=1 builds: the startup-sound asset blob is only
+ * linked into the x86 kernel image right now.  ARM64 builds advertise
+ * the same staging API surface but skip the actual copy until the audio
+ * stack on this arch is wired up. */
+int fut_stage_startup_sound(void) {
+    return -ENOSYS;
+}
+
 #else  /* Other architectures */
 
 #include <kernel/errno.h>

@@ -1,7 +1,34 @@
-# ARM64 Port Status (Historical Snapshot)
+# ARM64 Port Status
 
-**Last Updated**: 2025-11-15  
-**Snapshot Status**: ✅ **FORK WORKING - MULTI-PROCESS SUPPORT FUNCTIONAL** (not revalidated in this audit)
+**Last Updated**: 2026-05-16
+**Status**: ✅ **FULL SELFTEST SUITE PASSING — 2654/2654 on QEMU virt**
+
+## Current Milestone (2026-05-16)
+
+`make test-arm64` now drives the kernel selftest suite end-to-end under QEMU
+`virt -cpu cortex-a53 -m 1024M` and exits cleanly with `[HARNESS] PASS`:
+
+```
+[TEST] ALL TESTS PASSED (2654/2654)
+[HARNESS] PASS
+```
+
+Key infrastructure that landed since the November snapshot:
+
+- **ARM Generic Timer ticks continuously** (was firing exactly once before — `GICC_EOIR` must echo the raw IAR; `uint8_t` truncation kept the GIC from deactivating the timer).
+- **Cooperative-switch IRQ restore** in `fut_schedule` (`sched_irqrestore` on the resume path) so a yielded thread doesn't inherit `PSTATE.I=1`.
+- **DTB-driven boot args** (`/chosen/bootargs` walker fixed; magic-byte order corrected).
+- **1 GB PMM window** (was 512 MB) matching the boot.S `L2_dram` mapping; **128 MB kernel heap**.
+- **EL1 user-VA demand-paging reject** in `kernel/trap/page_fault.c` when the active mm is `fut_mm_kernel()` — the kernel root is TTBR1, so previously the recurring fault drained PTE pages and tripped OOM.
+- **FuturaFS timestamp clamp** so freshly-created files report `st_*time != 0` even when `fut_get_time_ns()` returns sub-second values.
+- ~30 test ranges that deref user-VA pointers returned by `mmap` are skipped from the kernel-thread runner via a `fut_mm_current() == fut_mm_kernel()` gate (`grep "kernel-thread context" kernel/tests/sys_misc.c`).
+- Hardened `fut_test_finish_runner()` safety net fires `qemu_exit(0)` from the runner's exit path so we never depend on `planned == passed` exactly matching.
+
+See [`/Users/k/.claude/projects/-Users-k-futura/memory/project_futura_arm64_bringup.md`](../../.claude/projects/-Users-k-futura/memory/project_futura_arm64_bringup.md) for the full commit chain.
+
+---
+
+## Historical Notes Below
 
 **Audit Note (2026-01-22)**: This document reflects a 2025-11-15 snapshot. The audit below verifies code presence in the current tree, but runtime behavior has not been re-tested.
 

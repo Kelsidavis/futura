@@ -103,19 +103,25 @@ boot.S before any C code runs.  The cleanest path:
   variable.  Touches many sites (`grep -rn KERNEL_VIRT_OFFSET kernel`),
   but each call is small.
 
-### 4. Apple s5l-UART early-debug shim
+### 4. Apple s5l-UART early-debug shim 🚧 PARTIAL (commit `1a156b28`)
 
-`platform/arm64/boot.S` writes diagnostic characters to PL011 at
-`0x09000000` (QEMU virt UART).  On Apple Silicon that address has no
-backing.  The early-debug path needs to either:
+**Post-MMU side landed.**  `fut_serial_putc()` now reads a
+function-pointer backend before falling through to PL011; the
+`fut_apple_uart_init()` driver registers its s5l-uart `putc` as the
+backend once the DTB-discovered UART base has been cached.  After
+that point every `fut_printf()` routes through the Apple UART driver
+on real hardware.  On QEMU virt the backend stays NULL and the
+PL011 path runs unchanged.
 
-- Probe MIDR_EL1 / DTB before writing (and skip on Apple), or
-- Have a minimum-viable assembly shim for the s5l-uart at its
-  Apple-specific address (DTB-discoverable — `apple_uart.c` already
-  knows the base).
-
-Without this we boot blind on real hardware: a fault before MMU is up
-is undebuggable.
+**Pre-MMU side still TBD.**  `platform/arm64/boot.S` writes
+diagnostic characters to PL011 at `0x09000000` (QEMU virt UART) for
+the early-debug path.  Those writes are commented out today, so they
+don't actually fault on real Apple Silicon — but if a future
+debugging session uncomments them, the kernel would silently drop
+the writes (the peripheral L2 map covers PA 0-1 GiB which is empty
+on Apple hardware).  The remaining work is either to probe MIDR_EL1
+before the early write and skip on Apple, or to add a minimum-
+viable assembly shim for the s5l-uart base.
 
 ### 5. AIC wiring in the IRQ entry path
 

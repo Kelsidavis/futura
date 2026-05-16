@@ -227,6 +227,14 @@ export REPRO_LDFLAGS
 # C standard and compiler flags
 CFLAGS := -std=c2x -ffreestanding -nostdlib -fno-builtin -fno-stack-protector -fno-asynchronous-unwind-tables
 CFLAGS += -Wall -Wextra -Wpedantic -Werror -Wno-unterminated-string-initialization
+# Demote -Wunused-but-set-variable from error to warning.  A lot of release
+# builds end up with variables that are only consumed by debug-only macros
+# (FORK_LOG, EXIT_LOG, BUDDY_DEBUG_PRINTF, test-suite counters, etc.); the
+# variable IS used semantically, just compiled out in the release path.
+# Surgical __attribute__((unused)) annotations already cover the spots we
+# care about — this flag keeps the build green for the rest without
+# silencing the underlying check.
+CFLAGS += -Wno-error=unused-but-set-variable
 CFLAGS += -fno-pic -fno-pie  # Disable PIC/PIE for kernel code
 CFLAGS += -fcf-protection=none  # Disable CET (Control-flow Enforcement Technology)
 CFLAGS += -I.

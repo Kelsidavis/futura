@@ -945,7 +945,7 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
     }
 
     /* Phase 2: Count FDs to close (per-FD flags in task->fd_flags[]) */
-    int cloexec_count = 0;
+    __attribute__((unused)) int cloexec_count = 0;
     if (task->fd_table && task->fd_flags) {
         for (int i = 0; i < task->max_fds; i++) {
             if (task->fd_table[i] != NULL && (task->fd_flags[i] & FD_CLOEXEC)) {

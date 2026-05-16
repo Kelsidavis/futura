@@ -826,7 +826,7 @@ void arch_memory_config(uintptr_t *ram_start, uintptr_t *ram_end, size_t *heap_s
     /* Convert to physical addresses */
     extern phys_addr_t pmap_virt_to_phys(uintptr_t vaddr);
     phys_addr_t mem_base_phys = pmap_virt_to_phys(mem_base);
-    phys_addr_t boot_ptables_start_phys = pmap_virt_to_phys((uintptr_t)boot_ptables_start);
+    __attribute__((unused)) phys_addr_t boot_ptables_start_phys = pmap_virt_to_phys((uintptr_t)boot_ptables_start);
     phys_addr_t boot_ptables_end_phys = pmap_virt_to_phys((uintptr_t)boot_ptables_end);
     boot_ptables_start_phys &= ~(PAGE_SIZE - 1ULL);
     boot_ptables_end_phys = PAGE_ALIGN_UP(boot_ptables_end_phys);

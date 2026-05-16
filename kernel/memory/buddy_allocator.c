@@ -501,7 +501,11 @@ static void *buddy_malloc_unlocked(size_t size) {
 
     /* Print free block count at each order to understand fragmentation */
     BUDDY_DEBUG_PRINTF("[BUDDY-MALLOC] Heap fragmentation status:\n");
-    size_t total_free_size = 0;
+    /* total_free_size is only consumed by BUDDY_DEBUG_PRINTF at the end of
+     * the loop; with debug disabled (the default) it expands to a no-op
+     * and -Werror=unused-but-set-variable fires.  Mark it unused so the
+     * release build still compiles cleanly. */
+    __attribute__((unused)) size_t total_free_size = 0;
     for (int i = 0; i < NUM_ORDERS; i++) {
         int order_val = i + MIN_ORDER;
         free_block_t *candidate = free_lists[i];

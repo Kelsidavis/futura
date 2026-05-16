@@ -375,7 +375,7 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
 
     /* Phase 2: Iterate through iovecs and read each buffer */
     ssize_t total_received = 0;
-    int iovecs_filled = 0;
+    __attribute__((unused)) int iovecs_filled = 0;
     bool msg_trunc_set = false;
     size_t dgram_actual_len = 0;  /* Real datagram length for MSG_TRUNC return value */
     /* Identify DGRAM socket once; used for MSG_TRUNC and direct dgram recv path */

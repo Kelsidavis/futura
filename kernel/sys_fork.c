@@ -1423,8 +1423,11 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
     /* Compatibility alias for the existing skip-region check below. */
     #define CLONE_SCAN_END (clone_scan_end)
 
-    int code_pages_shared = 0;
-    int code_pages_copied = 0;
+    /* Both only feed FORK_LOG below; mark unused so the release build
+     * (FORK_LOG is a no-op there) doesn't trip
+     * -Werror=unused-but-set-variable. */
+    __attribute__((unused)) int code_pages_shared = 0;
+    __attribute__((unused)) int code_pages_copied = 0;
     for (uint64_t page = CLONE_SCAN_START; page < CLONE_SCAN_END; page += FUT_PAGE_SIZE) {
         uint64_t pte = 0;
 
@@ -1468,7 +1471,7 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
     #define STACK_SCAN_START 0x7FFEFE0000ULL  /* USER_STACK_TOP - (32 pages * 4KB) */
     #define STACK_SCAN_END   0x7FFF000000ULL  /* USER_STACK_TOP */
 
-    int stack_pages_copied = 0;
+    __attribute__((unused)) int stack_pages_copied = 0;
     for (uint64_t page = STACK_SCAN_START; page < STACK_SCAN_END; page += FUT_PAGE_SIZE) {
         uint64_t pte = 0;
 

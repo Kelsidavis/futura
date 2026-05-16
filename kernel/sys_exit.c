@@ -231,8 +231,11 @@ long sys_exit(int status) {
         fut_thread_exit();  /* noreturn */
     }
 
-    int fds_closed = 0;
-    int hooks_executed = 0;
+    /* These only feed the EXIT_LOG below, which is a no-op unless
+     * EXIT_DEBUG is on; mark unused so -Werror=unused-but-set-variable
+     * doesn't trip in release builds. */
+    __attribute__((unused)) int fds_closed = 0;
+    __attribute__((unused)) int hooks_executed = 0;
 
     if (task) {
         /* Close all open file descriptors to prevent resource leaks */

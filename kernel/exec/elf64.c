@@ -3167,7 +3167,6 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
         if (caller_task && caller_task->fd_table && task->fd_table) {
             int max = caller_task->max_fds;
             if (max > (int)task->max_fds) max = (int)task->max_fds;
-            int inherited = 0;
             for (int i = 0; i < max; i++) {
                 struct fut_file *f = caller_task->fd_table[i];
                 int cloexec = (caller_task->fd_flags && (caller_task->fd_flags[i] & FD_CLOEXEC));
@@ -3175,10 +3174,8 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
                     vfs_file_ref(f);
                     task->fd_table[i] = f;
                     if (task->fd_flags) task->fd_flags[i] = 0;
-                    inherited++;
                 }
             }
-        } else {
         }
 
         /* Close epoll instances marked EPOLL_CLOEXEC */

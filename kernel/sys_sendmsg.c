@@ -392,7 +392,7 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
 
     /* Phase 2: Iterate through iovecs and write each buffer */
     ssize_t total_sent = 0;
-    int iovecs_sent = 0;
+    __attribute__((unused)) int iovecs_sent = 0;
     for (size_t i = 0; i < kmsg.msg_iovlen; i++) {
         struct iovec iov;
         if (sendmsg_copy_from_user(&iov, &kmsg.msg_iov[i], sizeof(struct iovec)) != 0) {

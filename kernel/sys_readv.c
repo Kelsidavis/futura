@@ -527,7 +527,7 @@ ssize_t sys_readv(int fd, const struct iovec *iov, int iovcnt) {
      * - CVE-2017-7308: Linux packet socket iovec overflow
      */
     size_t total_size = 0;
-    int zero_len_count = 0;
+    __attribute__((unused)) int zero_len_count = 0;
     size_t min_iov_len = (size_t)-1;
     size_t max_iov_len = 0;
     const size_t MAX_TOTAL_SIZE = 16 * 1024 * 1024;  /* 16 MB limit per readv */

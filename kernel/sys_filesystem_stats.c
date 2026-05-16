@@ -762,8 +762,17 @@ long sys_sysinfo(struct fut_linux_sysinfo *info) {
     unsigned long loads[3];
     fut_get_load_avg(loads);
 
+    /* Round up so a fresh boot doesn't report uptime=0: tests and
+     * userspace tools (uptime(1), free(1), some Go runtimes) treat
+     * uptime==0 as "uninitialised" rather than "<1 s since boot".
+     * Within the first tick the value is 0 by construction; bump it
+     * to 1 second so the field is always usefully non-zero once the
+     * timer is alive. */
+    long uptime_sec = (long)(uptime_ticks / 100);
+    if (uptime_sec == 0 && uptime_ticks > 0) uptime_sec = 1;
+
     struct fut_linux_sysinfo real_info = {
-        .uptime    = (long)(uptime_ticks / 100),  /* ticks (100 Hz) → seconds */
+        .uptime    = uptime_sec,
         .loads     = {loads[0], loads[1], loads[2]},
         .totalram  = total_pages * fs_page_size,
         .freeram   = free_pages  * fs_page_size,

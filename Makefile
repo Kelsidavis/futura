@@ -3402,7 +3402,7 @@ qemu-x86_64: platform-x86_64
 
 qemu-arm64: platform-arm64
 	@echo "Running ARM64 kernel in QEMU (virt 10.0 with VirtIO GPU)..."
-	@qemu-system-aarch64 -M virt-10.0 -cpu cortex-a53 -m 512M -kernel $(BIN_DIR)/futura_kernel.bin -device virtio-gpu-pci -display cocoa -serial stdio -no-reboot
+	@qemu-system-aarch64 -M virt-10.0 -cpu cortex-a53 -m 1024M -kernel $(BIN_DIR)/futura_kernel.bin -device virtio-gpu-pci -display cocoa -serial stdio -no-reboot
 
 # ARM64 test target (headless, semihosting for exit codes).
 # async-tests=1 schedules the sequential selftest runner;

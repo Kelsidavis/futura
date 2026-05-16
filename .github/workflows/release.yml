@@ -47,8 +47,15 @@ jobs:
         run: make kernel PLATFORM=arm64 ENABLE_WAYLAND=0
 
       - name: Collect release artifacts
+        # The PLATFORM=arm64 build emits build/bin/futura_kernel.{elf,bin}
+        # (no architecture subdirectory).  The previous `build/bin/arm64/`
+        # path silently no-op'd because of `2>/dev/null || true`, so the
+        # release tarball never actually shipped the ARM64 ELF.  Copy the
+        # real artifact paths and include the raw .bin too — that's the
+        # file QEMU -kernel and m1n1 payload generators consume.
         run: |
-          cp build/bin/arm64/futura_kernel.elf release/futura-arm64.elf 2>/dev/null || true
+          cp build/bin/futura_kernel.elf release/futura-arm64.elf
+          cp build/bin/futura_kernel.bin release/futura-arm64.bin
           sha256sum release/* > release/SHA256SUMS
 
       - name: Create GitHub Release
@@ -59,4 +66,5 @@ jobs:
             release/futura-x86_64.iso
             release/futura-x86_64.elf
             release/futura-arm64.elf
+            release/futura-arm64.bin
             release/SHA256SUMS

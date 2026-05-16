@@ -175,8 +175,29 @@ clear_bss:
 bss_cleared:
     /* Early debug: Write 'A' to UART before MMU (proves kernel started) */
     movz    x10, #0x0900, lsl #16     /* UART0 base = 0x09000000 */
-    // mov     x11, #0x41                
-    // strb    w11, [x10]                /* Write to UART data register */ 
+    // mov     x11, #0x41
+    // strb    w11, [x10]                /* Write to UART data register */
+
+    /* Compute the kernel's actual load PA so the page tables below
+     * are relocatable.  Saved in callee-saved registers x21-x23:
+     *   x21 = _start PA, 2 MiB-aligned-down  (high-VA L2 target PA)
+     *   x22 = x21 1 GiB-aligned-down         (identity 1 GiB block base)
+     *   x23 = x22 >> 30                      (L1 index for that block)
+     *
+     * For QEMU virt with kernel loaded at PA 0x40200000:
+     *   x21 = 0x40200000, x22 = 0x40000000, x23 = 1 — exactly the
+     *   values that used to be hardcoded.  For loaders that drop the
+     *   image at a different PA (m1n1-style relocation within the
+     *   39-bit VA window), the kernel still gets a correct identity
+     *   map and high-VA mapping.  This is one of the five Apple
+     *   Silicon bring-up blockers tracked in
+     *   docs/APPLE_SILICON_BRINGUP_PLAN.md — the remaining ones
+     *   (48-bit VA, dynamic KERN_PA_BASE, Apple UART, AIC) still
+     *   need land before a real Apple Silicon boot. */
+    adr     x21, _start
+    bic     x21, x21, #0x1FFFFF       /* 2 MB align down */
+    bic     x22, x21, #0x3FFFFFFF     /* 1 GB align down */
+    lsr     x23, x22, #30             /* L1 entry index */
 
     /* ========================================
      *   MMU Initialization
@@ -223,11 +244,13 @@ bss_cleared:
     orr     x1, x1, #3                /* Valid table descriptor */
     str     x1, [x0, #0]
 
-    /* L1[1] -> L2_dram (for VA 0x40000000-0x7FFFFFFF) */
+    /* L1[load-PA >> 30] -> L2_dram.  Dynamic so the kernel stays
+     * relocatable; for QEMU virt (load PA = 0x40200000) x23 == 1 so
+     * this lands in L1[1] just like the previous hardcoded entry. */
     adrp    x1, boot_l2_table_dram
     add     x1, x1, :lo12:boot_l2_table_dram
     orr     x1, x1, #3                /* Valid table descriptor */
-    str     x1, [x0, #8]
+    str     x1, [x0, x23, lsl #3]     /* L1[x23] = entry */
 
     /* L1[256] -> PCIe ECAM 1GB block (for VA 0x4000000000-0x403FFFFFFF) */
     /* 1GB block base PA = 0x4000000000 (maps ECAM at 0x4010000000 via offset) */
@@ -269,10 +292,14 @@ bss_cleared:
      */
     adrp    x0, boot_l2_table_dram
     add     x0, x0, :lo12:boot_l2_table_dram
-    /* Boot table: identity mapping PA=VA from PA 0x40000000 (RAM start).
-     * Even though kernel is at PA 0x40200000, we map from RAM start so
-     * identity mapping covers both DTB (0x40000000) and kernel (0x40200000+). */
-    movz    x1, #0x4000, lsl #16      /* Start PA = 0x40000000 (RAM start) */
+    /* Boot table: identity mapping PA=VA starting from the 1 GiB-
+     * aligned region containing the kernel.  For QEMU virt
+     * (kernel at PA 0x40200000) this is 0x40000000 — same as the
+     * previous hardcoded literal — and covers the DTB at 0x40000000
+     * too.  For a relocated load PA the identity window slides with
+     * the kernel so we still execute from valid VA = PA mappings
+     * across the MMU-enable transition. */
+    mov     x1, x22                   /* Start PA = 1 GiB-aligned load PA (was hardcoded 0x40000000) */
     mov     x3, #512                  /* 512 entries = 1GB */
     movz    x5, #0x0020, lsl #16      /* 2MB block size = 0x200000 */
 3:  mov     x2, #0x401                /* Valid (bit 0) | Block (bit 1=0) | AttrIndx=0 | AF (bit 10) */
@@ -336,16 +363,17 @@ bss_cleared:
     subs    x3, x3, #1
     bne     5b
 
-    /* Setup kernel_l2_table_dram: Map high VA to kernel physical address
-     * ELF PhysAddr = 0x40000000 (QEMU loads kernel here)
-     * High-VA kernel mapping: VA 0xFFFFFF8040000000 → PA 0x40000000 */
+    /* Setup kernel_l2_table_dram: Map high VA to kernel physical address.
+     * High-VA target is KERN_VA_BASE (0xFFFFFF8040000000); PA is the
+     * 2 MiB-aligned-down load PA computed above (x21).  For QEMU virt
+     * x21 == 0x40200000 — identical to the previous hardcoded value —
+     * so the mapping VA 0xFFFFFF8040000000 → PA 0x40200000 is
+     * preserved.  Once dynamic KERN_PA_BASE lands (see
+     * docs/APPLE_SILICON_BRINGUP_PLAN.md item 3) loaders can drop the
+     * kernel anywhere in DRAM and this path will still be correct. */
     adrp    x0, kernel_l2_table_dram
     add     x0, x0, :lo12:kernel_l2_table_dram
-    /* Kernel DRAM: map from PA 0x40200000 where QEMU actually loads the kernel.
-     * L2[0] maps VA 0xFFFFFF8040000000 → PA 0x40200000 (kernel .text.boot)
-     * L2[1] maps VA 0xFFFFFF8040200000 → PA 0x40400000 (kernel .text cont'd)
-     * etc. */
-    movz    x1, #0x4020, lsl #16      /* Start PA = 0x40200000 (kernel load addr) */
+    mov     x1, x21                   /* Start PA = 2 MiB-aligned load PA */
     mov     x3, #512                  /* 512 x 2MB = 1GB */
     movz    x5, #0x0020, lsl #16      /* 2MB block size */
 6:  mov     x2, #0x401                /* Valid | Block | AttrIndx=0 (normal) | AF */

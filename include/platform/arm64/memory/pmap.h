@@ -79,14 +79,21 @@ static inline uint64_t fut_kernel_virt_offset(void) {
     return KERN_VA_BASE - g_kernel_load_pa;
 }
 
-/* Convert physical address to kernel virtual address */
+/* Convert physical address to kernel virtual address.
+ *
+ * Reads the runtime offset published by boot.S so the conversion
+ * tracks the actual load PA.  For QEMU virt this is identical to
+ * the compile-time `KERNEL_VIRT_OFFSET` literal; for relocated
+ * loads (m1n1, future ARM64 boards) it adapts automatically.
+ * Closes the active half of Apple Silicon bring-up blocker #3. */
 static inline void *pmap_phys_to_virt(uint64_t pa) {
-    return (void *)(pa + KERNEL_VIRT_OFFSET);
+    return (void *)(pa + fut_kernel_virt_offset());
 }
 
-/* Convert kernel virtual address to physical address */
+/* Convert kernel virtual address to physical address.  Symmetric
+ * to `pmap_phys_to_virt`. */
 static inline uint64_t pmap_virt_to_phys(uintptr_t va) {
-    return (uint64_t)va - KERNEL_VIRT_OFFSET;
+    return (uint64_t)va - fut_kernel_virt_offset();
 }
 
 /* Backwards compatibility aliases */

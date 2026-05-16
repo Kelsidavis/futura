@@ -4,6 +4,17 @@
  * Licensed under the MPL v2.0 — see LICENSE for details.
  *
  * ARM64 interrupt controller setup, exception dispatch, and IRQ routing.
+ *
+ * ⚠ NOT LINKED ⚠
+ * This file is not currently in the ARM64 PLATFORM_SOURCES list — the
+ * live IRQ entry is platform/arm64/boot.S → fut_irq_main (in
+ * platform_init.c) which now has its own pluggable backend hook
+ * (fut_irq_set_dispatch_backend) for the Apple AIC path.  The handler
+ * table + fut_irq_dispatch(frame) below were a competing design that
+ * never landed.  Kept in tree because the signatures are still kept
+ * in sync (commit 88d3b28f) for an eventual switch to the
+ * arm64_vectors.S exception entry, which would invoke this dispatcher
+ * with a fut_interrupt_frame_t.  Until then this is reference code.
  */
 
 #include <platform/arm64/interrupt/irq.h>

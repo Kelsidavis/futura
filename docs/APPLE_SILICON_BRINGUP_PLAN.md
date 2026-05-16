@@ -82,7 +82,7 @@ which is a strict superset of the old 39-bit space.  Concretely:
 
 QEMU virt regression: `make test-arm64` PASS 2654/2654 unchanged.
 
-### 3. `KERN_PA_BASE` becomes a runtime value
+### 3. `KERN_PA_BASE` becomes a runtime value ✅ LANDED (commit `8cd7a32a`)
 
 `include/platform/arm64/memory/pmap.h:31` defines:
 

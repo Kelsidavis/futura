@@ -2200,7 +2200,29 @@ void fut_kernel_main(void) {
             fut_printf("[INIT] Intel: entering intel_thermal_init\n");
             intel_thermal_init();
             fut_printf("[INIT] Intel: entering intel_wdt_init\n");
-            intel_wdt_init();
+            int wdt_rc = intel_wdt_init();
+            /* Opt-in hardware watchdog activation.  Cmdline flag
+             * `hw_watchdog=N` enables the TCO with N-second timeout
+             * (1..1023 sec).  Once enabled the kernel timer tick has
+             * to pet it via intel_wdt_pet() at least every N seconds,
+             * or the chipset autonomously triggers a warm reset.  Off
+             * by default so a universal kernel doesn't reset machines
+             * that have driver init issues. */
+            if (wdt_rc == 0) {
+                extern const char *fut_boot_arg_value(const char *key);
+                const char *v = fut_boot_arg_value("hw_watchdog");
+                if (v && *v) {
+                    /* Tiny atoi: only support decimal seconds. */
+                    uint32_t secs = 0;
+                    for (const char *p = v; *p >= '0' && *p <= '9'; ++p) {
+                        secs = secs * 10 + (uint32_t)(*p - '0');
+                    }
+                    if (secs == 0) secs = 60;
+                    extern int intel_wdt_enable(uint32_t timeout_secs);
+                    int en_rc = intel_wdt_enable(secs);
+                    fut_printf("[INIT] hw_watchdog=%u: intel_wdt_enable rc=%d\n", secs, en_rc);
+                }
+            }
             fut_printf("[INIT] Intel: entering intel_mei_init\n");
             intel_mei_init();
             fut_printf("[INIT] Intel: entering intel_tbt_init\n");

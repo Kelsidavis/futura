@@ -398,6 +398,19 @@ void fut_timer_tick(void) {
         if (ps2_irq_stats_poll) {
             ps2_irq_stats_poll();
         }
+        /* Pet the hardware TCO watchdog if it's been enabled.  We feed
+         * once per second (every 100 ticks at 100 Hz).  If the kernel
+         * gets stuck and stops running this hook, the TCO countdown
+         * runs out and the chipset issues a warm reset autonomously,
+         * letting klog_persist capture the hang state for the next
+         * boot.  Weak-linked so kernels without the driver compiled
+         * in get a no-op. */
+        extern int intel_wdt_pet(void) __attribute__((weak));
+        static uint32_t s_wdt_tick_acc = 0;
+        if (intel_wdt_pet && (++s_wdt_tick_acc) >= 100u) {
+            s_wdt_tick_acc = 0;
+            (void)intel_wdt_pet();
+        }
     }
 #endif
 

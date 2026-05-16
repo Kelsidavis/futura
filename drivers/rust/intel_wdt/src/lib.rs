@@ -588,12 +588,49 @@ pub extern "C" fn intel_wdt_init() -> i32 {
     // Enable TCO base decode.
     enable_tco_base_decode(bus, dev, func);
 
-    // Discover TCOBASE.
+    // Discover TCOBASE.  If the BIOS hasn't programmed it (the case on
+    // L490 / Cannon Point PCH: BIOS leaves LPC config 0x50 unset because
+    // it doesn't expose TCO to the OS in its default config), pick an
+    // unused I/O range ourselves and write TCOBASE.  Restricted to PCHs
+    // we've identified as Series 300+ (Cannon Point on/H) so we don't
+    // touch unfamiliar silicon.
     let tcobase = match discover_tcobase(bus, dev, func) {
         Some(base) => base,
         None => {
-            log("intel_wdt: failed to discover TCOBASE");
-            return -2;
+            // Series 300 PCH LPC device IDs that we know follow the
+            // Cannon Point register layout (TCOBASE in LPC config 0x50,
+            // TCO at TCOBASE+0..0x1F as 32-byte I/O region).
+            const KNOWN_TCO_PCHS: &[u16] = &[
+                0x9d80, 0x9d81, 0x9d83, 0x9d84, 0x9d85, 0x9d86, 0x9d87,
+                0x9d88, 0x9d89, 0x9d8a, 0x9d8b, 0x9d8c, 0x9d8d, 0x9d8e, 0x9d8f,
+            ];
+            if !KNOWN_TCO_PCHS.contains(&device_id) {
+                log("intel_wdt: TCOBASE not programmed and PCH not in known list, skipping");
+                return -2;
+            }
+            // Pick 0x400 as the TCO I/O base.  It's outside the legacy
+            // PC I/O range (everything below 0x400 is ISA legacy), well
+            // below the LPC ACPI base (which the L490 firmware put at
+            // 0x1800), and 32-byte aligned as required.  Bit 0 set marks
+            // it as an I/O space resource.
+            const MANUAL_TCOBASE: u16 = 0x400;
+            unsafe {
+                fut_printf(
+                    b"intel_wdt: BIOS left TCOBASE unset on PCH 0x%04x; programming manually to 0x%04x\n\0"
+                        .as_ptr(),
+                    device_id as u32, MANUAL_TCOBASE as u32,
+                );
+            }
+            // Write to LPC config 0x50.  Low bit = I/O resource marker.
+            pci_write32(bus, dev, func, LPC_TCOBASE,
+                        ((MANUAL_TCOBASE as u32) & 0xFFE0) | 1);
+            // Re-confirm decode bit (should already be set by
+            // enable_tco_base_decode above, but be defensive).
+            let tcoctl = pci_read32(bus, dev, func, LPC_TCOCTL);
+            if tcoctl & TCOCTL_TCO_BASE_EN == 0 {
+                pci_write32(bus, dev, func, LPC_TCOCTL, tcoctl | TCOCTL_TCO_BASE_EN);
+            }
+            MANUAL_TCOBASE
         }
     };
 

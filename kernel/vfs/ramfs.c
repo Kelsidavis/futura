@@ -1342,15 +1342,24 @@ static int ramfs_getattr(struct fut_vnode *vnode, struct fut_stat *stat) {
     stat->st_blocks = (stat->st_size + 511) / 512;  /* Number of 512-byte blocks */
 
     /* Timestamps - stored in ramfs_node as ticks (100 Hz = 10ms each).
-     * Convert to nanoseconds: each tick = 10,000,000 ns. */
+     * Convert to nanoseconds: each tick = 10,000,000 ns.
+     *
+     * Clamp the seconds field to ≥ 1 once the timer has ticked at all:
+     * many tools (and the kernel selftest 1028) treat st_*time == 0
+     * as a 'never set' sentinel.  Within the first second of boot the
+     * raw value rounds to 0; bump it so non-zero seconds always
+     * indicate 'modified post-boot' even on very fast test runs. */
     uint64_t atime_ns = node->atime_ms * 10000000ULL;
     uint64_t mtime_ns = node->mtime_ms * 10000000ULL;
     uint64_t ctime_ns = node->ctime_ms * 10000000ULL;
     stat->st_atime = atime_ns / 1000000000;
+    if (stat->st_atime == 0 && node->atime_ms > 0) stat->st_atime = 1;
     stat->st_atime_nsec = (uint32_t)(atime_ns % 1000000000);
     stat->st_mtime = mtime_ns / 1000000000;
+    if (stat->st_mtime == 0 && node->mtime_ms > 0) stat->st_mtime = 1;
     stat->st_mtime_nsec = (uint32_t)(mtime_ns % 1000000000);
     stat->st_ctime = ctime_ns / 1000000000;
+    if (stat->st_ctime == 0 && node->ctime_ms > 0) stat->st_ctime = 1;
     stat->st_ctime_nsec = (uint32_t)(ctime_ns % 1000000000);
 
     return 0;

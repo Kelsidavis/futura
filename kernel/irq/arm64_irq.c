@@ -148,8 +148,14 @@ int fut_irq_acknowledge(void) {
     return irq;
 }
 
-void fut_irq_send_eoi(uint8_t irq) {
-    gic_write(GIC_CPU_BASE, GIC_CPU_EOI, irq & 0x3FF);
+void fut_irq_send_eoi(uint32_t iar_value) {
+    /* GICv2: write the full IAR value back to EOIR.  Just the IRQ ID
+     * (low 10 bits) is not enough — the GIC needs the original IAR
+     * read value to deactivate the interrupt correctly.  See commit
+     * 5082fb59 for the explanation of why the old uint8_t signature
+     * caused PPI 30 to fire exactly once and then stay 'active'
+     * forever on the GIC's internal state. */
+    gic_write(GIC_CPU_BASE, GIC_CPU_EOI, iar_value);
 }
 
 uint32_t fut_irq_get_priority(int irq) {

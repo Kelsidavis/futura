@@ -1,10 +1,27 @@
-/* apple_uart.c - Apple Silicon UART Driver Implementation
+/* apple_uart.c - Apple Silicon UART (s5l) — Rust-backed wrapper
  *
  * Copyright (c) 2025 Kelsi Davis
  * Licensed under the MPL v2.0 — see LICENSE for details.
  *
- * Samsung S5L-style UART driver for Apple M1/M2/M3 SoCs.
- * Provides console I/O for early boot and debugging.
+ * Samsung S5L-style UART used by Apple M1/M2/M3/M4 SoCs.  This file
+ * is a thin C bridge over the Rust driver under
+ * `drivers/rust/apple_uart` (Asahi-Linux-derived).  Per the project's
+ * Rust-only-drivers policy the register-level work lives in Rust;
+ * the C API below preserves the call-site signatures the rest of
+ * the arm64 platform code targets so nothing else has to change.
+ *
+ * The previous hand-rolled C body had the right semantics but was
+ * gradually drifting from the Rust port — keep one driver, not two.
+ * The C wrapper caches the UART base populated by
+ * fut_apple_uart_init() and forwards every subsequent call into the
+ * Rust FFI, which is safe to call concurrently with the Rust UART's
+ * own interrupt path.
+ *
+ * Compatibility note: the wrapper functions are no-ops until
+ * fut_apple_uart_init() has cached a non-zero base — RPi / QEMU virt
+ * builds never reach fut_apple_uart_init (which requires
+ * info->uart_base from the Apple DTB), so this code is dormant on
+ * those platforms.
  */
 
 #include <platform/arm64/apple_uart.h>
@@ -12,19 +29,12 @@
 #include <string.h>
 #include <stddef.h>
 
-/* ============================================================
- *   UART Register Access
- * ============================================================ */
+/* Cached UART base populated by fut_apple_uart_init.  0 until then,
+ * which the Rust FFI checks for and treats as "driver not ready". */
+static uint64_t s5l_uart_base = 0;
 
-/* Base address of UART registers (set during init) */
-static volatile uint8_t *uart_base = NULL;
-
-/* Forward declaration for the backend trampoline installed by init. */
+/* Forward decl — installed as the serial-putc backend by init. */
 void fut_apple_uart_putc_thunk(char ch);
-
-/* Helper macros for register access */
-#define UART_READ32(offset)      (*((volatile uint32_t *)(uart_base + (offset))))
-#define UART_WRITE32(offset, val) (*((volatile uint32_t *)(uart_base + (offset))) = (val))
 
 /* ============================================================
  *   UART Initialization
@@ -35,212 +45,64 @@ bool fut_apple_uart_init(const fut_platform_info_t *info, uint32_t baudrate) {
         fut_printf("[UART] Error: Invalid platform info or missing UART base\n");
         return false;
     }
-
     if (baudrate == 0) {
         fut_printf("[UART] Error: Invalid baud rate (cannot be zero)\n");
         return false;
     }
 
-    /* Map UART base address */
-    uart_base = (volatile uint8_t *)info->uart_base;
-
-    fut_printf("[UART] Initializing Apple s5l-uart\n");
+    fut_printf("[UART] Initializing Apple s5l-uart (Rust driver)\n");
     fut_printf("[UART] Base address: 0x%016llx\n", info->uart_base);
     fut_printf("[UART] Baud rate: %u\n", baudrate);
 
-    /* Disable UART during configuration */
-    UART_WRITE32(UCON, 0);
+    if (!rust_apple_uart_init(info->uart_base, baudrate)) {
+        fut_printf("[UART] Error: rust_apple_uart_init failed\n");
+        return false;
+    }
 
-    /* Configure line control: 8N1 (8 data bits, no parity, 1 stop bit) */
-    UART_WRITE32(ULCON, ULCON_WORD_LEN_8 | ULCON_PARITY_NONE);
-
-    /* Configure FIFO: Enable FIFO, reset TX/RX, set trigger levels */
-    UART_WRITE32(UFCON, UFCON_FIFO_ENABLE | UFCON_RX_FIFO_RST |
-                        UFCON_TX_FIFO_RST | UFCON_RX_TRIGGER_8 |
-                        UFCON_TX_TRIGGER_8);
-
-    /* Calculate baud rate divisor
-     * Baud rate formula: UART_CLOCK / (16 * baudrate)
-     * For fractional baud rate: UFRACVAL = (remainder * 16) / divisor
-     */
-    uint32_t div = APPLE_UART_CLOCK / (16 * baudrate);
-    uint32_t remainder = APPLE_UART_CLOCK % (16 * baudrate);
-    uint32_t frac = (remainder * 16) / (16 * baudrate);
-
-    UART_WRITE32(UBRDIV, div);
-    UART_WRITE32(UFRACVAL, frac);
-
-    /* Clear all interrupts */
-    UART_WRITE32(UINTP, 0xF);  /* Clear all pending interrupts */
-    UART_WRITE32(UINTM, 0xF);  /* Mask all interrupts initially */
-
-    /* Enable UART: RX interrupt mode, TX interrupt mode */
-    UART_WRITE32(UCON, UCON_RX_MODE_INT | UCON_TX_MODE_INT | UCON_RX_TIMEOUT);
+    s5l_uart_base = info->uart_base;
 
     /* Hook into the platform-agnostic serial console.  After this
      * point, every fut_serial_putc() (and therefore every fut_printf)
      * delegates to the s5l-uart instead of the QEMU-virt PL011 MMIO
-     * path.  The thunk is needed because fut_apple_uart_putc takes a
-     * fut_platform_info_t* arg that callers in apple_uart.c never use
-     * (uart_base is cached at module scope), so adapt the signature to
-     * the platform-agnostic `void (*)(char)` shape. */
+     * path.  The thunk adapts the public Apple UART API signature
+     * (which used to take a fut_platform_info_t *) to the
+     * platform-agnostic `void (*)(char)` shape. */
     extern void fut_serial_set_putc_backend(void (*fn)(char c));
     fut_serial_set_putc_backend(fut_apple_uart_putc_thunk);
 
     fut_printf("[UART] Apple s5l-uart initialized successfully\n");
-
     return true;
 }
 
-/* Thin trampoline so platform.h's `void (*)(char)` backend signature
- * matches the public Apple UART API which takes a platform_info ptr. */
-void fut_apple_uart_putc_thunk(char ch) {
-    fut_apple_uart_putc(NULL, ch);
-}
-
 /* ============================================================
- *   Character I/O
+ *   Character I/O (C API wrappers)
  * ============================================================ */
 
 void fut_apple_uart_putc(const fut_platform_info_t *info, char ch) {
-    if (!uart_base) {
+    (void)info;
+    if (s5l_uart_base == 0) {
         return;
     }
-
-    (void)info;  /* Unused - uart_base is cached */
-
-    /* Wait for TX FIFO to have space */
-    while (!(UART_READ32(UTRSTAT) & UTRSTAT_TX_EMPTY)) {
-        /* Spin-wait */
-    }
-
-    /* Write character to transmit buffer */
-    UART_WRITE32(UTXH, (uint32_t)ch);
-
-    /* Handle line endings: convert \n to \r\n for terminal compatibility */
+    rust_apple_uart_putc(s5l_uart_base, (uint8_t)ch);
     if (ch == '\n') {
-        /* Wait again for TX ready */
-        while (!(UART_READ32(UTRSTAT) & UTRSTAT_TX_EMPTY)) {
-            /* Spin-wait */
-        }
-        UART_WRITE32(UTXH, '\r');
+        /* Rust putc already expands \n to \r\n; nothing extra needed. */
     }
 }
 
 int fut_apple_uart_getc(const fut_platform_info_t *info) {
-    if (!uart_base) {
+    (void)info;
+    if (s5l_uart_base == 0) {
         return -1;
     }
-
-    (void)info;  /* Unused - uart_base is cached */
-
-    /* Check if RX FIFO has data */
-    if (!(UART_READ32(UTRSTAT) & UTRSTAT_RX_READY)) {
-        return -1;  /* No data available */
-    }
-
-    /* Read character from receive buffer */
-    uint32_t data = UART_READ32(URXH);
-
-    return (int)(data & 0xFF);
+    return rust_apple_uart_getc(s5l_uart_base);
 }
-
-bool fut_apple_uart_tx_ready(const fut_platform_info_t *info) {
-    if (!uart_base) {
-        return false;
-    }
-
-    (void)info;  /* Unused */
-
-    return (UART_READ32(UTRSTAT) & UTRSTAT_TX_EMPTY) != 0;
-}
-
-bool fut_apple_uart_rx_ready(const fut_platform_info_t *info) {
-    if (!uart_base) {
-        return false;
-    }
-
-    (void)info;  /* Unused */
-
-    return (UART_READ32(UTRSTAT) & UTRSTAT_RX_READY) != 0;
-}
-
-/* ============================================================
- *   Interrupt Management
- * ============================================================ */
-
-void fut_apple_uart_enable_rx_interrupt(const fut_platform_info_t *info) {
-    if (!uart_base) {
-        return;
-    }
-
-    (void)info;  /* Unused */
-
-    /* Unmask RX interrupt */
-    uint32_t mask = UART_READ32(UINTM);
-    mask &= ~UINT_RXD;
-    UART_WRITE32(UINTM, mask);
-}
-
-void fut_apple_uart_enable_tx_interrupt(const fut_platform_info_t *info) {
-    if (!uart_base) {
-        return;
-    }
-
-    (void)info;  /* Unused */
-
-    /* Unmask TX interrupt */
-    uint32_t mask = UART_READ32(UINTM);
-    mask &= ~UINT_TXD;
-    UART_WRITE32(UINTM, mask);
-}
-
-void fut_apple_uart_disable_tx_interrupt(const fut_platform_info_t *info) {
-    if (!uart_base) {
-        return;
-    }
-
-    (void)info;  /* Unused */
-
-    /* Mask TX interrupt */
-    uint32_t mask = UART_READ32(UINTM);
-    mask |= UINT_TXD;
-    UART_WRITE32(UINTM, mask);
-}
-
-uint32_t fut_apple_uart_get_intp(const fut_platform_info_t *info) {
-    if (!uart_base) {
-        return 0;
-    }
-
-    (void)info;  /* Unused */
-
-    return UART_READ32(UINTP);
-}
-
-void fut_apple_uart_clear_interrupts(const fut_platform_info_t *info, uint32_t mask) {
-    if (!uart_base) {
-        return;
-    }
-
-    (void)info;  /* Unused */
-
-    /* Write 1 to clear pending interrupts */
-    UART_WRITE32(UINTP, mask);
-}
-
-/* ============================================================
- *   String Output
- * ============================================================ */
 
 void fut_apple_uart_puts(const fut_platform_info_t *info, const char *str) {
-    if (!str) {
+    (void)info;
+    if (s5l_uart_base == 0 || !str) {
         return;
     }
-
-    while (*str) {
-        fut_apple_uart_putc(info, *str++);
-    }
+    rust_apple_uart_puts(s5l_uart_base, (const uint8_t *)str);
 }
 
 /* ============================================================
@@ -264,4 +126,10 @@ void fut_apple_uart_platform_init(const fut_platform_info_t *info) {
     fut_apple_uart_puts(info, "[APPLE] UART console ready\n");
 
     fut_printf("[APPLE] Apple UART subsystem initialized successfully\n");
+}
+
+/* Thin trampoline so platform.h's `void (*)(char)` backend signature
+ * matches the public Apple UART API which takes a platform_info ptr. */
+void fut_apple_uart_putc_thunk(char ch) {
+    fut_apple_uart_putc(NULL, ch);
 }

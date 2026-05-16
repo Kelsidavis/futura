@@ -16,10 +16,12 @@
  *
  * Physical Memory:
  *   0x40000000 - 0x48000000  Kernel code/data/stack (128 MB)
- *   0x48000000 - 0x60000000  Available for allocation
+ *   0x48000000 - 0x80000000  Available for allocation (~1.875 GB window
+ *                            after the kernel image; PMM ram_end is
+ *                            currently 0x80000000 to match boot.S L2_dram)
  *
  * Virtual Memory (TTBR1 - Kernel Space):
- *   0xFFFFFF8040000000 - 0xFFFFFF8048000000  Kernel (maps PA 0x40000000)
+ *   0xFFFFFF8040000000 - 0xFFFFFF8080000000  Kernel + direct map (PA 0x40000000-0x80000000)
  *   0xFFFFFF8000000000 - 0xFFFFFF8040000000  Peripherals (maps PA 0x00000000)
  *
  * Virtual Memory (TTBR0 - User Space):

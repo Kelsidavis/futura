@@ -477,8 +477,19 @@ unsafe fn spawn_poll_thread() {
         log("[VINPUT] failed to create poll task\n");
         return;
     }
+    // 8 KB was too tight: the poll loop runs deep into the virtio-input
+    // device chain (descriptor walking, event dispatch into the line
+    // discipline), and the ARM64 timer ISR pushes an 880-byte
+    // fut_interrupt_frame_t onto this stack when it preempts.  At 8 KB
+    // the overflow doesn't just trip the canary — the heap-adjacent
+    // allocation directly below this stack on the slab is the idle
+    // thread's fut_thread struct, and overflowing bytes overwrite its
+    // tid / task / stack_base fields.  Subsequent fut_thread_current()
+    // calls then return a struct whose tid decodes as a kernel-heap
+    // pointer, leading to the ARM64 "dubious current_thread" bug.
+    // 64 KB matches what every other kernel thread on this arch gets.
     let thread = unsafe {
-        fut_thread_create(task, poll_thread, core::ptr::null_mut(), 8192, 50)
+        fut_thread_create(task, poll_thread, core::ptr::null_mut(), 65536, 50)
     };
     if thread.is_null() {
         log("[VINPUT] failed to create poll thread\n");

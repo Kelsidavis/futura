@@ -417,39 +417,88 @@ bss_cleared:
     // mov     x11, #0x35                
     // strb    w11, [x10] 
 
-    /* Configure TCR_EL1 (Translation Control Register)
-     * T0SZ = 25 (bits 5:0): VA size = 64 - 25 = 39 bits
-     * T1SZ = 25 (bits 21:16): VA size = 39 bits
-     * TG0 = 00 (bits 15:14): 4KB granule for TTBR0
-     * TG1 = 10 (bits 31:30): 4KB granule for TTBR1 (different encoding!)
-     * SH0 = 11 (bits 13:12): Inner shareable for TTBR0
-     * SH1 = 11 (bits 29:28): Inner shareable for TTBR1
-     * ORGN0/IRGN0 = 01 (bits 11:10, 9:8): Normal, WB RA WA
-     * ORGN1/IRGN1 = 01 (bits 27:26, 25:24): Normal, WB RA WA
-     * IPS = 001 (bits 34:32): 36-bit PA space
-     */
-    /* Build TCR_EL1 value carefully to ensure TG0=00 for 4KB granule */
-    /* Start with T0SZ=25, IRGN0=01, ORGN0=01, SH0=11 */
-    movz    x0, #0x3519               /* Bits [15:0]: T0SZ=25, IRGN0=01, ORGN0=01, SH0=11, TG0=00 */
-    /* Set T1SZ=25, IRGN1=01, ORGN1=01, SH1=11, TG1=10 */
-    movk    x0, #0xB519, lsl #16     /* Bits [31:16]: T1SZ=25, IRGN1=01, ORGN1=01, SH1=11, TG1=10 */
-    /* Set IPS=010 (40-bit PA) */
-    movk    x0, #2, lsl #32           /* Bits [34:32]: IPS=010 */
+    /* ========================================
+     *   Setup L0 page tables (48-bit VA root)
+     *
+     * The existing boot_l1_table / kernel_l1_table chains were
+     * designed for 39-bit VA where ARM64 starts the walk at L1.
+     * Wrap them in an L0 root so the kernel can address PAs above
+     * the 512 GB / 39-bit window — Apple Silicon DRAM lives in that
+     * region.  The wrap is cost-free for QEMU virt: L0 has one
+     * populated entry per TTBR, indexes 0 and 511 respectively.
+     * ======================================== */
+
+    /* Zero L0 tables */
+    adrp    x0, boot_l0_table
+    add     x0, x0, :lo12:boot_l0_table
+    mov     x1, #0
+.Lzero_boot_l0:
+    str     xzr, [x0, x1, lsl #3]
+    add     x1, x1, #1
+    cmp     x1, #512
+    blt     .Lzero_boot_l0
+
+    adrp    x0, kernel_l0_table
+    add     x0, x0, :lo12:kernel_l0_table
+    mov     x1, #0
+.Lzero_kernel_l0:
+    str     xzr, [x0, x1, lsl #3]
+    add     x1, x1, #1
+    cmp     x1, #512
+    blt     .Lzero_kernel_l0
+
+    /* boot_l0_table[L0_idx] -> boot_l1_table.  L0 idx = bits 47:39 of
+     * the identity DRAM base (x22).  For QEMU virt x22 < 2^39 so
+     * L0_idx = 0; for Apple Silicon with kernel above 512 GB it lands
+     * in the appropriate higher slot. */
+    lsr     x24, x22, #39
+    adrp    x0, boot_l0_table
+    add     x0, x0, :lo12:boot_l0_table
+    adrp    x1, boot_l1_table
+    add     x1, x1, :lo12:boot_l1_table
+    orr     x1, x1, #3                /* Valid table descriptor */
+    str     x1, [x0, x24, lsl #3]
+
+    /* kernel_l0_table[511] -> kernel_l1_table.  KERN_VA_BASE
+     * (0xFFFFFF8040000000) sits at the top of the 256 TB upper-half
+     * VA range, which puts it in L0 index 511 regardless of load PA. */
+    adrp    x0, kernel_l0_table
+    add     x0, x0, :lo12:kernel_l0_table
+    adrp    x1, kernel_l1_table
+    add     x1, x1, :lo12:kernel_l1_table
+    orr     x1, x1, #3                /* Valid table descriptor */
+    str     x1, [x0, #(511 * 8)]
+
+    /* Configure TCR_EL1 (Translation Control Register).
+     * T0SZ / T1SZ = 16: 48-bit VA, walk starts at L0.
+     * TG0 = 00, TG1 = 10: 4KB granule.
+     * SH0/SH1 = 11: Inner shareable.
+     * IRGN/ORGN = 01: Normal, WB RA WA.
+     * IPS = 010: 40-bit PA space (sufficient for QEMU virt 1 GiB
+     * DRAM and the early Apple Silicon bring-up window).
+     *
+     * 48-bit VA is the long-term layout — covers Apple Silicon DRAM
+     * past the old 39-bit / 512 GB window — and is a strict superset
+     * of the 39-bit space the QEMU virt path used before, so existing
+     * kernel/user VAs translate identically. */
+    movz    x0, #0x3510               /* Bits [15:0]: T0SZ=16, IRGN0=01, ORGN0=01, SH0=11, TG0=00 */
+    movk    x0, #0xB510, lsl #16     /* Bits [31:16]: T1SZ=16, IRGN1=01, ORGN1=01, SH1=11, TG1=10 */
+    movk    x0, #2, lsl #32           /* Bits [34:32]: IPS=010 (40-bit PA) */
     msr     tcr_el1, x0
 
     /* Debug: TCR configured */
     movz    x10, #0x0900, lsl #16
-    // mov     x11, #0x36                
-    // strb    w11, [x10] 
+    // mov     x11, #0x36
+    // strb    w11, [x10]
 
-    /* Set TTBR0_EL1 to boot table (identity mapping for early boot) */
-    adrp    x0, boot_l1_table
-    add     x0, x0, :lo12:boot_l1_table
+    /* Set TTBR0_EL1 to boot L0 table (identity mapping for early boot) */
+    adrp    x0, boot_l0_table
+    add     x0, x0, :lo12:boot_l0_table
     msr     ttbr0_el1, x0
 
-    /* Set TTBR1_EL1 to kernel table (high VA mapping for kernel) */
-    adrp    x0, kernel_l1_table
-    add     x0, x0, :lo12:kernel_l1_table
+    /* Set TTBR1_EL1 to kernel L0 table (high VA mapping for kernel) */
+    adrp    x0, kernel_l0_table
+    add     x0, x0, :lo12:kernel_l0_table
     msr     ttbr1_el1, x0
 
     /* Debug: TTBR configured */
@@ -1018,15 +1067,20 @@ g_kernel_l1_index:
 
 .align 12                         /* 4KB alignment required for page tables */
 
-/* Page tables for 39-bit VA space (T0SZ=25)
- * For 39-bit VA, ARM64 starts page table walk at Level 1 (not L0)
- * Each L1 entry covers 1GB, each L2 entry covers 2MB
- */
+/* Page tables for 48-bit VA space (T0SZ=16, T1SZ=16).
+ * ARM64 with 48-bit VA + 4 KiB granule walks L0 → L1 → L2 → L3 (or
+ * L2 block).  Each L0 entry covers 512 GB, each L1 covers 1 GB, each
+ * L2 covers 2 MB.  We use 2 MB L2 blocks for kernel & identity DRAM
+ * — the L3 table is never populated. */
 
 /* Boot page tables - TTBR0_EL1 (identity mapping for early boot) */
+.global boot_l0_table
+boot_l0_table:
+    .space 4096                   /* Level 0 (48-bit VA root, 512 x 512 GB entries) */
+
 .global boot_l1_table
 boot_l1_table:
-    .space 4096                   /* Level 1 (root table, 512 x 1GB per entry) */
+    .space 4096                   /* Level 1 (512 x 1 GB per entry) */
 
 boot_l2_table_peripherals:
     .space 4096                   /* Level 2 for peripherals (512 x 2MB = 1GB) */
@@ -1038,6 +1092,10 @@ boot_l2_table_dram:
  * Maps high VA 0xFFFF000000000000+ to physical addresses
  * This allows kernel to run at high VA while user space uses low VA
  */
+.global kernel_l0_table
+kernel_l0_table:
+    .space 4096                   /* Level 0 for high VA (entry 511 points to L1) */
+
 .global kernel_l1_table
 kernel_l1_table:
     .space 4096                   /* Level 1 for high VA */

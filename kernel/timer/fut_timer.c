@@ -411,6 +411,22 @@ void fut_timer_tick(void) {
             s_wdt_tick_acc = 0;
             (void)intel_wdt_pet();
         }
+
+        /* Keep CMOS Shutdown Status (offset 0x0F) primed with 0x0A.
+         * That's the legacy IBM PC warm-reboot hint; many BIOSes read
+         * it during POST and skip memory training when set.  If ANY
+         * reset fires unexpectedly (TCO watchdog, power-button cycle,
+         * external reset), the hint is already in CMOS RAM and the
+         * next boot may preserve DRAM, so klog_persist can replay.
+         * Write once per second to keep the byte refreshed in case
+         * something else clobbers it. */
+        static uint32_t s_cmos_hint_acc = 0;
+        if ((++s_cmos_hint_acc) >= 100u) {
+            s_cmos_hint_acc = 0;
+            extern void hal_outb(uint16_t port, uint8_t value);
+            hal_outb(0x70, 0x0F);
+            hal_outb(0x71, 0x0A);
+        }
     }
 #endif
 

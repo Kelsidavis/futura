@@ -1129,7 +1129,14 @@ void fut_schedule(void) {
                 // First time or terminated prev - just jump to thread (don't save prev state)
                 fut_switch_context(NULL, &next->context);
             }
-            // Context switch returns when this thread is switched back to (cooperative threading)
+            // Context switch returns when this thread is switched back to (cooperative threading).
+            // Restore IRQs that we masked at the top of fut_schedule.  On ARM64
+            // the cooperative resume path (fut_switch_context's EL1 br x2) does
+            // not touch DAIF, so without this the resumed thread would run with
+            // I=1 inherited from the *previous* yielding thread — symptom: timer
+            // IRQs stop firing the moment any thread yields cooperatively (e.g.
+            // futex_wait blocking on a timeout), and the timeout never expires.
+            sched_irqrestore(sched_irq_flags);
         }
     }
 }

@@ -148,14 +148,50 @@ Two-step landing:
 QEMU virt's `has_aic` is false, so the AIC hook never runs and the
 GIC default stays in place.  2654/2654 selftest PASS unchanged.
 
+## Asahi-Linux-Derived Rust Drivers
+
+Per the project's Rust-only-drivers policy, all hardware register-
+level Apple Silicon code lives in `drivers/rust/apple_*` — these are
+Asahi-Linux-derived ports.  The C surface under
+`platform/arm64/{drivers,interrupt}/apple_*.c` is a thin compat
+bridge that:
+
+- Caches the DTB-discovered MMIO base in a static.
+- Forwards every public C function call into the Rust FFI
+  (`rust_<driver>_*`).
+- Is gated on the DTB having identified Apple Silicon, so RPi /
+  QEMU virt builds never reach these wrappers.
+
+Status of the C → Rust migration:
+
+| C file                  | Rust crate            | Status                            |
+|-------------------------|-----------------------|-----------------------------------|
+| `apple_aic.c`           | `apple_aic` (407 LOC) | ✅ wrapped (`ba6ae1d5`)            |
+| `apple_uart.c`          | `apple_uart` (393)    | ✅ wrapped (`7128f82e`)            |
+| `apple_power.c`         | `apple_smc` (479)     | ✅ already wrapped                  |
+| `apple_dcp.c`           | `apple_dart` (607)    | ✅ DMA side already wrapped         |
+| `apple_rtkit.c`         | `apple_rtkit` (552)   | 🚧 Rust FFI surface needs to add  |
+|                         |                       | `register_endpoint`, `start_endpoint`, |
+|                         |                       | `shutdown`, `recv` before C body  |
+|                         |                       | can become a wrapper              |
+| `apple_ans2.c`          | `apple_ans2` (836)    | ⏳ blocked on apple_rtkit          |
+| `apple_audio.c`         | (none)                | ⏳ no Rust crate yet               |
+| `apple_hid.c`           | (none)                | ⏳ no Rust crate yet               |
+| `apple_xhci.c`          | (none)                | ⏳ no Rust crate yet               |
+
+Each wrap is verified by the QEMU virt 2654/2654 selftest — the
+new Rust code only runs once the DTB-driven Apple-Silicon init path
+runs, which on QEMU never happens.
+
 ## Verification Strategy
 
 Each phase above ships independently with the **invariant** that
-`make test-arm64` (QEMU virt) continues to PASS 2654/2654.
+`make test-arm64` (QEMU virt) continues to PASS 2654/2654.  RPi
+config-only build (`make rpi-image`) also stays green.
 
 For Apple Silicon end-to-end:
 1. Tethered boot via `python3 -m m1n1.run m1n1.macho -b Image.gz kernel.macho`.
-2. Capture serial output once the Apple-UART early-debug shim is in
+2. Capture serial output once the s5l-UART early-debug shim is in
    place.
 3. Diff against the QEMU virt boot log to find the first divergence.
 

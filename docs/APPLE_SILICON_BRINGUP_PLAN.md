@@ -34,17 +34,17 @@ The reason the kernel doesn't actually boot on Apple Silicon today
 breaks down into five blockers.  Each can be tackled independently and
 verified incrementally — items 1 and 2 unblock the rest.
 
-### 1. Dynamic load-PA detection in `boot.S`
+### 1. Dynamic load-PA detection in `boot.S` ✅ LANDED (commit `c028e0c3`)
 
-`platform/arm64/boot.S` hardcodes:
-- L2 identity-map start PA = `0x40000000` (`movz x1, #0x4000, lsl #16`).
+`platform/arm64/boot.S` previously hardcoded three QEMU-virt-specific
+physical addresses into the boot page tables:
+
+- L2 identity-map start PA = `0x40000000`.
 - L1[1] → L2_dram (only valid when load PA is in
   `0x40000000-0x7FFFFFFF`).
-- Kernel high-VA L2_dram start PA = `0x40200000`
-  (`movz x1, #0x4020, lsl #16`).
+- Kernel high-VA L2_dram start PA = `0x40200000`.
 
-These all need to be derived from `adr x?, _start` so the kernel can
-be loaded anywhere in DRAM.  Conceptually:
+All three are now derived from `adr x21, _start`:
 
 ```asm
 adr     x21, _start
@@ -53,7 +53,10 @@ bic     x22, x21, #0x3FFFFFFF      /* 1 GB align down  — identity 1 GB base */
 lsr     x23, x22, #30              /* L1 index for the identity 1 GB block */
 ```
 
-then use `x21`, `x22`, `x23` instead of the hardcoded values.
+For QEMU virt the values are bit-identical to the previous literals
+(0x40200000 / 0x40000000 / 1), so the existing 2654/2654 selftest
+path is unchanged.  For PA-relocated loads within the 39-bit VA
+window the identity and high-VA mappings now slide with the kernel.
 
 ### 2. 48-bit VA on the Apple Silicon path
 

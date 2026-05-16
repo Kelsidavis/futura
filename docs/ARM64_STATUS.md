@@ -24,6 +24,19 @@ Key infrastructure that landed since the November snapshot:
 - ~30 test ranges that deref user-VA pointers returned by `mmap` are skipped from the kernel-thread runner via a `fut_mm_current() == fut_mm_kernel()` gate (`grep "kernel-thread context" kernel/tests/sys_misc.c`).
 - Hardened `fut_test_finish_runner()` safety net fires `qemu_exit(0)` from the runner's exit path so we never depend on `planned == passed` exactly matching.
 
+### Apple Silicon bring-up (kernel-side mostly done)
+
+A separate chain (`docs/APPLE_SILICON_BRINGUP_PLAN.md`) closed 4.5 of 5 blockers between QEMU virt and a real M1/M2/M3/M4 boot via m1n1:
+
+- **#1 PA-relocatable boot.S** — identity + high-VA L2 tables derived from `adr x21, _start`, kernel image can load anywhere in DRAM.
+- **#2 48-bit VA across the board** — `T0SZ = T1SZ = 16`, new L0 root tables, walks past the old 39-bit / 512 GB window so Apple DRAM is addressable.
+- **#3 Runtime KERN_PA_BASE** — `pmap_phys_to_virt` / `pmap_virt_to_phys` now read `fut_kernel_virt_offset()` (populated from `g_kernel_load_pa`) instead of the compile-time literal.
+- **#4 Apple s5l-UART (post-MMU)** — pluggable `fut_serial_set_putc_backend()`; `apple_uart_init()` registers the s5l-uart putc.
+- **#5 AIC IRQ dispatch** — `boot.S/fut_irq_handler` shrinks to a thin trampoline into `fut_irq_main()` with a pluggable backend; `apple_irq_init()` registers `apple_aic_handle_irq` as the override.
+- Bonus: `TCR_EL1.IPS` now reads `ID_AA64MMFR0_EL1.PARange` (Apple M1/M2 report 48-bit / 0b101); `gic_handle_irq` collapsed to a `fut_irq_main` forwarder so both IRQ entry paths share one source of truth.
+
+QEMU virt selftest stayed at 2654/2654 PASS across every step.  The only remaining piece is real-hardware verification on an M-series Mac.
+
 See [`/Users/k/.claude/projects/-Users-k-futura/memory/project_futura_arm64_bringup.md`](../../.claude/projects/-Users-k-futura/memory/project_futura_arm64_bringup.md) for the full commit chain.
 
 ---

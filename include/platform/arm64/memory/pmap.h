@@ -28,14 +28,11 @@
  *   0x0000000000400000 - ...  User code/data/stack
  */
 
-/* Kernel physical base — QEMU virt places DTB at RAM base (0x40000000) and
- * loads the kernel Image at the next 2MB boundary (0x40200000).
- *
- * Compile-time literal; correct for QEMU virt only.  The runtime
- * actual load PA is also published by boot.S in `g_kernel_load_pa`
- * (see below) — once all callers of KERNEL_VIRT_OFFSET migrate to the
- * runtime accessor, this #define can drop and the kernel will be
- * relocatable in PA (Apple Silicon bring-up blocker #3). */
+/* Kernel physical base — the QEMU virt literal.  Kept for any
+ * compile-time use (static initializers, link-script symbols).  The
+ * hot conversion path (pmap_phys_to_virt / pmap_virt_to_phys) reads
+ * the runtime offset via fut_kernel_virt_offset() instead, so the
+ * kernel is relocatable in PA without touching this macro. */
 #define KERN_PA_BASE      0x40200000ULL
 
 /* Kernel virtual base (where kernel is linked) */
@@ -63,9 +60,12 @@ extern uint64_t g_kernel_l1_index;
 /* Runtime accessors for the load metadata.  Use these (not the
  * compile-time KERN_PA_BASE / KERNEL_VIRT_OFFSET literals) in any
  * code that needs to keep working when the kernel is loaded at a
- * non-QEMU-virt physical address.  Until blocker #3 lands, the
- * literals and the runtime values agree on QEMU virt, so existing
- * callers stay correct. */
+ * non-QEMU-virt physical address.  pmap_phys_to_virt() and
+ * pmap_virt_to_phys() below already do, so generic kernel code
+ * (heap, PMM, vmem, COW, etc.) is automatically PA-relocatable.
+ * On QEMU virt the runtime offset is bit-identical to
+ * KERNEL_VIRT_OFFSET, so the literals stay valid for any future
+ * static-init use that needs a compile-time constant. */
 static inline uint64_t fut_kernel_load_pa(void) {
     return g_kernel_load_pa;
 }

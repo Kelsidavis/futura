@@ -165,9 +165,18 @@ Device Tree Blob (DTB):
 
 m1n1 passes the Apple device tree in X0 at boot. Futura's device tree
 parser (kernel/dtb/arm64_dtb.c) will:
-  - Detect Apple M1/M2/M3 platforms
+  - Detect Apple M1/M2/M3/M4 platforms
   - Extract hardware addresses (UART, AIC, ANS mailbox, NVMe)
-  - Initialize platform-specific drivers
+  - Initialize platform-specific drivers (post-MMU)
+
+Apple Silicon bring-up status:
+  - boot.S MMU setup is now PA-relocatable + 48-bit VA, so the kernel
+    image can load anywhere m1n1 chooses to drop it
+    (see docs/APPLE_SILICON_BRINGUP_PLAN.md for details).
+  - Remaining gating items before a real-hardware boot succeeds:
+      * s5l-UART early-debug (kernel currently uses PL011 at the
+        QEMU-virt VA until fut_platform_late_init swaps backends).
+      * AIC dispatch in boot.S's IRQ entry (currently GIC-only).
 
 If you need a custom DTB:
   1. Extract from m1n1: python3 -m m1n1.run m1n1.macho --dump-fdt fdt.dtb

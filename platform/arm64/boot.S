@@ -1011,39 +1011,15 @@ irq_handler_entry:
  */
 .type fut_irq_handler, @function
 fut_irq_handler:
-    /* Read the GIC's IAR.  x0 returns the *raw* IAR value (IRQ ID in
-     * low 10 bits + CPU ID in bits 12:10).  Save it whole so we can
-     * echo it back to EOIR — GICv2 requires that. */
+    /* Thin trampoline to the C dispatcher (platform_init.c:
+     * fut_irq_dispatch).  The C function holds the GIC IAR/EOI flow
+     * and the timer-vs-other branch — both of which are easier to
+     * keep right in C than in asm — and can transparently delegate
+     * to apple_aic_handle_irq() once the AIC backend is installed by
+     * the platform-init path on Apple Silicon (blocker #5 in
+     * docs/APPLE_SILICON_BRINGUP_PLAN.md). */
     stp     x29, x30, [sp, #-16]!
-    bl      fut_irq_acknowledge_raw
-    mov     x19, x0                   /* x19 = raw IAR value */
-    and     x20, x0, #0x3FF           /* x20 = IRQ ID */
-
-    /* Spurious (IRQ ID == 1023)? Just return — IAR auto-deactivates
-     * spurious reads, no EOI needed. */
-    mov     x1, #1023
-    cmp     x20, x1
-    beq     fut_irq_handler_done
-
-    /* Timer (IRQ 30)? */
-    cmp     x20, #30
-    beq     1f
-
-    /* Other IRQ: no dispatch framework yet, just EOI. */
-    mov     x0, x19
-    bl      fut_irq_send_eoi
-    b       fut_irq_handler_done
-
-1:  bl      fut_timer_irq_handler
-    mov     x0, x19                   /* EOI with raw IAR value */
-    bl      fut_irq_send_eoi
-    /* Intentionally no cooperative fut_thread_yield from here — that
-     * snapshots PSTATE.I=1 (hardware-set on exception entry) into the
-     * suspended thread and stops further timer ticks dead.  Tick-driven
-     * preemption still works via the IRET-style path on exception
-     * return. */
-
-fut_irq_handler_done:
+    bl      fut_irq_main
     ldp     x29, x30, [sp], #16
     ret
 

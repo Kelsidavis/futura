@@ -83,6 +83,16 @@ void fut_serial_putc(char c);
 void fut_serial_set_putc_backend(void (*fn)(char c));
 
 /**
+ * Install a platform-specific IRQ dispatch backend.  Once set,
+ * fut_irq_dispatch (called from boot.S/fut_irq_handler) delegates the
+ * entire IRQ handling to `fn` instead of running the default GICv2
+ * IAR/check/EOI flow.  Apple Silicon platform-init swaps in
+ * apple_aic_handle_irq() so AIC-routed interrupts dispatch correctly
+ * without trying to touch non-existent GICC/GICD MMIO.
+ */
+void fut_irq_set_dispatch_backend(void (*fn)(void));
+
+/**
  * Write a null-terminated string to serial console.
  *
  * @param str String to write

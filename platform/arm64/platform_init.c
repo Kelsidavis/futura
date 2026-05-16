@@ -876,6 +876,65 @@ uint32_t fut_irq_acknowledge_raw(void) {
     return mmio_read32(&gicc[GICC_IAR / 4]);
 }
 
+/* ============================================================
+ *   IRQ Dispatch (platform-aware)
+ * ============================================================
+ *
+ * boot.S/fut_irq_handler is now a thin asm trampoline that calls
+ * fut_irq_main() below.  By default this runs the GICv2 IAR/EOI
+ * flow that QEMU virt and most reference ARM64 boards use.  On
+ * Apple Silicon the AIC platform-init can swap the entire dispatch
+ * out via `fut_irq_set_dispatch_backend(apple_aic_handle_irq)`,
+ * which short-circuits the GIC accesses (those would write into
+ * non-existent peripheral MMIO on Apple hardware).
+ *
+ * Distinct from `fut_irq_dispatch(frame)` in kernel/irq/arm64_irq.c
+ * which is an older frame-aware dispatcher (unused at present —
+ * boot.S calls fut_irq_handler which now calls fut_irq_main). */
+
+static void (*g_irq_dispatch_backend)(void) = NULL;
+
+void fut_irq_set_dispatch_backend(void (*fn)(void)) {
+    g_irq_dispatch_backend = fn;
+}
+
+extern void fut_timer_irq_handler(void);
+
+void fut_irq_main(void) {
+    /* Platform-specific backend installed?  Defer entirely to it
+     * (e.g. apple_aic_handle_irq() does its own ack + clear and
+     * doesn't use the IAR/EOI two-step). */
+    if (g_irq_dispatch_backend) {
+        g_irq_dispatch_backend();
+        return;
+    }
+
+    /* Default GICv2 flow — replaces the previous inline asm in
+     * boot.S/fut_irq_handler.  Same semantics: read IAR (keeping
+     * the raw value for EOI), bail on spurious (IRQ ID 1023, which
+     * the GIC auto-deactivates), dispatch to the timer ISR on IRQ
+     * 30 (ARM Generic Timer PPI), then echo IAR back to EOIR. */
+    uint32_t iar = fut_irq_acknowledge_raw();
+    uint32_t irq_id = iar & 0x3FF;
+
+    if (irq_id == 1023) {
+        return;  /* spurious — IAR auto-deactivates */
+    }
+
+    if (irq_id == 30) {
+        fut_timer_irq_handler();
+    }
+    /* No dispatch framework yet for other IRQs; still issue EOI so
+     * the GIC will deliver the next one. */
+
+    fut_irq_send_eoi(iar);
+    /* Intentionally no cooperative fut_thread_yield from here — that
+     * snapshots PSTATE.I=1 (hardware-set on exception entry) into the
+     * suspended thread and stops further timer ticks dead.  Tick-
+     * driven preemption still works via the IRET-style path on
+     * exception return. */
+}
+
 /* Legacy helper that returns just the IRQ ID (or -1 on spurious).
  * Kept for callers that don't need the raw IAR value, but cannot be
  * paired with fut_irq_send_eoi any more — use the raw API. */

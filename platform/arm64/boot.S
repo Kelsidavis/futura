@@ -221,13 +221,18 @@ bss_cleared:
      * We'll use 2MB block mappings at level 2 for simplicity
      */
 
-    /* Get base address of boot page tables
-     * NOTE: For 39-bit VA (T0SZ=25), we start at Level 1, NOT Level 0!
-     * ARM64 page table walk starts at different levels based on VA size:
-     *   48-bit VA: L0  (T0SZ=16)
-     *   39-bit VA: L1  (T0SZ=25) ← We use this
-     *   30-bit VA: L2  (T0SZ=34)
-     */
+    /* Get base address of boot L1 table.
+     *
+     * We use 48-bit VA (T0SZ = T1SZ = 16) so the walk starts at L0,
+     * which is set up below as a wrapper that points at this L1
+     * table.  L1/L2 contents still mirror the original 39-bit
+     * layout (peripherals at L1[0], DRAM at L1[load_PA >> 30]),
+     * which means the existing 2654/2654 selftest is bit-identical
+     * to the pre-48-bit-VA flow.  ARM64 4 KiB-granule walk depth by
+     * VA size:
+     *   48-bit VA: L0 (T0SZ=16) ← We use this
+     *   39-bit VA: L1 (T0SZ=25)
+     *   30-bit VA: L2 (T0SZ=34) */
     adrp    x0, boot_l1_table
     add     x0, x0, :lo12:boot_l1_table
 
@@ -244,7 +249,7 @@ bss_cleared:
     // mov     x11, #0x31                
     // strb    w11, [x10] 
 
-    /* Setup L1 table (this is the root table for 39-bit VA)
+    /* Setup L1 table (L0 root above wraps this — see MMU enable comment)
      * L1 entry 0 (VA 0x00000000-0x3FFFFFFF): Point to L2_peripherals
      * L1 entry 1 (VA 0x40000000-0x7FFFFFFF): Point to L2_dram
      */
@@ -523,16 +528,20 @@ bss_cleared:
     // mov     x11, #0x38                
     // strb    w11, [x10] 
 
-    /* Enable MMU (2025-11-05: Fixed page table level bug!)
+    /* Enable MMU.
      *
-     * Previous attempts failed because we used L0 as root table,
-     * but for 39-bit VA (T0SZ=25), ARM64 starts at Level 1!
+     * Page table layout (48-bit VA, T0SZ=T1SZ=16, L0 root since
+     * commit ffd99e31 — see docs/APPLE_SILICON_BRINGUP_PLAN.md):
      *
-     * Corrected structure:
-     * - TTBR0/TTBR1 → L1 table (root for 39-bit VA)
-     * - L1[0] → L2_peripherals (80 x 2MB = 160MB for UART/GIC)
-     * - L1[1] → L2_dram (512 x 2MB = 1GB for kernel)
-     */
+     * - TTBR0/TTBR1 → L0 table (root for 48-bit VA)
+     * - L0[load_PA >> 39]  → boot_l1_table (identity DRAM)
+     * - L0[511]            → kernel_l1_table (high-VA kernel)
+     * - L1[0]              → L2_peripherals (1 GiB of UART / GIC / MMIO)
+     * - L1[load_PA >> 30]  → L2_dram (1 GiB of identity DRAM)
+     * - L2 entries are 2 MiB blocks
+     *
+     * For QEMU virt the load PA is 0x40200000 so L0 idx = 0 and
+     * L1 idx = 1, exactly matching the pre-48-bit-VA layout. */
     mrs     x0, sctlr_el1
     orr     x0, x0, #(1 << 0)    /* M: Enable MMU */
     orr     x0, x0, #(1 << 2)    /* C: Enable data cache */

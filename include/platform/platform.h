@@ -71,6 +71,18 @@ void fut_serial_enable_irq_mode(void);
 void fut_serial_putc(char c);
 
 /**
+ * Install a platform-specific putc backend.  Once set, fut_serial_putc
+ * delegates to `fn` instead of the default PL011 (QEMU virt) MMIO path.
+ *
+ * Used for the Apple Silicon bring-up: apple_uart_init() registers the
+ * s5l-uart's putc as the backend so kernel output works on real Apple
+ * hardware after the platform driver initialises.  Until a backend is
+ * installed (or if NULL is passed back), fut_serial_putc keeps the
+ * default PL011 behaviour — QEMU virt is unaffected.
+ */
+void fut_serial_set_putc_backend(void (*fn)(char c));
+
+/**
  * Write a null-terminated string to serial console.
  *
  * @param str String to write

@@ -19,6 +19,9 @@
 /* Base address of UART registers (set during init) */
 static volatile uint8_t *uart_base = NULL;
 
+/* Forward declaration for the backend trampoline installed by init. */
+void fut_apple_uart_putc_thunk(char ch);
+
 /* Helper macros for register access */
 #define UART_READ32(offset)      (*((volatile uint32_t *)(uart_base + (offset))))
 #define UART_WRITE32(offset, val) (*((volatile uint32_t *)(uart_base + (offset))) = (val))
@@ -74,9 +77,25 @@ bool fut_apple_uart_init(const fut_platform_info_t *info, uint32_t baudrate) {
     /* Enable UART: RX interrupt mode, TX interrupt mode */
     UART_WRITE32(UCON, UCON_RX_MODE_INT | UCON_TX_MODE_INT | UCON_RX_TIMEOUT);
 
+    /* Hook into the platform-agnostic serial console.  After this
+     * point, every fut_serial_putc() (and therefore every fut_printf)
+     * delegates to the s5l-uart instead of the QEMU-virt PL011 MMIO
+     * path.  The thunk is needed because fut_apple_uart_putc takes a
+     * fut_platform_info_t* arg that callers in apple_uart.c never use
+     * (uart_base is cached at module scope), so adapt the signature to
+     * the platform-agnostic `void (*)(char)` shape. */
+    extern void fut_serial_set_putc_backend(void (*fn)(char c));
+    fut_serial_set_putc_backend(fut_apple_uart_putc_thunk);
+
     fut_printf("[UART] Apple s5l-uart initialized successfully\n");
 
     return true;
+}
+
+/* Thin trampoline so platform.h's `void (*)(char)` backend signature
+ * matches the public Apple UART API which takes a platform_info ptr. */
+void fut_apple_uart_putc_thunk(char ch) {
+    fut_apple_uart_putc(NULL, ch);
 }
 
 /* ============================================================

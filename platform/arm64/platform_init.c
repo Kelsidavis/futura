@@ -437,10 +437,30 @@ void fut_serial_enable_irq_mode(void) {
      */
 }
 
+/* Platform-specific putc backend.  Installed by fut_serial_set_putc_backend
+ * (e.g. apple_uart_init() registers the s5l-uart's putc here).  NULL
+ * means "fall through to the default PL011 / QEMU virt path below". */
+static void (*g_serial_putc_backend)(char c) = NULL;
+
+void fut_serial_set_putc_backend(void (*fn)(char c)) {
+    g_serial_putc_backend = fn;
+}
+
 void fut_serial_putc(char c) {
-    /* Capture in kernel log ring buffer for dmesg */
+    /* Capture in kernel log ring buffer for dmesg.  This always runs
+     * regardless of which backend the platform uses — dmesg should
+     * see every kernel-emitted character. */
     extern void klog_write(const char *data, size_t len);
     klog_write(&c, 1);
+
+    /* If a platform-specific backend is installed, delegate to it and
+     * skip the PL011 path below.  Apple Silicon installs an s5l-uart
+     * backend from fut_apple_uart_init() once the driver has cached
+     * the DTB-discovered UART base. */
+    if (g_serial_putc_backend) {
+        g_serial_putc_backend(c);
+        return;
+    }
 
     volatile uint8_t *uart = (volatile uint8_t *)UART0_BASE;
 

@@ -3229,7 +3229,7 @@ run-clean:
 	@$(MAKE) DEBUG=$(DEBUG) HEADFUL=$(HEADFUL) ASYNC=$(ASYNC) MEM=$(MEM) EXTRA_QEMU_FLAGS="$(EXTRA_QEMU_FLAGS)" run
 
 help-run:
-	@echo "make run              # build, stage, and boot headless Wayland demo"
+	@echo "make run              # build, stage, and boot headless Wayland session"
 	@echo "make run-debug        # enable DEBUG_* toggles and run headless"
 	@echo "make run-headful      # run with QEMU display (GTK with virtio-gpu)"
 	@echo "make run-clean        # clean artifacts and re-run demo"
@@ -3242,7 +3242,7 @@ help-run:
 	@echo "  SPICE=1             # use SPICE display (headless-compatible)"
 	@echo "  DEBUG=1             # enable DEBUG_WAYLAND/DEBUG_NETUNIX"
 	@echo "  ASYNC=1             # enable async self-tests via kernel cmdline"
-	@echo "  AUTOEXIT=1          # request Wayland demo to auto-exit after launch"
+	@echo "  AUTOEXIT=1          # request Wayland session to auto-exit after launch"
 	@echo "  EXTRA_QEMU_FLAGS='-s -S' # append custom QEMU flags"
 	@echo
 	@echo "Display backend (HEADFUL mode):"
@@ -3509,7 +3509,7 @@ help:
 	@echo "  kernel            - Build kernel only"
 	@echo "  userland          - Build userland services only"
 	@echo "  third_party-wayland - Build vendored Wayland libraries"
-	@echo "  run               - Build and boot Wayland demo (headless)"
+	@echo "  run               - Build and boot the Wayland session (headless)"
 	@echo "  run-headful       - Build and boot with QEMU window"
 	@echo "  run-debug         - Build, enable DEBUG toggles, and boot"
 	@echo "  run-clean         - Clean artifacts then run demo"

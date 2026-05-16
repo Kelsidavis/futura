@@ -1,15 +1,18 @@
 # Apple Silicon Bring-up Plan
 
 **Last Updated**: 2026-05-16
-**Status**: 🚧 Foundation only — kernel does **not yet boot** on real Apple
-Silicon hardware.  `make m1n1-payload` produces a valid m1n1-compatible
-Image.gz with the ARM64 Linux header, but the kernel's early MMU setup
-is still QEMU-virt-tuned.
+**Status**: 🚧 Kernel-side blockers 4.5 of 5 landed (MMU + UART + IRQ
+dispatch all platform-aware); not yet validated on real Apple Silicon
+hardware.  `make m1n1-payload` produces a valid m1n1-compatible
+Image.gz with the ARM64 Linux header.  All blocker progress is
+implemented behind runtime detection so that QEMU virt's selftest
+suite (currently 2654/2654 PASS under `qemu-system-aarch64 -M virt`)
+stays green at every step.
 
-This document captures the staged work needed to get the existing
-ARM64 kernel (currently `make test-arm64` → 2654/2654 PASS under
-`qemu-system-aarch64 -M virt`) booting on a real M1/M2/M3/M4 Mac via
-m1n1.
+This document captures the staged work originally needed to get the
+ARM64 kernel booting on a real M1/M2/M3/M4 Mac via m1n1.  Most
+items are now ✅ LANDED — see the per-blocker sections for the
+commit references and remaining gaps.
 
 ## What Works Today
 
@@ -28,11 +31,14 @@ m1n1.
   implementer field is saved in `x19` so future setup code can
   branch on platform without re-reading the register.
 
-## What's Still Missing
+## Blocker Status
 
-The reason the kernel doesn't actually boot on Apple Silicon today
-breaks down into five blockers.  Each can be tackled independently and
-verified incrementally — items 1 and 2 unblock the rest.
+Originally five blockers stood between today's state and a successful
+Apple Silicon boot.  Most are now landed — the only remaining piece
+on the kernel side is the pre-MMU early-debug asm path in boot.S,
+which is currently inactive (writes are commented out), so a real
+hardware boot attempt now depends on actual M1/M2 verification work,
+not further code design.
 
 ### 1. Dynamic load-PA detection in `boot.S` ✅ LANDED (commit `c028e0c3`)
 

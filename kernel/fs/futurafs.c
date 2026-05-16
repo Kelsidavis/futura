@@ -20,6 +20,20 @@
 /* FuturaFS vnode operations - initialized at runtime to avoid ARM64 relocation issues */
 static struct fut_vnode_ops futurafs_vnode_ops;
 
+/* Wrapper around fut_get_time_ns that guarantees a non-zero result.
+ *
+ * Inodes use a stored mtime/atime/ctime value of 0 as the "never set"
+ * sentinel — getattr clamps non-zero ns values that round down to zero
+ * seconds, but cannot distinguish "never set" from "set during the first
+ * 10 ms of boot".  Returning at least 1 ns from creation/touch ensures
+ * downstream getattr clamping always fires, so freshly-created files
+ * always report a non-zero second-level timestamp on ARM64 where ticks
+ * advance at 100 Hz. */
+static inline uint64_t futurafs_now_ns(void) {
+    uint64_t now = fut_get_time_ns();
+    return now ? now : 1;
+}
+
 /* ============================================================
  *   I/O Transition Wrappers (Dual-Mode Support)
  * ============================================================ */
@@ -1089,8 +1103,8 @@ static void futurafs_dir_add_callback(int result, void *ctx) {
         if (add_ctx->file_type == FUTURAFS_FT_DIR) {
             add_ctx->dir_info->disk_inode.nlinks++;
         }
-        add_ctx->dir_info->disk_inode.mtime = fut_get_time_ns();
-        add_ctx->dir_info->disk_inode.ctime = fut_get_time_ns();
+        add_ctx->dir_info->disk_inode.mtime = futurafs_now_ns();
+        add_ctx->dir_info->disk_inode.ctime = futurafs_now_ns();
         add_ctx->dir_info->dirty = true;
 
         /* Mark directory vnode as modified */
@@ -2784,7 +2798,7 @@ static ssize_t futurafs_file_write_direct(struct futurafs_inode_info *inode_info
     }
 
     if (inode_dirtied) {
-        uint64_t now = fut_get_time_ns();
+        uint64_t now = futurafs_now_ns();
         inode_info->disk_inode.mtime = now;
         inode_info->disk_inode.ctime = now;
         int wret = futurafs_write_inode(inode_info->mount, inode_info->ino,
@@ -3501,7 +3515,7 @@ static ssize_t futurafs_vnode_read(struct fut_vnode *vnode, void *buf, size_t si
 
     /* Update atime on successful read (POSIX) */
     if (ret > 0) {
-        inode_info->disk_inode.atime = fut_get_time_ns();
+        inode_info->disk_inode.atime = futurafs_now_ns();
     }
     return ret;
 }
@@ -3517,7 +3531,7 @@ static ssize_t futurafs_vnode_write(struct fut_vnode *vnode, const void *buf, si
         vnode->size = inode_info->disk_inode.size;
 
         /* Update mtime/ctime (nanoseconds since epoch) */
-        uint64_t now = fut_get_time_ns();
+        uint64_t now = futurafs_now_ns();
         inode_info->disk_inode.mtime = now;
         inode_info->disk_inode.ctime = now;
     }
@@ -3669,7 +3683,7 @@ static int futurafs_vnode_setattr(struct fut_vnode *vnode, const struct fut_stat
         return 0;
     }
 
-    disk_inode->ctime = fut_get_time_ns();
+    disk_inode->ctime = futurafs_now_ns();
     inode_info->dirty = true;
 
     int ret = futurafs_write_inode(inode_info->mount, inode_info->ino, disk_inode);
@@ -3764,7 +3778,7 @@ static int futurafs_vnode_create(struct fut_vnode *dir, const char *name, uint32
     inode.blocks = 0;
 
     /* Set timestamps on creation */
-    uint64_t now = fut_get_time_ns();
+    uint64_t now = futurafs_now_ns();
     inode.atime = now;
     inode.mtime = now;
     inode.ctime = now;
@@ -3878,7 +3892,7 @@ static int futurafs_vnode_mkdir(struct fut_vnode *dir, const char *name, uint32_
     inode.direct[0] = new_block;
 
     /* Set timestamps on creation */
-    uint64_t now = fut_get_time_ns();
+    uint64_t now = futurafs_now_ns();
     inode.atime = now;
     inode.mtime = now;
     inode.ctime = now;
@@ -3970,7 +3984,7 @@ static int futurafs_vnode_unlink(struct fut_vnode *dir, const char *name) {
     }
 
     /* Update parent directory timestamps (entry removed) */
-    uint64_t now = fut_get_time_ns();
+    uint64_t now = futurafs_now_ns();
     dir_info->disk_inode.mtime = now;
     dir_info->disk_inode.ctime = now;
 
@@ -4092,7 +4106,7 @@ static int futurafs_vnode_rmdir(struct fut_vnode *dir, const char *name) {
     }
 
     /* Update parent directory timestamps (entry removed) */
-    uint64_t now_rmdir = fut_get_time_ns();
+    uint64_t now_rmdir = futurafs_now_ns();
     dir_info->disk_inode.mtime = now_rmdir;
     dir_info->disk_inode.ctime = now_rmdir;
 
@@ -4165,7 +4179,7 @@ static int futurafs_vnode_symlink(struct fut_vnode *parent, const char *linkname
     inode.size = target_len;
 
     /* Set timestamps and inherit uid/gid */
-    uint64_t now = fut_get_time_ns();
+    uint64_t now = futurafs_now_ns();
     inode.atime = now;
     inode.mtime = now;
     inode.ctime = now;
@@ -4273,7 +4287,7 @@ static int futurafs_vnode_truncate(struct fut_vnode *vnode, uint64_t length) {
     }
 
     struct futurafs_mount *mount = info->mount;
-    uint64_t now = fut_get_time_ns();
+    uint64_t now = futurafs_now_ns();
 
     if (length == 0) {
         /* Truncate to zero: release all data blocks */
@@ -4361,12 +4375,21 @@ static int futurafs_vnode_getattr(struct fut_vnode *vnode, struct fut_stat *st) 
     st->st_blocks = (uint64_t)info->disk_inode.blocks * (FUTURAFS_BLOCK_SIZE / 512);
     st->st_dev = vnode->mount ? vnode->mount->st_dev : 0;
 
-    /* Timestamps from disk inode (stored as nanoseconds since epoch) */
+    /* Timestamps from disk inode (stored as nanoseconds since epoch).
+     *
+     * Clamp to ≥1 second when the stored ns value is non-zero but
+     * truncates to zero seconds — early-boot timestamps on ARM64 can
+     * have sub-second precision (fut_get_time_ns is tick-based at
+     * 100 Hz = 10 ms), which would otherwise leave st_*time = 0
+     * and trip stat-time sentinel checks.  Same pattern ramfs uses. */
     st->st_atime = info->disk_inode.atime / 1000000000ULL;
+    if (st->st_atime == 0 && info->disk_inode.atime > 0) st->st_atime = 1;
     st->st_atime_nsec = info->disk_inode.atime % 1000000000ULL;
     st->st_mtime = info->disk_inode.mtime / 1000000000ULL;
+    if (st->st_mtime == 0 && info->disk_inode.mtime > 0) st->st_mtime = 1;
     st->st_mtime_nsec = info->disk_inode.mtime % 1000000000ULL;
     st->st_ctime = info->disk_inode.ctime / 1000000000ULL;
+    if (st->st_ctime == 0 && info->disk_inode.ctime > 0) st->st_ctime = 1;
     st->st_ctime_nsec = info->disk_inode.ctime % 1000000000ULL;
 
     return 0;
@@ -4536,7 +4559,7 @@ static int futurafs_vnode_link(struct fut_vnode *old_vnode, const char *oldpath,
     /* Increment nlinks on the target inode and update ctime */
     old_info->disk_inode.nlinks++;
     old_vnode->nlinks++;
-    old_info->disk_inode.ctime = fut_get_time_ns();
+    old_info->disk_inode.ctime = futurafs_now_ns();
     ret = futurafs_write_inode(mount, old_info->ino, &old_info->disk_inode);
     if (ret < 0) return ret;
 
@@ -4921,7 +4944,7 @@ int fut_futurafs_format(struct fut_blockdev *dev, const char *label, uint32_t in
     sb.data_blocks_start = data_blocks_start;
 
     fut_printf("[FUTURAFS-FMT] calling fut_get_time_ns...\n");
-    uint64_t format_now = fut_get_time_ns() / 1000000000ULL;
+    uint64_t format_now = futurafs_now_ns() / 1000000000ULL;
     fut_printf("[FUTURAFS-FMT] fut_get_time_ns returned, format_now=%llu\n",
                (unsigned long long)format_now);
     sb.mount_time = format_now;
@@ -4975,7 +4998,7 @@ int fut_futurafs_format(struct fut_blockdev *dev, const char *label, uint32_t in
     root_inode.blocks = 0;
 
     /* Set timestamps on root inode */
-    uint64_t format_time_ns = fut_get_time_ns();
+    uint64_t format_time_ns = futurafs_now_ns();
     root_inode.atime = format_time_ns;
     root_inode.mtime = format_time_ns;
     root_inode.ctime = format_time_ns;

@@ -899,6 +899,7 @@ void fut_irq_set_dispatch_backend(void (*fn)(void)) {
 }
 
 extern void fut_timer_irq_handler(void);
+int fut_dispatch_irq(uint32_t irq_id);
 
 void fut_irq_main(void) {
     /* Platform-specific backend installed?  Defer entirely to it
@@ -923,9 +924,14 @@ void fut_irq_main(void) {
 
     if (irq_id == 30) {
         fut_timer_irq_handler();
+    } else {
+        /* Dispatch to the registered handler from irq_handlers[]
+         * (populated by fut_register_irq_handler — e.g. uart_irq_handler
+         * for FUT_IRQ_UART).  No-op if no handler is registered.
+         * Matches the pattern in gic_irq_handler.c that the
+         * arm64_vectors.S exception entry uses. */
+        fut_dispatch_irq(irq_id);
     }
-    /* No dispatch framework yet for other IRQs; still issue EOI so
-     * the GIC will deliver the next one. */
 
     fut_irq_send_eoi(iar);
     /* Intentionally no cooperative fut_thread_yield from here — that

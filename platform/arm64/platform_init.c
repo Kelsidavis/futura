@@ -1375,7 +1375,7 @@ void arch_memory_config(uintptr_t *ram_start, uintptr_t *ram_end, size_t *heap_s
     uintptr_t heap_pa = (kend_pa + 0x1FFFFFULL) & ~0x1FFFFFULL;
     *ram_start = heap_pa;
     *ram_end   = 0x80000000;  /* 1 GB DRAM end — matches boot.S L2_dram window */
-    *heap_size = 32 * 1024 * 1024;  /* 32MB kernel heap */
+    *heap_size = 128 * 1024 * 1024;  /* 128 MB kernel heap (selftest suite burns ~70 MB) */
 }
 
 /**

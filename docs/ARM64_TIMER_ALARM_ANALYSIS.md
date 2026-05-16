@@ -5,6 +5,22 @@
 **Generated**: 2025-11-12
 **Analysis Focus**: Timer interrupt routing, alarm() syscall, and SIGALRM delivery on ARM64
 
+## Status (2026-05-16): ✅ RESOLVED
+
+The "PARTIALLY COMPLETE but CRITICAL GAP" identified below is closed.
+The ARM Generic Timer ticks continuously under QEMU virt now (commit
+chain anchored at `5082fb59`, `41e63e09`, `3ddf3268`):
+
+- GICv2 `GICC_EOIR` echoes the full IAR (previous `uint8_t` truncation
+  kept the GIC from deactivating PPI 30 → timer fired exactly once).
+- Timer is wired to PPI 30 (CNTP_*) rather than PPI 27 (virtual timer).
+- `fut_schedule()` calls `sched_irqrestore` on the cooperative resume
+  path so a yielded thread doesn't inherit `PSTATE.I=1`.
+
+`make test-arm64` now drives 2654/2654 selftests including the
+alarm/itimer family.  This document is retained for the diagnostic
+narrative.
+
 ---
 
 ## Executive Summary

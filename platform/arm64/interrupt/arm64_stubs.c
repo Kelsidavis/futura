@@ -23,7 +23,14 @@
  * stubbed on ARM64 (the perf suite depends on x86 qemu_exit and
  * cycle-counter plumbing that isn't wired here yet). */
 
-void fut_perf_selftest_schedule(void) {
+/* Forward decl matches the real signature in kernel/tests/perf.c so
+ * callers that pass a task pointer (e.g. selftest_sequential_runner)
+ * link cleanly on ARM64 instead of relying on K&R-style any-args
+ * tolerance.  Body is still a no-op until the ARM64 cycle-counter
+ * plumbing for the perf harness lands. */
+struct fut_task;
+void fut_perf_selftest_schedule(struct fut_task *task) {
+    (void)task;
     /* Performance self-test not implemented for ARM64 */
 }
 

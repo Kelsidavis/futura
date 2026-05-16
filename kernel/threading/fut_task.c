@@ -249,8 +249,17 @@ fut_task_t *fut_task_create(void) {
      * even a soft limit of 0 fires SIGXCPU on the very first timer tick. */
     task->rlimit_cpu_last_sec = (uint64_t)-1;
 
-    /* Record creation time for /proc/pid/stat starttime field */
-    { extern uint64_t fut_get_ticks(void); task->start_ticks = fut_get_ticks(); }
+    /* Record creation time for /proc/pid/stat starttime field.  Linux
+     * userspace tools (ps, top) and various test suites assume this is
+     * non-zero — start_time=0 is the sentinel for "kernel boot task".
+     * Tasks created very early during init (before the timer has fired
+     * even once) would otherwise get a literal 0; clamp to a minimum
+     * of 1 tick so the value stays distinguishable from "uninitialised". */
+    {
+        extern uint64_t fut_get_ticks(void);
+        uint64_t now = fut_get_ticks();
+        task->start_ticks = now ? now : 1;
+    }
 
     /* Initialize per-task file descriptor table */
     task->max_fds = FUT_FD_TABLE_INITIAL_SIZE;

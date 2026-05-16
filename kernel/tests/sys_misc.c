@@ -23132,17 +23132,17 @@ static void test_proc_maps_anon_devino(void) {
      * For anonymous (no vnode): dev="00:00", inode="0"
      * For file-backed: dev="00:01", inode=<nonzero>
      * Verify every line has a colon in the dev field (not the old "00:00 0" stuck-together format).
-     * Parse field 4 (0-indexed, space-delimited) and check it contains ':'. */
+     * Parse field 3 (0-indexed, space-delimited) — that's the dev field. */
     int lines_checked = 0;
     int lines_ok = 0;
     char *line = buf;
     while (line && *line) {
         char *nl = line;
         while (*nl && *nl != '\n') nl++;
-        /* Find field 4 (dev): skip fields 0-3 separated by spaces */
+        /* Skip past fields 0-2 (addr-addr, perms, offset) to land on field 3 (dev). */
         char *p = line;
         int field = 0;
-        while (p < nl && field < 4) {
+        while (p < nl && field < 3) {
             while (p < nl && *p == ' ') p++;  /* skip spaces */
             while (p < nl && *p != ' ') p++;  /* skip field */
             field++;

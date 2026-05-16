@@ -2795,7 +2795,13 @@ static size_t gen_modules(char *buf, size_t cap) {
     /* Module descriptor: name, simulated size (based on typical .a sizes) */
     struct mod_entry { const char *name; uint32_t size; };
 
-#if !defined(DRIVERS_QEMU)
+    /* The hard-coded module listings below describe the x86 driver build —
+     * VirtIO transport plus AMD/Intel chipset families.  On ARM64 the
+     * compiled-in drivers are a different set (Apple Silicon / Raspberry
+     * Pi families) and the x86 names are misleading, so emit an empty
+     * /proc/modules on non-x86 builds until an arch-specific listing is
+     * wired up. */
+#if !defined(DRIVERS_QEMU) && defined(__x86_64__)
     /* VirtIO drivers — core transport, listed when hardware drivers present */
     static const struct mod_entry virtio_mods[] = {
         { "virtio_blk",     16384 },
@@ -2900,7 +2906,7 @@ static size_t gen_modules(char *buf, size_t cap) {
     };
 #endif
 
-#if !defined(DRIVERS_QEMU)
+#if !defined(DRIVERS_QEMU) && defined(__x86_64__)
     /* Helper: emit one module line. Address increments by size each time. */
     uintptr_t addr = 0xffffffff80100000ULL;
 
@@ -2930,7 +2936,7 @@ static size_t gen_modules(char *buf, size_t cap) {
 #endif
 
 #undef EMIT_MOD_ARRAY
-#endif /* !DRIVERS_QEMU */
+#endif /* !DRIVERS_QEMU && __x86_64__ */
 
     return b.pos;
 }

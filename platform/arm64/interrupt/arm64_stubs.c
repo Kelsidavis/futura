@@ -221,6 +221,10 @@ int fut_stage_wayland_color_client_binary(void) {
 int fut_stage_second_stub_binary(void)  { return -ENODEV; }
 int fut_stage_fbtest_binary(void)       { return -ENODEV; }
 
+/* fut_stage_startup_sound stub for ARM64 lives in kernel/exec/elf64.c
+ * (the aarch64 #elif branch), alongside the other per-arch staging
+ * helpers.  Don't duplicate it here. */
+
 /* ============================================================
  *   Page Table Management
  * ============================================================

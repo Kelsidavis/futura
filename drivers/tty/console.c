@@ -231,12 +231,18 @@ void fut_console_start_input_thread(void) {
         return;
     }
 
-    /* Create input thread that feeds characters from serial to line discipline */
+    /* Create input thread that feeds characters from serial to line discipline.
+     * 8KB was too tight on ARM64: the blocking read path goes through
+     * fut_serial_getc_blocking → UART poll, and when the timer ISR preempts
+     * it the IRQ frame + scheduler chain runs on the same kernel stack,
+     * which overflowed the canary at byte 0 of an 8KB allocation (the
+     * value found there was a UART_FR pointer 0x*9000018, evidence the
+     * UART poll path was unwinding through the bottom of the stack). */
     g_console_input_thread = fut_thread_create(
         g_console_task,
         console_input_thread,
         NULL,
-        8192,  // 8KB stack
+        65536, // 64KB stack
         100    // Medium priority
     );
 

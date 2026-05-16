@@ -1513,6 +1513,18 @@ void exit_robust_list(fut_thread_t *thread) {
         return;
     }
 
+    /* Kernel threads (no user mm) cannot have a real robust list — any
+     * non-NULL value here is either stale from a freed task struct
+     * being reused, or set_robust_list() was called from a context
+     * where the userspace pointer is meaningless.  Walking it would
+     * dereference junk into kernel address space.  Skip for safety. */
+    extern struct fut_mm *fut_mm_kernel(void);
+    if (!thread->task ||
+        !thread->task->mm ||
+        thread->task->mm == fut_mm_kernel()) {
+        return;
+    }
+
     struct robust_list_head *head = (struct robust_list_head *)thread->robust_list;
 
     /* Validate and copy the list head from userspace */

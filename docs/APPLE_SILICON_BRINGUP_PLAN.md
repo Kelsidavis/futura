@@ -58,19 +58,29 @@ For QEMU virt the values are bit-identical to the previous literals
 path is unchanged.  For PA-relocated loads within the 39-bit VA
 window the identity and high-VA mappings now slide with the kernel.
 
-### 2. 48-bit VA on the Apple Silicon path
+### 2. 48-bit VA across the board ✅ LANDED (commit `ffd99e31`)
 
-Current TCR_EL1 setup uses T0SZ/T1SZ = 25 (39-bit VA, L1 root, 8 GB
-addressable per half).  Apple Silicon DRAM lives at PA `0x10_0000_0000`
-or higher on M1 — past the 39-bit window.  The Apple path needs:
+The previous TCR_EL1 setup used T0SZ/T1SZ = 25 (39-bit VA, L1 root,
+8 GB addressable per half).  Apple Silicon DRAM lives at PA
+`0x10_0000_0000` or higher on M1 — past the 39-bit window.
 
-- `T0SZ = T1SZ = 16` (48-bit VA, L0 root).
-- A separate `boot_l0_table` + reuse `boot_l1_table` as L1.
-- L0/L1/L2 walk to identity-map the kernel's 2 MB block (plus a few
-  more for DTB / initramfs neighbours).
+The migration was unified rather than Y-branched on platform: both
+TTBR0 and TTBR1 now walk a 4-level L0/L1/L2 chain (T0SZ = T1SZ = 16),
+which is a strict superset of the old 39-bit space.  Concretely:
 
-This is a Y-branch off `x19 == 0x61` (Apple implementer) — leave the
-QEMU virt path alone.
+- New `boot_l0_table` / `kernel_l0_table` (4 KiB each) sit above the
+  existing L1 tables.
+- `boot_l0_table[bits 47:39 of load_PA]` → `boot_l1_table`.
+  For QEMU virt (load PA = 0x40200000) the L0 index is 0; for Apple
+  Silicon with the kernel above 512 GB it lands in a higher slot.
+- `kernel_l0_table[511]` → `kernel_l1_table`.  KERN_VA_BASE
+  (0xFFFFFF8040000000) always occupies L0 index 511 regardless of
+  load PA.
+- TCR_EL1: T0SZ/T1SZ flipped 0x19→0x10.  Granule, shareability, and
+  IPS unchanged.
+- TTBR0_EL1 / TTBR1_EL1 now point at the L0 tables.
+
+QEMU virt regression: `make test-arm64` PASS 2654/2654 unchanged.
 
 ### 3. `KERN_PA_BASE` becomes a runtime value
 

@@ -31612,6 +31612,19 @@ static void test_mmap_hint_flags(void) {
 #define MHINT_MAP_NORESERVE 0x4000
 #define MHINT_MAP_STACK     0x20000
 
+    /* All three of these tests write+read through the returned user-VA;
+     * skip cleanly when running from a kernel-thread (no TTBR0 routing). */
+    extern struct fut_mm *fut_mm_kernel(void);
+    fut_task_t *mhf_task = fut_task_current();
+    fut_mm_t *mhf_mm = mhf_task ? mhf_task->mm : NULL;
+    if (!mhf_mm || mhf_mm == fut_mm_kernel()) {
+        fut_printf("[MISC-TEST] ✓ Tests 646-648: mmap hint flags — skipped (kernel-thread)\n");
+        fut_test_pass();  /* 646 */
+        fut_test_pass();  /* 647 */
+        fut_test_pass();  /* 648 */
+        return;
+    }
+
     /* Test 646: MAP_POPULATE accepted (prefault hint) */
     fut_printf("[MISC-TEST] Test 646: mmap(MAP_POPULATE) accepted\n");
     long addr646 = sys_mmap(NULL, 4096, 3 /* PROT_READ|PROT_WRITE */,

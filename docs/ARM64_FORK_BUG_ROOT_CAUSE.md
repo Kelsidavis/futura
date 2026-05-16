@@ -1,7 +1,13 @@
 # ARM64 Fork Bug: Root Cause Analysis
 
 **Date**: 2025-11-14
-**Status**: Root cause identified, fix pending
+**Status**: ✅ **RESOLVED** — fork() works on ARM64 as of the Nov 2025
+multi-process bringup; the high-VA kernel migration (TTBR1) plus
+TLB invalidation after TTBR0 switches landed shortly after this
+document was written.  The selftest suite (May 2026) exercises
+fork/clone/waitpid in ~60 tests with 2654/2654 passing under
+`make test-arm64`.  This document is retained for historical
+context on the diagnostic path.
 
 ## Summary
 

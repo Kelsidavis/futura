@@ -1362,17 +1362,19 @@ void arch_early_init(void) {
  * arch_memory_config - Provide ARM64 memory layout
  */
 void arch_memory_config(uintptr_t *ram_start, uintptr_t *ram_end, size_t *heap_size) {
-    /* ARM64 memory layout for QEMU virt machine (-m 512M)
-     * DRAM: 0x40000000 - 0x60000000 (512MB)
-     * DTB at 0x40000000, kernel loaded at 0x40200000 (QEMU ARM64 Image placement).
+    /* ARM64 memory layout for QEMU virt machine.
+     * DRAM base: 0x40000000.  DTB at base, kernel Image at 0x40200000.
      * Heap must begin past _stack_top to avoid clobbering BSS/stack.
-     * Boot page tables map full 1GB (0x40000000-0x80000000) via identity L2_dram. */
+     * Boot page tables (boot.S) map a full 1 GB of DRAM at
+     * 0x40000000-0x80000000, and the high-VA TTBR1 mapping also covers
+     * 1 GB of kernel-mode access into the same range, so use the full
+     * 1 GB window for PMM until DTB-driven sizing lands. */
     extern char _stack_top[];
     uintptr_t kend_pa = pmap_virt_to_phys((uintptr_t)_stack_top);
     /* Round up to 2 MiB so the heap starts on a section boundary. */
     uintptr_t heap_pa = (kend_pa + 0x1FFFFFULL) & ~0x1FFFFFULL;
     *ram_start = heap_pa;
-    *ram_end   = 0x60000000;  /* 512MB DRAM end */
+    *ram_end   = 0x80000000;  /* 1 GB DRAM end — matches boot.S L2_dram window */
     *heap_size = 32 * 1024 * 1024;  /* 32MB kernel heap */
 }
 

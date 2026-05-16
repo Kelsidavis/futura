@@ -68,8 +68,22 @@ _start:
  */
 .global _kernel_entry
 _kernel_entry:
-    /* Save device tree address */
+    /* Save device tree address (m1n1 and QEMU both pass DTB in x0). */
     mov     x20, x0
+
+    /* Stash the implementer field of MIDR_EL1 in x19 so later setup
+     * can branch on platform without re-reading the register after
+     * various clobbers.  Apple Silicon (M1/M2/M3/M4) reports
+     * implementer = 0x61 ('a').  QEMU cortex-a53 reports 0x41 ('A',
+     * ARM Ltd).  Apple Silicon support is still WIP — the bring-up
+     * gap covers dynamic load-PA mapping, 48-bit VA (Apple DRAM
+     * lives at PA 0x10_0000_0000+), s5l-UART early debug, and AIC
+     * wiring — so for now we just record the platform and continue
+     * with the QEMU-virt-tuned setup below.  See docs/ARM64_STATUS.md
+     * for the bring-up roadmap. */
+    mrs     x19, midr_el1
+    lsr     x19, x19, #24             /* implementer = MIDR_EL1[31:24] */
+    and     x19, x19, #0xff
 
     /* Check current exception level */
     mrs     x0, CurrentEL

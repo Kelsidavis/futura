@@ -60,6 +60,25 @@ extern uint64_t g_kernel_load_pa;
 extern uint64_t g_kernel_dram_pa;
 extern uint64_t g_kernel_l1_index;
 
+/* Runtime accessors for the load metadata.  Use these (not the
+ * compile-time KERN_PA_BASE / KERNEL_VIRT_OFFSET literals) in any
+ * code that needs to keep working when the kernel is loaded at a
+ * non-QEMU-virt physical address.  Until blocker #3 lands, the
+ * literals and the runtime values agree on QEMU virt, so existing
+ * callers stay correct. */
+static inline uint64_t fut_kernel_load_pa(void) {
+    return g_kernel_load_pa;
+}
+
+static inline uint64_t fut_kernel_dram_pa(void) {
+    return g_kernel_dram_pa;
+}
+
+static inline uint64_t fut_kernel_virt_offset(void) {
+    /* Runtime equivalent of KERNEL_VIRT_OFFSET = KERN_VA_BASE - load_PA. */
+    return KERN_VA_BASE - g_kernel_load_pa;
+}
+
 /* Convert physical address to kernel virtual address */
 static inline void *pmap_phys_to_virt(uint64_t pa) {
     return (void *)(pa + KERNEL_VIRT_OFFSET);

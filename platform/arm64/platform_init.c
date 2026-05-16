@@ -1180,6 +1180,30 @@ void fut_platform_early_init(uint32_t boot_magic, void *boot_info) {
     fut_serial_puts("\nFutura OS ARM64 Platform Initialization\n");
     fut_serial_puts("========================================\n\n");
 
+    /* Pull the kernel command line out of /chosen/bootargs (where QEMU
+     * deposits whatever was passed via -append) and seed the boot_args
+     * subsystem.  Without this, every boot_flag_enabled() call on ARM64
+     * silently returned its default, which made cmdline knobs like
+     * `async-tests=1`, `fb=0`, `no_xhci=1`, etc. ineffective and made
+     * `make test-arm64` always run the kernel idle to its 600 s timeout
+     * instead of letting the test harness reach qemu_exit(0). */
+    {
+        extern void fut_boot_args_init(const char *cmdline);
+        extern size_t fut_dtb_get_bootargs(uint64_t dtb_ptr,
+                                            char *out, size_t max_len);
+        static char cmdline_buf[512];
+        if (g_dtb_ptr != 0 &&
+            fut_dtb_get_bootargs(g_dtb_ptr, cmdline_buf,
+                                 sizeof(cmdline_buf)) > 0) {
+            fut_serial_puts("[INIT] Kernel cmdline: ");
+            fut_serial_puts(cmdline_buf);
+            fut_serial_puts("\n");
+            fut_boot_args_init(cmdline_buf);
+        } else {
+            fut_boot_args_init(NULL);
+        }
+    }
+
     /* Initialize GIC */
     fut_serial_puts("[INIT] Initializing GICv2...\n");
     fut_gic_init();

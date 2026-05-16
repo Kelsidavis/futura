@@ -51,6 +51,32 @@ Artifacts:
 
 ---
 
+## 3) ARM64 selftest harness (`make test-arm64`)
+
+Cross-build the ARM64 kernel and run the selftest suite under `qemu-system-aarch64 -M virt`:
+
+```bash
+make test-arm64
+```
+
+This target:
+
+1. Builds the kernel via `make PLATFORM=arm64 ENABLE_WAYLAND=0 kernel`.
+2. Boots `build/bin/futura_kernel.bin` with `-M virt -cpu cortex-a53 -m 1024M` and the cmdline `async-tests=1 futura.runtests=1`.
+3. Uses ARM64 semihosting (`-semihosting-config enable=on,target=native`) for `qemu_exit(0)` to terminate the VM with a real exit code.
+4. Caps the run at 600 s.
+
+A green run ends with:
+
+```
+[TEST] ALL TESTS PASSED (2654/2654)
+[HARNESS] PASS
+```
+
+The reachable suite count tracks the `planned_tests` sum in `kernel/kernel_main.c` (currently 2654 — five misc tests are gated out: `futex_bitset_selective_wakeup` and four branches that complete without firing `fut_test_pass`).  See `docs/ARM64_STATUS.md` for the bringup notes.
+
+---
+
 ## Expected Output Hints (x86-64)
 
 The early boot path emits short serial markers from the platform init code. If you need to confirm boot flow, look in `qemu.log` or the serial output from the harness run. For deeper traces, enable debug toggles:

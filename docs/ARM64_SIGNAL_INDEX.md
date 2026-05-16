@@ -1,7 +1,10 @@
 # ARM64 Signal Handling & Timers — Complete Index
 
 **Generated**: 2025-11-12
-**Status**: Priority work identified, documentation complete
+**Status**: ✅ Priority work landed — signal delivery, sigaction /
+sigprocmask / kill / pause / rt_sigreturn, and the timer/alarm path
+all exercise in the May-2026 2654/2654 selftest run.  Retained for
+the historical priority breakdown.
 
 ## Quick Links
 

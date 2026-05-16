@@ -61,7 +61,7 @@
  *   - UART: PL011 at 0x9000000 (virtio)
  *   - Interrupt Controller: GICv2 at 0x8000000/0x8010000
  *   - Timer: ARM Generic Timer
- *   - Memory: Configurable (512 MB default)
+ *   - Memory: 1 GB DRAM window (PMM ram_end=0x80000000)
  *
  * Apple Silicon (M1/M2/M3/M4):
  *   - UART: Apple s5l-uart (from platform/arm64/drivers/apple_uart.c)
@@ -973,8 +973,13 @@ void fut_platform_mem_init(uint64_t mem_lower, uint64_t mem_upper) {
 }
 
 uint64_t fut_platform_get_mem_size(void) {
-    /* QEMU virt machine typically provides 512MB; read from DTB in future */
-    return 512 * 1024 * 1024;  /* 512 MB (matches QEMU -m 512M) */
+    /* arch_memory_config() handles the actual PMM ram_start/ram_end window
+     * (currently 1 GB at 0x40000000-0x80000000, matching boot.S L2_dram).
+     * This helper is kept for callers that just want a coarse "how much
+     * DRAM does this platform expose" answer — return the boot-mapped
+     * 1 GB rather than the stale 512 MB.  Switch to DTB-driven sizing
+     * once boot.S can extend the kernel page tables. */
+    return 1024ULL * 1024 * 1024;  /* 1 GB — matches boot.S L2_dram + arch_memory_config */
 }
 
 void fut_platform_tlb_flush(void) {

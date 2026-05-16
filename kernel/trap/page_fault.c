@@ -744,7 +744,20 @@ bool fut_trap_handle_page_fault(fut_interrupt_frame_t *frame) {
             frame->pc = (uint64_t)(uintptr_t)window->resume;
             return true;  /* Redirect to copy fault handler */
         }
-        return false;  /* Kernel fault without uaccess window — unhandled */
+        /* No explicit uaccess window.  If the faulting address is in
+         * user VA space AND the current task has a valid user mm with
+         * a VMA covering this address, fall through to the normal
+         * demand-paging path below.  This lets kernel-mode code (e.g.
+         * kernel-thread selftests, kernel readers of /proc/self/maps
+         * + dereference) demand-page user mappings the same way EL0
+         * faults do, instead of unconditionally killing the thread.
+         *
+         * For faults that aren't in a known VMA, still fall through —
+         * the normal handler will reject with no-vma path. */
+        if (fault_addr >= 0xFFFFFF8000000000ULL) {
+            return false;  /* Kernel-VA fault — really unhandled */
+        }
+        /* User-VA from kernel mode — let demand-paging try. */
     }
 
     /* Extract write flag from ESR bit 6 (WnR: Write not Read).

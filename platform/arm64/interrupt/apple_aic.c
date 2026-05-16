@@ -1,10 +1,20 @@
-/* apple_aic.c - Apple Interrupt Controller (AIC) Implementation
+/* apple_aic.c - Apple Interrupt Controller (AIC) — Rust-backed wrapper
  *
  * Copyright (c) 2025 Kelsi Davis
  * Licensed under the MPL v2.0 — see LICENSE for details.
  *
- * Implementation of Apple Interrupt Controller for M1/M2/M3 SoCs.
- * Based on Asahi Linux AIC driver and documentation.
+ * Apple Interrupt Controller for M1/M2/M3/M4 SoCs.  This file is a
+ * thin C bridge over the Rust driver in `drivers/rust/apple_aic`
+ * (Asahi-Linux-derived implementation).  Per the project's
+ * Rust-only-drivers policy the actual register-level work lives in
+ * Rust; the C API here exists only to keep the call sites the rest
+ * of the arm64 platform code already targets (fut_apple_aic_*,
+ * apple_aic_handle_irq, fut_apple_irq_init) working unchanged.
+ *
+ * Earlier this file was a hand-rolled C stub that only knew about
+ * the ARM Generic Timer IRQ.  The Rust driver carries a full handler
+ * table, target-CPU routing, and IPI support — switch to it as part
+ * of the Apple Silicon bring-up chain.
  */
 
 #include <platform/arm64/apple_aic.h>
@@ -12,29 +22,9 @@
 #include <string.h>
 #include <stddef.h>
 
-/* ============================================================
- *   AIC Register Access
- * ============================================================ */
-
-/* Base address of AIC registers (set during init) */
-static volatile uint8_t *aic_base = NULL;
-
-/* Helper macros for register access */
-#define AIC_READ32(offset)      (*((volatile uint32_t *)(aic_base + (offset))))
-#define AIC_WRITE32(offset, val) (*((volatile uint32_t *)(aic_base + (offset))) = (val))
-
-/* ============================================================
- *   AIC Event Bitmap Helpers
- * ============================================================ */
-
-/**
- * Calculate the register offset and bit position for an IRQ.
- * AIC uses 32 IRQs per register (one bit per IRQ).
- */
-static inline void aic_irq_to_reg_bit(uint32_t irq_num, uint32_t *reg_offset, uint32_t *bit) {
-    *reg_offset = (irq_num / 32) * 4;  /* 4 bytes per register */
-    *bit = irq_num % 32;
-}
+/* Cached context returned by rust_aic_init.  NULL until
+ * fut_apple_aic_init succeeds. */
+static AppleAic *aic_ctx = NULL;
 
 /* ============================================================
  *   AIC Initialization
@@ -46,172 +36,71 @@ bool fut_apple_aic_init(const fut_platform_info_t *info) {
         return false;
     }
 
-    /* Map AIC base address */
-    aic_base = (volatile uint8_t *)info->aic_base;
-
-    /* Read AIC version/info register */
-    uint32_t aic_info = AIC_READ32(AIC_INFO);
-    uint32_t aic_version = (aic_info >> 16) & 0xFF;
-    uint32_t num_irqs = (aic_info & 0xFFFF);
-
-    fut_printf("[AIC] Apple Interrupt Controller detected\n");
-    fut_printf("[AIC] Version: 0x%x, IRQs: %u\n", aic_version, num_irqs);
+    fut_printf("[AIC] Apple Interrupt Controller detected (Rust driver)\n");
     fut_printf("[AIC] Base address: 0x%016llx\n", info->aic_base);
 
-    /* Mask all IRQs initially (write 0xFFFFFFFF to all MASK_SET registers) */
-    for (uint32_t i = 0; i < (AIC_MAX_IRQS / 32); i++) {
-        AIC_WRITE32(AIC_MASK_SET + (i * 4), 0xFFFFFFFF);
+    aic_ctx = rust_aic_init(info->aic_base);
+    if (!aic_ctx) {
+        fut_printf("[AIC] Error: rust_aic_init failed\n");
+        return false;
     }
 
-    /* Clear any pending events */
-    for (uint32_t i = 0; i < (AIC_MAX_IRQS / 32); i++) {
-        /* Read-only EVENT register, can't clear directly */
-        /* Instead, acknowledge all by writing to mask */
-    }
-
-    /* Enable IPI support */
-    AIC_WRITE32(AIC_IPI_MASK_CLR, 0xFFFFFFFF);  /* Unmask all IPI sources */
-
-    /* Get current CPU ID */
-    uint32_t cpu_id = fut_apple_aic_whoami();
-    fut_printf("[AIC] Initialized on CPU %u\n", cpu_id);
+    uint32_t cpu_id = rust_aic_whoami(aic_ctx);
+    fut_printf("[AIC] Initialized on CPU %u (IRQs=%u, ready=%d)\n",
+               cpu_id, rust_aic_num_irqs(aic_ctx),
+               rust_aic_is_ready(aic_ctx));
 
     return true;
 }
 
 /* ============================================================
- *   IRQ Control Functions
+ *   IRQ Control Functions (C API wrappers)
  * ============================================================ */
 
 void fut_apple_aic_enable_irq(uint32_t irq_num) {
-    if (irq_num >= AIC_MAX_IRQS) {
-        return;
-    }
-
-    uint32_t reg_offset, bit;
-    aic_irq_to_reg_bit(irq_num, &reg_offset, &bit);
-
-    /* Write to MASK_CLR to unmask (enable) the IRQ */
-    AIC_WRITE32(AIC_MASK_CLR + reg_offset, (1U << bit));
+    if (aic_ctx) rust_aic_enable_irq(aic_ctx, irq_num);
 }
 
 void fut_apple_aic_disable_irq(uint32_t irq_num) {
-    if (irq_num >= AIC_MAX_IRQS) {
-        return;
-    }
-
-    uint32_t reg_offset, bit;
-    aic_irq_to_reg_bit(irq_num, &reg_offset, &bit);
-
-    /* Write to MASK_SET to mask (disable) the IRQ */
-    AIC_WRITE32(AIC_MASK_SET + reg_offset, (1U << bit));
+    if (aic_ctx) rust_aic_disable_irq(aic_ctx, irq_num);
 }
 
 bool fut_apple_aic_is_pending(uint32_t irq_num) {
-    if (irq_num >= AIC_MAX_IRQS) {
-        return false;
-    }
-
-    uint32_t reg_offset, bit;
-    aic_irq_to_reg_bit(irq_num, &reg_offset, &bit);
-
-    /* Read EVENT register to check if IRQ is pending */
-    uint32_t event = AIC_READ32(AIC_EVENT + reg_offset);
-    return (event & (1U << bit)) != 0;
+    if (!aic_ctx) return false;
+    return rust_aic_is_pending(aic_ctx, irq_num) != 0;
 }
 
 void fut_apple_aic_ack_irq(uint32_t irq_num) {
-    if (irq_num >= AIC_MAX_IRQS) {
-        return;
-    }
-
-    /* On AIC, EOI is done by the hardware when the event is processed */
-    /* Some implementations may require explicit acknowledgment */
-    /* For now, this is a no-op - hardware auto-clears on read */
+    /* The AIC clears the event automatically on EVENT-register read.
+     * The Rust driver doesn't expose a separate ack — call sites that
+     * still expect one are kept happy with this no-op. */
+    (void)irq_num;
 }
 
-/* ============================================================
- *   IPI (Inter-Processor Interrupt) Functions
- * ============================================================ */
-
 void fut_apple_aic_send_ipi(uint32_t target_cpu, uint32_t ipi_num) {
-    if (target_cpu >= AIC_MAX_CPUS || ipi_num >= AIC_MAX_IPIS) {
-        return;
-    }
-
-    /* IPI_SEND register format: [31:24]=IPI num, [15:0]=target CPU mask */
-    uint32_t ipi_cmd = (ipi_num << 24) | (1U << target_cpu);
-    AIC_WRITE32(AIC_IPI_SEND, ipi_cmd);
+    if (aic_ctx) rust_aic_send_ipi(aic_ctx, target_cpu, ipi_num);
 }
 
 void fut_apple_aic_ack_ipi(uint32_t ipi_num) {
-    if (ipi_num >= AIC_MAX_IPIS) {
-        return;
-    }
-
-    /* Acknowledge IPI by writing IPI number to ACK register */
-    AIC_WRITE32(AIC_IPI_ACK, ipi_num);
+    if (aic_ctx) rust_aic_ack_ipi(aic_ctx, ipi_num);
 }
 
 uint32_t fut_apple_aic_whoami(void) {
-    /* Read WHOAMI register to get current CPU ID */
-    uint32_t whoami = AIC_READ32(AIC_WHOAMI);
-    return whoami & 0xFF;  /* Lower 8 bits contain CPU ID */
+    if (!aic_ctx) return 0;
+    return rust_aic_whoami(aic_ctx);
 }
 
 /* ============================================================
  *   IRQ Handler
  * ============================================================ */
 
-/* Timer interrupt handler (defined elsewhere) */
-extern void fut_timer_tick(void);
-
 void apple_aic_handle_irq(void) {
-    if (!aic_base) {
-        /* AIC not initialized yet - spurious interrupt */
-        return;
-    }
-
-    /* Read event pending bitmap */
-    uint32_t pending = AIC_READ32(AIC_EVENT_PENDING);
-
-    if (pending == 0) {
-        /* No pending interrupts - spurious */
-        return;
-    }
-
-    /* Scan all IRQ registers to find pending interrupts */
-    for (uint32_t reg = 0; reg < (AIC_MAX_IRQS / 32); reg++) {
-        uint32_t event = AIC_READ32(AIC_EVENT + (reg * 4));
-
-        if (event == 0) {
-            continue;  /* No pending IRQs in this register */
-        }
-
-        /* Find first set bit (pending IRQ) */
-        for (uint32_t bit = 0; bit < 32; bit++) {
-            if (event & (1U << bit)) {
-                uint32_t irq_num = (reg * 32) + bit;
-
-                /* Dispatch to appropriate handler based on IRQ number */
-                switch (irq_num) {
-                    case APPLE_TIMER_IRQ:
-                        /* ARM Generic Timer virtual timer interrupt */
-                        fut_timer_tick();
-                        break;
-
-                    default:
-                        /* Unknown interrupt - ignore for now */
-                        break;
-                }
-
-                /* Acknowledge IRQ (auto-clears on most AIC versions) */
-                fut_apple_aic_ack_irq(irq_num);
-
-                /* Only handle one IRQ per exception for simplicity */
-                return;
-            }
-        }
+    /* Forward to the Rust dispatcher.  It reads AIC_EVENT, finds the
+     * lowest pending IRQ, dispatches to the registered handler (the
+     * AIC clears the event on read so no explicit ack is needed),
+     * and returns. */
+    if (aic_ctx) {
+        rust_aic_handle_irq(aic_ctx);
     }
 }
 
@@ -234,14 +123,15 @@ void fut_apple_irq_init(const fut_platform_info_t *info) {
 
     /* Hook AIC dispatch into the platform-agnostic IRQ entry.  After
      * this, the asm trampoline in boot.S/fut_irq_handler delegates
-     * to apple_aic_handle_irq() instead of the GICv2 IAR/EOI flow.
-     * Closes the kernel-side half of Apple Silicon bring-up
-     * blocker #5 (docs/APPLE_SILICON_BRINGUP_PLAN.md). */
+     * to apple_aic_handle_irq() — which now forwards to the Rust
+     * driver — instead of the GICv2 IAR/EOI flow.  Closes the
+     * kernel-side half of Apple Silicon bring-up blocker #5
+     * (docs/APPLE_SILICON_BRINGUP_PLAN.md). */
     extern void fut_irq_set_dispatch_backend(void (*fn)(void));
     fut_irq_set_dispatch_backend(apple_aic_handle_irq);
 
-    /* Enable ARM Generic Timer interrupt (routed through FIQ, not AIC) */
-    /* Timer initialization will be done separately */
+    /* ARM Generic Timer interrupt is delivered as FIQ, not via the
+     * AIC.  Wiring happens in the timer/exception path. */
 
     fut_printf("[APPLE] Apple interrupt subsystem initialized\n");
 }

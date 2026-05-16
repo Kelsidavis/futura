@@ -488,7 +488,19 @@ bss_cleared:
      * kernel/user VAs translate identically. */
     movz    x0, #0x3510               /* Bits [15:0]: T0SZ=16, IRGN0=01, ORGN0=01, SH0=11, TG0=00 */
     movk    x0, #0xB510, lsl #16     /* Bits [31:16]: T1SZ=16, IRGN1=01, ORGN1=01, SH1=11, TG1=10 */
-    movk    x0, #2, lsl #32           /* Bits [34:32]: IPS=010 (40-bit PA) */
+
+    /* IPS: pin the CPU's hardware-reported max PA range so we don't
+     * advertise more PA addressability than the chip supports.  Apple
+     * Silicon M1/M2 report PARange=0b101 (48-bit PA / 256 TB), which
+     * we want to honour — the old hardcoded IPS=010 (40-bit PA / 1 TB)
+     * could clip Apple DRAM that lives above the 1 TB boundary.  Read
+     * ID_AA64MMFR0_EL1.PARange (bits [3:0]) and copy into IPS (bits
+     * [34:32]).  QEMU cortex-a53 reports PARange=0b010, so the QEMU
+     * virt path gets the same value it had before. */
+    mrs     x1, id_aa64mmfr0_el1
+    and     x1, x1, #0xF              /* PARange field (bits 3:0) */
+    lsl     x1, x1, #32               /* Move to TCR IPS slot (bits 34:32) */
+    orr     x0, x0, x1
     msr     tcr_el1, x0
 
     /* Debug: TCR configured */

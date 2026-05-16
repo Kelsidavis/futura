@@ -61,8 +61,14 @@ jobs:
         run: make kernel PLATFORM=arm64 ENABLE_WAYLAND=0
 
       - name: Run kernel tests (ARM64)
+        # The ARM64 selftest suite now passes 2654/2654 cleanly under
+        # `make test-arm64` (see docs/ARM64_STATUS.md).  Drop the
+        # `continue-on-error: true` so CI actually fails when an ARM64
+        # test regresses rather than silently turning green.  Job
+        # timeout-minutes: 30 above leaves ~18m margin past the 600s
+        # qemu cap, which is enough for the build + run we observe
+        # locally (~6–8m total).
         run: make test-arm64 ENABLE_WAYLAND=0
-        continue-on-error: true
 
   build-rpi:
     runs-on: ubuntu-24.04

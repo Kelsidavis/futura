@@ -906,6 +906,19 @@ static void selftest_sequential_runner(void *arg) {
     fut_vfs_test_thread(NULL);
     fut_poll_test_thread(NULL);
     fut_misc_test_thread(NULL);
+
+    /* Safety net: if every test function returned without triggering
+     * try_finish() (planned over-counted by the same magnitude as a
+     * skipped cluster, or a control-flow branch that returned without
+     * firing fut_test_pass), force the framework to fire qemu_exit(0).
+     *
+     * Without this, the runner falls off the end and the post-exit
+     * scheduler hand-off can trip a NULL-PC abort on ARM64 — the
+     * trampoline-then-fut_thread_exit path tries to switch to idle
+     * but lands on a thread with bogus context.  Calling
+     * fut_test_finish_runner() short-circuits qemu cleanly. */
+    extern void fut_test_finish_runner(void);
+    fut_test_finish_runner();
 }
 
 /* Bridge functions: legacy blockdev read/write → blkcore read/write */

@@ -126,3 +126,33 @@ void fut_splice_test_thread(void *arg);
  * getrusage, and times.
  */
 void fut_clock_sched_test_thread(void *arg);
+
+/* ============================================================
+ *   Test Framework Bookkeeping
+ *
+ * Implemented in kernel/stubs_missing.c.  Test source files call
+ * these without scattered extern declarations — include this header
+ * instead.
+ * ============================================================ */
+
+#include <stdbool.h>
+#include <stdint.h>
+
+/** Declare the total number of test_pass calls the suite plans to make. */
+void fut_test_plan(uint16_t count);
+
+/** Mark one test as passing.  Advances the counter; fires qemu_exit(0)
+ *  when passed >= planned. */
+void fut_test_pass(void);
+
+/** Mark one test as failing with the given code.  Fires qemu_exit(code)
+ *  immediately and freezes the framework against further pass calls. */
+void fut_test_fail(uint16_t code);
+
+/** True iff the framework has already fired qemu_exit (success or failure). */
+bool fut_tests_completed(void);
+
+/** Safety net: the sequential runner calls this on a clean return so
+ *  the framework always fires qemu_exit(0) when no failure was logged,
+ *  even if the planned count over-counts the actual fut_test_pass calls. */
+void fut_test_finish_runner(void);

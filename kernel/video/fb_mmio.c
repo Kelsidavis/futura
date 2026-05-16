@@ -537,17 +537,15 @@ void fb_boot_splash(void) {
         fut_printf("[FB] ARM64: virtio-gpu-mmio initialization failed (rc=%d), using fallback\n", rc);
     }
 
-    /* Fall back to hardcoded framebuffer address */
-    g_fb_hw.phys = FB_PHYS_FALLBACK;
-    g_fb_hw.length = (size_t)g_fb_hw.info.pitch * (size_t)g_fb_hw.info.height;
-    g_fb_available = true;
-    fut_printf("[FB] ARM64: Fallback framebuffer at phys=0x%llx (%ux%ux%u)\n",
-               (unsigned long long)g_fb_hw.phys,
-               FB_DEFAULT_WIDTH, FB_DEFAULT_HEIGHT, FB_DEFAULT_BPP);
-
-    /* Initialize console even on the RAM-only fallback path so kernel
-     * text still has somewhere to land if virtio-gpu init ever fails. */
-    extern int fb_console_init(void);
-    fb_console_init();
+    /* No working framebuffer.  The previous code installed a "fallback"
+     * mapping at PA 0x4000000 and called fb_console_init() so kernel text
+     * had "somewhere to land", but on QEMU virt that PA is unbacked — it
+     * lives in the kernel's peripheral window as Device-nGnRnE, and the
+     * first memcpy-from-back_buffer in fb_console_clear hung the boot
+     * (no display device, no fault handler that can make progress). Just
+     * mark FB as unavailable so the rest of the kernel skips display
+     * features and falls back to serial-only output. */
+    g_fb_available = false;
+    fut_printf("[FB] ARM64: no working framebuffer; serial-only console\n");
 }
 #endif

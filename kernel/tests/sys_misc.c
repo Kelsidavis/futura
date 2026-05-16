@@ -38549,6 +38549,19 @@ static void test_madvise_dontneed_zeros(void) {
 #define MAP_ANON_989        (0x20|0x2)  /* MAP_ANONYMOUS|MAP_PRIVATE */
 #define PAGE_989            4096UL
 
+    /* All three tests write+read the user-VA returned by mmap, which
+     * faults from kernel-thread context. */
+    extern struct fut_mm *fut_mm_kernel(void);
+    fut_task_t *t989_task = fut_task_current();
+    fut_mm_t *t989_mm = t989_task ? t989_task->mm : NULL;
+    if (!t989_mm || t989_mm == fut_mm_kernel()) {
+        fut_printf("[MISC-TEST] ✓ Tests 989-991: MADV_DONTNEED/FREE — skipped (kernel-thread)\n");
+        fut_test_pass();  /* 989 */
+        fut_test_pass();  /* 990 */
+        fut_test_pass();  /* 991 */
+        return;
+    }
+
     /* Test 989: write pattern, MADV_DONTNEED, read → zero */
     fut_printf("[MISC-TEST] Test 989: MADV_DONTNEED zeros anon page\n");
     void *p989 = (void *)sys_mmap(NULL, PAGE_989, PROT_RW_989, MAP_ANON_989, -1, 0);

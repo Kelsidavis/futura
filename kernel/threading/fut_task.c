@@ -763,12 +763,17 @@ static void task_cleanup_and_exit(fut_task_t *task, int status, int signal) {
 
     task_mark_exit(task, status, signal);
 
-    /* Release user-space memory manager before exiting */
-    if (task->mm) {
+    /* Release user-space memory manager before exiting.  Never release
+     * the kernel mm — it's a shared global, refcounted by every kernel
+     * thread, and releasing it would corrupt the heap walked by every
+     * subsequent fut_malloc.  Kernel-thread tasks already have task->mm
+     * set to fut_mm_kernel() (or NULL), so just clear the pointer and
+     * skip the release in that case. */
+    if (task->mm && task->mm != fut_mm_kernel()) {
         fut_mm_switch(fut_mm_kernel());
         fut_mm_release(task->mm);
-        task->mm = NULL;
     }
+    task->mm = NULL;
 
     fut_thread_exit();
 }

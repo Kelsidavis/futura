@@ -397,17 +397,49 @@ void arm64_exception_dispatch(fut_interrupt_frame_t *frame) {
             fut_printf("[DATA-ABORT-DEBUG] X0=0x%016llx X1=0x%016llx\n",
                        (unsigned long long)frame->x[0], (unsigned long long)frame->x[1]);
             if (ec == ESR_EC_DABT_EL1) {
-                /* Kernel data abort — try to kill the offending process instead
-                 * of panicking the whole kernel */
-                fut_task_t *faulting = fut_task_current();
-                if (faulting) {
-                    fut_printf("[DATA-ABORT] Killing faulted process, system continues\n");
-                    fut_task_exit_current(-11);  /* SIGSEGV */
-                    /* Should not return */
+                /* Kernel data abort — kill the offending thread and let the
+                 * scheduler run something else.  We deliberately do NOT call
+                 * fut_task_exit_current() here: that path tears down the
+                 * whole task (mm release, fd table, namespace unref, signal
+                 * delivery, exit_robust_list, etc.) and several of those
+                 * steps can themselves dereference the same broken state
+                 * that caused the abort, recursing back into the fault
+                 * handler and printing a misleading DOUBLE FAULT.
+                 *
+                 * For our purposes, marking the thread terminated, dropping
+                 * it from the scheduler ready queue, and yielding is enough:
+                 * the scheduler will never pick it again and the rest of
+                 * the kernel keeps running.  Memory leaks are acceptable
+                 * — the alternative is repeated full-system crashes when a
+                 * single kernel selftest reads through a stale user-VA. */
+                fut_thread_t *self = fut_thread_current();
+                if (self) {
+                    fut_printf("[DATA-ABORT] Killing faulted thread, system continues\n");
+                    /* Minimal kill: mark the thread terminated, drop it
+                     * from the scheduler ready queue, and yield.  Heavier
+                     * cleanup (full fut_task_exit_current) tries to tear
+                     * down the user mm / fd table / robust list / signal
+                     * paths and several of those steps can themselves
+                     * deref the same broken state that caused the abort,
+                     * recursing back here and printing a misleading
+                     * DOUBLE FAULT.  Memory leaks are acceptable — the
+                     * alternative is the whole system crashing every
+                     * time a kernel selftest dereferences a stale user-VA. */
+                    extern void fut_thread_kill_current(void);
+                    fut_thread_kill_current();
+                } else {
+                    fut_printf("[DATA-ABORT] No task context, scheduling away\n");
                 }
-                /* No task context — schedule away from this thread */
-                fut_printf("[DATA-ABORT] No task context, scheduling away\n");
+                /* Decrement exception_depth *before* fut_schedule, because
+                 * fut_schedule context-switches away and our dispatcher
+                 * never returns to its own depth-- at the bottom.  Without
+                 * this drop, the next exception taken in the resumed thread
+                 * sees depth=1 from us and bumps it to 2 → spurious
+                 * DOUBLE FAULT print.  This mirrors the rationale of
+                 * commit 85c1026f for EL0-origin SVCs that yield out. */
+                __atomic_sub_fetch(&exception_depth, 1, __ATOMIC_SEQ_CST);
                 fut_schedule();
+                /* Should not return; if it does, park here. */
                 for (;;) __asm__ volatile("wfe");
             }
             /* EL0 data abort not handled by page_fault.c */

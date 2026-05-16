@@ -711,6 +711,23 @@ void fut_thread_set_current(fut_thread_t *thread) {
     }
 }
 
+/* Minimal kill of the current thread.  Used from exception handlers
+ * where calling the full fut_task_exit_current path would itself fault
+ * (e.g. an EL1 data abort from a kernel thread reading a stale user
+ * pointer — the heavy teardown tries to walk the same broken state
+ * that caused the abort and recurses).  Marks the thread terminated,
+ * removes it from the ready queue, and returns to the caller; the
+ * caller is expected to call fut_schedule() immediately so the
+ * scheduler hands control to another thread.  Memory leaks are
+ * accepted in exchange for keeping the rest of the system alive. */
+void fut_thread_kill_current(void) {
+    fut_thread_t *self = fut_thread_current();
+    if (!self) return;
+    self->state = FUT_THREAD_TERMINATED;
+    extern void fut_sched_remove_thread(fut_thread_t *);
+    fut_sched_remove_thread(self);
+}
+
 #if defined(__x86_64__)
 void fut_thread_init_bootstrap(void) {
     fut_percpu_t *percpu = fut_percpu_get();

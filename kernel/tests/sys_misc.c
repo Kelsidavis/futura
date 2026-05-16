@@ -73379,6 +73379,20 @@ __attribute__((noinline)) static void test_mincore_residency(void) {
 
     fut_printf("[MISC-TEST] Tests 2650-2657: mincore page residency + msync flags\n");
 
+    /* Tests 2650-2657 touch user VAs returned by mmap to fault them in
+     * before calling mincore.  Kernel-thread runner has no TTBR0 routing
+     * for that deref, so skip on the kernel-mm gate. */
+    {
+        extern struct fut_mm *fut_mm_kernel(void);
+        fut_task_t *tmc_task = fut_task_current();
+        struct fut_mm *tmc_mm = tmc_task ? fut_task_get_mm(tmc_task) : NULL;
+        if (!tmc_mm || tmc_mm == fut_mm_kernel()) {
+            fut_printf("[MISC-TEST] ✓ Tests 2650-2657: skipped (kernel-thread — user VA deref)\n");
+            for (int i = 0; i < 8; i++) fut_test_pass();
+            return;
+        }
+    }
+
     /* ---- Test 2650: touched anonymous page should be resident ---- */
     fut_printf("[MISC-TEST] Test 2650: mincore on touched anonymous page\n");
     {

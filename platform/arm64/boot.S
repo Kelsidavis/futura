@@ -199,6 +199,19 @@ bss_cleared:
     bic     x22, x21, #0x3FFFFFFF     /* 1 GB align down */
     lsr     x23, x22, #30             /* L1 entry index */
 
+    /* Publish the discovered values to C-readable globals so the rest
+     * of the kernel can support relocated boots once the runtime
+     * KERN_PA_BASE conversion lands (bring-up blocker #3). */
+    adrp    x9, g_kernel_load_pa
+    add     x9, x9, :lo12:g_kernel_load_pa
+    str     x21, [x9]
+    adrp    x9, g_kernel_dram_pa
+    add     x9, x9, :lo12:g_kernel_dram_pa
+    str     x22, [x9]
+    adrp    x9, g_kernel_l1_index
+    add     x9, x9, :lo12:g_kernel_l1_index
+    str     x23, [x9]
+
     /* ========================================
      *   MMU Initialization
      * ======================================== */
@@ -973,10 +986,36 @@ fut_irq_handler_done:
 .extern fut_in_interrupt
 
 /* ============================================================
- *   Boot Page Tables (in BSS)
+ *   Runtime kernel-load metadata
+ *
+ * boot.S writes the discovered load PA into these symbols right after
+ * the dynamic-PA computation but before any C code runs.  C-side
+ * helpers (e.g. \`fut_kernel_load_pa()\` in platform_init.c) can read
+ * them to support Apple-Silicon-style relocated boots once the
+ * runtime KERN_PA_BASE conversion lands (Apple Silicon bring-up
+ * blocker #3 in docs/APPLE_SILICON_BRINGUP_PLAN.md).
+ *
+ * On QEMU virt with the kernel loaded at PA 0x40200000 these end up
+ * as 0x40200000 / 0x40000000 / 1 — matching the previously-hardcoded
+ * literals — so existing #define-based code paths are still correct.
  * ============================================================ */
 
 .section .bss
+.align 8
+.global g_kernel_load_pa
+g_kernel_load_pa:
+    .quad   0                         /* 2 MiB-aligned-down _start PA */
+.global g_kernel_dram_pa
+g_kernel_dram_pa:
+    .quad   0                         /* 1 GiB-aligned-down identity region base */
+.global g_kernel_l1_index
+g_kernel_l1_index:
+    .quad   0                         /* L1 entry index = g_kernel_dram_pa >> 30 */
+
+/* ============================================================
+ *   Boot Page Tables (in BSS)
+ * ============================================================ */
+
 .align 12                         /* 4KB alignment required for page tables */
 
 /* Page tables for 39-bit VA space (T0SZ=25)

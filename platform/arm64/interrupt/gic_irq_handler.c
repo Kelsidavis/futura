@@ -38,35 +38,17 @@ extern void fut_timer_irq_handler(void);
 #define ARM_TIMER_IRQ   30  /* Non-secure EL1 physical timer (CNTP_*) */
 
 /**
- * gic_handle_irq - Main IRQ dispatcher
+ * gic_handle_irq - Main IRQ dispatcher (arm64_vectors.S entry path)
  *
- * Called from ARM64 IRQ exception vector. Reads the GIC IAR to determine
- * which interrupt fired, dispatches to appropriate handler, and sends EOI.
+ * Forwards to the live IRQ dispatcher (`fut_irq_main` in
+ * platform_init.c) so both the active boot.S/fut_irq_handler path and
+ * the arm64_vectors.S path share the same backend-pointer dispatch,
+ * IAR/EOI flow, timer routing, and irq_handlers[] consultation.
+ * Previously this function duplicated the GIC IAR/EOI logic inline,
+ * and changes (e.g. the Apple AIC backend hook in commit 942ee205)
+ * had to be replicated by hand.
  */
 void gic_handle_irq(void) {
-    if (!gic_cpu_base) {
-        /* GIC not initialized yet - spurious interrupt */
-        return;
-    }
-
-    /* Read Interrupt Acknowledge Register to get interrupt ID */
-    uint32_t iar = gic_cpu_base[GICC_IAR / sizeof(uint32_t)];
-    uint32_t irq_id = iar & 0x3FF;  /* Lower 10 bits contain interrupt ID */
-
-    /* Spurious interrupt check (ID 1023) */
-    if (irq_id == 1023) {
-        return;
-    }
-
-    /* Dispatch to appropriate handler */
-    if (irq_id == ARM_TIMER_IRQ) {
-        fut_timer_irq_handler();
-    } else {
-        /* Dispatch to registered handler from irq_handlers table */
-        extern int fut_dispatch_irq(uint32_t irq_id);
-        fut_dispatch_irq(irq_id);
-    }
-
-    /* Send End of Interrupt signal to GIC */
-    gic_cpu_base[GICC_EOIR / sizeof(uint32_t)] = iar;
+    extern void fut_irq_main(void);
+    fut_irq_main();
 }

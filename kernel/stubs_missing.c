@@ -49,8 +49,13 @@ static void try_finish(void) {
     }
     uint16_t passed = atomic_load_explicit(&g_tests_passed, memory_order_acquire);
 
-    /* Debug: Show test progress */
-    fut_printf("[TEST-DEBUG] Tests passed: %u / %u\n", passed, planned);
+    /* Progress log: throttle to every 100 tests + always print the last
+     * 5 ramp-up to keep CI logs scannable without 2600+ DEBUG lines. */
+    bool emit = (passed == 1) || (passed >= planned) ||
+                (passed > planned - 5) || (passed % 100 == 0);
+    if (emit) {
+        fut_printf("[TEST-DEBUG] Tests passed: %u / %u\n", passed, planned);
+    }
 
     if (passed < planned) {
         return;

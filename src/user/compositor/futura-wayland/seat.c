@@ -260,6 +260,15 @@ static void seat_pointer_enter(struct seat_state *seat,
     }
 }
 
+/* Maximum delivery rate per Wayland client for pointer-motion events.
+ * The compositor's own cursor sprite is redrawn locally on every raw
+ * mouse packet; client delivery just keeps Wayland clients informed
+ * of pointer position for hover/UI updates, which they only render
+ * at frame rate anyway.  Sending faster than the client can drain
+ * fills its libwayland socket buffer and eventually wedges the
+ * compositor inside wl_display_flush_clients. */
+#define SEAT_POINTER_MOTION_MIN_INTERVAL_MS 16
+
 static void seat_pointer_motion(struct seat_state *seat,
                                 wl_fixed_t sx,
                                 wl_fixed_t sy,
@@ -269,6 +278,8 @@ static void seat_pointer_motion(struct seat_state *seat,
     }
 
     struct wl_client *target = wl_resource_get_client(seat->pointer_focus->surface_resource);
+    int32_t int_sx = wl_fixed_to_int(sx);
+    int32_t int_sy = wl_fixed_to_int(sy);
     struct seat_client *client;
     wl_list_for_each(client, &seat->clients, link) {
         if (!client->pointer_resource || !client->pointer_entered) {
@@ -277,11 +288,46 @@ static void seat_pointer_motion(struct seat_state *seat,
         if (wl_resource_get_client(client->pointer_resource) != target) {
             continue;
         }
+        /* Always update the pending coordinates so the next delivery
+         * sends the latest position -- no event is "lost", just merged
+         * with the next one within the 16 ms window. */
+        client->pending_motion_sx = int_sx;
+        client->pending_motion_sy = int_sy;
+        client->pending_motion = true;
+
+        uint32_t since = time_msec - client->last_pointer_motion_msec;
+        /* time_msec can wrap (32-bit ms), but unsigned subtraction handles
+         * that as long as the wrap distance is < INT32_MAX, which is
+         * ~24 days -- plenty for a desktop session. */
+        if (client->last_pointer_motion_msec != 0
+            && since < SEAT_POINTER_MOTION_MIN_INTERVAL_MS) {
+            continue;  /* Will be flushed by the next non-throttled event. */
+        }
         wl_pointer_send_motion(client->pointer_resource, time_msec, sx, sy);
         wl_pointer_send_frame(client->pointer_resource);
+        client->last_pointer_motion_msec = time_msec;
+        client->pending_motion = false;
     }
-    seat->pointer_sx = wl_fixed_to_int(sx);
-    seat->pointer_sy = wl_fixed_to_int(sy);
+    seat->pointer_sx = int_sx;
+    seat->pointer_sy = int_sy;
+}
+
+/* Drain any motion event that was throttled by seat_pointer_motion's
+ * 16 ms gate, so a client sees the final cursor position before the
+ * next button event / focus change.  Without this, button-on-motion
+ * sequences and pointer-leave events can carry stale coordinates. */
+static void seat_pointer_flush_pending_motion(struct seat_client *client,
+                                              uint32_t time_msec) {
+    if (!client || !client->pointer_resource || !client->pending_motion) {
+        return;
+    }
+    wl_pointer_send_motion(client->pointer_resource,
+                           time_msec,
+                           wl_fixed_from_int(client->pending_motion_sx),
+                           wl_fixed_from_int(client->pending_motion_sy));
+    wl_pointer_send_frame(client->pointer_resource);
+    client->last_pointer_motion_msec = time_msec;
+    client->pending_motion = false;
 }
 
 static void seat_pointer_button(struct seat_state *seat,
@@ -306,6 +352,7 @@ static void seat_pointer_button(struct seat_state *seat,
         if (wl_resource_get_client(client->pointer_resource) != target) {
             continue;
         }
+        seat_pointer_flush_pending_motion(client, time_msec);
         wl_pointer_send_button(client->pointer_resource, serial, time_msec, button, state);
         wl_pointer_send_frame(client->pointer_resource);
     }

@@ -414,4 +414,8 @@ arm64_install_exception_vectors:
     isb
     ret
 
+
+/* Mark stack as non-executable */
+.section .note.GNU-stack,"",%progbits
+
 .end

@@ -670,3 +670,6 @@ fut_save_context:
 .set PSTATE_F_BIT, (1 << 6)
 .set PSTATE_I_BIT, (1 << 7)
 .set PSTATE_A_BIT, (1 << 8)
+
+/* Mark stack as non-executable */
+.section .note.GNU-stack,"",%progbits

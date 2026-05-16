@@ -309,4 +309,8 @@ sync_exception_entry:
 .weak arm64_instruction_abort_handler
 
 /* Ensure these symbols are defined (linker will require them) */
+
+/* Mark stack as non-executable */
+.section .note.GNU-stack,"",%progbits
+
 .end

@@ -68,7 +68,8 @@ struct fut_thread {
     void *stack_base;                     // Stack allocation
     size_t stack_size;                    // Stack size in bytes
     void *alloc_base;                     // Original malloc pointer (for proper free)
-    uint64_t _padding;                    // Padding to align context to 16 bytes
+    uint8_t stack_overflow_reported;      // Set after first canary mismatch to rate-limit logs
+    uint8_t _pad_after_overflow[7];       // Pad to keep context 16-byte aligned
 
     fut_cpu_context_t context;            // Saved CPU context (64-bit, 16-byte aligned)
     fut_interrupt_frame_t *irq_frame;     // Saved interrupt frame (for IRQ context switches)

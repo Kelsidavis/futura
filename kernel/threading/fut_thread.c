@@ -214,7 +214,8 @@ fut_thread_t *fut_thread_create(
         .stack_base = stack,
         .stack_size = aligned_stack_size,
         .alloc_base = raw_thread,     // Save original pointer for proper free
-        ._padding = 0,                // Explicit padding for 16-byte alignment
+        .stack_overflow_reported = 0,
+        ._pad_after_overflow = {0},
         .context = {0},               // Will be initialized below
         .irq_frame = NULL,            // Pre-allocated below
         .state = FUT_THREAD_READY,
@@ -436,8 +437,19 @@ void fut_thread_yield(void) {
     if (yt && (uintptr_t)yt >= KERNEL_VIRTUAL_BASE && yt->stack_base) {
         uint64_t canary = *(volatile uint64_t *)yt->stack_base;
         if (canary != FUT_STACK_CANARY && canary != 0) {
-            fut_printf("[THREAD] *** STACK OVERFLOW *** tid=%llu at yield\n",
-                       (unsigned long long)yt->tid);
+            /* Rate-limit so a single mis-planted canary doesn't drown
+             * the kernel log on every yield — one report per thread is
+             * enough to surface the problem; downstream the canary
+             * check on thread exit gives the full register dump. */
+            if (!yt->stack_overflow_reported) {
+                yt->stack_overflow_reported = 1;
+                fut_printf("[THREAD] *** STACK OVERFLOW *** tid=%llu at yield "
+                           "(canary=0x%llx expected=0x%llx stack_base=%p)\n",
+                           (unsigned long long)yt->tid,
+                           (unsigned long long)canary,
+                           (unsigned long long)FUT_STACK_CANARY,
+                           yt->stack_base);
+            }
         }
     }
     fut_schedule();

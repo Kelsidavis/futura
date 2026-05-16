@@ -5597,41 +5597,62 @@ static int comp_timerfd_cb(int fd, uint32_t mask, void *data) {
     return 0;
 }
 
-/* Paints a small coloured block in the bottom-right of the FB so each
- * stage of comp_run's main loop has a distinct visual marker.  When the
- * compositor wedges the heartbeat freezes at the stage of last
- * completion -- read the marker straight off the screen.
+/* Paints a stage-indicator block directly onto the framebuffer.  Layout
+ * is a horizontal strip of eight 32x16 coloured blocks at the very top
+ * of the screen (above the menubar text), 256x16 total -- impossible to
+ * miss at 1920x1080.  Each stage is a distinct colour AND a distinct
+ * x position, so even one frozen block tells you exactly which stage
+ * of comp_run's main loop wedged.
  *
- *   Stage 0 (red,     x=-80) seat_poll_input #1
- *   Stage 1 (yellow,  x=-70) wl_display_flush_clients #1
- *   Stage 2 (green,   x=-60) wl_event_loop_dispatch
- *   Stage 3 (cyan,    x=-50) seat_poll_input #2
- *   Stage 4 (blue,    x=-40) timerfd read + comp_handle_timer_tick
- *   Stage 5 (magenta, x=-30) fallback render + zombie reap
- *   Stage 6 (white,   x=-20) wl_display_flush_clients #2
- *   Stage 7 (grey,    x=-10) sched_yield + nanosleep
+ *   x  0..31  red     stage 0  seat_poll_input #1
+ *   x 32..63  yellow  stage 1  wl_display_flush_clients #1
+ *   x 64..95  green   stage 2  wl_event_loop_dispatch
+ *   x 96..127 cyan    stage 3  seat_poll_input #2
+ *   x128..159 blue    stage 4  timerfd read + comp_handle_timer_tick
+ *   x160..191 magenta stage 5  fallback render + zombie reap
+ *   x192..223 white   stage 6  wl_display_flush_clients #2
+ *   x224..255 grey    stage 7  sched_yield + nanosleep
  *
- * Stage 0 should always be the freshest colour on a healthy compositor
- * because the loop wraps around and overwrites the others; if the user
- * sees a frozen non-red marker it identifies the wedge stage.
+ * Writes BOTH to the live framebuffer (so it's visible right now) AND
+ * to the compositor's backbuffer at the same offset (so the next
+ * render-and-present doesn't erase it).  On a frozen compositor only
+ * the live FB write happens, but that's enough to read the marker.
  */
 static void comp_run_heartbeat(struct compositor_state *comp, int stage) {
     if (!comp || !comp->fb_map) return;
-    if (comp->fb_info.width < 96 || comp->fb_info.height < 16) return;
+    if (comp->fb_info.width < 256 || comp->fb_info.height < 16) return;
     if (stage < 0 || stage >= 8) return;
     static const uint32_t kHbColours[8] = {
         0xFFFF0000u, 0xFFFFFF00u, 0xFF00FF00u, 0xFF00FFFFu,
         0xFF0000FFu, 0xFFFF00FFu, 0xFFFFFFFFu, 0xFF888888u,
     };
-    uint32_t *fb = (uint32_t *)comp->fb_map;
     int px_per_row = (int)(comp->fb_info.pitch / 4);
-    int start_x = (int)comp->fb_info.width - 96 + stage * 10;
-    int start_y = (int)comp->fb_info.height - 8;
+    int start_x = stage * 32;
+    int start_y = 0;
     uint32_t c = kHbColours[stage];
-    for (int dy = 0; dy < 4; ++dy) {
+
+    /* Live framebuffer write -- visible immediately. */
+    uint32_t *fb = (uint32_t *)comp->fb_map;
+    for (int dy = 0; dy < 16; ++dy) {
         uint32_t *line = fb + (start_y + dy) * px_per_row + start_x;
-        line[0] = c; line[1] = c; line[2] = c; line[3] = c;
-        line[4] = c; line[5] = c; line[6] = c; line[7] = c;
+        for (int dx = 0; dx < 32; ++dx) {
+            line[dx] = c;
+        }
+    }
+
+    /* Backbuffer write -- prevents the next comp_render_frame from
+     * clobbering the marker on present.  Use the front-most usable
+     * backbuffer (the one that will become the next frame). */
+    int idx = comp->backbuffer_enabled ? (comp->bb_index ^ 1) : 0;
+    if (idx >= 0 && idx < 2 && comp->bb[idx].px) {
+        int bb_pxr = comp->bb[idx].pitch / 4;
+        uint32_t *bb = comp->bb[idx].px;
+        for (int dy = 0; dy < 16; ++dy) {
+            uint32_t *line = bb + (start_y + dy) * bb_pxr + start_x;
+            for (int dx = 0; dx < 32; ++dx) {
+                line[dx] = c;
+            }
+        }
     }
 }
 

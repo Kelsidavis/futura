@@ -2101,6 +2101,10 @@ int fut_stage_shell_binary(void) {
     return -ENOSYS;  /* Shell binary not available on macOS host builds */
 }
 
+int fut_stage_startup_sound(void) {
+    return -ENOSYS;  /* startup-sound asset blob not built on macOS host builds */
+}
+
 int fut_stage_rust_hello_binary(void) {
     return -ENOSYS;  /* rust-hello not available on macOS host builds */
 }

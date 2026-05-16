@@ -197,8 +197,13 @@ typedef enum {
 #define TCP_RETRANSMIT_TIMEOUT_MS 1000  /* 1 second */
 #define TCP_MAX_RETRIES 5
 
-/* RX thread configuration */
-#define TCPIP_RX_THREAD_STACK_SIZE 8192  /* 8KB stack for RX thread */
+/* RX thread configuration.  64 KB matches CONFIG_KERNEL_STACK_SIZE.
+ * 8 KB was the same shape of bug we hit in virtio-input's poll_thread on
+ * ARM64 (commit ec408df4): the slab places thread stacks next to other
+ * fut_thread structs in the heap, and the RX path + an 880-byte timer-ISR
+ * frame easily overflows 8 KB downward into a neighboring struct,
+ * corrupting it. */
+#define TCPIP_RX_THREAD_STACK_SIZE (64 * 1024)
 #define TCPIP_RX_THREAD_PRIORITY   100   /* RX thread scheduling priority */
 
 /* ============================================================================

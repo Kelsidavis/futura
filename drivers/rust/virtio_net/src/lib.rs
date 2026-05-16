@@ -1101,11 +1101,18 @@ pub extern "C" fn virtio_net_init() -> FutStatus {
                 if task.is_null() {
                     log("virtio-net: WARNING: Failed to create task for RX thread");
                 } else {
+                    // 64 KB matches CONFIG_KERNEL_STACK_SIZE.  An 8 KB stack
+                    // here is the same shape of bug we hit in virtio-input's
+                    // poll_thread on ARM64 (commit ec408df4): the slab allocator
+                    // places this stack adjacent to another fut_thread struct,
+                    // and the poll loop + an 880-byte timer-ISR frame easily
+                    // overflows 8 KB downward into the neighbor, corrupting its
+                    // tid / task / stack_base.
                     let rx_thread = fut_thread_create(
                         task,
                         rx_poll_thread,
                         ptr::null_mut(),
-                        8192,  // stack size
+                        65536, // stack size (64 KB; see comment)
                         100,   // priority
                     );
 

@@ -150,3 +150,6 @@ int fut_firmware_embed_binary(const char *name,
     if (size == 0) return -EINVAL;
     return fut_firmware_embed(name, blob_start, size);
 }
+
+unsigned int fut_firmware_provider_count(void) { return g_num_providers; }
+unsigned int fut_firmware_embed_count(void)    { return g_num_embedded; }

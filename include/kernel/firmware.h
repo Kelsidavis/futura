@@ -72,4 +72,10 @@ int fut_firmware_embed_binary(const char *name,
                               const void *blob_start,
                               const void *blob_end);
 
+/* Diagnostic accessors — return the current count of registered
+ * providers / embedded blobs.  Useful for boot-log enumeration or
+ * tests verifying the loader's state machine. */
+unsigned int fut_firmware_provider_count(void);
+unsigned int fut_firmware_embed_count(void);
+
 #endif /* __FUTURA_FIRMWARE_H__ */

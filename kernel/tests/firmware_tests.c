@@ -246,6 +246,30 @@ void fut_firmware_test_thread(void *arg)
         else { FW_TEST_FAIL("embed_binary empty", 18); return; }
     }
 
+    /* T14: count accessors track state correctly */
+    {
+        fut_firmware_reset_providers();
+        if (fut_firmware_provider_count() != 0 ||
+            fut_firmware_embed_count() != 0) {
+            FW_TEST_FAIL("count zero after reset", 19);
+            return;
+        }
+        if (fut_firmware_embed("count1", test_blob_alpha,
+                                sizeof(test_blob_alpha)) != 0) {
+            FW_TEST_FAIL("embed for count test", 20);
+            return;
+        }
+        /* embed also lazy-registers the embedded provider, so
+         * provider_count goes 0 → 1 and embed_count goes 0 → 1. */
+        if (fut_firmware_embed_count() == 1 &&
+            fut_firmware_provider_count() == 1) {
+            FW_TEST_PASS("count accessors track state");
+        } else {
+            FW_TEST_FAIL("count accessors", 21);
+            return;
+        }
+    }
+
     fut_printf("[FW-TEST] all firmware loader tests passed\n");
 
     /* Leave the firmware table empty so any later platform-init

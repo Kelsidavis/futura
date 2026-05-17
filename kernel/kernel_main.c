@@ -2045,14 +2045,14 @@ void fut_kernel_main(void) {
         // planned_tests += 1u; /* net */
         /* perf tests disabled — not included in sequential runner */
 
-        /* firmware loader: T1-T13 (input validation, embed round-trip,
+        /* firmware loader: T1-T14 (input validation, embed round-trip,
          * duplicate rejection, provider walk, reset, embed_binary
-         * wrapper).  The misc suite above empirically fires 4 more
-         * fut_test_pass calls than its comment claims (the suite
-         * passes them as part of paths counted under other tests'
-         * bookkeeping), so leave room for those + the 13 firmware
-         * tests. */
-        planned_tests += 17u;
+         * wrapper, count accessors).  The misc suite above
+         * empirically fires 4 more fut_test_pass calls than its
+         * comment claims (the suite passes them as part of paths
+         * counted under other tests' bookkeeping), so leave room for
+         * those + the 14 firmware tests. */
+        planned_tests += 18u;
 
         /* HCI core: T1-T26 (registration validation, send_cmd routing,
          * event sink, open/close lifecycle, unregister idempotency,

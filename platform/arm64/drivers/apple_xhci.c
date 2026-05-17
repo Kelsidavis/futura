@@ -218,6 +218,14 @@ int apple_xhci_control_transfer(uint8_t slot_id, uint8_t bmRequestType,
                                  uint8_t bRequest, uint16_t wValue,
                                  uint16_t wIndex, void *data, uint16_t wLength) {
     if (!g_xhci.initialized || !g_xhci.rust_ctrl) return -1;
+    /* slot_id 0 is reserved (xHCI assigns slots starting at 1). */
+    if (slot_id == 0) return -1;
+    /* A caller passing data==NULL with wLength>0 would otherwise let
+     * us program a TRB pointing at physical address 0 — Rust forwards
+     * data_pa to the controller verbatim, and PA 0 is reserved RAM on
+     * every supported platform.  Reject the obvious caller bug rather
+     * than DMA into the trap. */
+    if (!data && wLength > 0) return -1;
     /* Convert the caller's kernel-VA buffer to a physical address —
      * xHCI DMAs the data stage directly via TRB.param. */
     uint64_t data_pa = (data && wLength > 0)
@@ -231,6 +239,9 @@ int apple_xhci_control_transfer(uint8_t slot_id, uint8_t bmRequestType,
 int apple_xhci_bulk_transfer(uint8_t slot_id, uint8_t endpoint,
                               void *data, uint32_t length) {
     if (!g_xhci.initialized || !g_xhci.rust_ctrl) return -1;
+    if (slot_id == 0) return -1;
+    /* Same NULL+nonzero-length reject as control_transfer. */
+    if (!data && length > 0) return -1;
     /* Same VA→PA conversion as control_transfer — TRB.param is a
      * physical address for the controller's DMA engine. */
     uint64_t data_pa = data ? pmap_virt_to_phys((uintptr_t)data) : 0;

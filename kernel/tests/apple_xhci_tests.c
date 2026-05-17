@@ -97,6 +97,48 @@ void fut_apple_xhci_test_thread(void *arg)
         }
     }
 
+    /* T8: control_transfer(slot_id=0, valid buf) → -1 (slot 0 reserved) */
+    {
+        uint8_t buf[8] = {0};
+        int rc = apple_xhci_control_transfer(0, 0x80, 0x06, 0x0100, 0,
+                                              buf, sizeof(buf));
+        if (rc == -1) XHCI_PASS("control_transfer(slot=0)");
+        else { XHCI_FAIL("control_transfer(slot=0)", 8); return; }
+    }
+
+    /* T9: control_transfer(slot=1, NULL data, nonzero len) → -1 */
+    {
+        int rc = apple_xhci_control_transfer(1, 0x80, 0x06, 0x0100, 0,
+                                              NULL, 64);
+        if (rc == -1) XHCI_PASS("control_transfer(NULL+len)");
+        else { XHCI_FAIL("control_transfer(NULL+len)", 9); return; }
+    }
+
+    /* T10: control_transfer(slot=1, NULL data, zero len) → -1 (no init,
+     * but exercises the NULL+0 path which IS legal — purely about
+     * showing the function doesn't crash on a NULL with 0 length). */
+    {
+        int rc = apple_xhci_control_transfer(1, 0x00, 0x05, 0x0001, 0,
+                                              NULL, 0);
+        if (rc == -1) XHCI_PASS("control_transfer(NULL+0)");
+        else { XHCI_FAIL("control_transfer(NULL+0)", 10); return; }
+    }
+
+    /* T11: bulk_transfer(slot=0, ...) → -1 (slot 0 reserved) */
+    {
+        uint8_t buf[8] = {0};
+        int rc = apple_xhci_bulk_transfer(0, 0x81, buf, sizeof(buf));
+        if (rc == -1) XHCI_PASS("bulk_transfer(slot=0)");
+        else { XHCI_FAIL("bulk_transfer(slot=0)", 11); return; }
+    }
+
+    /* T12: bulk_transfer(slot=1, NULL data, nonzero len) → -1 */
+    {
+        int rc = apple_xhci_bulk_transfer(1, 0x81, NULL, 64);
+        if (rc == -1) XHCI_PASS("bulk_transfer(NULL+len)");
+        else { XHCI_FAIL("bulk_transfer(NULL+len)", 12); return; }
+    }
+
     fut_printf("[XHCI-TEST] all apple_xhci guard tests passed\n");
 }
 

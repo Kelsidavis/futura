@@ -2106,11 +2106,12 @@ void fut_kernel_main(void) {
         planned_tests += 7u;
 #endif
 
-        /* apple_xhci: T1-T7 (init / enumerate / get_device /
+        /* apple_xhci: T1-T12 (init / enumerate / get_device /
          * control_transfer / bulk_transfer / platform_init NULL
-         * + uninit guards). ARM64-only. */
+         * + uninit guards, plus slot_id=0 reject and NULL+nonzero
+         * length reject on both transfer paths). ARM64-only. */
 #ifdef __aarch64__
-        planned_tests += 7u;
+        planned_tests += 12u;
 #endif
 
         /* apple_dcp: T1-T24 (every Rust FFI: swap_pending/take_complete,

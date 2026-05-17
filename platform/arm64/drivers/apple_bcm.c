@@ -38,6 +38,7 @@
 #include <platform/arm64/apple_gpio.h>
 #include <platform/platform.h>
 #include <kernel/firmware.h>
+#include <kernel/hci.h>
 #include <kernel/errno.h>
 #include <string.h>
 
@@ -87,6 +88,9 @@ static int32_t    g_bcm_wlan_reset_gpio = -1;
 static int32_t    g_bcm_bt_reset_gpio   = -1;
 static uint64_t   g_bcm_gpio_base_pa;
 
+/* HCI device index assigned to the BT function (or -1 if not registered). */
+static int g_bcm_hci_index = -1;
+
 /* Cached discovery state for accessor functions. */
 static struct {
     apple_bcm_discovery_t wifi;
@@ -104,6 +108,61 @@ static uint64_t read_bar64(const struct ApplePcie *p, uint8_t bus,
      * remaining bits are the base address. */
     return ((uint64_t)hi << 32) | (lo & ~0xFULL);
 }
+
+/* ============================================================
+ *   HCI transport stubs
+ * ============================================================
+ *
+ * The BCM4378/4387 BT function is HCI over the chip's PCIe interface
+ * using a vendor-specific msgbuf protocol — the WiFi function uploads
+ * the firmware, then the BT function comes up as a side-effect with
+ * a small set of doorbell registers for HCI command/event/ACL
+ * transfer.
+ *
+ * None of that ring/doorbell handling exists yet; these callbacks
+ * return -ENOSYS so consumers know the transport is registered but
+ * not yet live.  Registration itself is useful: the HCI subsystem
+ * has a real device to enumerate, and future radio bring-up just
+ * replaces these callbacks with the real msgbuf implementation. */
+
+static int bcm_hci_send_cmd(void *cookie, const uint8_t *pkt, size_t len)
+{
+    (void)cookie;
+    (void)pkt;
+    (void)len;
+    /* TODO: marshal into the BT msgbuf TX ring + ring the doorbell. */
+    return -ENOSYS;
+}
+
+static int bcm_hci_send_acl(void *cookie, const uint8_t *pkt, size_t len)
+{
+    (void)cookie;
+    (void)pkt;
+    (void)len;
+    return -ENOSYS;
+}
+
+static int bcm_hci_open(void *cookie)
+{
+    (void)cookie;
+    /* Real implementation: load BT patchram, send HCI_Reset, wait for
+     * cmd_complete.  All blocked on firmware-load slice + msgbuf ring
+     * setup. */
+    return -ENOSYS;
+}
+
+static void bcm_hci_close(void *cookie)
+{
+    (void)cookie;
+    /* No-op until open works. */
+}
+
+static const fut_hci_ops_t bcm_hci_ops = {
+    .send_cmd = bcm_hci_send_cmd,
+    .send_acl = bcm_hci_send_acl,
+    .open     = bcm_hci_open,
+    .close    = bcm_hci_close,
+};
 
 int apple_bcm_init(const fut_platform_info_t *info,
                    apple_bcm_discovery_t *out_wifi,
@@ -303,6 +362,25 @@ int apple_bcm_platform_init(const fut_platform_info_t *info)
             fut_printf("[bcm] chip rails up\n");
         }
         /* chip_power_on already logged the specific failure mode. */
+    }
+
+    /* Register the BT function as an HCI transport.  Callbacks are
+     * stubs returning -ENOSYS until the msgbuf ring path is wired,
+     * but registration alone gives the HCI layer a real device to
+     * enumerate and shows in the boot log on real hardware. */
+    if (found > 0 && g_bcm.bt_present && g_bcm_hci_index < 0) {
+        int idx = fut_hci_register("bcm-bt",
+                                    FUT_HCI_TYPE_PCIE,
+                                    &bcm_hci_ops,
+                                    NULL);
+        if (idx >= 0) {
+            g_bcm_hci_index = idx;
+            fut_printf("[bcm] HCI transport registered as hci%d "
+                       "(callbacks stubbed pending firmware load)\n",
+                       idx);
+        } else {
+            fut_printf("[bcm] HCI register failed: rc=%d\n", idx);
+        }
     }
 
     return found;

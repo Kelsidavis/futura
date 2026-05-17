@@ -943,6 +943,9 @@ static void selftest_sequential_runner(void *arg) {
     extern void fut_apple_aic_test_thread(void *arg);
     fut_apple_aic_test_thread(NULL);
 
+    extern void fut_apple_dart_test_thread(void *arg);
+    fut_apple_dart_test_thread(NULL);
+
     /* Safety net: if every test function returned without triggering
      * try_finish() (planned over-counted by the same magnitude as a
      * skipped cluster, or a control-flow branch that returned without
@@ -2096,6 +2099,13 @@ void fut_kernel_main(void) {
          * ops guards plus ans2_platform_init NULL). ARM64-only. */
 #ifdef __aarch64__
         planned_tests += 5u;
+#endif
+
+        /* apple_dart: T1-T8 (Rust IOMMU FFI NULL guards on free /
+         * enable/disable stream / map / unmap / iova_to_phys /
+         * flush_tlb_all / flush_tlb_stream). ARM64-only. */
+#ifdef __aarch64__
+        planned_tests += 8u;
 #endif
 
         /* apple_bcm: T1-T17 (Rust FFI classification + chip-name

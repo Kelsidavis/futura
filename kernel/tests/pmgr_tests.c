@@ -108,6 +108,34 @@ void fut_pmgr_test_thread(void *arg)
         PMGR_PASS("stats(NULL, NULL)");
     }
 
+    /* T9: disable_domains_for without init → -ENODEV */
+    {
+        int rc = apple_pmgr_disable_domains_for(0, "/soc/dcp");
+        if (rc == -ENODEV) PMGR_PASS("disable_domains_for(no init)");
+        else { PMGR_FAIL("disable_domains_for(no init)", 9); return; }
+    }
+
+    /* T10: disable_domains_any(NULL list) → -EINVAL */
+    {
+        if (apple_pmgr_disable_domains_any(0, NULL) == -EINVAL) {
+            PMGR_PASS("disable_domains_any(NULL list)");
+        } else {
+            PMGR_FAIL("disable_domains_any(NULL list)", 10);
+            return;
+        }
+    }
+
+    /* T11: disable_domains_any(empty list) → -ENOENT */
+    {
+        static const char *const empty_list[] = { NULL };
+        if (apple_pmgr_disable_domains_any(0, empty_list) == -ENOENT) {
+            PMGR_PASS("disable_domains_any(empty list)");
+        } else {
+            PMGR_FAIL("disable_domains_any(empty list)", 11);
+            return;
+        }
+    }
+
     fut_printf("[PMGR-TEST] all apple_pmgr error-path tests passed\n");
 }
 

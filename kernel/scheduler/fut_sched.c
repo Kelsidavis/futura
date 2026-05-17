@@ -302,7 +302,7 @@ void fut_sched_init(void) {
         idle_task,
         idle_thread_entry,
         NULL,
-        16384,  // 16KB: timer ISR + scheduler + context switch chain needs headroom
+        64 * 1024,  // 64KB: idle thread itself is shallow (just halts) but the timer ISR + scheduler + context-switch chain runs on its stack at every tick; on ARM64 a stack < ~16KB risks overflowing into the adjacent fut_thread struct via slab allocation
         FUT_IDLE_PRIORITY
     );
 
@@ -414,7 +414,7 @@ void fut_sched_init_cpu(void) {
         idle_task,
         idle_thread_entry,
         NULL,
-        16384,  // 16KB: timer ISR + scheduler + context switch chain needs headroom
+        64 * 1024,  // 64KB: idle thread itself is shallow (just halts) but the timer ISR + scheduler + context-switch chain runs on its stack at every tick; on ARM64 a stack < ~16KB risks overflowing into the adjacent fut_thread struct via slab allocation
         FUT_IDLE_PRIORITY
     );
 

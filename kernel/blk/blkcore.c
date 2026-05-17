@@ -280,7 +280,14 @@ fut_status_t fut_blk_register(fut_blkdev_t *dev) {
         g_blk_task,
         fut_blk_worker,
         state,
-        16 * 1024,
+        /* 64 KB stack — block worker descends through driver
+         * submit / VFS writeback / filesystem journaling, which is
+         * plenty of frame depth.  On ARM64 a stack < ~16 KB risks
+         * overflowing into the neighbouring fut_thread struct via
+         * the slab allocator (see ec408df4 for the virtio-input
+         * precedent + 7d375b36 for the klog flusher fix in the
+         * same vein). */
+        64 * 1024,
         160
     );
 

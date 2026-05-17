@@ -2482,49 +2482,20 @@ void fut_kernel_main(void) {
         bool is_apple = info.type >= 5 && info.type <= 8;  /* M1-M4 */
 
         if (is_apple) {
-            fut_printf("[INIT] Apple Silicon detected (%s), initializing drivers...\n",
+            fut_printf("[INIT] Apple Silicon detected (%s), early UART switch...\n",
                        info.name ? info.name : "unknown");
 
-            /* Apple UART (Rust) — serial console */
+            /* Apple UART (Rust) — register the s5l-uart putc backend
+             * NOW, before the rest of kernel init runs, so the boot
+             * log between here and fut_platform_late_init() reaches
+             * the Apple serial console.  fut_apple_ans2 / _dcp /
+             * _power / _hid / _xhci / _audio platform_init calls all
+             * happen later in fut_platform_late_init() — see
+             * platform/arm64/platform_init.c — to keep the init list
+             * in one place. */
             if (info.uart_base) {
                 extern int rust_apple_uart_init(uint64_t base, uint32_t baudrate);
                 rust_apple_uart_init(info.uart_base, 115200);
-            }
-
-            /* Apple GPIO (Rust) */
-            if (info.gpio_base_apple) {
-                extern void *rust_gpio_init(uint64_t base, uint32_t npins);
-                rust_gpio_init(info.gpio_base_apple, 256);
-            }
-
-            /* Apple power management — calls rust_smc_init internally */
-            if (info.smc_base) {
-                extern int apple_power_platform_init(const fut_platform_info_t *info);
-                apple_power_platform_init(&info);
-            }
-
-            /* Apple PCIe + xHCI USB — calls rust_apple_pcie_init internally */
-            if (info.pcie_base) {
-                extern int apple_xhci_platform_init(const fut_platform_info_t *info);
-                apple_xhci_platform_init(&info);
-            }
-
-            /* Apple HID (keyboard/trackpad) — calls rust_spi_init/rust_i2c_init */
-            if (info.spi0_base || info.i2c0_base) {
-                extern int apple_hid_platform_init(const fut_platform_info_t *info);
-                apple_hid_platform_init(&info);
-            }
-
-            /* Apple DCP display — calls rust_dart_init internally */
-            if (info.has_dcp && info.dcp_base) {
-                extern int fut_apple_dcp_platform_init(const fut_platform_info_t *info);
-                fut_apple_dcp_platform_init(&info);
-            }
-
-            /* Apple audio (MCA codec) */
-            {
-                extern int apple_audio_init(const fut_platform_info_t *info);
-                apple_audio_init(&info);
             }
         }
 

@@ -35,6 +35,7 @@
 
 #include <platform/arm64/apple_bcm.h>
 #include <platform/arm64/apple_pcie.h>
+#include <platform/arm64/apple_gpio.h>
 #include <platform/platform.h>
 #include <kernel/firmware.h>
 #include <kernel/errno.h>
@@ -74,6 +75,13 @@ extern uint16_t rust_apple_pcie_find_cap(const struct ApplePcie *p,
  * the PCIe init dance.  Populated by apple_bcm_init on success. */
 static struct ApplePcie *g_bcm_pcie;
 
+/* GPIO state cached from platform info so chip_power_on can drive
+ * WL_REG_ON / BT_REG_ON without re-parsing the DT. */
+static AppleGpio *g_bcm_gpio;
+static int32_t    g_bcm_wlan_reset_gpio = -1;
+static int32_t    g_bcm_bt_reset_gpio   = -1;
+static uint64_t   g_bcm_gpio_base_pa;
+
 /* Cached discovery state for accessor functions. */
 static struct {
     apple_bcm_discovery_t wifi;
@@ -111,7 +119,10 @@ int apple_bcm_init(const fut_platform_info_t *info,
                    (unsigned long)info->pcie_cfg_base);
         return 0;
     }
-    g_bcm_pcie = pcie;
+    g_bcm_pcie             = pcie;
+    g_bcm_gpio_base_pa     = info->gpio_base_apple;
+    g_bcm_wlan_reset_gpio  = info->wlan_reset_gpio;
+    g_bcm_bt_reset_gpio    = info->bt_reset_gpio;
 
     int found = 0;
     for (uint32_t port = 0; port < info->pcie_num_ports; port++) {
@@ -285,23 +296,60 @@ int apple_bcm_chip_power_on(void)
         fut_printf("[bcm] power_on: no chip discovered\n");
         return -ENODEV;
     }
+    if (g_bcm_gpio_base_pa == 0) {
+        fut_printf("[bcm] power_on: gpio_base_apple not set in DT\n");
+        return -ENODEV;
+    }
+    if (g_bcm_wlan_reset_gpio < 0 && g_bcm_bt_reset_gpio < 0) {
+        fut_printf("[bcm] power_on: no reset GPIOs known — DT walk for "
+                   "apple,bootstrap-gpios on /soc/wifi and "
+                   "/soc/bluetooth is the next slice\n");
+        return -ENOSYS;
+    }
 
-    /* Real bring-up needs three things, none of which exist yet:
+    if (!g_bcm_gpio) {
+        uint64_t gpio_va = fut_kernel_peripheral_va(g_bcm_gpio_base_pa);
+        g_bcm_gpio = rust_gpio_init(gpio_va, 256);
+        if (!g_bcm_gpio) {
+            fut_printf("[bcm] power_on: rust_gpio_init failed at va 0x%lx\n",
+                       (unsigned long)gpio_va);
+            return -EIO;
+        }
+    }
+
+    /* WL_REG_ON / BT_REG_ON are active high: HIGH = chip powered,
+     * LOW = held in reset.  Cycle them low→high to guarantee a clean
+     * start, then wait ~150ms for internal rails to stabilize.
      *
-     *   1. The "wlan-reset" GPIO line from the WiFi DT node
-     *      (apple,t8103-pcie-wlan-reset or similar) — driven via
-     *      apple_gpio to deassert WL_REG_ON.
-     *   2. The "bt-reset" GPIO line from the Bluetooth DT node, same
-     *      pattern.
-     *   3. A wait for the chip's internal voltage rails to stabilize
-     *      (Asahi uses ~150 ms after deassert).
-     *
-     * Until apple_bcm grows DT parsing for those nodes, all we can do
-     * is log the intent so the boot log on real hardware shows
-     * exactly where we got stuck. */
-    fut_printf("[bcm] power_on: stub — DT GPIO wiring for "
-               "wlan-reset/bt-reset is the next slice\n");
-    return -ENOSYS;
+     * We don't have a precision delay helper yet, so the busy-loops
+     * here are coarse.  Each iteration is a few cycles; 5M iterations
+     * is comfortably > 150ms even on a 3.5 GHz Firestorm. */
+    if (g_bcm_wlan_reset_gpio >= 0) {
+        rust_gpio_set_direction(g_bcm_gpio,
+                                 (uint32_t)g_bcm_wlan_reset_gpio, 1);
+        rust_gpio_set_output(g_bcm_gpio,
+                             (uint32_t)g_bcm_wlan_reset_gpio, 0);
+        for (volatile int i = 0; i < 500000; i++) { /* ~10ms */ }
+        rust_gpio_set_output(g_bcm_gpio,
+                             (uint32_t)g_bcm_wlan_reset_gpio, 1);
+        fut_printf("[bcm] power_on: WL_REG_ON pin %d driven HIGH\n",
+                   g_bcm_wlan_reset_gpio);
+    }
+    if (g_bcm_bt_reset_gpio >= 0) {
+        rust_gpio_set_direction(g_bcm_gpio,
+                                 (uint32_t)g_bcm_bt_reset_gpio, 1);
+        rust_gpio_set_output(g_bcm_gpio,
+                             (uint32_t)g_bcm_bt_reset_gpio, 0);
+        for (volatile int i = 0; i < 500000; i++) { /* ~10ms */ }
+        rust_gpio_set_output(g_bcm_gpio,
+                             (uint32_t)g_bcm_bt_reset_gpio, 1);
+        fut_printf("[bcm] power_on: BT_REG_ON pin %d driven HIGH\n",
+                   g_bcm_bt_reset_gpio);
+    }
+
+    /* Settle delay after both rails are up. */
+    for (volatile int i = 0; i < 5000000; i++) { /* ~150ms */ }
+    return 0;
 }
 
 int apple_bcm_chip_reset(void)

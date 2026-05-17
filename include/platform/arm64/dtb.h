@@ -86,6 +86,8 @@ typedef struct {
     uint32_t mca_num_clusters;   /* Number of MCA clusters (1 on M1, more on M1 Pro/Max) (Apple Silicon only) */
     uint64_t framebuffer_phys;   /* m1n1-published Simple Framebuffer PA (0 if not advertised by bootloader) */
     uint32_t framebuffer_stride; /* m1n1 Simple FB stride in bytes (0 → fall back to width × 4 for BGRA8888) */
+    int32_t  wlan_reset_gpio;    /* GPIO pin driving WL_REG_ON on the BCM combo chip (-1 = unknown) */
+    int32_t  bt_reset_gpio;      /* GPIO pin driving BT_REG_ON on the BCM combo chip (-1 = unknown) */
     bool has_gic;                /* Has GICv2 support */
     bool has_aic;                /* Has Apple AIC (Apple Silicon only) */
     bool has_dcp;                /* Has Apple DCP (Apple Silicon only) */

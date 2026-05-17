@@ -447,7 +447,14 @@ fut_platform_info_t fut_dtb_parse(uint64_t dtb_ptr) {
         .has_gic = false,
         .has_aic = false,
         .has_generic_timer = false,
-        .total_memory = 2ULL * 1024 * 1024 * 1024
+        .total_memory = 2ULL * 1024 * 1024 * 1024,
+        /* Apple BCM combo chip GPIO pins — populated by future DT
+         * walker that parses the apple,bootstrap-gpios property on
+         * /soc/wifi and /soc/bluetooth.  -1 means "unknown" and
+         * apple_bcm_chip_power_on will refuse rather than poke a
+         * random pin. */
+        .wlan_reset_gpio = -1,
+        .bt_reset_gpio   = -1,
     };
 
     if (!fut_dtb_validate(dtb_ptr)) {

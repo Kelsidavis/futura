@@ -146,6 +146,28 @@ static int dcp_alloc_surface(uint32_t width, uint32_t height, uint32_t format) {
     return idx;
 }
 
+/* Reverse dcp_alloc_surface — DART-unmap, free pages, drop the slot.
+ * Used by failure paths in apple_dcp_init that allocate a surface
+ * but then can't complete the swap-submit handshake. */
+static void dcp_release_surface(int fb_idx) {
+    if (fb_idx < 0 || fb_idx >= 4 || !g_dcp.surfaces[fb_idx].valid) return;
+    if (g_dcp.dart) {
+        rust_dart_unmap(g_dcp.dart, g_dcp.dart_stream_id,
+                        g_dcp.surfaces[fb_idx].iova,
+                        g_dcp.surfaces[fb_idx].size);
+    }
+    void *va = pmap_phys_to_virt(g_dcp.surfaces[fb_idx].phys);
+    size_t num_pages = g_dcp.surfaces[fb_idx].size / 4096;
+    if (va && num_pages > 0) {
+        fut_free_pages(va, num_pages);
+    }
+    rust_apple_dcp_unregister_surface(g_dcp.dcp, fb_idx);
+    g_dcp.surfaces[fb_idx].valid = false;
+    g_dcp.surfaces[fb_idx].phys  = 0;
+    g_dcp.surfaces[fb_idx].iova  = 0;
+    g_dcp.surfaces[fb_idx].size  = 0;
+}
+
 /* ============================================================
  *   Framebuffer registration
  * ============================================================ */
@@ -338,6 +360,7 @@ int fut_apple_dcp_platform_init(const fut_platform_info_t *info) {
         fut_printf("[DCP] swap_submit build returned 0%s\n",
                    info->framebuffer_phys != 0
                      ? " — staying on m1n1 FB" : "");
+        dcp_release_surface(fb_idx);
         return -1;
     }
     apple_rtkit_send_message(g_dcp.rtkit, APPLE_DCP_ENDPOINT, swap_msg);
@@ -362,6 +385,7 @@ int fut_apple_dcp_platform_init(const fut_platform_info_t *info) {
         fut_printf("[DCP] swap_submit ack timeout (250ms)%s\n",
                    info->framebuffer_phys != 0
                      ? " — staying on m1n1 FB" : " — display is dark");
+        dcp_release_surface(fb_idx);
         return -1;
     }
 
@@ -372,6 +396,7 @@ int fut_apple_dcp_platform_init(const fut_platform_info_t *info) {
         fut_printf("[DCP] fb_set_hwinfo failed rc=%d%s\n", rc,
                    info->framebuffer_phys != 0
                      ? " — m1n1 FB remains the active mapping" : "");
+        dcp_release_surface(fb_idx);
     }
     return rc;
 }

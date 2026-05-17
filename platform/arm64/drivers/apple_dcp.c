@@ -83,14 +83,21 @@ static int dcp_alloc_surface(uint32_t width, uint32_t height, uint32_t format) {
     size_t   num_pages = ((size_t)size64 + 4095) / 4096;
     size_t   size      = num_pages * 4096;
 
-    /* Allocate pages and zero them. */
-    uint64_t phys = (uint64_t)fut_malloc_pages(num_pages);
-    if (phys == 0) {
+    /* fut_malloc_pages returns a kernel VA (high-half mapping); zero
+     * via the VA, then convert to PA for handing to DART.  Previous
+     * code stored the VA in a variable named `phys` and passed it
+     * straight to rust_dart_map — the IOMMU would have been
+     * programmed with the VA bit pattern interpreted as a PA,
+     * pointing the DCP at the wrong physical pages and either
+     * scanning out garbage or stomping unrelated kernel memory. */
+    void    *va   = fut_malloc_pages(num_pages);
+    if (!va) {
         fut_printf("[DCP] Page allocation failed (%lu pages)\n",
                    (unsigned long)num_pages);
         return -1;
     }
-    memset((void *)phys, 0, size);
+    memset(va, 0, size);
+    uint64_t phys = pmap_virt_to_phys((uintptr_t)va);
 
     /* Map through DART or fall back to identity. */
     uint64_t iova;
@@ -102,7 +109,7 @@ static int dcp_alloc_surface(uint32_t width, uint32_t height, uint32_t format) {
                                 DART_PROT_READ | DART_PROT_WRITE);
         if (rc != 0) {
             fut_printf("[DCP] DART map failed: %d\n", rc);
-            fut_free_pages((void *)phys, num_pages);
+            fut_free_pages(va, num_pages);
             return -1;
         }
     } else {
@@ -113,7 +120,7 @@ static int dcp_alloc_surface(uint32_t width, uint32_t height, uint32_t format) {
                                                width, height, stride, format);
     if (idx < 0) {
         fut_printf("[DCP] All surface slots full\n");
-        fut_free_pages((void *)phys, num_pages);
+        fut_free_pages(va, num_pages);
         return -1;
     }
 

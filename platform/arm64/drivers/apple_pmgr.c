@@ -51,14 +51,18 @@ int apple_pmgr_init(const fut_platform_info_t *info)
 
 static int wait_for_state(uint32_t ps_offset, uint8_t want)
 {
-    /* Apple's pmgr typically completes a transition in <1ms but Asahi
-     * uses a 100ms timeout for headroom on the rare slow domain. */
-    for (uint32_t spins = 0; spins < 100; spins++) {
+    /* Apple's pmgr typically completes a transition in tens of µs
+     * but Asahi documents a 100ms ceiling for the rare slow domain.
+     * Poll at 100µs granularity: ~1000 polls × 100µs = 100ms total.
+     * Most calls return in 1-2 iterations; the per-poll cost is
+     * one MMIO read + udelay overhead, dwarfed by the wait when
+     * tight transitions happen. */
+    for (uint32_t spins = 0; spins < 1000; spins++) {
         uint32_t reg = pmgr_r32(ps_offset);
         uint8_t actual = (uint8_t)((reg & APPLE_PMGR_PS_ACTUAL_MASK)
                                     >> APPLE_PMGR_PS_ACTUAL_SHIFT);
         if (actual == want) return 0;
-        fut_platform_udelay(1000u);
+        fut_platform_udelay(100u);
     }
     return -EIO;
 }

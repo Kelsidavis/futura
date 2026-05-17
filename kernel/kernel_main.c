@@ -2003,10 +2003,10 @@ void fut_kernel_main(void) {
          * tests. */
         planned_tests += 17u;
 
-        /* HCI core: T1-T16 (registration validation, send_cmd routing,
+        /* HCI core: T1-T17 (registration validation, send_cmd routing,
          * event sink, open/close lifecycle, unregister idempotency,
-         * build_cmd packet construction). */
-        planned_tests += 16u;
+         * build_cmd packet construction, dispatch pkt_type guard). */
+        planned_tests += 17u;
 
         /* apple_bcm FFI: T1-T10 (chip classification across BCM4377/
          * 4378/4387 + variants, wrong-vendor/unknown-device rejection,

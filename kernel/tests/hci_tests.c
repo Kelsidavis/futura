@@ -270,6 +270,28 @@ void fut_hci_test_thread(void *arg)
         else { HCI_TEST_FAIL("build_cmd(buffer too small)", 16); return; }
     }
 
+    /* T17: dispatch_event with invalid pkt_type → -EINVAL */
+    {
+        /* Re-register a mock since we unregistered earlier. */
+        mock_state_t mock2 = {0};
+        int idx2 = fut_hci_register("mock2", FUT_HCI_TYPE_VIRTIO,
+                                     &mock_ops, &mock2);
+        if (idx2 < 0) { HCI_TEST_FAIL("re-register for T17", 17); return; }
+        fut_hci_dev_open(idx2);
+        fut_hci_set_event_sink(idx2, test_sink, NULL);
+
+        uint8_t evt[] = { 0x01, 0x02 };
+        int rc = fut_hci_dispatch_event(idx2, 0x00, evt, sizeof(evt));
+        int rc2 = fut_hci_dispatch_event(idx2, 0x06, evt, sizeof(evt));
+        if (rc == -EINVAL && rc2 == -EINVAL) {
+            HCI_TEST_PASS("dispatch_event rejects invalid pkt_type");
+        } else {
+            HCI_TEST_FAIL("dispatch_event invalid pkt_type", 17);
+            return;
+        }
+        fut_hci_unregister(idx2);
+    }
+
     fut_printf("[HCI-TEST] all HCI core tests passed\n");
     fut_hci_reset();
 }

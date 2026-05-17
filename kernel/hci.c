@@ -133,6 +133,13 @@ int fut_hci_dispatch_event(int dev_index,
 {
     if (!slot_valid(dev_index)) return -ENODEV;
     if (!pkt || len == 0) return -EINVAL;
+    /* HCI Bluetooth Core Specification §5.4: only packet indicators
+     * 0x01-0x05 are valid (CMD, ACL, SCO, EVT, ISO).  A malformed
+     * indicator from a flaky transport gets rejected here rather
+     * than confusing the sink. */
+    if (pkt_type < FUT_HCI_CMD_PKT || pkt_type > FUT_HCI_ISO_PKT) {
+        return -EINVAL;
+    }
 
     fut_hci_dev_t *d = &g_hci_devs[dev_index];
     if (!d->event_sink) return 0;  /* silently dropped — no sink */

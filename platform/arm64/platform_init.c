@@ -2293,12 +2293,20 @@ void arch_late_init(void) {
 
     /* Create init spawner thread */
 
-    /* Create thread to stage binaries and spawn init (runs after scheduler starts) */
+    /* Create thread to stage binaries and spawn init (runs after scheduler starts).
+     *
+     * Stack is 64 KB rather than something smaller because the staging
+     * thread walks embedded binary blobs through stage_arm64_blob →
+     * VFS path creation, and the slab allocator places thread structs
+     * adjacent to thread stacks — a stack < ~16 KB risks overflowing
+     * into the neighbouring fut_thread struct on ARM64 (the timer
+     * ISR alone uses ~1 KB per entry, on top of every called function's
+     * frame).  64 KB matches CONFIG_KERNEL_STACK_SIZE used elsewhere. */
     fut_thread_t *spawner_thread = fut_thread_create(
         kernel_task,
         arm64_init_spawner_thread,
         NULL,
-        16 * 1024,  /* 16KB stack */
+        64 * 1024,  /* 64 KB stack — see comment above */
         100         /* Normal priority */
     );
 

@@ -99,7 +99,45 @@ int32_t  rust_apple_dcp_swap_take_complete(AppleDcp *dcp);
 uint64_t rust_apple_dcp_set_backlight_msg(AppleDcp *dcp, uint8_t level);
 uint64_t rust_apple_dcp_set_power_msg(AppleDcp *dcp, uint8_t state);
 
+/** Cached state accessors (no side effects). */
+uint8_t  rust_apple_dcp_backlight(const AppleDcp *dcp);
+uint8_t  rust_apple_dcp_power_state(const AppleDcp *dcp);
+
 /** RTKit handler thunk target — pass the received 64-bit message in. */
 uint8_t  rust_apple_dcp_handle_msg(AppleDcp *dcp, uint64_t msg);
+
+/* ============================================================
+ *   Backlight / Power public API (C wrappers)
+ *
+ * These thin C wrappers compose the Rust message builders with
+ * apple_rtkit_send_message so callers don't have to touch RTKit
+ * directly.  All four return negative on failure (not initialised
+ * or bad arg); set_* return 0 on success, get_* return the cached
+ * value or 0xFF / 0xFF sentinel on no-init.
+ * ============================================================ */
+
+/**
+ * Set the panel backlight level (0..255).
+ * @return 0 on success, -1 if DCP isn't up.
+ */
+int     apple_dcp_set_backlight(uint8_t level);
+
+/**
+ * Read the cached backlight level last applied via set_backlight().
+ * @return level in 0..255, or 0xFF if DCP isn't up.
+ */
+uint8_t apple_dcp_get_backlight(void);
+
+/**
+ * Set DCP power state (APPLE_DCP_POWER_OFF / ON / STANDBY).
+ * @return 0 on success, -1 if DCP isn't up or state is unknown.
+ */
+int     apple_dcp_set_power(uint8_t state);
+
+/**
+ * Read the cached DCP power state.
+ * @return APPLE_DCP_POWER_*, or 0xFF if DCP isn't up.
+ */
+uint8_t apple_dcp_get_power_state(void);
 
 #endif /* __FUTURA_APPLE_DCP_H__ */

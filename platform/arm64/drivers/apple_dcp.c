@@ -414,3 +414,48 @@ int fut_apple_dcp_platform_init(const fut_platform_info_t *info) {
     }
     return rc;
 }
+
+/* ============================================================
+ *   Backlight / Power public C API
+ *
+ * Build the message via Rust, then ship it on the DCP endpoint.
+ * Errors only happen at the guard-rails — apple_rtkit_send_message
+ * is fire-and-forget so a successful build always counts as success
+ * from the kernel's POV (the panel's own ack arrives later via the
+ * RTKit handler).
+ * ============================================================ */
+
+int apple_dcp_set_backlight(uint8_t level)
+{
+    if (!g_dcp.initialized || !g_dcp.dcp || !g_dcp.rtkit) return -1;
+    uint64_t msg = rust_apple_dcp_set_backlight_msg(g_dcp.dcp, level);
+    if (!msg) return -1;
+    apple_rtkit_send_message(g_dcp.rtkit, APPLE_DCP_ENDPOINT, msg);
+    return 0;
+}
+
+uint8_t apple_dcp_get_backlight(void)
+{
+    if (!g_dcp.initialized || !g_dcp.dcp) return 0xFF;
+    return rust_apple_dcp_backlight(g_dcp.dcp);
+}
+
+int apple_dcp_set_power(uint8_t state)
+{
+    if (!g_dcp.initialized || !g_dcp.dcp || !g_dcp.rtkit) return -1;
+    if (state != APPLE_DCP_POWER_OFF &&
+        state != APPLE_DCP_POWER_ON  &&
+        state != APPLE_DCP_POWER_STANDBY) {
+        return -1;
+    }
+    uint64_t msg = rust_apple_dcp_set_power_msg(g_dcp.dcp, state);
+    if (!msg) return -1;
+    apple_rtkit_send_message(g_dcp.rtkit, APPLE_DCP_ENDPOINT, msg);
+    return 0;
+}
+
+uint8_t apple_dcp_get_power_state(void)
+{
+    if (!g_dcp.initialized || !g_dcp.dcp) return 0xFF;
+    return rust_apple_dcp_power_state(g_dcp.dcp);
+}

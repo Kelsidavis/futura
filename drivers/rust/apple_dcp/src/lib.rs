@@ -349,6 +349,21 @@ pub unsafe extern "C" fn rust_apple_dcp_set_power_msg(
     build_power_msg(state)
 }
 
+/// Read the cached backlight level (0..255).  Returns 0 if dcp is NULL.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rust_apple_dcp_backlight(dcp: *const AppleDcp) -> u8 {
+    if dcp.is_null() { return 0; }
+    unsafe { (*dcp).backlight }
+}
+
+/// Read the cached power state (APPLE_DCP_POWER_*).  Returns 0 (OFF) on
+/// NULL dcp — which matches the genuine "off" state and is safe.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rust_apple_dcp_power_state(dcp: *const AppleDcp) -> u8 {
+    if dcp.is_null() { return 0; }
+    unsafe { (*dcp).power_state }
+}
+
 /// Dispatch an RTKit message received on the DCP endpoint.  Updates
 /// swap state on SWAP_COMPLETE; other notifications (power / error /
 /// vsync) are ignored (the C side logs them).  Returns the message

@@ -2113,13 +2113,15 @@ void fut_kernel_main(void) {
         planned_tests += 7u;
 #endif
 
-        /* apple_dcp: T1-T17 (every Rust FFI: swap_pending/take_complete,
+        /* apple_dcp: T1-T24 (every Rust FFI: swap_pending/take_complete,
          * mode_width/height/stride/format/is_set, register_surface/
          * unregister/iova, set_mode/get_mode, swap_submit_build,
-         * set_backlight_msg, set_power_msg, handle_msg; plus C
-         * platform_init NULL). ARM64-only. */
+         * set_backlight_msg, set_power_msg, handle_msg,
+         * rust_backlight/power_state NULL guards; C wrappers for
+         * set/get backlight + set/get power_state without init).
+         * ARM64-only. */
 #ifdef __aarch64__
-        planned_tests += 17u;
+        planned_tests += 24u;
 #endif
 
         /* apple_aic + apple_ans2: T1-T5 (AIC init/pending/whoami/void

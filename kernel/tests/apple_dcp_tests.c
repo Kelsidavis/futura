@@ -158,6 +158,56 @@ void fut_apple_dcp_test_thread(void *arg)
         } else { DCP_FAIL("handle_msg(NULL)", 17); return; }
     }
 
+    /* T18: rust_apple_dcp_backlight(NULL) → 0 */
+    {
+        if (rust_apple_dcp_backlight(NULL) == 0) {
+            DCP_PASS("rust_backlight(NULL)");
+        } else { DCP_FAIL("rust_backlight(NULL)", 18); return; }
+    }
+
+    /* T19: rust_apple_dcp_power_state(NULL) → 0 */
+    {
+        if (rust_apple_dcp_power_state(NULL) == 0) {
+            DCP_PASS("rust_power_state(NULL)");
+        } else { DCP_FAIL("rust_power_state(NULL)", 19); return; }
+    }
+
+    /* T20: apple_dcp_set_backlight without init → -1 */
+    {
+        if (apple_dcp_set_backlight(128) == -1) {
+            DCP_PASS("set_backlight(no init)");
+        } else { DCP_FAIL("set_backlight(no init)", 20); return; }
+    }
+
+    /* T21: apple_dcp_get_backlight without init → 0xFF */
+    {
+        if (apple_dcp_get_backlight() == 0xFF) {
+            DCP_PASS("get_backlight(no init)");
+        } else { DCP_FAIL("get_backlight(no init)", 21); return; }
+    }
+
+    /* T22: apple_dcp_set_power(invalid state) → -1
+     * (also -1 because not initialised, but exercises the call) */
+    {
+        if (apple_dcp_set_power(99) == -1) {
+            DCP_PASS("set_power(invalid)");
+        } else { DCP_FAIL("set_power(invalid)", 22); return; }
+    }
+
+    /* T23: apple_dcp_set_power(valid state, but not init) → -1 */
+    {
+        if (apple_dcp_set_power(APPLE_DCP_POWER_ON) == -1) {
+            DCP_PASS("set_power(no init)");
+        } else { DCP_FAIL("set_power(no init)", 23); return; }
+    }
+
+    /* T24: apple_dcp_get_power_state without init → 0xFF */
+    {
+        if (apple_dcp_get_power_state() == 0xFF) {
+            DCP_PASS("get_power_state(no init)");
+        } else { DCP_FAIL("get_power_state(no init)", 24); return; }
+    }
+
     fut_printf("[DCP-TEST] all apple_dcp guard tests passed\n");
 }
 

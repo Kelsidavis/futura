@@ -916,6 +916,9 @@ static void selftest_sequential_runner(void *arg) {
     extern void fut_apple_bcm_test_thread(void *arg);
     fut_apple_bcm_test_thread(NULL);
 
+    extern void fut_dtb_walker_test_thread(void *arg);
+    fut_dtb_walker_test_thread(NULL);
+
     /* Safety net: if every test function returned without triggering
      * try_finish() (planned over-counted by the same magnitude as a
      * skipped cluster, or a control-flow branch that returned without
@@ -2008,6 +2011,11 @@ void fut_kernel_main(void) {
          * build_cmd packet construction, dispatch pkt_type guard,
          * dev_find lookup). */
         planned_tests += 20u;
+
+        /* DT walker: T1-T8 (synthetic DTB validates, compatible
+         * substring match, cell extraction at various indices,
+         * out-of-range cell, unknown compat/property, NULL args). */
+        planned_tests += 8u;
 
         /* apple_bcm FFI: T1-T10 (chip classification across BCM4377/
          * 4378/4387 + variants, wrong-vendor/unknown-device rejection,

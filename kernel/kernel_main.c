@@ -2091,10 +2091,11 @@ void fut_kernel_main(void) {
         planned_tests += 8u;
 #endif
 
-        /* apple_audio: T1-T8 (init-state guards on configure / play /
-         * write / volume / state / platform_init). ARM64-only. */
+        /* apple_audio: T1-T12 (init-state guards on configure / play /
+         * write / volume / state / platform_init, plus configure
+         * input validation: bad sample_rate / channels). ARM64-only. */
 #ifdef __aarch64__
-        planned_tests += 8u;
+        planned_tests += 12u;
 #endif
 
         /* apple_hid: T1-T7 (init guard, has_key/getchar/poll without

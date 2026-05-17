@@ -95,6 +95,41 @@ void fut_apple_audio_test_thread(void *arg)
         }
     }
 
+    /* T9-T12: configure input validation (these all fail at the
+     * !initialized guard first, but exercise the call paths) */
+    {
+        if (apple_audio_configure(7999, 2, 0) == -1) {
+            AUD_PASS("configure(rate too low)");
+        } else {
+            AUD_FAIL("configure(rate too low)", 9);
+            return;
+        }
+    }
+    {
+        if (apple_audio_configure(400000, 2, 0) == -1) {
+            AUD_PASS("configure(rate too high)");
+        } else {
+            AUD_FAIL("configure(rate too high)", 10);
+            return;
+        }
+    }
+    {
+        if (apple_audio_configure(48000, 0, 0) == -1) {
+            AUD_PASS("configure(channels=0)");
+        } else {
+            AUD_FAIL("configure(channels=0)", 11);
+            return;
+        }
+    }
+    {
+        if (apple_audio_configure(48000, 9, 0) == -1) {
+            AUD_PASS("configure(channels>8)");
+        } else {
+            AUD_FAIL("configure(channels>8)", 12);
+            return;
+        }
+    }
+
     fut_printf("[AUDIO-TEST] all apple_audio guard tests passed\n");
 }
 

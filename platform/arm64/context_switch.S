@@ -480,8 +480,13 @@ fut_context_init:
     /* Set initial PC to entry function */
     str     x1, [x0, #152]            /* PC = entry function */
 
-    /* Set initial PSTATE (EL1h, interrupts enabled) */
-    mov     x6, #(PSTATE_MODE_EL1h | PSTATE_F_BIT)
+    /* Set initial PSTATE: EL1h with ALL DAIF bits clear (D=0, A=0,
+     * I=0, F=0).  The previous value set PSTATE_F_BIT which masks
+     * FIQ — that was harmless on QEMU virt (timer fires as IRQ
+     * there) but broke preemption on Apple Silicon where the ARM
+     * Generic Timer is FIQ-delivered.  Threads booted with F=1
+     * would never see a timer tick. */
+    mov     x6, #PSTATE_MODE_EL1h
     str     x6, [x0, #160]            /* PSTATE */
 
     ret

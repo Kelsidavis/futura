@@ -1046,10 +1046,19 @@ void fut_timer_irq_handler(void) {
  * ============================================================ */
 
 void fut_enable_interrupts(void) {
-    __asm__ volatile("msr daifclr, #2" ::: "memory");  /* Clear I bit */
+    /* Clear both I and F.  QEMU virt has nothing that fires as FIQ so
+     * the F-clear is a no-op there; on Apple Silicon F=0 is required
+     * for the ARM Generic Timer (delivered as FIQ) to actually reach
+     * the CPU.  Previously this cleared only I and the boot-default
+     * F=1 stayed put, blocking every timer tick on Apple. */
+    __asm__ volatile("msr daifclr, #3" ::: "memory");  /* Clear I + F */
 }
 
 void fut_disable_interrupts(void) {
+    /* Mask only I.  Leaving F unmasked preserves the symmetry with
+     * fut_enable_interrupts above: callers that want a stricter
+     * mask use the save/restore pair, which captures the full DAIF
+     * and restores it byte-for-byte. */
     __asm__ volatile("msr daifset, #2" ::: "memory");  /* Set I bit */
 }
 

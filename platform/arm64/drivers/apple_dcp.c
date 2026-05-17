@@ -133,7 +133,7 @@ static int dcp_alloc_surface(uint32_t width, uint32_t height, uint32_t format) {
         return -1;
     }
 
-    if ((size_t)idx < (sizeof(g_dcp.surfaces) / sizeof(g_dcp.surfaces[0]))) {
+    if ((size_t)idx < APPLE_DCP_MAX_SURFACES) {
         g_dcp.surfaces[idx].phys  = phys;
         g_dcp.surfaces[idx].iova  = iova;
         g_dcp.surfaces[idx].size  = size;

@@ -54,6 +54,21 @@ int fb_probe_from_multiboot(const void *mb_info);
 int fb_get_info(struct fut_fb_hwinfo *out);
 
 /**
+ * Publish hardware framebuffer info from a platform prober.
+ *
+ * Use this when a platform-specific framebuffer source (Apple DCP,
+ * virtio-gpu, etc.) has discovered the live framebuffer geometry
+ * AFTER fb_probe_from_multiboot has already run and seeded the
+ * fallback.  The caller is responsible for ensuring the physical
+ * region pointed at by @info.phys remains valid and mapped for the
+ * lifetime of the framebuffer.
+ *
+ * @param info  Geometry to publish (copied).
+ * @return 0 on success, -EINVAL if @info is NULL or has zero geometry.
+ */
+int fb_set_hwinfo(const struct fut_fb_hwinfo *info);
+
+/**
  * Check if a framebuffer is available.
  *
  * @return true if framebuffer was successfully initialized

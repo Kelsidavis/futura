@@ -192,6 +192,18 @@ bool fb_is_available(void) {
     return g_fb_available;
 }
 
+int fb_set_hwinfo(const struct fut_fb_hwinfo *info) {
+    if (!info || info->info.width == 0 || info->info.height == 0) {
+        return -EINVAL;
+    }
+    g_fb_hw = *info;
+    g_fb_available = true;
+    fut_printf("[FB] hwinfo published: %ux%u %ubpp pitch=%u phys=0x%llx\n",
+               info->info.width, info->info.height, info->info.bpp,
+               info->info.pitch, (unsigned long long)info->phys);
+    return 0;
+}
+
 #ifdef __x86_64__
 void *fb_get_virt_addr(void) {
     return (void *)g_fb_virt;

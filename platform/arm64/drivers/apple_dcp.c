@@ -141,7 +141,7 @@ static int dcp_register_fb(int fb_idx) {
     uint32_t stride = rust_apple_dcp_mode_stride(g_dcp.dcp);
     uint32_t format = rust_apple_dcp_mode_format(g_dcp.dcp);
 
-    static struct fut_fb_hwinfo dcp_fb_hw;
+    struct fut_fb_hwinfo dcp_fb_hw = {0};
     dcp_fb_hw.phys        = g_dcp.surfaces[fb_idx].phys;
     dcp_fb_hw.length      = (uint64_t)stride * height;
     dcp_fb_hw.info.width  = width;
@@ -149,6 +149,15 @@ static int dcp_register_fb(int fb_idx) {
     dcp_fb_hw.info.pitch  = stride;
     dcp_fb_hw.info.bpp    = (format == APPLE_DCP_FMT_RGB565) ? 16 : 32;
     dcp_fb_hw.info.flags  = 0x00000001;  /* FB_FLAG_LINEAR */
+
+    /* Publish to the global FB subsystem so fb_get_info() / fb_is_available()
+     * reflect the DCP surface instead of the FB_PHYS_FALLBACK that
+     * fb_probe_from_multiboot's ARM64 fallback seeded earlier in boot. */
+    int rc = fb_set_hwinfo(&dcp_fb_hw);
+    if (rc != 0) {
+        fut_printf("[DCP] fb_set_hwinfo failed: %d\n", rc);
+        return rc;
+    }
 
     fut_printf("[DCP] Framebuffer: %ux%u %ubpp phys=0x%lx\n",
                width, height, dcp_fb_hw.info.bpp,

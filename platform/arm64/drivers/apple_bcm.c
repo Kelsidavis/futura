@@ -454,12 +454,18 @@ int apple_bcm_chip_power_on(void)
 
     /* WL_REG_ON / BT_REG_ON are active high: HIGH = chip powered,
      * LOW = held in reset.  Cycle them low→high to guarantee a clean
-     * start, then wait for internal rails to stabilize. */
+     * start, then wait for internal rails to stabilize.
+     *
+     * Order matters: set the OUT bit BEFORE flipping OE to OUTPUT.
+     * Apple pinctrl latches OUT in a separate register; if we did
+     * set_direction(OUTPUT) first and the OUT register still held
+     * 1 from a previous boot, the pin would briefly go HIGH before
+     * we drove it LOW — a glitch the BCM chip can latch onto. */
     if (g_bcm_wlan_reset_gpio >= 0) {
-        rust_gpio_set_direction(g_bcm_gpio,
-                                 (uint32_t)g_bcm_wlan_reset_gpio, 1);
         rust_gpio_set_output(g_bcm_gpio,
                              (uint32_t)g_bcm_wlan_reset_gpio, 0);
+        rust_gpio_set_direction(g_bcm_gpio,
+                                 (uint32_t)g_bcm_wlan_reset_gpio, 1);
         fut_platform_udelay(10u * 1000u);
         rust_gpio_set_output(g_bcm_gpio,
                              (uint32_t)g_bcm_wlan_reset_gpio, 1);
@@ -467,10 +473,10 @@ int apple_bcm_chip_power_on(void)
                    g_bcm_wlan_reset_gpio);
     }
     if (g_bcm_bt_reset_gpio >= 0) {
-        rust_gpio_set_direction(g_bcm_gpio,
-                                 (uint32_t)g_bcm_bt_reset_gpio, 1);
         rust_gpio_set_output(g_bcm_gpio,
                              (uint32_t)g_bcm_bt_reset_gpio, 0);
+        rust_gpio_set_direction(g_bcm_gpio,
+                                 (uint32_t)g_bcm_bt_reset_gpio, 1);
         fut_platform_udelay(10u * 1000u);
         rust_gpio_set_output(g_bcm_gpio,
                              (uint32_t)g_bcm_bt_reset_gpio, 1);

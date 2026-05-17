@@ -961,6 +961,9 @@ static void selftest_sequential_runner(void *arg) {
     extern void fut_apple_spi_i2c_test_thread(void *arg);
     fut_apple_spi_i2c_test_thread(NULL);
 
+    extern void fut_apple_mca_test_thread(void *arg);
+    fut_apple_mca_test_thread(NULL);
+
     /* Safety net: if every test function returned without triggering
      * try_finish() (planned over-counted by the same magnitude as a
      * skipped cluster, or a control-flow branch that returned without
@@ -2157,6 +2160,13 @@ void fut_kernel_main(void) {
          * i2c_init/free/write/read/status). ARM64-only. */
 #ifdef __aarch64__
         planned_tests += 10u;
+#endif
+
+        /* apple_mca: T1-T7 (Rust MCA FFI NULL guards on init/free/
+         * setup_playback/setup_capture/start_tx_dma/stop/handle_irq).
+         * ARM64-only. */
+#ifdef __aarch64__
+        planned_tests += 7u;
 #endif
 
         /* apple_bcm: T1-T17 (Rust FFI classification + chip-name

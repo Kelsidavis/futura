@@ -1064,14 +1064,21 @@ void fut_disable_interrupts(void) {
 
 uint64_t fut_save_and_disable_interrupts(void) {
     uint64_t pstate = read_sysreg(daif);
-    fut_disable_interrupts();
+    /* Mask BOTH I and F.  Apple Silicon delivers the timer as FIQ,
+     * so a critical-section primitive that only masks I would let
+     * the timer interrupt fire during scheduler-lock acquisition
+     * and race against the very state the lock is protecting.
+     * QEMU virt has no FIQ source so masking F is free there. */
+    __asm__ volatile("msr daifset, #3" ::: "memory");  /* Set I + F */
     return pstate;
 }
 
 void fut_restore_interrupts(uint64_t state) {
-    if (!(state & PSTATE_I_BIT)) {
-        fut_enable_interrupts();
-    }
+    /* Write the full saved DAIF back so I and F both return to the
+     * caller's pre-save state in one atomic register write — not
+     * separate conditional clears which would leak transient
+     * intermediate masks. */
+    __asm__ volatile("msr daif, %0" :: "r"(state) : "memory");
 }
 
 /* ============================================================

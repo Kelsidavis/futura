@@ -134,6 +134,13 @@ int fut_hci_dispatch_event(int dev_index,
 /* Wipe the registry — primarily for tests. */
 void fut_hci_reset(void);
 
+/* Iterate every registered device, call ops->open, and log the
+ * outcome.  Intended to run once after all transports register
+ * during platform init.  Failures (including -ENOSYS from stub
+ * transports) are non-fatal — they're informational so the boot
+ * log shows which radios are ready and which are pending. */
+void fut_hci_open_all(void);
+
 /* ============================================================
  *   HCI opcodes + packet construction
  * ============================================================

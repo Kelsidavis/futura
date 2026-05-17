@@ -152,6 +152,7 @@
 #include <platform/arm64/apple_bcm.h>
 #include <platform/arm64/apple_pmgr.h>
 #include <platform/arm64/apple_audio.h>
+#include <kernel/hci.h>
 #include <config/futura_config.h>
 #include <kernel/fut_waitq.h>
 #include <kernel/fut_task.h>
@@ -1506,6 +1507,11 @@ void fut_platform_late_init(void) {
 
             /* Audio: MCA + codec */
             apple_audio_platform_init(&info);
+
+            /* Open any HCI transports that drivers registered above
+             * (currently just apple_bcm BT, with stub callbacks
+             * returning -ENOSYS until radio bring-up lands). */
+            fut_hci_open_all();
 
             fut_serial_puts("[INIT] Apple Silicon driver init complete\n");
         }

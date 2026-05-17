@@ -13,6 +13,7 @@
 
 #include <kernel/hci.h>
 #include <kernel/errno.h>
+#include <kernel/kprintf.h>
 #include <string.h>
 
 static fut_hci_dev_t g_hci_devs[FUT_HCI_MAX_DEVICES];
@@ -150,6 +151,34 @@ void fut_hci_reset(void)
         memset(&g_hci_devs[i], 0, sizeof(g_hci_devs[i]));
         g_hci_slot_used[i] = false;
     }
+}
+
+void fut_hci_open_all(void)
+{
+    int total = 0, opened = 0, pending = 0;
+    for (int i = 0; i < FUT_HCI_MAX_DEVICES; i++) {
+        if (!g_hci_slot_used[i]) continue;
+        total++;
+        int rc = fut_hci_dev_open(i);
+        if (rc == 0) {
+            opened++;
+            fut_printf("[hci%d] %s opened (type=%d)\n",
+                       i, g_hci_devs[i].name, (int)g_hci_devs[i].type);
+        } else if (rc == -ENOSYS) {
+            pending++;
+            fut_printf("[hci%d] %s registered, transport pending "
+                       "implementation\n", i, g_hci_devs[i].name);
+        } else {
+            fut_printf("[hci%d] %s open failed: rc=%d\n",
+                       i, g_hci_devs[i].name, rc);
+        }
+    }
+    if (total == 0) {
+        /* Quiet path — nothing to log when no transports exist. */
+        return;
+    }
+    fut_printf("[hci] %d registered, %d opened, %d pending\n",
+               total, opened, pending);
 }
 
 int fut_hci_build_cmd(uint16_t opcode,

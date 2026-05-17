@@ -2014,8 +2014,11 @@ void fut_kernel_main(void) {
 
         /* DT walker: T1-T8 (synthetic DTB validates, compatible
          * substring match, cell extraction at various indices,
-         * out-of-range cell, unknown compat/property, NULL args). */
+         * out-of-range cell, unknown compat/property, NULL args).
+         * ARM64-only — the walker lives in kernel/dtb/arm64_dtb.c. */
+#ifdef __aarch64__
         planned_tests += 8u;
+#endif
 
         /* apple_bcm FFI: T1-T10 (chip classification across BCM4377/
          * 4378/4387 + variants, wrong-vendor/unknown-device rejection,

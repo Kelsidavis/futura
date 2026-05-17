@@ -16,6 +16,11 @@
  *   - strings block (concatenated NUL-terminated names)
  */
 
+/* fut_dtb_find_compat_u32_cell lives in kernel/dtb/arm64_dtb.c which
+ * is ARM64-only.  Compile this test as a no-op on x86_64 so the
+ * symbol-resolution stage doesn't trip. */
+#ifdef __aarch64__
+
 #include <stdint.h>
 #include <stddef.h>
 #include <platform/arm64/dtb.h>
@@ -184,3 +189,12 @@ void fut_dtb_walker_test_thread(void *arg)
 
     fut_printf("[DTB-TEST] all DT walker tests passed\n");
 }
+
+#else /* !__aarch64__ */
+
+/* x86_64 doesn't link kernel/dtb/arm64_dtb.c; runner is a no-op so
+ * kernel_main can call it unconditionally.  planned_tests bump is
+ * also ARM64-guarded. */
+void fut_dtb_walker_test_thread(void *arg) { (void)arg; }
+
+#endif /* __aarch64__ */

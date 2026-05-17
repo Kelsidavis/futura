@@ -61,6 +61,9 @@ extern void fut_test_fail(uint16_t code);
  */
 #define DTB_TOTALSIZE 176
 
+/* Phandle value embedded in the synthetic DTB below. */
+#define SYNTHETIC_PHANDLE 0x42u
+
 static const uint8_t synthetic_dtb[DTB_TOTALSIZE] __attribute__((aligned(8))) = {
     /* ----- Header (40 bytes, all big-endian u32) ----- */
     0xD0, 0x0D, 0xFE, 0xED,  /* magic */
@@ -185,6 +188,32 @@ void fut_dtb_walker_test_thread(void *arg)
             DTB_FAIL("find_compat_u32_cell(NULL args)", 8);
             return;
         }
+    }
+
+    /* T9-T11 require a DTB with a phandle property.  Our 176-byte
+     * synthetic DTB above doesn't carry one (it was sized to test
+     * the compat-cell walker).  Skip phandle tests against this DTB
+     * but exercise the boundary conditions of fut_dtb_phandle_reg. */
+
+    /* T9: phandle=0 → -1 (reserved per DT spec) */
+    {
+        int64_t r = fut_dtb_phandle_reg(dtb, 0);
+        if (r == -1) DTB_PASS("phandle_reg(phandle=0)");
+        else { DTB_FAIL("phandle_reg(phandle=0)", 9); return; }
+    }
+
+    /* T10: phandle=0xFFFFFFFF → -1 (also reserved) */
+    {
+        int64_t r = fut_dtb_phandle_reg(dtb, 0xFFFFFFFFu);
+        if (r == -1) DTB_PASS("phandle_reg(phandle=0xFFFFFFFF)");
+        else { DTB_FAIL("phandle_reg(phandle=ffffffff)", 10); return; }
+    }
+
+    /* T11: phandle in valid range but not present in the DTB → -1 */
+    {
+        int64_t r = fut_dtb_phandle_reg(dtb, 0x12345);
+        if (r == -1) DTB_PASS("phandle_reg(absent phandle)");
+        else { DTB_FAIL("phandle_reg(absent)", 11); return; }
     }
 
     fut_printf("[DTB-TEST] all DT walker tests passed\n");

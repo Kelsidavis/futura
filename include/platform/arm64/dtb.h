@@ -265,6 +265,19 @@ int64_t fut_dtb_find_compat_u32_cell(uint64_t dtb_ptr,
                                       uint32_t cell_idx);
 
 /**
+ * Resolve a DT phandle reference to the first cell of the target
+ * node's `reg` property.  Used to look up pmgr power-domain offsets
+ * from a device's `power-domains = <&ps_foo>` property without
+ * hardcoding per-SoC tables.
+ *
+ * @param dtb_ptr   Physical address of DTB
+ * @param phandle   The phandle value to look up
+ * @return first reg cell (big-endian) on success, -1 if the phandle
+ *         isn't bound to any node or the target has no reg property.
+ */
+int64_t fut_dtb_phandle_reg(uint64_t dtb_ptr, uint32_t phandle);
+
+/**
  * Get interrupt property from a node.
  * Parses ARM GIC interrupt format: <type, number, flags>
  *   - type: 0=SPI, 1=PPI

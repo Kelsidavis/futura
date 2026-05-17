@@ -1220,6 +1220,121 @@ int64_t fut_dtb_find_compat_u32_cell(uint64_t dtb_ptr,
     return -1;
 }
 
+int64_t fut_dtb_phandle_reg(uint64_t dtb_ptr, uint32_t phandle) {
+    if (!fut_dtb_validate(dtb_ptr) || phandle == 0 || phandle == 0xFFFFFFFFu) {
+        return -1;
+    }
+
+    dtb_header_t *header = (dtb_header_t *)dtb_ptr;
+    uint32_t totalsize = be32_to_cpu(header->totalsize);
+    uint32_t off_struct = be32_to_cpu(header->off_dt_struct);
+    uint32_t off_strings = be32_to_cpu(header->off_dt_strings);
+
+    if (off_struct >= totalsize || off_strings >= totalsize) return -1;
+
+    char *strings_base = (char *)(dtb_ptr + off_strings);
+    uint32_t strings_size = totalsize - off_strings;
+    uint32_t *struct_ptr = (uint32_t *)(dtb_ptr + off_struct);
+    uint32_t *struct_end = (uint32_t *)(dtb_ptr + totalsize);
+    uint32_t *p = struct_ptr;
+
+    /* DT format guarantees properties come before children, so the
+     * current node's reg is fully known by the time we hit either
+     * its first child BEGIN_NODE or its own END_NODE.
+     *
+     * State machine:
+     *   SEARCHING — scanning every node, watching for one whose
+     *               phandle matches our target.
+     *   IN_NODE   — found the matching node, still inside its
+     *               property list, waiting for reg.
+     *
+     * `cur_reg_seen` / `cur_reg` track the current node's first reg
+     * cell.  Reset on every BEGIN_NODE since a node's properties are
+     * scoped to it.  DT allows phandle under either "phandle"
+     * (modern) or "linux,phandle" (legacy); Asahi DTBs use the
+     * modern form, legacy is handled defensively. */
+
+    int depth = 0;
+    int match_depth = -1;
+    uint32_t cur_reg = 0;
+    bool cur_reg_seen = false;
+    int64_t result = -1;
+    bool in_matched_node = false;
+
+    while (p < struct_end && be32_to_cpu(p[0]) != FDT_END) {
+        uint32_t token = be32_to_cpu(p[0]);
+
+        if (token == FDT_BEGIN_NODE) {
+            const char *name_ptr = (const char *)&p[1];
+            size_t max_name = (size_t)((char *)struct_end - name_ptr);
+            size_t name_len = 0;
+            while (name_len < max_name && name_ptr[name_len] != '\0') name_len++;
+            size_t aligned_name_len = align_offset(name_len + 1);
+            p = (uint32_t *)((char *)&p[1] + aligned_name_len);
+            depth++;
+
+            /* If we were IN_NODE and just descended into a child,
+             * the matched node's property region is over without
+             * having yielded reg. */
+            if (in_matched_node && depth > match_depth) {
+                break;
+            }
+
+            /* Reset per-node reg cache for the freshly entered node. */
+            cur_reg_seen = false;
+            cur_reg = 0;
+
+        } else if (token == FDT_PROP) {
+            dtb_prop_t *prop = (dtb_prop_t *)&p[1];
+            uint32_t prop_len = be32_to_cpu(prop->len);
+            uint32_t name_off = be32_to_cpu(prop->nameoff);
+            if (name_off >= strings_size) break;
+            const char *pname = strings_base + name_off;
+            void *pvalue = (void *)&prop[1];
+
+            if (strcmp(pname, "reg") == 0 && prop_len >= 4) {
+                cur_reg = be32_to_cpu(*(uint32_t *)pvalue);
+                cur_reg_seen = true;
+                if (in_matched_node && depth == match_depth) {
+                    result = (int64_t)cur_reg;
+                    break;
+                }
+            } else if ((strcmp(pname, "phandle") == 0 ||
+                        strcmp(pname, "linux,phandle") == 0) &&
+                       prop_len >= 4 && !in_matched_node) {
+                uint32_t v = be32_to_cpu(*(uint32_t *)pvalue);
+                if (v == phandle) {
+                    match_depth = depth;
+                    in_matched_node = true;
+                    if (cur_reg_seen) {
+                        result = (int64_t)cur_reg;
+                        break;
+                    }
+                }
+            }
+
+            p = (uint32_t *)((char *)p + sizeof(uint32_t) +
+                              sizeof(dtb_prop_t) + prop_len);
+            p = (uint32_t *)align_offset((size_t)p);
+
+        } else if (token == FDT_END_NODE) {
+            if (in_matched_node && depth == match_depth) {
+                /* Matched node ended without surfacing reg. */
+                break;
+            }
+            depth--;
+            p += 1;
+
+        } else if (token == FDT_NOP) {
+            p += 1;
+        } else {
+            break;
+        }
+    }
+
+    return result;
+}
+
 /* ============================================================
  *   Platform Initialization Stubs
  * ============================================================ */

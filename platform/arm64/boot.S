@@ -395,10 +395,10 @@ bss_cleared:
     orr     x1, x1, #3                /* Valid table descriptor */
     str     x1, [x0, #8]
 
-    /* kernel_l1[8..39] -> 32 GiB of Apple peripheral PA range
+    /* kernel_l1[8..71] -> 64 GiB of Apple peripheral PA range
      *
-     * Maps VA 0xFFFFFF8200000000 - 0xFFFFFF89FFFFFFFF (32 GiB) to
-     * PA 0x200000000 - 0x9FFFFFFFF using 1 GiB block descriptors
+     * Maps VA 0xFFFFFF8200000000 - 0xFFFFFF91FFFFFFFF (64 GiB) to
+     * PA 0x200000000 - 0x11FFFFFFFF using 1 GiB block descriptors
      * with device-nGnRE memory attributes.
      *
      * Apple Silicon places its on-die peripherals at PA 0x200000000+
@@ -407,15 +407,15 @@ bss_cleared:
      * range, Rust drivers passing DTB-discovered PAs (s5l-uart at
      * 0x235200000, AIC at 0x23B100000, ANS mailbox at 0x277400000,
      * DCP at 0x231100000, SMC at 0x23E400000, MCA at 0x2D5200000,
-     * PCIe root complex at 0x690000000, PCIe ECAM at 0x6a0000000,
-     * ...) as VAs would translation-fault on the first MMIO touch.
+     * PCIe root complex at 0x690000000 (M1) / 0xc00000000 (M1
+     * Pro/Max), PCIe ECAM, ...) as VAs would translation-fault on
+     * the first MMIO touch.
      *
-     * The 32 GiB window was sized to cover PCIe (PA 0x690000000 on
-     * M1) along with the lower SoC peripheral block — an 8 GiB
-     * window would have stopped at PA 0x3FFFFFFFF and missed PCIe
-     * by ~22 GiB.  M1 Pro / Max push PCIe higher still (PA
-     * 0xc00000000); those configurations will need an extended
-     * window once we have a real machine to test against.
+     * The 64 GiB window is sized to cover both M1 (PCIe at 0x690...,
+     * ~26 GiB) AND M1 Pro / Max (PCIe at 0xc00..., ~48 GiB) without
+     * a runtime branch on SoC variant.  Costs 56 extra L1 entries
+     * (448 bytes of static page table) compared to the M1-only
+     * 32 GiB window.
      *
      * C callers convert PA→VA via the helper that ORs in
      * 0xFFFFFF8000000000 (declared in include/platform/arm64/memory/pmap.h).
@@ -427,7 +427,7 @@ bss_cleared:
     add     x0, x0, :lo12:kernel_l1_table
     add     x0, x0, #(8 * 8)          /* L1[8] */
     movz    x1, #0x0002, lsl #32      /* Start PA = 0x2_0000_0000 (8 GiB) */
-    mov     x3, #32                   /* 32 entries × 1 GiB = 32 GiB */
+    mov     x3, #64                   /* 64 entries × 1 GiB = 64 GiB */
     mov     x4, #0x40000000           /* 1 GiB stride */
 9:  movz    x2, #0x0605               /* Valid|Block|AttrIdx=1(dev)|AF|SH=10 */
     orr     x2, x1, x2                /* Combine PA with flags */

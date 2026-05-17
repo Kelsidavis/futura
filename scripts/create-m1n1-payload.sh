@@ -170,13 +170,24 @@ parser (kernel/dtb/arm64_dtb.c) will:
   - Initialize platform-specific drivers (post-MMU)
 
 Apple Silicon bring-up status:
-  - boot.S MMU setup is now PA-relocatable + 48-bit VA, so the kernel
-    image can load anywhere m1n1 chooses to drop it
-    (see docs/APPLE_SILICON_BRINGUP_PLAN.md for details).
-  - Remaining gating items before a real-hardware boot succeeds:
-      * s5l-UART early-debug (kernel currently uses PL011 at the
-        QEMU-virt VA until fut_platform_late_init swaps backends).
-      * AIC dispatch in boot.S's IRQ entry (currently GIC-only).
+  - boot.S MMU setup is PA-relocatable + 48-bit VA (T0SZ = T1SZ = 16),
+    so the kernel image can load anywhere m1n1 chooses to drop it.
+  - Runtime KERN_PA_BASE: pmap_phys/virt_to_phys consult a g_kernel
+    load-PA published by boot.S, so neither QEMU nor real Apple HW
+    need a fixed compile-time literal.
+  - Apple s5l-UART: post-MMU putc backend registered via
+    fut_serial_set_putc_backend() so kernel output works on Apple HW
+    once fut_apple_uart_init() runs.
+  - AIC dispatch: pluggable fut_irq_set_dispatch_backend() routes
+    fut_irq_main() to apple_aic_handle_irq when has_aic is true,
+    bit-identical to the GIC path on QEMU.  TCR.IPS now comes from
+    MMFR0.PARange so M1/M2's 48-bit PA is honoured.
+  - Drivers: every apple_*.c in platform/arm64/drivers/ is backed
+    by a Rust crate in drivers/rust/ (aic, uart, hid, audio/mca,
+    xhci, rtkit, ans2, dcp, smc/power).  DTB parser wires
+    /arm-io/{mca,ans,ans/mailbox,dcp,dcp/mailbox,dart-dcp,smc,
+    spi0,i2c0,pcie,pcie/ecam,aic,uart0} into fut_platform_info_t.
+  - See docs/APPLE_SILICON_BRINGUP_PLAN.md for the full status sheet.
 
 If you need a custom DTB:
   1. Extract from m1n1: python3 -m m1n1.run m1n1.macho --dump-fdt fdt.dtb

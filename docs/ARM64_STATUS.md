@@ -24,16 +24,23 @@ Key infrastructure that landed since the November snapshot:
 - ~30 test ranges that deref user-VA pointers returned by `mmap` are skipped from the kernel-thread runner via a `fut_mm_current() == fut_mm_kernel()` gate (`grep "kernel-thread context" kernel/tests/sys_misc.c`).
 - Hardened `fut_test_finish_runner()` safety net fires `qemu_exit(0)` from the runner's exit path so we never depend on `planned == passed` exactly matching.
 
-### Apple Silicon bring-up (kernel-side mostly done)
+### Apple Silicon bring-up (kernel-side complete)
 
-A separate chain (`docs/APPLE_SILICON_BRINGUP_PLAN.md`) closed 4.5 of 5 blockers between QEMU virt and a real M1/M2/M3/M4 boot via m1n1:
+A separate chain (`docs/APPLE_SILICON_BRINGUP_PLAN.md`) closed all 5 original blockers plus six follow-up rounds between QEMU virt and a real M1/M2/M3/M4 boot via m1n1:
 
 - **#1 PA-relocatable boot.S** — identity + high-VA L2 tables derived from `adr x21, _start`, kernel image can load anywhere in DRAM.
 - **#2 48-bit VA across the board** — `T0SZ = T1SZ = 16`, new L0 root tables, walks past the old 39-bit / 512 GB window so Apple DRAM is addressable.
 - **#3 Runtime KERN_PA_BASE** — `pmap_phys_to_virt` / `pmap_virt_to_phys` now read `fut_kernel_virt_offset()` (populated from `g_kernel_load_pa`) instead of the compile-time literal.
-- **#4 Apple s5l-UART (post-MMU)** — pluggable `fut_serial_set_putc_backend()`; `apple_uart_init()` registers the s5l-uart putc.
+- **#4 Apple s5l-UART** — post-MMU putc backend (`fut_serial_set_putc_backend()`) + pre-MMU MIDR_EL1-aware early-debug shim.
 - **#5 AIC IRQ dispatch** — `boot.S/fut_irq_handler` shrinks to a thin trampoline into `fut_irq_main()` with a pluggable backend; `apple_irq_init()` registers `apple_aic_handle_irq` as the override.
-- Bonus: `TCR_EL1.IPS` now reads `ID_AA64MMFR0_EL1.PARange` (Apple M1/M2 report 48-bit / 0b101); `gic_handle_irq` collapsed to a `fut_irq_main` forwarder so both IRQ entry paths share one source of truth.
+- **#5a FIQ dispatch** — symmetric `fut_fiq_main()` + `fiq_handler_entry` trampoline; `apple_aic_handle_fiq` checks `CNTP_CTL_EL0.ISTATUS` first so the ARM Generic Timer (delivered as FIQ on Apple) actually re-arms.
+- **#5b DAIF.F unmask** — `fut_enable_interrupts` clears both I and F; `fut_context_init` no longer ORs `PSTATE_F_BIT` into new-thread state; critical-section save/restore handles both bits atomically.
+- **#6 Apple peripheral PA→VA mapping** — `kernel_l1_table[8..511]` is a 504 GiB device-nGnRE window covering every Mac SoC peripheral + DRAM range; `fut_kernel_peripheral_va(pa)` helper used by every Apple C wrapper.
+- **#7 DMA address correctness** — xhci / ans2 / dcp / dart all feed physical addresses (not kernel VAs) into controller registers / NVMMU TCBs / IOMMU page-table pointers; `rust_virt_to_phys` on ARM64 now actually calls `pmap_virt_to_phys`.
+- **#8 Asahi DT path fallbacks** + walker fix — `/soc/<type>@<addr>` paths tried first, `/arm-io/*` as last-ditch; `fut_dtb_get_property` now correctly handles nested nodes.
+- **#9 ARM64 Image header flags** — `flags = 0xA` (4K pages + relocatable); m1n1 honours "load anywhere" instead of binding to text_offset = 0.
+- **#10 m1n1 framebuffer first-light** — kernel paints directly into `/chosen/framebuffer` via the peripheral mapping VA, before RTKit/DCP boot, so a console comes up even if the DCP swap-chain bring-up fails.
+- Bonus: `TCR_EL1.IPS` reads `ID_AA64MMFR0_EL1.PARange` (Apple M1/M2 report 48-bit / 0b101); `gic_handle_irq` collapsed to a `fut_irq_main` forwarder.  Every `apple_*.c` driver in `platform/arm64/drivers/` is now backed by a Rust crate.
 
 QEMU virt selftest stayed at 2654/2654 PASS across every step.  The only remaining piece is real-hardware verification on an M-series Mac.
 

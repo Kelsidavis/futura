@@ -439,7 +439,8 @@ All driver files include comprehensive comments:
 - [x] ANS2 NVMe driver — collapsed to thunk over Rust crate
 - [x] RTKit IPC (full FFI: boot / endpoint / power state / shutdown)
 - [x] Read/write path — DMA addresses now correctly PA-side
-- [ ] Boot from storage — future (needs pmgr + filesystem mount)
+- [x] pmgr wired: `apple_pmgr_enable_domains_for(dtb, "/soc/ans...")` runs before NVMe init
+- [ ] Boot from storage — future (needs filesystem mount on a Real APFS / ext4 partition)
 
 ### Phase 3 (Display & Input) — ✅ Complete (HW validation pending)
 - [x] DCP driver wrapped via Rust `apple_dcp` crate
@@ -489,8 +490,11 @@ Apple Silicon support has reached kernel-side feature completeness:
   - ARM64 Image header relocatable flag
 
 The complete boot-to-storage-to-display sequence is implemented and
-QEMU virt selftests pass 2654/2654 across every step.  Real-hardware
-validation on an M-series Mac is the next concrete step:
+QEMU virt selftests pass 2855/2855 across every step — including
+201 pre-hardware guard tests covering every public function in 18
+Apple driver subsystems (see `docs/APPLE_SILICON_TESTING.md` for
+the per-subsystem breakdown).  Real-hardware validation on an
+M-series Mac is the next concrete step:
 
 ```bash
 make m1n1-payload

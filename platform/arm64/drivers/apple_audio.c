@@ -95,12 +95,23 @@ int apple_audio_init(const fut_platform_info_t *info) {
     g_audio.volume = 80;
     g_audio.cluster = MCA_SPEAKER_CLUSTER;
 
-    /* MCA base would come from the DTB (/arm-io/mca on Apple Silicon).
-     * The platform_info struct does not surface it yet; until DTB
-     * parsing wires that up, the driver stays in "probed but not
-     * active" mode — no Rust MCA handle, write() returns success but
-     * silently drops audio. */
-    g_audio.mca = NULL;
+    /* MCA base comes from the DTB (/arm-io/mca on Apple Silicon).
+     * If the field is zero (no DT node parsed) the driver stays in
+     * "probed but not active" mode — no Rust MCA handle, write()
+     * returns success but silently drops audio. */
+    if (info->mca_base != 0) {
+        uint32_t clusters = info->mca_num_clusters ? info->mca_num_clusters : 1;
+        g_audio.mca = rust_mca_init(info->mca_base, clusters);
+        if (!g_audio.mca) {
+            fut_printf("[AUDIO] rust_mca_init(0x%lx, %u) failed\n",
+                       (unsigned long)info->mca_base, (unsigned int)clusters);
+        } else {
+            fut_printf("[AUDIO] MCA up at 0x%lx, %u cluster(s)\n",
+                       (unsigned long)info->mca_base, (unsigned int)clusters);
+        }
+    } else {
+        g_audio.mca = NULL;
+    }
 
     /* Initialize I2C for codec */
     if (info->i2c0_base != 0) {

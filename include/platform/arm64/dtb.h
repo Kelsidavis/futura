@@ -82,6 +82,8 @@ typedef struct {
     uint32_t pcie_num_ports;     /* Apple PCIe number of ports (Apple Silicon only) */
     uint32_t display_width;      /* Native panel width (Apple Silicon only) */
     uint32_t display_height;     /* Native panel height (Apple Silicon only) */
+    uint64_t mca_base;           /* Apple MCA (Multi-Channel Audio) I2S base (Apple Silicon only) */
+    uint32_t mca_num_clusters;   /* Number of MCA clusters (1 on M1, more on M1 Pro/Max) (Apple Silicon only) */
     bool has_gic;                /* Has GICv2 support */
     bool has_aic;                /* Has Apple AIC (Apple Silicon only) */
     bool has_dcp;                /* Has Apple DCP (Apple Silicon only) */

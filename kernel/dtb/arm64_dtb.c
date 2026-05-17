@@ -498,6 +498,16 @@ fut_platform_info_t fut_dtb_parse(uint64_t dtb_ptr) {
                 info.pcie_cfg_base = tmp_addr;
             }
 
+            /* MCA (Multi-Channel Audio) I2S controller.  Asahi DT node is
+             * /arm-io/mca; the cluster count is 1 on M1 / M2 base SKUs
+             * (only the internal speakers wired up) and grows to 6 on M1
+             * Pro / Max where additional analog outputs are routed.  We
+             * default to 1 here and let the audio driver clamp. */
+            if (fut_dtb_get_reg(dtb_ptr, "/arm-io/mca", &tmp_addr, NULL)) {
+                info.mca_base = tmp_addr;
+                info.mca_num_clusters = 1;
+            }
+
             break;
         }
 

@@ -521,81 +521,121 @@ fut_platform_info_t fut_dtb_parse(uint64_t dtb_ptr) {
             info.has_aic = true;
             info.has_generic_timer = true;
 
-            /* Parse Apple-specific device tree nodes */
+            /* Parse Apple-specific device tree nodes.
+             *
+             * Path conventions differ across DT sources: Asahi Linux
+             * (and m1n1's exported FDT) name peripherals under /soc/
+             * with the MMIO base as the unit-address suffix
+             * (e.g. /soc/serial@235200000), while some older custom
+             * DTs and the historical Futura test fixtures used
+             * /arm-io/ paths.  Walk both — the path-aware walker in
+             * fut_dtb_get_property short-circuits on the first
+             * match.  Hardcoded fallbacks above (uart_base,
+             * aic_base) keep the kernel limping along even if the
+             * DTB is unrecognisable. */
             uint64_t tmp_addr;
 
-            /* UART */
+            /* UART (s5l-uart) */
             if (fut_dtb_get_reg(dtb_ptr, "/soc/serial@235200000", &tmp_addr, NULL) ||
-                fut_dtb_get_reg(dtb_ptr, "/arm-io/uart0", &tmp_addr, NULL)) {
+                fut_dtb_get_reg(dtb_ptr, "/soc/serial",           &tmp_addr, NULL) ||
+                fut_dtb_get_reg(dtb_ptr, "/arm-io/uart0",         &tmp_addr, NULL)) {
                 info.uart_base = tmp_addr;
             }
 
-            /* AIC (Interrupt Controller) */
-            if (fut_dtb_get_reg(dtb_ptr, "/soc/aic@23b100000", &tmp_addr, NULL) ||
-                fut_dtb_get_reg(dtb_ptr, "/arm-io/aic", &tmp_addr, NULL)) {
+            /* AIC (Apple Interrupt Controller) — Asahi labels it
+             * /soc/interrupt-controller@..., older trees use /soc/aic. */
+            if (fut_dtb_get_reg(dtb_ptr, "/soc/interrupt-controller@23b100000", &tmp_addr, NULL) ||
+                fut_dtb_get_reg(dtb_ptr, "/soc/aic@23b100000",                 &tmp_addr, NULL) ||
+                fut_dtb_get_reg(dtb_ptr, "/soc/aic",                           &tmp_addr, NULL) ||
+                fut_dtb_get_reg(dtb_ptr, "/arm-io/aic",                        &tmp_addr, NULL)) {
                 info.aic_base = tmp_addr;
             }
 
-            /* ANS2 NVMe */
-            if (fut_dtb_get_reg(dtb_ptr, "/arm-io/ans", &tmp_addr, NULL)) {
+            /* ANS2 NVMe — Asahi has split MMIO + mailbox nodes
+             * (nvme@277400000 + mailbox@277408000), older trees
+             * nest as /arm-io/ans + /arm-io/ans/mailbox. */
+            if (fut_dtb_get_reg(dtb_ptr, "/soc/nvme@277400000", &tmp_addr, NULL) ||
+                fut_dtb_get_reg(dtb_ptr, "/soc/nvme",           &tmp_addr, NULL) ||
+                fut_dtb_get_reg(dtb_ptr, "/arm-io/ans",         &tmp_addr, NULL)) {
                 info.ans_nvme_base = tmp_addr;
             }
-            if (fut_dtb_get_reg(dtb_ptr, "/arm-io/ans/mailbox", &tmp_addr, NULL)) {
+            if (fut_dtb_get_reg(dtb_ptr, "/soc/mailbox@277408000", &tmp_addr, NULL) ||
+                fut_dtb_get_reg(dtb_ptr, "/arm-io/ans/mailbox",    &tmp_addr, NULL)) {
                 info.ans_mailbox_base = tmp_addr;
             }
 
-            /* DCP (Display Co-Processor) */
-            if (fut_dtb_get_reg(dtb_ptr, "/arm-io/dcp", &tmp_addr, NULL)) {
+            /* DCP (Display Co-Processor) — Asahi: display-pipe + mailbox. */
+            if (fut_dtb_get_reg(dtb_ptr, "/soc/display-pipe@28200000", &tmp_addr, NULL) ||
+                fut_dtb_get_reg(dtb_ptr, "/soc/dcp@28200000",          &tmp_addr, NULL) ||
+                fut_dtb_get_reg(dtb_ptr, "/soc/dcp",                   &tmp_addr, NULL) ||
+                fut_dtb_get_reg(dtb_ptr, "/arm-io/dcp",                &tmp_addr, NULL)) {
                 info.dcp_base = tmp_addr;
                 info.has_dcp = true;
             }
-            if (fut_dtb_get_reg(dtb_ptr, "/arm-io/dcp/mailbox", &tmp_addr, NULL)) {
+            if (fut_dtb_get_reg(dtb_ptr, "/soc/mailbox@28e408000", &tmp_addr, NULL) ||
+                fut_dtb_get_reg(dtb_ptr, "/arm-io/dcp/mailbox",    &tmp_addr, NULL)) {
                 info.dcp_mailbox_base = tmp_addr;
             }
 
-            /* DART IOMMU */
-            if (fut_dtb_get_reg(dtb_ptr, "/arm-io/dart-dcp", &tmp_addr, NULL)) {
+            /* DART IOMMU for DCP — Asahi uses /soc/iommu@<base>. */
+            if (fut_dtb_get_reg(dtb_ptr, "/soc/iommu@381000000", &tmp_addr, NULL) ||
+                fut_dtb_get_reg(dtb_ptr, "/soc/dart-dcp",        &tmp_addr, NULL) ||
+                fut_dtb_get_reg(dtb_ptr, "/arm-io/dart-dcp",     &tmp_addr, NULL)) {
                 info.dart_base = tmp_addr;
             }
 
             /* SMC (System Management Controller) */
-            if (fut_dtb_get_reg(dtb_ptr, "/arm-io/smc", &tmp_addr, NULL) ||
+            if (fut_dtb_get_reg(dtb_ptr, "/soc/smc@23e400000",  &tmp_addr, NULL) ||
+                fut_dtb_get_reg(dtb_ptr, "/soc/smc",            &tmp_addr, NULL) ||
+                fut_dtb_get_reg(dtb_ptr, "/arm-io/smc",         &tmp_addr, NULL) ||
                 fut_dtb_get_reg(dtb_ptr, "/arm-io/smc/mailbox", &tmp_addr, NULL)) {
                 info.smc_base = tmp_addr;
             }
 
-            /* GPIO */
-            if (fut_dtb_get_reg(dtb_ptr, "/arm-io/gpio", &tmp_addr, NULL) ||
-                fut_dtb_get_reg(dtb_ptr, "/arm-io/pinctrl", &tmp_addr, NULL)) {
+            /* GPIO / pinctrl */
+            if (fut_dtb_get_reg(dtb_ptr, "/soc/pinctrl@23c100000", &tmp_addr, NULL) ||
+                fut_dtb_get_reg(dtb_ptr, "/soc/pinctrl",           &tmp_addr, NULL) ||
+                fut_dtb_get_reg(dtb_ptr, "/arm-io/gpio",           &tmp_addr, NULL) ||
+                fut_dtb_get_reg(dtb_ptr, "/arm-io/pinctrl",        &tmp_addr, NULL)) {
                 info.gpio_base_apple = tmp_addr;
             }
 
             /* SPI0 (keyboard HID) */
-            if (fut_dtb_get_reg(dtb_ptr, "/arm-io/spi0", &tmp_addr, NULL)) {
+            if (fut_dtb_get_reg(dtb_ptr, "/soc/spi@23510c000", &tmp_addr, NULL) ||
+                fut_dtb_get_reg(dtb_ptr, "/soc/spi0",          &tmp_addr, NULL) ||
+                fut_dtb_get_reg(dtb_ptr, "/arm-io/spi0",       &tmp_addr, NULL)) {
                 info.spi0_base = tmp_addr;
             }
 
             /* I2C0 (trackpad HID) */
-            if (fut_dtb_get_reg(dtb_ptr, "/arm-io/i2c0", &tmp_addr, NULL)) {
+            if (fut_dtb_get_reg(dtb_ptr, "/soc/i2c@235010000", &tmp_addr, NULL) ||
+                fut_dtb_get_reg(dtb_ptr, "/soc/i2c0",          &tmp_addr, NULL) ||
+                fut_dtb_get_reg(dtb_ptr, "/arm-io/i2c0",       &tmp_addr, NULL)) {
                 info.i2c0_base = tmp_addr;
             }
 
-            /* PCIe */
-            if (fut_dtb_get_reg(dtb_ptr, "/arm-io/pcie", &tmp_addr, NULL) ||
-                fut_dtb_get_reg(dtb_ptr, "/arm-io/pciec0", &tmp_addr, NULL)) {
+            /* PCIe root complex */
+            if (fut_dtb_get_reg(dtb_ptr, "/soc/pcie@690000000", &tmp_addr, NULL) ||
+                fut_dtb_get_reg(dtb_ptr, "/soc/pcie",           &tmp_addr, NULL) ||
+                fut_dtb_get_reg(dtb_ptr, "/arm-io/pcie",        &tmp_addr, NULL) ||
+                fut_dtb_get_reg(dtb_ptr, "/arm-io/pciec0",      &tmp_addr, NULL)) {
                 info.pcie_base = tmp_addr;
                 info.pcie_num_ports = 3;  /* Default: 3 ports on M1/M2 */
             }
-            if (fut_dtb_get_reg(dtb_ptr, "/arm-io/pcie/ecam", &tmp_addr, NULL)) {
+            if (fut_dtb_get_reg(dtb_ptr, "/soc/pcie/ecam",     &tmp_addr, NULL) ||
+                fut_dtb_get_reg(dtb_ptr, "/arm-io/pcie/ecam",  &tmp_addr, NULL)) {
                 info.pcie_cfg_base = tmp_addr;
             }
 
-            /* MCA (Multi-Channel Audio) I2S controller.  Asahi DT node is
-             * /arm-io/mca; the cluster count is 1 on M1 / M2 base SKUs
-             * (only the internal speakers wired up) and grows to 6 on M1
-             * Pro / Max where additional analog outputs are routed.  We
-             * default to 1 here and let the audio driver clamp. */
-            if (fut_dtb_get_reg(dtb_ptr, "/arm-io/mca", &tmp_addr, NULL)) {
+            /* MCA (Multi-Channel Audio) I2S controller.  Asahi DT
+             * names the node /soc/mca@<base> with base 0x2D5200000
+             * on M1; cluster count is 1 on M1 / M2 base SKUs (only
+             * the internal speakers wired up) and grows to 6 on M1
+             * Pro / Max where additional analog outputs are routed.
+             * We default to 1 here and let the audio driver clamp. */
+            if (fut_dtb_get_reg(dtb_ptr, "/soc/mca@2d5200000", &tmp_addr, NULL) ||
+                fut_dtb_get_reg(dtb_ptr, "/soc/mca",           &tmp_addr, NULL) ||
+                fut_dtb_get_reg(dtb_ptr, "/arm-io/mca",        &tmp_addr, NULL)) {
                 info.mca_base = tmp_addr;
                 info.mca_num_clusters = 1;
             }

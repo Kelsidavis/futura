@@ -25,6 +25,7 @@
 #include <platform/arm64/apple_hid.h>
 #include <platform/arm64/apple_spi.h>
 #include <platform/arm64/apple_i2c.h>
+#include <platform/arm64/apple_pmgr.h>
 #include <platform/arm64/memory/pmap.h>
 #include <platform/platform.h>
 #include <string.h>
@@ -178,6 +179,30 @@ int apple_hid_platform_init(const fut_platform_info_t *info) {
 
     if (info->spi0_base == 0 && info->i2c0_base == 0) {
         return 0;  /* No HID hardware found in DTB */
+    }
+
+    extern uint64_t fut_platform_get_dtb(void);
+    uint64_t dtb = fut_platform_get_dtb();
+
+    if (info->spi0_base != 0) {
+        static const char *const spi_paths[] = {
+            "/soc/spi@23510c000",
+            "/soc/spi0",
+            "/arm-io/spi0",
+            NULL,
+        };
+        int n = apple_pmgr_enable_domains_any(dtb, spi_paths);
+        if (n > 0) fut_printf("[HID] pmgr: %d SPI0 domains enabled\n", n);
+    }
+    if (info->i2c0_base != 0) {
+        static const char *const i2c_paths[] = {
+            "/soc/i2c@235010000",
+            "/soc/i2c0",
+            "/arm-io/i2c0",
+            NULL,
+        };
+        int n = apple_pmgr_enable_domains_any(dtb, i2c_paths);
+        if (n > 0) fut_printf("[HID] pmgr: %d I2C0 domains enabled\n", n);
     }
 
     return apple_hid_init(info);

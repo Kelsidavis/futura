@@ -104,6 +104,47 @@ void apple_aic_handle_irq(void) {
     }
 }
 
+/* Apple FIQ dispatcher.
+ *
+ * On Apple Silicon two things fire as architectural FIQ rather than
+ * via the AIC's event bitmap:
+ *
+ *   1. ARM Generic Timer (CPU-local) — CNTP_CTL_EL0.ISTATUS is set
+ *      when the timer expires.  Asahi Linux and m1n1's FIQ dispatch
+ *      both check this bit FIRST and re-arm the timer + run the
+ *      tick handler directly, bypassing the AIC entirely.  Without
+ *      this short-circuit the timer FIQ falls through to the AIC
+ *      event-bitmap scan, finds nothing (the timer doesn't show up
+ *      in AIC_EVENT), and returns without re-arming — the timer
+ *      then fires continuously at the same expiry and the kernel
+ *      hangs in a FIQ storm.
+ *
+ *   2. Fast IPIs — not implemented yet, since we're single-CPU.
+ *      Add a similar short-circuit reading the IPI register when
+ *      SMP brings up secondary cores.
+ *
+ * Anything that's not the timer falls through to the AIC dispatch
+ * (some AIC events can be configured to fire as FIQ instead of IRQ,
+ * though we don't currently route any that way). */
+#define CNTP_CTL_ISTATUS  (1u << 2)
+
+void apple_aic_handle_fiq(void) {
+    uint64_t cntp_ctl;
+    __asm__ volatile("mrs %0, cntp_ctl_el0" : "=r"(cntp_ctl));
+    if (cntp_ctl & CNTP_CTL_ISTATUS) {
+        /* Timer fired — re-arm via the common handler that already
+         * writes CNTP_TVAL_EL0 + CNTP_CTL_EL0. */
+        extern void fut_timer_irq_handler(void);
+        fut_timer_irq_handler();
+        return;
+    }
+
+    /* Not the timer — scan the AIC for any FIQ-routed events. */
+    if (aic_ctx) {
+        rust_aic_handle_irq(aic_ctx);
+    }
+}
+
 /* ============================================================
  *   Platform Integration
  * ============================================================ */
@@ -130,15 +171,17 @@ void fut_apple_irq_init(const fut_platform_info_t *info) {
     extern void fut_irq_set_dispatch_backend(void (*fn)(void));
     fut_irq_set_dispatch_backend(apple_aic_handle_irq);
 
-    /* ARM Generic Timer is delivered as FIQ on Apple Silicon (not
-     * via AIC IRQ — the spec routes it directly to the FIQ vector).
-     * Register the same handler on the FIQ path: Rust's AIC dispatch
-     * reads AIC_EVENT which surfaces both IRQ and FIQ events through
-     * one bitmap, so apple_aic_handle_irq Just Works for both.
-     * Without this hook the FIQ vector falls through to fut_fiq_main's
-     * default NULL branch and the timer never reaches the scheduler. */
+    /* ARM Generic Timer is delivered as FIQ on Apple Silicon — but
+     * NOT through the AIC's event bitmap; the timer fires directly
+     * to the CPU FIQ vector and is identified by CNTP_CTL_EL0.ISTATUS.
+     * apple_aic_handle_fiq checks that bit first and re-arms via
+     * fut_timer_irq_handler before falling through to the AIC scan
+     * (in case some future build routes AIC events as FIQ).  Without
+     * the timer short-circuit a FIQ storm would hang the kernel —
+     * the timer keeps re-firing because the AIC scan doesn't re-arm
+     * it. */
     extern void fut_fiq_set_dispatch_backend(void (*fn)(void));
-    fut_fiq_set_dispatch_backend(apple_aic_handle_irq);
+    fut_fiq_set_dispatch_backend(apple_aic_handle_fiq);
 
     fut_printf("[APPLE] Apple interrupt subsystem initialized\n");
 }

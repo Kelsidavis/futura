@@ -3275,9 +3275,17 @@ try_ramdisk: (void)0;
         klog_persist_to_sd_once(1);
         fut_task_t *flush_task = fut_task_create();
         if (flush_task) {
+            /* 64 KB stack — klog_sd_flush_thread runs writeback paths
+             * that descend deep through vfs_write / sdhci queue
+             * submission.  On ARM64 the slab allocator places thread
+             * structs adjacent to stacks, and a stack < ~16 KB risks
+             * overflowing into the neighbouring fut_thread struct
+             * (see ec408df4 for the virtio-input precedent).  Use the
+             * project's standard 64 KB on every platform — the extra
+             * 48 KB is a one-shot boot allocation. */
             fut_thread_t *t = fut_thread_create(
                 flush_task, klog_sd_flush_thread, NULL,
-                16 * 1024, 200);
+                64 * 1024, 200);
             if (t) {
                 fut_printf("[KLOG-SD] periodic flusher started (TID %llu)\n",
                            (unsigned long long)t->tid);

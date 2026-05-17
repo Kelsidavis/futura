@@ -276,32 +276,49 @@ int fut_apple_dcp_platform_init(const fut_platform_info_t *info) {
     g_dcp.initialized = true;
 
     /* Allocate the primary framebuffer surface, submit it, register
-     * with the kernel fb layer.  The m1n1 FB fast-path above already
-     * published a FB if one was available, so callers see something
-     * either way; this DCP-allocated surface is for the longer-term
-     * swap-chain path. */
+     * with the kernel fb layer.  Even when m1n1 already published a
+     * FB at the top of this function, we attempt the DCP-owned path
+     * so the kernel ends up driving the display itself rather than
+     * piggybacking on m1n1's mapping forever.  Failures fall back to
+     * the already-registered m1n1 FB — the kernel always has *some*
+     * console as long as one of the two paths succeeded. */
     if (!rust_apple_dcp_mode_is_set(g_dcp.dcp)) {
-        fut_printf("[DCP] No mode set, skipping FB probe\n");
+        fut_printf("[DCP] No mode set, skipping DCP-owned FB probe\n");
         return 0;
     }
 
-    /* If m1n1 already published a FB at the top of this function
-     * (before RTKit boot), don't re-allocate a DCP surface — that
-     * would replace the m1n1 mapping with one the DCP can't
-     * actually drive yet. */
     if (info->framebuffer_phys != 0) {
-        return 0;
+        fut_printf("[DCP] m1n1 FB published, attempting DCP-owned takeover\n");
+    } else {
+        fut_printf("[DCP] no m1n1 FB; attempting DCP-owned FB init\n");
     }
 
     int fb_idx = dcp_alloc_surface(rust_apple_dcp_mode_width(g_dcp.dcp),
                                     rust_apple_dcp_mode_height(g_dcp.dcp),
                                     rust_apple_dcp_mode_format(g_dcp.dcp));
-    if (fb_idx < 0) return -1;
-
-    uint64_t swap_msg = rust_apple_dcp_swap_submit_build(g_dcp.dcp, fb_idx);
-    if (swap_msg) {
-        apple_rtkit_send_message(g_dcp.rtkit, APPLE_DCP_ENDPOINT, swap_msg);
+    if (fb_idx < 0) {
+        fut_printf("[DCP] surface alloc failed%s\n",
+                   info->framebuffer_phys != 0
+                     ? " — staying on m1n1 FB" : "");
+        return -1;
     }
 
-    return dcp_register_fb(fb_idx);
+    uint64_t swap_msg = rust_apple_dcp_swap_submit_build(g_dcp.dcp, fb_idx);
+    if (!swap_msg) {
+        fut_printf("[DCP] swap_submit build returned 0%s\n",
+                   info->framebuffer_phys != 0
+                     ? " — staying on m1n1 FB" : "");
+        return -1;
+    }
+    apple_rtkit_send_message(g_dcp.rtkit, APPLE_DCP_ENDPOINT, swap_msg);
+
+    int rc = dcp_register_fb(fb_idx);
+    if (rc == 0) {
+        fut_printf("[DCP] DCP-owned FB now active (surface %d)\n", fb_idx);
+    } else {
+        fut_printf("[DCP] fb_set_hwinfo failed rc=%d%s\n", rc,
+                   info->framebuffer_phys != 0
+                     ? " — m1n1 FB remains the active mapping" : "");
+    }
+    return rc;
 }

@@ -149,6 +149,7 @@
 #include <platform/arm64/apple_hid.h>
 #include <platform/arm64/apple_power.h>
 #include <platform/arm64/apple_xhci.h>
+#include <platform/arm64/apple_bcm.h>
 #include <platform/arm64/apple_audio.h>
 #include <config/futura_config.h>
 #include <kernel/fut_waitq.h>
@@ -1493,6 +1494,9 @@ void fut_platform_late_init(void) {
 
             /* USB: xHCI via PCIe */
             apple_xhci_platform_init(&info);
+
+            /* WiFi+Bluetooth: Broadcom BCM4377/4378/4387 — discovery only */
+            apple_bcm_platform_init(&info);
 
             /* Audio: MCA + codec */
             apple_audio_platform_init(&info);

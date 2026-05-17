@@ -1,0 +1,205 @@
+/* apple_bcm.c - Apple Silicon Broadcom WiFi+BT — discovery wrapper
+ *
+ * Copyright (c) 2026 Kelsi Davis
+ * Licensed under the MPL v2.0 — see LICENSE for details.
+ *
+ * First slice of Apple Silicon WiFi+Bluetooth support.  The combo
+ * chip (BCM4377 on early M1 prototypes, BCM4378 on M1 / M1 Pro /
+ * M1 Max / M1 Ultra, BCM4387 on M2/M3, provisionally BCM4388 on M4)
+ * lives on the Apple PCIe root complex as a multi-function endpoint:
+ *
+ *   function 0 — WiFi    (PCI class 0x028000)
+ *   function 1 — Bluetooth (PCI class 0xFE0000 / vendor specific)
+ *
+ * What this file does:
+ *   1. Brings up the Apple PCIe driver (idempotent — apple_xhci has
+ *      already done so by the time we run, this is a safety net).
+ *   2. Walks every link-up port, reading vendor/device at fn 0 and
+ *      fn 1, and stashes anything with vendor=0x14e4.
+ *   3. Reads BAR0 + BAR2 for each match so a follow-up slice can DMA
+ *      firmware in and map the doorbell window.
+ *   4. Caches the results in static state for accessor functions.
+ *
+ * What this file does NOT do (deferred to follow-up slices):
+ *   - PCIe MSI vector allocation for the chip
+ *   - Firmware blob loading from `apple_bcm_wifi_fw_base` path
+ *   - NVRAM (per-machine WiFi calibration) parse out of DT
+ *   - brcmfmac-style command/event ring setup
+ *   - HCI transport over the BT function
+ *   - Power-rail bring-up via SMC / GPIO (WL_REG_ON-style poke)
+ *
+ * Compat note: apple_bcm_platform_init() gates on
+ * info->type == PLATFORM_APPLE_M[1-4] so RPi and QEMU virt boots
+ * never touch the Broadcom code path.
+ */
+
+#include <platform/arm64/apple_bcm.h>
+#include <platform/arm64/apple_pcie.h>
+#include <platform/platform.h>
+#include <string.h>
+
+#define BCM_MAX_FUNCTIONS  2  /* fn 0 (WiFi) + fn 1 (Bluetooth) */
+
+/* Forward declarations for the rust_apple_pcie FFI we reuse. */
+extern struct ApplePcie *rust_apple_pcie_init(uint64_t base,
+                                              uint32_t num_ports,
+                                              uint64_t cfg_base);
+extern int      rust_apple_pcie_port_link_up(const struct ApplePcie *p,
+                                             uint32_t port);
+extern uint32_t rust_apple_pcie_cfg_read32(const struct ApplePcie *p,
+                                           uint8_t bus, uint8_t dev,
+                                           uint8_t fn, uint16_t reg);
+extern uint16_t rust_apple_pcie_cfg_read16(const struct ApplePcie *p,
+                                           uint8_t bus, uint8_t dev,
+                                           uint8_t fn, uint16_t reg);
+extern void     rust_apple_pcie_cfg_write32(struct ApplePcie *p,
+                                            uint8_t bus, uint8_t dev,
+                                            uint8_t fn, uint16_t reg,
+                                            uint32_t val);
+
+/* Cached discovery state for accessor functions. */
+static struct {
+    apple_bcm_discovery_t wifi;
+    apple_bcm_discovery_t bt;
+    bool wifi_present;
+    bool bt_present;
+} g_bcm;
+
+static uint64_t read_bar64(const struct ApplePcie *p, uint8_t bus,
+                           uint8_t fn, uint16_t reg)
+{
+    uint32_t lo = rust_apple_pcie_cfg_read32(p, bus, 0, fn, reg);
+    uint32_t hi = rust_apple_pcie_cfg_read32(p, bus, 0, fn, reg + 4);
+    /* 64-bit memory BAR: low 4 bits hold flags (type + prefetch); the
+     * remaining bits are the base address. */
+    return ((uint64_t)hi << 32) | (lo & ~0xFULL);
+}
+
+int apple_bcm_init(const fut_platform_info_t *info,
+                   apple_bcm_discovery_t *out_wifi,
+                   apple_bcm_discovery_t *out_bt)
+{
+    if (!info || info->pcie_base == 0 || info->pcie_cfg_base == 0) {
+        return 0;
+    }
+
+    uint64_t pcie_va     = fut_kernel_peripheral_va(info->pcie_base);
+    uint64_t pcie_cfg_va = fut_kernel_peripheral_va(info->pcie_cfg_base);
+    struct ApplePcie *pcie = rust_apple_pcie_init(pcie_va,
+                                                  info->pcie_num_ports,
+                                                  pcie_cfg_va);
+    if (!pcie) {
+        fut_printf("[bcm] PCIe init failed (pa pcie=0x%lx cfg=0x%lx)\n",
+                   (unsigned long)info->pcie_base,
+                   (unsigned long)info->pcie_cfg_base);
+        return 0;
+    }
+
+    int found = 0;
+    for (uint32_t port = 0; port < info->pcie_num_ports; port++) {
+        if (!rust_apple_pcie_port_link_up(pcie, port)) continue;
+
+        uint8_t bus = (uint8_t)(port + 1);
+
+        for (uint8_t fn = 0; fn < BCM_MAX_FUNCTIONS; fn++) {
+            uint32_t vid_did = rust_apple_pcie_cfg_read32(pcie, bus, 0, fn, 0x00);
+            uint16_t vid = (uint16_t)(vid_did & 0xFFFFu);
+            uint16_t did = (uint16_t)((vid_did >> 16) & 0xFFFFu);
+
+            if (vid == 0xFFFFu || vid == 0x0000u) continue;
+            if (vid != BCM_VENDOR_ID) continue;
+
+            uint32_t class_rev = rust_apple_pcie_cfg_read32(pcie, bus, 0, fn, 0x08);
+            uint32_t class_code = class_rev >> 8;
+            uint8_t  revision   = (uint8_t)(class_rev & 0xFFu);
+
+            apple_bcm_discovery_t d;
+            memset(&d, 0, sizeof(d));
+            d.chip       = rust_apple_bcm_classify(vid, did);
+            d.vendor     = vid;
+            d.device     = did;
+            d.revision   = revision;
+            d.bus        = bus;
+            d.function   = fn;
+            d.class_code = class_code;
+            d.bar0       = read_bar64(pcie, bus, fn, 0x10);
+            d.bar2       = read_bar64(pcie, bus, fn, 0x18);
+
+            /* Enable MEM access + bus mastering so subsequent slices
+             * can poke registers and DMA without re-running this. */
+            uint16_t cmd = rust_apple_pcie_cfg_read16(pcie, bus, 0, fn, 0x04);
+            rust_apple_pcie_cfg_write32(pcie, bus, 0, fn, 0x04,
+                                         (uint32_t)(cmd | 0x06u));
+
+            const char *chip_name = rust_apple_bcm_chip_name(d.chip);
+            fut_printf("[bcm] fn%u %s VID=0x%04x DID=0x%04x rev=0x%02x "
+                       "class=0x%06x BAR0=0x%lx BAR2=0x%lx\n",
+                       (unsigned)fn, chip_name,
+                       (unsigned)vid, (unsigned)did, (unsigned)revision,
+                       (unsigned)class_code,
+                       (unsigned long)d.bar0, (unsigned long)d.bar2);
+
+            if (fn == 0) {
+                if (out_wifi) *out_wifi = d;
+                g_bcm.wifi = d;
+                g_bcm.wifi_present = true;
+            } else {
+                if (out_bt) *out_bt = d;
+                g_bcm.bt = d;
+                g_bcm.bt_present = true;
+            }
+            found++;
+        }
+
+        /* Apple's BCM combo always sits on a single downstream port;
+         * once we've found a WiFi function on a bus we can stop. */
+        if (g_bcm.wifi_present) break;
+    }
+
+    if (found == 0) {
+        fut_printf("[bcm] no Broadcom WiFi/BT combo chip found on PCIe\n");
+    } else {
+        const char *wifi_fw = g_bcm.wifi_present
+            ? rust_apple_bcm_wifi_fw_base(g_bcm.wifi.chip) : "(none)";
+        const char *bt_fw = g_bcm.bt_present
+            ? rust_apple_bcm_bt_fw_base(g_bcm.bt.chip) : "(none)";
+        fut_printf("[bcm] discovery complete: wifi_fw=%s bt_fw=%s\n",
+                   wifi_fw, bt_fw);
+        fut_printf("[bcm] radio bring-up is a separate slice — chip is "
+                   "registered but no firmware has been loaded\n");
+    }
+
+    return found;
+}
+
+int apple_bcm_platform_init(const fut_platform_info_t *info)
+{
+    if (!info) return -1;
+
+    if (info->type != PLATFORM_APPLE_M1 &&
+        info->type != PLATFORM_APPLE_M2 &&
+        info->type != PLATFORM_APPLE_M3 &&
+        info->type != PLATFORM_APPLE_M4) {
+        return 0;
+    }
+
+    if (info->pcie_base == 0) {
+        return 0;
+    }
+
+    memset(&g_bcm, 0, sizeof(g_bcm));
+    return apple_bcm_init(info, NULL, NULL);
+}
+
+bool apple_bcm_wifi_present(void) { return g_bcm.wifi_present; }
+bool apple_bcm_bt_present(void)   { return g_bcm.bt_present; }
+
+const apple_bcm_discovery_t *apple_bcm_wifi_info(void)
+{
+    return g_bcm.wifi_present ? &g_bcm.wifi : NULL;
+}
+
+const apple_bcm_discovery_t *apple_bcm_bt_info(void)
+{
+    return g_bcm.bt_present ? &g_bcm.bt : NULL;
+}

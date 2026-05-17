@@ -1,0 +1,11 @@
+[package]
+name = "apple_bcm"
+version = "0.1.0"
+edition = "2024"
+license = "MPL-2.0"
+description = "Apple Silicon Broadcom BCM4377/4378/4387 WiFi+Bluetooth combo chip — discovery and chip-ID classification.  Lives on the Apple PCIe root complex as a multi-function device (WiFi on fn 0, Bluetooth on fn 1).  Firmware loading, NVRAM parsing, brcmfmac CYW43-style bring-up, MSI wiring, and the HCI Bluetooth transport are all stubbed for follow-up slices."
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]

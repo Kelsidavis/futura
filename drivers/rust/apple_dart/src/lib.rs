@@ -44,6 +44,16 @@
 use core::ptr::{read_volatile, write_volatile};
 use core::sync::atomic::{AtomicBool, Ordering};
 
+unsafe extern "C" {
+    /// Convert kernel virtual address → physical address.  Required
+    /// because the page-table pages we hand to the IOMMU must be
+    /// addressed physically — DART has no awareness of the CPU's
+    /// kernel-VA mapping.  Previously this was just `ptr as u64`
+    /// with a comment claiming "identity-mapped kernel BSS", which
+    /// was never actually true on ARM64.
+    fn rust_virt_to_phys(vaddr: *const core::ffi::c_void) -> u64;
+}
+
 // ---------------------------------------------------------------------------
 // Register offsets
 // ---------------------------------------------------------------------------
@@ -145,8 +155,10 @@ fn alloc_page() -> (*mut u64, u64) {
     }
     unsafe { G_PT_POOL_NEXT = idx + 1; }
     let ptr = unsafe { G_PT_POOL.pages[idx].as_mut_ptr() };
-    // Physical address: for identity-mapped kernel BSS, virt == phys
-    let phys = ptr as u64;
+    // G_PT_POOL lives in kernel BSS — a kernel VA.  DART walks page
+    // tables in physical address space, so we have to ask the kernel
+    // for the matching PA rather than reinterpret the VA bit pattern.
+    let phys = unsafe { rust_virt_to_phys(ptr as *const _) };
     // Zero-fill
     unsafe {
         for i in 0..512usize {

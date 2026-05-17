@@ -314,6 +314,29 @@ int fut_apple_dcp_platform_init(const fut_platform_info_t *info) {
     }
     apple_rtkit_send_message(g_dcp.rtkit, APPLE_DCP_ENDPOINT, swap_msg);
 
+    /* Poll for DCP's SWAP_COMPLETE ack via RTKit before re-registering
+     * the FB.  Without this we'd swap the kernel FB to a surface DCP
+     * hasn't actually started scanning yet — recipe for a black
+     * console even though the registration "succeeded".  DCP normally
+     * acks within one frame (~16.6ms @ 60Hz); 250ms gives ample
+     * headroom for slow modes and the first-frame ramp.  Each iter is
+     * 1ms via fut_platform_udelay. */
+    int got_ack = 0;
+    for (int attempt = 0; attempt < 250; attempt++) {
+        if (rust_apple_dcp_swap_take_complete(g_dcp.dcp)) {
+            got_ack = 1;
+            fut_printf("[DCP] swap_submit acked at attempt %d\n", attempt);
+            break;
+        }
+        fut_platform_udelay(1000u);
+    }
+    if (!got_ack) {
+        fut_printf("[DCP] swap_submit ack timeout (250ms)%s\n",
+                   info->framebuffer_phys != 0
+                     ? " — staying on m1n1 FB" : " — display is dark");
+        return -1;
+    }
+
     int rc = dcp_register_fb(fb_idx);
     if (rc == 0) {
         fut_printf("[DCP] DCP-owned FB now active (surface %d)\n", fb_idx);

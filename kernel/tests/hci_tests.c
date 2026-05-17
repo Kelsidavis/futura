@@ -428,6 +428,43 @@ void fut_hci_test_thread(void *arg)
         fut_hci_unregister(idx5);
     }
 
+    /* T29: registry slot-full returns -ENOMEM */
+    {
+        fut_hci_reset();
+        mock_state_t mocks[FUT_HCI_MAX_DEVICES + 1] = {0};
+        int idxs[FUT_HCI_MAX_DEVICES] = {0};
+        for (int i = 0; i < FUT_HCI_MAX_DEVICES; i++) {
+            char name[16];
+            name[0] = 's'; name[1] = 'l'; name[2] = 'o'; name[3] = 't';
+            name[4] = '0' + i; name[5] = '\0';
+            idxs[i] = fut_hci_register(name, FUT_HCI_TYPE_PCIE,
+                                        &mock_ops, &mocks[i]);
+            if (idxs[i] < 0) {
+                HCI_TEST_FAIL("slot register pre-fill", 29);
+                return;
+            }
+        }
+        /* Fifth register should fail */
+        int rc = fut_hci_register("over", FUT_HCI_TYPE_PCIE,
+                                   &mock_ops, &mocks[FUT_HCI_MAX_DEVICES]);
+        if (rc == -ENOMEM) HCI_TEST_PASS("register beyond MAX → -ENOMEM");
+        else { HCI_TEST_FAIL("register beyond MAX", 29); return; }
+        /* Cleanup */
+        for (int i = 0; i < FUT_HCI_MAX_DEVICES; i++) {
+            fut_hci_unregister(idxs[i]);
+        }
+    }
+
+    /* T30: after slot-full + unregister, register succeeds again */
+    {
+        mock_state_t mloc = {0};
+        int idx = fut_hci_register("reuse", FUT_HCI_TYPE_PCIE,
+                                    &mock_ops, &mloc);
+        if (idx >= 0) HCI_TEST_PASS("register after unregister succeeds");
+        else { HCI_TEST_FAIL("register after unregister", 30); return; }
+        fut_hci_unregister(idx);
+    }
+
     fut_printf("[HCI-TEST] all HCI core tests passed\n");
     fut_hci_reset();
 }

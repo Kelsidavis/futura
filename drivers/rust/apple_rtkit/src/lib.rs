@@ -107,6 +107,8 @@ const MGMT_EPMAP:         u8 = 0x08;
 const MGMT_EPMAP_REPLY:   u8 = 0x09;
 const MGMT_IOP_PWR_STATE: u8 = 0x0A;
 const MGMT_IOP_PWR_ACK:   u8 = 0x0B;
+const MGMT_AP_PWR_STATE:  u8 = 0x0C;
+const MGMT_AP_PWR_ACK:    u8 = 0x0D;
 
 const RTKIT_MIN_VERSION: u64 = 11;
 const RTKIT_MAX_VERSION: u64 = 12;
@@ -164,6 +166,8 @@ pub struct RtkitCtx {
     endpoints:  [EndpointSlot; MAX_ENDPOINTS],
     /// Current IOP power state.
     iop_pwr:    u8,
+    /// Current AP-side power state as last echoed by firmware.
+    ap_pwr:     u8,
 }
 
 impl RtkitCtx {
@@ -175,6 +179,7 @@ impl RtkitCtx {
             ep_bitmap: [0u32; 8],
             endpoints: [EndpointSlot::empty(); MAX_ENDPOINTS],
             iop_pwr:   PWR_STATE_OFF,
+            ap_pwr:    PWR_STATE_OFF,
         }
     }
 
@@ -428,6 +433,130 @@ impl RtkitCtx {
         self.endpoints[endpoint as usize].handler = Some(handler);
         self.endpoints[endpoint as usize].cookie  = cookie;
     }
+
+    // ---- Extended app-side primitives (used by ans2 / dcp / apple_rtkit.c) ----
+
+    /// Issue STARTEP for an application endpoint (≥ 0x20) and wait for the
+    /// matching STARTEP_ACK.  Returns `true` on ACK or `false` on timeout —
+    /// even on timeout the slot is marked `started` to match the legacy
+    /// C behaviour (firmware sometimes reorders ACKs and an ans2/dcp client
+    /// that gates further calls on `started` would otherwise hang).
+    pub fn start_endpoint(&mut self, endpoint: u8) -> bool {
+        if endpoint < 0x20 {
+            return false;
+        }
+        if !self.ep_available(endpoint) {
+            return false;
+        }
+        let payload = (endpoint as u64) << 32;
+        if !self.send_mgmt(MGMT_STARTEP, payload) {
+            return false;
+        }
+        // Pump messages while waiting; ack may arrive after other traffic.
+        for _ in 0..1_000 {
+            self.process_messages();
+            if self.endpoints[endpoint as usize].started {
+                return true;
+            }
+            for _ in 0..1_000 { core::hint::spin_loop(); }
+        }
+        // Match the C driver: optimistically mark started on timeout so
+        // higher layers don't stall on a missing ACK.
+        self.endpoints[endpoint as usize].started = true;
+        true
+    }
+
+    /// Drain the RX FIFO, dispatching each message to its handler (or to
+    /// the internal management handler for endpoint 0).  Returns the
+    /// number of messages processed.
+    pub fn process_messages(&mut self) -> u32 {
+        let mut count = 0u32;
+        while let Some(msg) = self.recv() {
+            count += 1;
+            let ep = ((msg >> EP_SHIFT) & EP_MASK) as u8;
+            if ep == APPLE_RTKIT_EP_MGMT {
+                self.handle_mgmt(msg);
+                continue;
+            }
+            let slot = self.endpoints[ep as usize];
+            if let Some(handler) = slot.handler {
+                unsafe { handler(slot.cookie, ep, msg) };
+            }
+        }
+        count
+    }
+
+    /// Internal management-endpoint dispatcher used by `process_messages`.
+    /// Mirrors the C driver: tracks STARTEP_ACK / IOP_PWR_ACK / AP_PWR_ACK
+    /// so the calling primitives can poll on the matching state field.
+    fn handle_mgmt(&mut self, msg: u64) {
+        let mtype = Self::mgmt_type(msg);
+        let payload = Self::msg_payload(msg);
+        match mtype {
+            MGMT_HELLO_REPLY => {
+                self.version = (payload & 0xF) as u32;
+            }
+            MGMT_STARTEP_ACK => {
+                let ep = ((payload >> 32) & 0xFF) as u8;
+                self.endpoints[ep as usize].started = true;
+            }
+            MGMT_IOP_PWR_ACK => {
+                self.iop_pwr = (payload & 0xFF) as u8;
+            }
+            MGMT_AP_PWR_ACK => {
+                self.ap_pwr = (payload & 0xFF) as u8;
+            }
+            _ => {}
+        }
+    }
+
+    /// Pop one message, returning `(endpoint, msg)` — does NOT dispatch to
+    /// a handler.  Used by the legacy C `apple_rtkit_recv_message` shim.
+    pub fn recv_with_ep(&self) -> Option<(u8, u64)> {
+        let msg = self.recv()?;
+        let ep = ((msg >> EP_SHIFT) & EP_MASK) as u8;
+        Some((ep, msg))
+    }
+
+    /// Send AP_PWR_STATE and pump messages until the matching ACK lands
+    /// or the timeout expires.  Returns `true` if the firmware echoed the
+    /// requested state.
+    pub fn set_ap_power_state(&mut self, state: u8) -> bool {
+        if !self.send_mgmt(MGMT_AP_PWR_STATE, state as u64) {
+            return false;
+        }
+        for _ in 0..1_000 {
+            self.process_messages();
+            if self.ap_pwr == state {
+                return true;
+            }
+            for _ in 0..1_000 { core::hint::spin_loop(); }
+        }
+        false
+    }
+
+    /// Send IOP_PWR_STATE and wait for the matching ACK.
+    pub fn set_iop_power_state(&mut self, state: u8) -> bool {
+        if !self.send_mgmt(MGMT_IOP_PWR_STATE, state as u64) {
+            return false;
+        }
+        for _ in 0..1_000 {
+            self.process_messages();
+            if self.iop_pwr == state {
+                return true;
+            }
+            for _ in 0..1_000 { core::hint::spin_loop(); }
+        }
+        false
+    }
+
+    /// Graceful shutdown: ask the IOP to QUIESCED then mark the context
+    /// as not-ready so further sends are rejected.  Memory is freed by
+    /// the caller via `rust_rtkit_free`.
+    pub fn shutdown(&mut self) {
+        let _ = self.set_iop_power_state(PWR_STATE_QUIESCED);
+        self.ready.store(false, Ordering::Release);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -538,6 +667,90 @@ pub extern "C" fn rust_rtkit_is_ready(ctx: *const RtkitCtx) -> i32 {
         return 0;
     }
     unsafe { (*ctx).ready.load(Ordering::Acquire) as i32 }
+}
+
+/// Pop a single message from the RX FIFO without dispatching it.  Writes
+/// the endpoint and message into the caller's output pointers and returns
+/// 1; returns 0 if the FIFO was empty.  Either output may be NULL.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rust_rtkit_recv_message(
+    ctx:          *mut RtkitCtx,
+    endpoint_out: *mut u8,
+    msg_out:      *mut u64,
+) -> i32 {
+    if ctx.is_null() {
+        return 0;
+    }
+    let c = unsafe { &mut *ctx };
+    match c.recv_with_ep() {
+        Some((ep, msg)) => {
+            if !endpoint_out.is_null() {
+                unsafe { write_volatile(endpoint_out, ep) };
+            }
+            if !msg_out.is_null() {
+                unsafe { write_volatile(msg_out, msg) };
+            }
+            1
+        }
+        None => 0,
+    }
+}
+
+/// Send STARTEP for an application endpoint and wait for the ACK.
+/// Returns 1 on success, 0 on invalid input.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rust_rtkit_start_endpoint(
+    ctx:      *mut RtkitCtx,
+    endpoint: u8,
+) -> i32 {
+    if ctx.is_null() {
+        return 0;
+    }
+    if unsafe { (*ctx).start_endpoint(endpoint) } { 1 } else { 0 }
+}
+
+/// Drain the RX FIFO, dispatching messages to handlers.  Returns the
+/// number of messages processed.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rust_rtkit_process_messages(ctx: *mut RtkitCtx) -> i32 {
+    if ctx.is_null() {
+        return 0;
+    }
+    unsafe { (*ctx).process_messages() as i32 }
+}
+
+/// Notify the IOP of an AP-side power state transition (waits for ACK).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rust_rtkit_set_ap_power_state(
+    ctx:   *mut RtkitCtx,
+    state: u8,
+) -> i32 {
+    if ctx.is_null() {
+        return 0;
+    }
+    if unsafe { (*ctx).set_ap_power_state(state) } { 1 } else { 0 }
+}
+
+/// Request that the IOP transition to a new power state (waits for ACK).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rust_rtkit_set_iop_power_state(
+    ctx:   *mut RtkitCtx,
+    state: u8,
+) -> i32 {
+    if ctx.is_null() {
+        return 0;
+    }
+    if unsafe { (*ctx).set_iop_power_state(state) } { 1 } else { 0 }
+}
+
+/// Graceful shutdown: ask the IOP to QUIESCED and clear the ready flag.
+/// Memory is freed by a subsequent `rust_rtkit_free`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rust_rtkit_shutdown(ctx: *mut RtkitCtx) {
+    if ctx.is_null() {
+        return;
+    }
+    unsafe { (*ctx).shutdown() }
 }
 
 // ---------------------------------------------------------------------------

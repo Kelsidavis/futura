@@ -83,6 +83,11 @@
 
 typedef struct apple_rtkit_ctx apple_rtkit_ctx_t;
 
+/* Forward declaration of the Rust-side RTKit handle.  Full FFI is
+ * declared at the bottom of this header; the C wrapper stores one of
+ * these in apple_rtkit_ctx::rust_ctx. */
+typedef struct RtkitCtx RtkitCtx;
+
 /* RTKit message handler callback */
 typedef void (*apple_rtkit_msg_handler_t)(void *cookie, uint8_t endpoint, uint64_t msg);
 
@@ -94,27 +99,34 @@ typedef struct {
     void *cookie;
 } apple_rtkit_endpoint_t;
 
-/* RTKit mailbox context */
+/* RTKit mailbox context.
+ *
+ * The C implementation now thin-wraps the Rust apple_rtkit crate;
+ * `rust_ctx` is the active handle and the other fields are kept for
+ * source compatibility with any third-party code that #includes this
+ * header but are not touched by the wrapper.  No in-tree caller reads
+ * them — verified by grep across platform/ kernel/ drivers/. */
 struct apple_rtkit_ctx {
-    /* Mailbox MMIO base */
+    /* Rust-side RTKit handle (drivers/rust/apple_rtkit) */
+    RtkitCtx *rust_ctx;
+
+    /* Mailbox MMIO base — legacy, unused by the wrapper */
     volatile uint8_t *mailbox_base;
     uint64_t mailbox_phys;
 
-    /* Protocol state */
+    /* Protocol state — legacy, unused */
     uint32_t version;
     bool initialized;
     uint8_t iop_power_state;
     uint8_t ap_power_state;
 
-    /* Endpoint map */
-    uint32_t endpoint_bitmap[8];   /* 256 bits for 256 endpoints */
+    /* Endpoint map — legacy, unused */
+    uint32_t endpoint_bitmap[8];
     apple_rtkit_endpoint_t endpoints[APPLE_RTKIT_MAX_ENDPOINTS];
 
-    /* Crashlog buffer (if provided by firmware) */
+    /* Crashlog / syslog buffers — legacy, unused */
     uint64_t crashlog_addr;
     uint32_t crashlog_size;
-
-    /* Syslog buffer (if provided by firmware) */
     uint64_t syslog_addr;
     uint32_t syslog_size;
 };
@@ -247,8 +259,7 @@ void apple_rtkit_shutdown(apple_rtkit_ctx_t *ctx);
  *   interchangeable — use one or the other per co-processor.
  * ============================================================ */
 
-/* Forward declaration of the opaque Rust context type */
-typedef struct RtkitCtx RtkitCtx;
+/* RtkitCtx forward declaration is at the top of this header.  */
 
 typedef void (*rust_rtkit_msg_handler_t)(void *cookie, uint8_t endpoint,
                                          uint64_t msg);
@@ -280,5 +291,30 @@ uint32_t rust_rtkit_version(const RtkitCtx *ctx);
 
 /** Returns 1 if boot sequence completed successfully. */
 int rust_rtkit_is_ready(const RtkitCtx *ctx);
+
+/** Pop one message from the RX FIFO (no dispatch).  Writes the endpoint
+ *  and message into the output pointers (NULL allowed) and returns 1; 0
+ *  on empty FIFO. */
+int rust_rtkit_recv_message(RtkitCtx *ctx, uint8_t *endpoint_out,
+                            uint64_t *msg_out);
+
+/** Send STARTEP for an application endpoint (≥ 0x20) and wait for ACK.
+ *  Returns 1 on success. */
+int rust_rtkit_start_endpoint(RtkitCtx *ctx, uint8_t endpoint);
+
+/** Drain the RX FIFO, dispatching to registered handlers.  Returns
+ *  number of messages processed. */
+int rust_rtkit_process_messages(RtkitCtx *ctx);
+
+/** Notify the IOP of an AP-side power state transition.  Returns 1 on
+ *  ACK match. */
+int rust_rtkit_set_ap_power_state(RtkitCtx *ctx, uint8_t state);
+
+/** Request the IOP transition to @state.  Returns 1 on ACK match. */
+int rust_rtkit_set_iop_power_state(RtkitCtx *ctx, uint8_t state);
+
+/** Graceful shutdown: QUIESCED + clear ready.  Memory still owned by
+ *  the caller — pair with rust_rtkit_free. */
+void rust_rtkit_shutdown(RtkitCtx *ctx);
 
 #endif /* __FUTURA_ARM64_APPLE_RTKIT_H__ */

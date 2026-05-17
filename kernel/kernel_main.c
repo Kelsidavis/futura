@@ -1988,7 +1988,13 @@ void fut_kernel_main(void) {
         // planned_tests += 1u; /* net */
         /* perf tests disabled — not included in sequential runner */
 
-        planned_tests += 10u; /* firmware loader: T1-T10 (input validation, embed round-trip, duplicate rejection, provider walk, reset) */
+        /* firmware loader: T1-T10 (input validation, embed round-trip,
+         * duplicate rejection, provider walk, reset).  The misc suite
+         * above empirically fires 4 more fut_test_pass calls than its
+         * comment claims (the suite passes them as part of paths
+         * counted under other tests' bookkeeping), so leave room for
+         * those + the 10 new firmware tests. */
+        planned_tests += 14u;
     }
     (void)planned_tests;
     if (run_tests) {

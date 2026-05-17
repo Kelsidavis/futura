@@ -198,9 +198,15 @@ int fb_set_hwinfo(const struct fut_fb_hwinfo *info) {
     }
     g_fb_hw = *info;
     g_fb_available = true;
-    fut_printf("[FB] hwinfo published: %ux%u %ubpp pitch=%u phys=0x%llx\n",
-               info->info.width, info->info.height, info->info.bpp,
-               info->info.pitch, (unsigned long long)info->phys);
+    if (info->virt) {
+        fut_printf("[FB] hwinfo published: %ux%u %ubpp pitch=%u phys=0x%llx virt=%p\n",
+                   info->info.width, info->info.height, info->info.bpp,
+                   info->info.pitch, (unsigned long long)info->phys, info->virt);
+    } else {
+        fut_printf("[FB] hwinfo published: %ux%u %ubpp pitch=%u phys=0x%llx\n",
+                   info->info.width, info->info.height, info->info.bpp,
+                   info->info.pitch, (unsigned long long)info->phys);
+    }
 
     /* Bring up the framebuffer console now that we have valid geometry.
      * Idempotent — fb_console_init returns 0 immediately if it's

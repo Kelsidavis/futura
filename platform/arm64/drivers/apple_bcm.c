@@ -250,7 +250,22 @@ int apple_bcm_platform_init(const fut_platform_info_t *info)
     }
 
     memset(&g_bcm, 0, sizeof(g_bcm));
-    return apple_bcm_init(info, NULL, NULL);
+    int found = apple_bcm_init(info, NULL, NULL);
+
+    /* Bring the chip out of reset right after discovery so the rails
+     * have settled by the time later code wants to bring the radios
+     * up.  Failures are non-fatal — they're informational and the
+     * caller can retry once the missing piece lands (DT pin numbers,
+     * etc.). */
+    if (found > 0) {
+        int rc = apple_bcm_chip_power_on();
+        if (rc == 0) {
+            fut_printf("[bcm] chip rails up\n");
+        }
+        /* chip_power_on already logged the specific failure mode. */
+    }
+
+    return found;
 }
 
 bool apple_bcm_wifi_present(void) { return g_bcm.wifi_present; }

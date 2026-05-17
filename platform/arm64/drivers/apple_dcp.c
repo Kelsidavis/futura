@@ -217,7 +217,8 @@ int fut_apple_dcp_platform_init(const fut_platform_info_t *info) {
         m1n1_fb.length      = (uint64_t)stride * info->display_height;
         /* Use the kernel peripheral mapping window — m1n1's FB sits
          * in DRAM at PA 0x10_0000_0000+ which is outside the
-         * kernel's L2_dram window but inside kernel_l1[8..71]. */
+         * kernel's L2_dram window but inside kernel_l1[8..511]
+         * (the 504 GiB device-nGnRE window boot.S sets up). */
         m1n1_fb.virt        = (void *)fut_kernel_peripheral_va(info->framebuffer_phys);
         m1n1_fb.info.width  = info->display_width;
         m1n1_fb.info.height = info->display_height;

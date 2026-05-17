@@ -129,6 +129,19 @@ int apple_audio_init(const fut_platform_info_t *info) {
     g_audio.play_buf.data = fut_malloc_pages(AUDIO_BUF_SIZE / 4096);
     if (!g_audio.play_buf.data) {
         fut_printf("[AUDIO] Failed to allocate playback buffer\n");
+        /* Release the Rust handles we already allocated above —
+         * rust_i2c_init does a heap alloc, so this isn't free.
+         * rust_mca_init uses a global static and is idempotent. */
+        if (g_audio.codec_i2c) {
+            extern void rust_i2c_free(AppleI2c *i2c);
+            rust_i2c_free((AppleI2c *)g_audio.codec_i2c);
+            g_audio.codec_i2c = NULL;
+        }
+        if (g_audio.mca) {
+            extern void rust_mca_free(AppleMca *mca);
+            rust_mca_free((AppleMca *)g_audio.mca);
+            g_audio.mca = NULL;
+        }
         return -1;
     }
     g_audio.play_buf.size = AUDIO_BUF_SIZE;

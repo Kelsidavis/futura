@@ -201,9 +201,11 @@ int fut_apple_dcp_platform_init(const fut_platform_info_t *info) {
      * and exposed its framebuffer via /chosen/framebuffer, publish
      * that to the kernel fb layer BEFORE touching DCP / DART /
      * RTKit.  That way even if the DCP bring-up below fails (likely
-     * on real hardware until we add pmgr clock-enable support), the
-     * kernel still has a console to print to.  display_width /
-     * height come from the DT walker and don't need DCP at all. */
+     * on real hardware until we wire pmgr_enable() to the DCP power
+     * domains — see apple_pmgr.h, blocked on per-SoC offset table or
+     * DT phandle resolution of power-domains property), the kernel
+     * still has a console to print to.  display_width / display_height
+     * come from the DT walker and don't need DCP at all. */
     if (info->framebuffer_phys != 0 &&
         info->display_width > 0 && info->display_height > 0) {
         struct fut_fb_hwinfo m1n1_fb = {0};

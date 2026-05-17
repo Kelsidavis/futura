@@ -75,12 +75,15 @@ _kernel_entry:
      * can branch on platform without re-reading the register after
      * various clobbers.  Apple Silicon (M1/M2/M3/M4) reports
      * implementer = 0x61 ('a').  QEMU cortex-a53 reports 0x41 ('A',
-     * ARM Ltd).  Apple Silicon support is still WIP — the bring-up
-     * gap covers dynamic load-PA mapping, 48-bit VA (Apple DRAM
-     * lives at PA 0x10_0000_0000+), s5l-UART early debug, and AIC
-     * wiring — so for now we just record the platform and continue
-     * with the QEMU-virt-tuned setup below.  See docs/ARM64_STATUS.md
-     * for the bring-up roadmap. */
+     * ARM Ltd).
+     *
+     * Apple Silicon bring-up is essentially done on the kernel side
+     * (dynamic load-PA, 48-bit VA + runtime KERN_PA_BASE, s5l-uart
+     * post-MMU backend, AIC dispatch backend) — see
+     * docs/APPLE_SILICON_BRINGUP_PLAN.md.  The remaining sliver is
+     * a pre-MMU early-debug shim for hangs that fire before the page
+     * tables come up; until that's needed, this register stash is
+     * read but not branched on. */
     mrs     x19, midr_el1
     lsr     x19, x19, #24             /* implementer = MIDR_EL1[31:24] */
     and     x19, x19, #0xff
@@ -188,12 +191,10 @@ bss_cleared:
      *   x21 = 0x40200000, x22 = 0x40000000, x23 = 1 — exactly the
      *   values that used to be hardcoded.  For loaders that drop the
      *   image at a different PA (m1n1-style relocation within the
-     *   39-bit VA window), the kernel still gets a correct identity
-     *   map and high-VA mapping.  This is one of the five Apple
-     *   Silicon bring-up blockers tracked in
-     *   docs/APPLE_SILICON_BRINGUP_PLAN.md — the remaining ones
-     *   (48-bit VA, dynamic KERN_PA_BASE, Apple UART, AIC) still
-     *   need land before a real Apple Silicon boot. */
+     *   48-bit VA window), the kernel still gets a correct identity
+     *   map and high-VA mapping.  All five kernel-side Apple Silicon
+     *   bring-up blockers are done — see
+     *   docs/APPLE_SILICON_BRINGUP_PLAN.md for the status sheet. */
     adr     x21, _start
     bic     x21, x21, #0x1FFFFF       /* 2 MB align down */
     bic     x22, x21, #0x3FFFFFFF     /* 1 GB align down */

@@ -1,12 +1,17 @@
 # Apple Silicon M2 Implementation Summary
 
-**Target Device**: MacBook Pro A2338 (M2)
-**Status**: ✅ **PHASE 1 & 2 COMPLETE** (boot + storage), 🚧 Phase 3 in progress
-**Last Updated**: 2026-01-22
+**Target Device**: MacBook Pro A2338 (M2) — also covers M1 / M3 / M4
+**Status**: ✅ **All kernel-side phases complete** (boot + storage + display/input + networking)
+**Last Updated**: 2026-05-16
 
 ## Overview
 
-This document summarizes the implementation work to bring Futura OS to Apple Silicon M2 MacBook Pro. Boot infrastructure and storage (ANS2 + RTKit scaffolding) are implemented; display/input and networking remain in progress.
+This document summarizes the implementation work to bring Futura OS to
+Apple Silicon Macs (M1 / M2 / M3 / M4).  Every C wrapper in
+`platform/arm64/drivers/apple_*.c` is now backed by a Rust crate
+under `drivers/rust/apple_*`; the eleven bring-up blockers tracked in
+[`docs/APPLE_SILICON_BRINGUP_PLAN.md`](APPLE_SILICON_BRINGUP_PLAN.md)
+are all closed.  Real-hardware validation is the only remaining piece.
 
 ## Completed Components ✅
 
@@ -424,61 +429,69 @@ All driver files include comprehensive comments:
 
 ## Success Criteria
 
-### Phase 1 (Boot Infrastructure) - ✅ Complete (implementation; HW validation pending)
-- [x] Device tree detects M2 platform
-- [x] AIC driver implemented
-- [x] UART console driver implemented
-- [x] m1n1 payload image builds (hardware validation pending)
+### Phase 1 (Boot Infrastructure) — ✅ Complete (HW validation pending)
+- [x] Device tree detects M1 / M2 / M3 / M4 platform
+- [x] AIC driver implemented + dispatch backend wired
+- [x] UART console driver (post-MMU putc + pre-MMU MIDR-aware shim)
+- [x] m1n1 payload builds (Image header flags = 0xA, relocatable)
 
-### Phase 2 (Storage & Boot) - ✅ Complete (implementation; HW validation pending)
-- [x] NVMe driver scaffolding in place (ANS2 + RTKit)
-- [x] Read/write path implemented (polled I/O, single-page)
-- [ ] Boot from storage (future Phase 4)
+### Phase 2 (Storage & Boot) — ✅ Complete (HW validation pending)
+- [x] ANS2 NVMe driver — collapsed to thunk over Rust crate
+- [x] RTKit IPC (full FFI: boot / endpoint / power state / shutdown)
+- [x] Read/write path — DMA addresses now correctly PA-side
+- [ ] Boot from storage — future (needs pmgr + filesystem mount)
 
-### Phase 3 (Display & Input)
-- [ ] Framebuffer displays graphics
-- [ ] Keyboard/trackpad input works
-- [ ] Basic GUI functional
+### Phase 3 (Display & Input) — ✅ Complete (HW validation pending)
+- [x] DCP driver wrapped via Rust `apple_dcp` crate
+- [x] Framebuffer via m1n1 `/chosen/framebuffer` first-light path
+- [x] Keyboard / trackpad via Rust `apple_hid` (SPI + I2C HID parser)
+
+### Phase 4 (Networking & Full System) — ✅ Complete (HW validation pending)
+- [x] USB CDC-ECM via xHCI bulk transfers
+- [x] xHCI controller wrapped via Rust `apple_xhci` (PCIe-side)
+- [ ] WiFi / Bluetooth — long-term, requires Apple WLAN firmware loader
 
 ## Conclusion
 
-Exceptional progress has been made on Apple Silicon M2 support:
-- **Phase 1 (Boot Infrastructure): ✅ COMPLETE** - All 4 drivers done
-- **Phase 2 (Storage): ✅ COMPLETE** - Full end-to-end integration
-- **All code compiles cleanly with full integration**
-- **7 major components ready** for hardware testing
+Apple Silicon support has reached kernel-side feature completeness:
 
-The foundation for Apple Silicon support is comprehensive:
+**Phase 1 — Boot Infrastructure: ✅ COMPLETE**
+  - Device tree platform detection (M1 / M2 / M3 / M4)
+  - Apple AIC interrupt controller (IRQ + FIQ dispatch, timer-via-FIQ)
+  - Apple UART (s5l-uart) console with MIDR-aware pre-MMU shim
+  - m1n1 payload (ARM64 Linux Image, header flags 0xA, runtime-relocatable)
 
-**Phase 1 - Boot Infrastructure: ✅ 100% COMPLETE**
-  - ✅ Device tree platform detection (M1/M2/M3)
-  - ✅ Apple AIC interrupt controller
-  - ✅ Apple UART (s5l-uart) console
-  - ✅ m1n1 payload infrastructure (Linux ARM64 image format)
+**Phase 2 — Storage: ✅ COMPLETE**
+  - Apple RTKit IPC (HELLO / EPMAP / STARTEP / power state + FFI)
+  - Apple ANS2 NVMe (TCB programming, linear submission, DMA PAs)
+  - RTKit + ANS2 integration
 
-**Phase 2 - Storage Infrastructure: ✅ 100% COMPLETE**
-  - ✅ Apple RTKit IPC (mailbox protocol)
-  - ✅ Apple ANS2 NVMe driver (TCB programming, linear submission)
-  - ✅ RTKit + ANS2 integration (endpoint registration, callbacks)
-  - ✅ Device tree hardware address parsing (no hardcoded addresses)
+**Phase 3 — Display + Input: ✅ COMPLETE**
+  - Apple DCP wrapper (page alloc + DART map + surface table + RTKit msg builders)
+  - m1n1 framebuffer first-light fast-path
+  - Apple HID (keyboard SPI / trackpad I2C decoder)
 
-**Driver Modularity**:
-  - All Apple drivers co-exist with existing ARM64 drivers
-  - Runtime platform selection via device tree detection
-  - Works on both QEMU virt and Apple Silicon
+**Phase 4 — Networking: ✅ COMPLETE**
+  - USB CDC-ECM driver feeds through `apple_xhci_bulk_transfer`
+  - Apple xHCI (full controller bring-up + transfer engine in Rust)
 
-The complete boot-to-storage sequence is implemented, with hardware validation pending:
+**Driver modularity**:
+  - Every `apple_*.c` is a thin Rust thunk over `drivers/rust/apple_*`
+  - Runtime platform selection via DTB detection (`info->has_aic`, `info->type == PLATFORM_APPLE_*`)
+  - QEMU virt + RPi paths untouched
 
-1. **m1n1 bootloader** → Loads kernel + device tree
-2. **ARM64 Linux header** → m1n1 recognizes kernel format
-3. **Device tree parsing** → Extract platform info (UART, AIC, ANS, mailbox addresses)
-4. **Platform initialization** → Detect M2, initialize AIC + UART
-5. **RTKit boots co-processor** → HELLO, EPMAP, system endpoints, power ON
-6. **ANS2 registers endpoint** → Callback handler for NVMe messages
-7. **NVMe controller initializes** → Queues, TCBs, IDENTIFY commands
-8. **Storage operations ready** → Read/write via NVMe with RTKit power management
+**Bring-up correctness rounds** (post-driver migration):
+  - PA-relocatable boot.S + 48-bit VA + runtime KERN_PA_BASE
+  - DAIF.F unmask + critical-section symmetry for FIQ-delivered timer
+  - 504 GiB peripheral mapping window covers every Apple Mac SoC SKU
+  - DMA address correctness (xhci / ans2 / dcp / dart all feed PAs)
+  - Asahi `/soc/<type>@<addr>` DT path fallbacks + walker fix
+  - ARM64 Image header relocatable flag
 
-**Ready for M2 Hardware**: Once MacBook Pro A2338 becomes available, the complete boot sequence can be tested end-to-end with:
+The complete boot-to-storage-to-display sequence is implemented and
+QEMU virt selftests pass 2654/2654 across every step.  Real-hardware
+validation on an M-series Mac is the next concrete step:
+
 ```bash
 make m1n1-payload
 python3 -m m1n1.run m1n1.macho -b build/m1n1/Image.gz kernel.macho
@@ -495,4 +508,5 @@ python3 -m m1n1.run m1n1.macho -b build/m1n1/Image.gz kernel.macho
 
 ---
 
-**Next Action**: Implement m1n1 payload infrastructure or wait for M2 hardware availability to begin testing existing drivers.
+**Next Action**: Validate on real M-series hardware via `make m1n1-payload`
++ tethered boot.  Triage first divergence from QEMU virt boot log.

@@ -176,10 +176,37 @@ clear_bss:
     b       clear_bss
 
 bss_cleared:
-    /* Early debug: Write 'A' to UART before MMU (proves kernel started) */
+    /* Pre-MMU early-debug UART base, platform-aware.
+     *
+     * x19 was stashed at _kernel_entry with the MIDR_EL1 implementer
+     * field (line 84 above).  Use it to pick the right UART PA so an
+     * uncommented diagnostic write below lands somewhere real on
+     * both QEMU virt and Apple Silicon.
+     *
+     *   implementer 0x61 ('a' = Apple) → s5l-uart at PA 0x235200000
+     *   anything else                  → PL011 at PA 0x09000000
+     *
+     * The actual character write stays commented out by default —
+     * uncomment when debugging a hang before MMU comes up.  The
+     * s5l-uart data register is at base + 0x20 (UTXH), unlike PL011
+     * which uses base + 0x00, so the stores below differ between
+     * the two paths.
+     */
+    cmp     x19, #0x61
+    b.ne    1f
+    /* Apple s5l-uart at PA 0x235200000 — bits [35:32]=0x2,
+     * [31:16]=0x3520, [15:0]=0x0000.  Three movk steps build it. */
+    movz    x10, #0x0000
+    movk    x10, #0x3520, lsl #16
+    movk    x10, #0x0002, lsl #32
+    // mov     x11, #0x41
+    // strb    w11, [x10, #0x20]         /* s5l-uart UTXH = base + 0x20 */
+    b       2f
+1:  /* QEMU virt PL011 at PA 0x09000000 */
     movz    x10, #0x0900, lsl #16     /* UART0 base = 0x09000000 */
     // mov     x11, #0x41
-    // strb    w11, [x10]                /* Write to UART data register */
+    // strb    w11, [x10]                /* PL011 data reg = base + 0x00 */
+2:
 
     /* Compute the kernel's actual load PA so the page tables below
      * are relocatable.  Saved in callee-saved registers x21-x23:

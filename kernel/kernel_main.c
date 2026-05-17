@@ -934,6 +934,9 @@ static void selftest_sequential_runner(void *arg) {
     extern void fut_apple_hid_test_thread(void *arg);
     fut_apple_hid_test_thread(NULL);
 
+    extern void fut_apple_xhci_test_thread(void *arg);
+    fut_apple_xhci_test_thread(NULL);
+
     /* Safety net: if every test function returned without triggering
      * try_finish() (planned over-counted by the same magnitude as a
      * skipped cluster, or a control-flow branch that returned without
@@ -2065,6 +2068,13 @@ void fut_kernel_main(void) {
         /* apple_hid: T1-T7 (init guard, has_key/getchar/poll without
          * init, register-callback set/clear, platform_init NULL).
          * ARM64-only. */
+#ifdef __aarch64__
+        planned_tests += 7u;
+#endif
+
+        /* apple_xhci: T1-T7 (init / enumerate / get_device /
+         * control_transfer / bulk_transfer / platform_init NULL
+         * + uninit guards). ARM64-only. */
 #ifdef __aarch64__
         planned_tests += 7u;
 #endif

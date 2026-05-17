@@ -1,0 +1,11 @@
+[package]
+name = "apple_xhci"
+version = "0.1.0"
+edition = "2024"
+license = "MPL-2.0"
+description = "Apple Silicon xHCI USB host controller driver for Futura OS (ARM64) — controller bring-up, command/event ring management, slot enumeration, control / bulk transfers.  PCIe BAR discovery and ring allocation stay on the C side (apple_xhci.c) since they depend on the platform PCIe driver and the kernel page allocator."
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]

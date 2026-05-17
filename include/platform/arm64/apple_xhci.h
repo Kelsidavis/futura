@@ -161,4 +161,42 @@ int apple_xhci_bulk_transfer(uint8_t slot_id, uint8_t endpoint,
  */
 int apple_xhci_platform_init(const fut_platform_info_t *info);
 
+/* ============================================================
+ *   Rust driver FFI (drivers/rust/apple_xhci)
+ *
+ * Owns all xHCI MMIO once the BAR is discovered: controller
+ * reset / start, command + event ring management, doorbell
+ * writes, port enumeration via Enable Slot, control + bulk
+ * transfers.  apple_xhci.c stays as the C-side glue that does
+ * Apple PCIe BAR discovery (rust_apple_pcie_*) and ring buffer
+ * allocation (fut_malloc_pages).
+ * ============================================================ */
+
+typedef struct AppleXhci AppleXhci;
+
+AppleXhci *rust_apple_xhci_new(uint64_t cap_base,
+                               uint8_t *cmd_ring,
+                               uint8_t *evt_ring,
+                               uint8_t *dcbaa);
+int32_t  rust_apple_xhci_reset_and_start(AppleXhci *ctrl);
+uint32_t rust_apple_xhci_max_slots(const AppleXhci *ctrl);
+uint32_t rust_apple_xhci_max_ports(const AppleXhci *ctrl);
+int32_t  rust_apple_xhci_enumerate(AppleXhci *ctrl,
+                                   uint8_t *out_ports,
+                                   uint8_t *out_slots,
+                                   uint32_t max_devs);
+int32_t  rust_apple_xhci_control_transfer(AppleXhci *ctrl,
+                                          uint8_t slot_id,
+                                          uint8_t bm_req_type,
+                                          uint8_t b_req,
+                                          uint16_t w_value,
+                                          uint16_t w_index,
+                                          uint8_t *data,
+                                          uint16_t w_length);
+int32_t  rust_apple_xhci_bulk_transfer(AppleXhci *ctrl,
+                                       uint8_t slot_id,
+                                       uint8_t endpoint,
+                                       uint8_t *data,
+                                       uint32_t length);
+
 #endif /* __FUTURA_APPLE_XHCI_H__ */

@@ -43,8 +43,22 @@ _start:
     /* 0x10: image_size - Effective size of kernel image */
     .quad   _kernel_end - _start    /* Total kernel size */
 
-    /* 0x18: flags - Kernel flags */
-    .quad   0                       /* bit 0: LE=0, bits 1-2: 4K pages */
+    /* 0x18: flags - Kernel flags per arm64/booting.rst
+     *   bit 0    = endian   (0 = little, 1 = big)         → 0
+     *   bits 1-2 = page size (01 = 4K, 10 = 16K, 11 = 64K) → 01
+     *   bit 3    = phys placement (0 = honour text_offset,
+     *              1 = relocatable, 2 MiB-aligned anywhere) → 1
+     *
+     * Bit 3 = 1 matches boot.S's dynamic load-PA computation
+     * (g_kernel_load_pa, blocker #1 in
+     * docs/APPLE_SILICON_BRINGUP_PLAN.md): the kernel runs correctly
+     * regardless of where the bootloader drops it, so the binding
+     * "load me exactly at text_offset" flag is wrong.  m1n1 reads
+     * this byte and will respect the relocatable bit rather than
+     * trying to place us at PA 0.
+     *
+     * 0x2 (bits 1-2 = 4K pages) | 0x8 (bit 3 = relocatable) = 0xA. */
+    .quad   0xA
 
     /* 0x20-0x30: Reserved fields */
     .quad   0                       /* res2 */

@@ -1,8 +1,8 @@
 # Apple Silicon M2 Hardware Testing Guide
 
 **Target Device**: MacBook Pro A2338 (M2) — also covers M1 / M3 / M4
-**Status**: Ready for tethered boot testing (non-destructive); kernel-side bring-up complete
-**Last Updated**: 2026-05-16
+**Status**: Ready for tethered boot testing (non-destructive); kernel-side bring-up complete with 127-test pre-hardware guard coverage
+**Last Updated**: 2026-05-17
 
 ---
 
@@ -362,6 +362,37 @@ python3 -m m1n1.run m1n1.macho -b build/m1n1/Image.gz kernel.macho --hv
 # - Set breakpoints
 # - Single-step execution
 # - Examine registers
+```
+
+---
+
+## Pre-Hardware Test Coverage (`make test-arm64`)
+
+Before touching real Apple hardware, the kernel test suite exercises every Apple-driver public function's guard paths under QEMU virt.  This catches signature changes, NULL-pointer regressions, and sentinel-return contracts without needing a Mac.
+
+| Subsystem        | Tests | What's covered                                                       |
+|------------------|-------|----------------------------------------------------------------------|
+| firmware loader  | 13    | input validation, embed round-trip, duplicate rejection, provider walk, reset, embed_binary |
+| HCI core         | 24    | registration / open / close / send / event sink / unregister / build_cmd / dispatch / find / cmd_complete decoder |
+| apple_bcm        | 17    | Rust FFI chip classification + chip-name / firmware-name lookup; C-side present / info / BAR / power_on / reset guards |
+| DTB walker       | 14    | compat-cell extraction, phandle_reg boundaries, full phandle resolution against a synthetic DTB |
+| apple_pmgr       | 8     | no-init guard paths, domain-list helpers reject NULL/empty, stats handle NULL |
+| apple_rtkit      | 8     | NULL-ctx guards on every public function, init(0) refusal             |
+| apple_power      | 8     | sentinel-return guards on every SMC accessor                          |
+| apple_audio      | 8     | init-state guards on configure / play / write / volume / state         |
+| apple_hid        | 7     | has_key / getchar / poll without init, register-callback set/clear     |
+| apple_xhci       | 7     | init / enumerate / get_device / control / bulk transfer guards         |
+| apple_dcp        | 8     | Rust FFI NULL guards on swap + mode accessors, platform_init NULL      |
+| apple_aic + ans2 | 5     | AIC init / pending / whoami guards, ans2_platform_init NULL            |
+| **Total**        |**127**| every public function across 10 Apple subsystems + 3 kernel subsystems |
+
+These run as part of the standard kernel test harness on every CI build (see `.github/workflows/ci.yml`).  If a guard test fails after your changes, you've removed a NULL check or changed a contract — fix the test or the code before booting on real hardware.
+
+```
+$ make test-arm64
+...
+[TEST] ALL TESTS PASSED (2785/2785)
+[HARNESS] PASS
 ```
 
 ---

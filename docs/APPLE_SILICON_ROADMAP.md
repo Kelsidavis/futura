@@ -1,9 +1,9 @@
 # Apple Silicon M2 Support Roadmap
 
-**Target Device**: MacBook Pro A2338 (M2)  
-**Status**: 🚧 **PHASE 3 IN PROGRESS**  
-**Started**: 2025-11-05  
-**Last Updated**: 2026-01-22
+**Target Device**: MacBook Pro A2338 (M2) (also covers M1 / M3 / M4 SoCs)
+**Status**: ✅ **Kernel-side bring-up COMPLETE; real-hardware validation pending**
+**Started**: 2025-11-05
+**Last Updated**: 2026-05-16
 
 ## Overview
 
@@ -51,27 +51,27 @@ Continue kernel init
 ## Required Drivers
 
 ### Priority 1: Core Platform (Boot Critical)
-- [x] **Device Tree Parser**: Extend existing DTB code for Apple DT ✅
-- [x] **Apple AIC**: Interrupt controller driver ✅
-- [x] **Apple UART**: Console I/O for debugging ✅
-- [ ] **ARM Generic Timer**: Already have, verify compatibility
+- [x] **Device Tree Parser**: Extended for Apple DT + path-aware walker (`578f6fbb`) ✅
+- [x] **Apple AIC**: Interrupt controller driver (Rust `apple_aic` + IRQ + FIQ dispatch) ✅
+- [x] **Apple UART**: Console I/O (Rust `apple_uart` + pre-MMU MIDR-aware shim) ✅
+- [x] **ARM Generic Timer**: FIQ dispatched via `apple_aic_handle_fiq` with `CNTP_CTL.ISTATUS` check ✅
 
 ### Priority 2: Essential I/O
-- [x] **Apple NVMe (ANS2)**: Block storage access ✅ (driver + RTKit scaffolding present)
-- [ ] **Apple GPIO**: Pin muxing and control
-- [ ] **USB-C PD**: Power delivery and serial console
-- [ ] **PCIe Controller**: For NVMe and other devices
+- [x] **Apple NVMe (ANS2)**: Driver collapsed to thunk over `rust_ans2` (`634f6d8c`) ✅
+- [x] **Apple GPIO**: Rust `apple_gpio` crate present ✅
+- [ ] **USB-C PD**: Power delivery / Type-C controller — not yet started
+- [x] **Apple PCIe**: `rust_apple_pcie` crate + xHCI controller wired through ECAM ✅
 
 ### Priority 3: Display & Graphics
-- [ ] **Apple DCP**: Display coprocessor interface
-- [ ] **Framebuffer**: Basic graphics output
-- [ ] **Apple GPU**: Metal acceleration (long-term)
+- [x] **Apple DCP**: Rust `apple_dcp` crate + C wrapper (`997e4c06`) ✅
+- [x] **Framebuffer**: m1n1 `/chosen/framebuffer` fast-path lights up console before DCP swap-chain (`a103eb48`) ✅
+- [ ] **Apple GPU**: Metal acceleration — long-term, requires AGX firmware reverse engineering
 
 ### Priority 4: Advanced Features
 - [ ] **Thunderbolt**: External device support
-- [ ] **Ethernet (USB-C)**: Network via adapter
-- [ ] **WiFi/Bluetooth**: On-board wireless (complex)
-- [ ] **Audio**: Apple audio subsystem
+- [x] **Ethernet (USB-C)**: CDC-ECM driver wired through `apple_xhci_bulk_transfer` ✅
+- [ ] **WiFi/Bluetooth**: On-board wireless — requires Apple WLAN firmware loader
+- [x] **Audio**: Rust `apple_mca` MCA I2S + I2C codec wrapper (`f95357b9`) ✅
 
 ## Implementation Plan
 
@@ -121,26 +121,27 @@ Continue kernel init
    - Load kernel modules
    - Enable userland
 
-### Phase 3: Display & Input (Week 5-6)
+### Phase 3: Display & Input ✅ **COMPLETE (kernel-side)**
 **Goal**: Basic GUI capability
 
-1. **Display Coprocessor (DCP)**
-   - IPC protocol with DCP firmware
-   - Mode setting
-   - Framebuffer allocation
+1. **Display Coprocessor (DCP)** ✅
+   - IPC protocol (RTKit message dispatcher in Rust `apple_dcp`)
+   - Mode setting (mode getter / setter via Rust FFI)
+   - Framebuffer allocation (page alloc + DART map + register with kernel fb)
+   - m1n1 framebuffer fast-path for first-light before full DCP boot
 
-2. **USB HID input**
-   - Keyboard/trackpad via USB-C
-   - Event processing
+2. **USB HID input** ✅
+   - Keyboard SPI / trackpad I2C (Rust `apple_hid` parser)
+   - Event processing (callbacks + ring buffer)
 
-### Phase 4: Networking & Full System (Week 7-8)
+### Phase 4: Networking & Full System ✅ **COMPLETE (kernel-side)**
 **Goal**: Full usable system
 
-1. **USB Ethernet adapter**
-   - CDC-ECM/CDC-NCM drivers
-   - TCP/IP integration
+1. **USB Ethernet adapter** ✅
+   - CDC-ECM driver (`platform/arm64/drivers/usb_cdc_ecm.c`)
+   - TCP/IP integration via existing stack
 
-2. **WiFi support (stretch goal)**
+2. **WiFi support** ❌ (stretch goal, requires Apple WLAN firmware loader)
    - Apple WLAN firmware
    - Complex initialization
 
@@ -192,41 +193,41 @@ m1n1 -w build/bin/futura.macho
 ## Current Status
 
 ### Completed ✅
-- Device tree infrastructure extended for Apple Silicon
-- Apple platform detection (M1/M2/M3)
-- Apple AIC interrupt controller driver
-- Apple UART driver (s5l-uart) for console I/O
-- **Apple ANS2 NVMe driver** - Full driver structure with queue management, TCB programming, linear submission
-- **Apple RTKit IPC driver** - Mailbox protocol for co-processor communication
-- **Device tree hardware address parsing** - fut_dtb_get_reg() for mailbox + NVMe base addresses
-- **RTKit + ANS2 integration** - Complete end-to-end storage stack
-- **m1n1 payload infrastructure** - Linux ARM64 image format, compression, build system ⭐ **NEW**
-- **Phase 1: Boot Infrastructure ✅ COMPLETE** (4 of 4 items - 100%)
-- **Phase 2: Storage infrastructure ✅ COMPLETE** (ANS2 + RTKit + Device Tree)
-- ARM64 platform foundation
-- virtio drivers (won't work on Apple hw, but good reference)
+- Device tree infrastructure extended for Apple Silicon (path-aware walker + Asahi `/soc/<type>@<addr>` fallbacks)
+- Apple platform detection (M1 / M2 / M3 / M4 via MIDR + DT compatible)
+- Every `platform/arm64/drivers/apple_*.c` migrated to a Rust crate under `drivers/rust/apple_*` (aic, uart, hid, audio/mca, xhci, rtkit, ans2, dcp, smc/power)
+- MMU / boot blockers: PA-relocatable + 48-bit VA + runtime `KERN_PA_BASE` + Image-header relocatable flag
+- IRQ + FIQ dispatch (timer FIQ via `CNTP_CTL.ISTATUS` check, DAIF.F unmasked)
+- Apple peripheral PA→VA mapping window (`kernel_l1_table[8..511]`, 504 GiB device-nGnRE)
+- DMA address correctness across xhci / ans2 / dcp / dart (physical addresses where the controller DMAs, not kernel VAs)
+- m1n1 framebuffer first-light fast-path (kernel paints into `/chosen/framebuffer` before DCP swap-chain bring-up)
+- `make m1n1-payload` produces a valid m1n1-compatible `Image.gz` with relocatable flag
+- ARM64 platform foundation + virtio drivers (won't run on Apple HW but kept as QEMU virt reference)
 
 ### In Progress 🚧
-- None - Phases 1 & 2 complete, ready for hardware testing
+- None on the kernel side — Phases 1-4 closed.
 
 ### Ready for Hardware Testing ✅
-- **All software infrastructure complete** - Phases 1 & 2 done
-- **Tethered boot ready** - Non-destructive testing available
-- **No installation required** - Runs entirely from RAM
-- **Testing guide available** - See `docs/APPLE_SILICON_TESTING.md`
-- **Automated script** - Use `./scripts/test-on-m2.sh` for quick testing
+- **Kernel-side bring-up complete** — every blocker identified is fixed
+- **Tethered boot ready** — `python3 -m m1n1.run m1n1.macho -b Image.gz kernel.macho`
+- **No installation required** — runs entirely from RAM
+- **Testing guide** — `docs/APPLE_SILICON_TESTING.md`
+- **Automated script** — `./scripts/test-on-m2.sh`
 
 ## Next Steps
 
-1. ✅ ~~Extend device tree support for Apple platform detection~~ (COMPLETE)
-2. ✅ ~~Implement Apple AIC interrupt controller~~ (COMPLETE)
-3. ✅ ~~Implement Apple UART for console output~~ (COMPLETE)
-4. ✅ ~~Implement Apple NVMe (ANS2) driver~~ (COMPLETE - Phase 2)
-5. ✅ ~~Implement Apple RTKit IPC driver~~ (COMPLETE - Phase 2)
-6. ✅ ~~Integrate RTKit + ANS2~~ (COMPLETE - Phase 2)
-7. ✅ ~~Device tree hardware address parsing~~ (COMPLETE - Phase 2)
-8. **Build m1n1 payload infrastructure** (NEXT - Phase 1 item 4)
-9. **Test on real M2 hardware** (BLOCKED - need hardware)
+The kernel-side roadmap items are all checked.  Remaining work is
+either real-hardware validation territory (which can't be done from
+this environment) or post-first-light features:
+
+1. ✅ ~~Phase 1 boot infrastructure~~ — boot.S MMU + UART + AIC dispatch
+2. ✅ ~~Phase 2 storage~~ — ANS2 + RTKit + DTB hardware-address parsing
+3. ✅ ~~Phase 3 display + input~~ — DCP + HID
+4. ✅ ~~Phase 4 networking~~ — USB CDC-ECM
+5. **Real-hardware validation on M1 / M2 / M3 / M4** — needs physical device
+6. **pmgr support** — Apple SoC clock gating; m1n1 leaves most enabled but a few peripherals (DCP power-on, ANS reset deassert) likely need pmgr writes
+7. **Full DCP swap-chain protocol** — currently m1n1's FB is the first-light path; DCP-driven mode changes / hot-plug come later
+8. **WiFi/Bluetooth** — long-term, requires Apple WLAN firmware loader
 
 ## Resources Needed
 

@@ -87,4 +87,28 @@ int apple_audio_set_volume(uint8_t volume);
  */
 int apple_audio_platform_init(const fut_platform_info_t *info);
 
+/* ============================================================
+ *   Rust driver FFI (drivers/rust/apple_mca)
+ *
+ * Owns all MCA MMIO.  This C file orchestrates I2S setup via
+ * rust_mca_setup_playback() and pushes samples via the polled
+ * rust_mca_tx_write() — no MCA registers are touched from C.
+ * ============================================================ */
+
+typedef struct AppleMca AppleMca;
+
+AppleMca *rust_mca_init(uint64_t base, uint32_t num_clusters);
+void      rust_mca_free(AppleMca *mca);
+int32_t   rust_mca_setup_playback(AppleMca *mca, uint32_t cluster,
+                                  uint32_t mclk_sel, uint32_t mclk_hz,
+                                  uint32_t sample_hz);
+int32_t   rust_mca_setup_capture(AppleMca *mca, uint32_t cluster,
+                                 uint32_t mclk_sel, uint32_t mclk_hz,
+                                 uint32_t sample_hz);
+int32_t   rust_mca_stop(AppleMca *mca, uint32_t cluster);
+int32_t   rust_mca_tx_write(const AppleMca *mca, uint32_t cluster,
+                            const uint32_t *buf, uint64_t count);
+int32_t   rust_mca_rx_read(const AppleMca *mca, uint32_t cluster,
+                           uint32_t *buf, uint64_t count);
+
 #endif /* __FUTURA_APPLE_AUDIO_H__ */

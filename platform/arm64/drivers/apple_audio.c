@@ -1,25 +1,25 @@
-/* apple_audio.c - Apple Silicon Audio Subsystem Driver
+/* apple_audio.c - Apple Silicon Audio Subsystem — Rust-backed wrapper
  *
  * Copyright (c) 2025 Kelsi Davis
  * Licensed under the MPL v2.0 — see LICENSE for details.
  *
  * Audio playback via Apple MCA (Multi-Channel Audio) I2S controller
- * with I2C-connected speaker amplifier codec.
+ * with an I2C-connected speaker-amplifier codec.  All MCA register
+ * work — clock master programming, SERDES/FSYNC setup, TX FIFO push,
+ * DMA-completion bookkeeping — lives in the Rust apple_mca crate
+ * under drivers/rust/apple_mca.  This file is a thin glue layer that:
  *
- * MCA register layout (per cluster, offset = cluster * 0x200):
- *   0x000  MCLK_CONF   — MCLK divider configuration
- *   0x004  SW_RESET     — Software reset
- *   0x008  CLK_CONF     — Clock enable and source
- *   0x020  SERDES_CONF  — Serializer/deserializer format
- *   0x024  SERDES_WS    — Frame sync (FSYNC) period
- *   0x040  TX_CONF      — TX DMA configuration
- *   0x044  TX_WATERMARK — TX FIFO watermark
- *   0x048  TX_FIFO_LVL  — TX FIFO level
- *   0x080  TX_DATA      — TX FIFO data port
- *   0x0C0  RX_CONF      — RX DMA configuration
- *   0x100  RX_DATA      — RX FIFO data port
- *   0x200  STATUS       — Interrupt status
- *   0x204  IRQ_MASK     — Interrupt mask
+ *   1. Owns the AppleMca handle (one cluster wired to the internal
+ *      speakers on M1/M2 MacBooks) and the I2C handle to the codec.
+ *   2. Maps the public format/channel/rate API onto rust_mca_setup_*.
+ *   3. Walks a ring buffer of PCM samples into rust_mca_tx_write()
+ *      in polled mode.
+ *   4. Keeps the codec init / volume writes in C — they are pure
+ *      I2C register pokes already going through rust_i2c.
+ *
+ * Compat note: apple_audio_platform_init() guards on
+ * info->type == PLATFORM_APPLE_M[1-4] so RPi and QEMU virt boots
+ * never reach the Rust MCA driver.
  */
 
 #include <platform/arm64/apple_audio.h>
@@ -28,46 +28,23 @@
 #include <kernel/fut_memory.h>
 #include <string.h>
 
-/* MCA register offsets (per cluster) */
-#define MCA_CLUSTER_STRIDE  0x200
-#define MCA_MCLK_CONF       0x000
-#define MCA_SW_RESET         0x004
-#define MCA_CLK_CONF         0x008
-#define MCA_SERDES_CONF      0x020
-#define MCA_SERDES_WS        0x024
-#define MCA_TX_CONF          0x040
-#define MCA_TX_WATERMARK     0x044
-#define MCA_TX_FIFO_LVL      0x048
-#define MCA_TX_DATA          0x080
-#define MCA_STATUS           0x200
-#define MCA_IRQ_MASK         0x204
-
-/* MCA_CLK_CONF bits */
-#define CLK_CONF_ENABLE       (1 << 0)
-#define CLK_CONF_MCLK_EN      (1 << 1)
-
-/* MCA_TX_CONF bits */
-#define TX_CONF_ENABLE        (1 << 0)
-#define TX_CONF_FIFO_RESET    (1 << 1)
-
-/* MCA_SERDES_CONF: I2S format */
-#define SERDES_I2S_16BIT     0x00000010
-#define SERDES_I2S_24BIT     0x00000018
-#define SERDES_I2S_32BIT     0x00000020
-
-/* MCA_SW_RESET */
-#define SW_RESET_ASSERT      (1 << 0)
-
-/* Codec I2C address (typical speaker amplifier) */
+/* Codec I2C address (typical speaker amplifier on Apple Silicon) */
 #define CODEC_I2C_ADDR       0x38
 
 /* Audio ring buffer size */
 #define AUDIO_BUF_SIZE       (16 * 1024)  /* 16KB ring buffer */
 
+/* MCA programming constants.  Cluster 0 is wired to the internal
+ * speakers on M1/M2 MacBooks.  MCLK source 0 is the SoC's audio PLL
+ * fed at ~24 MHz on shipping silicon — matches the previous C code's
+ * 24 MHz reference clock. */
+#define MCA_SPEAKER_CLUSTER  0u
+#define MCA_MCLK_SEL         0u
+#define MCA_MCLK_HZ          24000000u
+
 /* Static state */
 static struct {
-    volatile uint8_t *mca_base;
-    uint64_t mca_phys;
+    AppleMca *mca;
     AppleI2c *codec_i2c;
 
     apple_audio_state_t state;
@@ -77,18 +54,6 @@ static struct {
     uint8_t volume;        /* 0-100 */
     uint32_t cluster;      /* MCA cluster index (0 for speakers) */
 } g_audio;
-
-/* ============================================================
- *   MCA Register Access
- * ============================================================ */
-
-static inline uint32_t mca_read(uint32_t off) {
-    return *((volatile uint32_t *)(g_audio.mca_base + g_audio.cluster * MCA_CLUSTER_STRIDE + off));
-}
-
-static inline void mca_write(uint32_t off, uint32_t val) {
-    *((volatile uint32_t *)(g_audio.mca_base + g_audio.cluster * MCA_CLUSTER_STRIDE + off)) = val;
-}
 
 /* ============================================================
  *   Codec (Speaker Amplifier) Configuration
@@ -128,11 +93,14 @@ int apple_audio_init(const fut_platform_info_t *info) {
 
     memset(&g_audio, 0, sizeof(g_audio));
     g_audio.volume = 80;
+    g_audio.cluster = MCA_SPEAKER_CLUSTER;
 
-    /* MCA base would be parsed from DTB — use a sensible default.
-     * On M1/M2 the MCA block is at different addresses per SoC.
-     * For now we accept a zero base (driver probed but not active). */
-    /* TODO: Parse /arm-io/mca from DTB when MCA is present */
+    /* MCA base would come from the DTB (/arm-io/mca on Apple Silicon).
+     * The platform_info struct does not surface it yet; until DTB
+     * parsing wires that up, the driver stays in "probed but not
+     * active" mode — no Rust MCA handle, write() returns success but
+     * silently drops audio. */
+    g_audio.mca = NULL;
 
     /* Initialize I2C for codec */
     if (info->i2c0_base != 0) {
@@ -154,7 +122,7 @@ int apple_audio_init(const fut_platform_info_t *info) {
     g_audio.state.format = AUDIO_FMT_S16LE;
 
     g_audio.initialized = true;
-    fut_printf("[AUDIO] Apple audio subsystem initialized\n");
+    fut_printf("[AUDIO] Apple audio subsystem initialized (Rust MCA)\n");
 
     /* Initialize codec if I2C is available */
     if (g_audio.codec_i2c) {
@@ -172,34 +140,17 @@ int apple_audio_configure(uint32_t sample_rate, uint8_t channels, uint8_t format
     g_audio.state.channels = channels;
     g_audio.state.format = format;
 
-    /* Configure MCA if base is available */
-    if (g_audio.mca_base) {
-        /* Reset MCA cluster */
-        mca_write(MCA_SW_RESET, SW_RESET_ASSERT);
-        for (volatile int i = 0; i < 1000; i++);
-        mca_write(MCA_SW_RESET, 0);
-
-        /* Set serializer format */
-        uint32_t serdes;
-        switch (format) {
-            case AUDIO_FMT_S24LE: serdes = SERDES_I2S_24BIT; break;
-            case AUDIO_FMT_S32LE: serdes = SERDES_I2S_32BIT; break;
-            default:              serdes = SERDES_I2S_16BIT;  break;
+    /* Re-program MCA for the new sample rate, only if a handle exists.
+     * The Rust crate handles MCLK divider computation, SERDES/FSYNC
+     * programming, and clock enable internally. */
+    if (g_audio.mca) {
+        int rc = rust_mca_setup_playback(g_audio.mca, g_audio.cluster,
+                                         MCA_MCLK_SEL, MCA_MCLK_HZ,
+                                         sample_rate);
+        if (rc != 0) {
+            fut_printf("[AUDIO] rust_mca_setup_playback failed: %d\n", rc);
+            return rc;
         }
-        mca_write(MCA_SERDES_CONF, serdes);
-
-        /* Configure FSYNC period (samples per frame) */
-        uint32_t ws_period = (channels == 1) ? 32 : 64;
-        mca_write(MCA_SERDES_WS, ws_period - 1);
-
-        /* Configure MCLK divider for target sample rate */
-        /* MCLK = 24MHz / divider; BCLK = MCLK / (ws_period) */
-        uint32_t mclk_div = 24000000 / (sample_rate * ws_period);
-        if (mclk_div < 1) mclk_div = 1;
-        mca_write(MCA_MCLK_CONF, mclk_div - 1);
-
-        /* Enable clocks */
-        mca_write(MCA_CLK_CONF, CLK_CONF_ENABLE | CLK_CONF_MCLK_EN);
     }
 
     fut_printf("[AUDIO] Configured: %uHz, %uch, fmt=%u\n",
@@ -211,16 +162,16 @@ int apple_audio_play_start(void) {
     if (!g_audio.initialized) return -1;
     if (g_audio.state.playing) return 0;
 
-    if (g_audio.mca_base) {
-        /* Flush TX FIFO */
-        mca_write(MCA_TX_CONF, TX_CONF_FIFO_RESET);
-        mca_write(MCA_TX_CONF, 0);
-
-        /* Set watermark (interrupt when FIFO is half empty) */
-        mca_write(MCA_TX_WATERMARK, 8);
-
-        /* Enable TX */
-        mca_write(MCA_TX_CONF, TX_CONF_ENABLE);
+    /* If we hold an MCA handle but configure() was never called,
+     * push a default setup so the cluster is ready to accept data. */
+    if (g_audio.mca) {
+        int rc = rust_mca_setup_playback(g_audio.mca, g_audio.cluster,
+                                         MCA_MCLK_SEL, MCA_MCLK_HZ,
+                                         g_audio.state.sample_rate);
+        if (rc != 0) {
+            fut_printf("[AUDIO] rust_mca_setup_playback (start) failed: %d\n", rc);
+            return rc;
+        }
     }
 
     g_audio.state.playing = true;
@@ -234,8 +185,8 @@ int apple_audio_play_stop(void) {
     if (!g_audio.initialized) return -1;
     if (!g_audio.state.playing) return 0;
 
-    if (g_audio.mca_base) {
-        mca_write(MCA_TX_CONF, 0);
+    if (g_audio.mca) {
+        rust_mca_stop(g_audio.mca, g_audio.cluster);
     }
 
     g_audio.state.playing = false;
@@ -269,16 +220,28 @@ int apple_audio_write(const void *data, uint32_t len) {
         written += chunk;
     }
 
-    /* Push samples to MCA TX FIFO if playing */
-    if (g_audio.state.playing && g_audio.mca_base) {
+    /* Push samples to MCA TX FIFO if playing.  Polled-mode: hand a
+     * contiguous u32 slice to the Rust crate each pass and let it
+     * gate on its own FIFO-level check. */
+    if (g_audio.state.playing && g_audio.mca) {
         while (g_audio.play_buf.read_pos != g_audio.play_buf.write_pos) {
-            uint32_t fifo_lvl = mca_read(MCA_TX_FIFO_LVL) & 0x1F;
-            if (fifo_lvl >= 16) break;  /* FIFO full */
+            /* Find the largest contiguous run of u32 samples that
+             * doesn't wrap the ring buffer. */
+            uint32_t run_bytes;
+            if (g_audio.play_buf.write_pos > g_audio.play_buf.read_pos) {
+                run_bytes = g_audio.play_buf.write_pos - g_audio.play_buf.read_pos;
+            } else {
+                run_bytes = size - g_audio.play_buf.read_pos;
+            }
+            uint32_t run_samples = run_bytes / 4;
+            if (run_samples == 0) break;
 
-            uint32_t sample;
-            memcpy(&sample, buf + g_audio.play_buf.read_pos, 4);
-            mca_write(MCA_TX_DATA, sample);
-            g_audio.play_buf.read_pos = (g_audio.play_buf.read_pos + 4) % size;
+            const uint32_t *src = (const uint32_t *)(buf + g_audio.play_buf.read_pos);
+            int32_t pushed = rust_mca_tx_write(g_audio.mca, g_audio.cluster,
+                                               src, (uint64_t)run_samples);
+            if (pushed <= 0) break;  /* FIFO full or error — try next poll */
+
+            g_audio.play_buf.read_pos = (g_audio.play_buf.read_pos + ((uint32_t)pushed * 4)) % size;
         }
     }
 

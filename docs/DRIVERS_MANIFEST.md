@@ -131,10 +131,24 @@ Use `make rust-drivers` to build these.
 - `apple_dart` — Device Address Resolution Table (IOMMU)
 - `apple_gpio` — GPIO controller
 - `apple_i2c` — I2C controller
-- `apple_pcie` — PCIe host bridge
+- `apple_pcie` — PCIe host bridge (cap walker, MSI setup, config space access)
 - `apple_smc` — System Management Controller
 - `apple_spi` — SPI controller
 - `apple_mca` — MCA audio
+- `apple_hid` — SPI/I2C HID parser for keyboard + trackpad
+- `apple_xhci` — xHCI USB host controller (PCIe-attached)
+- `apple_dcp` — Display Coprocessor + framebuffer
+- `apple_bcm` — Broadcom BCM4377/4378/4387/4388 WiFi+Bluetooth combo chip (discovery, classification, FLR, firmware-name lookup; radio bring-up pending — see `docs/APPLE_WIFI_BT.md`)
+
+### ARM64 Apple Silicon — C-side helpers
+- `platform/arm64/drivers/apple_pmgr.c` — Power Manager (clock gates) with `apple_pmgr_enable/disable/state` helpers
+- `platform/arm64/drivers/apple_power.c` — battery / thermal / fan via SMC
+- `platform/arm64/drivers/apple_audio.c` — MCA + codec C wrapper
+- `platform/arm64/drivers/usb_cdc_ecm.c` — USB Ethernet over xHCI bulk transfer
+
+### Kernel subsystems (architecture-agnostic)
+- `kernel/firmware.c` — request-firmware loader (`fut_firmware_load`, embedded provider; FS provider pending)
+- `kernel/hci.c` — Bluetooth Host Controller Interface core (transport registry, send_cmd/event sink, opcode helpers)
 
 ## Rust Drivers (Linked but NOT initialized)
 

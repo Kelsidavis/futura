@@ -29,14 +29,23 @@ extern void fut_platform_udelay(uint32_t usec);
 /* pmgr base in the kernel peripheral VA window — 0 until init. */
 static volatile uint32_t *g_pmgr_va;
 
-/* Lifetime stats — incremented on every apple_pmgr_enable result.
- * Atomic so a future per-CPU bring-up path (where multiple cores may
- * race to enable peripherals) can read/write consistent counters.
- * Today everything runs on the boot CPU so this is just future-proof. */
+/* Lifetime stats — incremented on every apple_pmgr_enable / _disable
+ * result.  Atomic so a future per-CPU bring-up path (where multiple
+ * cores may race to enable peripherals) can read/write consistent
+ * counters.  Today everything runs on the boot CPU so this is just
+ * future-proof. */
 static _Atomic uint32_t g_pmgr_enabled_count;
+static _Atomic uint32_t g_pmgr_disabled_count;
 static _Atomic uint32_t g_pmgr_failed_count;
 
 void apple_pmgr_stats(uint32_t *enabled_count, uint32_t *failed_count)
+{
+    apple_pmgr_stats3(enabled_count, failed_count, NULL);
+}
+
+void apple_pmgr_stats3(uint32_t *enabled_count,
+                       uint32_t *failed_count,
+                       uint32_t *disabled_count)
 {
     if (enabled_count) {
         *enabled_count = atomic_load_explicit(&g_pmgr_enabled_count,
@@ -45,6 +54,10 @@ void apple_pmgr_stats(uint32_t *enabled_count, uint32_t *failed_count)
     if (failed_count) {
         *failed_count = atomic_load_explicit(&g_pmgr_failed_count,
                                               memory_order_acquire);
+    }
+    if (disabled_count) {
+        *disabled_count = atomic_load_explicit(&g_pmgr_disabled_count,
+                                                memory_order_acquire);
     }
 }
 
@@ -129,7 +142,15 @@ int apple_pmgr_disable(uint32_t ps_offset)
 
     uint32_t reg = pmgr_r32(ps_offset);
     pmgr_w32(ps_offset, reg & ~APPLE_PMGR_PS_TARGET_MASK);
-    return wait_for_state(ps_offset, 0);
+    int rc = wait_for_state(ps_offset, 0);
+    if (rc != 0) {
+        atomic_fetch_add_explicit(&g_pmgr_failed_count, 1,
+                                   memory_order_acq_rel);
+    } else {
+        atomic_fetch_add_explicit(&g_pmgr_disabled_count, 1,
+                                   memory_order_acq_rel);
+    }
+    return rc;
 }
 
 uint8_t apple_pmgr_state(uint32_t ps_offset)

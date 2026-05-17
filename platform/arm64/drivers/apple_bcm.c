@@ -41,6 +41,11 @@
 #include <kernel/errno.h>
 #include <string.h>
 
+/* From platform/arm64/platform_init.c — ARM Generic Timer-backed
+ * microsecond delay used here for the chip-reset / power-on settle
+ * timings the chip datasheet specifies. */
+extern void fut_platform_udelay(uint32_t usec);
+
 #define BCM_MAX_FUNCTIONS  2  /* fn 0 (WiFi) + fn 1 (Bluetooth) */
 
 /* Forward declarations for the rust_apple_pcie FFI we reuse. */
@@ -334,17 +339,13 @@ int apple_bcm_chip_power_on(void)
 
     /* WL_REG_ON / BT_REG_ON are active high: HIGH = chip powered,
      * LOW = held in reset.  Cycle them low→high to guarantee a clean
-     * start, then wait ~150ms for internal rails to stabilize.
-     *
-     * We don't have a precision delay helper yet, so the busy-loops
-     * here are coarse.  Each iteration is a few cycles; 5M iterations
-     * is comfortably > 150ms even on a 3.5 GHz Firestorm. */
+     * start, then wait for internal rails to stabilize. */
     if (g_bcm_wlan_reset_gpio >= 0) {
         rust_gpio_set_direction(g_bcm_gpio,
                                  (uint32_t)g_bcm_wlan_reset_gpio, 1);
         rust_gpio_set_output(g_bcm_gpio,
                              (uint32_t)g_bcm_wlan_reset_gpio, 0);
-        for (volatile int i = 0; i < 500000; i++) { /* ~10ms */ }
+        fut_platform_udelay(10u * 1000u);
         rust_gpio_set_output(g_bcm_gpio,
                              (uint32_t)g_bcm_wlan_reset_gpio, 1);
         fut_printf("[bcm] power_on: WL_REG_ON pin %d driven HIGH\n",
@@ -355,15 +356,16 @@ int apple_bcm_chip_power_on(void)
                                  (uint32_t)g_bcm_bt_reset_gpio, 1);
         rust_gpio_set_output(g_bcm_gpio,
                              (uint32_t)g_bcm_bt_reset_gpio, 0);
-        for (volatile int i = 0; i < 500000; i++) { /* ~10ms */ }
+        fut_platform_udelay(10u * 1000u);
         rust_gpio_set_output(g_bcm_gpio,
                              (uint32_t)g_bcm_bt_reset_gpio, 1);
         fut_printf("[bcm] power_on: BT_REG_ON pin %d driven HIGH\n",
                    g_bcm_bt_reset_gpio);
     }
 
-    /* Settle delay after both rails are up. */
-    for (volatile int i = 0; i < 5000000; i++) { /* ~150ms */ }
+    /* Asahi waits ~150 ms after deassert for the chip's internal
+     * voltage rails to settle before any further bus traffic. */
+    fut_platform_udelay(150u * 1000u);
     return 0;
 }
 
@@ -410,13 +412,9 @@ int apple_bcm_chip_reset(void)
     rust_apple_pcie_cfg_write32(g_bcm_pcie, bus, 0, fn, cap + 0x08,
                                  devctl_sts | PCIE_DEVCTL_FLR);
 
-    /* Busy-wait 200ms.  We don't have a precise delay yet on Apple
-     * (timer is up but a sleep helper is on the TODO list), so this
-     * is a coarse loop.  Each iteration is roughly one config read
-     * (a few hundred ns); 1M iterations is comfortably > 200ms. */
-    for (volatile int i = 0; i < 1000000; i++) {
-        (void)rust_apple_pcie_cfg_read32(g_bcm_pcie, bus, 0, fn, 0x00);
-    }
+    /* PCIe spec guarantees FLR completes within 100ms; brcmfmac
+     * waits 200ms for safety margin. */
+    fut_platform_udelay(200u * 1000u);
 
     /* Verify the chip came back — vendor ID should still read 0x14e4
      * after FLR (the device-IDs themselves survive reset). */

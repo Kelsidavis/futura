@@ -497,20 +497,23 @@ int fb_console_init(void) {
 #elif defined(__aarch64__)
     /* On ARM64, convert framebuffer physical address to kernel virtual.
      *
-     * The framebuffer that virtio-gpu (MMIO transport) hands us lives
-     * in DRAM (allocated via PMM), not in the peripheral region. The
-     * kernel-half mapping for DRAM uses KERN_VA_BASE/KERN_PA_BASE with
-     * an offset of 0xFFFFFF7FFFE00000 (NOT 0xFFFFFF8000000000 — that's
-     * 2 MiB too high because the kernel loads at PA 0x40200000, not
-     * 0x40000000). Writing to the wrong virt address produced silent
-     * 'black screen' behavior: the kernel happily wrote characters to
-     * an unmapped or wrongly-mapped page and the actual framebuffer
-     * stayed all-zero.
+     * Prefer hw_info.virt when the prober knew one — apple_dcp's
+     * m1n1 fast-path computes it via the kernel peripheral mapping
+     * window because the m1n1-allocated FB sits at PA 0x10_0000_0000+
+     * (M1 DRAM base) which is OUTSIDE the kernel's L2_dram window
+     * (1 GiB starting at g_kernel_load_pa).  pmap_phys_to_virt would
+     * produce a bogus VA for that PA, and the first FB write would
+     * translation-fault.
      *
-     * Use pmap_phys_to_virt so this stays in lock-step with the kernel
-     * memory map. */
-    extern void *pmap_phys_to_virt(uint64_t pa);
-    cons->fb_mem = (volatile uint8_t *)pmap_phys_to_virt((uint64_t)hw_info.phys);
+     * Fall back to pmap_phys_to_virt for FBs in the kernel's
+     * L2_dram window (virtio-gpu MMIO transport on QEMU virt
+     * allocates from PMM, so the VA-PA offset is the standard one). */
+    if (hw_info.virt) {
+        cons->fb_mem = (volatile uint8_t *)hw_info.virt;
+    } else {
+        extern void *pmap_phys_to_virt(uint64_t pa);
+        cons->fb_mem = (volatile uint8_t *)pmap_phys_to_virt((uint64_t)hw_info.phys);
+    }
 #else
     cons->fb_mem = (volatile uint8_t *)hw_info.phys;
 #endif

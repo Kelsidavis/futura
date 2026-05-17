@@ -31,6 +31,14 @@
 struct fut_fb_hwinfo {
     uint64_t phys;              /**< Physical base address of framebuffer */
     uint64_t length;            /**< Total bytes in framebuffer region */
+    void    *virt;              /**< Pre-computed kernel VA if the prober
+                                  *  knows one (e.g., apple_dcp's m1n1
+                                  *  fast-path uses the peripheral mapping
+                                  *  window for an m1n1-allocated FB that
+                                  *  doesn't live in the kernel image's
+                                  *  L2_dram window).  NULL means "compute
+                                  *  via pmap_phys_to_virt(phys)" — works
+                                  *  for FBs in the boot identity map. */
     struct fut_fb_info info;    /**< Public geometry (width, height, pitch, bpp) */
 };
 

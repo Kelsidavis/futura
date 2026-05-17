@@ -56,7 +56,7 @@ The fallback property is important: if tier 2 fails at any step the kernel still
 
 2. **DCP firmware verification.** m1n1 normally loads the DCP firmware before transferring control. We assume that's done. If a future bring-up scenario skips m1n1's DCP setup, we'd need our own firmware loader path here.
 
-3. **Swap completion ack tracking.** `apple_dcp_init` sends the swap_submit message via RTKit but doesn't wait for the DCP-side ack before re-registering the FB.  In the worst case the kernel believes the takeover succeeded while DCP is still scanning the old buffer.  A correct implementation polls the RTKit return message before the `fb_set_hwinfo` swap.
+3. ~~**Swap completion ack tracking.**~~ ✅ Landed in `18eb9fe4` — `apple_dcp_init` now polls `rust_apple_dcp_swap_take_complete` every 1ms for up to 250ms after sending the swap_submit message.  Failure to ack within that budget leaves the m1n1 FB in place (when present) instead of registering an unverified DCP FB.
 
 4. **Hotplug / mode change.** Resolution changes and panel reconfigurations need full swap-chain control.  Today we set the mode once at init and never revisit.
 

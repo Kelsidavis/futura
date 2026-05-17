@@ -26,6 +26,7 @@
  */
 
 #include <platform/arm64/apple_ans2.h>
+#include <platform/arm64/apple_pmgr.h>
 #include <platform/arm64/memory/pmap.h>
 #include <platform/platform.h>
 
@@ -39,6 +40,30 @@ bool fut_apple_ans2_platform_init(const fut_platform_info_t *info) {
          * the original C path when these were zero. */
         fut_printf("[ANS2] ANS2 base addresses not configured in DTB\n");
         return false;
+    }
+
+    /* Pull ANS2 out of pmgr reset / clock-gate via the DT
+     * power-domains property + phandle resolution.  Asahi DTBs list
+     * the ANS2 / NVMe-host / SART domains under /soc/ans@…. Skipped
+     * if pmgr isn't up or DT doesn't carry power-domains for ANS2
+     * (m1n1 usually already deasserted reset). */
+    extern uint64_t fut_platform_get_dtb(void);
+    uint64_t dtb = fut_platform_get_dtb();
+    if (dtb != 0) {
+        static const char *const ans_paths[] = {
+            "/soc/ans@27bcc4000",
+            "/soc/ans",
+            "/arm-io/ans",
+            NULL,
+        };
+        for (int i = 0; ans_paths[i]; i++) {
+            int rc = apple_pmgr_enable_domains_for(dtb, ans_paths[i]);
+            if (rc > 0) {
+                fut_printf("[ANS2] pmgr: %d domains enabled via %s\n",
+                           rc, ans_paths[i]);
+                break;
+            }
+        }
     }
 
     /* Convert peripheral PAs to kernel VAs through boot.S's

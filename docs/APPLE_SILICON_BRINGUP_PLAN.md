@@ -1,13 +1,16 @@
 # Apple Silicon Bring-up Plan
 
 **Last Updated**: 2026-05-16
-**Status**: 🚧 Kernel-side blockers 4.5 of 5 landed (MMU + UART + IRQ
-dispatch all platform-aware); not yet validated on real Apple Silicon
-hardware.  `make m1n1-payload` produces a valid m1n1-compatible
-Image.gz with the ARM64 Linux header.  All blocker progress is
-implemented behind runtime detection so that QEMU virt's selftest
-suite (currently 2654/2654 PASS under `qemu-system-aarch64 -M virt`)
-stays green at every step.
+**Status**: 🚧 Kernel-side bring-up done (4.75/5 boot blockers — the
+remaining 0.25 is a soft pre-MMU early-debug shim that only matters
+for debugging a hang before the MMU comes up; the post-MMU UART path
+is live).  Every Apple-specific driver in `platform/arm64/drivers/`
+has been migrated to a Rust crate under `drivers/rust/apple_*`.  Not
+yet validated on real Apple Silicon hardware.  `make m1n1-payload`
+produces a valid m1n1-compatible Image.gz with the ARM64 Linux
+header.  All progress is implemented behind runtime detection so
+that QEMU virt's selftest suite (currently 2654/2654 PASS under
+`qemu-system-aarch64 -M virt`) stays green at every step.
 
 This document captures the staged work originally needed to get the
 ARM64 kernel booting on a real M1/M2/M3/M4 Mac via m1n1.  Most
@@ -162,22 +165,32 @@ bridge that:
 - Is gated on the DTB having identified Apple Silicon, so RPi /
   QEMU virt builds never reach these wrappers.
 
-Status of the C → Rust migration:
+Status of the C → Rust migration (refreshed 2026-05-16):
 
-| C file                  | Rust crate            | Status                            |
-|-------------------------|-----------------------|-----------------------------------|
-| `apple_aic.c`           | `apple_aic` (407 LOC) | ✅ wrapped (`ba6ae1d5`)            |
-| `apple_uart.c`          | `apple_uart` (393)    | ✅ wrapped (`7128f82e`)            |
-| `apple_power.c`         | `apple_smc` (479)     | ✅ already wrapped                  |
-| `apple_dcp.c`           | `apple_dart` (607)    | ✅ DMA side already wrapped         |
-| `apple_rtkit.c`         | `apple_rtkit` (552)   | 🚧 Rust FFI surface needs to add  |
-|                         |                       | `register_endpoint`, `start_endpoint`, |
-|                         |                       | `shutdown`, `recv` before C body  |
-|                         |                       | can become a wrapper              |
-| `apple_ans2.c`          | `apple_ans2` (836)    | ⏳ blocked on apple_rtkit          |
-| `apple_audio.c`         | (none)                | ⏳ no Rust crate yet               |
-| `apple_hid.c`           | (none)                | ⏳ no Rust crate yet               |
-| `apple_xhci.c`          | (none)                | ⏳ no Rust crate yet               |
+| C file           | Rust crate                | Status                                |
+|------------------|---------------------------|---------------------------------------|
+| `apple_aic.c`    | `apple_aic`               | ✅ wrapped (`ba6ae1d5`)                 |
+| `apple_uart.c`   | `apple_uart`              | ✅ wrapped (`7128f82e`)                 |
+| `apple_power.c`  | `apple_smc`               | ✅ already wrapped                       |
+| `apple_hid.c`    | `apple_hid` (new)         | ✅ wrapped (`dd81c949`, US-layout parser)|
+| `apple_audio.c`  | `apple_mca`               | ✅ wraps existing crate (`f95357b9`)    |
+| `apple_xhci.c`   | `apple_xhci` (new)        | ✅ wrapped (`71f2db0b`, full xHCI body)  |
+| `apple_rtkit.c`  | `apple_rtkit` (extended)  | ✅ wrapped (`8b4e1322`) — added FFI for |
+|                  |                           | `start_endpoint`, `set_ap/iop_power_state`, |
+|                  |                           | `shutdown`, `process_messages`, `recv`  |
+| `apple_ans2.c`   | `apple_ans2`              | ✅ collapsed to thunk (`634f6d8c`,      |
+|                  |                           | -1290 lines — Rust crate already had   |
+|                  |                           | full FFI; C body was a duplicate)       |
+| `apple_dcp.c`    | `apple_dcp` (new)         | ✅ wrapped (`997e4c06`, 602→220 lines C;|
+|                  |                           | Rust owns state machine + protocol,    |
+|                  |                           | C keeps page alloc + DART + RTKit boot)|
+
+All Apple-Silicon C drivers in `platform/arm64/drivers/apple_*.c`
+now have their hardware-touching layer in a Rust crate under
+`drivers/rust/apple_*`.  Latest DTB additions wire `/arm-io/mca`
+into `fut_platform_info_t.mca_base` (commit `ceaefe69`), so the
+audio MCA actually initialises on real hardware instead of staying
+in "probed but inactive" mode.
 
 Each wrap is verified by the QEMU virt 2654/2654 selftest — the
 new Rust code only runs once the DTB-driven Apple-Silicon init path

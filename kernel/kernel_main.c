@@ -2009,11 +2009,11 @@ void fut_kernel_main(void) {
          * tests. */
         planned_tests += 17u;
 
-        /* HCI core: T1-T20 (registration validation, send_cmd routing,
+        /* HCI core: T1-T24 (registration validation, send_cmd routing,
          * event sink, open/close lifecycle, unregister idempotency,
          * build_cmd packet construction, dispatch pkt_type guard,
-         * dev_find lookup). */
-        planned_tests += 20u;
+         * dev_find lookup, cmd_complete event decoder). */
+        planned_tests += 24u;
 
         /* DT walker: T1-T14 (compat-cell extraction, phandle_reg
          * boundary conditions, full phandle resolution against a

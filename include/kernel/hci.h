@@ -192,4 +192,22 @@ int fut_hci_build_cmd(uint16_t opcode,
                       uint8_t *out_buf,
                       size_t out_cap);
 
+/* Decode the standard HCI CMD_COMPLETE event packet structure.
+ * Layout (Bluetooth Core Spec §7.7.14):
+ *   byte 0:    event code (must be FUT_HCI_EVT_CMD_COMPLETE = 0x0E)
+ *   byte 1:    parameter length (>= 3)
+ *   byte 2:    num HCI command packets host can send
+ *   bytes 3-4: command opcode (little-endian)
+ *   bytes 5+:  command-specific return parameters
+ *
+ * On success returns 1 and fills `*opcode_out` with the command
+ * opcode (host byte order).  Status / return-params interpretation
+ * is command-specific and left to the caller.
+ *
+ * Returns 0 if the packet is not a CMD_COMPLETE event or is too
+ * short for the mandatory fields. */
+int fut_hci_event_decode_cmd_complete(const uint8_t *pkt,
+                                      size_t len,
+                                      uint16_t *opcode_out);
+
 #endif /* __FUTURA_HCI_H__ */

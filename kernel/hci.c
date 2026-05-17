@@ -219,3 +219,15 @@ int fut_hci_build_cmd(uint16_t opcode,
     }
     return (int)needed;
 }
+
+int fut_hci_event_decode_cmd_complete(const uint8_t *pkt,
+                                      size_t len,
+                                      uint16_t *opcode_out)
+{
+    if (!pkt || !opcode_out) return 0;
+    if (len < 5) return 0;
+    if (pkt[0] != FUT_HCI_EVT_CMD_COMPLETE) return 0;
+    if (pkt[1] < 3) return 0;  /* param_len must cover num_pkts + opcode */
+    *opcode_out = (uint16_t)pkt[3] | ((uint16_t)pkt[4] << 8);
+    return 1;
+}

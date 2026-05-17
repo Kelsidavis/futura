@@ -314,6 +314,56 @@ void fut_hci_test_thread(void *arg)
 
     fut_hci_unregister(idx2);
 
+    /* T21: decode_cmd_complete identifies HCI_Reset's ack */
+    {
+        /* Real HCI_Reset CMD_COMPLETE event observed on most chips:
+         *   0x0E, 0x04, num_pkts, opcode_lo, opcode_hi, status */
+        uint8_t evt[] = { 0x0E, 0x04, 0x01, 0x03, 0x0C, 0x00 };
+        uint16_t opcode = 0;
+        int matched = fut_hci_event_decode_cmd_complete(evt, sizeof(evt),
+                                                        &opcode);
+        if (matched == 1 && opcode == FUT_HCI_OP_RESET) {
+            HCI_TEST_PASS("decode_cmd_complete(HCI_Reset)");
+        } else {
+            fut_printf("[HCI-TEST] matched=%d opcode=0x%04x\n",
+                       matched, opcode);
+            HCI_TEST_FAIL("decode_cmd_complete(HCI_Reset)", 21);
+            return;
+        }
+    }
+
+    /* T22: decode_cmd_complete rejects wrong event code */
+    {
+        uint8_t evt[] = { 0xFF, 0x04, 0x01, 0x03, 0x0C, 0x00 };
+        uint16_t opcode = 0xBEEF;
+        int matched = fut_hci_event_decode_cmd_complete(evt, sizeof(evt),
+                                                        &opcode);
+        if (matched == 0) HCI_TEST_PASS("decode_cmd_complete(wrong code)");
+        else { HCI_TEST_FAIL("decode_cmd_complete(wrong code)", 22); return; }
+    }
+
+    /* T23: decode_cmd_complete rejects truncated packet */
+    {
+        uint8_t evt[] = { 0x0E, 0x04 };  /* claims param_len=4 but only 2 bytes follow */
+        uint16_t opcode = 0;
+        int matched = fut_hci_event_decode_cmd_complete(evt, sizeof(evt),
+                                                        &opcode);
+        if (matched == 0) HCI_TEST_PASS("decode_cmd_complete(truncated)");
+        else { HCI_TEST_FAIL("decode_cmd_complete(truncated)", 23); return; }
+    }
+
+    /* T24: NULL pkt / NULL opcode_out → 0 */
+    {
+        uint16_t opcode = 0;
+        if (fut_hci_event_decode_cmd_complete(NULL, 6, &opcode) == 0 &&
+            fut_hci_event_decode_cmd_complete((const uint8_t *)"x", 6, NULL) == 0) {
+            HCI_TEST_PASS("decode_cmd_complete(NULL args)");
+        } else {
+            HCI_TEST_FAIL("decode_cmd_complete(NULL)", 24);
+            return;
+        }
+    }
+
     fut_printf("[HCI-TEST] all HCI core tests passed\n");
     fut_hci_reset();
 }

@@ -22,20 +22,30 @@
 #include <platform/arm64/apple_pmgr.h>
 #include <platform/platform.h>
 #include <kernel/errno.h>
+#include <stdatomic.h>
 
 extern void fut_platform_udelay(uint32_t usec);
 
 /* pmgr base in the kernel peripheral VA window — 0 until init. */
 static volatile uint32_t *g_pmgr_va;
 
-/* Lifetime stats — incremented on every apple_pmgr_enable result. */
-static uint32_t g_pmgr_enabled_count;
-static uint32_t g_pmgr_failed_count;
+/* Lifetime stats — incremented on every apple_pmgr_enable result.
+ * Atomic so a future per-CPU bring-up path (where multiple cores may
+ * race to enable peripherals) can read/write consistent counters.
+ * Today everything runs on the boot CPU so this is just future-proof. */
+static _Atomic uint32_t g_pmgr_enabled_count;
+static _Atomic uint32_t g_pmgr_failed_count;
 
 void apple_pmgr_stats(uint32_t *enabled_count, uint32_t *failed_count)
 {
-    if (enabled_count) *enabled_count = g_pmgr_enabled_count;
-    if (failed_count)  *failed_count  = g_pmgr_failed_count;
+    if (enabled_count) {
+        *enabled_count = atomic_load_explicit(&g_pmgr_enabled_count,
+                                               memory_order_acquire);
+    }
+    if (failed_count) {
+        *failed_count = atomic_load_explicit(&g_pmgr_failed_count,
+                                              memory_order_acquire);
+    }
 }
 
 static inline uint32_t pmgr_r32(uint32_t off)
@@ -97,9 +107,11 @@ int apple_pmgr_enable(uint32_t ps_offset)
                    "(reg now=0x%08x)\n",
                    (unsigned)ps_offset,
                    (unsigned)pmgr_r32(ps_offset));
-        g_pmgr_failed_count++;
+        atomic_fetch_add_explicit(&g_pmgr_failed_count, 1,
+                                   memory_order_acq_rel);
     } else {
-        g_pmgr_enabled_count++;
+        atomic_fetch_add_explicit(&g_pmgr_enabled_count, 1,
+                                   memory_order_acq_rel);
     }
     return rc;
 }

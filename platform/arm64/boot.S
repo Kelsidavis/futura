@@ -409,10 +409,10 @@ bss_cleared:
     orr     x1, x1, #3                /* Valid table descriptor */
     str     x1, [x0, #8]
 
-    /* kernel_l1[8..71] -> 64 GiB of Apple peripheral PA range
+    /* kernel_l1[8..511] -> 504 GiB of Apple peripheral PA range
      *
-     * Maps VA 0xFFFFFF8200000000 - 0xFFFFFF91FFFFFFFF (64 GiB) to
-     * PA 0x200000000 - 0x11FFFFFFFF using 1 GiB block descriptors
+     * Maps VA 0xFFFFFF8200000000 - 0xFFFFFFFFFFFFFFFF (504 GiB) to
+     * PA 0x200000000 - 0x7F00000000 using 1 GiB block descriptors
      * with device-nGnRE memory attributes.
      *
      * Apple Silicon places its on-die peripherals at PA 0x200000000+
@@ -425,11 +425,15 @@ bss_cleared:
      * Pro/Max), PCIe ECAM, ...) as VAs would translation-fault on
      * the first MMIO touch.
      *
-     * The 64 GiB window is sized to cover both M1 (PCIe at 0x690...,
-     * ~26 GiB) AND M1 Pro / Max (PCIe at 0xc00..., ~48 GiB) without
-     * a runtime branch on SoC variant.  Costs 56 extra L1 entries
-     * (448 bytes of static page table) compared to the M1-only
-     * 32 GiB window.
+     * Fill all remaining L1 slots (8..511) so any peripheral or
+     * m1n1-allocated framebuffer below PA 0x7F00000000 (= 508 GiB)
+     * is reachable through the constant-offset helper.  Mac config
+     * range: M1/M2 base 8 GB → M2 Ultra Mac Pro 192 GB DRAM, so
+     * 508 GB of mapping leaves comfortable headroom for any
+     * peripheral above DRAM.
+     *
+     * The L1 page is already allocated at 4 KiB, so filling more
+     * of it costs no extra memory.
      *
      * C callers convert PA→VA via the helper that ORs in
      * 0xFFFFFF8000000000 (declared in include/platform/arm64/memory/pmap.h).
@@ -441,7 +445,7 @@ bss_cleared:
     add     x0, x0, :lo12:kernel_l1_table
     add     x0, x0, #(8 * 8)          /* L1[8] */
     movz    x1, #0x0002, lsl #32      /* Start PA = 0x2_0000_0000 (8 GiB) */
-    mov     x3, #64                   /* 64 entries × 1 GiB = 64 GiB */
+    mov     x3, #504                  /* 504 entries × 1 GiB = 504 GiB */
     mov     x4, #0x40000000           /* 1 GiB stride */
 9:  movz    x2, #0x0605               /* Valid|Block|AttrIdx=1(dev)|AF|SH=10 */
     orr     x2, x1, x2                /* Combine PA with flags */

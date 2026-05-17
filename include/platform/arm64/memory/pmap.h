@@ -107,14 +107,15 @@ static inline uint64_t pmap_virt_to_phys(uintptr_t va) {
  * boot.S maps the entire kernel L0[511] window (VA
  * 0xFFFFFF8000000000+) so that peripheral PAs in the lower 4 GiB
  * (kernel_l2_table_peripherals: PA 0-0x40000000) AND the Apple
- * peripheral range (kernel_l1[8..71]: PA 0x200000000-0x11FFFFFFFF,
- * a 64 GiB device window) are accessible via a constant offset.
+ * peripheral range (kernel_l1[8..511]: PA 0x200000000-0x7F00000000,
+ * a 504 GiB device window) are accessible via a constant offset.
  * Use this helper from C code that hands a peripheral PA off to a
  * Rust driver expecting a VA — it works for QEMU virt's PL011 /
- * GIC / virtio in the low 1 GiB AND for Apple's s5l-uart, AIC,
- * ANS mailbox, DCP, SMC, MCA, PCIe root complex + ECAM on M1
- * (PCIe at 0x690...) AND M1 Pro / Max (PCIe at 0xc00...), with a
- * single arithmetic OR.
+ * GIC / virtio in the low 1 GiB AND for every documented Apple
+ * Mac (M1 base through M2 Ultra Mac Pro 192 GB) with a single
+ * arithmetic OR.  The 504 GiB upper bound is just where the L1
+ * table runs out — every Apple PA below ~512 GiB hits a valid
+ * mapping.
  */
 #define KERN_PERIPHERAL_VA_OFFSET  0xFFFFFF8000000000ULL
 

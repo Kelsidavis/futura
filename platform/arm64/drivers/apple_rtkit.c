@@ -146,10 +146,17 @@ bool apple_rtkit_set_iop_power_state(apple_rtkit_ctx_t *ctx, uint8_t state) {
 }
 
 void apple_rtkit_shutdown(apple_rtkit_ctx_t *ctx) {
-    if (!ctx || !ctx->rust_ctx) return;
-    rust_rtkit_shutdown(ctx->rust_ctx);
-    rust_rtkit_free(ctx->rust_ctx);
-    ctx->rust_ctx     = NULL;
-    ctx->initialized  = false;
-    /* ctx itself stays leaked — no fut_free_pages in this kernel. */
+    if (!ctx) return;
+    if (ctx->rust_ctx) {
+        rust_rtkit_shutdown(ctx->rust_ctx);
+        rust_rtkit_free(ctx->rust_ctx);
+        ctx->rust_ctx    = NULL;
+        ctx->initialized = false;
+    }
+    /* Free the page(s) we allocated in alloc_ctx() — the previous
+     * "no fut_free_pages in this kernel" comment was stale; the
+     * symbol exists and is the right counterpart to fut_malloc_pages. */
+    const size_t bytes = sizeof(apple_rtkit_ctx_t);
+    const size_t pages = (bytes + 4095) / 4096;
+    fut_free_pages(ctx, pages);
 }

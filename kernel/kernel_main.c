@@ -910,6 +910,9 @@ static void selftest_sequential_runner(void *arg) {
     extern void fut_firmware_test_thread(void *arg);
     fut_firmware_test_thread(NULL);
 
+    extern void fut_hci_test_thread(void *arg);
+    fut_hci_test_thread(NULL);
+
     /* Safety net: if every test function returned without triggering
      * try_finish() (planned over-counted by the same magnitude as a
      * skipped cluster, or a control-flow branch that returned without
@@ -1995,6 +1998,10 @@ void fut_kernel_main(void) {
          * counted under other tests' bookkeeping), so leave room for
          * those + the 10 new firmware tests. */
         planned_tests += 14u;
+
+        /* HCI core: T1-T13 (registration validation, send_cmd routing,
+         * event sink, open/close lifecycle, unregister idempotency). */
+        planned_tests += 13u;
     }
     (void)planned_tests;
     if (run_tests) {

@@ -721,6 +721,10 @@ impl Ans2Ctrl {
 unsafe extern "C" fn ans2_rtkit_handler(cookie: *mut (), _endpoint: u8, _msg: u64) {
     // cookie points to the Ans2Ctrl.  For now we just ack; a full
     // implementation would parse msg and wake waiting I/O requests.
+    if cookie.is_null() {
+        return;
+    }
+    // SAFETY: cookie was set by rust_ans2_init to a valid Ans2Ctrl*.
     let _ctrl = unsafe { &mut *(cookie as *mut Ans2Ctrl) };
     // TODO: parse msg type and signal completions
 }

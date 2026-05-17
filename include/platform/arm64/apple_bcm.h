@@ -40,6 +40,10 @@ typedef struct {
     uint64_t bar0;
     uint64_t bar2;
     uint32_t class_code;
+    uint16_t msi_cap;     /* PCI Cap 0x05 offset, 0 if absent */
+    uint16_t msix_cap;    /* PCI Cap 0x11 offset, 0 if absent */
+    uint16_t msi_vectors; /* 1, 2, 4, 8, 16, or 32 — only valid when msi_cap != 0 */
+    uint16_t msix_table_size; /* MSI-X table size, only valid when msix_cap != 0 */
 } apple_bcm_discovery_t;
 
 /* Walk the Apple PCIe root complex looking for the Broadcom combo

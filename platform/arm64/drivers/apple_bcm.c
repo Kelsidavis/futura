@@ -234,34 +234,36 @@ int apple_bcm_init(const fut_platform_info_t *info,
 
             /* Probe MSI / MSI-X capabilities so a follow-up slice
              * can program them.  Apple's PCIe IP requires MSI for
-             * interrupts; INTx is not routed. */
-            uint16_t msi_cap = rust_apple_pcie_find_cap(pcie, bus, 0, fn,
-                                                        PCI_CAP_ID_MSI);
-            uint16_t msix_cap = rust_apple_pcie_find_cap(pcie, bus, 0, fn,
-                                                         PCI_CAP_ID_MSIX);
-            if (msi_cap != 0) {
+             * interrupts; INTx is not routed.  Cache the offsets and
+             * vector counts into the discovery record so the future
+             * MSI-allocation slice doesn't have to re-walk. */
+            d.msi_cap  = rust_apple_pcie_find_cap(pcie, bus, 0, fn,
+                                                  PCI_CAP_ID_MSI);
+            d.msix_cap = rust_apple_pcie_find_cap(pcie, bus, 0, fn,
+                                                  PCI_CAP_ID_MSIX);
+            if (d.msi_cap != 0) {
                 uint16_t mc = rust_apple_pcie_cfg_read16(pcie, bus, 0, fn,
-                                                          msi_cap + 0x02);
+                                                          d.msi_cap + 0x02);
                 uint32_t mmc = (mc & PCI_MSI_MMC_MASK) >> PCI_MSI_MMC_SHIFT;
-                uint32_t vectors = 1u << mmc;
+                d.msi_vectors = (uint16_t)(1u << mmc);
                 fut_printf("[bcm] fn%u MSI cap@0x%02x: %u vectors, "
                            "%s addr, %s per-vector mask\n",
-                           (unsigned)fn, (unsigned)msi_cap,
-                           (unsigned)vectors,
+                           (unsigned)fn, (unsigned)d.msi_cap,
+                           (unsigned)d.msi_vectors,
                            (mc & PCI_MSI_64BIT) ? "64-bit" : "32-bit",
                            (mc & PCI_MSI_PVM) ? "yes" : "no");
             }
-            if (msix_cap != 0) {
+            if (d.msix_cap != 0) {
                 uint16_t mc = rust_apple_pcie_cfg_read16(pcie, bus, 0, fn,
-                                                          msix_cap + 0x02);
+                                                          d.msix_cap + 0x02);
                 /* MSI-X table size is bits 0-10 of Message Control, encoded
                  * as N-1 (so 0 means 1 vector, 0x7FF means 2048). */
-                uint32_t table_size = (uint32_t)(mc & 0x7FFu) + 1u;
+                d.msix_table_size = (uint16_t)((mc & 0x7FFu) + 1u);
                 fut_printf("[bcm] fn%u MSI-X cap@0x%02x: %u-entry table\n",
-                           (unsigned)fn, (unsigned)msix_cap,
-                           (unsigned)table_size);
+                           (unsigned)fn, (unsigned)d.msix_cap,
+                           (unsigned)d.msix_table_size);
             }
-            if (msi_cap == 0 && msix_cap == 0) {
+            if (d.msi_cap == 0 && d.msix_cap == 0) {
                 fut_printf("[bcm] fn%u no MSI/MSI-X capability "
                            "(unexpected for Apple PCIe)\n",
                            (unsigned)fn);

@@ -2485,17 +2485,28 @@ void fut_kernel_main(void) {
             fut_printf("[INIT] Apple Silicon detected (%s), early UART switch...\n",
                        info.name ? info.name : "unknown");
 
-            /* Apple UART (Rust) — register the s5l-uart putc backend
-             * NOW, before the rest of kernel init runs, so the boot
-             * log between here and fut_platform_late_init() reaches
-             * the Apple serial console.  fut_apple_ans2 / _dcp /
-             * _power / _hid / _xhci / _audio platform_init calls all
-             * happen later in fut_platform_late_init() — see
-             * platform/arm64/platform_init.c — to keep the init list
-             * in one place. */
+            /* Apple UART — initialise s5l-uart AND register its putc
+             * as the serial backend NOW, before the rest of kernel
+             * init runs, so the boot log between here and
+             * fut_platform_late_init() reaches the Apple serial
+             * console.  fut_apple_uart_init() does both: it calls
+             * rust_apple_uart_init() to bring the hardware up, then
+             * installs fut_apple_uart_putc_thunk via
+             * fut_serial_set_putc_backend().  Skipping that second
+             * step (as raw rust_apple_uart_init alone would) leaves
+             * fut_serial_putc falling through to the QEMU-virt PL011
+             * path — which doesn't exist at PA 0x09000000 on Apple
+             * hardware.
+             *
+             * apple_*_platform_init for ans2 / dcp / power / hid /
+             * xhci / audio all happen later in
+             * fut_platform_late_init() — see
+             * platform/arm64/platform_init.c — keeping the init
+             * list in one place. */
             if (info.uart_base) {
-                extern int rust_apple_uart_init(uint64_t base, uint32_t baudrate);
-                rust_apple_uart_init(info.uart_base, 115200);
+                extern bool fut_apple_uart_init(const fut_platform_info_t *info,
+                                                 uint32_t baudrate);
+                fut_apple_uart_init(&info, 115200);
             }
         }
 

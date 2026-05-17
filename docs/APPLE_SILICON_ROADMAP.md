@@ -206,8 +206,14 @@ m1n1 -w build/bin/futura.macho
 - Apple peripheral PA→VA mapping window (`kernel_l1_table[8..511]`, 504 GiB device-nGnRE)
 - DMA address correctness across xhci / ans2 / dcp / dart (physical addresses where the controller DMAs, not kernel VAs)
 - m1n1 framebuffer first-light fast-path (kernel paints into `/chosen/framebuffer` before DCP swap-chain bring-up)
+- DCP-owned FB takeover with swap_submit ack polling (kernel takes over from m1n1's mapping once DCP is up)
+- `apple_pmgr` power-domain enable wired across 7 peripherals (DCP / ANS2 / PCIe / SMC / MCA / SPI / I2C) via DT phandle resolution — no per-SoC offset tables
+- WiFi+Bluetooth combo chip discovery (`apple_bcm` Rust crate + C wrapper): PCIe walk, BCM4377/4378/4387/4388 classification, MSI cap probe + cache, PCIe FLR via Capability 0x10, WL_REG_ON/BT_REG_ON GPIO toggle via `apple_gpio`
+- Kernel firmware loader (`fut_firmware_load`) with embedded provider + `embed_binary` wrapper for objcopy blobs
+- Bluetooth HCI core (`kernel/hci.c`): transport registry, send_cmd / event sink, build_cmd, decode_cmd_complete
 - `make m1n1-payload` produces a valid m1n1-compatible `Image.gz` with relocatable flag
 - ARM64 platform foundation + virtio drivers (won't run on Apple HW but kept as QEMU virt reference)
+- **201-test pre-hardware guard suite** covering every public function across 18 Apple driver subsystems + firmware loader + HCI core + DTB walker (see `docs/APPLE_SILICON_TESTING.md`)
 
 ### In Progress 🚧
 - None on the kernel side — Phases 1-4 closed.

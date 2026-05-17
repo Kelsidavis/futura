@@ -952,6 +952,9 @@ static void selftest_sequential_runner(void *arg) {
     extern void fut_apple_uart_test_thread(void *arg);
     fut_apple_uart_test_thread(NULL);
 
+    extern void fut_apple_gpio_test_thread(void *arg);
+    fut_apple_gpio_test_thread(NULL);
+
     /* Safety net: if every test function returned without triggering
      * try_finish() (planned over-counted by the same magnitude as a
      * skipped cluster, or a control-flow branch that returned without
@@ -2126,6 +2129,14 @@ void fut_kernel_main(void) {
          * tx_ready/rx_ready/write/puts). ARM64-only. */
 #ifdef __aarch64__
         planned_tests += 8u;
+#endif
+
+        /* apple_gpio: T1-T9 (Rust FFI NULL guards on init/free/
+         * set_direction/get_direction/set_output/get_input/toggle/
+         * npins; also init(base=0) and init(npins=0) refusals).
+         * ARM64-only. */
+#ifdef __aarch64__
+        planned_tests += 9u;
 #endif
 
         /* apple_bcm: T1-T17 (Rust FFI classification + chip-name

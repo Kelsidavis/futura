@@ -958,6 +958,9 @@ static void selftest_sequential_runner(void *arg) {
     extern void fut_apple_smc_test_thread(void *arg);
     fut_apple_smc_test_thread(NULL);
 
+    extern void fut_apple_spi_i2c_test_thread(void *arg);
+    fut_apple_spi_i2c_test_thread(NULL);
+
     /* Safety net: if every test function returned without triggering
      * try_finish() (planned over-counted by the same magnitude as a
      * skipped cluster, or a control-flow branch that returned without
@@ -2147,6 +2150,13 @@ void fut_kernel_main(void) {
          * key_count / key_info). ARM64-only. */
 #ifdef __aarch64__
         planned_tests += 9u;
+#endif
+
+        /* apple_spi + apple_i2c: T1-T10 (Rust FFI NULL guards across
+         * spi_init/free/cs_assert/transfer/handle_irq and
+         * i2c_init/free/write/read/status). ARM64-only. */
+#ifdef __aarch64__
+        planned_tests += 10u;
 #endif
 
         /* apple_bcm: T1-T17 (Rust FFI classification + chip-name

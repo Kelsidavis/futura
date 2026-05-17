@@ -103,22 +103,34 @@ fut_thread_t *fut_thread_create_user(fut_process_t *process, void (*entry)(void 
 
     memset(thread, 0, sizeof(fut_thread_t));
 
-    /* Allocate kernel stack for system calls and exceptions */
-    thread->kernel_stack = fut_malloc(4096);
+    /* Allocate kernel stack for system calls and exceptions.
+     *
+     * NOTE: This entire function is currently unreachable —
+     * fut_process_create (its only caller) has no callers itself.
+     * Earlier sizes here were 4 KB which would have been
+     * disastrous: every syscall pushes a ~200 B trap frame, and
+     * deep VFS / scheduler paths on ARM64 routinely consume more
+     * than 4 KB of frames.  If this code ever gets re-wired,
+     * 64 KB matches CONFIG_KERNEL_STACK_SIZE used by fut_exec_elf
+     * and avoids the slab-adjacent-stack overflow class that bit
+     * commits ec408df4 / 65114e0d / 7d375b36 / a66ff056. */
+    thread->kernel_stack = fut_malloc(64 * 1024);
     if (!thread->kernel_stack) {
         fut_free(thread);
         return NULL;
     }
-    thread->kernel_stack_size = 4096;
+    thread->kernel_stack_size = 64 * 1024;
 
-    /* Allocate user stack (4KB) */
-    thread->user_stack = fut_malloc(4096);
+    /* Allocate user stack — 64 KB.  The previous 4 KB was below the
+     * arm64 EABI alignment guarantee for argv/envp blobs the
+     * trampoline blits onto the stack at entry. */
+    thread->user_stack = fut_malloc(64 * 1024);
     if (!thread->user_stack) {
         fut_free(thread->kernel_stack);
         fut_free(thread);
         return NULL;
     }
-    thread->user_stack_size = 4096;
+    thread->user_stack_size = 64 * 1024;
 
     /* Initialize thread */
     thread->tid = atomic_fetch_add(&next_tid, 1);

@@ -1,8 +1,8 @@
 # Apple Silicon M2 Hardware Testing Guide
 
-**Target Device**: MacBook Pro A2338 (M2)
-**Status**: Ready for tethered boot testing (non-destructive)
-**Last Updated**: 2025-11-05
+**Target Device**: MacBook Pro A2338 (M2) — also covers M1 / M3 / M4
+**Status**: Ready for tethered boot testing (non-destructive); kernel-side bring-up complete
+**Last Updated**: 2026-05-16
 
 ---
 
@@ -430,29 +430,47 @@ Use this checklist to systematically test Futura components:
 
 Once tethered boot is working:
 
-1. **Validate all Phase 1 & 2 components** using checklist above
+1. **Validate every Apple driver** the kernel brings up.  The full
+   set is now implemented; the checklist above covers the basics,
+   but the following should also be tested on first real-HW boot:
+   - DCP framebuffer console (via `/chosen/framebuffer` first-light
+     fast-path) — should produce text on the panel before RTKit
+     boot even starts
+   - SMC sensors (CPU temp, fan RPM via `apple_power`)
+   - HID input through `apple_hid` (SPI keyboard / I2C trackpad)
+   - USB devices via the xHCI path (CDC-ECM network adapter is
+     the easiest functional test)
+   - MCA audio output (once a userspace ALSA-equivalent exists)
 
 2. **Test edge cases**:
    - Multiple reboots
-   - Different m1n1 versions
-   - Various kernel configurations
-   - Stress testing (if applicable)
+   - Different m1n1 versions (commit-pinned vs latest)
+   - Various kernel configurations (ENABLE_WAYLAND on/off)
+   - Stress testing (large file copies through CDC-ECM, etc.)
 
 3. **Performance measurements**:
    - Boot time from m1n1 → kernel main
    - RTKit handshake latency
    - NVMe command completion time
-   - Interrupt latency
+   - Interrupt latency (timer FIQ + AIC IRQ paths)
+   - Framebuffer write throughput (device-nGnRE peripheral mapping
+     vs cached DRAM mapping — the m1n1 fast-path is intentionally
+     slow but functional)
 
 4. **Document findings**:
    - Update `docs/APPLE_SILICON_IMPLEMENTATION.md`
+   - Update `docs/APPLE_SILICON_BRINGUP_PLAN.md` if any new
+     blockers surface (pmgr clock-gating is the most likely)
    - Record any hardware quirks discovered
    - Note differences from documentation
 
-5. **Phase 3 preparation** (when ready):
-   - Display Coprocessor (DCP) driver
-   - Framebuffer setup
-   - HID input devices
+5. **Post-first-light work** (deferred for after validation):
+   - pmgr (SoC clock gating) — required for peripherals m1n1
+     doesn't leave enabled
+   - Full DCP swap-chain protocol — currently the m1n1 FB is the
+     console; switching to a DCP-allocated surface needs more
+     RTKit conversation
+   - WiFi / Bluetooth — Apple WLAN firmware loader work
 
 ---
 

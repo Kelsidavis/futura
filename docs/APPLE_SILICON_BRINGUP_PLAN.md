@@ -1,16 +1,14 @@
 # Apple Silicon Bring-up Plan
 
 **Last Updated**: 2026-05-16
-**Status**: 🚧 Kernel-side bring-up done (4.75/5 boot blockers — the
-remaining 0.25 is a soft pre-MMU early-debug shim that only matters
-for debugging a hang before the MMU comes up; the post-MMU UART path
-is live).  Every Apple-specific driver in `platform/arm64/drivers/`
-has been migrated to a Rust crate under `drivers/rust/apple_*`.  Not
-yet validated on real Apple Silicon hardware.  `make m1n1-payload`
-produces a valid m1n1-compatible Image.gz with the ARM64 Linux
-header.  All progress is implemented behind runtime detection so
-that QEMU virt's selftest suite (currently 2654/2654 PASS under
-`qemu-system-aarch64 -M virt`) stays green at every step.
+**Status**: 🚧 Kernel-side bring-up done (5/5 boot blockers + FIQ
+dispatch path + every Apple driver migrated to Rust + DTB wiring for
+mca / framebuffer / etc.).  Not yet validated on real Apple Silicon
+hardware.  `make m1n1-payload` produces a valid m1n1-compatible
+Image.gz with the ARM64 Linux header.  All progress is implemented
+behind runtime detection so that QEMU virt's selftest suite
+(currently 2654/2654 PASS under `qemu-system-aarch64 -M virt`) stays
+green at every step.
 
 This document captures the staged work originally needed to get the
 ARM64 kernel booting on a real M1/M2/M3/M4 Mac via m1n1.  Most
@@ -112,9 +110,9 @@ boot.S before any C code runs.  The cleanest path:
   variable.  Touches many sites (`grep -rn KERNEL_VIRT_OFFSET kernel`),
   but each call is small.
 
-### 4. Apple s5l-UART early-debug shim 🚧 PARTIAL (commit `1a156b28`)
+### 4. Apple s5l-UART early-debug shim ✅ LANDED (commits `1a156b28`, `1de1d8d4`)
 
-**Post-MMU side landed.**  `fut_serial_putc()` now reads a
+**Post-MMU side** (`1a156b28`).  `fut_serial_putc()` now reads a
 function-pointer backend before falling through to PL011; the
 `fut_apple_uart_init()` driver registers its s5l-uart `putc` as the
 backend once the DTB-discovered UART base has been cached.  After
@@ -122,15 +120,16 @@ that point every `fut_printf()` routes through the Apple UART driver
 on real hardware.  On QEMU virt the backend stays NULL and the
 PL011 path runs unchanged.
 
-**Pre-MMU side still TBD.**  `platform/arm64/boot.S` writes
-diagnostic characters to PL011 at `0x09000000` (QEMU virt UART) for
-the early-debug path.  Those writes are commented out today, so they
-don't actually fault on real Apple Silicon — but if a future
-debugging session uncomments them, the kernel would silently drop
-the writes (the peripheral L2 map covers PA 0-1 GiB which is empty
-on Apple hardware).  The remaining work is either to probe MIDR_EL1
-before the early write and skip on Apple, or to add a minimum-
-viable assembly shim for the s5l-uart base.
+**Pre-MMU side** (`1de1d8d4`).  `bss_cleared` in `boot.S` now uses
+the MIDR_EL1 implementer field (already stashed in x19 at boot)
+to pick the right UART PA:
+- implementer 0x61 ('a' = Apple) → s5l-uart at PA 0x235200000
+  (data register = base + 0x20)
+- anything else → PL011 at PA 0x09000000 (data register = base + 0x00)
+
+The diagnostic character store itself stays commented out by
+default — uncomment it when debugging a hang before MMU comes up
+and the write lands on the right hardware.
 
 ### 5. AIC wiring in the IRQ entry path ✅ LANDED (commits `a48210a3`, `942ee205`)
 
@@ -150,6 +149,31 @@ Two-step landing:
 
 QEMU virt's `has_aic` is false, so the AIC hook never runs and the
 GIC default stays in place.  2654/2654 selftest PASS unchanged.
+
+### 5a. FIQ dispatch for the ARM Generic Timer ✅ LANDED (commit `e814dc1f`)
+
+Apple delivers the ARM Generic Timer via the FIQ exception vector
+rather than IRQ.  Before this fix all four `fiq_*_handler` labels in
+`boot.S` branched to `generic_exception_handler` (which panics) —
+so the first timer FIQ on real Apple hardware would have crashed
+the kernel before the scheduler ever got a tick.
+
+The fix mirrors the IRQ path on the FIQ side:
+
+- `fut_fiq_main()` + `fut_fiq_set_dispatch_backend()` in
+  `platform_init.c`, with the same backend-pointer pattern as
+  `fut_irq_main`.  Default behavior (no backend) is to return
+  silently — QEMU virt never delivers FIQ legitimately, so a
+  spurious one shouldn't crash.
+- New `fiq_handler_entry` trampoline + `fut_fiq_handler` asm in
+  `boot.S`, mirror of `irq_handler_entry`.
+- `fiq_sp0_handler` / `fiq_spx_handler` / `fiq_aarch64_handler`
+  now branch to `fiq_handler_entry`.  `fiq_aarch32_handler`
+  stays on the panic path because we don't run AArch32 guests.
+- `apple_aic.c::fut_apple_irq_init()` registers
+  `apple_aic_handle_irq` on BOTH the IRQ and FIQ backend slots.
+  The Rust dispatcher reads AIC_EVENT which surfaces both event
+  types through one bitmap, so the same function handles both.
 
 ## Asahi-Linux-Derived Rust Drivers
 

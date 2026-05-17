@@ -120,51 +120,14 @@ void fut_apple_uart_putc(const fut_platform_info_t *info, char ch);
  */
 int fut_apple_uart_getc(const fut_platform_info_t *info);
 
-/**
- * Check if TX FIFO is ready for data.
- * @param info: Platform information
- * @return: true if ready, false if full
- */
-bool fut_apple_uart_tx_ready(const fut_platform_info_t *info);
-
-/**
- * Check if RX FIFO has data available.
- * @param info: Platform information
- * @return: true if data available, false otherwise
- */
-bool fut_apple_uart_rx_ready(const fut_platform_info_t *info);
-
-/**
- * Enable UART receive interrupt.
- * @param info: Platform information
- */
-void fut_apple_uart_enable_rx_interrupt(const fut_platform_info_t *info);
-
-/**
- * Enable UART transmit interrupt.
- * @param info: Platform information
- */
-void fut_apple_uart_enable_tx_interrupt(const fut_platform_info_t *info);
-
-/**
- * Disable UART transmit interrupt.
- * @param info: Platform information
- */
-void fut_apple_uart_disable_tx_interrupt(const fut_platform_info_t *info);
-
-/**
- * Get UART interrupt status.
- * @param info: Platform information
- * @return: Interrupt pending register value
- */
-uint32_t fut_apple_uart_get_intp(const fut_platform_info_t *info);
-
-/**
- * Clear UART interrupt flags.
- * @param info: Platform information
- * @param mask: Bitmask of interrupts to clear
- */
-void fut_apple_uart_clear_interrupts(const fut_platform_info_t *info, uint32_t mask);
+/* Note: tx_ready / rx_ready / enable_rx_interrupt / enable_tx_interrupt /
+ * disable_tx_interrupt / get_intp / clear_interrupts were previously
+ * declared here as fut_apple_uart_* wrappers but never implemented or
+ * called.  The Rust FFI equivalents (rust_apple_uart_tx_ready /
+ * rust_apple_uart_rx_ready / rust_apple_uart_enable_rx_irq /
+ * rust_apple_uart_enable_tx_irq / rust_apple_uart_disable_tx_irq /
+ * rust_apple_uart_intp / etc.) are declared below and remain the
+ * canonical entry points. */
 
 /**
  * Write a null-terminated string to UART.

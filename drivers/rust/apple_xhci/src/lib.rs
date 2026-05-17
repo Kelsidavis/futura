@@ -116,9 +116,20 @@ pub struct AppleXhci {
     db_base:  *mut u8,
 
     // Ring buffers — allocated by the C caller, never freed by this crate.
-    cmd_ring: *mut Trb,
-    evt_ring: *mut Trb,
-    dcbaa:    *mut u64,
+    // Each carries BOTH a kernel VA (used by Rust to read/write TRBs and
+    // DCBAA entries from CPU code) AND a physical address (written into
+    // CRCR / DCBAAP / TRB.param so the xHCI controller can DMA the right
+    // pages).  On QEMU virt the two values happen to be equal because the
+    // boot identity map covers low-PA DRAM; on Apple Silicon they differ
+    // because m1n1 drops the kernel image high in DRAM and PMM allocates
+    // physically-high pages that the kernel reaches through the high-half
+    // VA mapping.
+    cmd_ring:    *mut Trb,
+    cmd_ring_pa: u64,
+    evt_ring:    *mut Trb,
+    evt_ring_pa: u64,
+    dcbaa:       *mut u64,
+    dcbaa_pa:    u64,
 
     max_slots: u32,
     max_ports: u32,
@@ -137,19 +148,22 @@ unsafe impl Sync for AppleXhci {}
 // Singleton — one xHCI per PCIe RC on Apple Silicon.  Stored as a static
 // so the C caller does not need to know the Rust struct size.
 static mut G_XHCI: AppleXhci = AppleXhci {
-    cap_base: core::ptr::null_mut(),
-    op_base:  core::ptr::null_mut(),
-    rt_base:  core::ptr::null_mut(),
-    db_base:  core::ptr::null_mut(),
-    cmd_ring: core::ptr::null_mut(),
-    evt_ring: core::ptr::null_mut(),
-    dcbaa:    core::ptr::null_mut(),
-    max_slots: 0,
-    max_ports: 0,
+    cap_base:    core::ptr::null_mut(),
+    op_base:     core::ptr::null_mut(),
+    rt_base:     core::ptr::null_mut(),
+    db_base:     core::ptr::null_mut(),
+    cmd_ring:    core::ptr::null_mut(),
+    cmd_ring_pa: 0,
+    evt_ring:    core::ptr::null_mut(),
+    evt_ring_pa: 0,
+    dcbaa:       core::ptr::null_mut(),
+    dcbaa_pa:    0,
+    max_slots:   0,
+    max_ports:   0,
     cmd_enqueue: 0,
     evt_dequeue: 0,
-    cmd_cycle: 1,
-    evt_cycle: 1,
+    cmd_cycle:   1,
+    evt_cycle:   1,
 };
 
 // ---------------------------------------------------------------------------
@@ -209,9 +223,13 @@ fn start_controller(ctrl: &AppleXhci) -> bool {
     let slots = if ctrl.max_slots < XHCI_MAX_SLOTS { ctrl.max_slots } else { XHCI_MAX_SLOTS };
     w32(ctrl.op_base, XHCI_CONFIG, slots);
 
-    w64(ctrl.op_base, XHCI_DCBAAP, ctrl.dcbaa as u64);
+    /* DCBAAP and CRCR take PHYSICAL addresses — the controller DMAs
+     * the device context array and command-ring TRBs directly without
+     * going through the CPU's page tables.  Use the cached _pa
+     * fields, not the kernel VAs the CPU reads/writes through. */
+    w64(ctrl.op_base, XHCI_DCBAAP, ctrl.dcbaa_pa);
 
-    let crcr = (ctrl.cmd_ring as u64) | (ctrl.cmd_cycle as u64);
+    let crcr = ctrl.cmd_ring_pa | (ctrl.cmd_cycle as u64);
     w64(ctrl.op_base, XHCI_CRCR, crcr);
 
     let cmd = r32(ctrl.op_base, XHCI_USBCMD);
@@ -305,7 +323,7 @@ fn control_transfer_inner(
     b_req: u8,
     w_value: u16,
     w_index: u16,
-    data: *mut u8,
+    data_pa: u64,
     w_length: u16,
 ) -> i32 {
     if slot_id == 0 {
@@ -328,11 +346,13 @@ fn control_transfer_inner(
     };
     enqueue_trb(ctrl, setup);
 
-    // Data stage (if any)
-    if w_length > 0 && !data.is_null() {
+    // Data stage (if any) — TRB.param is a PHYSICAL address that the
+    // xHCI controller DMAs from/to; the caller must hand us the PA,
+    // not a kernel VA.
+    if w_length > 0 && data_pa != 0 {
         let dir_bit = if dir_in { 1u32 << 16 } else { 0 };
         let data_trb = Trb {
-            param:   data as u64,
+            param:   data_pa,
             status:  w_length as u32,
             control: (TRB_DATA << 10) | cycle_bit | dir_bit,
         };
@@ -360,16 +380,19 @@ fn bulk_transfer_inner(
     ctrl: &mut AppleXhci,
     slot_id: u8,
     endpoint: u8,
-    data: *mut u8,
+    data_pa: u64,
     length: u32,
 ) -> i32 {
-    if slot_id == 0 || data.is_null() || length == 0 {
+    if slot_id == 0 || data_pa == 0 || length == 0 {
         return -1;
     }
 
     let cycle_bit = if ctrl.cmd_cycle != 0 { TRB_FLAG_CYCLE } else { 0 };
     let trb = Trb {
-        param:   data as u64,
+        /* PHYSICAL address — xHCI DMAs the bulk-data buffer directly
+         * (no IOMMU on the Apple PCIe xHCI variant), so the caller
+         * must hand us the PA, not a kernel VA. */
+        param:   data_pa,
         status:  length,
         control: (TRB_NORMAL << 10) | TRB_FLAG_IOC | cycle_bit,
     };
@@ -397,18 +420,29 @@ fn bulk_transfer_inner(
 
 /// Bind the singleton controller to a discovered BAR plus three
 /// page-aligned buffers allocated by the C caller (cmd ring, event
-/// ring, DCBAA).  Each must be at least 4 KiB and pre-zeroed.
+/// ring, DCBAA).  Each must be at least 4 KiB and pre-zeroed.  Each
+/// ring takes BOTH a kernel VA (used by Rust for CPU read/write of
+/// TRBs and DCBAA entries) AND a physical address (written into the
+/// controller's CRCR / DCBAAP registers for DMA — the controller
+/// does not consult the CPU's page tables).
 ///
 /// Returns the singleton handle pointer for use in subsequent calls,
 /// or NULL on failure.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rust_apple_xhci_new(
-    cap_base: u64,
-    cmd_ring: *mut u8,
-    evt_ring: *mut u8,
-    dcbaa:    *mut u8,
+    cap_base:    u64,
+    cmd_ring:    *mut u8,
+    cmd_ring_pa: u64,
+    evt_ring:    *mut u8,
+    evt_ring_pa: u64,
+    dcbaa:       *mut u8,
+    dcbaa_pa:    u64,
 ) -> *mut AppleXhci {
-    if cap_base == 0 || cmd_ring.is_null() || evt_ring.is_null() || dcbaa.is_null() {
+    if cap_base == 0
+        || cmd_ring.is_null() || cmd_ring_pa == 0
+        || evt_ring.is_null() || evt_ring_pa == 0
+        || dcbaa.is_null()    || dcbaa_pa    == 0
+    {
         return core::ptr::null_mut();
     }
     let cap_base = cap_base as *mut u8;
@@ -431,8 +465,11 @@ pub unsafe extern "C" fn rust_apple_xhci_new(
     ctrl.rt_base     = rt_base;
     ctrl.db_base     = db_base;
     ctrl.cmd_ring    = cmd_ring as *mut Trb;
+    ctrl.cmd_ring_pa = cmd_ring_pa;
     ctrl.evt_ring    = evt_ring as *mut Trb;
+    ctrl.evt_ring_pa = evt_ring_pa;
     ctrl.dcbaa       = dcbaa as *mut u64;
+    ctrl.dcbaa_pa    = dcbaa_pa;
     ctrl.max_slots   = max_slots;
     ctrl.max_ports   = max_ports;
     ctrl.cmd_enqueue = 0;
@@ -510,8 +547,10 @@ pub unsafe extern "C" fn rust_apple_xhci_enumerate(
     found as i32
 }
 
-/// USB control transfer on EP0.  `data` may be NULL when `w_length == 0`.
-/// Returns bytes transferred on success, or a negative errno.
+/// USB control transfer on EP0.  `data_pa` is the PHYSICAL address of
+/// the data buffer (may be 0 when `w_length == 0`); the controller
+/// DMAs from/to it without consulting the CPU page tables.  Returns
+/// bytes transferred on success, or a negative errno.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rust_apple_xhci_control_transfer(
     ctrl:        *mut AppleXhci,
@@ -520,26 +559,27 @@ pub unsafe extern "C" fn rust_apple_xhci_control_transfer(
     b_req:       u8,
     w_value:     u16,
     w_index:     u16,
-    data:        *mut u8,
+    data_pa:     u64,
     w_length:    u16,
 ) -> i32 {
     if ctrl.is_null() { return -1; }
     let c = unsafe { &mut *ctrl };
-    control_transfer_inner(c, slot_id, bm_req_type, b_req, w_value, w_index, data, w_length)
+    control_transfer_inner(c, slot_id, bm_req_type, b_req, w_value, w_index, data_pa, w_length)
 }
 
-/// USB bulk transfer.  Returns bytes transferred on success.
+/// USB bulk transfer.  `data_pa` is the PHYSICAL address of the bulk
+/// buffer.  Returns bytes transferred on success.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rust_apple_xhci_bulk_transfer(
     ctrl:     *mut AppleXhci,
     slot_id:  u8,
     endpoint: u8,
-    data:     *mut u8,
+    data_pa:  u64,
     length:   u32,
 ) -> i32 {
     if ctrl.is_null() { return -1; }
     let c = unsafe { &mut *ctrl };
-    bulk_transfer_inner(c, slot_id, endpoint, data, length)
+    bulk_transfer_inner(c, slot_id, endpoint, data_pa, length)
 }
 
 // ---------------------------------------------------------------------------

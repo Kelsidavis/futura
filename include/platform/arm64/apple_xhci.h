@@ -175,9 +175,9 @@ int apple_xhci_platform_init(const fut_platform_info_t *info);
 typedef struct AppleXhci AppleXhci;
 
 AppleXhci *rust_apple_xhci_new(uint64_t cap_base,
-                               uint8_t *cmd_ring,
-                               uint8_t *evt_ring,
-                               uint8_t *dcbaa);
+                               uint8_t *cmd_ring, uint64_t cmd_ring_pa,
+                               uint8_t *evt_ring, uint64_t evt_ring_pa,
+                               uint8_t *dcbaa,    uint64_t dcbaa_pa);
 int32_t  rust_apple_xhci_reset_and_start(AppleXhci *ctrl);
 uint32_t rust_apple_xhci_max_slots(const AppleXhci *ctrl);
 uint32_t rust_apple_xhci_max_ports(const AppleXhci *ctrl);
@@ -191,12 +191,12 @@ int32_t  rust_apple_xhci_control_transfer(AppleXhci *ctrl,
                                           uint8_t b_req,
                                           uint16_t w_value,
                                           uint16_t w_index,
-                                          uint8_t *data,
+                                          uint64_t data_pa,
                                           uint16_t w_length);
 int32_t  rust_apple_xhci_bulk_transfer(AppleXhci *ctrl,
                                        uint8_t slot_id,
                                        uint8_t endpoint,
-                                       uint8_t *data,
+                                       uint64_t data_pa,
                                        uint32_t length);
 
 #endif /* __FUTURA_APPLE_XHCI_H__ */

@@ -110,10 +110,11 @@ int apple_xhci_init(const fut_platform_info_t *info) {
         return -1;
     }
 
-    /* Allocate the three buffers Rust needs.  Pages are guaranteed
-     * 4 KiB aligned and physically contiguous in the kernel's
-     * identity-mapped region, so vaddr == paddr from the controller's
-     * point of view. */
+    /* Allocate the three buffers Rust needs.  fut_malloc_pages
+     * returns a kernel VA in the high-half mapping; the xHCI
+     * controller DMAs the rings + DCBAA directly without going
+     * through the CPU page tables, so we have to also compute the
+     * physical address for each and hand BOTH to Rust. */
     uint8_t *cmd_ring = fut_malloc_pages(XHCI_RING_PAGE_COUNT);
     uint8_t *evt_ring = fut_malloc_pages(XHCI_RING_PAGE_COUNT);
     uint8_t *dcbaa    = fut_malloc_pages(XHCI_RING_PAGE_COUNT);
@@ -125,10 +126,17 @@ int apple_xhci_init(const fut_platform_info_t *info) {
     memset(evt_ring, 0, XHCI_RING_PAGE_COUNT * 4096);
     memset(dcbaa,    0, XHCI_RING_PAGE_COUNT * 4096);
 
+    uint64_t cmd_ring_pa = pmap_virt_to_phys((uintptr_t)cmd_ring);
+    uint64_t evt_ring_pa = pmap_virt_to_phys((uintptr_t)evt_ring);
+    uint64_t dcbaa_pa    = pmap_virt_to_phys((uintptr_t)dcbaa);
+
     /* The xHCI controller's BAR0 is also a PA — convert to kernel VA
      * through the peripheral mapping window before handing to Rust. */
     uint64_t xhci_bar_va = fut_kernel_peripheral_va(xhci_bar);
-    g_xhci.rust_ctrl = rust_apple_xhci_new(xhci_bar_va, cmd_ring, evt_ring, dcbaa);
+    g_xhci.rust_ctrl = rust_apple_xhci_new(xhci_bar_va,
+                                            cmd_ring, cmd_ring_pa,
+                                            evt_ring, evt_ring_pa,
+                                            dcbaa,    dcbaa_pa);
     if (!g_xhci.rust_ctrl) {
         fut_printf("[xHCI] rust_apple_xhci_new failed (PA BAR 0x%lx VA 0x%lx)\n",
                    (unsigned long)xhci_bar, (unsigned long)xhci_bar_va);
@@ -184,17 +192,24 @@ int apple_xhci_control_transfer(uint8_t slot_id, uint8_t bmRequestType,
                                  uint8_t bRequest, uint16_t wValue,
                                  uint16_t wIndex, void *data, uint16_t wLength) {
     if (!g_xhci.initialized || !g_xhci.rust_ctrl) return -1;
+    /* Convert the caller's kernel-VA buffer to a physical address —
+     * xHCI DMAs the data stage directly via TRB.param. */
+    uint64_t data_pa = (data && wLength > 0)
+                         ? pmap_virt_to_phys((uintptr_t)data) : 0;
     return rust_apple_xhci_control_transfer(g_xhci.rust_ctrl, slot_id,
                                              bmRequestType, bRequest,
                                              wValue, wIndex,
-                                             (uint8_t *)data, wLength);
+                                             data_pa, wLength);
 }
 
 int apple_xhci_bulk_transfer(uint8_t slot_id, uint8_t endpoint,
                               void *data, uint32_t length) {
     if (!g_xhci.initialized || !g_xhci.rust_ctrl) return -1;
+    /* Same VA→PA conversion as control_transfer — TRB.param is a
+     * physical address for the controller's DMA engine. */
+    uint64_t data_pa = data ? pmap_virt_to_phys((uintptr_t)data) : 0;
     return rust_apple_xhci_bulk_transfer(g_xhci.rust_ctrl, slot_id, endpoint,
-                                          (uint8_t *)data, length);
+                                          data_pa, length);
 }
 
 int apple_xhci_platform_init(const fut_platform_info_t *info) {

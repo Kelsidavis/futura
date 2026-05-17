@@ -106,6 +106,12 @@ int fut_hci_dev_count(void);
  * registration. */
 const fut_hci_dev_t *fut_hci_dev_get(int dev_index);
 
+/* Find a registered device by name (exact match).  Returns its
+ * index (>=0) or -ENODEV if no match.  Used by consumers that don't
+ * carry the original registration index (e.g. a userspace ioctl
+ * targeting "hci0"). */
+int fut_hci_dev_find(const char *name);
+
 /* Bring up the transport — calls ops->open under the hood and
  * marks the device as ready for traffic. */
 int fut_hci_dev_open(int dev_index);

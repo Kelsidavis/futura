@@ -87,6 +87,18 @@ const fut_hci_dev_t *fut_hci_dev_get(int dev_index)
     return &g_hci_devs[dev_index];
 }
 
+int fut_hci_dev_find(const char *name)
+{
+    if (!name) return -EINVAL;
+    for (int i = 0; i < FUT_HCI_MAX_DEVICES; i++) {
+        if (!g_hci_slot_used[i]) continue;
+        if (strncmp(g_hci_devs[i].name, name, FUT_HCI_NAME_MAX) == 0) {
+            return i;
+        }
+    }
+    return -ENODEV;
+}
+
 int fut_hci_dev_open(int dev_index)
 {
     if (!slot_valid(dev_index)) return -ENODEV;

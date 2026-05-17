@@ -271,11 +271,11 @@ void fut_hci_test_thread(void *arg)
     }
 
     /* T17: dispatch_event with invalid pkt_type → -EINVAL */
+    mock_state_t mock2 = {0};
+    int idx2 = -1;
     {
-        /* Re-register a mock since we unregistered earlier. */
-        mock_state_t mock2 = {0};
-        int idx2 = fut_hci_register("mock2", FUT_HCI_TYPE_VIRTIO,
-                                     &mock_ops, &mock2);
+        idx2 = fut_hci_register("mock2", FUT_HCI_TYPE_VIRTIO,
+                                 &mock_ops, &mock2);
         if (idx2 < 0) { HCI_TEST_FAIL("re-register for T17", 17); return; }
         fut_hci_dev_open(idx2);
         fut_hci_set_event_sink(idx2, test_sink, NULL);
@@ -289,8 +289,30 @@ void fut_hci_test_thread(void *arg)
             HCI_TEST_FAIL("dispatch_event invalid pkt_type", 17);
             return;
         }
-        fut_hci_unregister(idx2);
     }
+
+    /* T18: dev_find returns the registered index for an exact match */
+    {
+        int found = fut_hci_dev_find("mock2");
+        if (found == idx2) HCI_TEST_PASS("dev_find(exact match)");
+        else { HCI_TEST_FAIL("dev_find exact", 18); return; }
+    }
+
+    /* T19: dev_find for unknown name returns -ENODEV */
+    {
+        int found = fut_hci_dev_find("does-not-exist");
+        if (found == -ENODEV) HCI_TEST_PASS("dev_find(unknown)");
+        else { HCI_TEST_FAIL("dev_find unknown", 19); return; }
+    }
+
+    /* T20: dev_find(NULL) returns -EINVAL */
+    {
+        int found = fut_hci_dev_find(NULL);
+        if (found == -EINVAL) HCI_TEST_PASS("dev_find(NULL)");
+        else { HCI_TEST_FAIL("dev_find NULL", 20); return; }
+    }
+
+    fut_hci_unregister(idx2);
 
     fut_printf("[HCI-TEST] all HCI core tests passed\n");
     fut_hci_reset();

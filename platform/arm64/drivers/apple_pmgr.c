@@ -28,6 +28,16 @@ extern void fut_platform_udelay(uint32_t usec);
 /* pmgr base in the kernel peripheral VA window — 0 until init. */
 static volatile uint32_t *g_pmgr_va;
 
+/* Lifetime stats — incremented on every apple_pmgr_enable result. */
+static uint32_t g_pmgr_enabled_count;
+static uint32_t g_pmgr_failed_count;
+
+void apple_pmgr_stats(uint32_t *enabled_count, uint32_t *failed_count)
+{
+    if (enabled_count) *enabled_count = g_pmgr_enabled_count;
+    if (failed_count)  *failed_count  = g_pmgr_failed_count;
+}
+
 static inline uint32_t pmgr_r32(uint32_t off)
 {
     return g_pmgr_va[off / 4];
@@ -87,6 +97,9 @@ int apple_pmgr_enable(uint32_t ps_offset)
                    "(reg now=0x%08x)\n",
                    (unsigned)ps_offset,
                    (unsigned)pmgr_r32(ps_offset));
+        g_pmgr_failed_count++;
+    } else {
+        g_pmgr_enabled_count++;
     }
     return rc;
 }

@@ -74,4 +74,11 @@ int apple_pmgr_enable_domains_for(uint64_t dtb_ptr, const char *node_path);
 int apple_pmgr_enable_domains_any(uint64_t dtb_ptr,
                                   const char *const *paths);
 
+/* Return totals for the lifetime of this kernel boot.
+ * `enabled_count` is the number of times apple_pmgr_enable returned
+ * 0 (domain transitioned to ON or was already ON).  `failed_count`
+ * is the number of timeouts / write failures.  Useful for the
+ * end-of-init summary log line. */
+void apple_pmgr_stats(uint32_t *enabled_count, uint32_t *failed_count);
+
 #endif /* __FUTURA_APPLE_PMGR_H__ */

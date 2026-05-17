@@ -1513,6 +1513,17 @@ void fut_platform_late_init(void) {
              * returning -ENOSYS until radio bring-up lands). */
             fut_hci_open_all();
 
+            /* pmgr summary — useful diagnostic on real hardware to
+             * see which power domains the kernel touched.  Numbers
+             * include both transitions and idempotent re-enables of
+             * already-on domains. */
+            uint32_t pmgr_ok = 0, pmgr_fail = 0;
+            apple_pmgr_stats(&pmgr_ok, &pmgr_fail);
+            if (pmgr_ok > 0 || pmgr_fail > 0) {
+                fut_printf("[INIT] pmgr: %u domains enabled, %u failed\n",
+                           pmgr_ok, pmgr_fail);
+            }
+
             fut_serial_puts("[INIT] Apple Silicon driver init complete\n");
         }
     }

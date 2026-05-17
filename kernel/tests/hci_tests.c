@@ -395,6 +395,39 @@ void fut_hci_test_thread(void *arg)
         HCI_TEST_PASS("close_all(idle) no-op");
     }
 
+    /* T27: send_acl on open device routes to transport */
+    {
+        fut_hci_reset();
+        mock_state_t m4 = {0};
+        int idx4 = fut_hci_register("mock4", FUT_HCI_TYPE_PCIE,
+                                     &mock_ops, &m4);
+        if (idx4 < 0) { HCI_TEST_FAIL("register T27", 27); return; }
+        fut_hci_dev_open(idx4);
+
+        uint8_t acl[5] = { 0x01, 0x00, 0x02, 0x00, 0xAB };
+        int rc = fut_hci_send_acl(idx4, acl, sizeof(acl));
+        if (rc == 0 && m4.send_acl_calls == 1) {
+            HCI_TEST_PASS("send_acl routes to transport");
+        } else {
+            HCI_TEST_FAIL("send_acl routes", 27);
+            return;
+        }
+        fut_hci_unregister(idx4);
+    }
+
+    /* T28: send_acl oversized → -EINVAL */
+    {
+        mock_state_t m5 = {0};
+        int idx5 = fut_hci_register("mock5", FUT_HCI_TYPE_PCIE,
+                                     &mock_ops, &m5);
+        fut_hci_dev_open(idx5);
+        static uint8_t big[FUT_HCI_ACL_PKT_MAX + 1];
+        int rc = fut_hci_send_acl(idx5, big, sizeof(big));
+        if (rc == -EINVAL) HCI_TEST_PASS("send_acl oversized");
+        else { HCI_TEST_FAIL("send_acl oversized", 28); return; }
+        fut_hci_unregister(idx5);
+    }
+
     fut_printf("[HCI-TEST] all HCI core tests passed\n");
     fut_hci_reset();
 }

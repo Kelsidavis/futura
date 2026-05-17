@@ -2054,12 +2054,12 @@ void fut_kernel_main(void) {
          * those + the 14 firmware tests. */
         planned_tests += 18u;
 
-        /* HCI core: T1-T26 (registration validation, send_cmd routing,
-         * event sink, open/close lifecycle, unregister idempotency,
-         * build_cmd packet construction, dispatch pkt_type guard,
-         * dev_find lookup, cmd_complete event decoder, open_all/
-         * close_all round-trip). */
-        planned_tests += 26u;
+        /* HCI core: T1-T28 (registration validation, send_cmd/send_acl
+         * routing, event sink, open/close lifecycle, unregister
+         * idempotency, build_cmd packet construction, dispatch
+         * pkt_type guard, dev_find lookup, cmd_complete event decoder,
+         * open_all/close_all round-trip). */
+        planned_tests += 28u;
 
         /* DT walker: T1-T14 (compat-cell extraction, phandle_reg
          * boundary conditions, full phandle resolution against a

@@ -128,6 +128,16 @@ int fut_hci_send_cmd(int dev_index, const uint8_t *pkt, size_t len)
     return d->ops->send_cmd(d->cookie, pkt, len);
 }
 
+int fut_hci_send_acl(int dev_index, const uint8_t *pkt, size_t len)
+{
+    if (!pkt || len == 0 || len > FUT_HCI_ACL_PKT_MAX) return -EINVAL;
+    if (!slot_valid(dev_index)) return -ENODEV;
+    fut_hci_dev_t *d = &g_hci_devs[dev_index];
+    if (!d->open) return -ENODEV;
+    if (!d->ops->send_acl) return -ENOSYS;
+    return d->ops->send_acl(d->cookie, pkt, len);
+}
+
 int fut_hci_set_event_sink(int dev_index,
                            fut_hci_event_sink_t sink,
                            void *sink_cookie)

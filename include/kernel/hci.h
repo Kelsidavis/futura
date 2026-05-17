@@ -123,6 +123,10 @@ int fut_hci_dev_close(int dev_index);
  * -ENODEV if the device isn't open, -EINVAL for bad args. */
 int fut_hci_send_cmd(int dev_index, const uint8_t *pkt, size_t len);
 
+/* Send an HCI ACL data packet to a specific device.  Same return
+ * contract as send_cmd; size capped at FUT_HCI_ACL_PKT_MAX. */
+int fut_hci_send_acl(int dev_index, const uint8_t *pkt, size_t len);
+
 /* Install an event sink for a device.  Returns 0 on success.  A
  * NULL sink disables event delivery for that device. */
 int fut_hci_set_event_sink(int dev_index,

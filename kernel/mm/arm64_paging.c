@@ -885,12 +885,20 @@ void fut_paging_init(void) {
     mair |= (0x04 << 24);  /* Attribute 3: Device nGnRE */
     write_mair_el1(mair);
 
-    /* Set up translation control register - MUST MATCH boot.S settings! */
+    /* Set up translation control register - MUST MATCH boot.S settings!
+     *
+     * boot.S uses 48-bit VA (T0SZ = T1SZ = 16) so the page table walk
+     * starts at L0.  This was bumped from 39-bit (T0SZ = T1SZ = 25)
+     * in commit ffd99e31 because Apple Silicon's DRAM lives at PA
+     * 0x10_0000_0000+ which the 39-bit VA path could not address.
+     * This function is currently dead code on ARM64 (no caller — see
+     * grep fut_paging_init), but keep it in lock-step so any future
+     * caller doesn't silently downgrade the VA. */
     uint64_t tcr = 0;
-    /* T0SZ = 25 (39-bit user VA) - matches boot.S */
-    tcr |= (25 << 0);
-    /* T1SZ = 25 (39-bit kernel VA) - matches boot.S */
-    tcr |= (25 << 16);
+    /* T0SZ = 16 (48-bit user VA) - matches boot.S */
+    tcr |= (16 << 0);
+    /* T1SZ = 16 (48-bit kernel VA) - matches boot.S */
+    tcr |= (16 << 16);
     /* TG0 = 00 (4KB granule for TTBR0) - bits [15:14] remain 0 */
     /* TG1 = 10 (4KB granule for TTBR1) - bits [31:30] */
     tcr |= (2 << 30);

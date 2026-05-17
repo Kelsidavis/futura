@@ -90,13 +90,20 @@ void pmap_dump(uint64_t vaddr, size_t len) {
 }
 
 /* ============================================================
- *   ARM64 Page Table Walking (3-Level, 39-bit VA)
+ *   ARM64 Page Table Walking
  * ============================================================
  *
- * ARM64 page table hierarchy (T0SZ=25, 39-bit VA, 4KB granule):
- * L1 (PGD): Indexed by bits [38:30]
- * L2 (PMD): Indexed by bits [29:21] (2MB block pages at this level)
- * L3 (PTE): Indexed by bits [20:12] (4KB leaf page entries)
+ * boot.S programs T0SZ = T1SZ = 16 (48-bit VA, 4 KB granule), so the
+ * hardware walks four levels: L0 -> L1 -> L2 -> L3.  Apple Silicon
+ * DRAM at PA 0x10_0000_0000+ would not fit in the previous 39-bit
+ * VA layout (commit ffd99e31).
+ *
+ * The PGD_INDEX / PMD_INDEX / PTE_INDEX macros below cover L1 / L2 /
+ * L3; the L0 wrap is established by boot.S, and ctx->pgd actually
+ * points at the L1 table that L0[0] dispatches into for kernel-space
+ * mappings.  See include/platform/arm64/memory/paging.h for the
+ * full layout.  Block descriptors (2MB pages) still appear at the
+ * L2 level — pmap_probe_pte short-circuits on those.
  */
 
 int pmap_probe_pte(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t *pte_out) {
@@ -104,18 +111,17 @@ int pmap_probe_pte(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t *pte_out) {
         return -EINVAL;
     }
 
-    /* Get the PGD (Level 0 page table) from context */
+    /* Get the PGD from context — the L1 table that L0[0] dispatches
+     * into.  Callers walking through here only ever target VAs whose
+     * L0 index is the kernel's, so we don't re-walk L0. */
     page_table_t *pgd = pmap_context_pgd(ctx);
     if (!pgd) {
         /* fut_printf("[PROBE] No PGD\n"); */
         return -EFAULT;
     }
 
-    /* ARM64 with T0SZ=25 (39-bit VA) uses 3-level page tables:
-     * L1 (PGD): bits [38:30] -> L2 table
-     * L2 (PMD): bits [29:21] -> L3 table
-     * L3 (PTE): bits [20:12] -> physical page
-     */
+    /* Walk L1 -> L2 -> L3.  PGD_INDEX = bits [38:30] (L1),
+     * PMD_INDEX = bits [29:21] (L2), PTE_INDEX = bits [20:12] (L3). */
     uint64_t pgd_idx = PGD_INDEX(vaddr);
     uint64_t pmd_idx = PMD_INDEX(vaddr);
     uint64_t pte_idx = PTE_INDEX(vaddr);

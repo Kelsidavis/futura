@@ -141,8 +141,20 @@ int apple_pmgr_disable(uint32_t ps_offset)
     if (!g_pmgr_va) return -ENODEV;
 
     uint32_t reg = pmgr_r32(ps_offset);
-    pmgr_w32(ps_offset, reg & ~APPLE_PMGR_PS_TARGET_MASK);
-    int rc = wait_for_state(ps_offset, 0);
+    uint32_t target = (uint8_t)(reg & APPLE_PMGR_PS_TARGET_MASK);
+    int rc;
+    if (target == 0) {
+        /* Already requested-off; skip the redundant MMIO write and
+         * just confirm actual state matches.  Symmetric to the
+         * fast-path in apple_pmgr_enable so a bulk-disable run
+         * doesn't pile up unnecessary register writes when m1n1 or
+         * a prior boot left domains off. */
+        rc = wait_for_state(ps_offset, 0);
+    } else {
+        pmgr_w32(ps_offset, reg & ~APPLE_PMGR_PS_TARGET_MASK);
+        rc = wait_for_state(ps_offset, 0);
+    }
+
     if (rc != 0) {
         atomic_fetch_add_explicit(&g_pmgr_failed_count, 1,
                                    memory_order_acq_rel);

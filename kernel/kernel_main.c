@@ -940,6 +940,9 @@ static void selftest_sequential_runner(void *arg) {
     extern void fut_apple_dcp_test_thread(void *arg);
     fut_apple_dcp_test_thread(NULL);
 
+    extern void fut_apple_aic_test_thread(void *arg);
+    fut_apple_aic_test_thread(NULL);
+
     /* Safety net: if every test function returned without triggering
      * try_finish() (planned over-counted by the same magnitude as a
      * skipped cluster, or a control-flow branch that returned without
@@ -2087,6 +2090,12 @@ void fut_kernel_main(void) {
          * is_set; plus C platform_init NULL). ARM64-only. */
 #ifdef __aarch64__
         planned_tests += 8u;
+#endif
+
+        /* apple_aic + apple_ans2: T1-T5 (AIC init/pending/whoami/void
+         * ops guards plus ans2_platform_init NULL). ARM64-only. */
+#ifdef __aarch64__
+        planned_tests += 5u;
 #endif
 
         /* apple_bcm: T1-T17 (Rust FFI classification + chip-name

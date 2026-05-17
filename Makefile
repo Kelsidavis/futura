@@ -1161,6 +1161,7 @@ else ifeq ($(PLATFORM),arm64)
         platform/arm64/drivers/apple_power.c \
         platform/arm64/drivers/apple_xhci.c \
         platform/arm64/drivers/apple_bcm.c \
+        platform/arm64/drivers/apple_pmgr.c \
         platform/arm64/drivers/usb_cdc_ecm.c \
         platform/arm64/drivers/apple_audio.c \
         platform/arm64/drivers/virtio_mmio.c \

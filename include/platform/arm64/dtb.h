@@ -88,6 +88,7 @@ typedef struct {
     uint32_t framebuffer_stride; /* m1n1 Simple FB stride in bytes (0 → fall back to width × 4 for BGRA8888) */
     int32_t  wlan_reset_gpio;    /* GPIO pin driving WL_REG_ON on the BCM combo chip (-1 = unknown) */
     int32_t  bt_reset_gpio;      /* GPIO pin driving BT_REG_ON on the BCM combo chip (-1 = unknown) */
+    uint64_t pmgr_base;          /* Apple pmgr (Power Manager) register block base (Apple Silicon only) */
     bool has_gic;                /* Has GICv2 support */
     bool has_aic;                /* Has Apple AIC (Apple Silicon only) */
     bool has_dcp;                /* Has Apple DCP (Apple Silicon only) */

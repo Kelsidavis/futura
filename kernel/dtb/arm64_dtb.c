@@ -607,6 +607,15 @@ fut_platform_info_t fut_dtb_parse(uint64_t dtb_ptr) {
                 info.gpio_base_apple = tmp_addr;
             }
 
+            /* pmgr (Apple Power Manager — gates clocks per peripheral).
+             * Asahi DT names this `/soc/pmgr@<addr>` or `/arm-io/pmgr`
+             * depending on the kernel that produced the DT. */
+            if (fut_dtb_get_reg(dtb_ptr, "/soc/pmgr@23b700000", &tmp_addr, NULL) ||
+                fut_dtb_get_reg(dtb_ptr, "/soc/pmgr",           &tmp_addr, NULL) ||
+                fut_dtb_get_reg(dtb_ptr, "/arm-io/pmgr",        &tmp_addr, NULL)) {
+                info.pmgr_base = tmp_addr;
+            }
+
             /* SPI0 (keyboard HID) */
             if (fut_dtb_get_reg(dtb_ptr, "/soc/spi@23510c000", &tmp_addr, NULL) ||
                 fut_dtb_get_reg(dtb_ptr, "/soc/spi0",          &tmp_addr, NULL) ||

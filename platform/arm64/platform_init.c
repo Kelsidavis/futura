@@ -150,6 +150,7 @@
 #include <platform/arm64/apple_power.h>
 #include <platform/arm64/apple_xhci.h>
 #include <platform/arm64/apple_bcm.h>
+#include <platform/arm64/apple_pmgr.h>
 #include <platform/arm64/apple_audio.h>
 #include <config/futura_config.h>
 #include <kernel/fut_waitq.h>
@@ -1475,6 +1476,11 @@ void fut_platform_late_init(void) {
 
         if (info.has_aic) {
             fut_serial_puts("[INIT] Apple Silicon detected, initializing drivers...\n");
+
+            /* pmgr (clock gates) — initialise first so subsequent
+             * driver init can request power-on for peripherals that
+             * m1n1 left gated. */
+            apple_pmgr_init(&info);
 
             /* Storage: ANS2 NVMe */
             if (info.ans_nvme_base != 0) {

@@ -50,6 +50,8 @@ unsafe extern "C" {
     fn rust_rtkit_send(ctx: *mut (), endpoint: u8, msg: u64) -> i32;
     /// Poll RX FIFO and dispatch.
     fn rust_rtkit_poll(ctx: *mut ()) -> i32;
+    /// Release the RTKit context.
+    fn rust_rtkit_free(ctx: *mut ());
 }
 
 // ---------------------------------------------------------------------------
@@ -621,6 +623,9 @@ impl Ans2Ctrl {
             return None;
         }
         if unsafe { rust_rtkit_boot(rtkit) } == 0 {
+            // rust_rtkit_init heap-allocated the ctx; free it on
+            // boot-failure so we don't leak ~10 KiB per failed init.
+            unsafe { rust_rtkit_free(rtkit) };
             return None;
         }
 
@@ -643,6 +648,7 @@ impl Ans2Ctrl {
             }
         };
         if !boot_ok {
+            unsafe { rust_rtkit_free(rtkit) };
             return None;
         }
 
@@ -670,6 +676,8 @@ impl Ans2Ctrl {
             if !io_sq.is_null()      { unsafe { fut_free(io_sq as *mut u8) } }
             if !io_cq.is_null()      { unsafe { fut_free(io_cq as *mut u8) } }
             if !io_tcbs.is_null()    { unsafe { fut_free(io_tcbs as *mut u8) } }
+            // Also free the RTKit ctx that step 1 allocated.
+            unsafe { rust_rtkit_free(rtkit) };
             return None;
         }
 

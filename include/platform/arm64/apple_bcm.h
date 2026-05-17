@@ -65,6 +65,22 @@ bool                          apple_bcm_bt_present(void);
 const apple_bcm_discovery_t  *apple_bcm_wifi_info(void);
 const apple_bcm_discovery_t  *apple_bcm_bt_info(void);
 
+/* BAR access: return the kernel VA mapping the corresponding BAR, or
+ * 0 if the chip wasn't discovered.  Backed by the existing Apple
+ * peripheral mapping window (`fut_kernel_peripheral_va`) — no extra
+ * page-table work needed. */
+uint64_t apple_bcm_wifi_bar0_va(void);
+uint64_t apple_bcm_wifi_bar2_va(void);
+uint64_t apple_bcm_bt_bar0_va(void);
+uint64_t apple_bcm_bt_bar2_va(void);
+
+/* Chip lifecycle stubs.  Today they only validate state + log; the
+ * actual GPIO toggle for WL_REG_ON and the PCIe Function-Level Reset
+ * land in follow-up slices.  Returns 0 on success, negative errno on
+ * failure (no chip present, etc.). */
+int apple_bcm_chip_power_on(void);
+int apple_bcm_chip_reset(void);
+
 /* Rust FFI surface (apple_bcm crate). */
 uint32_t     rust_apple_bcm_classify(uint16_t vendor, uint16_t device);
 const char  *rust_apple_bcm_chip_name(uint32_t chip_id);

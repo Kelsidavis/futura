@@ -238,3 +238,77 @@ const apple_bcm_discovery_t *apple_bcm_bt_info(void)
 {
     return g_bcm.bt_present ? &g_bcm.bt : NULL;
 }
+
+uint64_t apple_bcm_wifi_bar0_va(void)
+{
+    if (!g_bcm.wifi_present || g_bcm.wifi.bar0 == 0) return 0;
+    return fut_kernel_peripheral_va(g_bcm.wifi.bar0);
+}
+
+uint64_t apple_bcm_wifi_bar2_va(void)
+{
+    if (!g_bcm.wifi_present || g_bcm.wifi.bar2 == 0) return 0;
+    return fut_kernel_peripheral_va(g_bcm.wifi.bar2);
+}
+
+uint64_t apple_bcm_bt_bar0_va(void)
+{
+    if (!g_bcm.bt_present || g_bcm.bt.bar0 == 0) return 0;
+    return fut_kernel_peripheral_va(g_bcm.bt.bar0);
+}
+
+uint64_t apple_bcm_bt_bar2_va(void)
+{
+    if (!g_bcm.bt_present || g_bcm.bt.bar2 == 0) return 0;
+    return fut_kernel_peripheral_va(g_bcm.bt.bar2);
+}
+
+int apple_bcm_chip_power_on(void)
+{
+    if (!g_bcm.wifi_present) {
+        fut_printf("[bcm] power_on: no chip discovered\n");
+        return -ENODEV;
+    }
+
+    /* Real bring-up needs three things, none of which exist yet:
+     *
+     *   1. The "wlan-reset" GPIO line from the WiFi DT node
+     *      (apple,t8103-pcie-wlan-reset or similar) — driven via
+     *      apple_gpio to deassert WL_REG_ON.
+     *   2. The "bt-reset" GPIO line from the Bluetooth DT node, same
+     *      pattern.
+     *   3. A wait for the chip's internal voltage rails to stabilize
+     *      (Asahi uses ~150 ms after deassert).
+     *
+     * Until apple_bcm grows DT parsing for those nodes, all we can do
+     * is log the intent so the boot log on real hardware shows
+     * exactly where we got stuck. */
+    fut_printf("[bcm] power_on: stub — DT GPIO wiring for "
+               "wlan-reset/bt-reset is the next slice\n");
+    return -ENOSYS;
+}
+
+int apple_bcm_chip_reset(void)
+{
+    if (!g_bcm.wifi_present) {
+        fut_printf("[bcm] reset: no chip discovered\n");
+        return -ENODEV;
+    }
+
+    /* The chip exposes PCIe Function-Level Reset (FLR) at the
+     * standard offset in the device control register of the PCIe
+     * capability.  Reset path is:
+     *
+     *   1. Walk extended config space to find PCIe capability ID 0x10.
+     *   2. Read device control register (cap_offset + 0x08).
+     *   3. Set bit 15 (Initiate FLR).
+     *   4. Wait 100 ms.
+     *   5. Verify chip vendor ID re-reads as 0x14e4.
+     *
+     * Once apple_pcie grows a capability-walk helper this becomes
+     * straightforward; today it would duplicate logic into apple_bcm,
+     * so it's deferred. */
+    fut_printf("[bcm] reset: stub — needs apple_pcie capability "
+               "walker to find PCIe cap offset for FLR\n");
+    return -ENOSYS;
+}

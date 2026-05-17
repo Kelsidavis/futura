@@ -136,6 +136,22 @@ void fut_pmgr_test_thread(void *arg)
         }
     }
 
+    /* T12: stats3 reports all three counters; NULL-safe */
+    {
+        uint32_t en = 0xDEAD, fa = 0xBEEF, di = 0xC0DE;
+        apple_pmgr_stats3(&en, &fa, &di);
+        if (en == 0 && fa == 0 && di == 0) {
+            PMGR_PASS("stats3 zero on non-Apple");
+        } else {
+            fut_printf("[PMGR-TEST] got en=%u fa=%u di=%u\n", en, fa, di);
+            PMGR_FAIL("stats3 zero on non-Apple", 12);
+            return;
+        }
+        /* All-NULL must not crash. */
+        apple_pmgr_stats3(NULL, NULL, NULL);
+        PMGR_PASS("stats3(NULL, NULL, NULL)");
+    }
+
     fut_printf("[PMGR-TEST] all apple_pmgr error-path tests passed\n");
 }
 

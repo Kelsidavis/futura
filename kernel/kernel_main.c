@@ -2069,11 +2069,12 @@ void fut_kernel_main(void) {
         planned_tests += 14u;
 #endif
 
-        /* apple_pmgr: T1-T11 (no-init guard paths return correct errnos,
+        /* apple_pmgr: T1-T13 (no-init guard paths return correct errnos,
          * enable + disable domain-list helpers reject NULL/empty,
-         * stats handle NULL). ARM64-only. */
+         * stats handle NULL, stats3 reports all three counters).
+         * ARM64-only. */
 #ifdef __aarch64__
-        planned_tests += 11u;
+        planned_tests += 13u;
 #endif
 
         /* apple_rtkit: T1-T8 (NULL-ctx guards on every public function

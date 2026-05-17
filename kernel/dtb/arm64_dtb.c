@@ -192,56 +192,148 @@ fut_platform_type_t fut_dtb_detect_platform(uint64_t dtb_ptr) {
  *   Property Extraction
  * ============================================================ */
 
-size_t fut_dtb_get_property(uint64_t dtb_ptr, const char *node_name __attribute__((unused)),
+/* True if @actual matches @target, treating an Asahi/U-Boot unit-address
+ * suffix on @actual as optional.  "uart0" matches "uart0@235200000" and
+ * vice-versa; "ans/mailbox" matches "ans/mailbox@..." too. */
+static bool dtb_node_name_matches(const char *actual, const char *target) {
+    while (*target != '\0') {
+        if (*actual == '\0' || *actual != *target) {
+            return false;
+        }
+        actual++;
+        target++;
+    }
+    /* Target exhausted — accept either exact end or unit-address suffix. */
+    return *actual == '\0' || *actual == '@';
+}
+
+size_t fut_dtb_get_property(uint64_t dtb_ptr, const char *node_name,
                             const char *prop_name, void *value_out, size_t max_len) {
     if (!fut_dtb_validate(dtb_ptr) || !prop_name || !value_out) {
         return 0;
     }
 
-    /* Simplified implementation: search through all nodes */
     dtb_header_t *header = (dtb_header_t *)dtb_ptr;
-    uint32_t totalsize = be32_to_cpu(header->totalsize);
-    uint32_t off_struct = be32_to_cpu(header->off_dt_struct);
-    uint32_t off_strings = be32_to_cpu(header->off_dt_strings);
+    uint32_t totalsize    = be32_to_cpu(header->totalsize);
+    uint32_t off_struct   = be32_to_cpu(header->off_dt_struct);
+    uint32_t off_strings  = be32_to_cpu(header->off_dt_strings);
+    uint32_t size_strings = be32_to_cpu(header->size_dt_strings);
 
-    /* Validate offsets are within the DTB blob */
     if (off_struct >= totalsize || off_strings >= totalsize) {
         return 0;
     }
 
-    char *strings_base = (char *)(dtb_ptr + off_strings);
-    uint32_t *struct_ptr = (uint32_t *)(dtb_ptr + off_struct);
-    uint32_t *struct_end = (uint32_t *)(dtb_ptr + totalsize);
+    const char *strings_base = (const char *)(dtb_ptr + off_strings);
+    uint32_t   *p            = (uint32_t *)(dtb_ptr + off_struct);
+    uint32_t   *struct_end   = (uint32_t *)(dtb_ptr + totalsize);
 
-    /* Skip to end of root node and look for properties */
-    uint32_t *p = struct_ptr;
+    /* Parse the target path into per-depth components.  An empty or
+     * NULL node_name matches the root node (depth 0).  Paths with a
+     * leading '/' are anchored; a relative path like "memory" is
+     * equivalent to "/memory".  Each component is a pointer + length
+     * into the caller's string; we don't copy because the path
+     * outlives the walk. */
+    #define MAX_DEPTH 16
+    const char *comp_ptr[MAX_DEPTH] = {0};
+    size_t      comp_len[MAX_DEPTH] = {0};
+    int         target_depth        = 0;
 
-    while (p < struct_end && be32_to_cpu(p[0]) != FDT_END) {
+    if (node_name && *node_name != '\0') {
+        const char *s = node_name;
+        if (*s == '/') s++;
+        while (*s != '\0' && target_depth < MAX_DEPTH) {
+            comp_ptr[target_depth] = s;
+            size_t len = 0;
+            while (s[len] != '\0' && s[len] != '/') len++;
+            comp_len[target_depth] = len;
+            target_depth++;
+            s += len;
+            if (*s == '/') s++;
+        }
+    }
+
+    /* Walk tokens.  is_match[d] is true if every ancestor from depth 1
+     * through d matched its path component.  is_match[0] is always
+     * true (root).  When depth == target_depth AND is_match[depth] is
+     * true we're inside the target node and look at every FDT_PROP. */
+    bool is_match[MAX_DEPTH + 1] = {0};
+    is_match[0] = true;
+    int  depth  = 0;
+
+    while (p < struct_end) {
         uint32_t token = be32_to_cpu(p[0]);
 
-        if (token == FDT_PROP) {
-            dtb_prop_t *prop = (dtb_prop_t *)&p[1];
+        if (token == FDT_END) {
+            break;
+        } else if (token == FDT_BEGIN_NODE) {
+            const char *name = (const char *)&p[1];
+            /* Bound the strlen to the remaining DTB so a malformed
+             * blob can't run us past struct_end. */
+            size_t max_name = (size_t)((char *)struct_end - name);
+            size_t name_len = 0;
+            while (name_len < max_name && name[name_len] != '\0') {
+                name_len++;
+            }
+            depth++;
+            if (depth <= MAX_DEPTH) {
+                if (depth <= target_depth && is_match[depth - 1]) {
+                    /* Compare this node name to the matching path
+                     * component.  Build a temporary NUL-terminated
+                     * copy of just the component to use the unit-
+                     * address-tolerant matcher. */
+                    char target_buf[64];
+                    size_t tlen = comp_len[depth - 1];
+                    if (tlen >= sizeof(target_buf)) tlen = sizeof(target_buf) - 1;
+                    memcpy(target_buf, comp_ptr[depth - 1], tlen);
+                    target_buf[tlen] = '\0';
+                    is_match[depth] = dtb_node_name_matches(name, target_buf);
+                } else {
+                    is_match[depth] = false;
+                }
+            }
+            /* Advance past the variable-length name (NUL-terminated,
+             * padded to 4 bytes).  This is the bit the old walker
+             * got wrong — it just did p += 1 and desync'd inside
+             * any non-root subtree. */
+            size_t aligned = align_offset(name_len + 1);
+            p = (uint32_t *)((char *)&p[1] + aligned);
+        } else if (token == FDT_END_NODE) {
+            if (depth <= MAX_DEPTH) {
+                is_match[depth] = false;
+            }
+            depth--;
+            p += 1;
+        } else if (token == FDT_NOP) {
+            p += 1;
+        } else if (token == FDT_PROP) {
+            dtb_prop_t *prop  = (dtb_prop_t *)&p[1];
             uint32_t prop_len = be32_to_cpu(prop->len);
             uint32_t name_off = be32_to_cpu(prop->nameoff);
+            if (name_off >= size_strings) {
+                break;
+            }
             const char *name = strings_base + name_off;
 
-            if (strcmp(name, prop_name) == 0) {
+            bool in_target = (depth == target_depth) &&
+                             (depth <= MAX_DEPTH) &&
+                             is_match[depth];
+            if (in_target && strcmp(name, prop_name) == 0) {
                 size_t copy_len = (prop_len < max_len) ? prop_len : max_len;
                 memcpy(value_out, &prop[1], copy_len);
                 return prop_len;
             }
 
-            /* Move to next entry */
-            p = (uint32_t *)((char *)p + sizeof(uint32_t) + sizeof(dtb_prop_t) + prop_len);
+            size_t advance = sizeof(uint32_t) + sizeof(dtb_prop_t) + prop_len;
+            p = (uint32_t *)((char *)p + advance);
             p = (uint32_t *)align_offset((size_t)p);
-        } else if (token == FDT_BEGIN_NODE || token == FDT_END_NODE || token == FDT_NOP) {
-            p += 1;
         } else {
+            /* Unknown token — abort rather than walking into garbage. */
             break;
         }
     }
 
     return 0;
+    #undef MAX_DEPTH
 }
 
 size_t fut_dtb_get_string_property(uint64_t dtb_ptr, const char *node_name,

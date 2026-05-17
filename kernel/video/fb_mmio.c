@@ -201,6 +201,17 @@ int fb_set_hwinfo(const struct fut_fb_hwinfo *info) {
     fut_printf("[FB] hwinfo published: %ux%u %ubpp pitch=%u phys=0x%llx\n",
                info->info.width, info->info.height, info->info.bpp,
                info->info.pitch, (unsigned long long)info->phys);
+
+    /* Bring up the framebuffer console now that we have valid geometry.
+     * Idempotent — fb_console_init returns 0 immediately if it's
+     * already up.  The x86_64 boot splash and ARM64 virtio-gpu paths
+     * both call this inline; without it on the Apple DCP path the
+     * kernel + shell would stay serial-only even after a real
+     * framebuffer became available, because fb_boot_splash already
+     * gave up earlier in boot with g_fb_available = false. */
+    extern int fb_console_init(void);
+    fb_console_init();
+
     return 0;
 }
 

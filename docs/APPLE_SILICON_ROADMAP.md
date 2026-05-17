@@ -70,7 +70,7 @@ Continue kernel init
 ### Priority 4: Advanced Features
 - [ ] **Thunderbolt**: External device support
 - [x] **Ethernet (USB-C)**: CDC-ECM driver wired through `apple_xhci_bulk_transfer` ✅
-- [~] **WiFi/Bluetooth**: On-board wireless — Rust `apple_bcm` crate + C wrapper discovers the Broadcom BCM4377/4378/4387/4388 combo chip on PCIe (function 0 = WiFi, function 1 = Bluetooth); firmware load + radio bring-up are follow-up slices
+- [~] **WiFi/Bluetooth**: On-board wireless — Rust `apple_bcm` crate + C wrapper does PCIe discovery, chip classification, FLR via PCIe Capability 0x10, WL_REG_ON/BT_REG_ON GPIO toggle (DT walker populates pin numbers from `apple,bootstrap-gpios`), and BAR-VA accessors; kernel firmware loader (`fut_firmware_load`) wires `apple_bcm` to attempt blob loading but currently fails -ENOENT because no FS provider exists yet.  Outstanding: FS firmware provider, PCIe MSI/MSI-X vector allocation, brcmfmac M2M-DMA firmware upload + msgbuf rings, HCI transport for Bluetooth function
 - [x] **Audio**: Rust `apple_mca` MCA I2S + I2C codec wrapper (`f95357b9`) ✅
 
 ## Implementation Plan
@@ -141,11 +141,14 @@ Continue kernel init
    - CDC-ECM driver (`platform/arm64/drivers/usb_cdc_ecm.c`)
    - TCP/IP integration via existing stack
 
-2. **WiFi/Bluetooth support** 🚧 (discovery only — radio bring-up pending)
+2. **WiFi/Bluetooth support** 🚧 (chip discovery + power-rails + reset wired; radio bring-up pending)
    - Rust `apple_bcm` crate classifies Broadcom WiFi+BT combo chips by PCI vendor/device
    - C wrapper walks Apple PCIe, finds fn 0 (WiFi) + fn 1 (Bluetooth), reads BAR0/BAR2, enables MEM + bus mastering
-   - Apple firmware blob base names exposed via FFI for the follow-up firmware loader
-   - **Deferred to subsequent slices**: brcmfmac M2M DMA upload, NVRAM parse, MSI wiring, HCI Bluetooth transport, WL_REG_ON / chip-reset GPIO poke
+   - `apple_bcm_chip_power_on` drives WL_REG_ON / BT_REG_ON HIGH via `apple_gpio`; pin numbers populated by DT walker
+   - `apple_bcm_chip_reset` issues PCIe Function-Level Reset via the reusable `rust_apple_pcie_find_cap` capability walker
+   - Kernel-level `fut_firmware_load` request-firmware API + apple_bcm integration (logs missing-firmware names cleanly)
+   - 10 unit tests for the firmware loader in `make test-arm64`
+   - **Deferred to subsequent slices**: FS-backed firmware provider, brcmfmac M2M DMA upload, NVRAM parse, MSI wiring, HCI Bluetooth transport
 
 ## Technical References
 
@@ -229,7 +232,7 @@ this environment) or post-first-light features:
 5. **Real-hardware validation on M1 / M2 / M3 / M4** — needs physical device
 6. **pmgr support** — Apple SoC clock gating; m1n1 leaves most enabled but a few peripherals (DCP power-on, ANS reset deassert) likely need pmgr writes
 7. **Full DCP swap-chain protocol** — currently m1n1's FB is the first-light path; DCP-driven mode changes / hot-plug come later
-8. **WiFi/Bluetooth firmware load + radio bring-up** — discovery is wired (`apple_bcm` crate + `apple_bcm_platform_init`); next slice loads the `brcmfmac4378-pcie.apple.*` blobs over M2M DMA, brings the chip out of reset, and registers an HCI transport for Bluetooth
+8. **WiFi/Bluetooth firmware load + radio bring-up** — discovery, power rails, FLR, and request-firmware plumbing all in place.  Outstanding pieces: (a) FS-backed firmware provider so `fut_firmware_load` returns the blob bytes, (b) PCIe MSI vector allocation for the BCM chip's command/event/RX/TX rings, (c) brcmfmac msgbuf protocol — M2M DMA firmware upload, ring init, scan/associate, (d) HCI transport for the BT function
 
 ## Resources Needed
 

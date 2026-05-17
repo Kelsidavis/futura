@@ -89,9 +89,16 @@ uint64_t rust_virt_to_phys(const void *vaddr) {
     return pmap_virt_to_phys((uintptr_t)vaddr);
 }
 #elif defined(__aarch64__)
+#include <platform/arm64/memory/pmap.h>
 uint64_t rust_virt_to_phys(const void *vaddr) {
-    /* ARM64: identity-mapped kernel; adjust if using higher-half */
-    return (uint64_t)(uintptr_t)vaddr;
+    /* ARM64 is NOT identity-mapped: boot.S puts the kernel image at
+     * a high-half VA (KERN_VA_BASE) mapped to its actual load PA
+     * (g_kernel_load_pa, tracked at runtime so m1n1-style relocated
+     * loads work).  Returning the VA unchanged would have made every
+     * Rust driver that DMAs a fut_alloc-allocated buffer write to
+     * the wrong physical pages — silent corruption on QEMU virt and
+     * a hard fault on Apple Silicon where the offset is non-trivial. */
+    return pmap_virt_to_phys((uintptr_t)vaddr);
 }
 #endif
 

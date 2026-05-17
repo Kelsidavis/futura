@@ -28,6 +28,13 @@ use core::sync::atomic::{AtomicBool, Ordering};
 unsafe extern "C" {
     fn fut_alloc(size: usize) -> *mut u8;
     fn fut_free(ptr: *mut u8);
+    /// Convert a kernel VA into the corresponding physical address.
+    /// The ANS2 controller's NVMMU and PRP fields expect PAs — using
+    /// raw `as u64` casts on kernel VAs from fut_alloc would have
+    /// pointed the controller at the wrong physical pages on every
+    /// platform where the kernel image is not identity-mapped (i.e.,
+    /// both QEMU virt and Apple Silicon on ARM64).
+    fn rust_virt_to_phys(vaddr: *const core::ffi::c_void) -> u64;
     /// Rust RTKit driver — init a context at the given mailbox MMIO base.
     fn rust_rtkit_init(base: u64) -> *mut ();
     /// Run the RTKit boot sequence.
@@ -316,16 +323,22 @@ impl Ans2Ctrl {
     }
 
     fn enable(&mut self) -> bool {
-        // Program AQA, ASQ, ACQ
+        // Program AQA, ASQ, ACQ — the controller DMAs the SQ / CQ
+        // entries via these physical addresses, so feed it PAs, not
+        // the kernel VAs returned by fut_alloc.
         let aqa = ((ADMIN_Q_DEPTH as u32 - 1) << 16) | (ADMIN_Q_DEPTH as u32 - 1);
         self.w32(NVME_REG_AQA, aqa);
-        self.w64(NVME_REG_ASQ, self.admin.sq as u64);
-        self.w64(NVME_REG_ACQ, self.admin.cq as u64);
+        self.w64(NVME_REG_ASQ,
+                 unsafe { rust_virt_to_phys(self.admin.sq as *const _) });
+        self.w64(NVME_REG_ACQ,
+                 unsafe { rust_virt_to_phys(self.admin.cq as *const _) });
 
-        // Configure NVMMU TCB base + count
+        // Configure NVMMU TCB base + count — same VA→PA conversion.
         self.w32(NVMMU_NUM_TCBS as usize, MAX_TAGS as u32);
-        self.w64(NVMMU_ASQ_TCB_BASE as usize, self.admin.tcbs as u64);
-        self.w64(NVMMU_IOSQ_TCB_BASE as usize, self.io_q.tcbs as u64);
+        self.w64(NVMMU_ASQ_TCB_BASE as usize,
+                 unsafe { rust_virt_to_phys(self.admin.tcbs as *const _) });
+        self.w64(NVMMU_IOSQ_TCB_BASE as usize,
+                 unsafe { rust_virt_to_phys(self.io_q.tcbs as *const _) });
 
         // Enable linear SQ
         self.w32(ANS_LINEAR_SQ_CTRL, ANS_LINEAR_SQ_EN);
@@ -467,7 +480,7 @@ impl Ans2Ctrl {
         let mut cmd = NvmeCmd::default();
         cmd.opcode = NVME_OP_IDENTIFY;
         cmd.nsid   = 0;
-        cmd.prp1   = buf as u64;
+        cmd.prp1   = unsafe { rust_virt_to_phys(buf as *const _) };
         cmd.prp2   = 0;
         cmd.cdw10  = 1; // CNS=1 (controller)
 
@@ -498,7 +511,7 @@ impl Ans2Ctrl {
         let mut cmd = NvmeCmd::default();
         cmd.opcode = NVME_OP_IDENTIFY;
         cmd.nsid   = 1;
-        cmd.prp1   = buf as u64;
+        cmd.prp1   = unsafe { rust_virt_to_phys(buf as *const _) };
         cmd.cdw10  = 0; // CNS=0 (namespace)
 
         let ok = self.admin_cmd(&cmd, 4096);
@@ -540,7 +553,7 @@ impl Ans2Ctrl {
         let mut cmd = NvmeCmd::default();
         cmd.opcode = NVME_OP_READ;
         cmd.nsid   = 1;
-        cmd.prp1   = buf as u64;
+        cmd.prp1   = unsafe { rust_virt_to_phys(buf as *const _) };
         cmd.prp2   = 0; // single PRP for now
         cmd.cdw10  = lba as u32;
         cmd.cdw11  = (lba >> 32) as u32;
@@ -573,7 +586,7 @@ impl Ans2Ctrl {
         let mut cmd = NvmeCmd::default();
         cmd.opcode = NVME_OP_WRITE;
         cmd.nsid   = 1;
-        cmd.prp1   = buf as u64;
+        cmd.prp1   = unsafe { rust_virt_to_phys(buf as *const _) };
         cmd.prp2   = 0;
         cmd.cdw10  = lba as u32;
         cmd.cdw11  = (lba >> 32) as u32;

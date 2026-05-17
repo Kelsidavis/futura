@@ -44,6 +44,12 @@
 #define MCA_MCLK_SEL         0u
 #define MCA_MCLK_HZ          24000000u
 
+/* Default sample rate if the caller calls play_start without an
+ * intervening configure().  48 kHz is the canonical CoreAudio default
+ * and the only rate guaranteed to work across every shipping M1/M2
+ * codec without an MCLK adjustment. */
+#define APPLE_AUDIO_DEFAULT_RATE  48000u
+
 /* Static state */
 static struct {
     AppleMca *mca;
@@ -202,8 +208,18 @@ int apple_audio_play_start(void) {
     if (g_audio.state.playing) return 0;
 
     /* If we hold an MCA handle but configure() was never called,
-     * push a default setup so the cluster is ready to accept data. */
+     * push a default setup so the cluster is ready to accept data.
+     * sample_rate==0 (the post-memset initial value) would produce
+     * garbage MCLK programming, so substitute the default rate and
+     * mirror it back into state so subsequent calls see consistent
+     * values. */
     if (g_audio.mca) {
+        if (g_audio.state.sample_rate == 0) {
+            g_audio.state.sample_rate = APPLE_AUDIO_DEFAULT_RATE;
+        }
+        if (g_audio.state.channels == 0) {
+            g_audio.state.channels = 2;
+        }
         int rc = rust_mca_setup_playback(g_audio.mca, g_audio.cluster,
                                          MCA_MCLK_SEL, MCA_MCLK_HZ,
                                          g_audio.state.sample_rate);

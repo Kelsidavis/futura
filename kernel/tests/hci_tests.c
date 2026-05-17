@@ -227,6 +227,49 @@ void fut_hci_test_thread(void *arg)
         else { HCI_TEST_FAIL("unregister idempotent", 13); return; }
     }
 
+    /* T14: build_cmd opcode layout (HCI_Reset is 0x0C03 = OGF 0x03, OCF 0x0003) */
+    {
+        uint8_t pkt[8] = {0};
+        int len = fut_hci_build_cmd(FUT_HCI_OP_RESET, NULL, 0,
+                                     pkt, sizeof(pkt));
+        if (len == 3 && pkt[0] == 0x03 && pkt[1] == 0x0C && pkt[2] == 0x00) {
+            HCI_TEST_PASS("build_cmd(HCI_Reset)");
+        } else {
+            fut_printf("[HCI-TEST] got len=%d pkt=%02x %02x %02x\n",
+                       len, pkt[0], pkt[1], pkt[2]);
+            HCI_TEST_FAIL("build_cmd(HCI_Reset)", 14);
+            return;
+        }
+    }
+
+    /* T15: build_cmd with params copies payload */
+    {
+        uint8_t params[] = { 0xDE, 0xAD, 0xBE, 0xEF };
+        uint8_t pkt[16] = {0};
+        int len = fut_hci_build_cmd(FUT_HCI_OP_LE_SET_SCAN_ENABLE,
+                                     params, sizeof(params),
+                                     pkt, sizeof(pkt));
+        if (len == 7 && pkt[2] == 4 &&
+            pkt[3] == 0xDE && pkt[4] == 0xAD &&
+            pkt[5] == 0xBE && pkt[6] == 0xEF) {
+            HCI_TEST_PASS("build_cmd(with params)");
+        } else {
+            HCI_TEST_FAIL("build_cmd(with params)", 15);
+            return;
+        }
+    }
+
+    /* T16: build_cmd into too-small buffer → -EINVAL */
+    {
+        uint8_t params[16];
+        uint8_t pkt[5];  /* needs 3 + 16 = 19 */
+        memset(params, 0, sizeof(params));
+        int len = fut_hci_build_cmd(FUT_HCI_OP_RESET, params, sizeof(params),
+                                     pkt, sizeof(pkt));
+        if (len == -EINVAL) HCI_TEST_PASS("build_cmd(buffer too small)");
+        else { HCI_TEST_FAIL("build_cmd(buffer too small)", 16); return; }
+    }
+
     fut_printf("[HCI-TEST] all HCI core tests passed\n");
     fut_hci_reset();
 }

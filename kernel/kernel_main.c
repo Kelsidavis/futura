@@ -1999,9 +1999,10 @@ void fut_kernel_main(void) {
          * those + the 10 new firmware tests. */
         planned_tests += 14u;
 
-        /* HCI core: T1-T13 (registration validation, send_cmd routing,
-         * event sink, open/close lifecycle, unregister idempotency). */
-        planned_tests += 13u;
+        /* HCI core: T1-T16 (registration validation, send_cmd routing,
+         * event sink, open/close lifecycle, unregister idempotency,
+         * build_cmd packet construction). */
+        planned_tests += 16u;
     }
     (void)planned_tests;
     if (run_tests) {

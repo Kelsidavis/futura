@@ -134,4 +134,49 @@ int fut_hci_dispatch_event(int dev_index,
 /* Wipe the registry — primarily for tests. */
 void fut_hci_reset(void);
 
+/* ============================================================
+ *   HCI opcodes + packet construction
+ * ============================================================
+ *
+ * Opcodes are 16-bit values split into OCF (Opcode Command Field,
+ * low 10 bits) and OGF (Opcode Group Field, high 6 bits).  The
+ * standard groups we care about for bring-up:
+ *
+ *   OGF 0x01  Link Control commands         (Inquiry, etc.)
+ *   OGF 0x03  Controller & Baseband cmds    (Reset, Read Local Name)
+ *   OGF 0x04  Informational Parameters      (Read Local Version)
+ *   OGF 0x08  LE Controller commands        (LE Set Scan Params, etc.)
+ */
+
+#define FUT_HCI_OPCODE(ogf, ocf)  ((uint16_t)((((ogf) & 0x3F) << 10) | ((ocf) & 0x3FF)))
+
+#define FUT_HCI_OP_RESET                FUT_HCI_OPCODE(0x03, 0x0003)
+#define FUT_HCI_OP_READ_LOCAL_NAME      FUT_HCI_OPCODE(0x03, 0x0014)
+#define FUT_HCI_OP_READ_LOCAL_VERSION   FUT_HCI_OPCODE(0x04, 0x0001)
+#define FUT_HCI_OP_READ_BD_ADDR         FUT_HCI_OPCODE(0x04, 0x0009)
+#define FUT_HCI_OP_LE_SET_SCAN_PARAMS   FUT_HCI_OPCODE(0x08, 0x000B)
+#define FUT_HCI_OP_LE_SET_SCAN_ENABLE   FUT_HCI_OPCODE(0x08, 0x000C)
+
+/* HCI event codes (first byte of the parameter portion of an
+ * incoming event packet). */
+#define FUT_HCI_EVT_CMD_COMPLETE        0x0E
+#define FUT_HCI_EVT_CMD_STATUS          0x0F
+#define FUT_HCI_EVT_HARDWARE_ERROR      0x10
+#define FUT_HCI_EVT_LE_META             0x3E
+
+/* Build an HCI command packet into `out_buf`.  Layout:
+ *   byte 0   : opcode low
+ *   byte 1   : opcode high
+ *   byte 2   : parameter length
+ *   bytes 3+ : params (copied from `params`, `param_len` bytes)
+ *
+ * Returns the total packet length on success, -EINVAL if the buffer
+ * is too small or parameters won't fit.  `out_buf` must hold at
+ * least 3 + param_len bytes; recommended size FUT_HCI_CMD_PKT_MAX. */
+int fut_hci_build_cmd(uint16_t opcode,
+                      const uint8_t *params,
+                      uint8_t param_len,
+                      uint8_t *out_buf,
+                      size_t out_cap);
+
 #endif /* __FUTURA_HCI_H__ */

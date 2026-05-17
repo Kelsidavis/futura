@@ -151,3 +151,23 @@ void fut_hci_reset(void)
         g_hci_slot_used[i] = false;
     }
 }
+
+int fut_hci_build_cmd(uint16_t opcode,
+                      const uint8_t *params,
+                      uint8_t param_len,
+                      uint8_t *out_buf,
+                      size_t out_cap)
+{
+    if (!out_buf) return -EINVAL;
+    size_t needed = 3u + param_len;
+    if (out_cap < needed) return -EINVAL;
+    if (param_len > 0 && !params) return -EINVAL;
+
+    out_buf[0] = (uint8_t)(opcode & 0xFFu);
+    out_buf[1] = (uint8_t)((opcode >> 8) & 0xFFu);
+    out_buf[2] = param_len;
+    if (param_len > 0) {
+        memcpy(out_buf + 3, params, param_len);
+    }
+    return (int)needed;
+}

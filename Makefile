@@ -886,6 +886,7 @@ KERNEL_SOURCES := \
     kernel/fs/futurafs.c \
     kernel/chrdev.c \
     kernel/firmware.c \
+    kernel/tests/firmware_tests.c \
     kernel/sys_echo.c \
     kernel/sys_exit.c \
     kernel/sys_fork.c \

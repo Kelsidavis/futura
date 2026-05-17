@@ -907,6 +907,9 @@ static void selftest_sequential_runner(void *arg) {
     fut_poll_test_thread(NULL);
     fut_misc_test_thread(NULL);
 
+    extern void fut_firmware_test_thread(void *arg);
+    fut_firmware_test_thread(NULL);
+
     /* Safety net: if every test function returned without triggering
      * try_finish() (planned over-counted by the same magnitude as a
      * skipped cluster, or a control-flow branch that returned without
@@ -1984,6 +1987,8 @@ void fut_kernel_main(void) {
         // planned_tests += 1u; /* futfs */
         // planned_tests += 1u; /* net */
         /* perf tests disabled — not included in sequential runner */
+
+        planned_tests += 10u; /* firmware loader: T1-T10 (input validation, embed round-trip, duplicate rejection, provider walk, reset) */
     }
     (void)planned_tests;
     if (run_tests) {

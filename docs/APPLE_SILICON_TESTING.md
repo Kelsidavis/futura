@@ -1,7 +1,7 @@
 # Apple Silicon M2 Hardware Testing Guide
 
 **Target Device**: MacBook Pro A2338 (M2) — also covers M1 / M3 / M4
-**Status**: Ready for tethered boot testing (non-destructive); kernel-side bring-up complete with 127-test pre-hardware guard coverage
+**Status**: Ready for tethered boot testing (non-destructive); kernel-side bring-up complete with 201-test pre-hardware guard coverage across every Apple driver public API
 **Last Updated**: 2026-05-17
 
 ---
@@ -384,14 +384,22 @@ Before touching real Apple hardware, the kernel test suite exercises every Apple
 | apple_xhci       | 7     | init / enumerate / get_device / control / bulk transfer guards         |
 | apple_dcp        | 8     | Rust FFI NULL guards on swap + mode accessors, platform_init NULL      |
 | apple_aic + ans2 | 5     | AIC init / pending / whoami guards, ans2_platform_init NULL            |
-| **Total**        |**127**| every public function across 10 Apple subsystems + 3 kernel subsystems |
+| apple_dart       | 8     | Rust IOMMU FFI NULL guards: free / enable/disable stream / map / unmap / iova_to_phys / flush_tlb |
+| apple_pcie       | 12    | Rust PCIe FFI NULL guards: cfg reads return PCI device-not-present sentinels (0xFFFFFFFF/0xFFFF/0xFF) |
+| apple_uart       | 8     | base=0 guards on init / putc / getc / tx_ready / rx_ready / write / puts |
+| apple_gpio       | 9     | init/free + every set/get/toggle NULL handling                         |
+| apple_smc        | 9     | read_key / write_key / cpu_temp / fan / ac / key_count / key_info guards |
+| apple_spi + i2c  | 10    | init/free/transfer/cs/handle_irq guards (5 each)                        |
+| apple_mca        | 7     | I2S init / setup_playback / setup_capture / DMA / handle_irq guards    |
+| apple_ans2 (Rust)| 7     | NVMe Rust FFI NULL guards: free / read / write / is_ready / max_lba / sector_size / poll |
+| **Total**        |**201**| every public function across 18 Apple subsystems + 3 kernel subsystems |
 
 These run as part of the standard kernel test harness on every CI build (see `.github/workflows/ci.yml`).  If a guard test fails after your changes, you've removed a NULL check or changed a contract — fix the test or the code before booting on real hardware.
 
 ```
 $ make test-arm64
 ...
-[TEST] ALL TESTS PASSED (2785/2785)
+[TEST] ALL TESTS PASSED (2855/2855)
 [HARNESS] PASS
 ```
 

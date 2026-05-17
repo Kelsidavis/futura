@@ -52,7 +52,7 @@ The fallback property is important: if tier 2 fails at any step the kernel still
 
 ## What's outstanding
 
-1. **pmgr power-domain enable for DCP.** On real Apple hardware the DCP coprocessor's power and clock are gated by the SoC's pmgr block until software writes the standard `PS_TARGET=0xF` pattern.  `apple_pmgr_enable(offset)` exists (`platform/arm64/drivers/apple_pmgr.c`); what's missing is the per-SoC table of DCP power-domain offsets (or DT-phandle resolution of each device node's `power-domains` property).  Without this, RTKit boot likely fails on cold boot and the kernel falls back to the m1n1 FB silently.
+1. ~~**pmgr power-domain enable for DCP.**~~ ✅ Landed in `ffbb4d56` — `apple_pmgr_enable_domains_for(dtb, "/soc/dcp@…")` reads the DCP node's `power-domains` property and walks each phandle to its pmgr-pwrstate node's reg offset via `fut_dtb_phandle_reg` (b883a81f), then calls `apple_pmgr_enable` on each.  No per-SoC offset tables; works on whichever Apple SoC m1n1 hands us.  Invoked from `apple_dcp_init` before RTKit boot.
 
 2. **DCP firmware verification.** m1n1 normally loads the DCP firmware before transferring control. We assume that's done. If a future bring-up scenario skips m1n1's DCP setup, we'd need our own firmware loader path here.
 

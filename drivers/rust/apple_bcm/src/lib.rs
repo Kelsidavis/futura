@@ -58,13 +58,16 @@ pub enum BcmChip {
 }
 
 impl BcmChip {
-    pub const fn name(self) -> &'static str {
+    /// Chip family name as a NUL-terminated byte slice so it can be
+    /// passed back through the FFI as `*const u8` and treated as a
+    /// C string.  Rust `&str` would not have the trailing NUL.
+    pub const fn name(self) -> &'static [u8] {
         match self {
-            BcmChip::Bcm4377 => "BCM4377",
-            BcmChip::Bcm4378 => "BCM4378",
-            BcmChip::Bcm4387 => "BCM4387",
-            BcmChip::Bcm4388 => "BCM4388",
-            BcmChip::Unknown => "unknown-bcm",
+            BcmChip::Bcm4377 => b"BCM4377\0",
+            BcmChip::Bcm4378 => b"BCM4378\0",
+            BcmChip::Bcm4387 => b"BCM4387\0",
+            BcmChip::Bcm4388 => b"BCM4388\0",
+            BcmChip::Unknown => b"unknown-bcm\0",
         }
     }
 
@@ -164,8 +167,7 @@ pub extern "C" fn rust_apple_bcm_classify(vendor: u16, device: u16) -> u32 {
 /// name ("BCM4378", "BCM4387", …).  The lifetime is `'static`.
 #[unsafe(no_mangle)]
 pub extern "C" fn rust_apple_bcm_chip_name(chip_id: u32) -> *const u8 {
-    let name = chip_from_u32(chip_id).name();
-    name.as_ptr()
+    chip_from_u32(chip_id).name().as_ptr()
 }
 
 /// Pointer to a NUL-terminated firmware base name for the WiFi side.

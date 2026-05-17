@@ -913,6 +913,9 @@ static void selftest_sequential_runner(void *arg) {
     extern void fut_hci_test_thread(void *arg);
     fut_hci_test_thread(NULL);
 
+    extern void fut_apple_bcm_test_thread(void *arg);
+    fut_apple_bcm_test_thread(NULL);
+
     /* Safety net: if every test function returned without triggering
      * try_finish() (planned over-counted by the same magnitude as a
      * skipped cluster, or a control-flow branch that returned without
@@ -2003,6 +2006,14 @@ void fut_kernel_main(void) {
          * event sink, open/close lifecycle, unregister idempotency,
          * build_cmd packet construction). */
         planned_tests += 16u;
+
+        /* apple_bcm FFI: T1-T10 (chip classification across BCM4377/
+         * 4378/4387 + variants, wrong-vendor/unknown-device rejection,
+         * firmware-name lookup for WiFi + BT sides).  ARM64-only —
+         * the Rust crate is aarch64-unknown-none. */
+#ifdef __aarch64__
+        planned_tests += 10u;
+#endif
     }
     (void)planned_tests;
     if (run_tests) {

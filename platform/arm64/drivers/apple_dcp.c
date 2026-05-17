@@ -301,16 +301,28 @@ int fut_apple_dcp_platform_init(const fut_platform_info_t *info) {
     g_dcp.rtkit = apple_rtkit_init(info->dcp_mailbox_base);
     if (!g_dcp.rtkit) {
         fut_printf("[DCP] RTKit init failed\n");
+        /* DART was set up earlier (line ~270); free it so we don't
+         * leak the rust_dart heap allocation. */
+        if (g_dcp.dart) {
+            rust_dart_free(g_dcp.dart);
+            g_dcp.dart = NULL;
+        }
         return -1;
     }
     if (!apple_rtkit_boot(g_dcp.rtkit)) {
         fut_printf("[DCP] RTKit boot failed\n");
+        apple_rtkit_shutdown(g_dcp.rtkit);
+        g_dcp.rtkit = NULL;
+        if (g_dcp.dart) { rust_dart_free(g_dcp.dart); g_dcp.dart = NULL; }
         return -1;
     }
     apple_rtkit_register_endpoint(g_dcp.rtkit, APPLE_DCP_ENDPOINT,
                                    apple_dcp_rtkit_handler, g_dcp.dcp);
     if (!apple_rtkit_start_endpoint(g_dcp.rtkit, APPLE_DCP_ENDPOINT)) {
         fut_printf("[DCP] Endpoint start failed\n");
+        apple_rtkit_shutdown(g_dcp.rtkit);
+        g_dcp.rtkit = NULL;
+        if (g_dcp.dart) { rust_dart_free(g_dcp.dart); g_dcp.dart = NULL; }
         return -1;
     }
 

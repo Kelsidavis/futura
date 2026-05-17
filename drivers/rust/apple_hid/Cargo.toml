@@ -1,0 +1,11 @@
+[package]
+name = "apple_hid"
+version = "0.1.0"
+edition = "2024"
+license = "MPL-2.0"
+description = "Apple Silicon HID input parser for Futura OS (ARM64) — keyboard / trackpad protocol decoding over SPI/I2C, with the actual SPI/I2C transfers handled in apple_spi / apple_i2c"
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]

@@ -126,4 +126,31 @@ void apple_hid_register_touch_callback(apple_hid_touch_callback_t cb);
  */
 int apple_hid_platform_init(const fut_platform_info_t *info);
 
+/* ============================================================
+ *   Rust driver FFI (drivers/rust/apple_hid)
+ *
+ * Pure protocol parser — no MMIO.  SPI/I2C transfers stay in the
+ * existing apple_spi / apple_i2c drivers; the parser is fed the
+ * received bytes.
+ * ============================================================ */
+
+typedef struct AppleHidParser AppleHidParser;
+typedef void (*rust_apple_hid_key_cb_t)(uint8_t scancode, uint8_t modifiers, bool pressed);
+typedef void (*rust_apple_hid_touch_cb_t)(const uint8_t *report, size_t len);
+
+AppleHidParser *rust_apple_hid_new(void);
+void            rust_apple_hid_free(AppleHidParser *p);
+void            rust_apple_hid_feed_spi_packet(AppleHidParser *p,
+                                                const uint8_t *ptr, size_t len);
+void            rust_apple_hid_feed_keyboard(AppleHidParser *p,
+                                              const uint8_t *ptr, size_t len);
+void            rust_apple_hid_feed_touchpad(AppleHidParser *p,
+                                              const uint8_t *ptr, size_t len);
+int             rust_apple_hid_getchar(AppleHidParser *p);
+int             rust_apple_hid_has_key(const AppleHidParser *p);
+void            rust_apple_hid_set_key_cb(AppleHidParser *p,
+                                           rust_apple_hid_key_cb_t cb);
+void            rust_apple_hid_set_touch_cb(AppleHidParser *p,
+                                             rust_apple_hid_touch_cb_t cb);
+
 #endif /* __FUTURA_APPLE_HID_H__ */

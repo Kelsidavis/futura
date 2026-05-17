@@ -2050,12 +2050,12 @@ void fut_kernel_main(void) {
         planned_tests += 8u;
 #endif
 
-        /* apple_bcm FFI: T1-T10 (chip classification across BCM4377/
-         * 4378/4387 + variants, wrong-vendor/unknown-device rejection,
-         * firmware-name lookup for WiFi + BT sides).  ARM64-only —
-         * the Rust crate is aarch64-unknown-none. */
+        /* apple_bcm: T1-T17 (Rust FFI classification + chip-name
+         * lookup, plus C-side accessor guards when no apple_bcm
+         * discovery has run).  ARM64-only — the Rust crate is
+         * aarch64-unknown-none. */
 #ifdef __aarch64__
-        planned_tests += 10u;
+        planned_tests += 17u;
 #endif
     }
     (void)planned_tests;

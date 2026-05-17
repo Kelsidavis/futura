@@ -145,6 +145,66 @@ void fut_apple_bcm_test_thread(void *arg)
         else { BCM_FAIL("chip_name(unknown)", 10); return; }
     }
 
+    /* ============================================================
+     *   C-side accessor guards (no apple_bcm_platform_init was called
+     *   under QEMU virt, so g_bcm.wifi_present / bt_present stay false)
+     * ============================================================ */
+
+    /* T11: wifi_present without init → false */
+    {
+        if (apple_bcm_wifi_present() == false) BCM_PASS("wifi_present(no init)");
+        else { BCM_FAIL("wifi_present(no init)", 11); return; }
+    }
+
+    /* T12: bt_present without init → false */
+    {
+        if (apple_bcm_bt_present() == false) BCM_PASS("bt_present(no init)");
+        else { BCM_FAIL("bt_present(no init)", 12); return; }
+    }
+
+    /* T13: wifi_info without init → NULL */
+    {
+        if (apple_bcm_wifi_info() == NULL) BCM_PASS("wifi_info(no init)");
+        else { BCM_FAIL("wifi_info(no init)", 13); return; }
+    }
+
+    /* T14: bt_info without init → NULL */
+    {
+        if (apple_bcm_bt_info() == NULL) BCM_PASS("bt_info(no init)");
+        else { BCM_FAIL("bt_info(no init)", 14); return; }
+    }
+
+    /* T15-T18: BAR-VA accessors return 0 without init */
+    {
+        if (apple_bcm_wifi_bar0_va() == 0 &&
+            apple_bcm_wifi_bar2_va() == 0 &&
+            apple_bcm_bt_bar0_va()   == 0 &&
+            apple_bcm_bt_bar2_va()   == 0) {
+            BCM_PASS("wifi/bt bar0/bar2 (no init)");
+        } else {
+            BCM_FAIL("BAR accessors no init", 15);
+            return;
+        }
+    }
+
+    /* T16: chip_power_on without discovery → -ENODEV */
+    {
+        int rc = apple_bcm_chip_power_on();
+        extern int apple_bcm_chip_power_on(void);
+        /* Allow -ENODEV (no chip discovered) or -ENOSYS (chip present
+         * but pmgr/gpio info missing) — either way the chip isn't
+         * actually present on this platform. */
+        if (rc < 0) BCM_PASS("chip_power_on(no init)");
+        else { BCM_FAIL("chip_power_on(no init)", 16); return; }
+    }
+
+    /* T17: chip_reset without discovery → -ENODEV */
+    {
+        int rc = apple_bcm_chip_reset();
+        if (rc < 0) BCM_PASS("chip_reset(no init)");
+        else { BCM_FAIL("chip_reset(no init)", 17); return; }
+    }
+
     fut_printf("[BCM-TEST] all apple_bcm FFI tests passed\n");
 }
 

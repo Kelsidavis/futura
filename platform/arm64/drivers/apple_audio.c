@@ -167,6 +167,14 @@ int apple_audio_configure(uint32_t sample_rate, uint8_t channels, uint8_t format
     if (!g_audio.initialized) return -1;
     if (g_audio.state.playing) return -16;  /* EBUSY */
 
+    /* Basic input validation — reject obviously bad values before
+     * handing them to the MCA setup which would otherwise produce
+     * garbage clocking.  Standard PCM rates span 8 kHz–384 kHz;
+     * channel count tops out at 8 for the I2S engine we drive. */
+    if (sample_rate < 8000 || sample_rate > 384000) return -1;
+    if (channels == 0 || channels > 8) return -1;
+    if (format > AUDIO_FMT_S32LE) return -1;
+
     g_audio.state.sample_rate = sample_rate;
     g_audio.state.channels = channels;
     g_audio.state.format = format;

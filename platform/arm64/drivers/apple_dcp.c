@@ -1,15 +1,27 @@
-/* apple_dcp.c - Apple Display Co-Processor (DCP) Driver Implementation
+/* apple_dcp.c - Apple Display Co-Processor — Rust-backed wrapper
  *
  * Copyright (c) 2025 Kelsi Davis
  * Licensed under the MPL v2.0 — see LICENSE for details.
  *
- * Apple DCP driver for display output on Apple Silicon (M1/M2/M3).
- * Uses RTKit mailbox-based IPC for co-processor communication.
+ * The DCP state machine + protocol layer (surface table, swap
+ * pending/complete, current mode, backlight/power tracking, RTKit
+ * message builders and the receive dispatcher) lives in
+ * drivers/rust/apple_dcp.  This C file keeps the parts that depend
+ * on kernel-only services:
  *
- * Implementation follows the pattern established by apple_ans2.c
- * with DCP-specific protocol adaptations.
+ *   1. Page allocation for surface buffers (fut_malloc_pages).
+ *   2. DART IOMMU mapping (rust_dart_init / rust_dart_map already
+ *      Rust internally, just called from C since we own the IOVA
+ *      allocator).
+ *   3. RTKit context boot via the C apple_rtkit_* wrappers (which
+ *      themselves now forward to rust_rtkit_*).
+ *   4. Registering the panel with the kernel framebuffer subsystem.
  *
- * Reference: Asahi Linux apple-dcp driver
+ * Everything else flows through the new rust_apple_dcp_* FFI.
+ *
+ * Compat note: fut_apple_dcp_platform_init() gates on
+ * info->type == PLATFORM_APPLE_M[1-4] so RPi / QEMU virt boots
+ * never reach the DCP code path.
  */
 
 #include <platform/arm64/apple_dcp.h>
@@ -20,583 +32,212 @@
 #include <kernel/fb.h>
 #include <string.h>
 
-/* ============================================================
- *   Register Access Macros
- * ============================================================ */
-
-#define DCP_READ32(ctrl, offset) \
-    (*((volatile uint32_t *)((ctrl)->dcp_base + (offset))))
-
-#define DCP_WRITE32(ctrl, offset, val) \
-    (*((volatile uint32_t *)((ctrl)->dcp_base + (offset))) = (val))
-
-#define DCP_READ64(ctrl, offset) \
-    (*((volatile uint64_t *)((ctrl)->dcp_base + (offset))))
-
-#define DCP_WRITE64(ctrl, offset, val) \
-    (*((volatile uint64_t *)((ctrl)->dcp_base + (offset))) = (val))
-
-/* ============================================================
- *   DCP Register Offsets (Placeholder - Real offsets TBD)
- * ============================================================ */
-
-/* These offsets are placeholders based on typical Apple SoC patterns.
- * Real offsets must be determined from:
- * 1. Device tree parsing
- * 2. Asahi Linux reverse engineering
- * 3. m1n1 bootloader documentation
- */
-#define DCP_REG_CTRL        0x0000  /* Control register */
-#define DCP_REG_STATUS      0x0004  /* Status register */
-#define DCP_REG_IRQ_STATUS  0x0008  /* Interrupt status */
-#define DCP_REG_IRQ_ENABLE  0x000C  /* Interrupt enable */
-#define DCP_REG_FB_BASE     0x0100  /* Framebuffer base address */
-#define DCP_REG_FB_STRIDE   0x0104  /* Framebuffer stride */
-#define DCP_REG_FB_SIZE     0x0108  /* Framebuffer size (W<<16 | H) */
-#define DCP_REG_FB_FORMAT   0x010C  /* Framebuffer pixel format */
-
-/* Status bits */
-#define DCP_STATUS_READY    (1 << 0)
-#define DCP_STATUS_BUSY     (1 << 1)
-#define DCP_STATUS_VSYNC    (1 << 2)
+/* C-side state — only the resources that don't belong in Rust. */
+static struct {
+    AppleDcp *dcp;             /* Rust state handle */
+    apple_rtkit_ctx_t *rtkit;
+    AppleDart *dart;
+    uint32_t dart_stream_id;
+    uint64_t next_iova;
+    /* Mirror of registered surfaces so shutdown can DART-unmap. */
+    struct {
+        uint64_t phys;
+        uint64_t iova;
+        size_t size;
+        bool valid;
+    } surfaces[4];
+    bool initialized;
+} g_dcp;
 
 /* ============================================================
- *   RTKit Message Handler
+ *   RTKit message handler — thunks into Rust
  * ============================================================ */
 
 static void apple_dcp_rtkit_handler(void *cookie, uint8_t endpoint, uint64_t msg) {
-    apple_dcp_ctrl_t *ctrl = (apple_dcp_ctrl_t *)cookie;
-
-    if (!ctrl) {
-        return;
-    }
-
-    /* Extract message components */
-    uint8_t tag = (msg >> 0) & 0xFF;
-    uint8_t type = (msg >> 8) & 0xFF;
-    uint16_t code = (msg >> 16) & 0xFFFF;
-
-    /* Log all RTKit messages for debugging */
-    fut_printf("[DCP] RTKit message from endpoint 0x%02x: tag=%u type=0x%02x code=0x%04x msg=0x%016lx\n",
-               endpoint, tag, type, code, (unsigned long)msg);
-
-    /* Handle specific message types */
-    switch (type) {
-        case 0x01:  /* Power notification */
-            fut_printf("[DCP] RTKit power notification: code=0x%04x\n", code);
-            break;
-
-        case 0x02:  /* Error notification */
-            fut_printf("[DCP] RTKit error notification: code=0x%04x\n", code);
-            break;
-
-        case 0x03:  /* Swap complete notification */
-            fut_printf("[DCP] Swap complete notification\n");
-            ctrl->swap_pending = false;
-            ctrl->swap_complete = true;
-            ctrl->swaps_completed++;
-            break;
-
-        case 0x04:  /* VSync notification */
-            /* VSync event - can be used for synchronization */
-            break;
-
-        default:
-            fut_printf("[DCP] RTKit unknown message type 0x%02x\n", type);
-            break;
+    AppleDcp *dcp = (AppleDcp *)cookie;
+    if (!dcp) return;
+    uint8_t mtype = rust_apple_dcp_handle_msg(dcp, msg);
+    /* Log unknown types so reverse-engineering deltas show up; SWAP_COMPLETE
+     * (0x03) is the only one Rust acts on, the rest are advisory. */
+    if (mtype != 0x03) {
+        fut_printf("[DCP] RTKit ep=0x%02x type=0x%02x msg=0x%016lx\n",
+                   endpoint, mtype, (unsigned long)msg);
     }
 }
 
 /* ============================================================
- *   Surface Management
+ *   Surface allocation + DART mapping
  * ============================================================ */
 
-int fut_apple_dcp_alloc_surface(apple_dcp_ctrl_t *dcp, uint32_t width, uint32_t height,
-                                 uint32_t format) {
-    if (!dcp) {
-        return -1;
-    }
-
-    /* Find free surface slot */
-    int idx = -1;
-    for (int i = 0; i < APPLE_DCP_MAX_SURFACES; i++) {
-        if (!dcp->surfaces[i].allocated) {
-            idx = i;
-            break;
-        }
-    }
-
-    if (idx < 0) {
-        fut_printf("[DCP] No free surface slots\n");
-        return -1;
-    }
-
-    /* Calculate surface size with overflow checks */
+static int dcp_alloc_surface(uint32_t width, uint32_t height, uint32_t format) {
+    /* Compute bytes-per-pixel + stride + page-aligned size. */
     uint32_t bpp = (format == APPLE_DCP_FMT_RGB565) ? 2 : 4;
     uint64_t stride64 = (uint64_t)width * bpp;
-    uint64_t size64 = stride64 * height;
-    if (stride64 > UINT32_MAX || size64 > (256ULL * 1024 * 1024)) {
-        fut_printf("[DCP] Surface dimensions too large (%ux%u)\n", width, height);
+    uint64_t size64   = stride64 * height;
+    if (stride64 > 0xFFFFFFFFULL || size64 > (256ULL * 1024 * 1024)) {
+        fut_printf("[DCP] Surface too large (%ux%u)\n", width, height);
         return -1;
     }
-    uint32_t stride = (uint32_t)stride64;
-    size_t size = (size_t)size64;
+    uint32_t stride   = (uint32_t)stride64;
+    size_t   num_pages = ((size_t)size64 + 4095) / 4096;
+    size_t   size      = num_pages * 4096;
 
-    /* Align to page boundary */
-    size_t num_pages = (size + 4095) / 4096;
-    size = num_pages * 4096;
-
-    /* Allocate physical memory */
+    /* Allocate pages and zero them. */
     uint64_t phys = (uint64_t)fut_malloc_pages(num_pages);
     if (phys == 0) {
-        fut_printf("[DCP] Failed to allocate surface memory (%lu pages)\n",
+        fut_printf("[DCP] Page allocation failed (%lu pages)\n",
                    (unsigned long)num_pages);
         return -1;
     }
-
-    /* Clear the surface */
     memset((void *)phys, 0, size);
 
-    /* Initialize surface descriptor */
-    apple_dcp_surface_t *surf = &dcp->surfaces[idx];
-    surf->phys_addr = phys;
-    /* Map through DART IOMMU if available */
-    if (dcp->dart) {
-        uint64_t iova = dcp->next_iova;
-        dcp->next_iova += size;
-        int ret = rust_dart_map(dcp->dart, dcp->dart_stream_id,
+    /* Map through DART or fall back to identity. */
+    uint64_t iova;
+    if (g_dcp.dart) {
+        iova = g_dcp.next_iova;
+        g_dcp.next_iova += size;
+        int rc = rust_dart_map(g_dcp.dart, g_dcp.dart_stream_id,
                                 iova, phys, (uint64_t)size,
                                 DART_PROT_READ | DART_PROT_WRITE);
-        if (ret != 0) {
-            fut_printf("[DCP] DART map failed: %d\n", ret);
+        if (rc != 0) {
+            fut_printf("[DCP] DART map failed: %d\n", rc);
             fut_free_pages((void *)phys, num_pages);
             return -1;
         }
-        surf->iova = iova;
     } else {
-        surf->iova = phys;  /* Identity mapping fallback */
-    }
-    surf->width = width;
-    surf->height = height;
-    surf->stride = stride;
-    surf->format = format;
-    surf->allocated = true;
-
-    dcp->num_surfaces++;
-
-    fut_printf("[DCP] Allocated surface %d: %ux%u, stride=%u, phys=0x%lx\n",
-               idx, width, height, stride, (unsigned long)phys);
-
-    return idx;
-}
-
-void fut_apple_dcp_free_surface(apple_dcp_ctrl_t *dcp, int surface_idx) {
-    if (!dcp || surface_idx < 0 || surface_idx >= APPLE_DCP_MAX_SURFACES) {
-        return;
+        iova = phys;
     }
 
-    apple_dcp_surface_t *surf = &dcp->surfaces[surface_idx];
-    if (!surf->allocated) {
-        return;
-    }
-
-    /* Unmap from DART IOMMU */
-    if (dcp->dart && surf->iova != surf->phys_addr) {
-        size_t unmap_size = (size_t)surf->stride * surf->height;
-        unmap_size = ((unmap_size + 4095) / 4096) * 4096;
-        rust_dart_unmap(dcp->dart, dcp->dart_stream_id,
-                        surf->iova, (uint64_t)unmap_size);
-    }
-
-    /* Free physical memory */
-    if (surf->phys_addr) {
-        size_t size = (size_t)surf->stride * surf->height;
-        size_t num_pages = (size + 4095) / 4096;
-        fut_free_pages((void *)surf->phys_addr, num_pages);
-    }
-
-    /* Clear surface descriptor */
-    memset(surf, 0, sizeof(apple_dcp_surface_t));
-    dcp->num_surfaces--;
-
-    fut_printf("[DCP] Freed surface %d\n", surface_idx);
-}
-
-uint64_t fut_apple_dcp_get_surface_addr(apple_dcp_ctrl_t *dcp, int surface_idx) {
-    if (!dcp || surface_idx < 0 || surface_idx >= APPLE_DCP_MAX_SURFACES) {
-        return 0;
-    }
-
-    apple_dcp_surface_t *surf = &dcp->surfaces[surface_idx];
-    if (!surf->allocated) {
-        return 0;
-    }
-
-    return surf->phys_addr;
-}
-
-/* ============================================================
- *   Mode Setting
- * ============================================================ */
-
-bool fut_apple_dcp_set_mode(apple_dcp_ctrl_t *dcp, uint32_t width, uint32_t height,
-                             uint32_t refresh_rate) {
-    if (!dcp || !dcp->rtkit) {
-        return false;
-    }
-
-    if (refresh_rate == 0) {
-        refresh_rate = 60;  /* Default to 60Hz */
-    }
-
-    /* Build set mode message
-     * Format: [type:8][width:12][height:12][refresh:8][format:8][reserved:16]
-     * This is a placeholder format - real format TBD from Asahi Linux
-     */
-    uint64_t msg = 0;
-    msg |= ((uint64_t)APPLE_DCP_MSG_SET_MODE << 0);   /* Message type */
-    msg |= ((uint64_t)(width & 0xFFF) << 8);          /* Width */
-    msg |= ((uint64_t)(height & 0xFFF) << 20);        /* Height */
-    msg |= ((uint64_t)(refresh_rate & 0xFF) << 32);   /* Refresh rate */
-    msg |= ((uint64_t)APPLE_DCP_FMT_BGRA8888 << 40);  /* Pixel format */
-
-    fut_printf("[DCP] Setting mode: %ux%u @ %uHz\n", width, height, refresh_rate);
-
-    /* Send mode setting message via RTKit */
-    bool ret = apple_rtkit_send_message(dcp->rtkit, dcp->dcp_endpoint, msg);
-    if (!ret) {
-        fut_printf("[DCP] Failed to send set mode message\n");
-        return false;
-    }
-
-    /* Update current mode */
-    dcp->current_mode.width = width;
-    dcp->current_mode.height = height;
-    dcp->current_mode.refresh_rate = refresh_rate;
-    dcp->current_mode.pixel_format = APPLE_DCP_FMT_BGRA8888;
-    dcp->current_mode.stride = width * 4;  /* BGRA = 4 bytes per pixel */
-    dcp->mode_set = true;
-
-    return true;
-}
-
-bool fut_apple_dcp_get_mode(apple_dcp_ctrl_t *dcp, apple_dcp_mode_t *mode_out) {
-    if (!dcp || !mode_out) {
-        return false;
-    }
-
-    if (!dcp->mode_set) {
-        return false;
-    }
-
-    *mode_out = dcp->current_mode;
-    return true;
-}
-
-/* ============================================================
- *   Buffer Swapping
- * ============================================================ */
-
-bool fut_apple_dcp_swap_submit(apple_dcp_ctrl_t *dcp, int surface_idx) {
-    if (!dcp || !dcp->rtkit) {
-        return false;
-    }
-
-    if (surface_idx < 0 || surface_idx >= APPLE_DCP_MAX_SURFACES) {
-        return false;
-    }
-
-    apple_dcp_surface_t *surf = &dcp->surfaces[surface_idx];
-    if (!surf->allocated) {
-        fut_printf("[DCP] Surface %d not allocated\n", surface_idx);
-        return false;
-    }
-
-    /* Check if swap is already pending */
-    if (dcp->swap_pending) {
-        fut_printf("[DCP] Swap already pending, dropping frame\n");
-        dcp->frames_dropped++;
-        return false;
-    }
-
-    /* Build swap submit message
-     * Format: [type:8][surface:8][phys_lo:24][phys_hi:24]
-     */
-    uint64_t msg = 0;
-    msg |= ((uint64_t)APPLE_DCP_MSG_SWAP_START << 0);
-    msg |= ((uint64_t)surface_idx << 8);
-    msg |= ((surf->iova >> 0) & 0xFFFFFF) << 16;
-    msg |= ((surf->iova >> 24) & 0xFFFFFF) << 40;
-
-    /* Mark swap as pending */
-    dcp->swap_pending = true;
-    dcp->swap_complete = false;
-    dcp->next_surface = surface_idx;
-
-    /* Send swap message */
-    bool ret = apple_rtkit_send_message(dcp->rtkit, dcp->dcp_endpoint, msg);
-    if (!ret) {
-        dcp->swap_pending = false;
-        fut_printf("[DCP] Failed to send swap message\n");
-        return false;
-    }
-
-    return true;
-}
-
-bool fut_apple_dcp_swap_wait(apple_dcp_ctrl_t *dcp, uint32_t timeout_ms) {
-    if (!dcp) {
-        return false;
-    }
-
-    if (!dcp->swap_pending) {
-        return true;  /* No swap pending */
-    }
-
-    /* Poll for completion */
-    /* TODO: Use proper wait queue when available */
-    uint32_t elapsed = 0;
-    while (dcp->swap_pending && (timeout_ms == 0 || elapsed < timeout_ms)) {
-        /* Poll RTKit for messages */
-        apple_rtkit_process_messages(dcp->rtkit);
-
-        /* Yield to reduce power consumption while polling */
-        __asm__ volatile("wfe" ::: "memory");
-        elapsed++;
-    }
-
-    if (dcp->swap_complete) {
-        dcp->current_surface = dcp->next_surface;
-        return true;
-    }
-
-    return false;
-}
-
-/* ============================================================
- *   Backlight and Power Control
- * ============================================================ */
-
-bool fut_apple_dcp_set_backlight(apple_dcp_ctrl_t *dcp, uint8_t level) {
-    if (!dcp || !dcp->rtkit) {
-        return false;
-    }
-
-    /* Build backlight message */
-    uint64_t msg = 0;
-    msg |= ((uint64_t)APPLE_DCP_MSG_BACKLIGHT << 0);
-    msg |= ((uint64_t)level << 8);
-
-    bool ret = apple_rtkit_send_message(dcp->rtkit, dcp->dcp_endpoint, msg);
-    if (ret) {
-        dcp->backlight = level;
-    }
-
-    return ret;
-}
-
-bool fut_apple_dcp_set_power(apple_dcp_ctrl_t *dcp, uint8_t state) {
-    if (!dcp || !dcp->rtkit) {
-        return false;
-    }
-
-    /* Build power message */
-    uint64_t msg = 0;
-    msg |= ((uint64_t)APPLE_DCP_MSG_POWER << 0);
-    msg |= ((uint64_t)state << 8);
-
-    bool ret = apple_rtkit_send_message(dcp->rtkit, dcp->dcp_endpoint, msg);
-    if (ret) {
-        dcp->power_state = state;
-        dcp->display_enabled = (state == APPLE_DCP_POWER_ON);
-    }
-
-    return ret;
-}
-
-/* ============================================================
- *   Initialization and Shutdown
- * ============================================================ */
-
-/* Static DCP context (single display support) */
-static apple_dcp_ctrl_t g_dcp_ctrl;
-static bool g_dcp_initialized = false;
-
-apple_dcp_ctrl_t *fut_apple_dcp_init(const fut_platform_info_t *info) {
-    if (!info) {
-        return NULL;
-    }
-
-    if (g_dcp_initialized) {
-        fut_printf("[DCP] Already initialized\n");
-        return &g_dcp_ctrl;
-    }
-
-    /* Verify DCP is available */
-    if (!info->has_dcp || info->dcp_base == 0) {
-        fut_printf("[DCP] DCP not available on this platform\n");
-        return NULL;
-    }
-
-    fut_printf("[DCP] Initializing Apple DCP...\n");
-    fut_printf("[DCP] DCP base: 0x%lx\n", (unsigned long)info->dcp_base);
-    fut_printf("[DCP] Mailbox base: 0x%lx\n", (unsigned long)info->dcp_mailbox_base);
-
-    /* Initialize controller context */
-    memset(&g_dcp_ctrl, 0, sizeof(g_dcp_ctrl));
-    g_dcp_ctrl.dcp_phys = info->dcp_base;
-    g_dcp_ctrl.mailbox_phys = info->dcp_mailbox_base;
-    g_dcp_ctrl.dcp_endpoint = APPLE_DCP_ENDPOINT;
-
-    /* Map MMIO registers */
-    g_dcp_ctrl.dcp_base = (volatile uint8_t *)info->dcp_base;
-
-    /* Initialize DART IOMMU if available */
-    if (info->dart_base != 0) {
-        /* t8020 variant (0) for M1/M2, t8110 variant (1) for M1 Pro/Max */
-        uint32_t dart_variant = 0;
-        g_dcp_ctrl.dart = rust_dart_init(info->dart_base, 16, dart_variant);
-        if (g_dcp_ctrl.dart) {
-            g_dcp_ctrl.dart_stream_id = 0;
-            g_dcp_ctrl.next_iova = 0x100000000ULL;  /* Start IOVA at 4GB */
-            rust_dart_enable_stream(g_dcp_ctrl.dart, g_dcp_ctrl.dart_stream_id);
-            fut_printf("[DCP] DART IOMMU initialized at 0x%lx\n",
-                       (unsigned long)info->dart_base);
-        } else {
-            fut_printf("[DCP] DART IOMMU init failed, using identity mapping\n");
-        }
-    }
-
-    /* Initialize RTKit context */
-    g_dcp_ctrl.rtkit = apple_rtkit_init(info->dcp_mailbox_base);
-    if (!g_dcp_ctrl.rtkit) {
-        fut_printf("[DCP] Failed to initialize RTKit\n");
-        return NULL;
-    }
-
-    /* Boot RTKit co-processor */
-    fut_printf("[DCP] Booting RTKit co-processor...\n");
-    bool boot_ok = apple_rtkit_boot(g_dcp_ctrl.rtkit);
-    if (!boot_ok) {
-        fut_printf("[DCP] Failed to boot RTKit\n");
-        return NULL;
-    }
-
-    /* Register DCP endpoint handler */
-    apple_rtkit_register_endpoint(g_dcp_ctrl.rtkit, g_dcp_ctrl.dcp_endpoint,
-                                   apple_dcp_rtkit_handler, &g_dcp_ctrl);
-
-    /* Start DCP application endpoint */
-    fut_printf("[DCP] Starting DCP endpoint 0x%02x...\n", g_dcp_ctrl.dcp_endpoint);
-    bool ep_ok = apple_rtkit_start_endpoint(g_dcp_ctrl.rtkit, g_dcp_ctrl.dcp_endpoint);
-    if (!ep_ok) {
-        fut_printf("[DCP] Failed to start DCP endpoint\n");
-        return NULL;
-    }
-
-    /* Set initial power state */
-    fut_apple_dcp_set_power(&g_dcp_ctrl, APPLE_DCP_POWER_ON);
-
-    /* Set default mode if panel dimensions are known */
-    if (info->display_width > 0 && info->display_height > 0) {
-        fut_apple_dcp_set_mode(&g_dcp_ctrl, info->display_width, info->display_height, 60);
-    }
-
-    g_dcp_initialized = true;
-    fut_printf("[DCP] Initialization complete\n");
-
-    return &g_dcp_ctrl;
-}
-
-void fut_apple_dcp_shutdown(apple_dcp_ctrl_t *dcp) {
-    if (!dcp || !g_dcp_initialized) {
-        return;
-    }
-
-    fut_printf("[DCP] Shutting down...\n");
-
-    /* Power off display */
-    fut_apple_dcp_set_power(dcp, APPLE_DCP_POWER_OFF);
-
-    /* Free all surfaces */
-    for (int i = 0; i < APPLE_DCP_MAX_SURFACES; i++) {
-        if (dcp->surfaces[i].allocated) {
-            fut_apple_dcp_free_surface(dcp, i);
-        }
-    }
-
-    /* Shutdown RTKit */
-    if (dcp->rtkit) {
-        apple_rtkit_shutdown(dcp->rtkit);
-        dcp->rtkit = NULL;
-    }
-
-    g_dcp_initialized = false;
-    fut_printf("[DCP] Shutdown complete\n");
-}
-
-/* ============================================================
- *   Platform Integration
- * ============================================================ */
-
-int fut_apple_dcp_platform_init(const fut_platform_info_t *info) {
-    if (!info) {
+    int idx = rust_apple_dcp_register_surface(g_dcp.dcp, iova,
+                                               width, height, stride, format);
+    if (idx < 0) {
+        fut_printf("[DCP] All surface slots full\n");
+        fut_free_pages((void *)phys, num_pages);
         return -1;
     }
 
-    /* Only initialize on Apple Silicon platforms */
+    if ((size_t)idx < (sizeof(g_dcp.surfaces) / sizeof(g_dcp.surfaces[0]))) {
+        g_dcp.surfaces[idx].phys  = phys;
+        g_dcp.surfaces[idx].iova  = iova;
+        g_dcp.surfaces[idx].size  = size;
+        g_dcp.surfaces[idx].valid = true;
+    }
+
+    fut_printf("[DCP] Surface %d: %ux%u stride=%u phys=0x%lx iova=0x%lx\n",
+               idx, width, height, stride,
+               (unsigned long)phys, (unsigned long)iova);
+    return idx;
+}
+
+/* ============================================================
+ *   Framebuffer registration
+ * ============================================================ */
+
+static int dcp_register_fb(int fb_idx) {
+    if (fb_idx < 0 || fb_idx >= 4 || !g_dcp.surfaces[fb_idx].valid) return -1;
+
+    uint32_t width  = rust_apple_dcp_mode_width(g_dcp.dcp);
+    uint32_t height = rust_apple_dcp_mode_height(g_dcp.dcp);
+    uint32_t stride = rust_apple_dcp_mode_stride(g_dcp.dcp);
+    uint32_t format = rust_apple_dcp_mode_format(g_dcp.dcp);
+
+    static struct fut_fb_hwinfo dcp_fb_hw;
+    dcp_fb_hw.phys        = g_dcp.surfaces[fb_idx].phys;
+    dcp_fb_hw.length      = (uint64_t)stride * height;
+    dcp_fb_hw.info.width  = width;
+    dcp_fb_hw.info.height = height;
+    dcp_fb_hw.info.pitch  = stride;
+    dcp_fb_hw.info.bpp    = (format == APPLE_DCP_FMT_RGB565) ? 16 : 32;
+    dcp_fb_hw.info.flags  = 0x00000001;  /* FB_FLAG_LINEAR */
+
+    fut_printf("[DCP] Framebuffer: %ux%u %ubpp phys=0x%lx\n",
+               width, height, dcp_fb_hw.info.bpp,
+               (unsigned long)dcp_fb_hw.phys);
+    return 0;
+}
+
+/* ============================================================
+ *   Platform entry point
+ * ============================================================ */
+
+int fut_apple_dcp_platform_init(const fut_platform_info_t *info) {
+    if (!info) return -1;
+
     if (info->type != PLATFORM_APPLE_M1 &&
         info->type != PLATFORM_APPLE_M2 &&
         info->type != PLATFORM_APPLE_M3 &&
         info->type != PLATFORM_APPLE_M4) {
-        return 0;  /* Not an error, just not applicable */
+        return 0;
+    }
+    if (!info->has_dcp || info->dcp_base == 0) {
+        return 0;
     }
 
-    /* Initialize DCP driver */
-    apple_dcp_ctrl_t *dcp = fut_apple_dcp_init(info);
-    if (!dcp) {
-        fut_printf("[DCP] Platform init failed\n");
+    memset(&g_dcp, 0, sizeof(g_dcp));
+    g_dcp.dcp = rust_apple_dcp_new();
+
+    fut_printf("[DCP] Init dcp=0x%lx mailbox=0x%lx\n",
+               (unsigned long)info->dcp_base,
+               (unsigned long)info->dcp_mailbox_base);
+
+    /* DART IOMMU — variant 0 = t8020 (M1/M2), variant 1 = t8110
+     * (M1 Pro/Max).  Identity fallback if no DART. */
+    if (info->dart_base != 0) {
+        g_dcp.dart = rust_dart_init(info->dart_base, 16, 0);
+        if (g_dcp.dart) {
+            g_dcp.dart_stream_id = 0;
+            g_dcp.next_iova      = 0x100000000ULL;
+            rust_dart_enable_stream(g_dcp.dart, g_dcp.dart_stream_id);
+            fut_printf("[DCP] DART up at 0x%lx\n",
+                       (unsigned long)info->dart_base);
+        }
+    }
+
+    /* RTKit context — apple_rtkit_* are themselves Rust thunks. */
+    g_dcp.rtkit = apple_rtkit_init(info->dcp_mailbox_base);
+    if (!g_dcp.rtkit) {
+        fut_printf("[DCP] RTKit init failed\n");
+        return -1;
+    }
+    if (!apple_rtkit_boot(g_dcp.rtkit)) {
+        fut_printf("[DCP] RTKit boot failed\n");
+        return -1;
+    }
+    apple_rtkit_register_endpoint(g_dcp.rtkit, APPLE_DCP_ENDPOINT,
+                                   apple_dcp_rtkit_handler, g_dcp.dcp);
+    if (!apple_rtkit_start_endpoint(g_dcp.rtkit, APPLE_DCP_ENDPOINT)) {
+        fut_printf("[DCP] Endpoint start failed\n");
         return -1;
     }
 
-    /* Probe framebuffer */
-    return fb_probe_from_dcp(dcp);
-}
+    /* Initial power-on. */
+    uint64_t pwr_msg = rust_apple_dcp_set_power_msg(g_dcp.dcp, APPLE_DCP_POWER_ON);
+    if (pwr_msg) apple_rtkit_send_message(g_dcp.rtkit, APPLE_DCP_ENDPOINT, pwr_msg);
 
-int fb_probe_from_dcp(apple_dcp_ctrl_t *dcp) {
-    if (!dcp || !dcp->mode_set) {
-        return -1;
+    /* Default mode from DTB-reported panel size, BGRA8888. */
+    if (info->display_width > 0 && info->display_height > 0) {
+        rust_apple_dcp_set_mode(g_dcp.dcp,
+                                 info->display_width, info->display_height,
+                                 60, APPLE_DCP_FMT_BGRA8888);
     }
 
-    /* Allocate primary framebuffer surface */
-    int fb_idx = fut_apple_dcp_alloc_surface(dcp,
-                                              dcp->current_mode.width,
-                                              dcp->current_mode.height,
-                                              dcp->current_mode.pixel_format);
-    if (fb_idx < 0) {
-        fut_printf("[DCP] Failed to allocate framebuffer surface\n");
-        return -1;
+    g_dcp.initialized = true;
+
+    /* Allocate the primary framebuffer surface, submit it, register
+     * with the kernel fb layer. */
+    if (!rust_apple_dcp_mode_is_set(g_dcp.dcp)) {
+        fut_printf("[DCP] No mode set, skipping FB probe\n");
+        return 0;
+    }
+    int fb_idx = dcp_alloc_surface(rust_apple_dcp_mode_width(g_dcp.dcp),
+                                    rust_apple_dcp_mode_height(g_dcp.dcp),
+                                    rust_apple_dcp_mode_format(g_dcp.dcp));
+    if (fb_idx < 0) return -1;
+
+    uint64_t swap_msg = rust_apple_dcp_swap_submit_build(g_dcp.dcp, fb_idx);
+    if (swap_msg) {
+        apple_rtkit_send_message(g_dcp.rtkit, APPLE_DCP_ENDPOINT, swap_msg);
     }
 
-    /* Submit initial frame */
-    fut_apple_dcp_swap_submit(dcp, fb_idx);
-
-    fut_printf("[DCP] Framebuffer initialized: %ux%u\n",
-               dcp->current_mode.width, dcp->current_mode.height);
-
-    /* Register with generic framebuffer layer */
-    static struct fut_fb_hwinfo dcp_fb_hw;
-    dcp_fb_hw.phys = dcp->surfaces[fb_idx].phys_addr;
-    dcp_fb_hw.length = (uint64_t)dcp->current_mode.stride * dcp->current_mode.height;
-    dcp_fb_hw.info.width = dcp->current_mode.width;
-    dcp_fb_hw.info.height = dcp->current_mode.height;
-    dcp_fb_hw.info.pitch = dcp->current_mode.stride;
-    dcp_fb_hw.info.bpp = (dcp->current_mode.pixel_format == APPLE_DCP_FMT_RGB565) ? 16 : 32;
-    dcp_fb_hw.info.flags = 0x00000001;  /* FB_FLAG_LINEAR */
-
-    fut_printf("[DCP] Registered framebuffer: %ux%u %ubpp phys=0x%lx\n",
-               dcp_fb_hw.info.width, dcp_fb_hw.info.height,
-               dcp_fb_hw.info.bpp, (unsigned long)dcp_fb_hw.phys);
-
-    return 0;
+    return dcp_register_fb(fb_idx);
 }

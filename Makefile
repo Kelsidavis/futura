@@ -435,6 +435,7 @@ RUST_APPLE_SPI_DIR    := $(RUST_ROOT)/apple_spi
 RUST_APPLE_MCA_DIR    := $(RUST_ROOT)/apple_mca
 RUST_APPLE_HID_DIR    := $(RUST_ROOT)/apple_hid
 RUST_APPLE_XHCI_DIR   := $(RUST_ROOT)/apple_xhci
+RUST_APPLE_DCP_DIR    := $(RUST_ROOT)/apple_dcp
 RUST_NVME_DIR         := $(RUST_ROOT)/nvme
 RUST_XHCI_DIR        := $(RUST_ROOT)/xhci
 RUST_RTL8111_DIR     := $(RUST_ROOT)/rtl8111
@@ -559,6 +560,7 @@ RUST_BUILD_DIR_APPLE_SPI   := $(RUST_APPLE_SPI_DIR)/target/$(RUST_TARGET)/$(RUST
 RUST_BUILD_DIR_APPLE_MCA   := $(RUST_APPLE_MCA_DIR)/target/$(RUST_TARGET)/$(RUST_PROFILE)
 RUST_BUILD_DIR_APPLE_HID   := $(RUST_APPLE_HID_DIR)/target/$(RUST_TARGET)/$(RUST_PROFILE)
 RUST_BUILD_DIR_APPLE_XHCI  := $(RUST_APPLE_XHCI_DIR)/target/$(RUST_TARGET)/$(RUST_PROFILE)
+RUST_BUILD_DIR_APPLE_DCP   := $(RUST_APPLE_DCP_DIR)/target/$(RUST_TARGET)/$(RUST_PROFILE)
 RUST_BUILD_DIR_NVME        := $(RUST_NVME_DIR)/target/$(RUST_TARGET)/$(RUST_PROFILE)
 RUST_BUILD_DIR_XHCI       := $(RUST_XHCI_DIR)/target/$(RUST_TARGET)/$(RUST_PROFILE)
 RUST_BUILD_DIR_RTL8111    := $(RUST_RTL8111_DIR)/target/$(RUST_TARGET)/$(RUST_PROFILE)
@@ -653,6 +655,7 @@ RUST_LIB_APPLE_SPI    := $(RUST_BUILD_DIR_APPLE_SPI)/libapple_spi.a
 RUST_LIB_APPLE_MCA    := $(RUST_BUILD_DIR_APPLE_MCA)/libapple_mca.a
 RUST_LIB_APPLE_HID    := $(RUST_BUILD_DIR_APPLE_HID)/libapple_hid.a
 RUST_LIB_APPLE_XHCI   := $(RUST_BUILD_DIR_APPLE_XHCI)/libapple_xhci.a
+RUST_LIB_APPLE_DCP    := $(RUST_BUILD_DIR_APPLE_DCP)/libapple_dcp.a
 RUST_LIB_NVME         := $(RUST_BUILD_DIR_NVME)/libnvme.a
 RUST_LIB_XHCI        := $(RUST_BUILD_DIR_XHCI)/libxhci.a
 RUST_LIB_RTL8111     := $(RUST_BUILD_DIR_RTL8111)/librtl8111.a
@@ -797,7 +800,7 @@ ifeq ($(PLATFORM),x86_64)
     CFLAGS += -DDRIVERS_ALL
   endif
 else ifeq ($(PLATFORM),arm64)
-RUST_LIBS := $(RUST_LIB_VIRTIO_GPU) $(RUST_LIB_VIRTIO_NET) $(RUST_LIB_VIRTIO_BLK) $(RUST_LIB_VIRTIO_INPUT) $(RUST_LIB_APPLE_UART) $(RUST_LIB_APPLE_RTKIT) $(RUST_LIB_APPLE_ANS2) $(RUST_LIB_APPLE_AIC) $(RUST_LIB_APPLE_DART) $(RUST_LIB_APPLE_GPIO) $(RUST_LIB_APPLE_I2C) $(RUST_LIB_APPLE_PCIE) $(RUST_LIB_APPLE_SMC) $(RUST_LIB_APPLE_SPI) $(RUST_LIB_APPLE_MCA) $(RUST_LIB_APPLE_HID) $(RUST_LIB_APPLE_XHCI) $(RUST_LIB_RPI_AUDIO) $(RUST_LIB_RPI_DISPLAY) $(RUST_LIB_RPI_DMA) $(RUST_LIB_RPI_EMMC) $(RUST_LIB_RPI_GENET) $(RUST_LIB_RPI_GPIO) $(RUST_LIB_RPI_I2C) $(RUST_LIB_RPI_MBOX) $(RUST_LIB_RPI_PCIE) $(RUST_LIB_RPI_PWM) $(RUST_LIB_RPI_RNG) $(RUST_LIB_RPI_SPI) $(RUST_LIB_RPI_THERMAL) $(RUST_LIB_RPI_USB) $(RUST_LIB_RPI_WATCHDOG)
+RUST_LIBS := $(RUST_LIB_VIRTIO_GPU) $(RUST_LIB_VIRTIO_NET) $(RUST_LIB_VIRTIO_BLK) $(RUST_LIB_VIRTIO_INPUT) $(RUST_LIB_APPLE_UART) $(RUST_LIB_APPLE_RTKIT) $(RUST_LIB_APPLE_ANS2) $(RUST_LIB_APPLE_AIC) $(RUST_LIB_APPLE_DART) $(RUST_LIB_APPLE_GPIO) $(RUST_LIB_APPLE_I2C) $(RUST_LIB_APPLE_PCIE) $(RUST_LIB_APPLE_SMC) $(RUST_LIB_APPLE_SPI) $(RUST_LIB_APPLE_MCA) $(RUST_LIB_APPLE_HID) $(RUST_LIB_APPLE_XHCI) $(RUST_LIB_APPLE_DCP) $(RUST_LIB_RPI_AUDIO) $(RUST_LIB_RPI_DISPLAY) $(RUST_LIB_RPI_DMA) $(RUST_LIB_RPI_EMMC) $(RUST_LIB_RPI_GENET) $(RUST_LIB_RPI_GPIO) $(RUST_LIB_RPI_I2C) $(RUST_LIB_RPI_MBOX) $(RUST_LIB_RPI_PCIE) $(RUST_LIB_RPI_PWM) $(RUST_LIB_RPI_RNG) $(RUST_LIB_RPI_SPI) $(RUST_LIB_RPI_THERMAL) $(RUST_LIB_RPI_USB) $(RUST_LIB_RPI_WATCHDOG)
 else
 RUST_LIBS :=
 endif
@@ -1862,6 +1865,15 @@ $(RUST_LIB_APPLE_XHCI): $(RUST_SOURCES)
 	@cd $(RUST_APPLE_XHCI_DIR) && RUSTFLAGS="-C panic=abort -C force-unwind-tables=no $(RUSTFLAGS)" $(CARGO) build --release --target $(RUST_TARGET)
 	@tmpdir=$$(mktemp -d); \
 	cd $$tmpdir && $(AR) x $(abspath $(RUST_LIB_APPLE_XHCI)) && for obj in *.o; do $(OBJCOPY) --remove-section='.gcc_except_table*' --remove-section='.eh_frame*' $$obj >/dev/null 2>&1 || true; done && $(AR) rcs $(abspath $(RUST_LIB_APPLE_XHCI)) *.o; \
+	rm -rf $$tmpdir
+
+$(RUST_LIB_APPLE_DCP): $(RUST_SOURCES)
+	@$(RUSTC) --print target-list | grep -q $(RUST_TARGET) >/dev/null || { \
+		echo "error: rust target '$(RUST_TARGET)' not installed for $(RUSTC)." >&2; exit 1; }
+	@echo "CARGO apple_dcp ($(RUST_PROFILE))"
+	@cd $(RUST_APPLE_DCP_DIR) && RUSTFLAGS="-C panic=abort -C force-unwind-tables=no $(RUSTFLAGS)" $(CARGO) build --release --target $(RUST_TARGET)
+	@tmpdir=$$(mktemp -d); \
+	cd $$tmpdir && $(AR) x $(abspath $(RUST_LIB_APPLE_DCP)) && for obj in *.o; do $(OBJCOPY) --remove-section='.gcc_except_table*' --remove-section='.eh_frame*' $$obj >/dev/null 2>&1 || true; done && $(AR) rcs $(abspath $(RUST_LIB_APPLE_DCP)) *.o; \
 	rm -rf $$tmpdir
 
 # RPi drivers — Raspberry Pi 3/4/5 peripheral drivers (Rust)

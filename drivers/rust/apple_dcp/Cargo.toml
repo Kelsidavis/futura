@@ -1,0 +1,11 @@
+[package]
+name = "apple_dcp"
+version = "0.1.0"
+edition = "2024"
+license = "MPL-2.0"
+description = "Apple Silicon Display Co-Processor (DCP) state + protocol layer for Futura OS (ARM64).  Owns the surface table (IOVAs + dimensions, not the page-backed buffers), swap pending/complete state machine, current mode / backlight / power tracking, and the RTKit message builders + receive dispatcher.  Page allocation and DART IOMMU mapping stay on the C wrapper side."
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]

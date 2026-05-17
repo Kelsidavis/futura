@@ -1,14 +1,17 @@
 # Apple Silicon Bring-up Plan
 
 **Last Updated**: 2026-05-16
-**Status**: 🚧 Kernel-side bring-up done (5/5 boot blockers + FIQ
-dispatch path + every Apple driver migrated to Rust + DTB wiring for
-mca / framebuffer / etc.).  Not yet validated on real Apple Silicon
-hardware.  `make m1n1-payload` produces a valid m1n1-compatible
-Image.gz with the ARM64 Linux header.  All progress is implemented
-behind runtime detection so that QEMU virt's selftest suite
-(currently 2654/2654 PASS under `qemu-system-aarch64 -M virt`) stays
-green at every step.
+**Status**: 🚧 Kernel-side bring-up done.  5/5 original blockers
+landed, plus a follow-up round closing FIQ dispatch + DAIF.F clear +
+64 GiB Apple peripheral mapping window + DMA-PA correctness across
+xhci/ans2/dcp/dart + Asahi `/soc/<type>@<addr>` DT path fallbacks +
+ARM64 Image header flags + m1n1 framebuffer first-light fast-path.
+Not yet validated on real Apple Silicon hardware.  `make m1n1-payload`
+produces a valid m1n1-compatible Image.gz with the ARM64 Linux
+header (now correctly flagged as relocatable).  All progress is
+implemented behind runtime detection so that QEMU virt's selftest
+suite (currently 2654/2654 PASS under `qemu-system-aarch64 -M virt`)
+stays green at every step.
 
 This document captures the staged work originally needed to get the
 ARM64 kernel booting on a real M1/M2/M3/M4 Mac via m1n1.  Most
@@ -171,9 +174,90 @@ The fix mirrors the IRQ path on the FIQ side:
   now branch to `fiq_handler_entry`.  `fiq_aarch32_handler`
   stays on the panic path because we don't run AArch32 guests.
 - `apple_aic.c::fut_apple_irq_init()` registers
-  `apple_aic_handle_irq` on BOTH the IRQ and FIQ backend slots.
-  The Rust dispatcher reads AIC_EVENT which surfaces both event
-  types through one bitmap, so the same function handles both.
+  `apple_aic_handle_irq` on the IRQ backend slot AND
+  `apple_aic_handle_fiq` (commit `3b1e93a2`) on the FIQ slot.
+  The FIQ dispatcher checks `CNTP_CTL_EL0.ISTATUS` first and
+  re-arms the timer if it's the source — the AIC's event bitmap
+  doesn't surface the architectural timer.
+
+### 5b. DAIF.F unmask + critical-section symmetry ✅ LANDED (commits `28f6ab00`, `fd098716`)
+
+`fut_enable_interrupts` only cleared the I bit, leaving F (FIQ)
+masked at its boot default of 1.  On QEMU virt this was harmless
+because nothing fires as FIQ there; on Apple it meant the timer
+FIQ never reached the CPU even after blocker #5a's dispatch path
+was in place.  Switch to `daifclr #3` (clears I + F) and drop
+`PSTATE_F_BIT` from new-thread initial PSTATE in
+`fut_context_init`.
+
+`fut_save_and_disable_interrupts` also only masked I, which would
+have let a timer FIQ race scheduler-lock acquisition.  Updated to
+`daifset #3` (mask I + F) and `fut_restore_interrupts` writes the
+saved DAIF back atomically.
+
+### 6. Apple peripheral PA→VA mapping ✅ LANDED (commits `4013e2cc`, `056797c7`, `62ae1555`)
+
+Apple peripherals (UART, AIC, SMC, DCP, ANS, MCA, PCIe, DART)
+all sit at PAs the boot identity map and kernel DRAM window both
+miss.  Three iterations:
+
+1. **Initial 8 GiB window** (`4013e2cc`) — `kernel_l1_table[8..15]`
+   maps VA `0xFFFFFF8200000000-0xFFFFFF83FFFFFFFF` → PA
+   `0x200000000-0x3FFFFFFFF` with device-nGnRE attrs.  Covers
+   every M1 / M2 SoC-internal peripheral.  New
+   `fut_kernel_peripheral_va(pa) = pa | 0xFFFFFF8000000000ULL`
+   helper.  Every Apple C wrapper converts DTB-discovered PA to
+   kernel VA before handing it to its Rust crate.
+2. **32 GiB extension** (`056797c7`) — bumped to cover M1's PCIe
+   at PA `0x690000000` (~26 GiB).
+3. **64 GiB extension** (`62ae1555`) — bumped again to cover
+   M1 Pro / Max's PCIe at PA `0xc00000000` (~48 GiB).
+
+### 7. DMA address correctness ✅ LANDED (commits `fcb7a5d4`, `447e1aae`, `47bc5d30`, `69cc8a71`)
+
+Sweep of "treating kernel VA as PA" bugs surfaced by the peripheral
+mapping work.  Multiple Apple-side drivers were writing kernel VAs
+into hardware registers / DMA descriptors that the controller
+interprets as physical addresses — latent on QEMU virt because the
+identity-ish DRAM mapping made VA ≈ PA, would have caused silent
+DMA corruption on real Apple HW.  Fixed:
+
+- `apple_xhci`: ring buffers + control / bulk transfers take
+  paired (va, pa); CRCR / DCBAAP / TRB.param get the PA.
+- `apple_ans2`: ASQ / ACQ / NVMMU TCB base + every `cmd.prp1`
+  goes through `rust_virt_to_phys` (which itself was returning
+  the VA unchanged on ARM64 — also fixed).
+- `apple_dcp`: surface allocation now stores `va` for memset and
+  `phys = pmap_virt_to_phys(va)` for DART map.
+- `apple_dart`: IOMMU page-table chunks go through
+  `rust_virt_to_phys` instead of the bogus `ptr as u64`.
+
+### 8. Asahi DT path fallbacks ✅ LANDED (commits `578f6fbb`, `4057cd83`)
+
+Fixing `fut_dtb_get_property` (`578f6fbb`) to handle nested nodes
+correctly revealed that the existing `/arm-io/*` path strings were
+historical Futura-test-fixture naming, not the Asahi `/soc/<type>
+@<addr>` paths m1n1 actually emits.  Added Asahi-spec fallbacks
+first in each chain, kept `/arm-io/*` as last-ditch.
+
+### 9. ARM64 Image header flags ✅ LANDED (commit `a0291515`)
+
+The `flags` field at offset 0x18 was 0 → "page size unspecified,
+bound to text_offset = 0" per arm64/booting.rst.  m1n1 would have
+honoured that and tried to place the kernel at PA 0 (which it
+itself occupies on real Apple HW).  Set `flags = 0xA` → 4K pages +
+bit 3 = relocatable.
+
+### 10. m1n1 framebuffer first-light ✅ LANDED (commits `cbaa1eb6`, `ffcfcd1a`, `a103eb48`, `3fc851f0`)
+
+If m1n1 publishes a Simple Framebuffer at `/chosen/framebuffer`
+(width / height / stride / reg), the kernel paints into it
+directly via the peripheral mapping VA — bypassing the
+not-yet-complete DCP swap-chain protocol.  Runs BEFORE RTKit boot
+so first-light survives an RTKit failure.  `fut_fb_hwinfo.virt`
+field lets probers pre-compute the VA when `pmap_phys_to_virt`
+would give a bogus answer (m1n1 FB at DRAM PA outside the
+`L2_dram` window).
 
 ## Asahi-Linux-Derived Rust Drivers
 

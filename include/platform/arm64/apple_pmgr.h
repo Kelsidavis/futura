@@ -49,4 +49,18 @@ int apple_pmgr_disable(uint32_t ps_offset);
 /* Read PS_ACTUAL for a peripheral, or 0xFF on error. */
 uint8_t apple_pmgr_state(uint32_t ps_offset);
 
+/* For a DT node at `node_path`, read its `power-domains` property (a
+ * list of u32 phandles to pmgr-pwrstate sub-nodes, single-cell per
+ * Asahi convention), resolve each phandle to the corresponding pmgr
+ * register offset, and call apple_pmgr_enable on it.  Returns the
+ * count of domains successfully enabled, or a negative errno.
+ *
+ * Use case: bring up every power domain a device needs without
+ * hardcoding per-SoC tables — read the DT instead.  Each Apple SoC
+ * generation (t8103, t6000, t8112, ...) has different pmgr offsets
+ * for the same logical domain, but the device's `power-domains`
+ * property carries the right phandles for whatever DT m1n1 hands us.
+ */
+int apple_pmgr_enable_domains_for(uint64_t dtb_ptr, const char *node_path);
+
 #endif /* __FUTURA_APPLE_PMGR_H__ */

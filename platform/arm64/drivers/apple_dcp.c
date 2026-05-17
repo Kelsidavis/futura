@@ -27,6 +27,7 @@
 #include <platform/arm64/apple_dcp.h>
 #include <platform/arm64/apple_dart.h>
 #include <platform/arm64/apple_rtkit.h>
+#include <platform/arm64/apple_pmgr.h>
 #include <platform/arm64/memory/pmap.h>
 #include <platform/platform.h>
 #include <kernel/fut_memory.h>
@@ -244,6 +245,31 @@ int fut_apple_dcp_platform_init(const fut_platform_info_t *info) {
             rust_dart_enable_stream(g_dcp.dart, g_dcp.dart_stream_id);
             fut_printf("[DCP] DART up at PA 0x%lx (VA 0x%lx)\n",
                        (unsigned long)info->dart_base, (unsigned long)dart_va);
+        }
+    }
+
+    /* Enable every pmgr power domain DCP needs.  Without this on
+     * cold boot the DCP coprocessor stays in reset and RTKit boot
+     * silently times out.  Resolved via DT phandles in the DCP
+     * node's power-domains property — no per-SoC offset table
+     * required.  Non-fatal if pmgr or the DT property is missing
+     * (m1n1 likely already powered things on). */
+    extern uint64_t fut_platform_get_dtb(void);
+    uint64_t dtb = fut_platform_get_dtb();
+    if (dtb != 0) {
+        static const char *const dcp_paths[] = {
+            "/soc/dcp@28200000",
+            "/soc/dcp",
+            "/arm-io/dcp",
+            NULL,
+        };
+        for (int i = 0; dcp_paths[i]; i++) {
+            int rc = apple_pmgr_enable_domains_for(dtb, dcp_paths[i]);
+            if (rc > 0) {
+                fut_printf("[DCP] pmgr: %d domains enabled via %s\n",
+                           rc, dcp_paths[i]);
+                break;
+            }
         }
     }
 

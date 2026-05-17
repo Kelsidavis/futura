@@ -946,6 +946,9 @@ static void selftest_sequential_runner(void *arg) {
     extern void fut_apple_dart_test_thread(void *arg);
     fut_apple_dart_test_thread(NULL);
 
+    extern void fut_apple_pcie_test_thread(void *arg);
+    fut_apple_pcie_test_thread(NULL);
+
     /* Safety net: if every test function returned without triggering
      * try_finish() (planned over-counted by the same magnitude as a
      * skipped cluster, or a control-flow branch that returned without
@@ -2106,6 +2109,14 @@ void fut_kernel_main(void) {
          * flush_tlb_all / flush_tlb_stream). ARM64-only. */
 #ifdef __aarch64__
         planned_tests += 8u;
+#endif
+
+        /* apple_pcie: T1-T12 (Rust FFI NULL guards on free, port_*,
+         * cfg_read/write, find_cap, setup_msi, handle_irq,
+         * scan_devices).  Config-read NULLs return PCI "device-not-
+         * present" sentinels (0xFFFFFFFF/0xFFFF/0xFF). */
+#ifdef __aarch64__
+        planned_tests += 12u;
 #endif
 
         /* apple_bcm: T1-T17 (Rust FFI classification + chip-name

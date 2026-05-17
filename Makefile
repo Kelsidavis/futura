@@ -900,6 +900,7 @@ KERNEL_SOURCES := \
     kernel/tests/apple_dcp_tests.c \
     kernel/tests/apple_aic_tests.c \
     kernel/tests/apple_dart_tests.c \
+    kernel/tests/apple_pcie_tests.c \
     kernel/sys_echo.c \
     kernel/sys_exit.c \
     kernel/sys_fork.c \

@@ -385,11 +385,15 @@ int fut_map_page(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr, uint64
     /* Translate generic flags to ARM64 flags if needed */
     uint64_t arm64_flags = arm64_translate_flags(flags);
 
-    /* Walk page table hierarchy and create intermediate tables as needed
-     * ARM64 with 39-bit VA (T0SZ=25) uses 3-level page tables:
-     * L1 (PGD): bits [38:30] -> L2 table
-     * L2 (PMD): bits [29:21] -> L3 table
-     * L3 (PTE): bits [20:12] -> physical page
+    /* Walk page table hierarchy and create intermediate tables as
+     * needed.  boot.S programs T0SZ = T1SZ = 16 (48-bit VA, 4-level
+     * walk), but this walker only descends three levels from the
+     * supplied `pgd`.  The L0 step is implicit: for kernel-half
+     * VAs the hardware indexes through kernel_l0_table[511] →
+     * kernel_l1_table (set up in boot.S), and the per-process root
+     * loaded into TTBR0 is treated as an L1 table by this walker.
+     * PGD_INDEX / PMD_INDEX / PTE_INDEX correspondingly cover bits
+     * [38:30] / [29:21] / [20:12].
      */
     int pgd_idx = PGD_INDEX(vaddr);
     PAGING_DEBUG("[MAP-PAGE] VA=0x%llx: PGD[%d] lookup at %p\n",
@@ -489,10 +493,8 @@ int fut_unmap_page(fut_vmem_context_t *ctx, uint64_t vaddr) {
         return -EINVAL;  /* No page table */
     }
 
-    /* Walk 3-level page table (T0SZ=25, 39-bit VA):
-     * L1 (PGD): bits [38:30] -> L2 table
-     * L2 (PMD): bits [29:21] -> L3 table
-     * L3 (PTE): bits [20:12] -> physical page (FINAL level)
+    /* Walk L1/L2/L3 from the supplied root.  See fut_map_page for
+     * the L0 / 48-bit VA story — same indexing here.
      */
     int pgd_idx = PGD_INDEX(vaddr);
     pte_t pgd_entry = pgd->entries[pgd_idx];
@@ -561,10 +563,8 @@ int fut_virt_to_phys(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t *paddr) {
         return -EINVAL;  /* No page table */
     }
 
-    /* Walk 3-level page table (T0SZ=25, 39-bit VA):
-     * L1 (PGD): bits [38:30] -> L2 table
-     * L2 (PMD): bits [29:21] -> L3 table
-     * L3 (PTE): bits [20:12] -> physical page (FINAL level)
+    /* Walk L1/L2/L3 from the supplied root.  See fut_map_page for
+     * the L0 / 48-bit VA story — same indexing here.
      */
     int pgd_idx = PGD_INDEX(vaddr);
     pte_t pgd_entry = pgd->entries[pgd_idx];
@@ -617,7 +617,8 @@ int fut_update_page_flags(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t flag
         return -EINVAL;
     }
 
-    /* Walk 3-level page table to find the L3 PTE */
+    /* Walk L1/L2/L3 from the supplied root to find the L3 PTE.
+     * See fut_map_page for the L0 / 48-bit VA story. */
     int pgd_idx = PGD_INDEX(vaddr);
     pte_t pgd_entry = pgd->entries[pgd_idx];
     if (!fut_pte_is_present(pgd_entry)) {
@@ -710,11 +711,13 @@ fut_vmem_context_t *fut_vmem_create(void) {
  * Walks the table hierarchy and frees intermediate tables,
  * but does not free individual memory pages (they're tracked separately).
  *
- * IMPORTANT: At L1 (PGD, level 0), only process user-space entries.
- * Kernel entries (copied from boot_l1_table during fut_vmem_create) point to
- * shared kernel page tables that must NOT be freed. With 39-bit VA (T0SZ=25),
- * the user-space DRAM region uses L1 indices 0-1 (0x00000000-0x7FFFFFFF).
- * Entries at index 2+ (including 256 for PCIe ECAM) are shared kernel mappings.
+ * IMPORTANT: At the root level (level 0 in this walker's numbering),
+ * only process user-space entries.  The walker treats the per-process
+ * root as an L1 table (PGD_INDEX = bits [38:30]), matching how
+ * copy_kernel_half initialises it; entries at indices 2+ would point
+ * at shared kernel sub-tables copied from boot_l1_table during
+ * fut_vmem_create and must NOT be freed.  User-space DRAM lives at
+ * VAs below 0x80000000 which fall in indices 0-1.
  *
  * @param table Page table to recursively free
  * @param level Current table level (0=L1/PGD, 1=L2/PMD, 2=L3/PTE)
@@ -737,8 +740,10 @@ static void free_page_tables_recursive(page_table_t *table, int level) {
     int start = 0;
     int end = 512;
     if (level == 0) {
-        /* Only recurse into user-space L1 entries (indices 0-1 for 39-bit VA).
-         * Skip kernel entries (index 2+) which are shared from boot_l1_table. */
+        /* Only recurse into the first two root entries — those cover
+         * user-space DRAM under the L1-as-root layout the walker
+         * assumes.  Entries at index 2+ are shared kernel sub-tables
+         * copied from boot_l1_table and must not be freed. */
         end = 2;
     }
 
@@ -943,7 +948,9 @@ void fut_paging_init(void) {
 
 /**
  * Dump page table entries for a virtual address.
- * Walks the 3-level page table hierarchy (T0SZ=25, 39-bit VA) and prints entries.
+ * Walks L1 → L2 → L3 from ctx->pgd (which the walker treats as an L1
+ * table — L0 is handled implicitly by the hardware via TTBR1's
+ * kernel_l0_table).  See fut_map_page for the full layout discussion.
  */
 void fut_dump_page_tables(fut_vmem_context_t *ctx, uint64_t vaddr) {
 
@@ -976,7 +983,7 @@ void fut_dump_page_tables(fut_vmem_context_t *ctx, uint64_t vaddr) {
         return;
     }
 
-    /* L3: PTE - bits [20:12] (FINAL level for 3-level walk) */
+    /* L3: PTE - bits [20:12] (final leaf level) */
     phys_addr_t pte_phys = pmd_entry & PTE_PHYS_ADDR_MASK;
     page_table_t *pte_table = (page_table_t *)pmap_phys_to_virt(pte_phys);
     int pte_idx = PTE_INDEX(vaddr);

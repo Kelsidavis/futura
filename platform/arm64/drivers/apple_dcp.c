@@ -47,7 +47,7 @@ static struct {
         uint64_t iova;
         size_t size;
         bool valid;
-    } surfaces[4];
+    } surfaces[APPLE_DCP_MAX_SURFACES];
     bool initialized;
 } g_dcp;
 
@@ -150,7 +150,8 @@ static int dcp_alloc_surface(uint32_t width, uint32_t height, uint32_t format) {
  * Used by failure paths in apple_dcp_init that allocate a surface
  * but then can't complete the swap-submit handshake. */
 static void dcp_release_surface(int fb_idx) {
-    if (fb_idx < 0 || fb_idx >= 4 || !g_dcp.surfaces[fb_idx].valid) return;
+    if (fb_idx < 0 || fb_idx >= APPLE_DCP_MAX_SURFACES ||
+        !g_dcp.surfaces[fb_idx].valid) return;
     if (g_dcp.dart) {
         rust_dart_unmap(g_dcp.dart, g_dcp.dart_stream_id,
                         g_dcp.surfaces[fb_idx].iova,
@@ -173,7 +174,8 @@ static void dcp_release_surface(int fb_idx) {
  * ============================================================ */
 
 static int dcp_register_fb(int fb_idx) {
-    if (fb_idx < 0 || fb_idx >= 4 || !g_dcp.surfaces[fb_idx].valid) return -1;
+    if (fb_idx < 0 || fb_idx >= APPLE_DCP_MAX_SURFACES ||
+        !g_dcp.surfaces[fb_idx].valid) return -1;
 
     uint32_t width  = rust_apple_dcp_mode_width(g_dcp.dcp);
     uint32_t height = rust_apple_dcp_mode_height(g_dcp.dcp);

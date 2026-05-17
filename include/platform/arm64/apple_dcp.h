@@ -24,6 +24,10 @@
 #include <stdbool.h>
 #include <platform/arm64/dtb.h>
 
+/* Number of swap-chain surface slots the Rust DCP driver maintains.
+ * Must match MAX_SURFACES in drivers/rust/apple_dcp/src/lib.rs. */
+#define APPLE_DCP_MAX_SURFACES   4
+
 /* DCP pixel formats — used when building modes / surfaces from C. */
 #define APPLE_DCP_FMT_BGRA8888  0x00000001
 #define APPLE_DCP_FMT_RGBA8888  0x00000002

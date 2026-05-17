@@ -94,6 +94,49 @@ void fut_apple_dcp_test_thread(void *arg)
         } else { DCP_FAIL("platform_init(NULL)", 8); return; }
     }
 
+    /* T9: register_surface(NULL, ...) → -1 */
+    {
+        int32_t rc = rust_apple_dcp_register_surface(NULL, 0x100000,
+                                                      1920, 1080, 1920 * 4,
+                                                      APPLE_DCP_FMT_BGRA8888);
+        if (rc == -1) DCP_PASS("register_surface(NULL)");
+        else { DCP_FAIL("register_surface(NULL)", 9); return; }
+    }
+
+    /* T10: unregister_surface(NULL, ...) → no-op (no crash) */
+    {
+        rust_apple_dcp_unregister_surface(NULL, 0);
+        DCP_PASS("unregister_surface(NULL) no-op");
+    }
+
+    /* T11: surface_iova(NULL, ...) → 0 */
+    {
+        if (rust_apple_dcp_surface_iova(NULL, 0) == 0) {
+            DCP_PASS("surface_iova(NULL)");
+        } else { DCP_FAIL("surface_iova(NULL)", 11); return; }
+    }
+
+    /* T12: set_mode(NULL, ...) → no-op (no crash) */
+    {
+        rust_apple_dcp_set_mode(NULL, 1920, 1080, 60, APPLE_DCP_FMT_BGRA8888);
+        DCP_PASS("set_mode(NULL) no-op");
+    }
+
+    /* T13: get_mode(NULL, &out) → 0 */
+    {
+        apple_dcp_mode_t out = {0};
+        if (rust_apple_dcp_get_mode(NULL, &out) == 0) {
+            DCP_PASS("get_mode(NULL dcp)");
+        } else { DCP_FAIL("get_mode(NULL dcp)", 13); return; }
+    }
+
+    /* T14: swap_submit_build(NULL, ...) → 0 */
+    {
+        if (rust_apple_dcp_swap_submit_build(NULL, 0) == 0) {
+            DCP_PASS("swap_submit_build(NULL)");
+        } else { DCP_FAIL("swap_submit_build(NULL)", 14); return; }
+    }
+
     fut_printf("[DCP-TEST] all apple_dcp guard tests passed\n");
 }
 

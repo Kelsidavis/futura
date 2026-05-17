@@ -892,6 +892,7 @@ KERNEL_SOURCES := \
     kernel/tests/apple_bcm_tests.c \
     kernel/tests/dtb_walker_tests.c \
     kernel/tests/pmgr_tests.c \
+    kernel/tests/rtkit_tests.c \
     kernel/sys_echo.c \
     kernel/sys_exit.c \
     kernel/sys_fork.c \

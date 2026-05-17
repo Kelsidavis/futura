@@ -922,6 +922,9 @@ static void selftest_sequential_runner(void *arg) {
     extern void fut_pmgr_test_thread(void *arg);
     fut_pmgr_test_thread(NULL);
 
+    extern void fut_rtkit_test_thread(void *arg);
+    fut_rtkit_test_thread(NULL);
+
     /* Safety net: if every test function returned without triggering
      * try_finish() (planned over-counted by the same magnitude as a
      * skipped cluster, or a control-flow branch that returned without
@@ -2026,6 +2029,13 @@ void fut_kernel_main(void) {
         /* apple_pmgr: T1-T8 (no-init guard paths return correct errnos,
          * domain-list helpers reject NULL/empty, stats handle NULL).
          * ARM64-only — apple_pmgr lives in platform/arm64/. */
+#ifdef __aarch64__
+        planned_tests += 8u;
+#endif
+
+        /* apple_rtkit: T1-T8 (NULL-ctx guards on every public function
+         * + init(0) refusal).  ARM64-only — apple_rtkit lives in
+         * platform/arm64/. */
 #ifdef __aarch64__
         planned_tests += 8u;
 #endif

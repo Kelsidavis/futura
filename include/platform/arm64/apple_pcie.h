@@ -20,6 +20,13 @@ uint32_t rust_apple_pcie_cfg_read32(const ApplePcie *pcie, uint8_t bus, uint8_t 
 void rust_apple_pcie_cfg_write32(ApplePcie *pcie, uint8_t bus, uint8_t dev, uint8_t fn_, uint16_t reg, uint32_t val);
 uint16_t rust_apple_pcie_cfg_read16(const ApplePcie *pcie, uint8_t bus, uint8_t dev, uint8_t fn_, uint16_t reg);
 uint8_t rust_apple_pcie_cfg_read8(const ApplePcie *pcie, uint8_t bus, uint8_t dev, uint8_t fn_, uint16_t reg);
+void rust_apple_pcie_cfg_write16(ApplePcie *pcie, uint8_t bus, uint8_t dev, uint8_t fn_, uint16_t reg, uint16_t val);
+
+/* Walk the PCI capability linked list looking for `cap_id` (e.g. 0x05
+ * for MSI, 0x10 for PCI Express, 0x11 for MSI-X).  Returns the cap's
+ * byte offset within config space, or 0 if not present. */
+uint16_t rust_apple_pcie_find_cap(const ApplePcie *pcie, uint8_t bus, uint8_t dev, uint8_t fn_, uint8_t cap_id);
+
 void rust_apple_pcie_setup_msi(ApplePcie *pcie, uint32_t port, uint64_t msi_addr, uint32_t irq_base);
 void rust_apple_pcie_handle_irq(const ApplePcie *pcie, uint32_t port);
 uint32_t rust_apple_pcie_scan_devices(const ApplePcie *pcie);

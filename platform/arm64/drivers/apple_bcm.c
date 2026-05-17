@@ -48,25 +48,7 @@ extern void fut_platform_udelay(uint32_t usec);
 
 #define BCM_MAX_FUNCTIONS  2  /* fn 0 (WiFi) + fn 1 (Bluetooth) */
 
-/* Forward declarations for the rust_apple_pcie FFI we reuse. */
-extern struct ApplePcie *rust_apple_pcie_init(uint64_t base,
-                                              uint32_t num_ports,
-                                              uint64_t cfg_base);
-extern int      rust_apple_pcie_port_link_up(const struct ApplePcie *p,
-                                             uint32_t port);
-extern uint32_t rust_apple_pcie_cfg_read32(const struct ApplePcie *p,
-                                           uint8_t bus, uint8_t dev,
-                                           uint8_t fn, uint16_t reg);
-extern uint16_t rust_apple_pcie_cfg_read16(const struct ApplePcie *p,
-                                           uint8_t bus, uint8_t dev,
-                                           uint8_t fn, uint16_t reg);
-extern void     rust_apple_pcie_cfg_write32(struct ApplePcie *p,
-                                            uint8_t bus, uint8_t dev,
-                                            uint8_t fn, uint16_t reg,
-                                            uint32_t val);
-extern uint16_t rust_apple_pcie_find_cap(const struct ApplePcie *p,
-                                          uint8_t bus, uint8_t dev,
-                                          uint8_t fn, uint8_t cap_id);
+/* PCIe FFI is declared in include/platform/arm64/apple_pcie.h. */
 
 /* PCI / PCIe capability IDs we care about here. */
 #define PCI_CAP_ID_MSI       0x05u

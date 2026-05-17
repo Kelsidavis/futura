@@ -248,6 +248,34 @@ int fut_apple_dcp_platform_init(const fut_platform_info_t *info) {
         fut_printf("[DCP] No mode set, skipping FB probe\n");
         return 0;
     }
+
+    /* Fast-path: m1n1 already brought up a Simple Framebuffer and
+     * published its PA in /chosen/framebuffer.  Publish that to the
+     * kernel fb layer immediately so the early kernel console can
+     * paint somewhere — much faster path to first-light than the
+     * full DCP swap-chain bring-up, which needs additional protocol
+     * conversation with the co-processor that we don't fully
+     * implement yet.  Once DCP-driven swap-chain support is
+     * complete, the alloc + DART + swap path below can take over. */
+    if (info->framebuffer_phys != 0) {
+        struct fut_fb_hwinfo m1n1_fb = {0};
+        uint32_t width  = rust_apple_dcp_mode_width(g_dcp.dcp);
+        uint32_t height = rust_apple_dcp_mode_height(g_dcp.dcp);
+        uint32_t stride = rust_apple_dcp_mode_stride(g_dcp.dcp);
+        uint32_t format = rust_apple_dcp_mode_format(g_dcp.dcp);
+        m1n1_fb.phys        = info->framebuffer_phys;
+        m1n1_fb.length      = (uint64_t)stride * height;
+        m1n1_fb.info.width  = width;
+        m1n1_fb.info.height = height;
+        m1n1_fb.info.pitch  = stride;
+        m1n1_fb.info.bpp    = (format == APPLE_DCP_FMT_RGB565) ? 16 : 32;
+        m1n1_fb.info.flags  = 0x00000001;  /* FB_FLAG_LINEAR */
+        int rc = fb_set_hwinfo(&m1n1_fb);
+        fut_printf("[DCP] Using m1n1's pre-allocated FB at PA 0x%lx (rc=%d)\n",
+                   (unsigned long)info->framebuffer_phys, rc);
+        return rc;
+    }
+
     int fb_idx = dcp_alloc_surface(rust_apple_dcp_mode_width(g_dcp.dcp),
                                     rust_apple_dcp_mode_height(g_dcp.dcp),
                                     rust_apple_dcp_mode_format(g_dcp.dcp));

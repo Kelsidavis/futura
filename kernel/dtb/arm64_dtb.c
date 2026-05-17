@@ -648,7 +648,8 @@ fut_platform_info_t fut_dtb_parse(uint64_t dtb_ptr) {
             fut_dtb_get_chosen_framebuffer(dtb_ptr,
                                             &info.display_width,
                                             &info.display_height,
-                                            NULL);
+                                            NULL,
+                                            &info.framebuffer_phys);
 
             break;
         }
@@ -780,7 +781,8 @@ size_t fut_dtb_get_bootargs(uint64_t dtb_ptr, char *out, size_t max_len) {
 bool fut_dtb_get_chosen_framebuffer(uint64_t dtb_ptr,
                                     uint32_t *width_out,
                                     uint32_t *height_out,
-                                    uint32_t *stride_out) {
+                                    uint32_t *stride_out,
+                                    uint64_t *addr_out) {
     if (!fut_dtb_validate(dtb_ptr)) {
         return false;
     }
@@ -870,6 +872,15 @@ bool fut_dtb_get_chosen_framebuffer(uint64_t dtb_ptr,
                 } else if (strcmp(prop_name, "stride") == 0) {
                     if (stride_out) { *stride_out = val; }
                 }
+            } else if (in_fb && addr_out &&
+                       strcmp(prop_name, "reg") == 0 &&
+                       prop_len == 16) {
+                /* Simple Framebuffer's reg is (addr, size) — both
+                 * 64-bit big-endian.  Extract the first 8 bytes as
+                 * the framebuffer physical base. */
+                uint64_t raw;
+                memcpy(&raw, &prop[1], sizeof(raw));
+                *addr_out = be64_to_cpu(raw);
             }
             size_t advance = sizeof(uint32_t) + sizeof(dtb_prop_t) + prop_len;
             p = (uint32_t *)((char *)p + advance);

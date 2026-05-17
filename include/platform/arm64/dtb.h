@@ -84,6 +84,7 @@ typedef struct {
     uint32_t display_height;     /* Native panel height (Apple Silicon only) */
     uint64_t mca_base;           /* Apple MCA (Multi-Channel Audio) I2S base (Apple Silicon only) */
     uint32_t mca_num_clusters;   /* Number of MCA clusters (1 on M1, more on M1 Pro/Max) (Apple Silicon only) */
+    uint64_t framebuffer_phys;   /* m1n1-published Simple Framebuffer PA (0 if not advertised by bootloader) */
     bool has_gic;                /* Has GICv2 support */
     bool has_aic;                /* Has Apple AIC (Apple Silicon only) */
     bool has_dcp;                /* Has Apple DCP (Apple Silicon only) */
@@ -120,23 +121,29 @@ fut_platform_type_t fut_dtb_detect_platform(uint64_t dtb_ptr);
 size_t fut_dtb_get_bootargs(uint64_t dtb_ptr, char *out, size_t max_len);
 
 /**
- * Read /chosen/framebuffer dimensions.  m1n1 (Asahi) and U-Boot
- * publish the panel geometry the bootloader's already brought up
- * here, in a Linux-conformant Simple Framebuffer subnode.  Used by
- * fut_dtb_parse on Apple Silicon to populate display_width and
- * display_height before apple_dcp picks a default mode.
+ * Read /chosen/framebuffer dimensions + base PA.  m1n1 (Asahi) and
+ * U-Boot publish the panel geometry the bootloader's already brought
+ * up here, in a Linux-conformant Simple Framebuffer subnode.  Used
+ * by fut_dtb_parse on Apple Silicon to populate display_width /
+ * display_height / framebuffer_phys before apple_dcp picks a
+ * default mode — when the address is non-zero, the kernel can paint
+ * into m1n1's pre-existing framebuffer without booting DCP.
  *
  * @param dtb_ptr:    DTB pointer (virtual)
  * @param width_out:  Receives width in pixels (NULL allowed)
  * @param height_out: Receives height in pixels (NULL allowed)
  * @param stride_out: Receives stride in bytes (NULL allowed)
+ * @param addr_out:   Receives the framebuffer physical base address
+ *                    (NULL allowed; only set when the subnode's
+ *                    "reg" property is a 16-byte addr+size pair).
  * @return:           true if /chosen/framebuffer was found and at
  *                    least width+height were read.
  */
 bool fut_dtb_get_chosen_framebuffer(uint64_t dtb_ptr,
                                     uint32_t *width_out,
                                     uint32_t *height_out,
-                                    uint32_t *stride_out);
+                                    uint32_t *stride_out,
+                                    uint64_t *addr_out);
 
 /**
  * Get property value from DTB node.

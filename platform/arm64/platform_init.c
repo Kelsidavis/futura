@@ -1329,7 +1329,18 @@ void fut_platform_early_init(uint32_t boot_magic, void *boot_info) {
         }
     }
     if (skip_gic) {
-        fut_serial_puts("[INIT] Skipping GICv2 init (Apple Silicon — AIC used instead)\n");
+        fut_serial_puts("[INIT] Skipping GICv2 init (Apple Silicon — bringing up AIC instead)\n");
+        /* Install the AIC backend now, before fut_enable_interrupts
+         * down below.  Without this, the first IRQ that fires on real
+         * Apple hardware would land in fut_irq_main's default GICv2
+         * path and read garbage from the unbacked GIC PA — at best
+         * harmless, at worst it leaves an in-service vector latched
+         * in nothing.  fut_apple_irq_init() also runs rust_aic_init
+         * with the DTB-discovered base, so the Rust driver has a
+         * valid AIC handle in time for the first timer interrupt. */
+        fut_platform_info_t apple_info = fut_dtb_parse(g_dtb_ptr);
+        extern void fut_apple_irq_init(const fut_platform_info_t *info);
+        fut_apple_irq_init(&apple_info);
     } else {
         fut_serial_puts("[INIT] Initializing GICv2...\n");
         fut_gic_init();

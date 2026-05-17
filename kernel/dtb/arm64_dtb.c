@@ -658,6 +658,46 @@ fut_platform_info_t fut_dtb_parse(uint64_t dtb_ptr) {
                                             &info.framebuffer_stride,
                                             &info.framebuffer_phys);
 
+            /* WL_REG_ON / BT_REG_ON pin numbers from apple,bootstrap-gpios
+             * on the Broadcom combo chip's WiFi + Bluetooth nodes.  The
+             * property layout is <phandle pin flags ...>; cell 1 of the
+             * first triple is the pin number.  Try chip-family compatibles
+             * in turn so we match whichever generation booted us. */
+            static const char *const bcm_wifi_compats[] = {
+                "brcm,bcm4378-pcie",
+                "brcm,bcm4387-pcie",
+                "brcm,bcm4388-pcie",
+                "pci14e4,4425",
+                "pci14e4,4433",
+                "pci14e4,4434",
+                "pci14e4,4438",
+                NULL,
+            };
+            static const char *const bcm_bt_compats[] = {
+                "brcm,bcm4378-bt",
+                "brcm,bcm4387-bt",
+                "brcm,bcm4388-bt",
+                NULL,
+            };
+            for (int i = 0; bcm_wifi_compats[i]; i++) {
+                int64_t pin = fut_dtb_find_compat_u32_cell(
+                    dtb_ptr, bcm_wifi_compats[i],
+                    "apple,bootstrap-gpios", 1);
+                if (pin >= 0) {
+                    info.wlan_reset_gpio = (int32_t)pin;
+                    break;
+                }
+            }
+            for (int i = 0; bcm_bt_compats[i]; i++) {
+                int64_t pin = fut_dtb_find_compat_u32_cell(
+                    dtb_ptr, bcm_bt_compats[i],
+                    "apple,bootstrap-gpios", 1);
+                if (pin >= 0) {
+                    info.bt_reset_gpio = (int32_t)pin;
+                    break;
+                }
+            }
+
             break;
         }
 
@@ -1072,6 +1112,103 @@ int fut_dtb_find_compatible_nodes(uint64_t dtb_ptr, const char *compatible,
     }
 
     return found_count;
+}
+
+int64_t fut_dtb_find_compat_u32_cell(uint64_t dtb_ptr,
+                                      const char *compatible_substr,
+                                      const char *prop_name,
+                                      uint32_t cell_idx) {
+    if (!fut_dtb_validate(dtb_ptr) || !compatible_substr || !prop_name) {
+        return -1;
+    }
+
+    dtb_header_t *header = (dtb_header_t *)dtb_ptr;
+    uint32_t totalsize = be32_to_cpu(header->totalsize);
+    uint32_t off_struct = be32_to_cpu(header->off_dt_struct);
+    uint32_t off_strings = be32_to_cpu(header->off_dt_strings);
+
+    if (off_struct >= totalsize || off_strings >= totalsize) {
+        return -1;
+    }
+
+    char *strings_base = (char *)(dtb_ptr + off_strings);
+    uint32_t strings_size = totalsize - off_strings;
+    uint32_t *struct_ptr = (uint32_t *)(dtb_ptr + off_struct);
+    uint32_t *struct_end = (uint32_t *)(dtb_ptr + totalsize);
+    uint32_t *p = struct_ptr;
+
+    bool in_matching_node = false;
+    int     depth = 0;
+    int     match_depth = -1;
+
+    while (p < struct_end && be32_to_cpu(p[0]) != FDT_END) {
+        uint32_t token = be32_to_cpu(p[0]);
+
+        if (token == FDT_BEGIN_NODE) {
+            const char *node_name_ptr = (const char *)&p[1];
+            size_t max_name = (size_t)((char *)struct_end - node_name_ptr);
+            size_t name_len = 0;
+            while (name_len < max_name && node_name_ptr[name_len] != '\0') {
+                name_len++;
+            }
+            size_t aligned_name_len = align_offset(name_len + 1);
+            p = (uint32_t *)((char *)&p[1] + aligned_name_len);
+            depth++;
+            /* in_matching_node flips on per-node — only the
+             * compatible check at this depth determines a match;
+             * children don't inherit the match. */
+            in_matching_node = false;
+
+        } else if (token == FDT_PROP) {
+            dtb_prop_t *prop = (dtb_prop_t *)&p[1];
+            uint32_t prop_len = be32_to_cpu(prop->len);
+            uint32_t name_off = be32_to_cpu(prop->nameoff);
+            if (name_off >= strings_size) break;
+            const char *pname = strings_base + name_off;
+            void *pvalue = (void *)&prop[1];
+
+            if (strcmp(pname, "compatible") == 0 && prop_len > 0) {
+                /* compatible is a sequence of null-terminated strings
+                 * laid out back-to-back; strstr on the buffer finds a
+                 * match in any of them. */
+                if (strstr((const char *)pvalue, compatible_substr) != NULL) {
+                    in_matching_node = true;
+                    match_depth = depth;
+                }
+            }
+
+            if (in_matching_node && strcmp(pname, prop_name) == 0) {
+                size_t needed = (size_t)(cell_idx + 1) * sizeof(uint32_t);
+                if (prop_len >= needed) {
+                    uint32_t *cells = (uint32_t *)pvalue;
+                    return (int64_t)be32_to_cpu(cells[cell_idx]);
+                }
+                /* property too short — keep scanning in case a later
+                 * matching node has a longer property. */
+            }
+
+            p = (uint32_t *)((char *)p + sizeof(uint32_t) +
+                              sizeof(dtb_prop_t) + prop_len);
+            p = (uint32_t *)align_offset((size_t)p);
+
+        } else if (token == FDT_END_NODE) {
+            if (match_depth >= 0 && depth == match_depth) {
+                /* leaving the matching node without finding the
+                 * property; reset match state. */
+                in_matching_node = false;
+                match_depth = -1;
+            }
+            depth--;
+            p += 1;
+
+        } else if (token == FDT_NOP) {
+            p += 1;
+        } else {
+            break;
+        }
+    }
+
+    return -1;
 }
 
 /* ============================================================

@@ -248,6 +248,22 @@ int fut_dtb_find_compatible_nodes(uint64_t dtb_ptr, const char *compatible,
                                    fut_dtb_node_t *nodes_out, int max_nodes);
 
 /**
+ * Find the first node whose compatible property contains `compatible_substr`
+ * (substring match), read its `prop_name` property as an array of
+ * big-endian u32 cells, and return cell `cell_idx` (zero-indexed).
+ *
+ * Used by apple_bcm to extract WL_REG_ON / BT_REG_ON pin numbers from
+ * the apple,bootstrap-gpios property on the WiFi / Bluetooth DT nodes.
+ *
+ * @return cell value on success, -1 if node not found or property
+ *         too short.
+ */
+int64_t fut_dtb_find_compat_u32_cell(uint64_t dtb_ptr,
+                                      const char *compatible_substr,
+                                      const char *prop_name,
+                                      uint32_t cell_idx);
+
+/**
  * Get interrupt property from a node.
  * Parses ARM GIC interrupt format: <type, number, flags>
  *   - type: 0=SPI, 1=PPI

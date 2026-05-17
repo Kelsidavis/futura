@@ -147,6 +147,13 @@ void fut_hci_reset(void);
  * log shows which radios are ready and which are pending. */
 void fut_hci_open_all(void);
 
+/* Inverse of fut_hci_open_all — calls ops->close on every device
+ * currently marked open and clears the open flag.  Used by the
+ * shutdown / reboot path so transports get a chance to put
+ * controllers into a safe state before the kernel hands control
+ * back to firmware. */
+void fut_hci_close_all(void);
+
 /* ============================================================
  *   HCI opcodes + packet construction
  * ============================================================

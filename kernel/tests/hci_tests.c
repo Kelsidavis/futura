@@ -364,6 +364,37 @@ void fut_hci_test_thread(void *arg)
         }
     }
 
+    /* T25: open_all + close_all round-trip */
+    {
+        fut_hci_reset();
+        mock_state_t m3 = {0};
+        int idx3 = fut_hci_register("mock3", FUT_HCI_TYPE_USB, &mock_ops, &m3);
+        if (idx3 < 0) { HCI_TEST_FAIL("register for T25", 25); return; }
+
+        fut_hci_open_all();
+        const fut_hci_dev_t *d = fut_hci_dev_get(idx3);
+        if (!d || !d->open || m3.open_calls != 1) {
+            HCI_TEST_FAIL("open_all post-state", 25);
+            return;
+        }
+
+        fut_hci_close_all();
+        d = fut_hci_dev_get(idx3);
+        if (d && !d->open && m3.close_calls == 1) {
+            HCI_TEST_PASS("open_all + close_all round-trip");
+        } else {
+            HCI_TEST_FAIL("close_all post-state", 25);
+            return;
+        }
+        fut_hci_unregister(idx3);
+    }
+
+    /* T26: close_all on idle (nothing open) → no-op */
+    {
+        fut_hci_close_all();
+        HCI_TEST_PASS("close_all(idle) no-op");
+    }
+
     fut_printf("[HCI-TEST] all HCI core tests passed\n");
     fut_hci_reset();
 }

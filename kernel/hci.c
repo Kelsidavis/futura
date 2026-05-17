@@ -200,6 +200,20 @@ void fut_hci_open_all(void)
                total, opened, pending);
 }
 
+void fut_hci_close_all(void)
+{
+    int closed = 0;
+    for (int i = 0; i < FUT_HCI_MAX_DEVICES; i++) {
+        if (!g_hci_slot_used[i]) continue;
+        if (!g_hci_devs[i].open) continue;
+        fut_hci_dev_close(i);
+        closed++;
+    }
+    if (closed > 0) {
+        fut_printf("[hci] %d transports closed\n", closed);
+    }
+}
+
 int fut_hci_build_cmd(uint16_t opcode,
                       const uint8_t *params,
                       uint8_t param_len,

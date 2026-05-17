@@ -121,6 +121,12 @@ int apple_xhci_init(const fut_platform_info_t *info) {
     uint8_t *dcbaa    = fut_malloc_pages(XHCI_RING_PAGE_COUNT);
     if (!cmd_ring || !evt_ring || !dcbaa) {
         fut_printf("[xHCI] Ring allocation failed\n");
+        /* Free whichever sub-allocations succeeded; without this any
+         * partial-success scenario leaks pages that the PMM can't
+         * recover. */
+        if (cmd_ring) fut_free_pages(cmd_ring, XHCI_RING_PAGE_COUNT);
+        if (evt_ring) fut_free_pages(evt_ring, XHCI_RING_PAGE_COUNT);
+        if (dcbaa)    fut_free_pages(dcbaa,    XHCI_RING_PAGE_COUNT);
         return -1;
     }
     memset(cmd_ring, 0, XHCI_RING_PAGE_COUNT * 4096);
@@ -141,12 +147,21 @@ int apple_xhci_init(const fut_platform_info_t *info) {
     if (!g_xhci.rust_ctrl) {
         fut_printf("[xHCI] rust_apple_xhci_new failed (PA BAR 0x%lx VA 0x%lx)\n",
                    (unsigned long)xhci_bar, (unsigned long)xhci_bar_va);
+        fut_free_pages(cmd_ring, XHCI_RING_PAGE_COUNT);
+        fut_free_pages(evt_ring, XHCI_RING_PAGE_COUNT);
+        fut_free_pages(dcbaa,    XHCI_RING_PAGE_COUNT);
         return -1;
     }
 
     int rc = rust_apple_xhci_reset_and_start(g_xhci.rust_ctrl);
     if (rc != 0) {
         fut_printf("[xHCI] Controller reset/start failed (rc=%d)\n", rc);
+        /* The Rust ctrl now holds references to the rings; rather
+         * than free them here and risk a UAF if Rust tries to touch
+         * them again on a future call, leave them allocated and
+         * leak.  The kernel doesn't unload drivers anyway, so this
+         * is a permanent leak only if init runs more than once,
+         * which apple_xhci_platform_init guards against. */
         return -1;
     }
 

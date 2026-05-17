@@ -485,6 +485,12 @@ impl ApplePcie {
         }
     }
 
+    pub fn config_write16(&self, bus: u8, dev: u8, fn_: u8, reg: u16, val: u16) {
+        if let Some(p) = self.port_for_bus(bus) {
+            self.ports[p].cfg_write16(bus, dev, fn_, reg, val);
+        }
+    }
+
     pub fn config_read8(&self, bus: u8, dev: u8, fn_: u8, reg: u16) -> u8 {
         match self.port_for_bus(bus) {
             Some(p) => self.ports[p].cfg_read8(bus, dev, fn_, reg),
@@ -812,6 +818,22 @@ pub unsafe extern "C" fn rust_apple_pcie_cfg_read16(
         return 0xFFFF;
     }
     unsafe { (*pcie).config_read16(bus, dev, fn_, reg) }
+}
+
+/// Write a 16-bit value to PCI configuration space.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rust_apple_pcie_cfg_write16(
+    pcie: *mut ApplePcie,
+    bus: u8,
+    dev: u8,
+    fn_: u8,
+    reg: u16,
+    val: u16,
+) {
+    if pcie.is_null() {
+        return;
+    }
+    unsafe { (*pcie).config_write16(bus, dev, fn_, reg, val) }
 }
 
 /// Read an 8-bit value from PCI configuration space.

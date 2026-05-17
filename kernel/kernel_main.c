@@ -931,6 +931,9 @@ static void selftest_sequential_runner(void *arg) {
     extern void fut_apple_audio_test_thread(void *arg);
     fut_apple_audio_test_thread(NULL);
 
+    extern void fut_apple_hid_test_thread(void *arg);
+    fut_apple_hid_test_thread(NULL);
+
     /* Safety net: if every test function returned without triggering
      * try_finish() (planned over-counted by the same magnitude as a
      * skipped cluster, or a control-flow branch that returned without
@@ -2057,6 +2060,13 @@ void fut_kernel_main(void) {
          * write / volume / state / platform_init). ARM64-only. */
 #ifdef __aarch64__
         planned_tests += 8u;
+#endif
+
+        /* apple_hid: T1-T7 (init guard, has_key/getchar/poll without
+         * init, register-callback set/clear, platform_init NULL).
+         * ARM64-only. */
+#ifdef __aarch64__
+        planned_tests += 7u;
 #endif
 
         /* apple_bcm: T1-T17 (Rust FFI classification + chip-name

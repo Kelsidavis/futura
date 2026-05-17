@@ -648,7 +648,7 @@ fut_platform_info_t fut_dtb_parse(uint64_t dtb_ptr) {
             fut_dtb_get_chosen_framebuffer(dtb_ptr,
                                             &info.display_width,
                                             &info.display_height,
-                                            NULL,
+                                            &info.framebuffer_stride,
                                             &info.framebuffer_phys);
 
             break;

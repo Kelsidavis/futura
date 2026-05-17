@@ -207,7 +207,12 @@ int fut_apple_dcp_platform_init(const fut_platform_info_t *info) {
     if (info->framebuffer_phys != 0 &&
         info->display_width > 0 && info->display_height > 0) {
         struct fut_fb_hwinfo m1n1_fb = {0};
-        uint32_t stride = info->display_width * 4;  /* default BGRA8888 stride */
+        /* Prefer the actual stride from /chosen/framebuffer when
+         * m1n1 published one — panels with non-power-of-2 widths or
+         * driver-imposed alignment can have stride > width × 4. */
+        uint32_t stride = (info->framebuffer_stride > 0)
+                            ? info->framebuffer_stride
+                            : (info->display_width * 4);
         m1n1_fb.phys        = info->framebuffer_phys;
         m1n1_fb.length      = (uint64_t)stride * info->display_height;
         /* Use the kernel peripheral mapping window — m1n1's FB sits

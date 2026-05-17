@@ -27,6 +27,7 @@
 #include <platform/arm64/apple_dcp.h>
 #include <platform/arm64/apple_dart.h>
 #include <platform/arm64/apple_rtkit.h>
+#include <platform/arm64/memory/pmap.h>
 #include <platform/platform.h>
 #include <kernel/fut_memory.h>
 #include <kernel/fb.h>
@@ -190,15 +191,17 @@ int fut_apple_dcp_platform_init(const fut_platform_info_t *info) {
                (unsigned long)info->dcp_mailbox_base);
 
     /* DART IOMMU — variant 0 = t8020 (M1/M2), variant 1 = t8110
-     * (M1 Pro/Max).  Identity fallback if no DART. */
+     * (M1 Pro/Max).  PA→VA via the kernel peripheral mapping window.
+     * Identity fallback if no DART. */
     if (info->dart_base != 0) {
-        g_dcp.dart = rust_dart_init(info->dart_base, 16, 0);
+        uint64_t dart_va = fut_kernel_peripheral_va(info->dart_base);
+        g_dcp.dart = rust_dart_init(dart_va, 16, 0);
         if (g_dcp.dart) {
             g_dcp.dart_stream_id = 0;
             g_dcp.next_iova      = 0x100000000ULL;
             rust_dart_enable_stream(g_dcp.dart, g_dcp.dart_stream_id);
-            fut_printf("[DCP] DART up at 0x%lx\n",
-                       (unsigned long)info->dart_base);
+            fut_printf("[DCP] DART up at PA 0x%lx (VA 0x%lx)\n",
+                       (unsigned long)info->dart_base, (unsigned long)dart_va);
         }
     }
 

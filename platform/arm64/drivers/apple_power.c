@@ -8,6 +8,7 @@
 
 #include <platform/arm64/apple_power.h>
 #include <platform/arm64/apple_smc.h>
+#include <platform/arm64/memory/pmap.h>
 #include <platform/platform.h>
 #include <string.h>
 
@@ -34,7 +35,10 @@ int apple_power_init(const fut_platform_info_t *info) {
         return -1;
     }
 
-    g_smc = rust_smc_init(info->smc_base);
+    /* PA→VA via the kernel peripheral mapping window — the Rust crate
+     * does raw MMIO via the value as a pointer, so it needs a VA. */
+    uint64_t smc_va = fut_kernel_peripheral_va(info->smc_base);
+    g_smc = rust_smc_init(smc_va);
     if (!g_smc) {
         fut_printf("[POWER] Failed to initialize SMC\n");
         return -1;

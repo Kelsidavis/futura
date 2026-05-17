@@ -27,6 +27,7 @@
 
 #include <platform/arm64/apple_xhci.h>
 #include <platform/arm64/apple_pcie.h>
+#include <platform/arm64/memory/pmap.h>
 #include <platform/platform.h>
 #include <kernel/fut_memory.h>
 #include <string.h>
@@ -63,11 +64,19 @@ int apple_xhci_init(const fut_platform_info_t *info) {
         return -1;
     }
 
-    ApplePcie *pcie = rust_apple_pcie_init(info->pcie_base,
+    /* PA→VA via the kernel peripheral mapping window — Rust crates do
+     * raw MMIO via the value as a pointer.  The xHCI BAR read out of
+     * PCIe config below also gets converted before passing to the
+     * xHCI Rust driver. */
+    uint64_t pcie_va     = fut_kernel_peripheral_va(info->pcie_base);
+    uint64_t pcie_cfg_va = fut_kernel_peripheral_va(info->pcie_cfg_base);
+    ApplePcie *pcie = rust_apple_pcie_init(pcie_va,
                                             info->pcie_num_ports,
-                                            info->pcie_cfg_base);
+                                            pcie_cfg_va);
     if (!pcie) {
-        fut_printf("[xHCI] Failed to initialize PCIe\n");
+        fut_printf("[xHCI] Failed to initialize PCIe (PA pcie=0x%lx cfg=0x%lx)\n",
+                   (unsigned long)info->pcie_base,
+                   (unsigned long)info->pcie_cfg_base);
         return -1;
     }
 
@@ -116,9 +125,13 @@ int apple_xhci_init(const fut_platform_info_t *info) {
     memset(evt_ring, 0, XHCI_RING_PAGE_COUNT * 4096);
     memset(dcbaa,    0, XHCI_RING_PAGE_COUNT * 4096);
 
-    g_xhci.rust_ctrl = rust_apple_xhci_new(xhci_bar, cmd_ring, evt_ring, dcbaa);
+    /* The xHCI controller's BAR0 is also a PA — convert to kernel VA
+     * through the peripheral mapping window before handing to Rust. */
+    uint64_t xhci_bar_va = fut_kernel_peripheral_va(xhci_bar);
+    g_xhci.rust_ctrl = rust_apple_xhci_new(xhci_bar_va, cmd_ring, evt_ring, dcbaa);
     if (!g_xhci.rust_ctrl) {
-        fut_printf("[xHCI] rust_apple_xhci_new failed\n");
+        fut_printf("[xHCI] rust_apple_xhci_new failed (PA BAR 0x%lx VA 0x%lx)\n",
+                   (unsigned long)xhci_bar, (unsigned long)xhci_bar_va);
         return -1;
     }
 

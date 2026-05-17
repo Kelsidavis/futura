@@ -26,6 +26,7 @@
  */
 
 #include <platform/arm64/apple_rtkit.h>
+#include <platform/arm64/memory/pmap.h>
 #include <kernel/fut_memory.h>
 #include <string.h>
 
@@ -56,10 +57,16 @@ apple_rtkit_ctx_t *apple_rtkit_init(uint64_t mailbox_base) {
         return NULL;
     }
 
-    ctx->rust_ctx = rust_rtkit_init(mailbox_base);
+    /* The Rust crate stores `base` as a raw VA-pointer and reads via
+     * read_volatile, so we have to hand it a kernel VA — not the
+     * DTB-supplied PA.  Convert through the kernel peripheral mapping
+     * window so the same call works on QEMU virt's PL011-ish low
+     * peripherals AND Apple's high-PA mailbox regions. */
+    uint64_t mailbox_va = fut_kernel_peripheral_va(mailbox_base);
+    ctx->rust_ctx = rust_rtkit_init(mailbox_va);
     if (!ctx->rust_ctx) {
-        fut_printf("[RTKit] rust_rtkit_init(0x%lx) failed\n",
-                   (unsigned long)mailbox_base);
+        fut_printf("[RTKit] rust_rtkit_init(VA 0x%lx, PA 0x%lx) failed\n",
+                   (unsigned long)mailbox_va, (unsigned long)mailbox_base);
         /* Page allocator has no free() in this kernel — leak the ctx
          * page rather than half-init. */
         return NULL;
@@ -67,7 +74,8 @@ apple_rtkit_ctx_t *apple_rtkit_init(uint64_t mailbox_base) {
 
     ctx->mailbox_phys = mailbox_base;
     ctx->initialized  = true;
-    fut_printf("[RTKit] Initialized at 0x%lx\n", (unsigned long)mailbox_base);
+    fut_printf("[RTKit] Initialized at PA 0x%lx (VA 0x%lx)\n",
+               (unsigned long)mailbox_base, (unsigned long)mailbox_va);
     return ctx;
 }
 

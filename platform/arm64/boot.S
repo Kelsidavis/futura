@@ -395,6 +395,40 @@ bss_cleared:
     orr     x1, x1, #3                /* Valid table descriptor */
     str     x1, [x0, #8]
 
+    /* kernel_l1[8..15] -> 8 GiB of Apple peripheral PA range
+     *
+     * Maps VA 0xFFFFFF8200000000 - 0xFFFFFF83FFFFFFFF (8 GiB) to
+     * PA 0x200000000 - 0x3FFFFFFFF using 1 GiB block descriptors
+     * with device-nGnRE memory attributes.
+     *
+     * Apple Silicon places its on-die peripherals at PA 0x200000000+
+     * which the boot identity map (low 1 GiB) and kernel DRAM
+     * mapping (1 GiB at the kernel load PA) both miss.  Without this
+     * range, Rust drivers passing DTB-discovered PAs (s5l-uart at
+     * 0x235200000, AIC at 0x23B100000, ANS mailbox at 0x277400000,
+     * DCP at 0x231100000, SMC at 0x23E400000, MCA at 0x2D5200000,
+     * ...) as VAs would translation-fault on the first MMIO touch.
+     *
+     * The 8 GiB window covers every documented M1/M2 peripheral.  C
+     * callers convert PA→VA via the helper that ORs in
+     * 0xFFFFFF8000000000 (declared in include/platform/arm64/memory/pmap.h).
+     *
+     * On QEMU virt these L1 entries point at unbacked PA — harmless
+     * because no QEMU-side code accesses VAs in the 0xFFFFFF8200000000+
+     * range. */
+    adrp    x0, kernel_l1_table
+    add     x0, x0, :lo12:kernel_l1_table
+    add     x0, x0, #(8 * 8)          /* L1[8] */
+    movz    x1, #0x0002, lsl #32      /* Start PA = 0x2_0000_0000 (8 GiB) */
+    mov     x3, #8                    /* 8 entries × 1 GiB = 8 GiB */
+    mov     x4, #0x40000000           /* 1 GiB stride */
+9:  movz    x2, #0x0605               /* Valid|Block|AttrIdx=1(dev)|AF|SH=10 */
+    orr     x2, x1, x2                /* Combine PA with flags */
+    str     x2, [x0], #8              /* Store and advance */
+    add     x1, x1, x4                /* Next 1 GiB block */
+    subs    x3, x3, #1
+    bne     9b
+
     /* Setup kernel_l2_table_peripherals: Same as boot, but for high VA */
     adrp    x0, kernel_l2_table_peripherals
     add     x0, x0, :lo12:kernel_l2_table_peripherals

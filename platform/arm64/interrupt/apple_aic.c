@@ -18,6 +18,7 @@
  */
 
 #include <platform/arm64/apple_aic.h>
+#include <platform/arm64/memory/pmap.h>
 #include <platform/platform.h>
 #include <string.h>
 #include <stddef.h>
@@ -36,10 +37,16 @@ bool fut_apple_aic_init(const fut_platform_info_t *info) {
         return false;
     }
 
-    fut_printf("[AIC] Apple Interrupt Controller detected (Rust driver)\n");
-    fut_printf("[AIC] Base address: 0x%016llx\n", info->aic_base);
+    /* DTB reports the AIC PA (0x23B100000 on M1).  The Rust driver
+     * uses the value as a raw VA for MMIO, so convert through the
+     * boot.S kernel-peripheral mapping window first. */
+    uint64_t aic_va = fut_kernel_peripheral_va(info->aic_base);
 
-    aic_ctx = rust_aic_init(info->aic_base);
+    fut_printf("[AIC] Apple Interrupt Controller detected (Rust driver)\n");
+    fut_printf("[AIC] PA 0x%016llx -> VA 0x%016llx\n",
+               info->aic_base, aic_va);
+
+    aic_ctx = rust_aic_init(aic_va);
     if (!aic_ctx) {
         fut_printf("[AIC] Error: rust_aic_init failed\n");
         return false;

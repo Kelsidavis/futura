@@ -26,6 +26,7 @@
  */
 
 #include <platform/arm64/apple_ans2.h>
+#include <platform/arm64/memory/pmap.h>
 #include <platform/platform.h>
 
 bool fut_apple_ans2_platform_init(const fut_platform_info_t *info) {
@@ -40,12 +41,18 @@ bool fut_apple_ans2_platform_init(const fut_platform_info_t *info) {
         return false;
     }
 
-    Ans2Ctrl *ctrl = rust_ans2_init(info->ans_nvme_base,
-                                     info->ans_mailbox_base);
+    /* Convert peripheral PAs to kernel VAs through boot.S's
+     * kernel_l1[8..15] mapping window — the Rust crate reads MMIO
+     * via raw read_volatile and would translation-fault on the PA. */
+    uint64_t nvme_va = fut_kernel_peripheral_va(info->ans_nvme_base);
+    uint64_t mbox_va = fut_kernel_peripheral_va(info->ans_mailbox_base);
+
+    Ans2Ctrl *ctrl = rust_ans2_init(nvme_va, mbox_va);
     if (!ctrl) {
-        fut_printf("[ANS2] rust_ans2_init(nvme=0x%lx, mbox=0x%lx) failed\n",
-                   (unsigned long)info->ans_nvme_base,
-                   (unsigned long)info->ans_mailbox_base);
+        fut_printf("[ANS2] rust_ans2_init(nvme=PA 0x%lx VA 0x%lx, "
+                   "mbox=PA 0x%lx VA 0x%lx) failed\n",
+                   (unsigned long)info->ans_nvme_base, (unsigned long)nvme_va,
+                   (unsigned long)info->ans_mailbox_base, (unsigned long)mbox_va);
         return false;
     }
 

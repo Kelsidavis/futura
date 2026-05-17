@@ -100,6 +100,26 @@ static inline uint64_t pmap_virt_to_phys(uintptr_t va) {
 #define phys_to_virt pmap_phys_to_virt
 #define virt_to_phys pmap_virt_to_phys
 
+/* ============================================================
+ *   Kernel peripheral VA helper
+ * ============================================================
+ *
+ * boot.S maps the entire kernel L0[511] window (VA
+ * 0xFFFFFF8000000000+) so that peripheral PAs in the lower 4 GiB
+ * (kernel_l2_table_peripherals: PA 0-0x40000000) AND the Apple
+ * peripheral range (kernel_l1[8..15]: PA 0x200000000-0x3FFFFFFFF)
+ * are accessible via a constant offset.  Use this helper from C
+ * code that hands a peripheral PA off to a Rust driver expecting
+ * a VA — it works for QEMU virt's PL011/GIC/virtio in the low 1
+ * GiB AND for Apple's s5l-uart, AIC, ANS mailbox, DCP, SMC, MCA
+ * at PA 0x200000000+, with a single arithmetic OR.
+ */
+#define KERN_PERIPHERAL_VA_OFFSET  0xFFFFFF8000000000ULL
+
+static inline uint64_t fut_kernel_peripheral_va(uint64_t pa) {
+    return pa | KERN_PERIPHERAL_VA_OFFSET;
+}
+
 typedef uint64_t phys_addr_t;
 
 /* Forward declaration for vmem context */

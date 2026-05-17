@@ -25,6 +25,7 @@
 #include <platform/arm64/apple_hid.h>
 #include <platform/arm64/apple_spi.h>
 #include <platform/arm64/apple_i2c.h>
+#include <platform/arm64/memory/pmap.h>
 #include <platform/platform.h>
 #include <string.h>
 
@@ -65,25 +66,29 @@ int apple_hid_init(const fut_platform_info_t *info) {
 
     memset(&g_hid, 0, sizeof(g_hid));
 
-    /* Initialize SPI for keyboard */
+    /* Initialize SPI for keyboard.  Peripheral PA → kernel VA via the
+     * boot.S peripheral mapping window so the Rust crate's raw MMIO
+     * reads land on a mapped address. */
     if (info->spi0_base != 0) {
-        g_hid.spi = rust_spi_init(info->spi0_base, SPI_HID_PCLK_HZ, 0, SPI_HID_SCLK_HZ);
+        uint64_t spi_va = fut_kernel_peripheral_va(info->spi0_base);
+        g_hid.spi = rust_spi_init(spi_va, SPI_HID_PCLK_HZ, 0, SPI_HID_SCLK_HZ);
         if (!g_hid.spi) {
             fut_printf("[HID] Failed to initialize SPI\n");
             return -1;
         }
         g_hid.spi_cs = 0;
-        fut_printf("[HID] SPI keyboard initialized at 0x%lx\n",
-                   (unsigned long)info->spi0_base);
+        fut_printf("[HID] SPI keyboard initialized at PA 0x%lx (VA 0x%lx)\n",
+                   (unsigned long)info->spi0_base, (unsigned long)spi_va);
     }
 
     /* Initialize I2C for trackpad (if separate from SPI) */
     if (info->i2c0_base != 0) {
-        g_hid.i2c = rust_i2c_init(info->i2c0_base);
+        uint64_t i2c_va = fut_kernel_peripheral_va(info->i2c0_base);
+        g_hid.i2c = rust_i2c_init(i2c_va);
         if (g_hid.i2c) {
             g_hid.i2c_addr = 0x49;  /* Common Apple trackpad I2C address */
-            fut_printf("[HID] I2C trackpad initialized at 0x%lx\n",
-                       (unsigned long)info->i2c0_base);
+            fut_printf("[HID] I2C trackpad initialized at PA 0x%lx (VA 0x%lx)\n",
+                       (unsigned long)info->i2c0_base, (unsigned long)i2c_va);
         }
     }
 

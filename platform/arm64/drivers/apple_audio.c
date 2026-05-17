@@ -24,6 +24,7 @@
 
 #include <platform/arm64/apple_audio.h>
 #include <platform/arm64/apple_i2c.h>
+#include <platform/arm64/memory/pmap.h>
 #include <platform/platform.h>
 #include <kernel/fut_memory.h>
 #include <string.h>
@@ -98,16 +99,21 @@ int apple_audio_init(const fut_platform_info_t *info) {
     /* MCA base comes from the DTB (/arm-io/mca on Apple Silicon).
      * If the field is zero (no DT node parsed) the driver stays in
      * "probed but not active" mode — no Rust MCA handle, write()
-     * returns success but silently drops audio. */
+     * returns success but silently drops audio.
+     *
+     * PA→VA conversion via the kernel peripheral mapping window; the
+     * Rust crate stores the value as a raw VA and reads MMIO directly. */
     if (info->mca_base != 0) {
         uint32_t clusters = info->mca_num_clusters ? info->mca_num_clusters : 1;
-        g_audio.mca = rust_mca_init(info->mca_base, clusters);
+        uint64_t mca_va = fut_kernel_peripheral_va(info->mca_base);
+        g_audio.mca = rust_mca_init(mca_va, clusters);
         if (!g_audio.mca) {
-            fut_printf("[AUDIO] rust_mca_init(0x%lx, %u) failed\n",
-                       (unsigned long)info->mca_base, (unsigned int)clusters);
+            fut_printf("[AUDIO] rust_mca_init(VA 0x%lx, %u) failed\n",
+                       (unsigned long)mca_va, (unsigned int)clusters);
         } else {
-            fut_printf("[AUDIO] MCA up at 0x%lx, %u cluster(s)\n",
-                       (unsigned long)info->mca_base, (unsigned int)clusters);
+            fut_printf("[AUDIO] MCA up at PA 0x%lx (VA 0x%lx), %u cluster(s)\n",
+                       (unsigned long)info->mca_base, (unsigned long)mca_va,
+                       (unsigned int)clusters);
         }
     } else {
         g_audio.mca = NULL;
@@ -115,7 +121,7 @@ int apple_audio_init(const fut_platform_info_t *info) {
 
     /* Initialize I2C for codec */
     if (info->i2c0_base != 0) {
-        g_audio.codec_i2c = rust_i2c_init(info->i2c0_base);
+        g_audio.codec_i2c = rust_i2c_init(fut_kernel_peripheral_va(info->i2c0_base));
     }
 
     /* Allocate playback buffer */

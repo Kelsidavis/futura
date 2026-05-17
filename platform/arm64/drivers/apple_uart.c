@@ -25,6 +25,7 @@
  */
 
 #include <platform/arm64/apple_uart.h>
+#include <platform/arm64/memory/pmap.h>
 #include <platform/platform.h>
 #include <string.h>
 #include <stddef.h>
@@ -50,16 +51,25 @@ bool fut_apple_uart_init(const fut_platform_info_t *info, uint32_t baudrate) {
         return false;
     }
 
+    /* Convert DTB-reported PA → kernel VA via the peripheral mapping
+     * window that boot.S sets up.  The Rust crate treats the value
+     * as a raw address it can read/write — without this conversion,
+     * the PA dereference would translation-fault on real hardware
+     * (Apple s5l-uart at PA 0x235200000 is not in any other kernel
+     * mapping). */
+    uint64_t uart_va = fut_kernel_peripheral_va(info->uart_base);
+
     fut_printf("[UART] Initializing Apple s5l-uart (Rust driver)\n");
-    fut_printf("[UART] Base address: 0x%016llx\n", info->uart_base);
+    fut_printf("[UART] PA 0x%016llx -> VA 0x%016llx\n",
+               info->uart_base, uart_va);
     fut_printf("[UART] Baud rate: %u\n", baudrate);
 
-    if (!rust_apple_uart_init(info->uart_base, baudrate)) {
+    if (!rust_apple_uart_init(uart_va, baudrate)) {
         fut_printf("[UART] Error: rust_apple_uart_init failed\n");
         return false;
     }
 
-    s5l_uart_base = info->uart_base;
+    s5l_uart_base = uart_va;
 
     /* Hook into the platform-agnostic serial console.  After this
      * point, every fut_serial_putc() (and therefore every fut_printf)

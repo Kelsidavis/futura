@@ -197,9 +197,12 @@ fut_switch_context:
 
     /* Target is EL0 - use ERET path - need to restore ALL registers for fork */
     /* CRITICAL: Load all registers BEFORE switching page table! */
-    /* The context is in kernel memory (0x40000000+) which is only mapped in
-     * the kernel's TTBR0_EL1, not in user TTBR0_EL1, so we must load everything
-     * before switching. */
+    /* The context lives in kernel DRAM (QEMU virt: PA 0x40000000+;
+     * Apple Silicon: wherever m1n1 dropped the kernel image, e.g.,
+     * PA 0x809_xxxx_xxxx).  Either way it's only mapped via TTBR1_EL1
+     * (kernel half) and the user's TTBR0_EL1, so once we install
+     * the user TTBR0 below the kernel-VA address of the context
+     * becomes unreachable — load every register before the switch. */
 
     /* Set up ELR_EL1 and SPSR_EL1 for exception return */
 

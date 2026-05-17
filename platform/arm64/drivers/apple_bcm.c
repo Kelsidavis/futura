@@ -542,8 +542,17 @@ int apple_bcm_chip_reset(void)
                                                        bus, 0, fn, 0x00);
         vid = (uint16_t)(vid_did & 0xFFFFu);
         if (vid == BCM_VENDOR_ID) {
+            /* PCIe spec: FLR clears the Command register, so Bus
+             * Master Enable (bit 2) and Memory Space Enable (bit 1)
+             * are now zero.  Restore them so subsequent BAR reads
+             * and DMA work without the caller re-doing init. */
+            uint16_t cmd = rust_apple_pcie_cfg_read16(g_bcm_pcie, bus, 0, fn,
+                                                       0x04);
+            rust_apple_pcie_cfg_write32(g_bcm_pcie, bus, 0, fn, 0x04,
+                                         (uint32_t)(cmd | 0x06u));
             fut_printf("[bcm] reset: FLR successful at attempt %d "
-                       "(vid=0x%04x)\n", attempt, vid);
+                       "(vid=0x%04x), MEM+BME restored\n",
+                       attempt, vid);
             return 0;
         }
         fut_platform_udelay(10u * 1000u);

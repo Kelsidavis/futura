@@ -48,22 +48,16 @@ bool fut_apple_ans2_platform_init(const fut_platform_info_t *info) {
      * if pmgr isn't up or DT doesn't carry power-domains for ANS2
      * (m1n1 usually already deasserted reset). */
     extern uint64_t fut_platform_get_dtb(void);
-    uint64_t dtb = fut_platform_get_dtb();
-    if (dtb != 0) {
-        static const char *const ans_paths[] = {
-            "/soc/ans@27bcc4000",
-            "/soc/ans",
-            "/arm-io/ans",
-            NULL,
-        };
-        for (int i = 0; ans_paths[i]; i++) {
-            int rc = apple_pmgr_enable_domains_for(dtb, ans_paths[i]);
-            if (rc > 0) {
-                fut_printf("[ANS2] pmgr: %d domains enabled via %s\n",
-                           rc, ans_paths[i]);
-                break;
-            }
-        }
+    static const char *const ans_paths[] = {
+        "/soc/ans@27bcc4000",
+        "/soc/ans",
+        "/arm-io/ans",
+        NULL,
+    };
+    int ans_pmgr = apple_pmgr_enable_domains_any(fut_platform_get_dtb(),
+                                                  ans_paths);
+    if (ans_pmgr > 0) {
+        fut_printf("[ANS2] pmgr: %d domains enabled\n", ans_pmgr);
     }
 
     /* Convert peripheral PAs to kernel VAs through boot.S's

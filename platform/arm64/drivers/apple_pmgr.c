@@ -155,3 +155,14 @@ int apple_pmgr_enable_domains_for(uint64_t dtb_ptr, const char *node_path)
 
     return enabled;
 }
+
+int apple_pmgr_enable_domains_any(uint64_t dtb_ptr,
+                                  const char *const *paths)
+{
+    if (!paths) return -EINVAL;
+    for (int i = 0; paths[i]; i++) {
+        int rc = apple_pmgr_enable_domains_for(dtb_ptr, paths[i]);
+        if (rc > 0) return rc;
+    }
+    return -ENOENT;
+}

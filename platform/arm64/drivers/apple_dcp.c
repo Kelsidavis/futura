@@ -256,21 +256,15 @@ int fut_apple_dcp_platform_init(const fut_platform_info_t *info) {
      * (m1n1 likely already powered things on). */
     extern uint64_t fut_platform_get_dtb(void);
     uint64_t dtb = fut_platform_get_dtb();
-    if (dtb != 0) {
-        static const char *const dcp_paths[] = {
-            "/soc/dcp@28200000",
-            "/soc/dcp",
-            "/arm-io/dcp",
-            NULL,
-        };
-        for (int i = 0; dcp_paths[i]; i++) {
-            int rc = apple_pmgr_enable_domains_for(dtb, dcp_paths[i]);
-            if (rc > 0) {
-                fut_printf("[DCP] pmgr: %d domains enabled via %s\n",
-                           rc, dcp_paths[i]);
-                break;
-            }
-        }
+    static const char *const dcp_paths[] = {
+        "/soc/dcp@28200000",
+        "/soc/dcp",
+        "/arm-io/dcp",
+        NULL,
+    };
+    int dcp_pmgr = apple_pmgr_enable_domains_any(dtb, dcp_paths);
+    if (dcp_pmgr > 0) {
+        fut_printf("[DCP] pmgr: %d domains enabled\n", dcp_pmgr);
     }
 
     /* RTKit context — apple_rtkit_* are themselves Rust thunks. */

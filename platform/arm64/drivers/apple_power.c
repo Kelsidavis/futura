@@ -8,6 +8,7 @@
 
 #include <platform/arm64/apple_power.h>
 #include <platform/arm64/apple_smc.h>
+#include <platform/arm64/apple_pmgr.h>
 #include <platform/arm64/memory/pmap.h>
 #include <platform/platform.h>
 #include <string.h>
@@ -149,6 +150,19 @@ int apple_power_platform_init(const fut_platform_info_t *info) {
 
     if (info->smc_base == 0) {
         return 0;  /* No SMC found in DTB */
+    }
+
+    extern uint64_t fut_platform_get_dtb(void);
+    static const char *const smc_paths[] = {
+        "/soc/smc@23e400000",
+        "/soc/smc",
+        "/arm-io/smc",
+        NULL,
+    };
+    int smc_pmgr = apple_pmgr_enable_domains_any(fut_platform_get_dtb(),
+                                                  smc_paths);
+    if (smc_pmgr > 0) {
+        fut_printf("[POWER] pmgr: %d SMC domains enabled\n", smc_pmgr);
     }
 
     return apple_power_init(info);

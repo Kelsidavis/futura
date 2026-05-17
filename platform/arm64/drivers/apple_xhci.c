@@ -232,23 +232,17 @@ int apple_xhci_platform_init(const fut_platform_info_t *info) {
      * the PCIe link won't train and BAR reads return 0xFFFF.  m1n1
      * may have done it; this is idempotent. */
     extern uint64_t fut_platform_get_dtb(void);
-    uint64_t dtb = fut_platform_get_dtb();
-    if (dtb != 0) {
-        static const char *const pcie_paths[] = {
-            "/soc/pcie@690000000",
-            "/soc/pcie",
-            "/arm-io/pcie",
-            "/arm-io/pciec0",
-            NULL,
-        };
-        for (int i = 0; pcie_paths[i]; i++) {
-            int rc = apple_pmgr_enable_domains_for(dtb, pcie_paths[i]);
-            if (rc > 0) {
-                fut_printf("[xHCI] pmgr: %d PCIe domains enabled via %s\n",
-                           rc, pcie_paths[i]);
-                break;
-            }
-        }
+    static const char *const pcie_paths[] = {
+        "/soc/pcie@690000000",
+        "/soc/pcie",
+        "/arm-io/pcie",
+        "/arm-io/pciec0",
+        NULL,
+    };
+    int pcie_pmgr = apple_pmgr_enable_domains_any(fut_platform_get_dtb(),
+                                                   pcie_paths);
+    if (pcie_pmgr > 0) {
+        fut_printf("[xHCI] pmgr: %d PCIe domains enabled\n", pcie_pmgr);
     }
 
     int ret = apple_xhci_init(info);

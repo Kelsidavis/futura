@@ -24,6 +24,7 @@
 
 #include <platform/arm64/apple_audio.h>
 #include <platform/arm64/apple_i2c.h>
+#include <platform/arm64/apple_pmgr.h>
 #include <platform/arm64/memory/pmap.h>
 #include <platform/platform.h>
 #include <kernel/fut_memory.h>
@@ -293,6 +294,19 @@ int apple_audio_platform_init(const fut_platform_info_t *info) {
         info->type != PLATFORM_APPLE_M3 &&
         info->type != PLATFORM_APPLE_M4) {
         return 0;
+    }
+
+    extern uint64_t fut_platform_get_dtb(void);
+    static const char *const mca_paths[] = {
+        "/soc/mca@2d5200000",
+        "/soc/mca",
+        "/arm-io/mca",
+        NULL,
+    };
+    int mca_pmgr = apple_pmgr_enable_domains_any(fut_platform_get_dtb(),
+                                                  mca_paths);
+    if (mca_pmgr > 0) {
+        fut_printf("[AUDIO] pmgr: %d MCA domains enabled\n", mca_pmgr);
     }
 
     return apple_audio_init(info);

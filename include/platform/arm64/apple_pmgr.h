@@ -63,4 +63,15 @@ uint8_t apple_pmgr_state(uint32_t ps_offset);
  */
 int apple_pmgr_enable_domains_for(uint64_t dtb_ptr, const char *node_path);
 
+/* Convenience wrapper: try a NULL-terminated list of candidate DT
+ * paths, calling apple_pmgr_enable_domains_for on each until one
+ * returns > 0 (some domain successfully enabled).  Returns the
+ * count from the first successful path, or -ENOENT if none matched.
+ *
+ * Same DT m1n1 / Asahi may name a device under several paths
+ * across SoC revisions (`/soc/dcp@…`, `/soc/dcp`, `/arm-io/dcp`);
+ * callers list every form they want to support. */
+int apple_pmgr_enable_domains_any(uint64_t dtb_ptr,
+                                  const char *const *paths);
+
 #endif /* __FUTURA_APPLE_PMGR_H__ */

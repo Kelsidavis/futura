@@ -121,6 +121,14 @@ static int dcp_alloc_surface(uint32_t width, uint32_t height, uint32_t format) {
                                                width, height, stride, format);
     if (idx < 0) {
         fut_printf("[DCP] All surface slots full\n");
+        /* If we mapped through DART above, tear that mapping down now —
+         * otherwise the IOMMU keeps an entry pointing at the pages
+         * we're about to free, which is a use-after-free hazard for
+         * the chip's next DMA cycle. */
+        if (g_dcp.dart) {
+            rust_dart_unmap(g_dcp.dart, g_dcp.dart_stream_id,
+                            iova, (uint64_t)size);
+        }
         fut_free_pages(va, num_pages);
         return -1;
     }

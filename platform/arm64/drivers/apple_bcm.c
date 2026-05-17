@@ -69,7 +69,25 @@ extern uint16_t rust_apple_pcie_find_cap(const struct ApplePcie *p,
                                           uint8_t fn, uint8_t cap_id);
 
 /* PCI / PCIe capability IDs we care about here. */
+#define PCI_CAP_ID_MSI       0x05u
 #define PCI_CAP_ID_PCIE      0x10u
+#define PCI_CAP_ID_MSIX      0x11u
+
+/* PCIe MSI Capability layout (PCI Local Bus Spec §6.8):
+ *   cap+0x00: cap_id (u8) + next_ptr (u8) + Message Control (u16)
+ *   cap+0x04: Message Address (lower 32 bits)
+ *   cap+0x08: Message Address (upper 32 bits, if 64-bit Address Capable)
+ * Message Control bits:
+ *   0:     MSI enable
+ *   1-3:   Multiple Message Capable (vectors requested, log2 — 0=1, 1=2, ..., 5=32)
+ *   4-6:   Multiple Message Enable (vectors actually enabled, log2)
+ *   7:     64-bit Address Capable
+ *   8:     Per-Vector Masking Capable
+ */
+#define PCI_MSI_MMC_SHIFT    1
+#define PCI_MSI_MMC_MASK     0x000Eu
+#define PCI_MSI_64BIT        (1u << 7)
+#define PCI_MSI_PVM          (1u << 8)
 
 /* PCI Express device-capabilities register: bit 28 = FLR Capable. */
 #define PCIE_DEVCAP_FLR_CAP  (1u << 28)
@@ -172,6 +190,41 @@ int apple_bcm_init(const fut_platform_info_t *info,
                        (unsigned)vid, (unsigned)did, (unsigned)revision,
                        (unsigned)class_code,
                        (unsigned long)d.bar0, (unsigned long)d.bar2);
+
+            /* Probe MSI / MSI-X capabilities so a follow-up slice
+             * can program them.  Apple's PCIe IP requires MSI for
+             * interrupts; INTx is not routed. */
+            uint16_t msi_cap = rust_apple_pcie_find_cap(pcie, bus, 0, fn,
+                                                        PCI_CAP_ID_MSI);
+            uint16_t msix_cap = rust_apple_pcie_find_cap(pcie, bus, 0, fn,
+                                                         PCI_CAP_ID_MSIX);
+            if (msi_cap != 0) {
+                uint16_t mc = rust_apple_pcie_cfg_read16(pcie, bus, 0, fn,
+                                                          msi_cap + 0x02);
+                uint32_t mmc = (mc & PCI_MSI_MMC_MASK) >> PCI_MSI_MMC_SHIFT;
+                uint32_t vectors = 1u << mmc;
+                fut_printf("[bcm] fn%u MSI cap@0x%02x: %u vectors, "
+                           "%s addr, %s per-vector mask\n",
+                           (unsigned)fn, (unsigned)msi_cap,
+                           (unsigned)vectors,
+                           (mc & PCI_MSI_64BIT) ? "64-bit" : "32-bit",
+                           (mc & PCI_MSI_PVM) ? "yes" : "no");
+            }
+            if (msix_cap != 0) {
+                uint16_t mc = rust_apple_pcie_cfg_read16(pcie, bus, 0, fn,
+                                                          msix_cap + 0x02);
+                /* MSI-X table size is bits 0-10 of Message Control, encoded
+                 * as N-1 (so 0 means 1 vector, 0x7FF means 2048). */
+                uint32_t table_size = (uint32_t)(mc & 0x7FFu) + 1u;
+                fut_printf("[bcm] fn%u MSI-X cap@0x%02x: %u-entry table\n",
+                           (unsigned)fn, (unsigned)msix_cap,
+                           (unsigned)table_size);
+            }
+            if (msi_cap == 0 && msix_cap == 0) {
+                fut_printf("[bcm] fn%u no MSI/MSI-X capability "
+                           "(unexpected for Apple PCIe)\n",
+                           (unsigned)fn);
+            }
 
             if (fn == 0) {
                 if (out_wifi) *out_wifi = d;

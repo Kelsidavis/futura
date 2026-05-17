@@ -207,6 +207,45 @@ void fut_firmware_test_thread(void *arg)
         }
     }
 
+    /* T11: embed_binary computes size correctly */
+    {
+        fut_firmware_reset_providers();
+        const uint8_t *start = test_blob_alpha;
+        const uint8_t *end   = test_blob_alpha + sizeof(test_blob_alpha);
+        int rc = fut_firmware_embed_binary("binary-alpha", start, end);
+        if (rc != 0) {
+            FW_TEST_FAIL("embed_binary", 15);
+            return;
+        }
+        const void *d = NULL;
+        size_t s = 0;
+        rc = fut_firmware_load("binary-alpha", &d, &s);
+        if (rc == 0 && d == test_blob_alpha && s == sizeof(test_blob_alpha)) {
+            FW_TEST_PASS("embed_binary computes size + roundtrips");
+        } else {
+            FW_TEST_FAIL("embed_binary round-trip", 16);
+            return;
+        }
+    }
+
+    /* T12: embed_binary with end < start → -EINVAL */
+    {
+        int rc = fut_firmware_embed_binary("bad",
+                                            test_blob_alpha + 5,
+                                            test_blob_alpha);
+        if (rc == -EINVAL) FW_TEST_PASS("embed_binary(end<start)");
+        else { FW_TEST_FAIL("embed_binary bad range", 17); return; }
+    }
+
+    /* T13: embed_binary with end == start → -EINVAL (zero size) */
+    {
+        int rc = fut_firmware_embed_binary("empty",
+                                            test_blob_alpha,
+                                            test_blob_alpha);
+        if (rc == -EINVAL) FW_TEST_PASS("embed_binary(empty)");
+        else { FW_TEST_FAIL("embed_binary empty", 18); return; }
+    }
+
     fut_printf("[FW-TEST] all firmware loader tests passed\n");
 
     /* Leave the firmware table empty so any later platform-init

@@ -139,3 +139,14 @@ int fut_firmware_embed(const char *name, const void *data, size_t size)
     ensure_embedded_registered();
     return 0;
 }
+
+int fut_firmware_embed_binary(const char *name,
+                              const void *blob_start,
+                              const void *blob_end)
+{
+    if (!blob_start || !blob_end) return -EINVAL;
+    if (blob_end < blob_start) return -EINVAL;
+    size_t size = (size_t)((const char *)blob_end - (const char *)blob_start);
+    if (size == 0) return -EINVAL;
+    return fut_firmware_embed(name, blob_start, size);
+}

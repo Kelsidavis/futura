@@ -61,4 +61,15 @@ void fut_firmware_reset_providers(void);
 #define FUT_FIRMWARE_EMBEDDED_MAX  16
 int fut_firmware_embed(const char *name, const void *data, size_t size);
 
+/* Convenience wrapper for blobs linked into the kernel image via
+ * objcopy (-I binary -B …).  objcopy emits two symbols per input
+ * file: `_binary_<sanitised_path>_start` and `_..._end`; pass both
+ * to this helper and it computes size and forwards to
+ * fut_firmware_embed.  Returns the same codes.  Useful for tiny
+ * per-machine NVRAM tables that fit in the kernel image; large
+ * firmware blobs should come from an FS provider instead. */
+int fut_firmware_embed_binary(const char *name,
+                              const void *blob_start,
+                              const void *blob_end);
+
 #endif /* __FUTURA_FIRMWARE_H__ */

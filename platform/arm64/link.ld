@@ -24,14 +24,20 @@ PHDRS
 /* Sections */
 SECTIONS
 {
-    /* Virtual address in high half (TTBR1_EL1 region)
-     * Physical load address remains 0x40000000
-     * This enables proper kernel/user address space separation:
-     * - TTBR0_EL1: User space (0x0000000000000000 - 0x0000007FFFFFFFFF)
-     * - TTBR1_EL1: Kernel space (0xFFFFFF8000000000 - 0xFFFFFFFFFFFFFFFF)
+    /* Virtual address in high half (TTBR1_EL1 region).
+     * Physical load address: 0x40200000 on QEMU virt (m1n1 may drop
+     * the image elsewhere on real Apple hardware; boot.S handles the
+     * relocation via g_kernel_load_pa).
      *
-     * With TCR T1SZ=25, TTBR1 covers 39-bit VA starting from 0xFFFFFF8000000000
-     * So kernel must be linked at or above this address.
+     * boot.S programs T0SZ = T1SZ = 16 (48-bit VA), so:
+     * - TTBR0_EL1: User space  (0x0000000000000000 - 0x0000FFFFFFFFFFFF)
+     * - TTBR1_EL1: Kernel space (0xFFFF000000000000 - 0xFFFFFFFFFFFFFFFF)
+     *
+     * The kernel link base 0xFFFFFF8040000000 sits inside that
+     * kernel-half range (L0 index 511, L1 index 1).  This same value
+     * also happens to be valid under the older 39-bit VA layout, so
+     * the link script doesn't need to change between the two — the
+     * mapping in boot.S does.
      */
     . = 0xFFFFFF8040000000;
 

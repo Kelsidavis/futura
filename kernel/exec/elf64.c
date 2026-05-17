@@ -161,7 +161,7 @@ extern void fut_platform_panic(const char *);
 #define USER_CODE_SELECTOR  (0x20u | 0x3u)  /* 0x23 */
 #define USER_DATA_SELECTOR  (0x18u | 0x3u)  /* 0x1B */
 
-#define USER_STACK_TOP      0x00007FFF000000ULL  /* Stack within 39-bit VA space (T0SZ=25) */
+#define USER_STACK_TOP      0x00007FFF000000ULL  /* Stack VA — fits both 39-bit (T0SZ=25, RPi) and 48-bit (T0SZ=16, QEMU virt + Apple) user-half layouts */
 #define USER_STACK_PAGES    64u  /* 256KB stack for deep call chains */
 
 typedef struct __attribute__((packed)) {
@@ -3372,8 +3372,9 @@ static uint64_t g_exec_interp_entry = 0;
 #define PF_W            0x00000002u
 #define PF_R            0x00000004u
 
-/* ARM64 user mode stack location (high address, 128KB stack) */
-/* Stack must be within 39-bit VA space (T0SZ=25) - max 0x7FFFFFFFFF */
+/* ARM64 user mode stack location (high address, 128KB stack).
+ * VA fits both the 39-bit user-half (T0SZ=25, RPi) and 48-bit
+ * user-half (T0SZ=16, QEMU virt + Apple Silicon) layouts. */
 #define USER_STACK_TOP      0x00007FFF000000ULL
 #define USER_STACK_PAGES    32u
 

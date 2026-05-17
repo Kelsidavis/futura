@@ -268,7 +268,9 @@ int pmap_set_page_ro(fut_vmem_context_t *ctx, uint64_t vaddr) {
         return -EINVAL;
     }
 
-    /* Compute indices for 3-level walk (L1/L2/L3, 39-bit VA with 4KB granule) */
+    /* Compute indices for the L1/L2/L3 walk; L0 is dispatched by
+     * boot.S and ctx->pgd points at the L1 table.  4 KB granule,
+     * 48-bit VA (T0SZ = T1SZ = 16). */
     uint64_t pgd_idx = PGD_INDEX(vaddr);
     uint64_t pmd_idx = PMD_INDEX(vaddr);
     uint64_t pte_idx = PTE_INDEX(vaddr);

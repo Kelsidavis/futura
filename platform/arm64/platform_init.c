@@ -1538,19 +1538,31 @@ void arch_early_init(void) {
  * arch_memory_config - Provide ARM64 memory layout
  */
 void arch_memory_config(uintptr_t *ram_start, uintptr_t *ram_end, size_t *heap_size) {
-    /* ARM64 memory layout for QEMU virt machine.
-     * DRAM base: 0x40000000.  DTB at base, kernel Image at 0x40200000.
-     * Heap must begin past _stack_top to avoid clobbering BSS/stack.
-     * Boot page tables (boot.S) map a full 1 GB of DRAM at
-     * 0x40000000-0x80000000, and the high-VA TTBR1 mapping also covers
-     * 1 GB of kernel-mode access into the same range, so use the full
-     * 1 GB window for PMM until DTB-driven sizing lands. */
+    /* ARM64 memory layout.
+     *
+     * The PMM range covers the part of DRAM that boot.S has mapped
+     * but the kernel image doesn't already claim:
+     *
+     *   - ram_start = first 2-MiB-aligned PA past _stack_top.
+     *   - ram_end   = end of the 1-GiB L2_dram window that boot.S
+     *                 set up starting from the 1-GiB-aligned-down
+     *                 kernel load PA (g_kernel_dram_pa).
+     *
+     * On QEMU virt with kernel @ 0x40200000: g_kernel_dram_pa =
+     * 0x40000000, ram_end = 0x80000000 — exactly the previously
+     * hardcoded value.  On Apple Silicon m1n1 may drop the kernel
+     * anywhere in DRAM (e.g., PA 0x809_xxxx_xxxx); the L2_dram
+     * window slides with the load PA, and ram_end follows.  Without
+     * this, the hardcoded 0x80000000 would put ram_end < ram_start
+     * on Apple and PMM init would either fail outright or hand out
+     * the wrong physical pages. */
+    extern uint64_t g_kernel_dram_pa;
     extern char _stack_top[];
     uintptr_t kend_pa = pmap_virt_to_phys((uintptr_t)_stack_top);
     /* Round up to 2 MiB so the heap starts on a section boundary. */
     uintptr_t heap_pa = (kend_pa + 0x1FFFFFULL) & ~0x1FFFFFULL;
     *ram_start = heap_pa;
-    *ram_end   = 0x80000000;  /* 1 GB DRAM end — matches boot.S L2_dram window */
+    *ram_end   = (uintptr_t)g_kernel_dram_pa + (1ULL << 30);
     *heap_size = 128 * 1024 * 1024;  /* 128 MB kernel heap (selftest suite burns ~70 MB) */
 }
 

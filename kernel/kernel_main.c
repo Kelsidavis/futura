@@ -964,6 +964,9 @@ static void selftest_sequential_runner(void *arg) {
     extern void fut_apple_mca_test_thread(void *arg);
     fut_apple_mca_test_thread(NULL);
 
+    extern void fut_apple_ans2_test_thread(void *arg);
+    fut_apple_ans2_test_thread(NULL);
+
     /* Safety net: if every test function returned without triggering
      * try_finish() (planned over-counted by the same magnitude as a
      * skipped cluster, or a control-flow branch that returned without
@@ -2165,6 +2168,12 @@ void fut_kernel_main(void) {
         /* apple_mca: T1-T7 (Rust MCA FFI NULL guards on init/free/
          * setup_playback/setup_capture/start_tx_dma/stop/handle_irq).
          * ARM64-only. */
+#ifdef __aarch64__
+        planned_tests += 7u;
+#endif
+
+        /* apple_ans2: T1-T7 (Rust ANS2 NVMe FFI NULL guards on free/
+         * read/write/is_ready/max_lba/sector_size/poll). ARM64-only. */
 #ifdef __aarch64__
         planned_tests += 7u;
 #endif

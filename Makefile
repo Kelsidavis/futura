@@ -906,6 +906,7 @@ KERNEL_SOURCES := \
     kernel/tests/apple_smc_tests.c \
     kernel/tests/apple_spi_i2c_tests.c \
     kernel/tests/apple_mca_tests.c \
+    kernel/tests/apple_ans2_tests.c \
     kernel/sys_echo.c \
     kernel/sys_exit.c \
     kernel/sys_fork.c \

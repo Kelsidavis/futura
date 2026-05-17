@@ -195,3 +195,48 @@ int apple_pmgr_enable_domains_any(uint64_t dtb_ptr,
     }
     return -ENOENT;
 }
+
+int apple_pmgr_disable_domains_for(uint64_t dtb_ptr, const char *node_path)
+{
+    if (!g_pmgr_va) return -ENODEV;
+    if (!node_path) return -EINVAL;
+
+    uint32_t buf[APPLE_PMGR_MAX_DOMAINS];
+    size_t prop_len = fut_dtb_get_property(dtb_ptr, node_path,
+                                            "power-domains",
+                                            buf, sizeof(buf));
+    if (prop_len == 0 || prop_len < sizeof(uint32_t)) {
+        return -ENOENT;
+    }
+
+    uint32_t ncells = (uint32_t)(prop_len / sizeof(uint32_t));
+    if (ncells > APPLE_PMGR_MAX_DOMAINS) ncells = APPLE_PMGR_MAX_DOMAINS;
+
+    int disabled = 0;
+    for (uint32_t i = 0; i < ncells; i++) {
+        uint32_t raw = buf[i];
+        uint32_t phandle =
+            ((raw & 0xFFu) << 24) |
+            ((raw & 0xFF00u) << 8) |
+            ((raw & 0xFF0000u) >> 8) |
+            ((raw & 0xFF000000u) >> 24);
+
+        int64_t off = fut_dtb_phandle_reg(dtb_ptr, phandle);
+        if (off < 0) continue;
+
+        int rc = apple_pmgr_disable((uint32_t)off);
+        if (rc == 0) disabled++;
+    }
+    return disabled;
+}
+
+int apple_pmgr_disable_domains_any(uint64_t dtb_ptr,
+                                    const char *const *paths)
+{
+    if (!paths) return -EINVAL;
+    for (int i = 0; paths[i]; i++) {
+        int rc = apple_pmgr_disable_domains_for(dtb_ptr, paths[i]);
+        if (rc > 0) return rc;
+    }
+    return -ENOENT;
+}

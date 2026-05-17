@@ -74,6 +74,19 @@ int apple_pmgr_enable_domains_for(uint64_t dtb_ptr, const char *node_path);
 int apple_pmgr_enable_domains_any(uint64_t dtb_ptr,
                                   const char *const *paths);
 
+/* Inverse of apple_pmgr_enable_domains_for: walks the same DT
+ * `power-domains` list, but calls apple_pmgr_disable on each
+ * resolved offset.  Used for clean subsystem teardown (e.g. driver
+ * unload, suspend-to-RAM path).  Returns count disabled or
+ * negative errno. */
+int apple_pmgr_disable_domains_for(uint64_t dtb_ptr,
+                                    const char *node_path);
+
+/* Same NULL-terminated path-list pattern as _any but for the
+ * disable side. */
+int apple_pmgr_disable_domains_any(uint64_t dtb_ptr,
+                                    const char *const *paths);
+
 /* Return totals for the lifetime of this kernel boot.
  * `enabled_count` is the number of times apple_pmgr_enable returned
  * 0 (domain transitioned to ON or was already ON).  `failed_count`

@@ -919,6 +919,9 @@ static void selftest_sequential_runner(void *arg) {
     extern void fut_dtb_walker_test_thread(void *arg);
     fut_dtb_walker_test_thread(NULL);
 
+    extern void fut_pmgr_test_thread(void *arg);
+    fut_pmgr_test_thread(NULL);
+
     /* Safety net: if every test function returned without triggering
      * try_finish() (planned over-counted by the same magnitude as a
      * skipped cluster, or a control-flow branch that returned without
@@ -2018,6 +2021,13 @@ void fut_kernel_main(void) {
          * ARM64-only — the walker lives in kernel/dtb/arm64_dtb.c. */
 #ifdef __aarch64__
         planned_tests += 14u;
+#endif
+
+        /* apple_pmgr: T1-T8 (no-init guard paths return correct errnos,
+         * domain-list helpers reject NULL/empty, stats handle NULL).
+         * ARM64-only — apple_pmgr lives in platform/arm64/. */
+#ifdef __aarch64__
+        planned_tests += 8u;
 #endif
 
         /* apple_bcm FFI: T1-T10 (chip classification across BCM4377/

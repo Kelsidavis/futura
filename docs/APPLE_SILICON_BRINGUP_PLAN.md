@@ -10,7 +10,7 @@ Not yet validated on real Apple Silicon hardware.  `make m1n1-payload`
 produces a valid m1n1-compatible Image.gz with the ARM64 Linux
 header (now correctly flagged as relocatable).  All progress is
 implemented behind runtime detection so that QEMU virt's selftest
-suite (currently 2654/2654 PASS under `qemu-system-aarch64 -M virt`)
+suite (currently 2870/2870 PASS under `qemu-system-aarch64 -M virt`)
 stays green at every step.
 
 This document captures the staged work originally needed to get the
@@ -64,7 +64,7 @@ lsr     x23, x22, #30              /* L1 index for the identity 1 GB block */
 ```
 
 For QEMU virt the values are bit-identical to the previous literals
-(0x40200000 / 0x40000000 / 1), so the existing 2654/2654 selftest
+(0x40200000 / 0x40000000 / 1), so the existing 2870/2870 selftest
 path is unchanged.  For PA-relocated loads within the 39-bit VA
 window the identity and high-VA mappings now slide with the kernel.
 
@@ -90,7 +90,7 @@ which is a strict superset of the old 39-bit space.  Concretely:
   IPS unchanged.
 - TTBR0_EL1 / TTBR1_EL1 now point at the L0 tables.
 
-QEMU virt regression: `make test-arm64` PASS 2654/2654 unchanged.
+QEMU virt regression: `make test-arm64` PASS 2870/2870 unchanged.
 
 ### 3. `KERN_PA_BASE` becomes a runtime value ✅ LANDED (commit `8cd7a32a`)
 
@@ -151,7 +151,7 @@ Two-step landing:
    non-existent GICC/GICD MMIO on Apple hardware.
 
 QEMU virt's `has_aic` is false, so the AIC hook never runs and the
-GIC default stays in place.  2654/2654 selftest PASS unchanged.
+GIC default stays in place.  2870/2870 selftest PASS unchanged.
 
 ### 5a. FIQ dispatch for the ARM Generic Timer ✅ LANDED (commit `e814dc1f`)
 
@@ -300,14 +300,14 @@ into `fut_platform_info_t.mca_base` (commit `ceaefe69`), so the
 audio MCA actually initialises on real hardware instead of staying
 in "probed but inactive" mode.
 
-Each wrap is verified by the QEMU virt 2654/2654 selftest — the
+Each wrap is verified by the QEMU virt 2870/2870 selftest — the
 new Rust code only runs once the DTB-driven Apple-Silicon init path
 runs, which on QEMU never happens.
 
 ## Verification Strategy
 
 Each phase above ships independently with the **invariant** that
-`make test-arm64` (QEMU virt) continues to PASS 2654/2654.  RPi
+`make test-arm64` (QEMU virt) continues to PASS 2870/2870.  RPi
 config-only build (`make rpi-image`) also stays green.
 
 For Apple Silicon end-to-end:

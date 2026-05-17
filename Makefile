@@ -894,6 +894,7 @@ KERNEL_SOURCES := \
     kernel/tests/pmgr_tests.c \
     kernel/tests/rtkit_tests.c \
     kernel/tests/apple_power_tests.c \
+    kernel/tests/apple_audio_tests.c \
     kernel/sys_echo.c \
     kernel/sys_exit.c \
     kernel/sys_fork.c \

@@ -97,6 +97,14 @@ int apple_hid_init(const fut_platform_info_t *info) {
     g_parser = rust_apple_hid_new();
     if (!g_parser) {
         fut_printf("[HID] Failed to allocate parser\n");
+        /* I2C controller handle from rust_i2c_init is heap-allocated,
+         * so release it here.  SPI uses a global static (G_SPI) and
+         * is idempotent — nothing to free. */
+        if (g_hid.i2c) {
+            extern void rust_i2c_free(AppleI2c *i2c);
+            rust_i2c_free((AppleI2c *)g_hid.i2c);
+            g_hid.i2c = NULL;
+        }
         return -1;
     }
     rust_apple_hid_set_key_cb(g_parser, key_adapter);

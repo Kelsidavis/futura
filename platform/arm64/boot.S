@@ -395,10 +395,10 @@ bss_cleared:
     orr     x1, x1, #3                /* Valid table descriptor */
     str     x1, [x0, #8]
 
-    /* kernel_l1[8..15] -> 8 GiB of Apple peripheral PA range
+    /* kernel_l1[8..39] -> 32 GiB of Apple peripheral PA range
      *
-     * Maps VA 0xFFFFFF8200000000 - 0xFFFFFF83FFFFFFFF (8 GiB) to
-     * PA 0x200000000 - 0x3FFFFFFFF using 1 GiB block descriptors
+     * Maps VA 0xFFFFFF8200000000 - 0xFFFFFF89FFFFFFFF (32 GiB) to
+     * PA 0x200000000 - 0x9FFFFFFFF using 1 GiB block descriptors
      * with device-nGnRE memory attributes.
      *
      * Apple Silicon places its on-die peripherals at PA 0x200000000+
@@ -407,10 +407,17 @@ bss_cleared:
      * range, Rust drivers passing DTB-discovered PAs (s5l-uart at
      * 0x235200000, AIC at 0x23B100000, ANS mailbox at 0x277400000,
      * DCP at 0x231100000, SMC at 0x23E400000, MCA at 0x2D5200000,
+     * PCIe root complex at 0x690000000, PCIe ECAM at 0x6a0000000,
      * ...) as VAs would translation-fault on the first MMIO touch.
      *
-     * The 8 GiB window covers every documented M1/M2 peripheral.  C
-     * callers convert PA→VA via the helper that ORs in
+     * The 32 GiB window was sized to cover PCIe (PA 0x690000000 on
+     * M1) along with the lower SoC peripheral block — an 8 GiB
+     * window would have stopped at PA 0x3FFFFFFFF and missed PCIe
+     * by ~22 GiB.  M1 Pro / Max push PCIe higher still (PA
+     * 0xc00000000); those configurations will need an extended
+     * window once we have a real machine to test against.
+     *
+     * C callers convert PA→VA via the helper that ORs in
      * 0xFFFFFF8000000000 (declared in include/platform/arm64/memory/pmap.h).
      *
      * On QEMU virt these L1 entries point at unbacked PA — harmless
@@ -420,7 +427,7 @@ bss_cleared:
     add     x0, x0, :lo12:kernel_l1_table
     add     x0, x0, #(8 * 8)          /* L1[8] */
     movz    x1, #0x0002, lsl #32      /* Start PA = 0x2_0000_0000 (8 GiB) */
-    mov     x3, #8                    /* 8 entries × 1 GiB = 8 GiB */
+    mov     x3, #32                   /* 32 entries × 1 GiB = 32 GiB */
     mov     x4, #0x40000000           /* 1 GiB stride */
 9:  movz    x2, #0x0605               /* Valid|Block|AttrIdx=1(dev)|AF|SH=10 */
     orr     x2, x1, x2                /* Combine PA with flags */

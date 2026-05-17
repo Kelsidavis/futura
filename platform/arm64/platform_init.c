@@ -911,9 +911,14 @@ uint32_t fut_irq_acknowledge_raw(void) {
  * boot.S calls fut_irq_handler which now calls fut_irq_main). */
 
 static void (*g_irq_dispatch_backend)(void) = NULL;
+static void (*g_fiq_dispatch_backend)(void) = NULL;
 
 void fut_irq_set_dispatch_backend(void (*fn)(void)) {
     g_irq_dispatch_backend = fn;
+}
+
+void fut_fiq_set_dispatch_backend(void (*fn)(void)) {
+    g_fiq_dispatch_backend = fn;
 }
 
 extern void fut_timer_irq_handler(void);
@@ -957,6 +962,25 @@ void fut_irq_main(void) {
      * suspended thread and stops further timer ticks dead.  Tick-
      * driven preemption still works via the IRET-style path on
      * exception return. */
+}
+
+/* FIQ entry point — paired with fiq_handler_entry in boot.S.
+ *
+ * On Apple Silicon the ARM Generic Timer is delivered as FIQ (not
+ * IRQ), so the FIQ vectors need a real dispatcher.  apple_aic_init
+ * installs apple_aic_handle_irq as the FIQ backend (the same
+ * function works for both event paths — Rust's AIC handler reads
+ * AIC_EVENT which doesn't distinguish IRQ vs FIQ on the read side).
+ *
+ * On QEMU virt no peripheral delivers FIQ, so without a backend
+ * installed this just returns silently — a spurious FIQ shouldn't
+ * crash the kernel, and the previous boot.S handler that branched
+ * straight to generic_exception_handler turned every legitimate
+ * Apple timer tick into a panic. */
+void fut_fiq_main(void) {
+    if (g_fiq_dispatch_backend) {
+        g_fiq_dispatch_backend();
+    }
 }
 
 /* Legacy helper that returns just the IRQ ID (or -1 on spurious).

@@ -130,8 +130,15 @@ void fut_apple_irq_init(const fut_platform_info_t *info) {
     extern void fut_irq_set_dispatch_backend(void (*fn)(void));
     fut_irq_set_dispatch_backend(apple_aic_handle_irq);
 
-    /* ARM Generic Timer interrupt is delivered as FIQ, not via the
-     * AIC.  Wiring happens in the timer/exception path. */
+    /* ARM Generic Timer is delivered as FIQ on Apple Silicon (not
+     * via AIC IRQ — the spec routes it directly to the FIQ vector).
+     * Register the same handler on the FIQ path: Rust's AIC dispatch
+     * reads AIC_EVENT which surfaces both IRQ and FIQ events through
+     * one bitmap, so apple_aic_handle_irq Just Works for both.
+     * Without this hook the FIQ vector falls through to fut_fiq_main's
+     * default NULL branch and the timer never reaches the scheduler. */
+    extern void fut_fiq_set_dispatch_backend(void (*fn)(void));
+    fut_fiq_set_dispatch_backend(apple_aic_handle_irq);
 
     fut_printf("[APPLE] Apple interrupt subsystem initialized\n");
 }

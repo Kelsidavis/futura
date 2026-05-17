@@ -739,7 +739,7 @@ irq_sp0_handler:
 
 /* FIQ from current EL with SP0 */
 fiq_sp0_handler:
-    b       generic_exception_handler
+    b       fiq_handler_entry
 
 /* SError from current EL with SP0 */
 serror_sp0_handler:
@@ -755,7 +755,7 @@ irq_spx_handler:
 
 /* FIQ from current EL with SPx */
 fiq_spx_handler:
-    b       generic_exception_handler
+    b       fiq_handler_entry
 
 /* SError from current EL with SPx */
 serror_spx_handler:
@@ -771,7 +771,7 @@ irq_aarch64_handler:
 
 /* FIQ from lower EL (AArch64) */
 fiq_aarch64_handler:
-    b       generic_exception_handler
+    b       fiq_handler_entry
 
 /* SError from lower EL (AArch64) */
 serror_aarch64_handler:
@@ -892,6 +892,56 @@ print_hex64:
     ldp     x19, x20, [sp], #16
     ldp     x29, x30, [sp], #16
     ret
+
+/*
+ * FIQ handler entry point — same register-save dance as IRQ.
+ *
+ * Apple Silicon delivers the ARM Generic Timer via FIQ rather than
+ * IRQ, so the FIQ vectors need a real dispatcher.  Routes through
+ * fut_fiq_handler → fut_fiq_main (platform_init.c) → the FIQ
+ * dispatch backend that apple_aic_init installs.  On QEMU virt no
+ * peripheral delivers FIQ and the backend stays NULL — fut_fiq_main
+ * returns silently, the asm restores registers and erets.
+ */
+.align 4
+fiq_handler_entry:
+    stp     x0, x1, [sp, #-16]!
+    stp     x2, x3, [sp, #-16]!
+    stp     x4, x5, [sp, #-16]!
+    stp     x6, x7, [sp, #-16]!
+    stp     x8, x9, [sp, #-16]!
+    stp     x10, x11, [sp, #-16]!
+    stp     x12, x13, [sp, #-16]!
+    stp     x14, x15, [sp, #-16]!
+    stp     x16, x17, [sp, #-16]!
+    stp     x18, x19, [sp, #-16]!
+    stp     x20, x21, [sp, #-16]!
+    stp     x22, x23, [sp, #-16]!
+    stp     x24, x25, [sp, #-16]!
+    stp     x26, x27, [sp, #-16]!
+    stp     x28, x29, [sp, #-16]!
+    stp     x30, xzr, [sp, #-16]!
+
+    bl      fut_fiq_handler
+
+    ldp     x30, xzr, [sp], #16
+    ldp     x28, x29, [sp], #16
+    ldp     x26, x27, [sp], #16
+    ldp     x24, x25, [sp], #16
+    ldp     x22, x23, [sp], #16
+    ldp     x20, x21, [sp], #16
+    ldp     x18, x19, [sp], #16
+    ldp     x16, x17, [sp], #16
+    ldp     x14, x15, [sp], #16
+    ldp     x12, x13, [sp], #16
+    ldp     x10, x11, [sp], #16
+    ldp     x8, x9, [sp], #16
+    ldp     x6, x7, [sp], #16
+    ldp     x4, x5, [sp], #16
+    ldp     x2, x3, [sp], #16
+    ldp     x0, x1, [sp], #16
+
+    eret
 
 /*
  * IRQ handler entry point
@@ -1021,6 +1071,17 @@ fut_irq_handler:
      * docs/APPLE_SILICON_BRINGUP_PLAN.md). */
     stp     x29, x30, [sp, #-16]!
     bl      fut_irq_main
+    ldp     x29, x30, [sp], #16
+    ret
+
+.global fut_fiq_handler
+.type fut_fiq_handler, @function
+fut_fiq_handler:
+    /* FIQ trampoline mirror of fut_irq_handler.  fut_fiq_main has
+     * its own backend slot, set on Apple Silicon by apple_aic_init.
+     * On QEMU virt the slot stays NULL and this is a fast no-op. */
+    stp     x29, x30, [sp, #-16]!
+    bl      fut_fiq_main
     ldp     x29, x30, [sp], #16
     ret
 

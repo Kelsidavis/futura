@@ -518,30 +518,38 @@ int apple_bcm_chip_reset(void)
         return -EIO;
     }
 
+    fut_printf("[bcm] reset: initiating FLR via PCIe cap 0x%02x\n",
+               (unsigned)cap);
+
     /* Read-modify-write the device control register, setting bit 15
      * to initiate FLR.  The spec guarantees the chip will accept the
-     * write and complete reset within 100ms; per Broadcom's
-     * brcmfmac driver, a 200ms wait is the safe choice. */
+     * write and complete reset within 100ms; per Broadcom's brcmfmac
+     * driver, 200ms is the safe initial wait. */
     uint32_t devctl_sts = rust_apple_pcie_cfg_read32(g_bcm_pcie, bus, 0, fn,
                                                      cap + 0x08);
     rust_apple_pcie_cfg_write32(g_bcm_pcie, bus, 0, fn, cap + 0x08,
                                  devctl_sts | PCIE_DEVCTL_FLR);
 
-    /* PCIe spec guarantees FLR completes within 100ms; brcmfmac
-     * waits 200ms for safety margin. */
+    /* Initial settle delay matching brcmfmac. */
     fut_platform_udelay(200u * 1000u);
 
-    /* Verify the chip came back — vendor ID should still read 0x14e4
-     * after FLR (the device-IDs themselves survive reset). */
-    uint32_t vid_did = rust_apple_pcie_cfg_read32(g_bcm_pcie, bus, 0, fn, 0x00);
-    uint16_t vid = (uint16_t)(vid_did & 0xFFFFu);
-    if (vid != BCM_VENDOR_ID) {
-        fut_printf("[bcm] reset: chip didn't return after FLR "
-                   "(vid=0x%04x)\n", vid);
-        return -EIO;
+    /* Poll vendor ID up to an additional 300ms for slower chips.
+     * Total budget = 200ms initial + 30 × 10ms = 500ms, well above
+     * the 100ms PCIe spec guarantees for FLR completion. */
+    uint16_t vid = 0;
+    for (int attempt = 0; attempt < 31; attempt++) {
+        uint32_t vid_did = rust_apple_pcie_cfg_read32(g_bcm_pcie,
+                                                       bus, 0, fn, 0x00);
+        vid = (uint16_t)(vid_did & 0xFFFFu);
+        if (vid == BCM_VENDOR_ID) {
+            fut_printf("[bcm] reset: FLR successful at attempt %d "
+                       "(vid=0x%04x)\n", attempt, vid);
+            return 0;
+        }
+        fut_platform_udelay(10u * 1000u);
     }
 
-    fut_printf("[bcm] reset: FLR successful via PCIe cap at 0x%02x\n",
-               (unsigned)cap);
-    return 0;
+    fut_printf("[bcm] reset: chip didn't return within 500ms after FLR "
+               "(last vid=0x%04x)\n", vid);
+    return -EIO;
 }

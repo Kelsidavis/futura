@@ -186,6 +186,16 @@ int apple_xhci_enumerate(void) {
         return found;
     }
 
+    /* Defensive cap: rust_apple_xhci_enumerate is told the buffer
+     * size and shouldn't return more, but a misbehaving controller
+     * + future Rust crate revision could violate that contract.
+     * Bound at the array size we declared. */
+    if (found > XHCI_MAX_SLOTS) {
+        fut_printf("[xHCI] Enumerate returned %d > %d, capping\n",
+                   found, XHCI_MAX_SLOTS);
+        found = XHCI_MAX_SLOTS;
+    }
+
     for (int32_t i = 0; i < found; i++) {
         g_xhci.devices[i].slot_id = slots[i];
         g_xhci.devices[i].port    = ports[i];

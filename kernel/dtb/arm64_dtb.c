@@ -508,6 +508,16 @@ fut_platform_info_t fut_dtb_parse(uint64_t dtb_ptr) {
                 info.mca_num_clusters = 1;
             }
 
+            /* Panel geometry from /chosen/framebuffer (Simple FB node
+             * that m1n1 populates with the firmware's chosen mode).
+             * apple_dcp uses this to skip the EDID + DCP-control
+             * round-trip on first boot and just paint into the
+             * already-running framebuffer surface. */
+            fut_dtb_get_chosen_framebuffer(dtb_ptr,
+                                            &info.display_width,
+                                            &info.display_height,
+                                            NULL);
+
             break;
         }
 
@@ -617,6 +627,127 @@ size_t fut_dtb_get_bootargs(uint64_t dtb_ptr, char *out, size_t max_len) {
 
     out[0] = '\0';
     return 0;
+}
+
+/* Walk the flattened device tree looking for /chosen/framebuffer's
+ * width / height / stride properties.  m1n1 (Asahi Linux's
+ * bootloader) and U-Boot both publish the panel geometry the
+ * firmware has already brought up here, as a Linux Simple
+ * Framebuffer subnode.  Used by fut_dtb_parse on Apple Silicon to
+ * surface a default mode for apple_dcp without having to wait for
+ * EDID + a full DCP control conversation.
+ *
+ * Implemented as a focused walker for the same reason as
+ * fut_dtb_get_bootargs: the generic fut_dtb_get_property helper does
+ * not advance past FDT_BEGIN_NODE's variable-length name correctly
+ * and silently misses properties on nested nodes.
+ *
+ * Returns true if /chosen/framebuffer was found and at least width
+ * + height were read; *_out pointers may be NULL and are not
+ * updated unless the corresponding property was present. */
+bool fut_dtb_get_chosen_framebuffer(uint64_t dtb_ptr,
+                                    uint32_t *width_out,
+                                    uint32_t *height_out,
+                                    uint32_t *stride_out) {
+    if (!fut_dtb_validate(dtb_ptr)) {
+        return false;
+    }
+
+    dtb_header_t *header = (dtb_header_t *)dtb_ptr;
+    uint32_t totalsize    = be32_to_cpu(header->totalsize);
+    uint32_t off_struct   = be32_to_cpu(header->off_dt_struct);
+    uint32_t off_strings  = be32_to_cpu(header->off_dt_strings);
+    uint32_t size_strings = be32_to_cpu(header->size_dt_strings);
+
+    if (off_struct >= totalsize || off_strings >= totalsize) {
+        return false;
+    }
+
+    const char *strings_base = (const char *)(dtb_ptr + off_strings);
+    uint32_t *p              = (uint32_t *)(dtb_ptr + off_struct);
+    uint32_t *struct_end     = (uint32_t *)(dtb_ptr + totalsize);
+
+    /* Track our position relative to /chosen and /chosen/framebuffer.
+     * Same depth-counter approach as fut_dtb_get_bootargs so nested
+     * children inside chosen don't fool the in_chosen state. */
+    bool in_chosen    = false;
+    bool in_fb        = false;
+    int  chosen_depth = 0;
+    int  fb_depth     = 0;
+    int  depth        = 0;
+    bool got_width    = false;
+    bool got_height   = false;
+
+    while (p < struct_end) {
+        uint32_t token = be32_to_cpu(p[0]);
+
+        if (token == FDT_END) {
+            break;
+        } else if (token == FDT_BEGIN_NODE) {
+            const char *node_name = (const char *)&p[1];
+            size_t max_name = (size_t)((char *)struct_end - node_name);
+            size_t name_len = 0;
+            while (name_len < max_name && node_name[name_len] != '\0') {
+                name_len++;
+            }
+            depth++;
+            if (!in_chosen && strcmp(node_name, "chosen") == 0) {
+                in_chosen    = true;
+                chosen_depth = depth;
+            } else if (in_chosen && !in_fb &&
+                       /* Match "framebuffer" or "framebuffer@<addr>" — the
+                        * Simple Framebuffer node name often carries the
+                        * MMIO base as a unit address. */
+                       (strcmp(node_name, "framebuffer") == 0 ||
+                        (name_len >= 12 &&
+                         strncmp(node_name, "framebuffer@", 12) == 0))) {
+                in_fb    = true;
+                fb_depth = depth;
+            }
+            size_t aligned = align_offset(name_len + 1);
+            p = (uint32_t *)((char *)&p[1] + aligned);
+        } else if (token == FDT_END_NODE) {
+            if (in_fb && depth == fb_depth) {
+                in_fb = false;
+            }
+            if (in_chosen && depth == chosen_depth) {
+                in_chosen = false;
+            }
+            depth--;
+            p += 1;
+        } else if (token == FDT_NOP) {
+            p += 1;
+        } else if (token == FDT_PROP) {
+            dtb_prop_t *prop  = (dtb_prop_t *)&p[1];
+            uint32_t prop_len = be32_to_cpu(prop->len);
+            uint32_t name_off = be32_to_cpu(prop->nameoff);
+            if (name_off >= size_strings) {
+                break;
+            }
+            const char *prop_name = strings_base + name_off;
+            if (in_fb && prop_len == sizeof(uint32_t)) {
+                uint32_t raw;
+                memcpy(&raw, &prop[1], sizeof(raw));
+                uint32_t val = be32_to_cpu(raw);
+                if (strcmp(prop_name, "width") == 0) {
+                    if (width_out) { *width_out = val; }
+                    got_width = true;
+                } else if (strcmp(prop_name, "height") == 0) {
+                    if (height_out) { *height_out = val; }
+                    got_height = true;
+                } else if (strcmp(prop_name, "stride") == 0) {
+                    if (stride_out) { *stride_out = val; }
+                }
+            }
+            size_t advance = sizeof(uint32_t) + sizeof(dtb_prop_t) + prop_len;
+            p = (uint32_t *)((char *)p + advance);
+            p = (uint32_t *)align_offset((size_t)p);
+        } else {
+            break;
+        }
+    }
+
+    return got_width && got_height;
 }
 
 /* ============================================================

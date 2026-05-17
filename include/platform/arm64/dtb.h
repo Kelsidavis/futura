@@ -120,6 +120,25 @@ fut_platform_type_t fut_dtb_detect_platform(uint64_t dtb_ptr);
 size_t fut_dtb_get_bootargs(uint64_t dtb_ptr, char *out, size_t max_len);
 
 /**
+ * Read /chosen/framebuffer dimensions.  m1n1 (Asahi) and U-Boot
+ * publish the panel geometry the bootloader's already brought up
+ * here, in a Linux-conformant Simple Framebuffer subnode.  Used by
+ * fut_dtb_parse on Apple Silicon to populate display_width and
+ * display_height before apple_dcp picks a default mode.
+ *
+ * @param dtb_ptr:    DTB pointer (virtual)
+ * @param width_out:  Receives width in pixels (NULL allowed)
+ * @param height_out: Receives height in pixels (NULL allowed)
+ * @param stride_out: Receives stride in bytes (NULL allowed)
+ * @return:           true if /chosen/framebuffer was found and at
+ *                    least width+height were read.
+ */
+bool fut_dtb_get_chosen_framebuffer(uint64_t dtb_ptr,
+                                    uint32_t *width_out,
+                                    uint32_t *height_out,
+                                    uint32_t *stride_out);
+
+/**
  * Get property value from DTB node.
  * @param dtb_ptr: Physical address of DTB
  * @param node_name: Full path to node (e.g., "/soc/serial@fe201000")

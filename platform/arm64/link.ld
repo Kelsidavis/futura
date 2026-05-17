@@ -78,15 +78,23 @@ SECTIONS
         _bss_end = .;
     } :data
 
-    /* Kernel end marker */
-    _kernel_end = .;
-
-    /* Kernel stack (32 KB, grows downward) */
+    /* Kernel stack (64 KB, grows downward).  Must be BEFORE
+     * _kernel_end so the ARM64 Linux header's image_size field
+     * (computed as _kernel_end - _start in boot.S) reserves space
+     * for the stack too.  m1n1 honours image_size when placing the
+     * kernel in DRAM and may put other state immediately after the
+     * reserved region — if the stack lived past _kernel_end the
+     * first stack push would silently corrupt whatever m1n1 dropped
+     * there. */
     . = ALIGN(16);  /* Ensure 16-byte alignment for AArch64 ABI */
     _stack_start = .;
     . += 0x10000;   /* 64 KB stack (increased from 32 KB, reasonable size) */
     . = ALIGN(16);
     _stack_top = .;
+
+    /* Kernel end marker — placed AFTER the stack so image_size
+     * covers everything the kernel actually uses. */
+    _kernel_end = .;
 
     /* Discard sections */
     /DISCARD/ : {

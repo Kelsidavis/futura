@@ -341,6 +341,24 @@ static void uart_irq_handler(int irq_num, void *frame) {
 }
 
 void fut_serial_init(void) {
+    /* Skip PL011 + GICv2 register pokes on Apple Silicon — neither
+     * peripheral exists there, and writing to their QEMU-virt PAs
+     * (0x09000000 / 0x08000000) on real Apple hardware would hit
+     * unbacked MMIO in the kernel's identity-mapped peripheral
+     * window.  The s5l-uart backend is installed later in
+     * kernel_main.c via fut_apple_uart_init(); until then output
+     * still works via the in-RAM klog ring buffer for dmesg, just
+     * not on live serial. */
+    if (g_dtb_ptr != 0) {
+        extern fut_platform_type_t fut_dtb_detect_platform(uint64_t dtb_ptr);
+        fut_platform_type_t pt = fut_dtb_detect_platform(g_dtb_ptr);
+        if (pt == PLATFORM_APPLE_M1 || pt == PLATFORM_APPLE_M2 ||
+            pt == PLATFORM_APPLE_M3 || pt == PLATFORM_APPLE_M4) {
+            fut_waitq_init(&uart_rx_waitq);
+            return;
+        }
+    }
+
     volatile uint8_t *uart = (volatile uint8_t *)UART0_BASE;
 
     /* Disable UART for re-configuration */
@@ -1296,9 +1314,26 @@ void fut_platform_early_init(uint32_t boot_magic, void *boot_info) {
         }
     }
 
-    /* Initialize GIC */
-    fut_serial_puts("[INIT] Initializing GICv2...\n");
-    fut_gic_init();
+    /* Initialize GIC — but only on platforms that actually have one.
+     * Apple Silicon uses AIC instead; writing to the QEMU-virt GICD
+     * base (0x08000000) on real Apple hardware would hit unbacked
+     * MMIO.  AIC bring-up is handled later via the IRQ dispatch
+     * backend (fut_irq_set_dispatch_backend → apple_aic_handle_irq). */
+    bool skip_gic = false;
+    if (g_dtb_ptr != 0) {
+        extern fut_platform_type_t fut_dtb_detect_platform(uint64_t dtb_ptr);
+        fut_platform_type_t pt = fut_dtb_detect_platform(g_dtb_ptr);
+        if (pt == PLATFORM_APPLE_M1 || pt == PLATFORM_APPLE_M2 ||
+            pt == PLATFORM_APPLE_M3 || pt == PLATFORM_APPLE_M4) {
+            skip_gic = true;
+        }
+    }
+    if (skip_gic) {
+        fut_serial_puts("[INIT] Skipping GICv2 init (Apple Silicon — AIC used instead)\n");
+    } else {
+        fut_serial_puts("[INIT] Initializing GICv2...\n");
+        fut_gic_init();
+    }
 
     /* Probe framebuffer from device tree / fallback */
     fut_serial_puts("[INIT] Probing framebuffer...\n");

@@ -93,15 +93,16 @@ int apple_pmgr_enable(uint32_t ps_offset)
 
     uint32_t reg = pmgr_r32(ps_offset);
     uint32_t target = (uint8_t)(reg & APPLE_PMGR_PS_TARGET_MASK);
+    int rc;
     if (target == APPLE_PMGR_PS_ON) {
         /* Already requested-on; just confirm the actual state. */
-        return wait_for_state(ps_offset, APPLE_PMGR_PS_ON);
+        rc = wait_for_state(ps_offset, APPLE_PMGR_PS_ON);
+    } else {
+        pmgr_w32(ps_offset, (reg & ~APPLE_PMGR_PS_TARGET_MASK)
+                              | APPLE_PMGR_PS_ON);
+        rc = wait_for_state(ps_offset, APPLE_PMGR_PS_ON);
     }
 
-    pmgr_w32(ps_offset, (reg & ~APPLE_PMGR_PS_TARGET_MASK)
-                          | APPLE_PMGR_PS_ON);
-
-    int rc = wait_for_state(ps_offset, APPLE_PMGR_PS_ON);
     if (rc != 0) {
         fut_printf("[pmgr] enable ps_offset=0x%x timed out "
                    "(reg now=0x%08x)\n",
@@ -110,6 +111,12 @@ int apple_pmgr_enable(uint32_t ps_offset)
         atomic_fetch_add_explicit(&g_pmgr_failed_count, 1,
                                    memory_order_acq_rel);
     } else {
+        /* Counted on both paths — the "already on" case is the
+         * common one when m1n1 left a domain powered, and we still
+         * want the summary log to reflect it as a successful enable
+         * (the request semantically succeeded).  Otherwise the boot
+         * log would falsely show 0 domains enabled on systems where
+         * m1n1 did everything correctly. */
         atomic_fetch_add_explicit(&g_pmgr_enabled_count, 1,
                                    memory_order_acq_rel);
     }

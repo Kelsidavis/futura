@@ -58,6 +58,21 @@ extern void     rust_apple_pcie_cfg_write32(struct ApplePcie *p,
                                             uint8_t bus, uint8_t dev,
                                             uint8_t fn, uint16_t reg,
                                             uint32_t val);
+extern uint16_t rust_apple_pcie_find_cap(const struct ApplePcie *p,
+                                          uint8_t bus, uint8_t dev,
+                                          uint8_t fn, uint8_t cap_id);
+
+/* PCI / PCIe capability IDs we care about here. */
+#define PCI_CAP_ID_PCIE      0x10u
+
+/* PCI Express device-capabilities register: bit 28 = FLR Capable. */
+#define PCIE_DEVCAP_FLR_CAP  (1u << 28)
+/* PCI Express device-control register: bit 15 = Initiate FLR. */
+#define PCIE_DEVCTL_FLR      (1u << 15)
+
+/* Cache the PCIe handle so chip_reset can use it without re-running
+ * the PCIe init dance.  Populated by apple_bcm_init on success. */
+static struct ApplePcie *g_bcm_pcie;
 
 /* Cached discovery state for accessor functions. */
 static struct {
@@ -96,6 +111,7 @@ int apple_bcm_init(const fut_platform_info_t *info,
                    (unsigned long)info->pcie_cfg_base);
         return 0;
     }
+    g_bcm_pcie = pcie;
 
     int found = 0;
     for (uint32_t port = 0; port < info->pcie_num_ports; port++) {
@@ -294,21 +310,62 @@ int apple_bcm_chip_reset(void)
         fut_printf("[bcm] reset: no chip discovered\n");
         return -ENODEV;
     }
+    if (!g_bcm_pcie) {
+        fut_printf("[bcm] reset: PCIe handle missing\n");
+        return -ENODEV;
+    }
 
-    /* The chip exposes PCIe Function-Level Reset (FLR) at the
-     * standard offset in the device control register of the PCIe
-     * capability.  Reset path is:
-     *
-     *   1. Walk extended config space to find PCIe capability ID 0x10.
-     *   2. Read device control register (cap_offset + 0x08).
-     *   3. Set bit 15 (Initiate FLR).
-     *   4. Wait 100 ms.
-     *   5. Verify chip vendor ID re-reads as 0x14e4.
-     *
-     * Once apple_pcie grows a capability-walk helper this becomes
-     * straightforward; today it would duplicate logic into apple_bcm,
-     * so it's deferred. */
-    fut_printf("[bcm] reset: stub — needs apple_pcie capability "
-               "walker to find PCIe cap offset for FLR\n");
-    return -ENOSYS;
+    uint8_t bus = g_bcm.wifi.bus;
+    uint8_t fn  = g_bcm.wifi.function;
+
+    uint16_t cap = rust_apple_pcie_find_cap(g_bcm_pcie, bus, 0, fn,
+                                            PCI_CAP_ID_PCIE);
+    if (cap == 0) {
+        fut_printf("[bcm] reset: PCIe capability not found on "
+                   "bus=%u fn=%u\n", bus, fn);
+        return -EIO;
+    }
+
+    /* PCIe Capability layout (PCIe Base Spec §7.5.3):
+     *   cap+0x00: cap_id (u8) + next_ptr (u8) + cap_flags (u16)
+     *   cap+0x04: Device Capabilities (u32)
+     *   cap+0x08: Device Control (u16) + Device Status (u16) */
+    uint32_t devcap = rust_apple_pcie_cfg_read32(g_bcm_pcie, bus, 0, fn,
+                                                  cap + 0x04);
+    if ((devcap & PCIE_DEVCAP_FLR_CAP) == 0) {
+        fut_printf("[bcm] reset: chip is not FLR-capable "
+                   "(devcap=0x%08x)\n", (unsigned)devcap);
+        return -EIO;
+    }
+
+    /* Read-modify-write the device control register, setting bit 15
+     * to initiate FLR.  The spec guarantees the chip will accept the
+     * write and complete reset within 100ms; per Broadcom's
+     * brcmfmac driver, a 200ms wait is the safe choice. */
+    uint32_t devctl_sts = rust_apple_pcie_cfg_read32(g_bcm_pcie, bus, 0, fn,
+                                                     cap + 0x08);
+    rust_apple_pcie_cfg_write32(g_bcm_pcie, bus, 0, fn, cap + 0x08,
+                                 devctl_sts | PCIE_DEVCTL_FLR);
+
+    /* Busy-wait 200ms.  We don't have a precise delay yet on Apple
+     * (timer is up but a sleep helper is on the TODO list), so this
+     * is a coarse loop.  Each iteration is roughly one config read
+     * (a few hundred ns); 1M iterations is comfortably > 200ms. */
+    for (volatile int i = 0; i < 1000000; i++) {
+        (void)rust_apple_pcie_cfg_read32(g_bcm_pcie, bus, 0, fn, 0x00);
+    }
+
+    /* Verify the chip came back — vendor ID should still read 0x14e4
+     * after FLR (the device-IDs themselves survive reset). */
+    uint32_t vid_did = rust_apple_pcie_cfg_read32(g_bcm_pcie, bus, 0, fn, 0x00);
+    uint16_t vid = (uint16_t)(vid_did & 0xFFFFu);
+    if (vid != BCM_VENDOR_ID) {
+        fut_printf("[bcm] reset: chip didn't return after FLR "
+                   "(vid=0x%04x)\n", vid);
+        return -EIO;
+    }
+
+    fut_printf("[bcm] reset: FLR successful via PCIe cap at 0x%02x\n",
+               (unsigned)cap);
+    return 0;
 }

@@ -492,6 +492,48 @@ impl ApplePcie {
         }
     }
 
+    // ---- Capability walking ----
+
+    /// Walk the PCI capability linked list looking for a specific
+    /// capability ID.  Returns the byte offset of the capability
+    /// within config space, or 0 if not found.
+    ///
+    /// PCI Local Bus Spec §6.7: the status register at offset 0x06
+    /// has bit 4 (Capabilities List) set when a list is present; the
+    /// list head is at offset 0x34.  Each entry is `[cap_id:8,
+    /// next_ptr:8, payload…]`; next=0 terminates.
+    pub fn find_capability(
+        &self,
+        bus: u8,
+        dev: u8,
+        fn_: u8,
+        cap_id: u8,
+    ) -> u16 {
+        let status = self.config_read16(bus, dev, fn_, 0x06);
+        if status & 0x0010 == 0 {
+            return 0; // no capabilities list
+        }
+
+        let mut off = self.config_read8(bus, dev, fn_, 0x34) as u16;
+        // Mask the low two bits; they're reserved.
+        off &= !0x3;
+
+        // Cap the walk at 48 entries so a malformed device can't
+        // wedge us in an infinite loop.
+        for _ in 0..48 {
+            if off == 0 || off < 0x40 {
+                return 0;
+            }
+            let id = self.config_read8(bus, dev, fn_, off);
+            if id == cap_id {
+                return off;
+            }
+            let next = self.config_read8(bus, dev, fn_, off + 1);
+            off = (next as u16) & !0x3;
+        }
+        0
+    }
+
     // ---- Link status ----
 
     pub fn port_link_up(&self, port: u32) -> bool {
@@ -785,6 +827,23 @@ pub unsafe extern "C" fn rust_apple_pcie_cfg_read8(
         return 0xFF;
     }
     unsafe { (*pcie).config_read8(bus, dev, fn_, reg) }
+}
+
+/// Walk the capability linked list and return the offset of a
+/// capability matching `cap_id`, or 0 if not found.  Standard
+/// capability IDs: 0x05 = MSI, 0x10 = PCI Express, 0x11 = MSI-X.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rust_apple_pcie_find_cap(
+    pcie: *const ApplePcie,
+    bus: u8,
+    dev: u8,
+    fn_: u8,
+    cap_id: u8,
+) -> u16 {
+    if pcie.is_null() {
+        return 0;
+    }
+    unsafe { (*pcie).find_capability(bus, dev, fn_, cap_id) }
 }
 
 /// Configure MSI for `port`.

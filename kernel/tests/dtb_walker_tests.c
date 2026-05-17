@@ -61,8 +61,9 @@ extern void fut_test_fail(uint16_t code);
  */
 #define DTB_TOTALSIZE 176
 
-/* Phandle value embedded in the synthetic DTB below. */
+/* Phandle value embedded in the second DTB below. */
 #define SYNTHETIC_PHANDLE 0x42u
+#define SYNTHETIC_REG     0x0000CAFEu
 
 static const uint8_t synthetic_dtb[DTB_TOTALSIZE] __attribute__((aligned(8))) = {
     /* ----- Header (40 bytes, all big-endian u32) ----- */
@@ -111,6 +112,67 @@ static const uint8_t synthetic_dtb[DTB_TOTALSIZE] __attribute__((aligned(8))) = 
 
     /* Padding to 176 */
     0,0,0,
+};
+
+/* Second synthetic DTB carrying a `phandle` property so we can
+ * exercise the fut_dtb_phandle_reg resolver end-to-end.
+ *
+ * Layout (144 bytes):
+ *   0x00..0x28  Header
+ *   0x28..0x38  Empty mem_rsvmap
+ *   0x38..0x7C  Structure block (68 bytes)
+ *               root
+ *                 powernode
+ *                   reg     = <SYNTHETIC_REG>
+ *                   phandle = SYNTHETIC_PHANDLE
+ *   0x7C..0x88  Strings block (12 bytes: "reg\0phandle\0")
+ *   0x88..0x90  Padding
+ */
+#define PHANDLE_DTB_TOTALSIZE 144
+static const uint8_t phandle_dtb[PHANDLE_DTB_TOTALSIZE] __attribute__((aligned(8))) = {
+    /* Header */
+    0xD0, 0x0D, 0xFE, 0xED,
+    0x00, 0x00, 0x00, 0x90,  /* totalsize = 144 */
+    0x00, 0x00, 0x00, 0x38,  /* off_dt_struct = 56 */
+    0x00, 0x00, 0x00, 0x7C,  /* off_dt_strings = 124 */
+    0x00, 0x00, 0x00, 0x28,  /* off_mem_rsvmap = 40 */
+    0x00, 0x00, 0x00, 0x11,
+    0x00, 0x00, 0x00, 0x10,
+    0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x0C,  /* size_dt_strings = 12 */
+    0x00, 0x00, 0x00, 0x44,  /* size_dt_struct = 68 */
+
+    /* mem_rsvmap (16 zero bytes) */
+    0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0,
+
+    /* Structure block (68 bytes) */
+    /* BEGIN_NODE "" (4 + 4 = 8) */
+    0,0,0,1,  0,0,0,0,
+    /* BEGIN_NODE "powernode" (4 + 12 = 16) */
+    0,0,0,1,
+    'p','o','w','e','r','n','o','d','e', 0x00, 0,0,
+    /* FDT_PROP reg (len=4, nameoff=0) value=0x0000CAFE (16) */
+    0,0,0,3,
+    0,0,0,4,
+    0,0,0,0,
+    0,0,0xCA,0xFE,
+    /* FDT_PROP phandle (len=4, nameoff=4) value=0x42 (16) */
+    0,0,0,3,
+    0,0,0,4,
+    0,0,0,4,
+    0,0,0,0x42,
+    /* FDT_END_NODE x2 + FDT_END (12) */
+    0,0,0,2,
+    0,0,0,2,
+    0,0,0,9,
+
+    /* Strings block (12 bytes) */
+    'r','e','g', 0x00,
+    'p','h','a','n','d','l','e', 0x00,
+
+    /* Padding to 144 */
+    0,0,0,0,
+    0,0,0,0,
 };
 
 void fut_dtb_walker_test_thread(void *arg)
@@ -214,6 +276,35 @@ void fut_dtb_walker_test_thread(void *arg)
         int64_t r = fut_dtb_phandle_reg(dtb, 0x12345);
         if (r == -1) DTB_PASS("phandle_reg(absent phandle)");
         else { DTB_FAIL("phandle_reg(absent)", 11); return; }
+    }
+
+    /* T12-T14: full phandle resolution against the secondary DTB. */
+    uint64_t pdtb = (uint64_t)(uintptr_t)phandle_dtb;
+
+    /* T12: secondary DTB validates */
+    {
+        if (fut_dtb_validate(pdtb)) DTB_PASS("validate phandle DTB");
+        else { DTB_FAIL("validate phandle DTB", 12); return; }
+    }
+
+    /* T13: phandle 0x42 resolves to reg first cell = 0xCAFE */
+    {
+        int64_t r = fut_dtb_phandle_reg(pdtb, SYNTHETIC_PHANDLE);
+        if (r == (int64_t)SYNTHETIC_REG) {
+            DTB_PASS("phandle_reg(present phandle)");
+        } else {
+            fut_printf("[DTB-TEST] got r=0x%lx, expected 0x%x\n",
+                       (long)r, (unsigned)SYNTHETIC_REG);
+            DTB_FAIL("phandle_reg(present phandle)", 13);
+            return;
+        }
+    }
+
+    /* T14: unrelated phandle on the same DTB → -1 */
+    {
+        int64_t r = fut_dtb_phandle_reg(pdtb, 0x99);
+        if (r == -1) DTB_PASS("phandle_reg(wrong phandle in valid DTB)");
+        else { DTB_FAIL("phandle_reg(wrong phandle)", 14); return; }
     }
 
     fut_printf("[DTB-TEST] all DT walker tests passed\n");

@@ -27,6 +27,7 @@
 
 #include <platform/arm64/apple_xhci.h>
 #include <platform/arm64/apple_pcie.h>
+#include <platform/arm64/apple_pmgr.h>
 #include <platform/arm64/memory/pmap.h>
 #include <platform/platform.h>
 #include <kernel/fut_memory.h>
@@ -224,6 +225,30 @@ int apple_xhci_platform_init(const fut_platform_info_t *info) {
 
     if (info->pcie_base == 0) {
         return 0;
+    }
+
+    /* Bring up pmgr power domains for the PCIe root complex (the
+     * xHCI controller hangs off PCIe).  Without this on cold boot
+     * the PCIe link won't train and BAR reads return 0xFFFF.  m1n1
+     * may have done it; this is idempotent. */
+    extern uint64_t fut_platform_get_dtb(void);
+    uint64_t dtb = fut_platform_get_dtb();
+    if (dtb != 0) {
+        static const char *const pcie_paths[] = {
+            "/soc/pcie@690000000",
+            "/soc/pcie",
+            "/arm-io/pcie",
+            "/arm-io/pciec0",
+            NULL,
+        };
+        for (int i = 0; pcie_paths[i]; i++) {
+            int rc = apple_pmgr_enable_domains_for(dtb, pcie_paths[i]);
+            if (rc > 0) {
+                fut_printf("[xHCI] pmgr: %d PCIe domains enabled via %s\n",
+                           rc, pcie_paths[i]);
+                break;
+            }
+        }
     }
 
     int ret = apple_xhci_init(info);

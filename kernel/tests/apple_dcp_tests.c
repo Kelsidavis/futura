@@ -137,6 +137,27 @@ void fut_apple_dcp_test_thread(void *arg)
         } else { DCP_FAIL("swap_submit_build(NULL)", 14); return; }
     }
 
+    /* T15: set_backlight_msg(NULL, ...) → 0 */
+    {
+        if (rust_apple_dcp_set_backlight_msg(NULL, 128) == 0) {
+            DCP_PASS("set_backlight_msg(NULL)");
+        } else { DCP_FAIL("set_backlight_msg(NULL)", 15); return; }
+    }
+
+    /* T16: set_power_msg(NULL, ...) → 0 */
+    {
+        if (rust_apple_dcp_set_power_msg(NULL, APPLE_DCP_POWER_ON) == 0) {
+            DCP_PASS("set_power_msg(NULL)");
+        } else { DCP_FAIL("set_power_msg(NULL)", 16); return; }
+    }
+
+    /* T17: handle_msg(NULL, ...) → 0xFF (unknown message type sentinel) */
+    {
+        if (rust_apple_dcp_handle_msg(NULL, 0) == 0xFF) {
+            DCP_PASS("handle_msg(NULL)");
+        } else { DCP_FAIL("handle_msg(NULL)", 17); return; }
+    }
+
     fut_printf("[DCP-TEST] all apple_dcp guard tests passed\n");
 }
 

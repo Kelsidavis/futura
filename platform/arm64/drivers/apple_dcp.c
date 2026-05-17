@@ -197,6 +197,33 @@ int fut_apple_dcp_platform_init(const fut_platform_info_t *info) {
                (unsigned long)info->dcp_base,
                (unsigned long)info->dcp_mailbox_base);
 
+    /* FIRST-LIGHT FAST-PATH: if m1n1 already brought up the panel
+     * and exposed its framebuffer via /chosen/framebuffer, publish
+     * that to the kernel fb layer BEFORE touching DCP / DART /
+     * RTKit.  That way even if the DCP bring-up below fails (likely
+     * on real hardware until we add pmgr clock-enable support), the
+     * kernel still has a console to print to.  display_width /
+     * height come from the DT walker and don't need DCP at all. */
+    if (info->framebuffer_phys != 0 &&
+        info->display_width > 0 && info->display_height > 0) {
+        struct fut_fb_hwinfo m1n1_fb = {0};
+        uint32_t stride = info->display_width * 4;  /* default BGRA8888 stride */
+        m1n1_fb.phys        = info->framebuffer_phys;
+        m1n1_fb.length      = (uint64_t)stride * info->display_height;
+        /* Use the kernel peripheral mapping window — m1n1's FB sits
+         * in DRAM at PA 0x10_0000_0000+ which is outside the
+         * kernel's L2_dram window but inside kernel_l1[8..71]. */
+        m1n1_fb.virt        = (void *)fut_kernel_peripheral_va(info->framebuffer_phys);
+        m1n1_fb.info.width  = info->display_width;
+        m1n1_fb.info.height = info->display_height;
+        m1n1_fb.info.pitch  = stride;
+        m1n1_fb.info.bpp    = 32;
+        m1n1_fb.info.flags  = 0x00000001;  /* FB_FLAG_LINEAR */
+        int rc = fb_set_hwinfo(&m1n1_fb);
+        fut_printf("[DCP] First-light: m1n1 FB at PA 0x%lx VA %p (rc=%d)\n",
+                   (unsigned long)info->framebuffer_phys, m1n1_fb.virt, rc);
+    }
+
     /* DART IOMMU — variant 0 = t8020 (M1/M2), variant 1 = t8110
      * (M1 Pro/Max).  PA→VA via the kernel peripheral mapping window.
      * Identity fallback if no DART. */
@@ -243,47 +270,21 @@ int fut_apple_dcp_platform_init(const fut_platform_info_t *info) {
     g_dcp.initialized = true;
 
     /* Allocate the primary framebuffer surface, submit it, register
-     * with the kernel fb layer. */
+     * with the kernel fb layer.  The m1n1 FB fast-path above already
+     * published a FB if one was available, so callers see something
+     * either way; this DCP-allocated surface is for the longer-term
+     * swap-chain path. */
     if (!rust_apple_dcp_mode_is_set(g_dcp.dcp)) {
         fut_printf("[DCP] No mode set, skipping FB probe\n");
         return 0;
     }
 
-    /* Fast-path: m1n1 already brought up a Simple Framebuffer and
-     * published its PA in /chosen/framebuffer.  Publish that to the
-     * kernel fb layer immediately so the early kernel console can
-     * paint somewhere — much faster path to first-light than the
-     * full DCP swap-chain bring-up, which needs additional protocol
-     * conversation with the co-processor that we don't fully
-     * implement yet.  Once DCP-driven swap-chain support is
-     * complete, the alloc + DART + swap path below can take over. */
+    /* If m1n1 already published a FB at the top of this function
+     * (before RTKit boot), don't re-allocate a DCP surface — that
+     * would replace the m1n1 mapping with one the DCP can't
+     * actually drive yet. */
     if (info->framebuffer_phys != 0) {
-        struct fut_fb_hwinfo m1n1_fb = {0};
-        uint32_t width  = rust_apple_dcp_mode_width(g_dcp.dcp);
-        uint32_t height = rust_apple_dcp_mode_height(g_dcp.dcp);
-        uint32_t stride = rust_apple_dcp_mode_stride(g_dcp.dcp);
-        uint32_t format = rust_apple_dcp_mode_format(g_dcp.dcp);
-        m1n1_fb.phys        = info->framebuffer_phys;
-        m1n1_fb.length      = (uint64_t)stride * height;
-        /* m1n1 allocates the FB in DRAM at PA 0x10_0000_0000+ (M1
-         * DRAM base), which falls OUTSIDE the kernel's L2_dram window
-         * (1 GiB starting at g_kernel_load_pa).  pmap_phys_to_virt
-         * would produce a bogus VA for that PA.  Use the kernel
-         * peripheral mapping window (kernel_l1[8..71] covers PA
-         * 0x200000000-0x11FFFFFFFF, including the 64 GiB DRAM base
-         * on M1) — the resulting VA is mapped as device-nGnRE which
-         * is fine for first-light FB writes. */
-        m1n1_fb.virt        = (void *)fut_kernel_peripheral_va(info->framebuffer_phys);
-        m1n1_fb.info.width  = width;
-        m1n1_fb.info.height = height;
-        m1n1_fb.info.pitch  = stride;
-        m1n1_fb.info.bpp    = (format == APPLE_DCP_FMT_RGB565) ? 16 : 32;
-        m1n1_fb.info.flags  = 0x00000001;  /* FB_FLAG_LINEAR */
-        int rc = fb_set_hwinfo(&m1n1_fb);
-        fut_printf("[DCP] Using m1n1's pre-allocated FB at PA 0x%lx VA 0x%lx (rc=%d)\n",
-                   (unsigned long)info->framebuffer_phys,
-                   (unsigned long)m1n1_fb.virt, rc);
-        return rc;
+        return 0;
     }
 
     int fb_idx = dcp_alloc_surface(rust_apple_dcp_mode_width(g_dcp.dcp),

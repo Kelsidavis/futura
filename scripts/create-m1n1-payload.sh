@@ -172,21 +172,39 @@ parser (kernel/dtb/arm64_dtb.c) will:
 Apple Silicon bring-up status:
   - boot.S MMU setup is PA-relocatable + 48-bit VA (T0SZ = T1SZ = 16),
     so the kernel image can load anywhere m1n1 chooses to drop it.
+    Image header flags = 0xA (4K pages + bit 3 relocatable) so m1n1
+    honours the "load anywhere" semantic instead of binding to
+    text_offset = 0.
   - Runtime KERN_PA_BASE: pmap_phys/virt_to_phys consult a g_kernel
     load-PA published by boot.S, so neither QEMU nor real Apple HW
     need a fixed compile-time literal.
   - Apple s5l-UART: post-MMU putc backend registered via
-    fut_serial_set_putc_backend() so kernel output works on Apple HW
-    once fut_apple_uart_init() runs.
+    fut_serial_set_putc_backend(); pre-MMU early-debug shim is
+    MIDR_EL1-aware so the diagnostic store (commented out by
+    default) lands at the right UART PA on each platform.
   - AIC dispatch: pluggable fut_irq_set_dispatch_backend() routes
-    fut_irq_main() to apple_aic_handle_irq when has_aic is true,
-    bit-identical to the GIC path on QEMU.  TCR.IPS now comes from
-    MMFR0.PARange so M1/M2's 48-bit PA is honoured.
+    fut_irq_main() to apple_aic_handle_irq when has_aic is true.
+    apple_aic_handle_fiq dispatches the ARM Generic Timer (delivered
+    via FIQ) by checking CNTP_CTL_EL0.ISTATUS before scanning AIC
+    events.  DAIF F bit is now cleared by fut_enable_interrupts so
+    the timer FIQ actually reaches the CPU.
+  - Peripheral mapping: kernel_l1_table[8..71] gives a 64 GiB
+    device-nGnRE window (PA 0x200000000-0x11FFFFFFFF) covering every
+    M1 / M1 Pro / Max SoC peripheral including PCIe at PA 0x690...
+    (M1) or 0xc00... (M1 Pro/Max).  fut_kernel_peripheral_va(pa) is
+    a single OR with 0xFFFFFF8000000000 — every C wrapper converts
+    DTB-discovered PAs before handing them to the Rust drivers.
+  - DMA addresses: xhci, ans2, dcp, dart now write physical
+    addresses (not kernel VAs) into controller registers / NVMMU
+    TCBs / IOMMU page-table pointers.  rust_virt_to_phys on ARM64
+    now actually calls pmap_virt_to_phys.
   - Drivers: every apple_*.c in platform/arm64/drivers/ is backed
     by a Rust crate in drivers/rust/ (aic, uart, hid, audio/mca,
-    xhci, rtkit, ans2, dcp, smc/power).  DTB parser wires
-    /arm-io/{mca,ans,ans/mailbox,dcp,dcp/mailbox,dart-dcp,smc,
-    spi0,i2c0,pcie,pcie/ecam,aic,uart0} into fut_platform_info_t.
+    xhci, rtkit, ans2, dcp, smc/power).  DTB parser tries Asahi
+    /soc/<type>@<addr> paths first, falls back to /arm-io/* legacy.
+  - First-light: if m1n1 publishes /chosen/framebuffer the kernel
+    paints into it directly via the peripheral mapping VA — so a
+    console comes up even if the full DCP swap-chain bring-up fails.
   - See docs/APPLE_SILICON_BRINGUP_PLAN.md for the full status sheet.
 
 If you need a custom DTB:

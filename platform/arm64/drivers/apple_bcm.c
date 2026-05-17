@@ -542,16 +542,24 @@ int apple_bcm_chip_reset(void)
                                                        bus, 0, fn, 0x00);
         vid = (uint16_t)(vid_did & 0xFFFFu);
         if (vid == BCM_VENDOR_ID) {
-            /* PCIe spec: FLR clears the Command register, so Bus
-             * Master Enable (bit 2) and Memory Space Enable (bit 1)
-             * are now zero.  Restore them so subsequent BAR reads
-             * and DMA work without the caller re-doing init. */
-            uint16_t cmd = rust_apple_pcie_cfg_read16(g_bcm_pcie, bus, 0, fn,
-                                                       0x04);
-            rust_apple_pcie_cfg_write32(g_bcm_pcie, bus, 0, fn, 0x04,
-                                         (uint32_t)(cmd | 0x06u));
+            /* PCIe spec: FLR clears the Command register on EVERY
+             * function of the chip (it's chip-wide for shared logic),
+             * so Bus Master Enable (bit 2) and Memory Space Enable
+             * (bit 1) are now zero on BOTH fn 0 (WiFi) and fn 1
+             * (Bluetooth).  Restore them on every discovered
+             * function or the BT side would be silently broken
+             * after a reset. */
+            for (uint8_t f = 0; f < BCM_MAX_FUNCTIONS; f++) {
+                uint32_t v = rust_apple_pcie_cfg_read32(g_bcm_pcie,
+                                                         bus, 0, f, 0x00);
+                if ((v & 0xFFFFu) != BCM_VENDOR_ID) continue;
+                uint16_t cmd = rust_apple_pcie_cfg_read16(g_bcm_pcie,
+                                                           bus, 0, f, 0x04);
+                rust_apple_pcie_cfg_write32(g_bcm_pcie, bus, 0, f, 0x04,
+                                             (uint32_t)(cmd | 0x06u));
+            }
             fut_printf("[bcm] reset: FLR successful at attempt %d "
-                       "(vid=0x%04x), MEM+BME restored\n",
+                       "(vid=0x%04x), MEM+BME restored on all functions\n",
                        attempt, vid);
             return 0;
         }

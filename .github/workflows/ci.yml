@@ -15,9 +15,9 @@ jobs:
     permissions:
       contents: read
     # 25 min: build is consistently ~6 min, but the kernel-test phase
-    # (2654 reachable tests via qemu's isa-debug-exit harness) trips the
-    # 20-min cap on slow runner days — observed cancellations mid-test
-    # on otherwise-passing commits.
+    # (2709+ reachable tests via qemu's isa-debug-exit harness, growing
+    # with each new subsystem) trips the 20-min cap on slow runner days
+    # — observed cancellations mid-test on otherwise-passing commits.
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
@@ -61,13 +61,14 @@ jobs:
         run: make kernel PLATFORM=arm64 ENABLE_WAYLAND=0
 
       - name: Run kernel tests (ARM64)
-        # The ARM64 selftest suite now passes 2654/2654 cleanly under
-        # `make test-arm64` (see docs/ARM64_STATUS.md).  Drop the
-        # `continue-on-error: true` so CI actually fails when an ARM64
-        # test regresses rather than silently turning green.  Job
-        # timeout-minutes: 30 above leaves ~18m margin past the 600s
-        # qemu cap, which is enough for the build + run we observe
-        # locally (~6–8m total).
+        # The ARM64 selftest suite passes 2709/2709 cleanly under
+        # `make test-arm64` (see docs/ARM64_STATUS.md).  Count grows
+        # as new subsystems land their tests — see kernel_main.c for
+        # the `planned_tests` increments.  Drop `continue-on-error`
+        # so CI actually fails when an ARM64 test regresses rather
+        # than silently turning green.  Job timeout-minutes: 30 above
+        # leaves ~18m margin past the 600s qemu cap, which is enough
+        # for the build + run we observe locally (~6–8m total).
         run: make test-arm64 ENABLE_WAYLAND=0
 
   build-rpi:

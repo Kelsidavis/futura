@@ -885,6 +885,7 @@ KERNEL_SOURCES := \
     kernel/blockdev/ramdisk.c \
     kernel/fs/futurafs.c \
     kernel/chrdev.c \
+    kernel/firmware.c \
     kernel/sys_echo.c \
     kernel/sys_exit.c \
     kernel/sys_fork.c \

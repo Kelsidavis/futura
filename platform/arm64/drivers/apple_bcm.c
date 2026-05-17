@@ -36,6 +36,8 @@
 #include <platform/arm64/apple_bcm.h>
 #include <platform/arm64/apple_pcie.h>
 #include <platform/platform.h>
+#include <kernel/firmware.h>
+#include <kernel/errno.h>
 #include <string.h>
 
 #define BCM_MAX_FUNCTIONS  2  /* fn 0 (WiFi) + fn 1 (Bluetooth) */
@@ -158,17 +160,50 @@ int apple_bcm_init(const fut_platform_info_t *info,
 
     if (found == 0) {
         fut_printf("[bcm] no Broadcom WiFi/BT combo chip found on PCIe\n");
-    } else {
-        const char *wifi_fw = g_bcm.wifi_present
-            ? rust_apple_bcm_wifi_fw_base(g_bcm.wifi.chip) : "(none)";
-        const char *bt_fw = g_bcm.bt_present
-            ? rust_apple_bcm_bt_fw_base(g_bcm.bt.chip) : "(none)";
-        fut_printf("[bcm] discovery complete: wifi_fw=%s bt_fw=%s\n",
-                   wifi_fw, bt_fw);
-        fut_printf("[bcm] radio bring-up is a separate slice — chip is "
-                   "registered but no firmware has been loaded\n");
+        return 0;
     }
 
+    const char *wifi_fw = g_bcm.wifi_present
+        ? rust_apple_bcm_wifi_fw_base(g_bcm.wifi.chip) : "(none)";
+    const char *bt_fw = g_bcm.bt_present
+        ? rust_apple_bcm_bt_fw_base(g_bcm.bt.chip) : "(none)";
+    fut_printf("[bcm] discovery complete: wifi_fw=%s bt_fw=%s\n",
+               wifi_fw, bt_fw);
+
+    /* Attempt to load the firmware blobs through the kernel firmware
+     * loader.  We expect this to fail with -ENOENT today — there is
+     * no FS-backed provider on Apple yet, and the blobs are too large
+     * to embed in the kernel image.  Logging the attempt + failure
+     * makes it obvious on real-hardware boot what's still missing. */
+    if (g_bcm.wifi_present) {
+        const void *data = NULL;
+        size_t size = 0;
+        int rc = fut_firmware_load(wifi_fw, &data, &size);
+        if (rc == 0) {
+            fut_printf("[bcm] wifi firmware loaded: %s (%lu bytes)\n",
+                       wifi_fw, (unsigned long)size);
+        } else {
+            fut_printf("[bcm] wifi firmware unavailable: %s rc=%d "
+                       "(install /lib/firmware/%s* and provide an FS "
+                       "firmware provider — radio stays down)\n",
+                       wifi_fw, rc, wifi_fw);
+        }
+    }
+    if (g_bcm.bt_present) {
+        const void *data = NULL;
+        size_t size = 0;
+        int rc = fut_firmware_load(bt_fw, &data, &size);
+        if (rc == 0) {
+            fut_printf("[bcm] bt patchram loaded: %s (%lu bytes)\n",
+                       bt_fw, (unsigned long)size);
+        } else {
+            fut_printf("[bcm] bt patchram unavailable: %s rc=%d "
+                       "(HCI transport stays down)\n", bt_fw, rc);
+        }
+    }
+
+    fut_printf("[bcm] radio bring-up is a separate slice — chip is "
+               "registered but no firmware has been loaded\n");
     return found;
 }
 

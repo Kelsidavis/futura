@@ -307,6 +307,11 @@ int apple_audio_set_volume(uint8_t volume) {
     return 0;
 }
 
+uint8_t apple_audio_get_volume(void) {
+    if (!g_audio.initialized) return 0xFF;
+    return g_audio.volume;
+}
+
 int apple_audio_platform_init(const fut_platform_info_t *info) {
     if (!info) return -1;
 

@@ -83,6 +83,12 @@ int apple_audio_get_state(apple_audio_state_t *state);
 int apple_audio_set_volume(uint8_t volume);
 
 /**
+ * Read the current playback volume (0..100).
+ * @return: volume in 0..100, or 0xFF if not initialised
+ */
+uint8_t apple_audio_get_volume(void);
+
+/**
  * Platform integration entry point.
  */
 int apple_audio_platform_init(const fut_platform_info_t *info);

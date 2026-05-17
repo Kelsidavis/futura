@@ -130,6 +130,16 @@ void fut_apple_audio_test_thread(void *arg)
         }
     }
 
+    /* T13: get_volume without init → 0xFF sentinel */
+    {
+        if (apple_audio_get_volume() == 0xFF) {
+            AUD_PASS("get_volume(no init)");
+        } else {
+            AUD_FAIL("get_volume(no init)", 13);
+            return;
+        }
+    }
+
     fut_printf("[AUDIO-TEST] all apple_audio guard tests passed\n");
 }
 

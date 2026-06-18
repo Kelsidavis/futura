@@ -26,7 +26,7 @@ use core::ptr::{read_volatile, write_volatile};
 use core::sync::atomic::{fence, Ordering};
 
 use common::{
-    alloc, alloc_page, free, log, map_mmio_region, unmap_mmio_region,
+    alloc, alloc_page, free, free_page, log, map_mmio_region, unmap_mmio_region,
     MMIO_DEFAULT_FLAGS,
 };
 
@@ -579,6 +579,8 @@ fn init_tx_ring() -> Option<(*mut I211TxDesc, u64, *mut u8, u64)> {
     let total_buf_size = DESC_RING_SIZE * TX_BUF_SIZE;
     let bufs = unsafe { alloc(total_buf_size) };
     if bufs.is_null() {
+        // Free the descriptor-ring page allocated above before bailing.
+        unsafe { free_page(ring as *mut u8); }
         return None;
     }
     let bufs_phys = virt_to_phys(bufs);
@@ -610,6 +612,8 @@ fn init_rx_ring() -> Option<(*mut I211RxDesc, u64, *mut u8, u64)> {
     let total_buf_size = DESC_RING_SIZE * RX_BUF_SIZE;
     let bufs = unsafe { alloc(total_buf_size) };
     if bufs.is_null() {
+        // Free the descriptor-ring page allocated above before bailing.
+        unsafe { free_page(ring as *mut u8); }
         return None;
     }
     let bufs_phys = virt_to_phys(bufs);
@@ -764,6 +768,7 @@ pub extern "C" fn i211_init() -> i32 {
             log("i211: failed to allocate RX descriptor ring");
             unsafe {
                 free(tx_bufs);
+                free_page(tx_ring as *mut u8);
                 unmap_mmio_region(mmio, mmio_size);
             }
             return -8;

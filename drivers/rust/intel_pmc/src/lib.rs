@@ -401,6 +401,11 @@ fn cstate_to_msr(cstate: u32) -> u32 {
 ///   -3 = failed to map PMC MMIO region
 #[unsafe(no_mangle)]
 pub extern "C" fn intel_pmc_init() -> i32 {
+    // Guard against double-init: a second call would re-map the PMC MMIO region
+    // and overwrite the global, leaking the previous mapping.
+    if unsafe { (*PMC.get()).initialized } {
+        return 0;
+    }
     log("intel_pmc: initializing PMC driver");
 
     // First try the Sunrise-Point-and-later flow: PWRMBASE register in
@@ -614,7 +619,9 @@ pub extern "C" fn intel_pmc_read_reg(offset: u32) -> u32 {
             return 0;
         }
         let off = offset as usize;
-        if off + 4 > PMC_MMIO_SIZE {
+        // Reject unaligned offsets (the contract requires 4-byte alignment) and
+        // bound without an addition that could overflow.
+        if off % 4 != 0 || off > PMC_MMIO_SIZE - 4 {
             return 0;
         }
         mmio_read32((*state).base, off)

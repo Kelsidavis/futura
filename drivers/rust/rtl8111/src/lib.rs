@@ -23,7 +23,7 @@ use core::ptr::{read_volatile, write_volatile};
 use core::sync::atomic::{fence, Ordering};
 
 use common::{
-    alloc, alloc_page, free, log, map_mmio_region, unmap_mmio_region,
+    alloc, alloc_page, free, free_page, log, map_mmio_region, unmap_mmio_region,
     MMIO_DEFAULT_FLAGS,
 };
 
@@ -527,6 +527,8 @@ fn init_tx_ring() -> Option<(*mut RtlDescriptor, u64, *mut u8, u64)> {
     let total_buf_size = DESC_RING_SIZE * TX_BUF_SIZE;
     let bufs = unsafe { alloc(total_buf_size) };
     if bufs.is_null() {
+        // Free the descriptor-ring page allocated above before bailing.
+        unsafe { free_page(ring as *mut u8); }
         return None;
     }
     let bufs_phys = virt_to_phys(bufs);
@@ -564,6 +566,8 @@ fn init_rx_ring() -> Option<(*mut RtlDescriptor, u64, *mut u8, u64)> {
     let total_buf_size = DESC_RING_SIZE * RX_BUF_SIZE;
     let bufs = unsafe { alloc(total_buf_size) };
     if bufs.is_null() {
+        // Free the descriptor-ring page allocated above before bailing.
+        unsafe { free_page(ring as *mut u8); }
         return None;
     }
     let bufs_phys = virt_to_phys(bufs);
@@ -600,6 +604,13 @@ fn init_rx_ring() -> Option<(*mut RtlDescriptor, u64, *mut u8, u64)> {
 #[unsafe(no_mangle)]
 pub extern "C" fn rtl8111_init() -> i32 {
     log("rtl8111: scanning PCI for Realtek Ethernet controllers...");
+
+    // Guard against double-init: a second call would overwrite the global
+    // without freeing the previous instance's rings/buffers or unmapping its
+    // MMIO, leaking the entire prior device.
+    if unsafe { (*core::ptr::addr_of!(RTL)).is_some() } {
+        return 0;
+    }
 
     let (bus, dev, func, device_id, irq) = match find_rtl_pci() {
         Some(info) => info,
@@ -723,6 +734,7 @@ pub extern "C" fn rtl8111_init() -> i32 {
             log("rtl8111: failed to allocate RX ring");
             unsafe {
                 free(tx_bufs);
+                free_page(tx_ring as *mut u8);
                 unmap_mmio_region(mmio, mmio_size);
             }
             return -8;
@@ -783,6 +795,8 @@ pub extern "C" fn rtl8111_init() -> i32 {
         unsafe {
             free(tx_bufs);
             free(rx_bufs);
+            free_page(tx_ring as *mut u8);
+            free_page(rx_ring as *mut u8);
             unmap_mmio_region(mmio, mmio_size);
         }
         return -9;

@@ -741,9 +741,15 @@ fn setup_output_path(codec: &mut RealtekCodec, path_idx: usize) -> bool {
         }
     }
 
-    // Set connection select at the pin to route through our chosen path
-    if path.mixer_nid != 0 {
-        send_verb(codec, path.pin_nid, VERB_SET_CONN_SELECT | path.conn_idx as u32);
+    // Route the pin's input selector to the chosen path. conn_idx is the pin's
+    // own connection-list index in BOTH the direct (pin->DAC) and one-hop
+    // (pin->mixer) cases, so this must run for direct paths too — the previous
+    // `mixer_nid != 0` guard left a multi-connection pin on its default
+    // (possibly wrong) source, producing silence or wrong-source audio.
+    if let Some(pi) = find_widget(codec, path.pin_nid) {
+        if codec.widgets[pi].conn_list_len > 1 {
+            send_verb(codec, path.pin_nid, VERB_SET_CONN_SELECT | path.conn_idx as u32);
+        }
     }
 
     // Unmute and set gain on DAC output amp
@@ -1010,6 +1016,11 @@ fn discover_input_path(codec: &mut RealtekCodec) {
 /// Returns 0 on success, negative on error.
 #[unsafe(no_mangle)]
 pub extern "C" fn hda_realtek_init(verb_fn: HdaVerbFn, codec_addr: u8) -> i32 {
+    // The codec address is a 4-bit field on the HDA link (0-15); reject larger
+    // values rather than letting them overflow into the NID field of every verb.
+    if codec_addr > 15 {
+        return -1;
+    }
     let codec = unsafe { &mut *STATE.get() };
 
     codec.verb_fn = Some(verb_fn);

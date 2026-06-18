@@ -207,11 +207,16 @@ fn wait_until_idle(io_base: u16) -> i32 {
 fn wait_for_completion(io_base: u16) -> i32 {
     for _ in 0..POLL_TIMEOUT {
         let st = io_inb(io_base + SMBHSTSTS);
-        if st & HSTSTS_INTR != 0 {
-            return 0;
-        }
+        // Check the error bits BEFORE the completion (INTR) bit: the PCH asserts
+        // INTR on completion regardless of success, so on a device NAK both INTR
+        // and DEV_ERR are set. Testing INTR first would report success and let
+        // the caller read a stale/garbage data register. (The AMD sibling driver
+        // already checks errors first.)
         if st & (HSTSTS_DEV_ERR | HSTSTS_BUS_ERR | HSTSTS_FAILED) != 0 {
             return -2;
+        }
+        if st & HSTSTS_INTR != 0 {
+            return 0;
         }
         thread_yield();
     }

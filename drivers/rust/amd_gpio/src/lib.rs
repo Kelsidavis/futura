@@ -247,6 +247,11 @@ fn detect_pin_count(base: usize) -> u32 {
 /// Returns 0 on success, negative error code on failure.
 #[unsafe(no_mangle)]
 pub extern "C" fn amd_gpio_init(acpi_mmio_base: u64) -> i32 {
+    // Guard against double-init: a second call would map a fresh MMIO region and
+    // overwrite the global, leaking the previous mapping.
+    if unsafe { (*STATE.get()).inited } {
+        return 0;
+    }
     log("amd_gpio: initialising AMD FCH GPIO controller...");
 
     let mmio_base = if acpi_mmio_base == 0 {

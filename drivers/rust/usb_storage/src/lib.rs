@@ -158,6 +158,14 @@ struct UsbStorageDevice {
     product: [u8; 17],
     /// Block device name ("usb0\0" .. "usb3\0")
     name: [u8; 8],
+    /// blkcore registration handle, or null if never registered. blkcore has no
+    /// unregister API, so once set this slot permanently owns the registration
+    /// (which points its backend_ctx back at this slot).
+    blkdev: *mut FutBlkDev,
+    /// True once this slot has been registered with blkcore. Such a slot must
+    /// never be reused for a different device: the outstanding registration
+    /// still routes I/O through backend_ctx to this slot, so reuse would alias.
+    registered: bool,
 }
 
 impl UsbStorageDevice {
@@ -174,6 +182,8 @@ impl UsbStorageDevice {
             vendor: [0; 9],
             product: [0; 17],
             name: [0; 8],
+            blkdev: core::ptr::null_mut(),
+            registered: false,
         }
     }
 }
@@ -653,9 +663,16 @@ fn find_slot(state: &UsbStorageState, dev_id: u32) -> Option<usize> {
 }
 
 /// Find a free slot, returning its index.
+///
+/// A slot is only reusable if it is both detached AND has never been registered
+/// with blkcore. blkcore has no unregister API, so a slot that owns a live
+/// registration (backend_ctx pointing back at the slot) must not be handed to a
+/// different device — doing so would route the old registration's I/O to the new
+/// device. The cost is that the driver supports at most MAX_USB_STORAGE_DEVICES
+/// registrations over its lifetime rather than per-attach reuse.
 fn find_free_slot(state: &UsbStorageState) -> Option<usize> {
     for i in 0..MAX_USB_STORAGE_DEVICES {
-        if !state.devices[i].attached {
+        if !state.devices[i].attached && !state.devices[i].registered {
             return Some(i);
         }
     }
@@ -742,6 +759,10 @@ fn register_blkdev(state: &mut UsbStorageState, slot: usize) -> i32 {
     let blkdev_ref = unsafe { &mut *blkdev };
     match register(blkdev_ref) {
         Ok(()) => {
+            // Retain the handle and mark the slot as owning a live blkcore
+            // registration so it is never reused (see find_free_slot).
+            dev.blkdev = blkdev;
+            dev.registered = true;
             unsafe {
                 fut_printf(
                     b"usb_storage: registered block device %s (%llu blocks x %u bytes)\n\0"
@@ -998,6 +1019,13 @@ pub extern "C" fn usb_storage_detach(dev_id: u32) -> i32 {
     dev.bulk_fn = None;
     dev.block_count = 0;
     dev.block_size = 0;
+    // NOTE: blkcore exposes no unregister API, so the FutBlkDev registered at
+    // attach time cannot be removed or freed here — freeing it would leave
+    // blkcore with a dangling pointer (use-after-free). The slot stays marked
+    // `registered`, which keeps the backend's `attached` guard rejecting I/O and
+    // prevents the slot from being reused for a different device (which would
+    // alias the stale registration). The FutBlkDev allocation is intentionally
+    // retained until an unregister path exists.
 
     unsafe {
         fut_printf(

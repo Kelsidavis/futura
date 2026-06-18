@@ -556,6 +556,12 @@ impl VirtioGpuDevice {
             unsafe { core::arch::asm!("dsb sy"); }
             timeout -= 1;
         }
+        if timeout == 0 {
+            // The device never retired the command. The caller can't currently
+            // observe this (submit_command returns ()), but log it so a hung
+            // device is diagnosable rather than silently treated as success.
+            log("[VIRTIO-GPU] command timed out waiting for used ring\n");
+        }
 
         self.cmd_idx = self.cmd_idx.wrapping_add(1);
     }

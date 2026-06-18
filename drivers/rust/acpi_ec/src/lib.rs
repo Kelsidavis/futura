@@ -223,6 +223,12 @@ fn ec_byte_read(data_port: u16, cmd_port: u16, addr: u8) -> i32 {
     if wait_ibf_clear(cmd_port) != 0 {
         return -1;
     }
+    // Drain any stale output byte (e.g. an unconsumed SCI query result) before
+    // issuing the read, so wait_obf_set below synchronizes on THIS read's result
+    // rather than returning immediately with the leftover byte.
+    if ec_read_status(cmd_port) & EC_STS_OBF != 0 {
+        let _ = ec_read_data(data_port);
+    }
     ec_write_cmd(cmd_port, EC_CMD_READ);
 
     if wait_ibf_clear(cmd_port) != 0 {
@@ -345,7 +351,12 @@ pub extern "C" fn acpi_ec_init(data_port: u16, cmd_port: u16) -> i32 {
             );
         }
     } else {
-        log("acpi_ec: WARNING -- probe read of EC[0x00] timed out");
+        // The EC never responded to the probe, so it won't respond to real
+        // reads/writes either. Disable the driver instead of advertising a
+        // working EC and burning the full timeout on every later operation.
+        log("acpi_ec: WARNING -- probe read of EC[0x00] timed out; disabling driver");
+        unsafe { (*state).initialized = false; }
+        return -1;
     }
 
     log("acpi_ec: driver initialized");

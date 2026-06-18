@@ -55,7 +55,7 @@ const MSR_PSTATE_DEF_BASE: u32 = 0xC001_0064;
 /// CPPC Capabilities 1: HighestPerf[7:0], NominalPerf[15:8],
 /// LowestNonlinearPerf[23:16], LowestPerf[31:24].
 const MSR_CPPC_CAPS1: u32 = 0xC001_0293;
-/// CPPC Request: DesiredPerf[7:0], MinPerf[15:8], MaxPerf[23:16], EPP[31:24].
+/// CPPC Request: MaxPerf[7:0], MinPerf[15:8], DesiredPerf[23:16], EPP[31:24].
 const MSR_CPPC_REQ: u32 = 0xC001_0294;
 /// CPPC Status: current performance level.
 const MSR_CPPC_STATUS: u32 = 0xC001_0299;
@@ -473,14 +473,17 @@ pub extern "C" fn amd_pstate_cppc_set_perf(desired: u8, min: u8, max: u8, epp: u
         return -22; // EINVAL
     }
 
-    // Build the CPPC_REQ MSR value:
-    //   bits [7:0]   = DesiredPerf
+    // Build the CPPC_REQ MSR value per the AMD PPR field layout:
+    //   bits [7:0]   = MaxPerf
     //   bits [15:8]  = MinPerf
-    //   bits [23:16] = MaxPerf
+    //   bits [23:16] = DesiredPerf
     //   bits [31:24] = EPP
-    let val: u64 = (desired as u64)
+    // (Previously Max and Desired were swapped, so "set max perf, desired=0
+    // autonomous" wrote desired into the Max field and 0 into Desired, capping
+    // the core at perf 0.)
+    let val: u64 = (max as u64)
         | ((min as u64) << 8)
-        | ((max as u64) << 16)
+        | ((desired as u64) << 16)
         | ((epp as u64) << 24);
 
     wrmsr(MSR_CPPC_REQ, val);

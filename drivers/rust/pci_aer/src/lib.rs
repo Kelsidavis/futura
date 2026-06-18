@@ -232,7 +232,10 @@ fn find_or_alloc_slot(bus: u8, dev: u8, func: u8) -> Option<usize> {
         if devs[i].active && devs[i].bus == bus && devs[i].dev == dev && devs[i].func == func {
             return Some(i);
         }
-        if !devs[i].active && free_slot.is_none() && i < count + 1 {
+        // Any inactive slot is reusable. The previous `i < count + 1` guard
+        // prevented reusing freed slots beyond the current count, leaking slots
+        // over time.
+        if !devs[i].active && free_slot.is_none() {
             free_slot = Some(i);
         }
     }

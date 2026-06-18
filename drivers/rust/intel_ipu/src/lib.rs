@@ -187,15 +187,17 @@ pub extern "C" fn intel_ipu_init() -> i32 {
         }
     };
 
-    let mut cmd = pci_read16(dev.bus, dev.dev, dev.func, PCI_COMMAND);
-    cmd |= PCI_CMD_MEM_SPACE | PCI_CMD_BUS_MASTER;
-    pci_write16(dev.bus, dev.dev, dev.func, PCI_COMMAND, cmd);
-
+    // Validate BAR0 BEFORE enabling bus mastering, so the device is never left
+    // DMA-capable when its BAR is unconfigured.
     let phys = (pci_read32(dev.bus, dev.dev, dev.func, PCI_BAR0) & BAR_MEM_MASK) as u64;
     if phys == 0 {
         log("intel_ipu: BAR0 not configured");
         return -2;
     }
+
+    let mut cmd = pci_read16(dev.bus, dev.dev, dev.func, PCI_COMMAND);
+    cmd |= PCI_CMD_MEM_SPACE | PCI_CMD_BUS_MASTER;
+    pci_write16(dev.bus, dev.dev, dev.func, PCI_COMMAND, cmd);
 
     let base = unsafe { map_mmio_region(phys, IPU_MMIO_SIZE, MMIO_DEFAULT_FLAGS) };
     if base.is_null() {

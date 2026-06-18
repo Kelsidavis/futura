@@ -36,7 +36,7 @@
 
 use core::cell::UnsafeCell;
 use core::ffi::c_void;
-use common::{log, map_mmio_region, MMIO_DEFAULT_FLAGS};
+use common::{free_page, log, map_mmio_region, unmap_mmio_region, MMIO_DEFAULT_FLAGS};
 
 unsafe extern "C" {
     fn fut_printf(fmt: *const u8, ...);
@@ -413,6 +413,7 @@ pub extern "C" fn i915_gtt_init() -> i32 {
         Some(p) => p,
         None => {
             log("i915_gtt_init: PMM alloc for scratch page failed");
+            unsafe { unmap_mmio_region(gtt_base as *mut u8, GEN9_GTT_SIZE); }
             return -3;
         }
     };
@@ -434,6 +435,10 @@ pub extern "C" fn i915_gtt_init() -> i32 {
                 b"i915_gtt_init: PTE readback mismatch! wrote 0x%llx read 0x%llx\n\0".as_ptr(),
                 expected, installed,
             );
+        }
+        unsafe {
+            free_page(scratch_virt);
+            unmap_mmio_region(gtt_base as *mut u8, GEN9_GTT_SIZE);
         }
         return -4;
     }
@@ -769,6 +774,14 @@ pub extern "C" fn i915_map_fb_in_gtt() -> i32 {
     let pages = ((hw.length as usize) + 4095) / 4096;
     let gtt_top = (GTT_NUM_ENTRIES as u64) * GTT_PAGE_SIZE;
     let scratch_pages: u64 = 1;
+    // If the FB doesn't fit below the scratch page, the subtraction below would
+    // underflow to a wild GPU VA and the FB would be silently left unmapped
+    // (gtt_install drops out-of-range indices), leaving the GPU pointed at
+    // garbage. Reject it instead.
+    if scratch_pages + pages as u64 > GTT_NUM_ENTRIES as u64 {
+        log("i915: framebuffer too large for GTT");
+        return -5;
+    }
     let fb_gpu_va = gtt_top - (scratch_pages + pages as u64) * GTT_PAGE_SIZE;
 
     let gtt_base = unsafe { (*st).gtt_base };
@@ -1092,7 +1105,12 @@ pub extern "C" fn i915_register_back_buf(virt: *const u8, size: usize, pitch: u3
     let fb_pages: u64 = ((unsafe { (*st).fb_size } + 4095) / 4096) as u64;
     let gtt_top = (GTT_NUM_ENTRIES as u64) * GTT_PAGE_SIZE;
     /* Place back_buf right below the FB window (which is right below
-     * the scratch page). */
+     * the scratch page). Reject it if it doesn't fit, so the subtraction
+     * can't underflow into a wild GPU VA (see i915_map_fb_in_gtt). */
+    if scratch_pages + fb_pages + pages as u64 > GTT_NUM_ENTRIES as u64 {
+        log("i915: back buffer too large for GTT");
+        return -5;
+    }
     let back_buf_gpu_va =
         gtt_top - (scratch_pages + fb_pages + pages as u64) * GTT_PAGE_SIZE;
 

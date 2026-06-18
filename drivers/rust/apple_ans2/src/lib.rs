@@ -691,9 +691,23 @@ impl Ans2Ctrl {
             core::ptr::write_bytes(io_tcbs    as *mut u8, 0, tcb_size);
         }
 
+        // Frees every queue buffer plus the RTKit ctx allocated in step 1.
+        // Used on each failure path below so a controller that intermittently
+        // fails reset/enable/identify doesn't leak ~40 KiB per attempt.
+        let free_queues = || unsafe {
+            fut_free(admin_sq   as *mut u8);
+            fut_free(admin_cq   as *mut u8);
+            fut_free(admin_tcbs as *mut u8);
+            fut_free(io_sq      as *mut u8);
+            fut_free(io_cq      as *mut u8);
+            fut_free(io_tcbs    as *mut u8);
+            rust_rtkit_free(rtkit);
+        };
+
         // 4. Build the controller struct on the heap.
         let ctrl_mem = unsafe { fut_alloc(core::mem::size_of::<Self>()) as *mut Self };
         if ctrl_mem.is_null() {
+            free_queues();
             return None;
         }
 
@@ -709,11 +723,15 @@ impl Ans2Ctrl {
 
         // 5. Reset + enable NVMe controller.
         if !ctrl.reset() || !ctrl.enable() {
+            free_queues();
+            unsafe { fut_free(ctrl_mem as *mut u8) };
             return None;
         }
 
         // 6. Identify controller + namespace 1.
         if !ctrl.identify_controller() || !ctrl.identify_namespace() {
+            free_queues();
+            unsafe { fut_free(ctrl_mem as *mut u8) };
             return None;
         }
 

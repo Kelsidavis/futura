@@ -303,6 +303,11 @@ const PCI_CFG_COMMAND: u8 = 0x04;
 /// voltage rail. Returns 0 on success, negative on failure.
 #[unsafe(no_mangle)]
 pub extern "C" fn intel_pinctrl_init() -> i32 {
+    // Guard against double-init: a second call would re-unhide the P2SB bridge
+    // and map another 16 MiB SBREG window, leaking the previous mapping.
+    if unsafe { (*STATE.get()).initialized } {
+        return 0;
+    }
     log("pinctrl: probing Intel P2SB bridge at 00:0d.0");
 
     let (bus, dev, func, vendor, device) = match find_p2sb() {
@@ -467,8 +472,10 @@ pub extern "C" fn intel_pinctrl_set_gpio_out(port_id: u32, pad_idx: u32, value: 
     let base = unsafe { (*st).sbreg_base };
     if base.is_null() { return -2; }
 
-    let community_off: u32 = port_id << 16;
-    let dw0_off = community_off + PAD_BASE_GLK + pad_idx * 8;
+    let dw0_off = match pad_dw0_off(port_id, pad_idx) {
+        Some(o) => o,
+        None => return -3,
+    };
     let mut dw0 = unsafe { r32(base, dw0_off) };
 
     dw0 &= !(0xF << 10);   /* PMODE = 0 (GPIO) */
@@ -487,7 +494,10 @@ pub extern "C" fn intel_pinctrl_read_dw0(port_id: u32, pad_idx: u32) -> u32 {
     if !unsafe { (*st).initialized } { return 0xFFFF_FFFF; }
     let base = unsafe { (*st).sbreg_base };
     if base.is_null() { return 0xFFFF_FFFF; }
-    let dw0_off = (port_id << 16) + PAD_BASE_GLK + pad_idx * 8;
+    let dw0_off = match pad_dw0_off(port_id, pad_idx) {
+        Some(o) => o,
+        None => return 0xFFFF_FFFF,
+    };
     unsafe { r32(base, dw0_off) }
 }
 
@@ -498,7 +508,28 @@ pub extern "C" fn intel_pinctrl_write_dw0(port_id: u32, pad_idx: u32, value: u32
     if !unsafe { (*st).initialized } { return -1; }
     let base = unsafe { (*st).sbreg_base };
     if base.is_null() { return -2; }
-    let dw0_off = (port_id << 16) + PAD_BASE_GLK + pad_idx * 8;
+    let dw0_off = match pad_dw0_off(port_id, pad_idx) {
+        Some(o) => o,
+        None => return -3,
+    };
     unsafe { w32(base, dw0_off, value); }
     0
+}
+
+/// Compute the DW0 register offset for (port_id, pad_idx), validating that it
+/// stays within the mapped 16 MiB SBREG window. Returns None for out-of-range
+/// inputs so the exported accessors can't be driven into an out-of-bounds (and,
+/// for the write paths, arbitrary) MMIO access.
+fn pad_dw0_off(port_id: u32, pad_idx: u32) -> Option<u32> {
+    if port_id > 0xFF {
+        return None;
+    }
+    let off = (port_id << 16)
+        .checked_add(PAD_BASE_GLK)?
+        .checked_add(pad_idx.checked_mul(8)?)?;
+    if (off as usize).checked_add(4)? <= SBREG_BAR_SIZE {
+        Some(off)
+    } else {
+        None
+    }
 }

@@ -141,6 +141,11 @@ const HSFS_CTL: usize = 0x04;
 
 /// Flash Address register
 const FADDR: usize = 0x08;
+/// FADDR addresses the flash linear space; the field is 27 bits on PCH (128 MiB),
+/// well above any real SPI flash. Used as a conservative upper bound on
+/// offset+len so the per-chunk `flash_addr += chunk` cannot wrap a u32 and an
+/// out-of-range request is rejected rather than aliased to a low address.
+const FADDR_LIMIT: u64 = 0x0800_0000;
 
 /// Flash Data registers base (FDATA0 at 0x10, FDATA1 at 0x14, ...)
 const FDATA_BASE: usize = 0x10;
@@ -550,6 +555,9 @@ pub extern "C" fn intel_spi_read(offset: u32, buf: *mut u8, len: u32) -> i32 {
         if !(*state).initialized || buf.is_null() || len == 0 {
             return -22; // EINVAL
         }
+        if offset as u64 + len as u64 > FADDR_LIMIT {
+            return -22; // EINVAL: out of flash address range
+        }
 
         let base = (*state).base;
         let mut remaining = len as usize;
@@ -597,6 +605,9 @@ pub extern "C" fn intel_spi_write(offset: u32, buf: *const u8, len: u32) -> i32 
     unsafe {
         if !(*state).initialized || buf.is_null() || len == 0 {
             return -22; // EINVAL
+        }
+        if offset as u64 + len as u64 > FADDR_LIMIT {
+            return -22; // EINVAL: out of flash address range
         }
 
         let base = (*state).base;
@@ -656,6 +667,9 @@ pub extern "C" fn intel_spi_erase_4k(offset: u32) -> i32 {
         if offset & 0xFFF != 0 {
             log("intel_spi: erase offset not 4KB aligned");
             return -22; // EINVAL
+        }
+        if offset as u64 + 0x1000 > FADDR_LIMIT {
+            return -22; // EINVAL: out of flash address range
         }
 
         let base = (*state).base;

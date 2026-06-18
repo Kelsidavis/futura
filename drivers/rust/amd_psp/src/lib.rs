@@ -250,8 +250,14 @@ impl AmdPsp {
     /// Returns the value of P2C_MSG_0 (status/response) on success,
     /// or a negative error code on timeout.
     fn send_command(&self, cmd: u32, args: &[u32], resp: &mut [u32]) -> i32 {
-        // Clear the response ready bit by reading P2C_MSG_0.
-        let _ = self.mbox_read(P2C_MSG_0);
+        // Acknowledge/clear any stale response-ready state left by a prior
+        // command before issuing this one. A bare read does NOT clear the P2C
+        // ready bit (bit 31), so without this the poll below could match a
+        // previous command's still-set ready bit and return stale response
+        // registers before the PSP has even processed this command. Writing the
+        // response mailbox is the conventional acknowledge; if the register is
+        // read-only on this part the write is harmless.
+        self.mbox_write(P2C_MSG_0, 0);
 
         // Write command parameters to C2P_MSG_1..15.
         let nargs = if args.len() > MAX_MSG_PARAMS as usize {
@@ -392,6 +398,14 @@ fn detect_mbox_offset(bar2_base: *mut u8) -> usize {
 /// Returns 0 on success, negative error on failure.
 #[unsafe(no_mangle)]
 pub extern "C" fn amd_psp_init() -> i32 {
+    // Guard against double-init: if the global is already populated, the BAR2
+    // MMIO region has already been mapped. Re-mapping would leak the previous
+    // mapping (the StaticCell overwrite drops the old AmdPsp without unmapping).
+    // Treat a repeat call as a no-op success.
+    if unsafe { (*PSP.get()).is_some() } {
+        return 0;
+    }
+
     log("amd_psp: scanning PCI for AMD PSP device...");
 
     let (bus, dev, func, device_id) = match find_psp() {

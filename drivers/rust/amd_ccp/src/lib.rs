@@ -355,9 +355,12 @@ impl AmdCcp {
 
     /// Build word 0 of a CCP5 command descriptor.
     ///
-    /// Layout: bits [3:0] = engine, bits [8:4] = function, bits [20:16] = flags
+    /// Layout: bits [3:0] = engine, bits [11:4] = function, bits [20:16] = flags.
+    /// The function field is 8 bits wide: for AES it carries the direction
+    /// (bit 0), mode (bits [4:3]) and key size (bits [7:6]). Masking it to only
+    /// 5 bits dropped the key-size bits, so AES-256 was programmed as key-size 0.
     fn build_word0(engine: u32, function: u32, flags: u32) -> u32 {
-        (engine & 0x0F) | ((function & 0x1F) << 4) | flags
+        (engine & 0x0F) | ((function & 0xFF) << 4) | flags
     }
 
     /// Build an address high word with memory type.

@@ -693,7 +693,10 @@ pub extern "C" fn amd_umc_ecc_status(
         None => return -19, // ENODEV
     };
 
-    if channel >= umc.num_channels || !umc.channels[channel as usize].active {
+    // Channels are stored sparsely by physical index, so validate against the
+    // array bound (not num_channels, which is the dense count of *active*
+    // channels); the .active check gates whether the channel is populated.
+    if channel >= MAX_CHANNELS as u32 || !umc.channels[channel as usize].active {
         return -22; // EINVAL
     }
 
@@ -728,7 +731,10 @@ pub extern "C" fn amd_umc_ecc_clear(channel: u32) -> i32 {
         None => return -19, // ENODEV
     };
 
-    if channel >= umc.num_channels || !umc.channels[channel as usize].active {
+    // Channels are stored sparsely by physical index, so validate against the
+    // array bound (not num_channels, which is the dense count of *active*
+    // channels); the .active check gates whether the channel is populated.
+    if channel >= MAX_CHANNELS as u32 || !umc.channels[channel as usize].active {
         return -22; // EINVAL
     }
 

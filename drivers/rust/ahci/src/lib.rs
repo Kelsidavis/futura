@@ -28,7 +28,7 @@ use core::ptr::{read_volatile, write_volatile};
 use core::sync::atomic::{Ordering, fence};
 
 use common::{
-    alloc, alloc_page, log, map_mmio_region, register, thread_yield,
+    alloc, alloc_page, free_page, log, map_mmio_region, register, thread_yield,
     unmap_mmio_region, FutBlkBackend, FutBlkDev, FutStatus,
     FUT_BLK_ADMIN, FUT_BLK_READ, FUT_BLK_WRITE, MMIO_DEFAULT_FLAGS,
 };
@@ -608,6 +608,8 @@ fn port_init(port: &mut AhciPort, abar: *mut u8, port_num: u32, s64a: bool) -> b
     let recv_fis = unsafe { alloc_page() as *mut AhciRecvFis };
     if recv_fis.is_null() {
         log("ahci: failed to allocate received FIS");
+        // Free the command list allocated above before bailing out.
+        unsafe { free_page(cmd_list as *mut u8); }
         return false;
     }
     unsafe { core::ptr::write_bytes(recv_fis as *mut u8, 0, 4096); }
@@ -625,6 +627,15 @@ fn port_init(port: &mut AhciPort, abar: *mut u8, port_num: u32, s64a: bool) -> b
         let ct = unsafe { alloc_page() as *mut AhciCmdTable };
         if ct.is_null() {
             log("ahci: failed to allocate command table");
+            // Free everything allocated so far: cmd_list, recv_fis, and any
+            // command tables already allocated in earlier iterations.
+            unsafe {
+                for prev in 0..slot {
+                    free_page(port.cmd_tables[prev] as *mut u8);
+                }
+                free_page(recv_fis as *mut u8);
+                free_page(cmd_list as *mut u8);
+            }
             return false;
         }
         unsafe { core::ptr::write_bytes(ct as *mut u8, 0, 4096); }
@@ -733,6 +744,17 @@ fn port_issue_cmd(
         return -2;
     }
 
+    // If the controller does not support 64-bit addressing, a data buffer whose
+    // physical address has nonzero upper 32 bits cannot be programmed safely
+    // (dbau would be written but ignored, corrupting the transfer). Reject it.
+    let s64a = {
+        let ctrl = unsafe { &*AHCI.get() };
+        ctrl.as_ref().map(|c| c.s64a).unwrap_or(false)
+    };
+    if byte_count > 0 && buf_phys != 0 && !s64a && (buf_phys >> 32) != 0 {
+        return -6;
+    }
+
     // Fill in the command table
     let ct = port.cmd_tables[slot];
     if ct.is_null() {
@@ -757,7 +779,10 @@ fn port_issue_cmd(
                 let chunk = if remaining > 0x400000 { 0x400000u64 } else { remaining };
 
                 ct_ref.prdt[prdt_idx].dba = (buf_phys + offset) as u32;
-                ct_ref.prdt[prdt_idx].dbau = ((buf_phys + offset) >> 32) as u32;
+                // Only program the upper 32 bits when the controller supports
+                // 64-bit addressing (validated above); otherwise keep dbau zero.
+                ct_ref.prdt[prdt_idx].dbau =
+                    if s64a { ((buf_phys + offset) >> 32) as u32 } else { 0 };
                 ct_ref.prdt[prdt_idx]._reserved = 0;
                 // DBC is 0-based byte count: actual_bytes - 1
                 // Bit 31 = Interrupt on Completion (set on last entry)
@@ -918,7 +943,47 @@ fn port_identify(port: &mut AhciPort, buf: *mut u8) -> i32 {
 
 fn port_rw_dma(port: &mut AhciPort, lba: u64, nsectors: usize, buf_phys: u64, write: bool) -> i32 {
     let cmd = if write { ATA_CMD_WRITE_DMA_EXT } else { ATA_CMD_READ_DMA_EXT };
-    let byte_count = nsectors as u32 * port.sector_size;
+
+    // ── Input validation (before programming DMA) ──
+
+    // Reject null buffer (virt_to_phys of a null pointer yields 0).
+    if buf_phys == 0 {
+        return -100;
+    }
+    // Reject zero-length transfer.
+    if nsectors == 0 {
+        return -101;
+    }
+    // READ/WRITE DMA EXT count is a 16-bit field where 0 means 65536, so the
+    // maximum is 65536 sectors. `nsectors as u16` below would silently truncate
+    // anything larger, so reject it here.
+    if nsectors > 65536 {
+        return -102;
+    }
+    // Reject out-of-range LBA range (use checked add to avoid wraparound).
+    match lba.checked_add(nsectors as u64) {
+        Some(end) if end <= port.sector_count => {}
+        _ => return -103,
+    }
+    // Compute the byte count, guarding against u32 overflow.
+    let byte_count = match (nsectors as u32).checked_mul(port.sector_size) {
+        Some(bc) => bc,
+        None => return -104,
+    };
+    // Reject requests that need more than MAX_PRDT_ENTRIES PRDT entries
+    // (each entry maps up to 4 MiB); the PRDT fill loop would otherwise stop
+    // short and issue an inconsistent transfer.
+    let entries_needed = (byte_count as usize).div_ceil(0x400000);
+    if entries_needed > MAX_PRDT_ENTRIES {
+        return -105;
+    }
+    // If the controller lacks 64-bit addressing support, reject buffers whose
+    // physical address has nonzero upper 32 bits rather than silently truncating.
+    let ctrl = unsafe { &*AHCI.get() };
+    let s64a = ctrl.as_ref().map(|c| c.s64a).unwrap_or(false);
+    if !s64a && (buf_phys >> 32) != 0 {
+        return -106;
+    }
 
     let mut cfis = [0u8; 64];
     build_h2d_fis(

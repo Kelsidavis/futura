@@ -388,8 +388,12 @@ impl AmdMp2 {
     ///
     /// Returns 0 on success, or a negative error code on failure.
     fn send_command(&self, cmd_word: u32, params: &[u32]) -> i32 {
-        // Clear any stale response.
-        let _ = self.reg_read(P2C_MSG0);
+        // Clear any stale response before issuing the command. A bare read does
+        // NOT clear P2C_RESP_READY, so without this the poll in wait_response_raw
+        // could match a previous command's still-set ready bit and return its
+        // stale result (and a stale DMA buffer) before the MP2 processes this
+        // command. Write the response register to a non-ready state first.
+        self.reg_write(P2C_MSG0, 0);
         self.clear_interrupt();
 
         // Write parameter registers (C2P_MSG1 through C2P_MSG5).

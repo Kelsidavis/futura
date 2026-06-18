@@ -292,6 +292,11 @@ fn gna_clear_status(base: *mut u8) {
 ///   -4 = failed to map MMIO region
 #[unsafe(no_mangle)]
 pub extern "C" fn intel_gna_init() -> i32 {
+    // Guard against double-init: a second call would re-map BAR0 and overwrite
+    // state.base, leaking the previous mapping (there is no unmap path).
+    if unsafe { (*GNA.get()).initialized } {
+        return 0;
+    }
     log("intel_gna: scanning PCI for Intel GNA devices...");
 
     let (bus, dev, func, device_id, irq) = match find_gna_pci() {
@@ -314,11 +319,8 @@ pub extern "C" fn intel_gna_init() -> i32 {
         );
     }
 
-    // Enable bus mastering and memory space access in PCI command register
-    let pci_cmd = pci_read16(bus, dev, func, 0x04);
-    pci_write16(bus, dev, func, 0x04, pci_cmd | 0x06); // Memory Space + Bus Master
-
-    // Read BAR0 for MMIO
+    // Read and validate BAR0 BEFORE enabling bus mastering, so the device is
+    // never left DMA-capable when its BAR turns out to be unusable.
     let bar0_lo = pci_read32(bus, dev, func, 0x10);
 
     if bar0_lo & 0x01 != 0 {
@@ -340,6 +342,10 @@ pub extern "C" fn intel_gna_init() -> i32 {
         log("intel_gna: BAR0 not configured");
         return -3;
     }
+
+    // Enable bus mastering and memory space access in PCI command register
+    let pci_cmd = pci_read16(bus, dev, func, 0x04);
+    pci_write16(bus, dev, func, 0x04, pci_cmd | 0x06); // Memory Space + Bus Master
 
     unsafe {
         fut_printf(

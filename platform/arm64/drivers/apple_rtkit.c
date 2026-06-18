@@ -67,8 +67,12 @@ apple_rtkit_ctx_t *apple_rtkit_init(uint64_t mailbox_base) {
     if (!ctx->rust_ctx) {
         fut_printf("[RTKit] rust_rtkit_init(VA 0x%lx, PA 0x%lx) failed\n",
                    (unsigned long)mailbox_va, (unsigned long)mailbox_base);
-        /* Page allocator has no free() in this kernel — leak the ctx
-         * page rather than half-init. */
+        /* Release the ctx page alloc_ctx() reserved — fut_free_pages is
+         * the counterpart to fut_malloc_pages (apple_rtkit_shutdown uses
+         * the same calc).  The old "no free() in this kernel" note was
+         * stale and leaked a page on every RTKit init failure. */
+        const size_t pages = (sizeof(apple_rtkit_ctx_t) + 4095) / 4096;
+        fut_free_pages(ctx, pages);
         return NULL;
     }
 

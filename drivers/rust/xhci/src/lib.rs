@@ -28,7 +28,7 @@ use core::ptr::{read_volatile, write_volatile};
 use core::sync::atomic::{fence, Ordering};
 
 use common::{
-    alloc, alloc_page, free_page, log, map_mmio_region, thread_sleep, thread_yield,
+    alloc, alloc_page, free, free_page, log, map_mmio_region, thread_yield,
     unmap_mmio_region, MMIO_DEFAULT_FLAGS,
 };
 
@@ -708,6 +708,9 @@ fn setup_scratchpad(ctrl: &mut XhciController) -> bool {
     };
     if virt_array.is_null() {
         log("xhci: failed to allocate scratchpad virt array");
+        // The array page is local-only (never stored in ctrl) so free it
+        // here, otherwise it leaks.
+        unsafe { free_page(array_page as *mut u8); }
         return false;
     }
 
@@ -716,6 +719,16 @@ fn setup_scratchpad(ctrl: &mut XhciController) -> bool {
         let buf = alloc_page_zeroed();
         if buf.is_null() {
             log("xhci: failed to allocate scratchpad buffer");
+            // Free the buffers already allocated, the virt array, and the
+            // array page. None are stored in ctrl yet, so nothing else can
+            // reclaim them.
+            unsafe {
+                for j in 0..i {
+                    free_page(read_volatile(virt_array.add(j)));
+                }
+                free(virt_array as *mut u8);
+                free_page(array_page as *mut u8);
+            }
             return false;
         }
         unsafe {
@@ -779,6 +792,8 @@ fn setup_event_ring(ctrl: &mut XhciController) -> bool {
     let erst = alloc_page_zeroed() as *mut ErstEntry;
     if erst.is_null() {
         log("xhci: failed to allocate ERST");
+        // trbs isn't stored in ctrl yet, so free it here to avoid a leak.
+        unsafe { free_page(trbs as *mut u8); }
         return false;
     }
 
@@ -1410,8 +1425,15 @@ fn control_transfer(
         | (trt << 16);
     ep0_enqueue(slot, &Trb { param: setup_param, status: setup_status, control: setup_control });
 
-    // Optional Data Stage TRB.
+    // Optional Data Stage TRB. Record the physical address of the ring
+    // slot this TRB lands in so we can match its Transfer Event later --
+    // the residual must be read from the Data stage event, not the Status
+    // stage event (which always reports residual 0). The event TRB's
+    // `param` field points at the TRB that generated it.
+    let mut data_trb_phys: u64 = 0;
     if data_len > 0 {
+        data_trb_phys =
+            slot.ep0_tring_phys + (slot.ep0_enqueue as u64) * 16;
         let data_phys = virt_to_phys(data);
         let status: u32 = data_len as u32;
         let control: u32 = (TRB_TYPE_DATA << TRB_TYPE_SHIFT)
@@ -1442,7 +1464,14 @@ fn control_transfer(
                 if cc != TRB_CC_SUCCESS && cc != TRB_CC_SHORT_PACKET {
                     return Err(cc);
                 }
-                data_residual = ev.status & 0x00FFFFFF;
+                // Only the Data stage carries a meaningful residual. Match
+                // the event's TRB pointer against the Data TRB we enqueued;
+                // capturing residual from every event would let the Status
+                // stage event (always residual 0) clobber a short-packet
+                // residual and over-report the bytes transferred.
+                if data_len > 0 && ev.param == data_trb_phys {
+                    data_residual = ev.status & 0x00FFFFFF;
+                }
             }
             None => {
                 return Err(0xFE);
@@ -1766,6 +1795,14 @@ fn bulk_transfer(
     data: *mut u8,
     len: u32,
 ) -> Result<u32, u32> {
+    // Validate the request before touching any ring. A single Normal TRB
+    // carries a 17-bit (64 KiB) transfer length; a larger `len` would
+    // silently truncate when written into the TRB status field. Reject
+    // null buffers and zero-length transfers too. 0xFC is an internal
+    // "invalid argument" sentinel (xHCI completion codes never reach it).
+    if data.is_null() || len == 0 || len > 65536 {
+        return Err(0xFC);
+    }
     let slot = match unsafe { slot_mut(slot_id) } {
         Some(s) if s.in_use => s,
         _ => return Err(0xFF),
@@ -2228,6 +2265,45 @@ fn test_cmd_ring(ctrl: &mut XhciController) -> bool {
 // ── FFI exports ──
 
 /// Initialize the xHCI host controller.
+/// Free every DMA region the setup_* helpers stored in `ctrl`. Null pointers
+/// are skipped, so this is safe to call after a partial init. Used on the
+/// xhci_init error paths, which previously only unmapped MMIO and leaked the
+/// DCBAA, scratchpad array + buffers, and command/event/ERST pages.
+fn free_xhci_resources(ctrl: &mut XhciController) {
+    unsafe {
+        if !ctrl.dcbaa.is_null() {
+            free_page(ctrl.dcbaa as *mut u8);
+            ctrl.dcbaa = core::ptr::null_mut();
+        }
+        if !ctrl.scratchpad_bufs.is_null() {
+            for i in 0..ctrl.scratchpad_count {
+                let buf = read_volatile(ctrl.scratchpad_bufs.add(i));
+                if !buf.is_null() {
+                    free_page(buf);
+                }
+            }
+            free(ctrl.scratchpad_bufs as *mut u8);
+            ctrl.scratchpad_bufs = core::ptr::null_mut();
+        }
+        if !ctrl.scratchpad_array.is_null() {
+            free_page(ctrl.scratchpad_array as *mut u8);
+            ctrl.scratchpad_array = core::ptr::null_mut();
+        }
+        if !ctrl.cmd_ring.trbs.is_null() {
+            free_page(ctrl.cmd_ring.trbs as *mut u8);
+            ctrl.cmd_ring.trbs = core::ptr::null_mut();
+        }
+        if !ctrl.evt_ring.trbs.is_null() {
+            free_page(ctrl.evt_ring.trbs as *mut u8);
+            ctrl.evt_ring.trbs = core::ptr::null_mut();
+        }
+        if !ctrl.evt_ring.erst.is_null() {
+            free_page(ctrl.evt_ring.erst as *mut u8);
+            ctrl.evt_ring.erst = core::ptr::null_mut();
+        }
+    }
+}
+
 /// Scans PCI for xHCI devices, performs controller reset, sets up DCBAA,
 /// command/event rings, scratchpad buffers, and initializes root hub ports.
 /// Returns 0 on success, negative on error.
@@ -2383,6 +2459,7 @@ pub extern "C" fn xhci_init() -> i32 {
     // ── Setup DCBAA ──
 
     if !setup_dcbaa(&mut ctrl) {
+        free_xhci_resources(&mut ctrl);
         unsafe { unmap_mmio_region(bar0, bar0_size); }
         return -5;
     }
@@ -2391,6 +2468,7 @@ pub extern "C" fn xhci_init() -> i32 {
     // ── Setup Scratchpad Buffers ──
 
     if !setup_scratchpad(&mut ctrl) {
+        free_xhci_resources(&mut ctrl);
         unsafe { unmap_mmio_region(bar0, bar0_size); }
         return -6;
     }
@@ -2406,6 +2484,7 @@ pub extern "C" fn xhci_init() -> i32 {
     // ── Setup Command Ring ──
 
     if !setup_command_ring(&mut ctrl) {
+        free_xhci_resources(&mut ctrl);
         unsafe { unmap_mmio_region(bar0, bar0_size); }
         return -7;
     }
@@ -2414,6 +2493,7 @@ pub extern "C" fn xhci_init() -> i32 {
     // ── Setup Event Ring ──
 
     if !setup_event_ring(&mut ctrl) {
+        free_xhci_resources(&mut ctrl);
         unsafe { unmap_mmio_region(bar0, bar0_size); }
         return -8;
     }
@@ -2478,6 +2558,7 @@ pub extern "C" fn xhci_init() -> i32 {
     let sts = mmio_read32(bar0, op_base + XHCI_OP_USBSTS);
     if sts & USBSTS_HCH != 0 {
         log("xhci: controller failed to start (still halted)");
+        free_xhci_resources(&mut ctrl);
         unsafe { unmap_mmio_region(bar0, bar0_size); }
         return -9;
     }

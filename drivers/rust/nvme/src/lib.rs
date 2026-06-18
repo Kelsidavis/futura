@@ -124,9 +124,12 @@ const NVME_CSTS_RDY: u32 = 1 << 0;     // Ready
 const NVME_CSTS_CFS: u32 = 1 << 1;     // Controller Fatal Status
 const NVME_CSTS_SHST_MASK: u32 = 3 << 2;
 
-// Queue sizes
+// Queue sizes. Each queue's submission ring is one page: 64 entries x 64 bytes
+// = 4 KiB exactly. The I/O SQ/CQ are allocated with a single alloc_page() each
+// (see below), so the depth MUST stay 64 — a larger depth would make the
+// controller DMA, and write_bytes() zero, past the end of the one-page ring.
 const ADMIN_QUEUE_SIZE: u16 = 64;
-const IO_QUEUE_SIZE: u16 = 256;
+const IO_QUEUE_SIZE: u16 = 64;
 
 // NVMe admin opcodes
 const NVME_ADMIN_IDENTIFY: u8 = 0x06;

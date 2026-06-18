@@ -183,8 +183,12 @@ const HSFS_FCERR: u32 = 1 << 1;
 const HSFS_AEL: u32 = 1 << 2;
 /// SPI cycle in progress
 const HSFS_SCIP: u32 = 1 << 5;
-/// Flash data byte count minus 1 (bits [14:12])
-const HSFS_FDBC_SHIFT: u32 = 12;
+/// Flash data byte count minus 1. In the combined 32-bit HSFS_CTL dword this is
+/// the HSFC FDBC field at bits [29:24] (HSFC[13:8]). It was previously defined at
+/// shift 12, which overlapped FCGO (bit 16) and FCYCLE (bit 17): a 64-byte cycle
+/// (fdbc=63) corrupted the go bit and cycle type, silently turning a read into a
+/// write/erase.
+const HSFS_FDBC_SHIFT: u32 = 24;
 const HSFS_FDBC_MASK: u32 = 0x3F << HSFS_FDBC_SHIFT;
 /// Flash cycle go
 const HSFS_FCGO: u32 = 1 << 16;

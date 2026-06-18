@@ -148,9 +148,17 @@ const DEFAULT_S5_SLP_TYP: u8 = 5;
 // ── GPE register layout ──
 
 /// GPE0 enable register offset from GPE0_BLK base.
-/// Per ACPI spec, GPE0_EN starts at GPE0_BLK + GPE0_BLK_LEN/2.
-/// We default to 0x20 (for a 64-byte GPE0 block, common on AMD).
+/// Per ACPI spec, GPE0_EN starts at GPE0_BLK + GPE0_BLK_LEN/2, where
+/// GPE0_BLK_LEN is a runtime FADT field. This hardcodes 0x20 (a 64-byte block,
+/// common on AMD); on platforms with a differently-sized block it is wrong.
+/// gpe0_en_read/write are currently unused, so this is latent — wiring up GPE
+/// enable support requires plumbing GPE0_BLK_LEN through acpi_pm_init.
 const GPE0_EN_OFFSET: u16 = 0x20;
+
+/// Upper bound on the GPE0 status byte offset. Real platforms expose at most a
+/// few hundred GPEs (≤ ~32 status bytes); used to reject out-of-range offsets in
+/// the status/clear accessors.
+const GPE0_MAX_STS_BYTES: u32 = 32;
 
 // ── Driver state ──
 
@@ -497,8 +505,11 @@ pub extern "C" fn acpi_pm_shutdown() -> i32 {
 
         // Read current PM1_CNT, preserve reserved bits but clear SLP_TYP and SLP_EN.
         let cnt = pm1_cnt_read(cnt_port);
+        // Mask the packed value to the 3-bit SLP_TYP field so a slp_typ > 7
+        // can't spill into SLP_EN (bit 13) and trigger the transition early or
+        // into the wrong sleep state.
         let new_cnt = (cnt & !PM1_CNT_SLP_TYP_MASK & !PM1_CNT_SLP_EN)
-            | ((slp_typ as u16) << PM1_CNT_SLP_TYP_SHIFT);
+            | (((slp_typ as u16) << PM1_CNT_SLP_TYP_SHIFT) & PM1_CNT_SLP_TYP_MASK);
 
         // First write: set SLP_TYP without SLP_EN.
         pm1_cnt_write(cnt_port, new_cnt);
@@ -582,6 +593,12 @@ pub extern "C" fn acpi_pm_gpe_status(block: u32) -> u32 {
         if !(*state).initialized || (*state).gpe0_blk == 0 {
             return 0;
         }
+        // Bound the byte offset: GPE0 status occupies at most ~32 bytes (256
+        // GPEs) on any real platform. Without this a large `block` truncates
+        // u32->u16 and reads an I/O port outside the GPE block.
+        if block >= GPE0_MAX_STS_BYTES {
+            return 0;
+        }
         gpe0_sts_read((*state).gpe0_blk, block as u16) as u32
     }
 }
@@ -599,7 +616,9 @@ pub extern "C" fn acpi_pm_gpe_clear(block: u32, bit: u8) {
         if !(*state).initialized || (*state).gpe0_blk == 0 {
             return;
         }
-        if bit > 7 {
+        if bit > 7 || block >= GPE0_MAX_STS_BYTES {
+            // See acpi_pm_gpe_status: bound the offset so a stray write-1-to-clear
+            // can't land on an I/O port outside the GPE block.
             return;
         }
         gpe0_sts_write((*state).gpe0_blk, block as u16, 1u8 << bit);

@@ -408,9 +408,10 @@ pub extern "C" fn amd_gpio_set_pull(pin: u32, pull: u32) -> i32 {
 /// `edge`: true = edge-triggered, false = level-triggered.
 /// `active_high`: true = active high / rising edge, false = active low / falling edge.
 ///
-/// This configures the interrupt type and polarity but does NOT enable the
-/// interrupt. The interrupt is armed on the next read of the pin status or
-/// can be explicitly enabled by configuring bit 16 of the pin register.
+/// This configures the interrupt type and polarity and enables interrupt
+/// generation (bit 16) for the pad, clearing any pending status. Delivery to the
+/// CPU still depends on the FCH interrupt routing/master enable, so this is safe
+/// for the polled status path (amd_gpio_get_interrupt_status).
 ///
 /// Returns 0 on success, negative error code on failure.
 #[unsafe(no_mangle)]

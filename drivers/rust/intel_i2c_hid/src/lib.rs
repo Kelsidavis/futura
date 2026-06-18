@@ -419,8 +419,11 @@ pub extern "C" fn intel_i2c_hid_poll_input(idx: u32, out: *mut u8, max_len: u32)
     }
 
     let report_len = u16::from_le_bytes([tmp[0], tmp[1]]) as u32;
-    if report_len == 0 {
-        return 0; // no input pending
+    // The HID-over-I2C 2-byte length is inclusive of itself, so a valid non-empty
+    // report is >= 2. Reject < 2 (0 = no input pending; 1 = malformed): otherwise
+    // `report_len - 2` below underflows to a huge value and copies out of bounds.
+    if report_len < 2 {
+        return 0;
     }
     if report_len > read_len {
         // Truncated read — report something is wrong rather than blindly

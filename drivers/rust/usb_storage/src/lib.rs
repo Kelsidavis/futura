@@ -546,10 +546,16 @@ fn scsi_read_10(
     count: u32,
     buf: *mut u8,
 ) -> i32 {
-    if count == 0 || count > 0xFFFF {
+    if count == 0 || count > 0xFFFF || buf.is_null() {
         return -1;
     }
-    let lba32 = lba as u32; // READ (10) uses 32-bit LBA
+    // READ (10) carries a 32-bit LBA; reject anything that wouldn't fit or
+    // that runs past the namespace rather than silently truncating to the
+    // wrong sector.
+    if lba > u32::MAX as u64 || lba.saturating_add(count as u64) > dev.block_count {
+        return -1;
+    }
+    let lba32 = lba as u32;
 
     let mut scsi_cmd = [0u8; 10];
     scsi_cmd[0] = SCSI_READ_10;
@@ -562,7 +568,10 @@ fn scsi_read_10(
     scsi_cmd[7] = (count >> 8) as u8;
     scsi_cmd[8] = count as u8;
 
-    let transfer_bytes = count * dev.block_size;
+    let transfer_bytes = match count.checked_mul(dev.block_size) {
+        Some(v) => v,
+        None => return -1,
+    };
     let csw = match execute_transport(
         dev,
         CBW_FLAG_DATA_IN,
@@ -589,7 +598,12 @@ fn scsi_write_10(
     count: u32,
     buf: *const u8,
 ) -> i32 {
-    if count == 0 || count > 0xFFFF {
+    if count == 0 || count > 0xFFFF || buf.is_null() {
+        return -1;
+    }
+    // WRITE (10) carries a 32-bit LBA; reject out-of-range rather than
+    // truncating to the wrong sector.
+    if lba > u32::MAX as u64 || lba.saturating_add(count as u64) > dev.block_count {
         return -1;
     }
     let lba32 = lba as u32;
@@ -603,7 +617,10 @@ fn scsi_write_10(
     scsi_cmd[7] = (count >> 8) as u8;
     scsi_cmd[8] = count as u8;
 
-    let transfer_bytes = count * dev.block_size;
+    let transfer_bytes = match count.checked_mul(dev.block_size) {
+        Some(v) => v,
+        None => return -1,
+    };
     let csw = match execute_transport(
         dev,
         CBW_FLAG_DATA_OUT,

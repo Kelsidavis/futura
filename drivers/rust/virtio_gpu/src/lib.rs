@@ -464,8 +464,10 @@ impl VirtioGpuDevice {
         self.resp_buffer = resp_page;
         unsafe { memset(resp_page as *mut c_void, 0, 4096); }
 
-        /* Allocate framebuffer (multiple pages for large displays) */
-        self.fb_size = (self.width * self.height * 4) as usize;
+        /* Allocate framebuffer (multiple pages for large displays). Compute in
+         * usize so width*height*4 cannot overflow u32 and under-allocate the
+         * framebuffer (dimensions are bounded at the FFI entry point). */
+        self.fb_size = (self.width as usize) * (self.height as usize) * 4;
         let num_pages = (self.fb_size + 4095) / 4096;
 
         /* Allocate all framebuffer pages contiguously */
@@ -562,7 +564,7 @@ impl VirtioGpuDevice {
         log("[VIRTIO-GPU] Initializing display\n");
 
         /* Fill framebuffer with white for test pattern */
-        let pixels = (self.width * self.height) as usize;
+        let pixels = (self.width as usize) * (self.height as usize);
         let fb = self.framebuffer as *mut u32;
         for i in 0..pixels {
             unsafe { write_volatile(fb.add(i), 0xFFFFFFFF); }
@@ -689,6 +691,14 @@ pub extern "C" fn virtio_gpu_init_arm64_pci(
     height: u32,
 ) -> i32 {
     log("[VIRTIO-GPU] ARM64 virtio-gpu-pci driver starting\n");
+
+    // Bound caller-supplied dimensions so width*height*4 cannot overflow and
+    // under-allocate the framebuffer (16384 is far beyond any real display and
+    // keeps the byte count well within usize).
+    if width == 0 || height == 0 || width > 16384 || height > 16384 {
+        log("[VIRTIO-GPU] invalid display dimensions\n");
+        return -1;
+    }
 
     let device = unsafe { VirtioGpuDevice::new(bus, dev, func, width, height) };
     if device.is_none() {

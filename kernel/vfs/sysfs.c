@@ -293,6 +293,23 @@ static size_t sysfs_gen_str(char *buf, size_t cap, const char *s) {
     return n;
 }
 
+/* Format a signed decimal followed by '\n'.  Used for sysfs nodes whose
+ * value is computed at read time (e.g. the live thermal-zone temp)
+ * rather than a compile-time string literal. */
+static size_t sysfs_gen_i32(char *buf, size_t cap, int32_t val) {
+    char rev[16];
+    size_t r = 0;
+    bool neg = val < 0;
+    uint32_t u = neg ? (uint32_t)(-(int64_t)val) : (uint32_t)val;
+    if (u == 0) rev[r++] = '0';
+    while (u > 0 && r < sizeof(rev)) { rev[r++] = (char)('0' + (u % 10)); u /= 10; }
+    size_t n = 0;
+    if (neg && n < cap) buf[n++] = '-';
+    while (r > 0 && n < cap) buf[n++] = rev[--r];
+    if (n < cap) buf[n++] = '\n';
+    return n;
+}
+
 static ssize_t sysfs_file_read(struct fut_vnode *vnode, void *buf,
                                 size_t size, uint64_t offset) {
     if (!vnode || !buf || !size) return -EINVAL;
@@ -558,13 +575,25 @@ static ssize_t sysfs_file_read(struct fut_vnode *vnode, void *buf,
 
         /* /sys/class/thermal/thermal_zone0/ files */
         case SYSFS_TZ0_TYPE:
+#ifdef __aarch64__
+            total = sysfs_gen_str(tmp, sizeof(tmp), "soc_thermal\n");
+#else
             total = sysfs_gen_str(tmp, sizeof(tmp), "x86_pkg_temp\n");
+#endif
             break;
         case SYSFS_TZ0_TEMP: {
-            /* Report CPU temperature in millidegrees Celsius.
-             * On real hardware this would read MSR/ACPI; in QEMU we
-             * report a fixed 45°C (45000 millidegrees). */
-            total = sysfs_gen_str(tmp, sizeof(tmp), "45000\n");
+            /* CPU temperature in millidegrees Celsius.  On Apple Silicon
+             * read the live SMC die-temperature sensor; everywhere else
+             * (QEMU virt, x86 without MSR/ACPI wiring) fall back to a
+             * fixed 45°C so the node stays readable. */
+            int32_t mc = 45000;
+#ifdef __aarch64__
+            extern int32_t apple_power_cpu_temp(void);
+            int32_t smc = apple_power_cpu_temp();
+            /* 0x80000000 is the "no SMC / not initialised" sentinel. */
+            if ((uint32_t)smc != 0x80000000u) mc = smc;
+#endif
+            total = sysfs_gen_i32(tmp, sizeof(tmp), mc);
             break;
         }
         case SYSFS_TZ0_POLICY:

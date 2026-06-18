@@ -69,11 +69,11 @@ This target:
 A green run ends with:
 
 ```
-[TEST] ALL TESTS PASSED (2876/2876)
+[TEST] ALL TESTS PASSED (2901/2901)
 [HARNESS] PASS
 ```
 
-The reachable suite count tracks the `planned_tests` sum in `kernel/kernel_main.c` (currently 2876 — five misc tests are gated out: `futex_bitset_selective_wakeup` and four branches that complete without firing `fut_test_pass`).  See `docs/ARM64_STATUS.md` for the bringup notes.
+The reachable suite count tracks the `planned_tests` sum in `kernel/kernel_main.c` (currently 2901 — five misc tests are gated out: `futex_bitset_selective_wakeup` and four branches that complete without firing `fut_test_pass`).  See `docs/ARM64_STATUS.md` for the bringup notes.
 
 ---
 

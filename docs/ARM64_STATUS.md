@@ -1,7 +1,7 @@
 # ARM64 Port Status
 
 **Last Updated**: 2026-05-16
-**Status**: ✅ **FULL SELFTEST SUITE PASSING — 2876/2876 on QEMU virt**
+**Status**: ✅ **FULL SELFTEST SUITE PASSING — 2901/2901 on QEMU virt**
 
 ## Current Milestone (2026-05-16)
 
@@ -9,7 +9,7 @@
 `virt -cpu cortex-a53 -m 1024M` and exits cleanly with `[HARNESS] PASS`:
 
 ```
-[TEST] ALL TESTS PASSED (2876/2876)
+[TEST] ALL TESTS PASSED (2901/2901)
 [HARNESS] PASS
 ```
 
@@ -42,7 +42,7 @@ A separate chain (`docs/APPLE_SILICON_BRINGUP_PLAN.md`) closed all 5 original bl
 - **#10 m1n1 framebuffer first-light** — kernel paints directly into `/chosen/framebuffer` via the peripheral mapping VA, before RTKit/DCP boot, so a console comes up even if the DCP swap-chain bring-up fails.
 - Bonus: `TCR_EL1.IPS` reads `ID_AA64MMFR0_EL1.PARange` (Apple M1/M2 report 48-bit / 0b101); `gic_handle_irq` collapsed to a `fut_irq_main` forwarder.  Every `apple_*.c` driver in `platform/arm64/drivers/` is now backed by a Rust crate.
 
-QEMU virt selftest stayed at 2876/2876 PASS across every step.  The only remaining piece is real-hardware verification on an M-series Mac.
+QEMU virt selftest stayed at 2901/2901 PASS across every step.  The only remaining piece is real-hardware verification on an M-series Mac.
 
 See [`/Users/k/.claude/projects/-Users-k-futura/memory/project_futura_arm64_bringup.md`](../../.claude/projects/-Users-k-futura/memory/project_futura_arm64_bringup.md) for the full commit chain.
 

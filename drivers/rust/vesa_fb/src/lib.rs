@@ -322,7 +322,20 @@ pub extern "C" fn vesa_fb_init(info: *const FbInfo) -> i32 {
     if info.base_phys == 0 || info.width == 0 || info.height == 0 { return -2; }
 
     let bytes_pp = (info.bpp + 7) / 8;
-    let fb_size = (info.pitch * info.height) as usize;
+    // Only 24/32 bpp are handled by write_pixel; reject others rather than
+    // silently rendering nothing.
+    if info.bpp != 24 && info.bpp != 32 {
+        log("vesa_fb: unsupported bpp (need 24 or 32)");
+        return -2;
+    }
+    // The pitch must cover a full scanline, or write_pixel offsets would run off
+    // the end of each row.
+    if (info.pitch as usize) < (info.width as usize) * (bytes_pp as usize) {
+        log("vesa_fb: pitch smaller than width*bytes_pp");
+        return -2;
+    }
+    // Compute in usize so pitch*height can't overflow u32 and under-map the FB.
+    let fb_size = (info.pitch as usize) * (info.height as usize);
 
     let fb = unsafe { map_mmio_region(info.base_phys, fb_size, MMIO_DEFAULT_FLAGS) };
     if fb.is_null() {
@@ -381,8 +394,9 @@ pub extern "C" fn vesa_fb_fillrect(x: u32, y: u32, w: u32, h: u32, color: u32) {
     if !s.initialized { return; }
     let x1 = x.min(s.width);
     let y1 = y.min(s.height);
-    let x2 = (x + w).min(s.width);
-    let y2 = (y + h).min(s.height);
+    // saturating_add so x+w / y+h can't wrap and defeat the clamp.
+    let x2 = x.saturating_add(w).min(s.width);
+    let y2 = y.saturating_add(h).min(s.height);
     for py in y1..y2 {
         for px in x1..x2 {
             write_pixel(s, px, py, color);
@@ -397,8 +411,13 @@ pub extern "C" fn vesa_fb_blit(x: u32, y: u32, w: u32, h: u32, pixels: *const u3
     if !s.initialized { return; }
     for row in 0..h {
         for col in 0..w {
-            let color = unsafe { *pixels.add((row * w + col) as usize) };
-            write_pixel(s, x + col, y + row, color);
+            // Source index in usize so row*w+col cannot overflow u32 and read
+            // out of the caller's buffer.
+            let src = (row as usize) * (w as usize) + (col as usize);
+            let color = unsafe { *pixels.add(src) };
+            // saturating_add so an out-of-range x/y can't wrap into a valid
+            // coordinate and bypass write_pixel's bounds check.
+            write_pixel(s, x.saturating_add(col), y.saturating_add(row), color);
         }
     }
 }

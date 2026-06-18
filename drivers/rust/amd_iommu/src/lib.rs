@@ -1394,6 +1394,26 @@ pub extern "C" fn amd_iommu_map_device(
     let read = (flags & 1) != 0;
     let write = (flags & 2) != 0;
 
+    // The 4-level I/O page tables cover a 48-bit IOVA space. Validate the range
+    // up front (before allocating a page table) so an out-of-range or
+    // overflowing request is rejected rather than having its per-level index
+    // masks silently alias it into a low table slot and corrupt an unrelated
+    // mapping. A zero-size request would otherwise allocate a table and DTE
+    // while mapping nothing.
+    const IOVA_LIMIT: u64 = 1u64 << 48;
+    let aligned_iova = iova & !0xFFF;
+    let end = match iova.checked_add(size).and_then(|e| e.checked_add(0xFFF)) {
+        Some(e) => e & !0xFFF,
+        None => {
+            log("amd_iommu: map range overflow");
+            return -2;
+        }
+    };
+    if size == 0 || end > IOVA_LIMIT {
+        log("amd_iommu: map range out of bounds");
+        return -2;
+    }
+
     // Ensure the device has a page table allocated
     if state.page_table_roots[idx] == 0 {
         let pt_root = match alloc_io_page_table() {
@@ -1420,9 +1440,7 @@ pub extern "C" fn amd_iommu_map_device(
 
     let l4_phys = state.page_table_roots[idx];
 
-    // Map each 4K page in the range
-    let aligned_iova = iova & !0xFFF;
-    let end = (iova + size + 0xFFF) & !0xFFF;
+    // Map each 4K page in the range (aligned_iova / end validated above)
     let mut current_iova = aligned_iova;
     let mut current_phys = phys & !0xFFF;
 
@@ -1474,9 +1492,21 @@ pub extern "C" fn amd_iommu_unmap_device(bdf: u16, iova: u64, size: u64) -> i32 
         return -3;
     }
 
-    // Unmap each 4K page in the range
+    // Validate the range against the 48-bit IOVA space, matching map_device, so
+    // an out-of-range/overflowing unmap doesn't alias into a low table slot.
+    const IOVA_LIMIT: u64 = 1u64 << 48;
     let aligned_iova = iova & !0xFFF;
-    let end = (iova + size + 0xFFF) & !0xFFF;
+    let end = match iova.checked_add(size).and_then(|e| e.checked_add(0xFFF)) {
+        Some(e) => e & !0xFFF,
+        None => {
+            log("amd_iommu: unmap range overflow");
+            return -2;
+        }
+    };
+    if end > IOVA_LIMIT {
+        log("amd_iommu: unmap range out of bounds");
+        return -2;
+    }
     let mut current_iova = aligned_iova;
 
     while current_iova < end {

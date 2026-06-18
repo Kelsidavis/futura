@@ -1284,9 +1284,22 @@ pub extern "C" fn intel_vtd_map_device(
 
     let pml4_phys = state.pt_roots[idx];
 
-    // Map each 4K page in the range
+    // The 4-level page tables cover a 48-bit IOVA space. Reject out-of-range or
+    // overflowing requests rather than letting the per-level index masks
+    // silently alias the IOVA into a low table slot.
+    const IOVA_LIMIT: u64 = 1u64 << 48;
     let aligned_iova = iova & !0xFFF;
-    let end = (iova + size + 0xFFF) & !0xFFF;
+    let end = match iova.checked_add(size).and_then(|e| e.checked_add(0xFFF)) {
+        Some(e) => e & !0xFFF,
+        None => {
+            log("intel_vtd: map range overflow");
+            return -2;
+        }
+    };
+    if end > IOVA_LIMIT {
+        log("intel_vtd: map range out of bounds");
+        return -2;
+    }
     let mut current_iova = aligned_iova;
     let mut current_phys = phys & !0xFFF;
 
@@ -1341,9 +1354,20 @@ pub extern "C" fn intel_vtd_unmap_device(
         return 0;
     }
 
-    // Unmap each 4K page in the range
+    // Validate the range against the 48-bit IOVA space, matching map_device.
+    const IOVA_LIMIT: u64 = 1u64 << 48;
     let aligned_iova = iova & !0xFFF;
-    let end = (iova + size + 0xFFF) & !0xFFF;
+    let end = match iova.checked_add(size).and_then(|e| e.checked_add(0xFFF)) {
+        Some(e) => e & !0xFFF,
+        None => {
+            log("intel_vtd: unmap range overflow");
+            return -2;
+        }
+    };
+    if end > IOVA_LIMIT {
+        log("intel_vtd: unmap range out of bounds");
+        return -2;
+    }
     let mut current_iova = aligned_iova;
 
     while current_iova < end {

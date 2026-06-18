@@ -27,7 +27,7 @@ use core::ptr::{read_volatile, write_volatile};
 use core::sync::atomic::{fence, Ordering};
 
 use common::{
-    alloc, alloc_page, free, log, map_mmio_region, unmap_mmio_region,
+    alloc, alloc_page, free, free_page, log, map_mmio_region, unmap_mmio_region,
     MMIO_DEFAULT_FLAGS,
 };
 
@@ -442,6 +442,8 @@ fn init_tx_ring() -> Option<(*mut XgbeDesc, u64, *mut u8, u64)> {
     let total_buf_size = DESC_RING_SIZE * TX_BUF_SIZE;
     let bufs = unsafe { alloc(total_buf_size) };
     if bufs.is_null() {
+        // Free the descriptor-ring page allocated above before bailing.
+        unsafe { free_page(ring as *mut u8); }
         return None;
     }
     let bufs_phys = virt_to_phys(bufs);
@@ -474,6 +476,8 @@ fn init_rx_ring() -> Option<(*mut XgbeDesc, u64, *mut u8, u64)> {
     let total_buf_size = DESC_RING_SIZE * RX_BUF_SIZE;
     let bufs = unsafe { alloc(total_buf_size) };
     if bufs.is_null() {
+        // Free the descriptor-ring page allocated above before bailing.
+        unsafe { free_page(ring as *mut u8); }
         return None;
     }
     let bufs_phys = virt_to_phys(bufs);
@@ -635,6 +639,7 @@ pub extern "C" fn amd_xgbe_init() -> i32 {
             log("amd_xgbe: failed to allocate RX descriptor ring");
             unsafe {
                 free(tx_bufs);
+                free_page(tx_ring as *mut u8);
                 unmap_mmio_region(mmio, mmio_size);
             }
             return -8;
@@ -884,9 +889,12 @@ pub extern "C" fn amd_xgbe_poll() -> i32 {
         // Advance to next descriptor
         nic.rx_cur = (idx + 1) % DESC_RING_SIZE;
 
-        // Update RX tail to return the descriptor to hardware
+        // Update RX tail to hand the re-armed descriptor back to hardware. The
+        // XGMAC tail points one past the last descriptor owned by the DMA, so
+        // use the advanced index (matching the TX path) rather than idx itself —
+        // otherwise the just-re-armed descriptor lags a poll cycle behind.
         let tail_addr = nic.rx_ring_phys
-            + (idx as u64) * (DESC_SIZE as u64);
+            + (nic.rx_cur as u64) * (DESC_SIZE as u64);
         mmio_write32(nic.mmio, DMA_CH0_RDTR, tail_addr as u32);
     }
 

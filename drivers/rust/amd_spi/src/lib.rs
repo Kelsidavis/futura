@@ -923,6 +923,11 @@ pub extern "C" fn amd_spi_read(offset: u32, buf: *mut u8, len: u32) -> i32 {
     if buf.is_null() || len == 0 {
         return -22; // EINVAL
     }
+    // 24-bit (3-byte) flash addressing: reject out-of-range/overflowing ranges
+    // rather than wrapping the address to an unintended flash location.
+    if offset as u64 + len as u64 > 0x0100_0000 {
+        return -22; // EINVAL
+    }
 
     let spi = match unsafe { (*SPI.get()).as_ref() } {
         Some(s) => s,
@@ -948,6 +953,11 @@ pub extern "C" fn amd_spi_write(offset: u32, buf: *const u8, len: u32) -> i32 {
     if buf.is_null() || len == 0 {
         return -22; // EINVAL
     }
+    // 24-bit (3-byte) flash addressing: reject out-of-range/overflowing ranges
+    // rather than wrapping the address to an unintended flash location.
+    if offset as u64 + len as u64 > 0x0100_0000 {
+        return -22; // EINVAL
+    }
 
     let spi = match unsafe { (*SPI.get()).as_ref() } {
         Some(s) => s,
@@ -965,6 +975,10 @@ pub extern "C" fn amd_spi_write(offset: u32, buf: *const u8, len: u32) -> i32 {
 /// Returns 0 on success, negative error code on failure.
 #[unsafe(no_mangle)]
 pub extern "C" fn amd_spi_erase_sector(offset: u32) -> i32 {
+    // The 4 KiB sector must lie within the 24-bit flash address space.
+    if offset as u64 + 0x1000 > 0x0100_0000 {
+        return -22; // EINVAL
+    }
     let spi = match unsafe { (*SPI.get()).as_ref() } {
         Some(s) => s,
         None => return -19, // ENODEV

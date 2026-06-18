@@ -282,10 +282,23 @@ fn calibrate_with_delay(delay_fn: DelayUsFn) -> u64 {
     // Average ticks per round
     let avg_ticks = total_ticks / (CALIBRATION_ROUNDS as u64);
 
+    // Reject a measurement where the delay consumed (almost) no time — e.g. the
+    // delay callback no-opped because its timer source wasn't ready yet. Without
+    // this, freq becomes a bogus tiny value that init's `freq == 0` check
+    // doesn't catch, corrupting all later timekeeping.
+    if avg_ticks < 1000 {
+        return 0;
+    }
+
     // freq = ticks / time_seconds = ticks * 1_000_000 / CALIBRATION_US
     let freq = avg_ticks
         .saturating_mul(1_000_000)
         / (CALIBRATION_US as u64);
+
+    // A real TSC runs far above 1 MHz; anything lower is a failed calibration.
+    if freq < 1_000_000 {
+        return 0;
+    }
 
     freq
 }

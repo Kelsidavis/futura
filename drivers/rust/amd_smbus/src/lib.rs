@@ -307,6 +307,11 @@ impl AmdSmbus {
     /// `read` indicates direction (true = read from device).
     /// `cmd` is the SMBus command byte (register address on the target).
     fn setup(&self, addr7: u8, read: bool, cmd: u8) -> i32 {
+        // Reject out-of-range 7-bit addresses rather than silently truncating
+        // (addr7 << 1 in u8 would drop the MSB and target the wrong device).
+        if addr7 > 0x7F {
+            return -22; // EINVAL
+        }
         // Wait for any previous transaction to finish.
         if self.wait_idle() != 0 {
             log("amd_smbus: bus busy, aborting stale transaction");

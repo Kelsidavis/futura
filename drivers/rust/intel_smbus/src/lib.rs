@@ -288,6 +288,9 @@ pub extern "C" fn intel_smbus_read_byte(addr: u8, command: u8) -> i32 {
     if !state.initialized {
         return -1;
     }
+    if addr > 0x7F {
+        return -22; // EINVAL: addr << 1 in u8 would drop the MSB
+    }
 
     if wait_until_idle(state.io_base) != 0 {
         log("intel_smbus: controller busy");
@@ -316,6 +319,9 @@ pub extern "C" fn intel_smbus_write_byte(addr: u8, command: u8, value: u8) -> i3
     if !state.initialized {
         return -1;
     }
+    if addr > 0x7F {
+        return -22; // EINVAL: addr << 1 in u8 would drop the MSB
+    }
 
     if wait_until_idle(state.io_base) != 0 {
         log("intel_smbus: controller busy");
@@ -343,6 +349,9 @@ pub extern "C" fn intel_smbus_read_word(addr: u8, command: u8) -> i32 {
     let state = unsafe { &*STATE.get() };
     if !state.initialized {
         return -1;
+    }
+    if addr > 0x7F {
+        return -22; // EINVAL: addr << 1 in u8 would drop the MSB
     }
 
     if wait_until_idle(state.io_base) != 0 {

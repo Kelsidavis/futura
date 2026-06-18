@@ -794,6 +794,11 @@ fn wait_idle(base: usize) -> i32 {
 /// Set the target address. The controller must be disabled to change
 /// IC_TAR, so we disable, write IC_TAR, then re-enable.
 fn set_target_addr(base: usize, addr: u8, speed_khz: u32) -> i32 {
+    // Reject out-of-range 7-bit addresses rather than masking them to 0x7F and
+    // silently targeting the wrong device (the controller is 7-bit only).
+    if addr > 0x7F {
+        return -22; // EINVAL
+    }
     let rc = controller_disable(base);
     if rc != 0 {
         return rc;

@@ -433,6 +433,11 @@ fn device_name(device_id: u16) -> &'static [u8] {
 ///   -5 = NIC wake timeout (MAC clock did not stabilise)
 #[unsafe(no_mangle)]
 pub extern "C" fn intel_cnvi_init() -> i32 {
+    // Guard against double-init: a second call would re-map BAR0 and overwrite
+    // the global, leaking the previous mapping.
+    if unsafe { (*CNVI.get()).initialized } {
+        return 0;
+    }
     log("intel_cnvi: initializing CNVi WiFi driver");
 
     // Scan for Intel CNVi PCI device

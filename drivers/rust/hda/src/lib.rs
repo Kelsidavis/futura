@@ -1794,11 +1794,16 @@ pub extern "C" fn hda_write_samples(buf: *const u8, len: u32) -> i32 {
     let available = if ctrl.playing {
         let read_pos = lpib;
         let write_pos = ctrl.write_pos;
-        if write_pos >= read_pos {
-            buf_total - (write_pos - read_pos) - FRAG_SIZE
+        // Bytes queued but not yet played back, as a circular distance.
+        let used = if write_pos >= read_pos {
+            write_pos - read_pos
         } else {
-            (read_pos - write_pos) - FRAG_SIZE
-        }
+            buf_total - (read_pos - write_pos)
+        };
+        // saturating_sub: when the read cursor is within one fragment of the
+        // write cursor, used can exceed buf_total - FRAG_SIZE; a plain subtract
+        // would underflow to a huge usize and defeat the safety margin.
+        (buf_total - used).saturating_sub(FRAG_SIZE)
     } else {
         buf_total
     };

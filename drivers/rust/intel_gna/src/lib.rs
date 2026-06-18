@@ -216,6 +216,9 @@ struct GnaState {
     device_id: u16,
     /// Whether the driver has been initialized
     initialized: bool,
+    /// Whether a submission is outstanding (set by submit, cleared on DONE/ERROR
+    /// in poll). Distinguishes "idle, nothing submitted" from "running".
+    pending: bool,
 }
 
 impl GnaState {
@@ -228,6 +231,7 @@ impl GnaState {
             func: 0,
             device_id: 0,
             initialized: false,
+            pending: false,
         }
     }
 }
@@ -487,6 +491,7 @@ pub extern "C" fn intel_gna_submit(desc_phys: u64, count: u32) -> i32 {
     fence(Ordering::SeqCst);
 
     unsafe {
+        (*state).pending = true;
         fut_printf(
             b"intel_gna: submitted %u descriptors at phys 0x%llx\n\0".as_ptr(),
             count, desc_phys,
@@ -518,6 +523,7 @@ pub extern "C" fn intel_gna_poll() -> i32 {
     if sts & STS_ERROR != 0 {
         let err_code = (sts & STS_ERR_CODE_MASK) >> STS_ERR_CODE_SHIFT;
         unsafe {
+            (*state).pending = false;
             fut_printf(
                 b"intel_gna: inference error, STS=0x%08x code=%u\n\0".as_ptr(),
                 sts, err_code,
@@ -529,14 +535,19 @@ pub extern "C" fn intel_gna_poll() -> i32 {
     if sts & STS_DONE != 0 {
         // Clear the done bit for next submission
         gna_clear_status(base);
+        unsafe { (*state).pending = false; }
         return 0;
     }
 
-    if sts & STS_BUSY != 0 {
+    // While a submission is outstanding, report "in progress" even before the
+    // hardware has asserted BUSY (it does so asynchronously). Without this, a
+    // poll in that window would fall through to the idle return and be mistaken
+    // for completion.
+    if sts & STS_BUSY != 0 || unsafe { (*state).pending } {
         return 1;
     }
 
-    // Neither busy, done, nor error -- device is idle (no submission pending)
+    // Idle: nothing was submitted.
     0
 }
 
@@ -565,6 +576,7 @@ pub extern "C" fn intel_gna_abort() -> i32 {
         if sts & STS_BUSY == 0 {
             // Clear status bits
             gna_clear_status(base);
+            unsafe { (*state).pending = false; }
             log("intel_gna: inference aborted");
             return 0;
         }

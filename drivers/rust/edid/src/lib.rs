@@ -531,6 +531,7 @@ pub extern "C" fn edid_validate(data: *const u8, len: u32) -> bool {
 #[unsafe(no_mangle)]
 pub extern "C" fn edid_preferred_mode(
     data: *const u8,
+    len: u32,
     width: *mut u32,
     height: *mut u32,
     refresh: *mut u32,
@@ -538,9 +539,13 @@ pub extern "C" fn edid_preferred_mode(
     if data.is_null() || width.is_null() || height.is_null() || refresh.is_null() {
         return -1;
     }
+    // Require a full base block; a shorter buffer would make the bounds-checked
+    // readers (told the length is 128) read past the caller's buffer.
+    if len < EDID_BASE_LEN {
+        return -1;
+    }
 
-    // Assume at least 128 bytes available.
-    let (w, h, r) = parse_preferred_timing(data, EDID_BASE_LEN);
+    let (w, h, r) = parse_preferred_timing(data, len);
     if w == 0 && h == 0 {
         return -2;
     }
@@ -558,13 +563,16 @@ pub extern "C" fn edid_preferred_mode(
 /// Copies the name into the provided buffer (up to max_len - 1 chars + null).
 /// Returns the number of characters written (excluding null), or -1 on error.
 #[unsafe(no_mangle)]
-pub extern "C" fn edid_monitor_name(data: *const u8, name: *mut u8, max_len: u32) -> i32 {
+pub extern "C" fn edid_monitor_name(data: *const u8, len: u32, name: *mut u8, max_len: u32) -> i32 {
     if data.is_null() || name.is_null() || max_len == 0 {
+        return -1;
+    }
+    if len < EDID_BASE_LEN {
         return -1;
     }
 
     let mut buf = [0u8; 14];
-    extract_monitor_name(data, EDID_BASE_LEN, &mut buf);
+    extract_monitor_name(data, len, &mut buf);
 
     // Find the length of the extracted name.
     let mut name_len = 0u32;
@@ -604,13 +612,16 @@ pub extern "C" fn edid_monitor_name(data: *const u8, name: *mut u8, max_len: u32
 /// The buffer must be at least 4 bytes.
 /// Returns 0 on success, -1 on error.
 #[unsafe(no_mangle)]
-pub extern "C" fn edid_manufacturer(data: *const u8, mfr: *mut u8) -> i32 {
+pub extern "C" fn edid_manufacturer(data: *const u8, len: u32, mfr: *mut u8) -> i32 {
     if data.is_null() || mfr.is_null() {
+        return -1;
+    }
+    if len < EDID_BASE_LEN {
         return -1;
     }
 
     let mut buf = [0u8; 4];
-    decode_manufacturer(data, EDID_BASE_LEN, &mut buf);
+    decode_manufacturer(data, len, &mut buf);
 
     unsafe {
         *mfr = buf[0];
@@ -626,9 +637,9 @@ pub extern "C" fn edid_manufacturer(data: *const u8, mfr: *mut u8) -> i32 {
 /// Returns a 24-bit bitmask (bytes 35-37) where each bit corresponds to a
 /// pre-defined standard timing mode. Returns 0 if data is null.
 #[unsafe(no_mangle)]
-pub extern "C" fn edid_established_timings(data: *const u8) -> u32 {
-    if data.is_null() {
+pub extern "C" fn edid_established_timings(data: *const u8, len: u32) -> u32 {
+    if data.is_null() || len < EDID_BASE_LEN {
         return 0;
     }
-    parse_established_timings(data, EDID_BASE_LEN)
+    parse_established_timings(data, len)
 }

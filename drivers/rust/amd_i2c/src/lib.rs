@@ -697,6 +697,12 @@ pub extern "C" fn amd_i2c_init(controller: u32) -> i32 {
         return -22; // EINVAL
     }
 
+    // Guard against double-init: re-initialising a controller would map a fresh
+    // MMIO region and overwrite ctrl.base, leaking the previous mapping.
+    if unsafe { (*STATE.get()).controllers[controller as usize].inited } {
+        return 0;
+    }
+
     unsafe {
         fut_printf(
             b"amd_i2c: initialising controller %u...\n\0".as_ptr(),

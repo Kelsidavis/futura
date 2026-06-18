@@ -25,7 +25,7 @@ use core::ptr::{read_volatile, write_volatile};
 use core::sync::atomic::{fence, Ordering};
 
 use common::{
-    alloc, alloc_page, free, log, map_mmio_region, unmap_mmio_region,
+    alloc, alloc_page, free, free_page, log, map_mmio_region, unmap_mmio_region,
     MMIO_DEFAULT_FLAGS,
 };
 
@@ -110,7 +110,7 @@ const IGC_CTRL: usize     = 0x0000;  // Device Control
 const IGC_STATUS: usize   = 0x0008;  // Device Status
 const IGC_EECD: usize     = 0x0010;  // EEPROM/Flash Control
 const IGC_EERD: usize     = 0x0014;  // EEPROM Read
-const IGC_CTRL_EXT: usize = 0x00C0;  // Extended Device Control
+const IGC_CTRL_EXT: usize = 0x0018;  // Extended Device Control
 const IGC_MDIC: usize     = 0x0020;  // MDI Control (PHY register access)
 
 // Interrupt registers
@@ -605,6 +605,8 @@ fn init_tx_ring() -> Option<(*mut IgcTxDesc, u64, *mut u8, u64)> {
     let total_buf_size = DESC_RING_SIZE * TX_BUF_SIZE;
     let bufs = unsafe { alloc(total_buf_size) };
     if bufs.is_null() {
+        // Free the descriptor-ring page allocated above before bailing.
+        unsafe { free_page(ring as *mut u8); }
         return None;
     }
     let bufs_phys = virt_to_phys(bufs);
@@ -636,6 +638,8 @@ fn init_rx_ring() -> Option<(*mut IgcRxDesc, u64, *mut u8, u64)> {
     let total_buf_size = DESC_RING_SIZE * RX_BUF_SIZE;
     let bufs = unsafe { alloc(total_buf_size) };
     if bufs.is_null() {
+        // Free the descriptor-ring page allocated above before bailing.
+        unsafe { free_page(ring as *mut u8); }
         return None;
     }
     let bufs_phys = virt_to_phys(bufs);
@@ -787,6 +791,7 @@ pub extern "C" fn igc_init() -> i32 {
             log("igc: failed to allocate RX descriptor ring");
             unsafe {
                 free(tx_bufs);
+                free_page(tx_ring as *mut u8);
                 unmap_mmio_region(mmio, mmio_size);
             }
             return -8;

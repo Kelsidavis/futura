@@ -493,8 +493,11 @@ fn recv_frame(dev: &mut UsbNetDevice) -> i32 {
     }
 
     let frame_len = ret as u32;
-    // Minimum Ethernet frame is 14 bytes (header only, no payload)
-    if frame_len < 14 {
+    // Minimum Ethernet frame is 14 bytes (header only, no payload). Also reject
+    // a length larger than the buffer the transfer was issued against: a
+    // conformant HCD cannot exceed it, but trusting `ret` blindly would let the
+    // network stack read past rx_buf.
+    if frame_len < 14 || frame_len as usize > RX_BUF_SIZE {
         return 0;
     }
 
@@ -641,6 +644,13 @@ pub extern "C" fn usb_net_attach(
     if !state.initialised {
         log("usb_net: not initialised");
         return -1;
+    }
+
+    // Validate endpoint directions (bit 7 set = IN). A swapped IN/OUT pair would
+    // otherwise silently transmit on the IN endpoint and receive on the OUT one.
+    if bulk_in & 0x80 == 0 || bulk_out & 0x80 != 0 {
+        log("usb_net: bulk endpoint direction bits invalid");
+        return -4;
     }
 
     // Check for duplicate

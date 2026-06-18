@@ -310,7 +310,11 @@ impl PortState {
         self.link_up = true;
         let link_stat = self.r32(PORT_LINK_STAT);
         self.speed = LinkSpeed::from_hw(link_stat & LINK_STAT_SPEED_MASK);
-        self.width = (1u8).wrapping_shl(((link_stat & LINK_STAT_WIDTH_MASK) >> 4) as u32);
+        // The negotiated-width field already holds the lane count directly
+        // (1, 2, 4, 8, 16 — a 6-bit one-hot-ish encoding per the PCIe spec),
+        // not a log2 exponent. Treating it as a shift count reported x1 as 2,
+        // x4 as 16, and produced garbage (via wrapping_shl) for x8/x16.
+        self.width = ((link_stat & LINK_STAT_WIDTH_MASK) >> 4) as u8;
         true
     }
 

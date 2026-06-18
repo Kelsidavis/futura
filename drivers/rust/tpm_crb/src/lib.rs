@@ -390,9 +390,22 @@ fn crb_submit_command(
 ) -> i32 {
     let cmd_len_usize = cmd_len as usize;
 
+    if rsp.is_null() || rsp_size.is_null() {
+        return -2;
+    }
+
     // Validate command fits in hardware command buffer
     if cmd_len > hw_cmd_size {
         log("tpm_crb: command too large for hardware buffer");
+        return -2;
+    }
+
+    // The command and response share a single mapped data buffer. Never write
+    // or read past it even if the hardware reports a command/response buffer
+    // larger than the page we mapped — otherwise the write/read loops below
+    // would run off the end of the MMIO mapping.
+    if cmd_len_usize > TPM_CRB_DATA_BUF_SIZE {
+        log("tpm_crb: command exceeds mapped data buffer");
         return -2;
     }
 
@@ -467,7 +480,9 @@ fn crb_submit_command(
     }
 
     let rsp_cap = unsafe { *rsp_size } as usize;
-    let copy_len = if rsp_total > rsp_cap { rsp_cap } else { rsp_total };
+    // Clamp the copy to the caller's buffer AND to the mapped data buffer, so a
+    // bogus oversized response length can't read past the MMIO page.
+    let copy_len = rsp_total.min(rsp_cap).min(TPM_CRB_DATA_BUF_SIZE);
 
     // Validate response fits within hardware response buffer
     if rsp_total > hw_rsp_size as usize {
@@ -784,7 +799,12 @@ pub extern "C" fn tpm_crb_get_random(buf: *mut u8, len: u32) -> i32 {
     let data_start = TPM2_RSP_HDR_SIZE + 2;
     let available = digest_size.min(len as usize);
 
-    if data_start + available > rsp.len() {
+    // Bound the copy by the ACTUAL response length (the response header's size
+    // field), not just the 4096-byte scratch buffer. A malformed response with
+    // a large digest_size would otherwise copy uninitialized scratch bytes to
+    // the caller — a stack info leak.
+    let actual_rsp_len = get_be32(&rsp[2..6]) as usize;
+    if data_start + available > actual_rsp_len || data_start + available > rsp.len() {
         return -1;
     }
 

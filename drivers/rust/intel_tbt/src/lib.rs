@@ -488,6 +488,11 @@ fn security_name(level: u32) -> &'static [u8] {
 ///   -4 = controller failed to become ready
 #[unsafe(no_mangle)]
 pub extern "C" fn intel_tbt_init() -> i32 {
+    // Guard against double-init: a second call would re-map the NHI MMIO region
+    // and overwrite the global, leaking the previous mapping.
+    if unsafe { (*TBT.get()).initialized } {
+        return 0;
+    }
     log("intel_tbt: initializing Thunderbolt/USB4 driver");
 
     // Scan PCI bus for a TBT/USB4 controller

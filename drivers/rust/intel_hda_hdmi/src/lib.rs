@@ -701,6 +701,11 @@ fn disable_pin(codec: &IntelHdmiCodec, pin_idx: usize) {
 /// Returns 0 on success, negative on error.
 #[unsafe(no_mangle)]
 pub extern "C" fn intel_hda_hdmi_init(verb_fn: HdaVerbFn, codec_addr: u8) -> i32 {
+    // The codec address is a 4-bit field on the HDA link (0-15); reject larger
+    // values rather than letting them overflow into the NID field of every verb.
+    if codec_addr > 15 {
+        return -1;
+    }
     let codec = unsafe { &mut *STATE.get() };
 
     codec.verb_fn = Some(verb_fn);

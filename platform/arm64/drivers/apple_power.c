@@ -23,6 +23,7 @@
 #define KEY_FNUM  SMC_KEY('F','N','u','m')  /* Fan count */
 #define KEY_F0AC  SMC_KEY('F','0','A','c')  /* Fan 0 actual RPM */
 #define KEY_F0TG  SMC_KEY('F','0','T','g')  /* Fan 0 target RPM */
+#define KEY_F0MD  SMC_KEY('F','0','M','d')  /* Fan 0 mode: 0=auto, 1=forced */
 #define KEY_BCHG  SMC_KEY('B','C','H','G')  /* Battery charge */
 #define KEY_BFCG  SMC_KEY('B','F','C','G')  /* Battery full capacity */
 #define KEY_ACIN  SMC_KEY('A','C','I','N')  /* AC adapter present */
@@ -165,6 +166,22 @@ uint32_t apple_power_fan_target_rpm(void) {
 
 int apple_power_set_fan_rpm(uint32_t rpm) {
     if (!g_power_initialized || !g_smc) return -1;
+
+    /* rpm == 0 is documented as "hand control back to automatic" — the
+     * SMC's own thermal loop drives the fan.  Writing F0Tg = 0 instead
+     * would command a full stop, so map 0 to the mode key. */
+    if (rpm == 0) {
+        uint8_t mode = 0;  /* auto */
+        return rust_smc_write_key(g_smc, KEY_F0MD, &mode, 1);
+    }
+
+    /* Force manual mode before programming the target.  In the default
+     * automatic mode the SMC computes fan speed from thermal targets
+     * and ignores F0Tg entirely, so without this write the requested
+     * RPM has no effect on real hardware. */
+    uint8_t mode = 1;  /* forced */
+    rust_smc_write_key(g_smc, KEY_F0MD, &mode, 1);
+
     uint8_t buf[2] = { (uint8_t)(rpm >> 8), (uint8_t)(rpm & 0xFF) };
     return rust_smc_write_key(g_smc, KEY_F0TG, buf, 2);
 }

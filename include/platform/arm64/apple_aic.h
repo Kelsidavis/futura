@@ -114,6 +114,10 @@ void fut_apple_aic_ack_ipi(uint32_t ipi_num);
  */
 uint32_t fut_apple_aic_whoami(void);
 
+/* Register / unregister a per-IRQ dispatch handler.  Prototypes live
+ * with the Rust FFI block below (they need rust_aic_irq_handler_t):
+ * fut_apple_aic_register_handler / fut_apple_aic_unregister_handler. */
+
 /**
  * Main AIC IRQ handler.
  * Called from ARM64 IRQ exception vector on Apple Silicon.
@@ -173,6 +177,24 @@ void rust_aic_register_handler(AppleAic *aic, uint32_t irq,
 
 /** Unregister the handler for IRQ @irq. */
 void rust_aic_unregister_handler(AppleAic *aic, uint32_t irq);
+
+/**
+ * Register a handler for hardware IRQ @irq_num in the AIC dispatch
+ * table.  Without a registration the dispatcher (apple_aic_handle_irq)
+ * has nothing to call for that IRQ.  No-op until the AIC is initialised.
+ * @param irq_num: Hardware IRQ number (0-895)
+ * @param handler: Callback invoked as handler(irq, cookie) on dispatch
+ * @param cookie:  Opaque pointer passed back to the handler
+ */
+void fut_apple_aic_register_handler(uint32_t irq_num,
+                                    rust_aic_irq_handler_t handler,
+                                    void *cookie);
+
+/**
+ * Remove the handler previously registered for @irq_num.
+ * @param irq_num: Hardware IRQ number (0-895)
+ */
+void fut_apple_aic_unregister_handler(uint32_t irq_num);
 
 /** Dispatch one pending IRQ — call from the ARM64 IRQ exception vector. */
 void rust_aic_handle_irq(const AppleAic *aic);

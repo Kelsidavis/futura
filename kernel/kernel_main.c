@@ -2127,13 +2127,13 @@ void fut_kernel_main(void) {
         planned_tests += 26u;
 #endif
 
-        /* apple_aic + apple_ans2: AIC init/pending/whoami/void ops
-         * guards, ans2 Rust-FFI NULL guards (free/read/write/is_ready/
-         * max_lba/sector_size/poll), and the public C I/O wrappers
-         * (read/write/is_ready/max_lba/sector_size/poll without a live
-         * controller).  ARM64-only. */
+        /* apple_aic + apple_ans2: AIC init/pending/whoami/void ops +
+         * register/unregister-handler guards, ans2 Rust-FFI NULL
+         * guards (free/read/write/is_ready/max_lba/sector_size/poll),
+         * and the public C I/O wrappers (read/write/is_ready/max_lba/
+         * sector_size/poll without a live controller).  ARM64-only. */
 #ifdef __aarch64__
-        planned_tests += 13u;
+        planned_tests += 15u;
 #endif
 
         /* apple_dart: T1-T8 (Rust IOMMU FFI NULL guards on free /

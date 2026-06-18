@@ -34,6 +34,15 @@ extern void fut_test_fail(uint16_t code);
         fut_test_fail((uint16_t)(code)); \
     } while (0)
 
+/* Dummy dispatch target for the register/unregister guard tests —
+ * never actually invoked because the AIC isn't initialised on QEMU
+ * virt, but gives register_handler a valid non-NULL callback. */
+static void aic_test_dummy_handler(uint32_t irq, void *cookie)
+{
+    (void)irq;
+    (void)cookie;
+}
+
 void fut_apple_aic_test_thread(void *arg)
 {
     (void)arg;
@@ -76,6 +85,18 @@ void fut_apple_aic_test_thread(void *arg)
             AIC_FAIL("ans2_platform_init(NULL)", 5);
             return;
         }
+    }
+
+    /* T6: register_handler without init → no-op (no crash) */
+    {
+        fut_apple_aic_register_handler(42, aic_test_dummy_handler, NULL);
+        AIC_PASS("register_handler(no init) doesn't crash");
+    }
+
+    /* T7: unregister_handler without init → no-op (no crash) */
+    {
+        fut_apple_aic_unregister_handler(42);
+        AIC_PASS("unregister_handler(no init) doesn't crash");
     }
 
     fut_printf("[AIC-TEST] all apple_aic + apple_ans2 guard tests passed\n");

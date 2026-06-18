@@ -97,6 +97,22 @@ uint32_t fut_apple_aic_whoami(void) {
     return rust_aic_whoami(aic_ctx);
 }
 
+/* Register / unregister a per-IRQ handler in the Rust AIC's dispatch
+ * table.  apple_aic_handle_irq() → rust_aic_handle_irq() looks the
+ * handler up by IRQ number, so without a registration entry point the
+ * table stays empty and every dispatched device IRQ is silently
+ * dropped.  These wrappers are what lets an interrupt-driven driver
+ * (vs. the current polled paths) actually receive its IRQ. */
+void fut_apple_aic_register_handler(uint32_t irq_num,
+                                    rust_aic_irq_handler_t handler,
+                                    void *cookie) {
+    if (aic_ctx) rust_aic_register_handler(aic_ctx, irq_num, handler, cookie);
+}
+
+void fut_apple_aic_unregister_handler(uint32_t irq_num) {
+    if (aic_ctx) rust_aic_unregister_handler(aic_ctx, irq_num);
+}
+
 /* ============================================================
  *   IRQ Handler
  * ============================================================ */

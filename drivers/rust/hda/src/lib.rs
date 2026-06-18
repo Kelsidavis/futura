@@ -26,7 +26,7 @@ use core::ptr::{read_volatile, write_volatile};
 use core::sync::atomic::{Ordering, fence};
 
 use common::{
-    alloc, alloc_page, log, map_mmio_region, unmap_mmio_region,
+    alloc, alloc_page, free, free_page, log, map_mmio_region, unmap_mmio_region,
     MMIO_DEFAULT_FLAGS,
 };
 
@@ -1339,11 +1339,36 @@ fn setup_bdl(ctrl: &mut HdaController) {
 
 // ── Allocate audio resources ──
 
+/// Free the four DMA regions allocated by alloc_audio_resources. Null fields
+/// are skipped and cleared, so this is safe to call after a partial allocation
+/// and on any hda_init error path.
+fn free_audio_resources(ctrl: &mut HdaController) {
+    unsafe {
+        if !ctrl.corb.is_null() {
+            free_page(ctrl.corb as *mut u8);
+            ctrl.corb = core::ptr::null_mut();
+        }
+        if !ctrl.rirb.is_null() {
+            free_page(ctrl.rirb as *mut u8);
+            ctrl.rirb = core::ptr::null_mut();
+        }
+        if !ctrl.bdl.is_null() {
+            free_page(ctrl.bdl as *mut u8);
+            ctrl.bdl = core::ptr::null_mut();
+        }
+        if !ctrl.audio_buf.is_null() {
+            free(ctrl.audio_buf);
+            ctrl.audio_buf = core::ptr::null_mut();
+        }
+    }
+}
+
 fn alloc_audio_resources(ctrl: &mut HdaController) -> bool {
     // Allocate CORB buffer (256 * 4 = 1024 bytes, needs page alignment)
     let corb = unsafe { alloc_page() };
     if corb.is_null() {
         log("hda: failed to allocate CORB");
+        free_audio_resources(ctrl);
         return false;
     }
     unsafe { core::ptr::write_bytes(corb, 0, 4096); }
@@ -1354,6 +1379,7 @@ fn alloc_audio_resources(ctrl: &mut HdaController) -> bool {
     let rirb = unsafe { alloc_page() };
     if rirb.is_null() {
         log("hda: failed to allocate RIRB");
+        free_audio_resources(ctrl);
         return false;
     }
     unsafe { core::ptr::write_bytes(rirb, 0, 4096); }
@@ -1364,6 +1390,7 @@ fn alloc_audio_resources(ctrl: &mut HdaController) -> bool {
     let bdl = unsafe { alloc_page() };
     if bdl.is_null() {
         log("hda: failed to allocate BDL");
+        free_audio_resources(ctrl);
         return false;
     }
     unsafe { core::ptr::write_bytes(bdl, 0, 4096); }
@@ -1377,6 +1404,7 @@ fn alloc_audio_resources(ctrl: &mut HdaController) -> bool {
     let audio_buf = unsafe { alloc(buf_size) };
     if audio_buf.is_null() {
         log("hda: failed to allocate audio buffer");
+        free_audio_resources(ctrl);
         return false;
     }
     unsafe { core::ptr::write_bytes(audio_buf, 0, buf_size); }
@@ -1516,6 +1544,7 @@ pub extern "C" fn hda_init() -> i32 {
 
     // Reset the controller
     if !controller_reset(bar0) {
+        free_audio_resources(&mut ctrl);
         unsafe { unmap_mmio_region(bar0, bar0_size); }
         return -6;
     }
@@ -1527,12 +1556,14 @@ pub extern "C" fn hda_init() -> i32 {
 
     // Initialize CORB and RIRB
     if !corb_init(&mut ctrl) {
+        free_audio_resources(&mut ctrl);
         unsafe { unmap_mmio_region(bar0, bar0_size); }
         return -7;
     }
     log("hda: CORB initialized");
 
     if !rirb_init(&mut ctrl) {
+        free_audio_resources(&mut ctrl);
         unsafe { unmap_mmio_region(bar0, bar0_size); }
         return -8;
     }
@@ -1542,6 +1573,7 @@ pub extern "C" fn hda_init() -> i32 {
     let codec_count = discover_codecs(&mut ctrl);
     if codec_count == 0 {
         log("hda: no codecs found");
+        free_audio_resources(&mut ctrl);
         unsafe { unmap_mmio_region(bar0, bar0_size); }
         return -9;
     }
@@ -1564,6 +1596,7 @@ pub extern "C" fn hda_init() -> i32 {
 
     if !found_output {
         log("hda: no usable output path found");
+        free_audio_resources(&mut ctrl);
         unsafe { unmap_mmio_region(bar0, bar0_size); }
         return -10;
     }
@@ -1574,6 +1607,7 @@ pub extern "C" fn hda_init() -> i32 {
     // Setup output stream descriptor
     if !setup_output_stream(&mut ctrl) {
         log("hda: failed to setup output stream");
+        free_audio_resources(&mut ctrl);
         unsafe { unmap_mmio_region(bar0, bar0_size); }
         return -11;
     }

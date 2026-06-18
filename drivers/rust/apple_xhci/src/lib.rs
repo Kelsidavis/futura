@@ -280,8 +280,26 @@ fn enqueue_trb(ctrl: &mut AppleXhci, trb: Trb) {
         write_volatile(ctrl.cmd_ring.add(ctrl.cmd_enqueue as usize), trb);
     }
     ctrl.cmd_enqueue += 1;
-    // Caller is responsible for re-arming a link TRB if we wrap; the
-    // original C driver had the same simplification.
+    // Reserve the last slot for a LINK TRB that points the controller back to
+    // the start of the ring and toggles the cycle state. Without it the
+    // enqueue pointer (and the controller's dequeue pointer, which only wraps
+    // on a LINK TRB) would walk off the 64-entry command ring after a handful
+    // of transfers and eventually past the backing page.
+    if ctrl.cmd_enqueue as usize >= CMD_RING_SIZE - 1 {
+        let cycle_bit = if ctrl.cmd_cycle != 0 { TRB_FLAG_CYCLE } else { 0 };
+        let link = Trb {
+            param:   ctrl.cmd_ring_pa,
+            status:  0,
+            // LINK TRB with Toggle Cycle (TC, bit 1) set so the controller
+            // flips its consumer cycle bit when it follows the link.
+            control: (TRB_LINK << 10) | (1 << 1) | cycle_bit,
+        };
+        unsafe {
+            write_volatile(ctrl.cmd_ring.add(CMD_RING_SIZE - 1), link);
+        }
+        ctrl.cmd_enqueue = 0;
+        ctrl.cmd_cycle ^= 1;
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -171,7 +171,11 @@ int apple_audio_init(const fut_platform_info_t *info) {
 
 int apple_audio_configure(uint32_t sample_rate, uint8_t channels, uint8_t format) {
     if (!g_audio.initialized) return -1;
-    if (g_audio.state.playing) return -16;  /* EBUSY */
+    /* Reconfiguring reprograms the cluster's clock + SERDES, so it
+     * can't run while either direction is streaming — a configure()
+     * during capture would clobber the RX setup just as it would a
+     * playback. */
+    if (g_audio.state.playing || g_audio.state.capturing) return -16;  /* EBUSY */
 
     /* Basic input validation — reject obviously bad values before
      * handing them to the MCA setup which would otherwise produce

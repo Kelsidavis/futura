@@ -146,7 +146,10 @@ const AUTONEG_TIMEOUT_LOOPS: u32 = 500_000;
 fn mdio_read(phy_addr: u8, reg: u8) -> u16 {
     let drv = unsafe { &*STATE.get() };
     if let Some(read_fn) = drv.read_fn {
-        unsafe { read_fn(phy_addr, reg) }
+        // PHY and register addresses are 5-bit fields on the MII management
+        // bus; mask so an out-of-range address can't bleed into adjacent
+        // bits of the MAC's MDIO command register.
+        unsafe { read_fn(phy_addr & 0x1F, reg & 0x1F) }
     } else {
         0xFFFF
     }
@@ -155,7 +158,7 @@ fn mdio_read(phy_addr: u8, reg: u8) -> u16 {
 fn mdio_write(phy_addr: u8, reg: u8, val: u16) {
     let drv = unsafe { &*STATE.get() };
     if let Some(write_fn) = drv.write_fn {
-        unsafe { write_fn(phy_addr, reg, val) }
+        unsafe { write_fn(phy_addr & 0x1F, reg & 0x1F, val) }
     }
 }
 

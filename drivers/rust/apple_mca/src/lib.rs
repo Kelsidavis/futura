@@ -274,8 +274,12 @@ impl ClusterState {
     /// Write one 32-bit PCM sample into the TX FIFO (polled, with timeout).
     pub fn tx_write_sample(&self, sample: u32) -> bool {
         for _ in 0..10_000u32 {
-            if self.r32(FIFO_STAT) & FIFO_TX_EMPTY == 0 ||
-               (self.r32(FIFO_STAT) & FIFO_TX_LEVEL_MASK) < 16 {
+            // Only write when the TX FIFO has room. The level field counts the
+            // samples already queued; the FIFO is 16 deep. The previous
+            // "not empty OR level < 16" gate fired whenever the FIFO was
+            // non-empty — including when it was completely full — which pushed
+            // a sample into a full FIFO and triggered FIFO_TX_OVERFLOW.
+            if (self.r32(FIFO_STAT) & FIFO_TX_LEVEL_MASK) < 16 {
                 self.w32(TX_DATA, sample);
                 return true;
             }

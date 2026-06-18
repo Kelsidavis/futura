@@ -525,7 +525,11 @@ pub extern "C" fn uart16550_init(port: u16, baud: u32) -> i32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn uart16550_putc(port: u16, ch: u8) {
     let base = resolve_base(port);
-    wait_thr_empty(base);
+    // Skip the write if the holding register never drained: writing into a
+    // non-empty THR can drop the byte already queued there.
+    if !wait_thr_empty(base) {
+        return;
+    }
     io_outb(base + REG_RBR_THR, ch);
 }
 

@@ -432,12 +432,15 @@ fn mei_host_buf_free_slots(base: *mut u8) -> u8 {
     let depth = csr_cbd(csr);
     let rp = csr_cbrp(csr);
     let wp = csr_cbwp(csr);
-    // Number of filled slots
-    let filled = wp.wrapping_sub(rp) & (depth.wrapping_mul(2).wrapping_sub(1));
+    // Filled slots = wrapped difference of the 8-bit read/write pointers. The
+    // previous `& (depth*2 - 1)` mask was only valid for power-of-two depths and
+    // overflowed the u8 multiply once depth >= 128; the plain wrapping_sub
+    // matches the ME-side calculation in mei_me_buf_pending_slots.
+    let filled = wp.wrapping_sub(rp);
     if filled > depth {
         return 0;
     }
-    depth.wrapping_sub(filled)
+    depth - filled
 }
 
 /// Check how many slots the ME has written (pending reads for the host).
@@ -536,6 +539,10 @@ fn mei_read_message(
     }
 
     let msg_len = mei_hdr_length(hdr) as u32;
+    // Guard against a malformed header length before deriving the DWORD count.
+    if msg_len as usize > MEI_MAX_MSG_LEN {
+        return -1;
+    }
     let payload_dwords = ((msg_len as usize) + 3) / 4;
 
     // Wait for remaining payload DWORDs
@@ -544,6 +551,13 @@ fn mei_read_message(
             break;
         }
         thread_yield();
+    }
+
+    // If the ME never delivered the full payload, do NOT read anyway: reading
+    // payload_dwords from an under-filled ring would consume stale DWORDs and
+    // desync the read pointer for every future message.
+    if (mei_me_buf_pending_slots(base) as usize) < payload_dwords {
+        return -1;
     }
 
     // Read payload DWORDs
@@ -589,6 +603,12 @@ fn mei_read_message(
 #[unsafe(no_mangle)]
 pub extern "C" fn intel_mei_init() -> i32 {
     log("intel_mei: initializing MEI/HECI driver");
+
+    // Guard against double-init: a second call would re-map BAR0 and overwrite
+    // state.base, leaking the previous MMIO mapping (mirrors intel_dma_init).
+    if unsafe { (*MEI.get()).initialized } {
+        return 0;
+    }
 
     // Scan for Intel MEI PCI device
     let (bus, dev, func, device_id) = match find_mei_device() {

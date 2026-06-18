@@ -612,6 +612,12 @@ pub extern "C" fn lapic_send_ipi(dest: u32, vector: u8) -> i32 {
         if !(*state).initialized {
             return -1;
         }
+        // Vectors 0-15 are reserved; a fixed-delivery IPI with one of them is
+        // illegal and the LAPIC would flag it in the error-status register.
+        // (INIT/SIPI use dedicated helpers, so this only gates fixed delivery.)
+        if vector < 16 {
+            return -3;
+        }
 
         let base = (*state).base;
 

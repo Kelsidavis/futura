@@ -459,3 +459,13 @@ uint8_t apple_dcp_get_power_state(void)
     if (!g_dcp.initialized || !g_dcp.dcp) return 0xFF;
     return rust_apple_dcp_power_state(g_dcp.dcp);
 }
+
+int apple_dcp_get_mode(apple_dcp_mode_t *out)
+{
+    if (!out) return -1;
+    if (!g_dcp.initialized || !g_dcp.dcp) return -1;
+    /* rust_apple_dcp_get_mode returns 1 when it copied a live mode into
+     * `out`, 0 when no mode has been set yet — normalise to the 0/-1
+     * convention the rest of this file's public API uses. */
+    return rust_apple_dcp_get_mode(g_dcp.dcp, out) == 1 ? 0 : -1;
+}

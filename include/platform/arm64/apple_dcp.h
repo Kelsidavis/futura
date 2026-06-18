@@ -140,4 +140,15 @@ int     apple_dcp_set_power(uint8_t state);
  */
 uint8_t apple_dcp_get_power_state(void);
 
+/**
+ * Copy the active display mode (resolution / refresh / format / stride)
+ * into *out.  This is the C-level counterpart to the backlight/power
+ * getters — consumers that want the panel geometry without reaching
+ * into the framebuffer layer or the raw Rust FFI use this.
+ * @param out: destination mode struct (must be non-NULL).
+ * @return 0 on success, -1 if DCP isn't up, out is NULL, or no mode
+ *         has been set yet.
+ */
+int apple_dcp_get_mode(apple_dcp_mode_t *out);
+
 #endif /* __FUTURA_APPLE_DCP_H__ */

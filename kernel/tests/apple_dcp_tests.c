@@ -208,6 +208,21 @@ void fut_apple_dcp_test_thread(void *arg)
         } else { DCP_FAIL("get_power_state(no init)", 24); return; }
     }
 
+    /* T25: apple_dcp_get_mode(NULL out) → -1 */
+    {
+        if (apple_dcp_get_mode(NULL) == -1) {
+            DCP_PASS("get_mode(NULL out)");
+        } else { DCP_FAIL("get_mode(NULL out)", 25); return; }
+    }
+
+    /* T26: apple_dcp_get_mode(&out) without init → -1 */
+    {
+        apple_dcp_mode_t out;
+        if (apple_dcp_get_mode(&out) == -1) {
+            DCP_PASS("get_mode(no init)");
+        } else { DCP_FAIL("get_mode(no init)", 26); return; }
+    }
+
     fut_printf("[DCP-TEST] all apple_dcp guard tests passed\n");
 }
 

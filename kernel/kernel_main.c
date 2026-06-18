@@ -2121,10 +2121,10 @@ void fut_kernel_main(void) {
          * unregister/iova, set_mode/get_mode, swap_submit_build,
          * set_backlight_msg, set_power_msg, handle_msg,
          * rust_backlight/power_state NULL guards; C wrappers for
-         * set/get backlight + set/get power_state without init).
-         * ARM64-only. */
+         * set/get backlight + set/get power_state + get_mode without
+         * init). ARM64-only. */
 #ifdef __aarch64__
-        planned_tests += 24u;
+        planned_tests += 26u;
 #endif
 
         /* apple_aic + apple_ans2: T1-T5 (AIC init/pending/whoami/void

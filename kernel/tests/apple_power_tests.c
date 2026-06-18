@@ -91,11 +91,30 @@ void fut_apple_power_test_thread(void *arg)
         else { POW_FAIL("set_fan_rpm(no init)", 7); return; }
     }
 
-    /* T8: platform_init(NULL) → -1 */
+    /* T8: ambient_temp without init → 0x80000000 */
+    {
+        int32_t t = apple_power_ambient_temp();
+        if ((uint32_t)t == 0x80000000u) POW_PASS("ambient_temp(no init)");
+        else { POW_FAIL("ambient_temp(no init)", 8); return; }
+    }
+
+    /* T9: fan_rpm without init → 0 */
+    {
+        if (apple_power_fan_rpm() == 0) POW_PASS("fan_rpm(no init)");
+        else { POW_FAIL("fan_rpm(no init)", 9); return; }
+    }
+
+    /* T10: fan_target_rpm without init → 0 */
+    {
+        if (apple_power_fan_target_rpm() == 0) POW_PASS("fan_target_rpm(no init)");
+        else { POW_FAIL("fan_target_rpm(no init)", 10); return; }
+    }
+
+    /* T11: platform_init(NULL) → -1 */
     {
         int rc = apple_power_platform_init(NULL);
         if (rc == -1) POW_PASS("platform_init(NULL info)");
-        else { POW_FAIL("platform_init(NULL info)", 8); return; }
+        else { POW_FAIL("platform_init(NULL info)", 11); return; }
     }
 
     fut_printf("[POWER-TEST] all apple_power NULL-guard tests passed\n");

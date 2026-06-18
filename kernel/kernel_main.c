@@ -2084,11 +2084,12 @@ void fut_kernel_main(void) {
         planned_tests += 8u;
 #endif
 
-        /* apple_power: T1-T8 (sentinel-return guards on every public
-         * SMC accessor — temps, battery, AC, fan RPM, update).
+        /* apple_power: T1-T11 (sentinel-return guards on every public
+         * SMC accessor — cpu/gpu/ambient temps, battery, AC, fan
+         * actual/target RPM, set_fan_rpm, update, platform_init).
          * ARM64-only — apple_power lives in platform/arm64/. */
 #ifdef __aarch64__
-        planned_tests += 8u;
+        planned_tests += 11u;
 #endif
 
         /* apple_audio: T1-T13 (init-state guards on configure / play /

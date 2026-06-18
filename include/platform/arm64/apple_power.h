@@ -62,6 +62,12 @@ int32_t apple_power_cpu_temp(void);
 int32_t apple_power_gpu_temp(void);
 
 /**
+ * Get ambient temperature in millidegrees Celsius.
+ * Returns 0x80000000 sentinel when uninitialised or the key is absent.
+ */
+int32_t apple_power_ambient_temp(void);
+
+/**
  * Check if AC adapter is present.
  */
 bool apple_power_ac_present(void);
@@ -70,6 +76,17 @@ bool apple_power_ac_present(void);
  * Get battery charge percentage (0-100).
  */
 uint8_t apple_power_battery_pct(void);
+
+/**
+ * Get fan 0 actual speed in RPM (0 when uninitialised).
+ */
+uint32_t apple_power_fan_rpm(void);
+
+/**
+ * Get fan 0 target/commanded speed in RPM (0 when uninitialised or
+ * the firmware reports no commanded target).
+ */
+uint32_t apple_power_fan_target_rpm(void);
 
 /**
  * Set fan target speed in RPM.

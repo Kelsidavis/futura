@@ -72,6 +72,17 @@ int apple_power_update(apple_power_state_t *state) {
     state->fan_rpm = rust_smc_fan0_rpm(g_smc);
     state->ac_present = rust_smc_ac_present(g_smc) != 0;
 
+    /* Fan 0 target RPM (F0Tg, ui16 big-endian — same encoding the
+     * write path in apple_power_set_fan_rpm uses).  Without this the
+     * documented fan_target_rpm field stayed 0 after every update(),
+     * so callers couldn't tell the commanded speed from "no fan". */
+    {
+        uint8_t fbuf[2];
+        if (rust_smc_read_key(g_smc, KEY_F0TG, fbuf, 2) == 2) {
+            state->fan_target_rpm = ((uint16_t)fbuf[0] << 8) | fbuf[1];
+        }
+    }
+
     /* Read GPU and ambient temps */
     uint8_t buf[2];
     if (rust_smc_read_key(g_smc, KEY_TG0P, buf, 2) == 2) {
@@ -115,6 +126,14 @@ int32_t apple_power_gpu_temp(void) {
     return (int32_t)((raw * 1000) / 4);
 }
 
+int32_t apple_power_ambient_temp(void) {
+    if (!g_power_initialized || !g_smc) return 0x80000000;
+    uint8_t buf[2];
+    if (rust_smc_read_key(g_smc, KEY_TA0P, buf, 2) != 2) return 0x80000000;
+    uint16_t raw = ((uint16_t)buf[0] << 8) | buf[1];
+    return (int32_t)((raw * 1000) / 4);
+}
+
 bool apple_power_ac_present(void) {
     if (!g_power_initialized || !g_smc) return false;
     return rust_smc_ac_present(g_smc) != 0;
@@ -130,6 +149,18 @@ uint8_t apple_power_battery_pct(void) {
         full = ((uint16_t)buf[0] << 8) | buf[1];
     if (full == 0) return 0;
     return (uint8_t)((charge * 100) / full);
+}
+
+uint32_t apple_power_fan_rpm(void) {
+    if (!g_power_initialized || !g_smc) return 0;
+    return rust_smc_fan0_rpm(g_smc);
+}
+
+uint32_t apple_power_fan_target_rpm(void) {
+    if (!g_power_initialized || !g_smc) return 0;
+    uint8_t buf[2];
+    if (rust_smc_read_key(g_smc, KEY_F0TG, buf, 2) != 2) return 0;
+    return ((uint16_t)buf[0] << 8) | buf[1];
 }
 
 int apple_power_set_fan_rpm(uint32_t rpm) {

@@ -746,21 +746,34 @@ fn bdf_to_devid(bus: u8, dev: u8, func: u8) -> u16 {
 
 /// Submit a command to the command buffer ring and advance the tail pointer.
 fn submit_command(state: &mut IommuState, cmd: &CommandEntry) {
-    let idx = (state.cmd_buf_tail as usize) / 16;
-    if idx >= CMD_BUF_ENTRIES {
-        // Wrap (should not happen if tail is managed correctly)
-        state.cmd_buf_tail = 0;
+    // Position the tail will hold after this command. If it would equal the
+    // hardware head pointer, the ring is full and writing here would clobber a
+    // command the IOMMU hasn't consumed yet. Spin (bounded) for the IOMMU to
+    // drain at least one entry before proceeding.
+    let next_tail = ((state.cmd_buf_tail as usize + 16) % CMD_BUF_SIZE) as u32;
+    let mut have_space = false;
+    for _ in 0..1_000_000u32 {
+        let head = mmio_read64(state.mmio_base, MMIO_CMD_BUF_HEAD) as u32;
+        if next_tail != head {
+            have_space = true;
+            break;
+        }
+        core::hint::spin_loop();
     }
+    if !have_space {
+        // Head never advanced (e.g. IOMMU not draining). Proceed best-effort
+        // rather than hang; the prior behaviour also wrote unconditionally.
+        log("amd_iommu: command ring full; head not advancing");
+    }
+
     let actual_idx = (state.cmd_buf_tail as usize) / 16;
     unsafe {
         write_volatile(state.cmd_buf.add(actual_idx), *cmd);
     }
     fence(Ordering::SeqCst);
 
-    // Advance tail (wrapping at buffer size in bytes)
-    state.cmd_buf_tail = ((state.cmd_buf_tail as usize + 16) % CMD_BUF_SIZE) as u32;
-
-    // Write the new tail to the MMIO register
+    // Advance tail (wrapping at buffer size in bytes) and publish it.
+    state.cmd_buf_tail = next_tail;
     mmio_write64(state.mmio_base, MMIO_CMD_BUF_TAIL, state.cmd_buf_tail as u64);
 }
 
@@ -1557,7 +1570,15 @@ pub extern "C" fn amd_iommu_identity_map(bdf: u16) -> i32 {
         }
     };
 
-    // Build the 1:1 identity map (first 4 GiB)
+    // Build the 1:1 identity map (first 4 GiB).
+    //
+    // NOTE: if setup_identity_map fails partway it leaks the L4 root and any
+    // L3/L2 tables already allocated. This is an OOM-only path at IOMMU init,
+    // and a correct rollback would require threading the original alloc_page
+    // virtual addresses (currently discarded — the tables are accessed via a
+    // separate map_mmio_region view) back out for free_page, which risks a
+    // double-free in MMIO-mapped page-table teardown. The leak is left in place
+    // deliberately rather than introduce that risk.
     if !setup_identity_map(l4_phys) {
         log("amd_iommu: failed to build identity mapping");
         return -4;

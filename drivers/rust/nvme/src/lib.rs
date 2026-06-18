@@ -23,8 +23,8 @@ use core::ptr::{read_volatile, write_volatile};
 use core::sync::atomic::{Ordering, fence};
 
 use common::{
-    alloc, alloc_page, log, map_mmio_region, register, thread_yield,
-    FutBlkBackend, FutBlkDev, FutStatus,
+    alloc, alloc_page, free, free_page, log, map_mmio_region, register, thread_yield,
+    unmap_mmio_region, FutBlkBackend, FutBlkDev, FutStatus,
     FUT_BLK_ADMIN, FUT_BLK_READ, FUT_BLK_WRITE, MMIO_DEFAULT_FLAGS,
 };
 
@@ -395,7 +395,19 @@ unsafe extern "C" fn nvme_read(
     buf: *mut c_void,
 ) -> FutStatus {
     let ctrl = unsafe { &mut *(ctx as *mut NvmeController) };
+
+    // Input validation: reject null buffers, empty transfers, and ranges that
+    // fall outside the namespace.
+    if buf.is_null() || nsectors == 0 {
+        return -22; // -EINVAL
+    }
+    match lba.checked_add(nsectors as u64) {
+        Some(end) if end <= ctrl.ns_block_count => {}
+        _ => return -22, // -EINVAL: out-of-range / overflow
+    }
+
     let buf_phys = virt_to_phys(buf as *const u8);
+    let total_bytes = nsectors * ctrl.ns_block_size as usize;
 
     ctrl.io_cmd_id = ctrl.io_cmd_id.wrapping_add(1);
     let mut cmd = NvmeSubmCmd::zeroed();
@@ -403,9 +415,16 @@ unsafe extern "C" fn nvme_read(
     cmd.command_id = ctrl.io_cmd_id;
     cmd.nsid = ctrl.nsid;
     cmd.prp1 = buf_phys;
-    // For transfers > 4 KiB, prp2 = next page (simplified single-page for now)
-    if nsectors * ctrl.ns_block_size as usize > 4096 {
-        cmd.prp2 = buf_phys + 4096;
+    // PRP handling: prp1 covers the first page. A second page is described by
+    // prp2 pointing directly at that page. Anything larger than two pages would
+    // require prp2 to be a PRP-list pointer (a separate physically-contiguous
+    // page of PRP entries); building that correctly is risky to do untested, so
+    // we cap transfers at two pages (8 KiB) and reject larger requests.
+    if total_bytes > 8192 {
+        return -22; // -EINVAL: would require a PRP list
+    }
+    if total_bytes > 4096 {
+        cmd.prp2 = buf_phys + 4096; // exactly the second (and last) page
     }
     cmd.cdw10 = lba as u32;            // Starting LBA low
     cmd.cdw11 = (lba >> 32) as u32;    // Starting LBA high
@@ -425,7 +444,19 @@ unsafe extern "C" fn nvme_write(
     buf: *const c_void,
 ) -> FutStatus {
     let ctrl = unsafe { &mut *(ctx as *mut NvmeController) };
+
+    // Input validation: reject null buffers, empty transfers, and ranges that
+    // fall outside the namespace.
+    if buf.is_null() || nsectors == 0 {
+        return -22; // -EINVAL
+    }
+    match lba.checked_add(nsectors as u64) {
+        Some(end) if end <= ctrl.ns_block_count => {}
+        _ => return -22, // -EINVAL: out-of-range / overflow
+    }
+
     let buf_phys = virt_to_phys(buf as *const u8);
+    let total_bytes = nsectors * ctrl.ns_block_size as usize;
 
     ctrl.io_cmd_id = ctrl.io_cmd_id.wrapping_add(1);
     let mut cmd = NvmeSubmCmd::zeroed();
@@ -433,8 +464,15 @@ unsafe extern "C" fn nvme_write(
     cmd.command_id = ctrl.io_cmd_id;
     cmd.nsid = ctrl.nsid;
     cmd.prp1 = buf_phys;
-    if nsectors * ctrl.ns_block_size as usize > 4096 {
-        cmd.prp2 = buf_phys + 4096;
+    // PRP handling: prp1 covers the first page, prp2 the second page directly.
+    // Transfers spanning more than two pages would need prp2 to be a PRP-list
+    // pointer; we cap at two pages (8 KiB) and reject larger requests rather
+    // than build a PRP list untested.
+    if total_bytes > 8192 {
+        return -22; // -EINVAL: would require a PRP list
+    }
+    if total_bytes > 4096 {
+        cmd.prp2 = buf_phys + 4096; // exactly the second (and last) page
     }
     cmd.cdw10 = lba as u32;
     cmd.cdw11 = (lba >> 32) as u32;
@@ -470,6 +508,33 @@ static NVME_BACKEND: FutBlkBackend = FutBlkBackend {
 };
 
 // ── FFI exports ──
+
+/// Free any pages allocated so far during init and unmap BAR0, then return the
+/// supplied error code. Null pointers are skipped, so callers pass whatever has
+/// been allocated up to the point of failure (later allocations stay null).
+unsafe fn init_cleanup(
+    bar0: *mut u8,
+    bar0_size: usize,
+    admin_sq: *mut u8,
+    admin_cq: *mut u8,
+    identify_buf: *mut u8,
+    io_sq: *mut u8,
+    io_cq: *mut u8,
+    err: i32,
+) -> i32 {
+    unsafe {
+        // Disable the controller before freeing queue memory it was programmed
+        // to DMA from/to (every caller is at or after controller_enable).
+        if !bar0.is_null() { controller_disable(bar0); }
+        if !io_cq.is_null() { free_page(io_cq); }
+        if !io_sq.is_null() { free_page(io_sq); }
+        if !identify_buf.is_null() { free_page(identify_buf); }
+        if !admin_cq.is_null() { free_page(admin_cq); }
+        if !admin_sq.is_null() { free_page(admin_sq); }
+        if !bar0.is_null() { unmap_mmio_region(bar0, bar0_size); }
+    }
+    err
+}
 
 /// Initialize the NVMe controller
 /// Scans PCI for NVMe devices, sets up admin + I/O queues, identifies namespace.
@@ -557,7 +622,10 @@ pub extern "C" fn nvme_init() -> i32 {
 
     // Enable the controller
     if !controller_enable(bar0) {
-        return -5;
+        return unsafe {
+            init_cleanup(bar0, bar0_size, admin_sq as *mut u8, admin_cq as *mut u8,
+                         core::ptr::null_mut(), core::ptr::null_mut(), core::ptr::null_mut(), -5)
+        };
     }
     log("nvme: controller enabled");
 
@@ -565,7 +633,10 @@ pub extern "C" fn nvme_init() -> i32 {
     let identify_buf = unsafe { alloc_page() };
     if identify_buf.is_null() {
         log("nvme: failed to allocate identify buffer");
-        return -6;
+        return unsafe {
+            init_cleanup(bar0, bar0_size, admin_sq as *mut u8, admin_cq as *mut u8,
+                         core::ptr::null_mut(), core::ptr::null_mut(), core::ptr::null_mut(), -6)
+        };
     }
 
     let mut ctrl = NvmeController {
@@ -603,7 +674,10 @@ pub extern "C" fn nvme_init() -> i32 {
     admin_submit(&mut ctrl, &cmd);
     if let Err(e) = admin_wait_completion(&mut ctrl, cid) {
         unsafe { fut_printf(b"nvme: identify controller failed: 0x%x\n\0".as_ptr(), e as u32); }
-        return -7;
+        return unsafe {
+            init_cleanup(bar0, bar0_size, admin_sq as *mut u8, admin_cq as *mut u8,
+                         identify_buf, core::ptr::null_mut(), core::ptr::null_mut(), -7)
+        };
     }
     log("nvme: identify controller OK");
 
@@ -620,7 +694,10 @@ pub extern "C" fn nvme_init() -> i32 {
     admin_submit(&mut ctrl, &cmd);
     if let Err(e) = admin_wait_completion(&mut ctrl, cid) {
         unsafe { fut_printf(b"nvme: identify namespace failed: 0x%x\n\0".as_ptr(), e as u32); }
-        return -8;
+        return unsafe {
+            init_cleanup(bar0, bar0_size, admin_sq as *mut u8, admin_cq as *mut u8,
+                         identify_buf, core::ptr::null_mut(), core::ptr::null_mut(), -8)
+        };
     }
 
     // Parse namespace capacity and LBA format
@@ -651,7 +728,10 @@ pub extern "C" fn nvme_init() -> i32 {
     let io_sq = unsafe { alloc_page() as *mut NvmeSubmCmd };
     if io_cq.is_null() || io_sq.is_null() {
         log("nvme: failed to allocate I/O queues");
-        return -9;
+        return unsafe {
+            init_cleanup(bar0, bar0_size, admin_sq as *mut u8, admin_cq as *mut u8,
+                         identify_buf, io_sq as *mut u8, io_cq as *mut u8, -9)
+        };
     }
     unsafe {
         core::ptr::write_bytes(io_cq, 0, IO_QUEUE_SIZE as usize);
@@ -670,7 +750,10 @@ pub extern "C" fn nvme_init() -> i32 {
     admin_submit(&mut ctrl, &cmd);
     if let Err(e) = admin_wait_completion(&mut ctrl, cid) {
         unsafe { fut_printf(b"nvme: create I/O CQ failed: 0x%x\n\0".as_ptr(), e as u32); }
-        return -10;
+        return unsafe {
+            init_cleanup(bar0, bar0_size, admin_sq as *mut u8, admin_cq as *mut u8,
+                         identify_buf, io_sq as *mut u8, io_cq as *mut u8, -10)
+        };
     }
 
     // Create I/O SQ
@@ -685,7 +768,10 @@ pub extern "C" fn nvme_init() -> i32 {
     admin_submit(&mut ctrl, &cmd);
     if let Err(e) = admin_wait_completion(&mut ctrl, cid) {
         unsafe { fut_printf(b"nvme: create I/O SQ failed: 0x%x\n\0".as_ptr(), e as u32); }
-        return -11;
+        return unsafe {
+            init_cleanup(bar0, bar0_size, admin_sq as *mut u8, admin_cq as *mut u8,
+                         identify_buf, io_sq as *mut u8, io_cq as *mut u8, -11)
+        };
     }
 
     ctrl.io_sq = io_sq;
@@ -704,7 +790,17 @@ pub extern "C" fn nvme_init() -> i32 {
     let blkdev = unsafe { alloc(core::mem::size_of::<FutBlkDev>()) as *mut FutBlkDev };
     if blkdev.is_null() {
         log("nvme: failed to allocate blkdev");
-        return -12;
+        // The controller copy was already published into the NVME global and a
+        // copy heap-allocated at ctrl_ptr; tear both down before freeing the
+        // queue memory they reference.
+        unsafe {
+            NVME = None;
+            free(ctrl_ptr as *mut u8);
+        }
+        return unsafe {
+            init_cleanup(bar0, bar0_size, admin_sq as *mut u8, admin_cq as *mut u8,
+                         identify_buf, io_sq as *mut u8, io_cq as *mut u8, -12)
+        };
     }
     unsafe {
         (*blkdev).name = b"nvme0n1\0".as_ptr() as *const c_char;

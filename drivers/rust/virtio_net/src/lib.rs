@@ -338,7 +338,7 @@ impl VirtQueue {
         }
     }
 
-    fn enqueue_tx(&mut self, data_phys: u64, data_len: usize) -> Result<(), FutStatus> {
+    fn enqueue_tx(&mut self, data_phys: u64, data_len: usize) -> Result<u16, FutStatus> {
         if self.desc.is_null() || self.avail.is_null() {
             return Err(ENODEV);
         }
@@ -354,15 +354,19 @@ impl VirtQueue {
                 next: 0,
             });
 
-            let avail = &mut *self.avail;
-            let slot = avail.idx % self.size;
-            avail.ring[slot as usize] = desc_idx;
+            // Raw-pointer volatile accesses to the device-shared avail ring,
+            // mirroring enqueue_rx: never form an &mut to DMA memory, and keep
+            // the device/CPU views consistent across the boundary. The previous
+            // &mut + plain stores could be reordered/elided around the fence.
+            let avail_idx = ptr::read_volatile(addr_of!((*self.avail).idx));
+            let slot = avail_idx % self.size;
+            write_volatile(addr_of_mut!((*self.avail).ring[slot as usize]), desc_idx);
             core::sync::atomic::fence(Ordering::SeqCst);
-            avail.idx = avail.idx.wrapping_add(1);
+            write_volatile(addr_of_mut!((*self.avail).idx), avail_idx.wrapping_add(1));
         }
 
         self.next_avail.fetch_add(1, Ordering::Release);
-        Ok(())
+        Ok(desc_idx)
     }
 
     fn enqueue_rx(&mut self, buf_phys: u64, buf_len: usize) -> Result<(), FutStatus> {
@@ -905,10 +909,13 @@ impl VirtioNetDevice {
 
         // Enqueue to TX virtqueue (header + frame)
         let total_len = VIRTIO_NET_HDR_SIZE + len;
-        if let Err(e) = self.tx_queue.enqueue_tx(self.tx_buffer_phys, total_len) {
-            self.io_lock.unlock();
-            return e;
-        }
+        let desc_idx = match self.tx_queue.enqueue_tx(self.tx_buffer_phys, total_len) {
+            Ok(idx) => idx,
+            Err(e) => {
+                self.io_lock.unlock();
+                return e;
+            }
+        };
 
         // Notify device
         self.notify_queue(TX_QUEUE_IDX);
@@ -917,6 +924,12 @@ impl VirtioNetDevice {
         let mut retries = 0;
         while !self.tx_queue.has_used() {
             if retries > 1000 {
+                // Reclaim the descriptor so repeated timeouts don't permanently
+                // exhaust the free list and wedge the TX ring. The published
+                // avail entry is left in place; a device that later consumes it
+                // would at worst re-send one stale frame — preferable to leaking
+                // a descriptor on every timeout.
+                self.tx_queue.free_desc(desc_idx);
                 self.io_lock.unlock();
                 return ETIMEDOUT;
             }

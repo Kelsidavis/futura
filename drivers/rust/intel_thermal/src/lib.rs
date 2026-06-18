@@ -112,6 +112,9 @@ const THERM_STATUS_THRESH2: u64 = 1 << 8;
 const THERM_DIGITAL_READOUT_SHIFT: u32 = 16;
 const THERM_DIGITAL_READOUT_MASK: u64 = 0x7F << 16;
 
+/// Reading Valid bit (bit 31): the digital readout is only meaningful when set.
+const THERM_STATUS_READING_VALID: u64 = 1 << 31;
+
 /// Resolution field: bits[30:27].
 const THERM_RESOLUTION_SHIFT: u32 = 27;
 const THERM_RESOLUTION_MASK: u64 = 0xF << 27;
@@ -293,6 +296,17 @@ fn read_rapl_units() -> (u32, u32, u32) {
 fn read_digital_readout(msr: u32) -> u32 {
     let val = rdmsr(msr);
     ((val & THERM_DIGITAL_READOUT_MASK) >> THERM_DIGITAL_READOUT_SHIFT) as u32
+}
+
+/// Read the digital readout only if the Reading Valid bit is set. Returns None
+/// when the sensor reading isn't valid yet, so callers don't compute
+/// `tjmax - 0 = tjmax` and report a bogus near-TjMax temperature.
+fn read_valid_readout(msr: u32) -> Option<u32> {
+    let val = rdmsr(msr);
+    if val & THERM_STATUS_READING_VALID == 0 {
+        return None;
+    }
+    Some(((val & THERM_DIGITAL_READOUT_MASK) >> THERM_DIGITAL_READOUT_SHIFT) as u32)
 }
 
 /// Read the temperature resolution from a thermal status MSR.
@@ -491,8 +505,10 @@ pub extern "C" fn intel_thermal_cpu_temp() -> i32 {
         return 0;
     }
 
-    let readout = read_digital_readout(MSR_IA32_THERM_STATUS);
-    state.tjmax_c as i32 - readout as i32
+    match read_valid_readout(MSR_IA32_THERM_STATUS) {
+        Some(readout) => state.tjmax_c as i32 - readout as i32,
+        None => 0, // reading not valid yet
+    }
 }
 
 /// Get the current package temperature in degrees C.
@@ -506,8 +522,10 @@ pub extern "C" fn intel_thermal_pkg_temp() -> i32 {
         return 0;
     }
 
-    let readout = read_digital_readout(MSR_IA32_PKG_THERM_STATUS);
-    state.tjmax_c as i32 - readout as i32
+    match read_valid_readout(MSR_IA32_PKG_THERM_STATUS) {
+        Some(readout) => state.tjmax_c as i32 - readout as i32,
+        None => 0, // reading not valid yet
+    }
 }
 
 /// Get the TjMax (thermal junction maximum) in degrees C.

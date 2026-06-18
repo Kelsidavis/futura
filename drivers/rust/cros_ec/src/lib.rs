@@ -456,8 +456,11 @@ pub extern "C" fn cros_ec_read_kmatrix(out: *mut u8, max_len: u32) -> i32 {
 
 /* Diff the EC keyboard matrix against a previous snapshot and report
  * key transitions. Each transition is written to `events` as
- * (col << 4) | row, with the high bit (0x80) set on key-down and clear
- * on key-up. Returns the number of events written (clamped to max_events).
+ * (col << 3) | row, with the high bit (0x80) set on key-down and clear
+ * on key-up. Decode as: col = (val >> 3) & 0x0F, row = val & 0x07,
+ * pressed = val & 0x80. (col is 0..12 — 4 bits — and must not share bit 7
+ * with the pressed flag, which the older col<<4 layout did for col >= 8.)
+ * Returns the number of events written (clamped to max_events).
  *
  * Typical usage from a polling thread:
  *   static mut prev: [u8; 13] = [0; 13];
@@ -488,7 +491,10 @@ pub extern "C" fn cros_ec_kmatrix_diff(
             if diff & bit == 0 { continue; }
             if count >= max_events { return count as i32; }
             let pressed = (c & bit) != 0;
-            let encoded = ((col as u8) << 4) | row;
+            // col (0..12) in bits [6:3], row (0..7) in bits [2:0]; bit 7 is the
+            // pressed flag. The old (col << 4) layout put col 8..12 into bit 7,
+            // colliding with the flag and aliasing those columns.
+            let encoded = ((col as u8) << 3) | row;
             let val = if pressed { encoded | 0x80 } else { encoded };
             unsafe { *events.add(count as usize) = val; }
             count += 1;

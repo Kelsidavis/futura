@@ -361,6 +361,14 @@ struct VtdState {
     // In practice, we allocate page tables on demand.
     pt_roots: [u64; 256],
 
+    // Owning full 16-bit BDF for each pt_roots slot.  Because bdf_to_index()
+    // hashes a 16-bit BDF into an 8-bit index, distinct devices can collide on
+    // the same slot.  Without this guard a colliding device would silently
+    // share another device's page table -- a DMA-isolation failure.  Each slot
+    // records the BDF that owns it (BDF_NONE = empty); a colliding *different*
+    // BDF is rejected rather than allowed to corrupt the mapping.
+    pt_owners: [u16; 256],
+
     // Next domain ID to assign
     next_domain_id: u16,
 
@@ -705,6 +713,16 @@ fn alloc_domain_id(state: &mut VtdState) -> u16 {
     id
 }
 
+/// Sentinel for an unowned pt_roots slot.  0xFFFF is bus 255, dev 31, func 7,
+/// which is not a probeable PCI device (it is the conventional "no device"
+/// encoding), so it is safe to use as the empty marker.
+const BDF_NONE: u16 = 0xFFFF;
+
+/// Compose the full 16-bit BDF (bus[15:8], dev[7:3], func[2:0]).
+fn bdf_full(bus: u8, dev: u8, func: u8) -> u16 {
+    ((bus as u16) << 8) | ((dev as u16) << 3) | (func as u16)
+}
+
 /// Encode a BDF (bus/device/function) into an index for our pt_roots array.
 /// We use a simple hash: bus XOR ((dev << 3) | func) to fit in 256 entries.
 /// For a full implementation this would be a larger table.
@@ -713,6 +731,24 @@ fn bdf_to_index(bus: u8, dev: u8, func: u8) -> usize {
     // Simple modular index -- collisions are possible but acceptable for
     // a driver that manages a moderate number of devices
     (((bus as usize) << 4) ^ devfn) & 0xFF
+}
+
+/// Resolve a BDF to its pt_roots slot index with a collision guard.
+///
+/// bdf_to_index() hashes a 16-bit BDF into an 8-bit index, so two distinct
+/// devices can map to the same slot.  We additionally track the owning BDF per
+/// slot: the slot must be either empty (BDF_NONE) or owned by this exact BDF.
+/// If it is owned by a *different* BDF the slots have collided, and we refuse
+/// (return None) rather than silently route this device's DMA through another
+/// device's page table -- which would break DMA isolation.
+fn resolve_bdf_slot(state: &VtdState, bus: u8, dev: u8, func: u8) -> Option<usize> {
+    let idx = bdf_to_index(bus, dev, func);
+    let owner = state.pt_owners[idx];
+    if owner == BDF_NONE || owner == bdf_full(bus, dev, func) {
+        Some(idx)
+    } else {
+        None
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1046,6 +1082,7 @@ pub extern "C" fn intel_vtd_init(mmio_base_phys: u64) -> i32 {
         ctx_tables: [0u64; ROOT_TABLE_ENTRIES],
         ctx_table_virts: [core::ptr::null_mut(); ROOT_TABLE_ENTRIES],
         pt_roots: [0u64; 256],
+        pt_owners: [BDF_NONE; 256],
         next_domain_id: 1,
         enabled: false,
     };
@@ -1199,9 +1236,16 @@ pub extern "C" fn intel_vtd_identity_map(bus: u8, dev: u8, func: u8) -> i32 {
     // Allocate a domain ID
     let domain_id = alloc_domain_id(state);
 
-    // Store the page table root
-    let idx = bdf_to_index(bus, dev, func);
+    // Store the page table root (refuse on a hash collision with another BDF)
+    let idx = match resolve_bdf_slot(state, bus, dev, func) {
+        Some(i) => i,
+        None => {
+            log("intel_vtd: BDF slot collision; refusing identity map");
+            return -5;
+        }
+    };
     state.pt_roots[idx] = pml4_phys;
+    state.pt_owners[idx] = bdf_full(bus, dev, func);
 
     // Install context table entry
     if !write_context_entry(state, bus, dev, func, pml4_phys, domain_id, CTX_TT_MULTI_LEVEL) {
@@ -1261,7 +1305,15 @@ pub extern "C" fn intel_vtd_map_device(
     let read  = (flags & 1) != 0;
     let write = (flags & 2) != 0;
 
-    let idx = bdf_to_index(bus, dev, func);
+    // Refuse if this BDF collides with a different device on the same slot,
+    // rather than routing its DMA through the other device's page table.
+    let idx = match resolve_bdf_slot(state, bus, dev, func) {
+        Some(i) => i,
+        None => {
+            log("intel_vtd: BDF slot collision; refusing map");
+            return -6;
+        }
+    };
 
     // Ensure the device has a page table allocated
     if state.pt_roots[idx] == 0 {
@@ -1273,6 +1325,7 @@ pub extern "C" fn intel_vtd_map_device(
             }
         };
         state.pt_roots[idx] = pml4_phys;
+        state.pt_owners[idx] = bdf_full(bus, dev, func);
 
         // Allocate domain and install context entry
         let domain_id = alloc_domain_id(state);
@@ -1343,7 +1396,13 @@ pub extern "C" fn intel_vtd_unmap_device(
         }
     };
 
-    let idx = bdf_to_index(bus, dev, func);
+    let idx = match resolve_bdf_slot(state, bus, dev, func) {
+        Some(i) => i,
+        None => {
+            log("intel_vtd: BDF slot collision; refusing unmap");
+            return -2;
+        }
+    };
     let pml4_phys = state.pt_roots[idx];
     if pml4_phys == 0 {
         log("intel_vtd: device has no page table");

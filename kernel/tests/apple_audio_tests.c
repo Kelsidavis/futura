@@ -140,6 +140,36 @@ void fut_apple_audio_test_thread(void *arg)
         }
     }
 
+    /* T14: capture_start() without init → -1 */
+    {
+        if (apple_audio_capture_start() == -1) {
+            AUD_PASS("capture_start(no init)");
+        } else {
+            AUD_FAIL("capture_start(no init)", 14);
+            return;
+        }
+    }
+
+    /* T15: capture_stop() without init → -1 */
+    {
+        if (apple_audio_capture_stop() == -1) {
+            AUD_PASS("capture_stop(no init)");
+        } else {
+            AUD_FAIL("capture_stop(no init)", 15);
+            return;
+        }
+    }
+
+    /* T16: read(NULL, len) → -1 (NULL-arg + no-init reject) */
+    {
+        if (apple_audio_read(NULL, 64) == -1) {
+            AUD_PASS("read(NULL)");
+        } else {
+            AUD_FAIL("read(NULL)", 16);
+            return;
+        }
+    }
+
     fut_printf("[AUDIO-TEST] all apple_audio guard tests passed\n");
 }
 

@@ -2092,12 +2092,13 @@ void fut_kernel_main(void) {
         planned_tests += 11u;
 #endif
 
-        /* apple_audio: T1-T13 (init-state guards on configure / play /
+        /* apple_audio: T1-T16 (init-state guards on configure / play /
          * write / volume / state / platform_init, plus configure
          * input validation: bad sample_rate / channels, get_volume
-         * sentinel). ARM64-only. */
+         * sentinel, and capture_start / capture_stop / read guards).
+         * ARM64-only. */
 #ifdef __aarch64__
-        planned_tests += 13u;
+        planned_tests += 16u;
 #endif
 
         /* apple_hid: T1-T7 (init guard, has_key/getchar/poll without

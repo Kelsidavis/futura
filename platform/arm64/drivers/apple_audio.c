@@ -206,6 +206,10 @@ int apple_audio_configure(uint32_t sample_rate, uint8_t channels, uint8_t format
 int apple_audio_play_start(void) {
     if (!g_audio.initialized) return -1;
     if (g_audio.state.playing) return 0;
+    /* The speaker cluster's serial engine can't run an independent TX
+     * stream while it's deserializing for capture — refuse rather than
+     * silently reprogram SERDES out from under an active recording. */
+    if (g_audio.state.capturing) return -16;  /* EBUSY */
 
     /* If we hold an MCA handle but configure() was never called,
      * push a default setup so the cluster is ready to accept data.
@@ -246,6 +250,66 @@ int apple_audio_play_stop(void) {
 
     g_audio.state.playing = false;
     return 0;
+}
+
+int apple_audio_capture_start(void) {
+    if (!g_audio.initialized) return -1;
+    if (g_audio.state.capturing) return 0;
+    /* Mirror of play_start: one cluster, one serial direction at a
+     * time in this polled driver. */
+    if (g_audio.state.playing) return -16;  /* EBUSY */
+
+    /* Program the cluster for I2S capture.  As in play_start,
+     * substitute the default rate/channels when configure() was never
+     * called so the RX clock domain isn't set up from a zero rate. */
+    if (g_audio.mca) {
+        if (g_audio.state.sample_rate == 0) {
+            g_audio.state.sample_rate = APPLE_AUDIO_DEFAULT_RATE;
+        }
+        if (g_audio.state.channels == 0) {
+            g_audio.state.channels = 2;
+        }
+        int rc = rust_mca_setup_capture(g_audio.mca, g_audio.cluster,
+                                        MCA_MCLK_SEL, MCA_MCLK_HZ,
+                                        g_audio.state.sample_rate);
+        if (rc != 0) {
+            fut_printf("[AUDIO] rust_mca_setup_capture failed: %d\n", rc);
+            return rc;
+        }
+    }
+
+    g_audio.state.capturing = true;
+    return 0;
+}
+
+int apple_audio_capture_stop(void) {
+    if (!g_audio.initialized) return -1;
+    if (!g_audio.state.capturing) return 0;
+
+    if (g_audio.mca) {
+        rust_mca_stop(g_audio.mca, g_audio.cluster);
+    }
+
+    g_audio.state.capturing = false;
+    return 0;
+}
+
+int apple_audio_read(void *data, uint32_t len) {
+    if (!g_audio.initialized || !data || len == 0) return -1;
+    /* Nothing to hand back unless a capture stream is live.  Returning
+     * 0 (not -1) lets a caller poll read() in a loop without treating
+     * "no samples yet" as a fatal error. */
+    if (!g_audio.state.capturing) return 0;
+    if (!g_audio.mca) return 0;  /* probed but no MCA handle — drop silently */
+
+    /* MCA RX FIFO is 32-bit PCM words; only whole samples come out. */
+    uint32_t nsamples = len / 4;
+    if (nsamples == 0) return 0;
+
+    int32_t got = rust_mca_rx_read(g_audio.mca, g_audio.cluster,
+                                   (uint32_t *)data, (uint64_t)nsamples);
+    if (got <= 0) return 0;  /* FIFO empty or error — caller retries */
+    return got * 4;
 }
 
 int apple_audio_write(const void *data, uint32_t len) {

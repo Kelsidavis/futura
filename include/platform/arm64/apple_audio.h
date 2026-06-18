@@ -73,6 +73,30 @@ int apple_audio_play_stop(void);
 int apple_audio_write(const void *data, uint32_t len);
 
 /**
+ * Start audio capture (microphone / line-in) on the MCA cluster.
+ * Refuses with -16 (EBUSY) while playback is active — the polled
+ * single-cluster driver runs one serial direction at a time.
+ * @return: 0 on success, -1 if not initialised, negative on MCA error.
+ */
+int apple_audio_capture_start(void);
+
+/**
+ * Stop audio capture.
+ * @return: 0 on success (or if not capturing), -1 if not initialised.
+ */
+int apple_audio_capture_stop(void);
+
+/**
+ * Read captured PCM samples from the MCA RX FIFO (polled).  Returns 0
+ * when no capture is active or the FIFO is momentarily empty, so it is
+ * safe to call in a poll loop.
+ * @param data: Destination buffer (32-bit PCM words)
+ * @param len: Buffer size in bytes
+ * @return: Bytes read, or -1 on a NULL/zero-length/uninitialised call.
+ */
+int apple_audio_read(void *data, uint32_t len);
+
+/**
  * Get current audio state.
  */
 int apple_audio_get_state(apple_audio_state_t *state);

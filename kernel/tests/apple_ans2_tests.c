@@ -79,6 +79,58 @@ void fut_apple_ans2_test_thread(void *arg)
         ANS2_PASS("poll(NULL) no-op");
     }
 
+    /* ---- Public C wrappers (no controller on QEMU virt) ---- */
+
+    /* T8: apple_ans2_read without init → -1 */
+    {
+        uint8_t buf[512] = {0};
+        if (apple_ans2_read(0, 1, buf) == -1) ANS2_PASS("c_read(no init)");
+        else { ANS2_FAIL("c_read(no init)", 8); return; }
+    }
+
+    /* T9: apple_ans2_read(NULL buf) → -1 */
+    {
+        if (apple_ans2_read(0, 1, NULL) == -1) ANS2_PASS("c_read(NULL buf)");
+        else { ANS2_FAIL("c_read(NULL buf)", 9); return; }
+    }
+
+    /* T10: apple_ans2_write without init → -1 */
+    {
+        uint8_t buf[512] = {0};
+        if (apple_ans2_write(0, 1, buf) == -1) ANS2_PASS("c_write(no init)");
+        else { ANS2_FAIL("c_write(no init)", 10); return; }
+    }
+
+    /* T11: apple_ans2_write(NULL buf) → -1 */
+    {
+        if (apple_ans2_write(0, 1, NULL) == -1) ANS2_PASS("c_write(NULL buf)");
+        else { ANS2_FAIL("c_write(NULL buf)", 11); return; }
+    }
+
+    /* T12: apple_ans2_is_ready without init → false */
+    {
+        if (apple_ans2_is_ready() == false) ANS2_PASS("c_is_ready(no init)");
+        else { ANS2_FAIL("c_is_ready(no init)", 12); return; }
+    }
+
+    /* T13: apple_ans2_max_lba without init → 0 */
+    {
+        if (apple_ans2_max_lba() == 0) ANS2_PASS("c_max_lba(no init)");
+        else { ANS2_FAIL("c_max_lba(no init)", 13); return; }
+    }
+
+    /* T14: apple_ans2_sector_size without init → 0 */
+    {
+        if (apple_ans2_sector_size() == 0) ANS2_PASS("c_sector_size(no init)");
+        else { ANS2_FAIL("c_sector_size(no init)", 14); return; }
+    }
+
+    /* T15: apple_ans2_poll without init → no-op */
+    {
+        apple_ans2_poll();
+        ANS2_PASS("c_poll(no init) no-op");
+    }
+
     fut_printf("[ANS2-TEST] all apple_ans2 NULL-guard tests passed\n");
 }
 

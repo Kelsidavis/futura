@@ -42,6 +42,37 @@
 bool fut_apple_ans2_platform_init(const fut_platform_info_t *info);
 
 /* ============================================================
+ *   Public C I/O API
+ *
+ * Reachable wrappers over the retained controller handle.  All return
+ * a sentinel (-1 / false / 0) when the controller never initialised,
+ * which is the case on every non-Apple ARM64 boot.  On Apple hardware
+ * the namespace is also published to the generic block layer as
+ * "nvme0" once IDENTIFY completes, so most callers go through
+ * fut_blockdev_* instead of these directly.
+ * ============================================================ */
+
+/** Read @count sectors from @lba into @buf.  Returns sectors-read, or
+ *  -1 on error / uninitialised / NULL buffer. */
+int apple_ans2_read(uint64_t lba, uint32_t count, void *buf);
+
+/** Write @count sectors from @buf to @lba.  Returns sectors-written,
+ *  or -1 on error / uninitialised / NULL buffer. */
+int apple_ans2_write(uint64_t lba, uint32_t count, const void *buf);
+
+/** True once the controller has reset and identified its namespace. */
+bool apple_ans2_is_ready(void);
+
+/** Maximum LBA, or 0 when uninitialised / not yet identified. */
+uint64_t apple_ans2_max_lba(void);
+
+/** Logical sector size in bytes, or 0 when uninitialised. */
+uint32_t apple_ans2_sector_size(void);
+
+/** Pump the RTKit RX FIFO so in-flight completions are dispatched. */
+void apple_ans2_poll(void);
+
+/* ============================================================
  *   Rust driver FFI (drivers/rust/apple_ans2)
  * ============================================================ */
 

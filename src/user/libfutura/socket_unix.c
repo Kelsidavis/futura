@@ -56,6 +56,12 @@ static inline long sys_connect(int sockfd, const void *addr, uint32_t addrlen) {
 #define UNIX_MAX_CONNECTIONS   32
 #define UNIX_MAX_PENDING_CONN  16
 
+/* Upper bound on descriptors carried in a single SCM_RIGHTS message.
+ * Matches Linux's SCM_MAX_FD and bounds the per-packet fd allocation so a
+ * caller-controlled msg_controllen can't request an enormous (or, after a
+ * size_t multiply, wrapped) allocation. */
+#define UNIX_SCM_MAX_FDS       253
+
 struct unix_packet_fd {
     char path[128];
 };
@@ -356,6 +362,9 @@ static int extract_fds_from_control(const struct msghdr *msg,
     if (total_fds == 0) {
         return 0;
     }
+    if (total_fds > UNIX_SCM_MAX_FDS) {
+        return -1;
+    }
 
     struct unix_packet_fd *fds = malloc(total_fds * sizeof(struct unix_packet_fd));
     if (!fds) {
@@ -637,6 +646,9 @@ static ssize_t socket_stream_send(struct unix_stream *stream,
     if (!stream || stream->state != STREAM_CONNECTED || !stream->connection) {
         return -1;
     }
+    if (!msg) {
+        return -1;
+    }
     struct unix_connection *conn = stream->connection;
     int local_index = stream->endpoint_index;
     int remote_index = 1 - local_index;
@@ -681,6 +693,9 @@ static ssize_t socket_stream_recv(struct unix_stream *stream,
     if (!stream || stream->state != STREAM_CONNECTED || !stream->connection) {
         return -1;
     }
+    if (!msg) {
+        return -1;
+    }
     struct unix_connection *conn = stream->connection;
     int index = stream->endpoint_index;
 
@@ -720,18 +735,57 @@ static ssize_t socket_stream_recv(struct unix_stream *stream,
     }
     pkt->offset += copied;
 
-    if (!pkt->control_sent && pkt->fd_count > 0 &&
-        msg->msg_control && msg->msg_controllen >= sizeof(struct cmsghdr) + pkt->fd_count * sizeof(int)) {
-        struct cmsghdr *cmsg = (struct cmsghdr *)msg->msg_control;
-        cmsg->cmsg_level = SOL_SOCKET;
-        cmsg->cmsg_type = SCM_RIGHTS;
-        cmsg->cmsg_len = sizeof(struct cmsghdr) + pkt->fd_count * sizeof(int);
-        int *fd_data = (int *)((char *)cmsg + sizeof(struct cmsghdr));
-        for (size_t i = 0; i < pkt->fd_count; ++i) {
-            fd_data[i] = reopen_fd_for_path(pkt->fds[i].path);
+    if (!pkt->control_sent && pkt->fd_count > 0) {
+        size_t need = sizeof(struct cmsghdr) + pkt->fd_count * sizeof(int);
+        if (msg->msg_control && msg->msg_controllen >= need) {
+            /* Reopen every descriptor up front so a failure partway through
+             * can be rolled back without leaking the ones already opened or
+             * handing back a half-populated SCM_RIGHTS array. */
+            int *opened = malloc(pkt->fd_count * sizeof(int));
+            bool ok = (opened != NULL);
+            size_t n = 0;
+            for (; ok && n < pkt->fd_count; ++n) {
+                opened[n] = reopen_fd_for_path(pkt->fds[n].path);
+                if (opened[n] < 0) {
+                    ok = false;
+                    break;
+                }
+            }
+            if (ok) {
+                struct cmsghdr *cmsg = (struct cmsghdr *)msg->msg_control;
+                cmsg->cmsg_level = SOL_SOCKET;
+                cmsg->cmsg_type = SCM_RIGHTS;
+                cmsg->cmsg_len = need;
+                int *fd_data = (int *)((char *)cmsg + sizeof(struct cmsghdr));
+                for (size_t i = 0; i < pkt->fd_count; ++i) {
+                    fd_data[i] = opened[i];
+                }
+                msg->msg_flags = 0;
+                msg->msg_controllen = need;
+            } else {
+                /* Roll back the descriptors opened before the failure. */
+                for (size_t i = 0; i < n; ++i) {
+                    if (opened[i] >= 0) {
+                        fut_fd_path_forget(opened[i]);
+                        sys_close(opened[i]);
+                    }
+                }
+                msg->msg_flags = MSG_CTRUNC;
+                msg->msg_controllen = 0;
+            }
+            free(opened);
+        } else {
+            /* No control buffer, or it is too small to hold the descriptors:
+             * discard them with MSG_CTRUNC rather than leaving the packet
+             * undeliverable (which would wedge the stream in a 0-byte recv
+             * loop). */
+            msg->msg_flags = MSG_CTRUNC;
+            if (msg->msg_control) {
+                msg->msg_controllen = 0;
+            }
         }
-        msg->msg_flags = 0;
-        msg->msg_controllen = cmsg->cmsg_len;
+        /* Either way the control is now resolved, so the packet may be
+         * reclaimed once its data is drained. */
         pkt->control_sent = true;
     } else if (msg->msg_control && msg->msg_controllen > 0) {
         struct cmsghdr *cmsg = (struct cmsghdr *)msg->msg_control;

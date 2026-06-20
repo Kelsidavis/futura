@@ -40,6 +40,8 @@ typedef unsigned short sa_family_t;
 
 #define MSG_OOB         0x01
 #define MSG_PEEK        0x02
+#define MSG_CTRUNC      0x08
+#define MSG_TRUNC       0x20
 #define MSG_DONTWAIT    0x40
 #define MSG_NOSIGNAL    0x4000
 #define MSG_CMSG_CLOEXEC 0x40000000

@@ -30,6 +30,26 @@ struct fut_dir {
     int64_t handle;
 };
 
+/* The posixd protocol and the kernel both report failure as a negative
+ * -errno value (see the struct comments in <user/futura_posix.h>). POSIX
+ * userland must instead return -1 and set errno to the positive code, so
+ * funnel daemon/kernel results through this helper. */
+static long posix_result(long value) {
+    if (value < 0) {
+        errno = (int)-value;
+        return -1;
+    }
+    return value;
+}
+
+/* Transport-level failure (a FIPC send/recv that fails or is truncated)
+ * carries no errno of its own; surface it as EIO under the same
+ * return-(-1) contract. */
+static int posix_transport_fail(void) {
+    errno = EIO;
+    return -1;
+}
+
 /**
  * Initialize POSIX subsystem (connect to posixd).
  */
@@ -53,11 +73,8 @@ int open(const char *path, int flags, ...) {
         return -1;
     }
     if (!posixd_channel) {
-        if (posix_init() < 0) {
-            return -1;
-        }
-        if (!posixd_channel) {
-            return -1;
+        if (posix_init() < 0 || !posixd_channel) {
+            return posix_transport_fail();
         }
     }
 
@@ -93,20 +110,21 @@ int open(const char *path, int flags, ...) {
     int ret = fut_fipc_send(posixd_channel, POSIXD_MSG_OPEN,
                             &msg.req, sizeof(msg.req));
     if (ret < 0) {
-        return -1;
+        return posix_transport_fail();
     }
 
     /* Receive response */
     uint8_t resp_buffer[256];
     ssize_t recv_ret = fut_fipc_recv(posixd_channel, resp_buffer, sizeof(resp_buffer));
     if (recv_ret < (ssize_t)(sizeof(struct fut_fipc_msg) + sizeof(struct posixd_open_resp))) {
-        return -1;
+        return posix_transport_fail();
     }
 
     struct fut_fipc_msg *resp_msg = (struct fut_fipc_msg *)resp_buffer;
     struct posixd_open_resp *resp = (struct posixd_open_resp *)resp_msg->payload;
 
-    return resp->fd;
+    /* resp->fd is the descriptor, or a negative -errno on failure. */
+    return (int)posix_result(resp->fd);
 }
 
 /**
@@ -133,22 +151,15 @@ int close(int fd) {
         return 0;
     }
 
+    /* No posixd available — close directly via the kernel. sys_close
+     * returns 0 or a negative -errno. */
     if (!posixd_channel && posix_init() < 0) {
         fut_fd_path_forget(fd);
-        int ret = (int)sys_close(fd);
-        if (ret >= 0) {
-            errno = 0;  /* Clear errno on success */
-        }
-        return ret;
+        return (int)posix_result(sys_close(fd));
     }
-
     if (!posixd_channel) {
         fut_fd_path_forget(fd);
-        int ret = (int)sys_close(fd);
-        if (ret >= 0) {
-            errno = 0;  /* Clear errno on success */
-        }
-        return ret;
+        return (int)posix_result(sys_close(fd));
     }
 
     struct posixd_close_req req = { .fd = fd };
@@ -156,10 +167,22 @@ int close(int fd) {
     /* Send request */
     int ret = fut_fipc_send(posixd_channel, POSIXD_MSG_CLOSE,
                             &req, sizeof(req));
-
-    /* Phase 3: Wait for response */
     fut_fd_path_forget(fd);
-    return ret;
+    if (ret < 0) {
+        return posix_transport_fail();
+    }
+
+    /* Read the daemon's reply: leaving it unread would desync the channel
+     * for the next request, and the close result itself was being dropped. */
+    uint8_t resp_buffer[256];
+    ssize_t recv_ret = fut_fipc_recv(posixd_channel, resp_buffer, sizeof(resp_buffer));
+    if (recv_ret < (ssize_t)(sizeof(struct fut_fipc_msg) + sizeof(struct posixd_close_resp))) {
+        return posix_transport_fail();
+    }
+
+    struct fut_fipc_msg *resp_msg = (struct fut_fipc_msg *)resp_buffer;
+    struct posixd_close_resp *resp = (struct posixd_close_resp *)resp_msg->payload;
+    return (int)posix_result(resp->result);
 }
 
 /**
@@ -167,6 +190,7 @@ int close(int fd) {
  */
 ssize_t read(int fd, void *buf, size_t count) {
     if (!buf) {
+        errno = EFAULT;
         return -1;
     }
 
@@ -190,7 +214,7 @@ ssize_t read(int fd, void *buf, size_t count) {
     }
 
     if (!posixd_channel && posix_init() < 0) {
-        return -1;
+        return posix_transport_fail();
     }
 
     /* Phase 3: Would use shared memory region for zero-copy:
@@ -210,14 +234,14 @@ ssize_t read(int fd, void *buf, size_t count) {
     int ret = fut_fipc_send(posixd_channel, POSIXD_MSG_READ,
                             &req, sizeof(req));
     if (ret < 0) {
-        return -1;
+        return posix_transport_fail();
     }
 
     /* Receive response */
     uint8_t resp_buffer[4096];
     ssize_t recv_ret = fut_fipc_recv(posixd_channel, resp_buffer, sizeof(resp_buffer));
     if (recv_ret < (ssize_t)(sizeof(struct fut_fipc_msg) + sizeof(struct posixd_read_resp))) {
-        return -1;
+        return posix_transport_fail();
     }
 
     struct fut_fipc_msg *resp_msg = (struct fut_fipc_msg *)resp_buffer;
@@ -238,15 +262,20 @@ ssize_t read(int fd, void *buf, size_t count) {
         return (ssize_t)safe_copy;
     }
 
-    return resp->bytes_read;
+    /* bytes_read is 0 at EOF, or a negative -errno on failure. */
+    return (ssize_t)posix_result(resp->bytes_read);
 }
 
 /**
  * Write to file descriptor.
  */
 ssize_t write(int fd, const void *buf, size_t count) {
-    if ((!posixd_channel && posix_init() < 0) || !buf) {
+    if (!buf) {
+        errno = EFAULT;
         return -1;
+    }
+    if (!posixd_channel && posix_init() < 0) {
+        return posix_transport_fail();
     }
 
     if (__fut_eventfd_is(fd)) {
@@ -280,20 +309,21 @@ ssize_t write(int fd, const void *buf, size_t count) {
     int ret = fut_fipc_send(posixd_channel, POSIXD_MSG_WRITE,
                             &msg, sizeof(msg.req) + msg.req.count);
     if (ret < 0) {
-        return -1;
+        return posix_transport_fail();
     }
 
     /* Receive response */
     uint8_t resp_buffer[256];
     ssize_t recv_ret = fut_fipc_recv(posixd_channel, resp_buffer, sizeof(resp_buffer));
     if (recv_ret < (ssize_t)(sizeof(struct fut_fipc_msg) + sizeof(struct posixd_write_resp))) {
-        return -1;
+        return posix_transport_fail();
     }
 
     struct fut_fipc_msg *resp_msg = (struct fut_fipc_msg *)resp_buffer;
     struct posixd_write_resp *resp = (struct posixd_write_resp *)resp_msg->payload;
 
-    return resp->bytes_written;
+    /* bytes_written, or a negative -errno on failure. */
+    return (ssize_t)posix_result(resp->bytes_written);
 }
 
 void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset) {
@@ -328,12 +358,16 @@ int munmap(void *addr, size_t length) {
 }
 
 int flock(int fd, int operation) {
-    return (int)sys_call2(SYS_flock, fd, operation);
+    return (int)posix_result(sys_call2(SYS_flock, fd, operation));
 }
 
 int unlink(const char *path) {
-    if ((!posixd_channel && posix_init() < 0) || !path) {
+    if (!path) {
+        errno = EFAULT;
         return -1;
+    }
+    if (!posixd_channel && posix_init() < 0) {
+        return posix_transport_fail();
     }
 
     struct posixd_unlink_req req;
@@ -345,18 +379,18 @@ int unlink(const char *path) {
 
     int ret = fut_fipc_send(posixd_channel, POSIXD_MSG_UNLINK, &req, sizeof(req));
     if (ret < 0) {
-        return ret;
+        return posix_transport_fail();
     }
 
     uint8_t resp_buffer[256];
     ssize_t recv_ret = fut_fipc_recv(posixd_channel, resp_buffer, sizeof(resp_buffer));
     if (recv_ret < (ssize_t)(sizeof(struct fut_fipc_msg) + sizeof(struct posixd_unlink_resp))) {
-        return -1;
+        return posix_transport_fail();
     }
 
     struct fut_fipc_msg *resp_msg = (struct fut_fipc_msg *)resp_buffer;
     struct posixd_unlink_resp *resp = (struct posixd_unlink_resp *)resp_msg->payload;
-    return resp->result;
+    return (int)posix_result(resp->result);
 }
 
 int mkdir(const char *path, mode_t mode) {
@@ -365,7 +399,7 @@ int mkdir(const char *path, mode_t mode) {
         return -1;
     }
     if (!posixd_channel && posix_init() < 0) {
-        return -1;
+        return posix_transport_fail();
     }
 
     struct posixd_mkdir_req req;
@@ -378,23 +412,27 @@ int mkdir(const char *path, mode_t mode) {
 
     int ret = fut_fipc_send(posixd_channel, POSIXD_MSG_MKDIR, &req, sizeof(req));
     if (ret < 0) {
-        return ret;
+        return posix_transport_fail();
     }
 
     uint8_t resp_buffer[256];
     ssize_t recv_ret = fut_fipc_recv(posixd_channel, resp_buffer, sizeof(resp_buffer));
     if (recv_ret < (ssize_t)(sizeof(struct fut_fipc_msg) + sizeof(struct posixd_mkdir_resp))) {
-        return -1;
+        return posix_transport_fail();
     }
 
     struct fut_fipc_msg *resp_msg = (struct fut_fipc_msg *)resp_buffer;
     struct posixd_mkdir_resp *resp = (struct posixd_mkdir_resp *)resp_msg->payload;
-    return resp->result;
+    return (int)posix_result(resp->result);
 }
 
 int rmdir(const char *path) {
-    if ((!posixd_channel && posix_init() < 0) || !path) {
+    if (!path) {
+        errno = EFAULT;
         return -1;
+    }
+    if (!posixd_channel && posix_init() < 0) {
+        return posix_transport_fail();
     }
 
     struct posixd_unlink_req req;
@@ -406,22 +444,27 @@ int rmdir(const char *path) {
 
     int ret = fut_fipc_send(posixd_channel, POSIXD_MSG_RMDIR, &req, sizeof(req));
     if (ret < 0) {
-        return ret;
+        return posix_transport_fail();
     }
 
     uint8_t resp_buffer[256];
     ssize_t recv_ret = fut_fipc_recv(posixd_channel, resp_buffer, sizeof(resp_buffer));
     if (recv_ret < (ssize_t)(sizeof(struct fut_fipc_msg) + sizeof(struct posixd_unlink_resp))) {
-        return -1;
+        return posix_transport_fail();
     }
 
     struct fut_fipc_msg *resp_msg = (struct fut_fipc_msg *)resp_buffer;
     struct posixd_unlink_resp *resp = (struct posixd_unlink_resp *)resp_msg->payload;
-    return resp->result;
+    return (int)posix_result(resp->result);
 }
 
 fut_dir_t *opendir(const char *path) {
-    if ((!posixd_channel && posix_init() < 0) || !path) {
+    if (!path) {
+        errno = EFAULT;
+        return NULL;
+    }
+    if (!posixd_channel && posix_init() < 0) {
+        errno = EIO;
         return NULL;
     }
 
@@ -434,18 +477,25 @@ fut_dir_t *opendir(const char *path) {
 
     int ret = fut_fipc_send(posixd_channel, POSIXD_MSG_OPENDIR, &req, sizeof(req));
     if (ret < 0) {
+        errno = EIO;
         return NULL;
     }
 
     uint8_t resp_buffer[256];
     ssize_t recv_ret = fut_fipc_recv(posixd_channel, resp_buffer, sizeof(resp_buffer));
     if (recv_ret < (ssize_t)(sizeof(struct fut_fipc_msg) + sizeof(struct posixd_opendir_resp))) {
+        errno = EIO;
         return NULL;
     }
 
     struct fut_fipc_msg *resp_msg = (struct fut_fipc_msg *)resp_buffer;
     struct posixd_opendir_resp *resp = (struct posixd_opendir_resp *)resp_msg->payload;
-    if (resp->result < 0 || resp->dir_handle < 0) {
+    if (resp->result < 0) {
+        errno = -resp->result;
+        return NULL;
+    }
+    if (resp->dir_handle < 0) {
+        errno = EBADF;
         return NULL;
     }
 
@@ -453,6 +503,7 @@ fut_dir_t *opendir(const char *path) {
     if (!dir) {
         struct posixd_closedir_req creq = { .dir_handle = resp->dir_handle };
         fut_fipc_send(posixd_channel, POSIXD_MSG_CLOSEDIR, &creq, sizeof(creq));
+        errno = ENOMEM;
         return NULL;
     }
     dir->handle = resp->dir_handle;
@@ -460,53 +511,65 @@ fut_dir_t *opendir(const char *path) {
 }
 
 int closedir(fut_dir_t *dir) {
-    if (!dir || (!posixd_channel && posix_init() < 0)) {
+    if (!dir) {
+        errno = EBADF;
         return -1;
+    }
+    if (!posixd_channel && posix_init() < 0) {
+        return posix_transport_fail();
     }
 
     struct posixd_closedir_req req = { .dir_handle = dir->handle };
     int ret = fut_fipc_send(posixd_channel, POSIXD_MSG_CLOSEDIR, &req, sizeof(req));
     if (ret < 0) {
         free(dir);
-        return ret;
+        return posix_transport_fail();
     }
 
     uint8_t resp_buffer[256];
     ssize_t recv_ret = fut_fipc_recv(posixd_channel, resp_buffer, sizeof(resp_buffer));
     if (recv_ret < (ssize_t)(sizeof(struct fut_fipc_msg) + sizeof(struct posixd_closedir_resp))) {
         free(dir);
-        return -1;
+        return posix_transport_fail();
     }
 
     struct fut_fipc_msg *resp_msg = (struct fut_fipc_msg *)resp_buffer;
     struct posixd_closedir_resp *resp = (struct posixd_closedir_resp *)resp_msg->payload;
-    int result = resp->result;
+    int result = (int)posix_result(resp->result);
     free(dir);
     return result;
 }
 
 int readdir(fut_dir_t *dir, struct fut_dirent *entry) {
-    if (!dir || !entry || (!posixd_channel && posix_init() < 0)) {
+    if (!dir) {
+        errno = EBADF;
         return -1;
+    }
+    if (!entry) {
+        errno = EFAULT;
+        return -1;
+    }
+    if (!posixd_channel && posix_init() < 0) {
+        return posix_transport_fail();
     }
 
     struct posixd_readdir_req req = { .dir_handle = dir->handle };
     entry->d_name[0] = '\0';
     int ret = fut_fipc_send(posixd_channel, POSIXD_MSG_READDIR, &req, sizeof(req));
     if (ret < 0) {
-        return ret;
+        return posix_transport_fail();
     }
 
     uint8_t resp_buffer[sizeof(struct fut_fipc_msg) + sizeof(struct posixd_readdir_resp)] = {0};
     ssize_t recv_ret = fut_fipc_recv(posixd_channel, resp_buffer, sizeof(resp_buffer));
     if (recv_ret < (ssize_t)(sizeof(struct fut_fipc_msg) + sizeof(struct posixd_readdir_resp))) {
-        return -1;
+        return posix_transport_fail();
     }
 
     struct fut_fipc_msg *resp_msg = (struct fut_fipc_msg *)resp_buffer;
     struct posixd_readdir_resp *resp = (struct posixd_readdir_resp *)resp_msg->payload;
     if (resp->result < 0) {
-        return resp->result;
+        return (int)posix_result(resp->result);
     }
 
     if (!resp->has_entry) {
@@ -532,8 +595,8 @@ int readdir(fut_dir_t *dir, struct fut_dirent *entry) {
  * Fork process.
  */
 int fork(void) {
-    if (!posixd_channel) {
-        return -1;
+    if (!posixd_channel && posix_init() < 0) {
+        return posix_transport_fail();
     }
 
     /* Send fork request */
@@ -541,28 +604,33 @@ int fork(void) {
     int ret = fut_fipc_send(posixd_channel, POSIXD_MSG_FORK,
                             &req, sizeof(req));
     if (ret < 0) {
-        return -1;
+        return posix_transport_fail();
     }
 
     /* Receive response */
     uint8_t resp_buffer[256];
     ssize_t recv_ret = fut_fipc_recv(posixd_channel, resp_buffer, sizeof(resp_buffer));
     if (recv_ret < (ssize_t)(sizeof(struct fut_fipc_msg) + sizeof(struct posixd_fork_resp))) {
-        return -1;
+        return posix_transport_fail();
     }
 
     struct fut_fipc_msg *resp_msg = (struct fut_fipc_msg *)resp_buffer;
     struct posixd_fork_resp *resp = (struct posixd_fork_resp *)resp_msg->payload;
 
-    return resp->pid;
+    /* pid in the parent, 0 in the child, or a negative -errno on failure. */
+    return (int)posix_result(resp->pid);
 }
 
 /**
  * Execute program.
  */
 int execve(const char *path, char *const argv[], char *const envp[]) {
-    if (!posixd_channel || !path) {
+    if (!path) {
+        errno = EFAULT;
         return -1;
+    }
+    if (!posixd_channel && posix_init() < 0) {
+        return posix_transport_fail();
     }
 
     /* Build exec request */
@@ -582,10 +650,15 @@ int execve(const char *path, char *const argv[], char *const envp[]) {
     (void)envp;
 
     /* Send request */
-    fut_fipc_send(posixd_channel, POSIXD_MSG_EXEC,
-                  &msg.req, sizeof(msg.req));
+    int ret = fut_fipc_send(posixd_channel, POSIXD_MSG_EXEC,
+                            &msg.req, sizeof(msg.req));
+    if (ret < 0) {
+        return posix_transport_fail();
+    }
 
-    /* exec doesn't return on success */
+    /* exec doesn't return on success, so reaching here means the image
+     * was not replaced. */
+    errno = ENOEXEC;
     return -1;
 }
 
@@ -593,8 +666,8 @@ int execve(const char *path, char *const argv[], char *const envp[]) {
  * Wait for child process.
  */
 int waitpid(int pid, int *status, int options) {
-    if (!posixd_channel) {
-        return -1;
+    if (!posixd_channel && posix_init() < 0) {
+        return posix_transport_fail();
     }
 
     struct posixd_wait_req req = {
@@ -606,18 +679,24 @@ int waitpid(int pid, int *status, int options) {
     int ret = fut_fipc_send(posixd_channel, POSIXD_MSG_WAIT,
                             &req, sizeof(req));
     if (ret < 0) {
-        return -1;
+        return posix_transport_fail();
     }
 
     /* Receive response */
     uint8_t resp_buffer[256];
     ssize_t recv_ret = fut_fipc_recv(posixd_channel, resp_buffer, sizeof(resp_buffer));
     if (recv_ret < (ssize_t)(sizeof(struct fut_fipc_msg) + sizeof(struct posixd_wait_resp))) {
-        return -1;
+        return posix_transport_fail();
     }
 
     struct fut_fipc_msg *resp_msg = (struct fut_fipc_msg *)resp_buffer;
     struct posixd_wait_resp *resp = (struct posixd_wait_resp *)resp_msg->payload;
+
+    /* On failure pid carries -errno; don't touch *status in that case. */
+    if (resp->pid < 0) {
+        errno = -resp->pid;
+        return -1;
+    }
 
     if (status) {
         *status = resp->status;

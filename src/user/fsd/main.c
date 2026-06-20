@@ -476,6 +476,13 @@ static void handle_read(struct fsd_fipc_msg *msg) {
 
     /* Use capability syscall to read file (validates READ rights) */
     long bytes_read = sys_read_cap(kernel_handle, resp.data, read_size);
+
+    /* Never trust the returned count to exceed what we asked for: clamp it
+     * to read_size before it sizes the response, so a bogus over-read can't
+     * make fsd_send_response transmit past the end of resp.data. */
+    if (bytes_read > (long)read_size) {
+        bytes_read = (long)read_size;
+    }
     resp.bytes_read = (int32_t)bytes_read;
 
     /* Send response with data */

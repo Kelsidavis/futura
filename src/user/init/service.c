@@ -337,44 +337,57 @@ int init_service_start_all(void) {
  * Monitor running services — reap exited children and respawn if needed.
  */
 void init_service_monitor(void) {
-    /* Reap any exited children with WNOHANG */
+    /* Reap *every* child that has exited, not just the first. Several may
+     * die between monitor polls; reaping one per call leaves the rest as
+     * zombies and delays their respawn by a full poll interval each. */
     int wstatus = 0;
-    long exited_pid = sys_wait4_call(-1, &wstatus, 1 /* WNOHANG */, 0);
+    long exited_pid;
+    while ((exited_pid = sys_wait4_call(-1, &wstatus, 1 /* WNOHANG */, 0)) > 0) {
+        /* Find which service this PID belongs to */
+        for (int i = 0; i < num_services; i++) {
+            struct fui_service *service = services[i];
+            if (!service || service->pid != (int)exited_pid) continue;
 
-    if (exited_pid <= 0) {
-        return;  /* No exited children */
-    }
+            int exit_code = (wstatus >> 8) & 0xFF;
+            printf("[SERVICE] %s (pid %d) exited with status %d\n",
+                   service->name, service->pid, exit_code);
 
-    /* Find which service this PID belongs to */
-    for (int i = 0; i < num_services; i++) {
-        struct fui_service *service = services[i];
-        if (!service || service->pid != (int)exited_pid) continue;
+            service->exit_code = exit_code;
+            service->pid = 0;
 
-        int exit_code = (wstatus >> 8) & 0xFF;
-        printf("[SERVICE] %s (pid %d) exited with status %d\n",
-               service->name, service->pid, exit_code);
+            if (service->respawn) {
+                struct respawn_tracker *tracker = &respawn_trackers[i];
 
-        service->exit_code = exit_code;
-        service->pid = 0;
+                /* Window the respawn count so the limit catches a crash
+                 * loop, not a service that merely exits now and then. If a
+                 * prior exit was counted and it was longer than `window` ms
+                 * ago, the service has been stable, so reset the counter.
+                 * Keyed off count (not last_time) so a first crash at tick 0
+                 * isn't mistaken for "no prior crash". */
+                uint64_t now = (uint64_t)sys_time_millis_call() * 10;
+                if (tracker->count != 0 &&
+                    now - tracker->last_time > tracker->window) {
+                    tracker->count = 0;
+                }
+                tracker->last_time = now;
+                tracker->count++;
 
-        if (service->respawn) {
-            struct respawn_tracker *tracker = &respawn_trackers[i];
-            tracker->count++;
-
-            if (tracker->count > service->respawn_limit) {
-                printf("[SERVICE] %s exceeded respawn limit (%d), marking failed\n",
-                       service->name, service->respawn_limit);
-                service->state = SERVICE_FAILED;
+                if (tracker->count > service->respawn_limit) {
+                    printf("[SERVICE] %s exceeded respawn limit (%d), marking failed\n",
+                           service->name, service->respawn_limit);
+                    service->state = SERVICE_FAILED;
+                } else {
+                    printf("[SERVICE] Respawning %s (attempt %d/%d)\n",
+                           service->name, tracker->count, service->respawn_limit);
+                    service->state = SERVICE_STOPPED;
+                    init_service_start(service->name);
+                }
             } else {
-                printf("[SERVICE] Respawning %s (attempt %d/%d)\n",
-                       service->name, tracker->count, service->respawn_limit);
                 service->state = SERVICE_STOPPED;
-                init_service_start(service->name);
             }
-        } else {
-            service->state = SERVICE_STOPPED;
+            break;
         }
-        break;
+        wstatus = 0;
     }
 }
 

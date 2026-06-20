@@ -558,9 +558,13 @@ static int handle_surface_create2(struct futuraway_state *state,
     surface->premultiplied = req->alpha_premultiplied != 0;
     surface->full_dirty = true;
 
-    if (req->shm_bytes != 0 && req->shm_bytes < surface->stride_bytes * (uint64_t)req->height) {
-        surface->pixels_size = (size_t)req->shm_bytes;
-    }
+    /* req->shm_bytes is only a client hint about its mapping size; it must
+     * NOT be written into surface->pixels_size, which is the invariant
+     * "bytes actually allocated at surface->pixels" that surface_ensure_pixels
+     * relies on to decide whether to realloc. Setting it from the hint left
+     * pixels_size > the real allocation (NULL on a fresh surface), so a later
+     * commit smaller than this surface would skip the realloc and memcpy into
+     * an undersized/NULL buffer. The commit path sizes the buffer correctly. */
 
     return 0;
 }

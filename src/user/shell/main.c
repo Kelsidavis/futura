@@ -16713,6 +16713,22 @@ static void strcat_simple(char *dest, const char *src) {
     strcpy_simple(dest, src);
 }
 
+/* Join argv[start..argc) with single-space separators into a fixed-size
+ * buffer.  Always NUL-terminates and never writes past dstsz, unlike the
+ * unbounded strcpy_simple/strcat_simple pattern the ASCII-art commands
+ * (cowsay/figlet/…) used to build a message into a 256-byte stack buffer. */
+__attribute__((unused))
+static void join_args_simple(char *dst, size_t dstsz, char *argv[], int start, int argc) {
+    size_t pos = 0;
+    if (dstsz == 0) return;
+    for (int i = start; i < argc; i++) {
+        if (i > start && pos + 1 < dstsz) dst[pos++] = ' ';
+        const char *s = argv[i];
+        while (*s && pos + 1 < dstsz) dst[pos++] = *s++;
+    }
+    dst[pos] = '\0';
+}
+
 /* Check if string starts with a character */
 __attribute__((unused))
 static int starts_with(const char *str, char c) {
@@ -17371,7 +17387,7 @@ static void execute_script_buffer(char *buf) {
                         /* Extract command (everything before <<WORD) */
                         int hcl = 0;
                         const char *hp = trimmed;
-                        while (*hp) {
+                        while (*hp && hcl < (int)sizeof(heredoc_cmd) - 1) {
                             if (hp[0] == '<' && hp[1] == '<') break;
                             heredoc_cmd[hcl++] = *hp++;
                         }
@@ -42177,18 +42193,10 @@ static void cmd_apk(int argc, char *argv[]) {
 /* cowsay - ASCII art cow says a message */
 static void cmd_cowsay(int argc, char *argv[]) {
     char msg[256];
-    msg[0] = '\0';
     if (argc < 2) {
         strcpy_simple(msg, "Moo!");
     } else {
-        strcpy_simple(msg, argv[1]);
-        for (int i = 2; i < argc; i++) {
-            int len = 0;
-            while (msg[len]) len++;
-            msg[len] = ' ';
-            msg[len + 1] = '\0';
-            strcat_simple(msg, argv[i]);
-        }
+        join_args_simple(msg, sizeof(msg), argv, 1, argc);
     }
     /* Calculate message length */
     int mlen = 0;
@@ -42265,13 +42273,7 @@ static void cmd_figlet(int argc, char *argv[]) {
     static const char *font_bang[] = {" # ", " # ", " # ", "   ", " # "};
     /* Build the full text from args */
     char text[256];
-    text[0] = '\0';
-    strcpy_simple(text, argv[1]);
-    for (int i = 2; i < argc; i++) {
-        int len = 0; while (text[len]) len++;
-        text[len] = ' '; text[len + 1] = '\0';
-        strcat_simple(text, argv[i]);
-    }
+    join_args_simple(text, sizeof(text), argv, 1, argc);
     /* Render line by line */
     for (int row = 0; row < 5; row++) {
         for (int i = 0; text[i]; i++) {
@@ -42307,13 +42309,7 @@ static void cmd_toilet(int argc, char *argv[]) {
     };
     /* Build the full text from args */
     char text[256];
-    text[0] = '\0';
-    strcpy_simple(text, argv[1]);
-    for (int i = 2; i < argc; i++) {
-        int len = 0; while (text[len]) len++;
-        text[len] = ' '; text[len + 1] = '\0';
-        strcat_simple(text, argv[i]);
-    }
+    join_args_simple(text, sizeof(text), argv, 1, argc);
     /* Simple large block style: each char becomes a 3-line colored block */
     for (int row = 0; row < 3; row++) {
         for (int i = 0; text[i]; i++) {
@@ -42433,16 +42429,10 @@ static void cmd_lolcat(int argc, char *argv[]) {
 /* ponysay - pony says a message */
 static void cmd_ponysay(int argc, char *argv[]) {
     char msg[256];
-    msg[0] = '\0';
     if (argc < 2) {
         strcpy_simple(msg, "Friendship is magic!");
     } else {
-        strcpy_simple(msg, argv[1]);
-        for (int i = 2; i < argc; i++) {
-            int len = 0; while (msg[len]) len++;
-            msg[len] = ' '; msg[len + 1] = '\0';
-            strcat_simple(msg, argv[i]);
-        }
+        join_args_simple(msg, sizeof(msg), argv, 1, argc);
     }
     int mlen = 0;
     while (msg[mlen]) mlen++;
@@ -42478,13 +42468,7 @@ static void cmd_boxes(int argc, char *argv[]) {
         return;
     }
     char text[256];
-    text[0] = '\0';
-    strcpy_simple(text, argv[1]);
-    for (int i = 2; i < argc; i++) {
-        int len = 0; while (text[len]) len++;
-        text[len] = ' '; text[len + 1] = '\0';
-        strcat_simple(text, argv[i]);
-    }
+    join_args_simple(text, sizeof(text), argv, 1, argc);
     int tlen = 0;
     while (text[tlen]) tlen++;
     /* Top border */

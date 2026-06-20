@@ -269,11 +269,16 @@ int __fut_timerfd_disarm(int fd) {
 ssize_t __fut_timerfd_read(int fd, void *buf, size_t count) {
     struct fut_timerfd *t = lookup_timerfd(fd);
     if (!t || !buf || count < sizeof(uint64_t)) {
+        errno = EINVAL;
         return -1;
     }
 
     accrue_pending(t, now_ms());
     if (t->pending_expirations == 0) {
+        /* No expirations pending: a timerfd read is non-blocking here, so
+         * report EAGAIN rather than leaving errno stale (matches the
+         * eventfd/signalfd read stubs and what poll-driven callers expect). */
+        errno = EAGAIN;
         return -1;
     }
 

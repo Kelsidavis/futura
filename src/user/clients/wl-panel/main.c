@@ -585,9 +585,14 @@ int main(void) {
     }
 
     state.shm_data = (uint32_t *)sys_mmap(NULL, (long)state.shm_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    if ((long)state.shm_data < 0) {
+    /* mmap can fail with NULL or a low/garbage pointer, not only a negative
+     * value; the bare "< 0" check let a NULL through to be dereferenced in
+     * panel_draw. Match the guard the other wl-* clients use. */
+    if (state.shm_data == NULL || (long)state.shm_data < 0 ||
+        (uintptr_t)state.shm_data < 0x10000) {
         printf("[PANEL] Failed to mmap shared memory\n");
         sys_close(fd);
+        fut_shm_unlink(shm_name);
         return 1;
     }
 
@@ -630,6 +635,7 @@ int main(void) {
     if (state.compositor) wl_compositor_destroy(state.compositor);
     if (state.registry) wl_registry_destroy(state.registry);
     if (state.shm_data) sys_munmap_call(state.shm_data, (long)state.shm_size);
+    fut_shm_unlink(shm_name);
     wl_display_disconnect(state.display);
 
     printf("[PANEL] Panel exited\n");

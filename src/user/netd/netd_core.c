@@ -286,6 +286,15 @@ bool netd_poll_once(struct netd *nd, uint32_t timeout_ms) {
         struct fut_fipc_net_hdr net_hdr;
         memcpy(&net_hdr, buf, sizeof(net_hdr));
 
+        /* Reject foreign or wrong-version datagrams before trusting any other
+         * header field. The send path stamps these, so a frame without them
+         * is not ours; without this check a malformed/foreign packet whose
+         * payload_len and CRC happen to be self-consistent would be injected
+         * into a channel. */
+        if (net_hdr.magic != FIPC_NET_MAGIC || net_hdr.version != FIPC_NET_V1) {
+            return true;
+        }
+
         size_t payload_len = net_hdr.payload_len;
         if (sizeof(net_hdr) + payload_len != (size_t)received) {
             return true;

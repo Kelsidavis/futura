@@ -23,7 +23,8 @@ static long get_millis(void) {
 int clock_gettime(int clock_id, struct timespec *tp) {
     /* Defensive check: reject NULL and corrupted pointers (addresses < 0x10000) */
     if (!tp || (uintptr_t)tp < 0x10000) {
-        return -EINVAL;
+        errno = EFAULT;
+        return -1;
     }
 
     /* Both CLOCK_REALTIME and CLOCK_MONOTONIC use system time */
@@ -32,7 +33,8 @@ int clock_gettime(int clock_id, struct timespec *tp) {
     case CLOCK_MONOTONIC:
         break;
     default:
-        return -EINVAL;  /* Unsupported clock */
+        errno = EINVAL;  /* Unsupported clock */
+        return -1;
     }
 
     long ms = get_millis();
@@ -50,7 +52,8 @@ int gettimeofday(struct timeval *tv, void *tz) {
     (void)tz;  /* Timezone is not supported */
 
     if (!tv) {
-        return -EINVAL;
+        errno = EFAULT;
+        return -1;
     }
 
     long ms = get_millis();
@@ -80,12 +83,14 @@ time_t time(time_t *tloc) {
  */
 int nanosleep(const struct timespec *req, struct timespec *rem) {
     if (!req) {
-        return -EINVAL;
+        errno = EFAULT;
+        return -1;
     }
 
     /* Validate timespec values */
     if (req->tv_sec < 0 || req->tv_nsec < 0 || req->tv_nsec >= 1000000000L) {
-        return -EINVAL;
+        errno = EINVAL;
+        return -1;
     }
 
     /* Convert to fut_timespec_t for the syscall */
@@ -100,11 +105,15 @@ int nanosleep(const struct timespec *req, struct timespec *rem) {
     /* Call the kernel nanosleep syscall */
     long result = sys_nanosleep_call(&fut_req, &fut_rem);
 
-    /* Copy remaining time back if requested */
-    if (rem && result == -EINTR) {
-        rem->tv_sec = fut_rem.tv_sec;
-        rem->tv_nsec = fut_rem.tv_nsec;
+    if (result < 0) {
+        /* Interrupted: report the unslept remainder if the caller wants it. */
+        if (result == -EINTR && rem) {
+            rem->tv_sec = fut_rem.tv_sec;
+            rem->tv_nsec = fut_rem.tv_nsec;
+        }
+        errno = (int)-result;
+        return -1;
     }
 
-    return (int)result;
+    return 0;
 }

@@ -52,7 +52,9 @@ int main(void) {
     fut_timespec_t sleep_ts = { .tv_sec = 0, .tv_nsec = 16 * 1000 * 1000 };
 
     const uint32_t frames = 120;
-    uint64_t start_ms = (uint64_t)sys_time_millis_call();
+    /* sys_time_millis_call() returns the 100 Hz kernel tick counter, i.e.
+     * one tick = 10 ms — not milliseconds despite the name. */
+    uint64_t start_ticks = (uint64_t)sys_time_millis_call();
 
     for (uint32_t frame = 0; frame < frames; ++frame) {
         for (uint32_t y = 0; y < height; ++y) {
@@ -68,8 +70,8 @@ int main(void) {
         sys_nanosleep_call(&sleep_ts, NULL);
     }
 
-    uint64_t end_ms = (uint64_t)sys_time_millis_call();
-    uint64_t elapsed_ms = (end_ms > start_ms) ? (end_ms - start_ms) : 1u;
+    uint64_t end_ticks = (uint64_t)sys_time_millis_call();
+    uint64_t elapsed_ms = ((end_ticks > start_ticks) ? (end_ticks - start_ticks) : 1u) * 10u;
     uint32_t fps_times100 = (uint32_t)((frames * 100000ULL) / elapsed_ms);
 
     printf("fbtest fps x100: %u\n", fps_times100);

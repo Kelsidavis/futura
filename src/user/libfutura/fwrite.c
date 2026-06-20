@@ -24,13 +24,23 @@ size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream) {
     }
 
     size_t total = size * nmemb;
-    long wrote = sys_write(stream->fd, ptr, (long)total);
-    if (wrote < 0) {
-        return 0;
+
+    /* sys_write may satisfy only part of the request, so loop until the
+     * whole buffer is written, an error occurs, or the write stalls
+     * (zero bytes of progress).  Returning early on a single short write
+     * would silently drop the unwritten remainder. */
+    const char *buf = (const char *)ptr;
+    size_t written = 0;
+    while (written < total) {
+        long wrote = sys_write(stream->fd, buf + written, (long)(total - written));
+        if (wrote <= 0) {
+            break;
+        }
+        written += (size_t)wrote;
     }
 
-    size_t elements = (size_t)wrote / size;
-    return elements;
+    /* Report only the count of fully-written elements, per C semantics. */
+    return written / size;
 }
 
 __attribute__((weak))

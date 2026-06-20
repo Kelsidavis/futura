@@ -99,6 +99,13 @@ long syscall(long number, ...) {
         int mode = va_arg(ap, int);
         /* Architecture-agnostic syscall invocation */
         result = __SYSCALL_3(SYS_open, pathname, flags, mode);
+        /* Translate a raw kernel -errno into the -1/errno contract, as the
+         * ARM64 path above does; otherwise callers see e.g. -2 instead of
+         * -1 with errno==ENOENT. */
+        if (result < 0 && result > -4096) {
+            errno = (int)-result;
+            result = -1;
+        }
         break;
     }
     case SYS_openat: {
@@ -114,6 +121,10 @@ long syscall(long number, ...) {
         } else {
             /* Architecture-agnostic syscall: open(pathname, flags, mode) */
             result = __SYSCALL_3(SYS_open, pathname, flags, mode);
+            if (result < 0 && result > -4096) {
+                errno = (int)-result;
+                result = -1;
+            }
         }
         break;
     }

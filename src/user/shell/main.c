@@ -6962,29 +6962,50 @@ static void cmd_base64(int argc, char *argv[]) {
     }
 
     if (!decode) {
-        /* Encode */
-        unsigned char buf[3];
-        char out[5];
+        /* Encode. Stream through a bit accumulator so the output is correct
+         * regardless of how sys_read() chunks the input — reading a fixed 3
+         * bytes per call would emit padding mid-stream on a short read from
+         * a pipe or terminal. */
+        unsigned char inbuf[4096];
+        char obuf[512];
+        int op = 0, col = 0, bits = 0;
+        unsigned acc = 0;
+        unsigned long total = 0;
         long n;
-        int col = 0;
-        while ((n = sys_read(fd_in, buf, 3)) > 0) {
-            out[0] = b64[buf[0] >> 2];
-            out[1] = b64[((buf[0] & 3) << 4) | (n > 1 ? (buf[1] >> 4) : 0)];
-            out[2] = n > 1 ? b64[((buf[1] & 0xF) << 2) | (n > 2 ? (buf[2] >> 6) : 0)] : '=';
-            out[3] = n > 2 ? b64[buf[2] & 0x3F] : '=';
-            sys_write(1, out, 4);
-            col += 4;
-            if (col >= 76) { sys_write(1, "\n", 1); col = 0; }
+        while ((n = sys_read(fd_in, inbuf, sizeof(inbuf))) > 0) {
+            for (long i = 0; i < n; i++) {
+                acc = (acc << 8) | inbuf[i];
+                bits += 8;
+                total++;
+                while (bits >= 6) {
+                    bits -= 6;
+                    obuf[op++] = b64[(acc >> bits) & 0x3F];
+                    if (++col == 76) { obuf[op++] = '\n'; col = 0; }
+                }
+                if (op >= (int)sizeof(obuf) - 2) { sys_write(1, obuf, op); op = 0; }
+            }
         }
-        if (col > 0) sys_write(1, "\n", 1);
+        if (bits > 0) {
+            obuf[op++] = b64[(acc << (6 - bits)) & 0x3F];
+            if (++col == 76) { obuf[op++] = '\n'; col = 0; }
+        }
+        for (int p = (int)((3 - (total % 3)) % 3); p > 0; p--) {
+            obuf[op++] = '=';
+            if (++col == 76) { obuf[op++] = '\n'; col = 0; }
+            if (op >= (int)sizeof(obuf) - 2) { sys_write(1, obuf, op); op = 0; }
+        }
+        if (col > 0) obuf[op++] = '\n';
+        if (op > 0) sys_write(1, obuf, op);
     } else {
-        /* Decode */
+        /* Decode. Keep the bit accumulator across read() boundaries so a
+         * 4-character group split between two reads still decodes correctly. */
         static unsigned char dbuf[4096];
         static unsigned char outb[3072]; /* 4096 * 3/4 */
+        unsigned acc = 0;
+        int bits = 0;
         ssize_t nr;
         while ((nr = sys_read(fd_in, dbuf, sizeof(dbuf))) > 0) {
             int op = 0;
-            int acc = 0, bits = 0;
             for (ssize_t i = 0; i < nr; i++) {
                 unsigned char c = dbuf[i];
                 int val = -1;
@@ -6993,10 +7014,8 @@ static void cmd_base64(int argc, char *argv[]) {
                 else if (c >= '0' && c <= '9') val = c - '0' + 52;
                 else if (c == '+') val = 62;
                 else if (c == '/') val = 63;
-                else if (c == '=') val = 0; /* padding */
-                else continue; /* skip whitespace/newlines */
-                if (c == '=') { bits += 6; if (bits >= 8) { bits -= 8; } continue; }
-                acc = (acc << 6) | val;
+                else continue; /* skip '=' padding and whitespace */
+                acc = (acc << 6) | (unsigned)val;
                 bits += 6;
                 if (bits >= 8) {
                     bits -= 8;

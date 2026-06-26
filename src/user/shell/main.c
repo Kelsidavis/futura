@@ -5724,22 +5724,17 @@ static int tail_process_fd(int fd, int max_lines) {
     /* Calculate how many lines to skip */
     long skip_lines = total_lines > max_lines ? total_lines - max_lines : 0;
 
-    /* Output the last N lines */
+    /* Output the last N lines. Bytes belong to the output window once we have
+     * passed skip_lines complete lines; the newline that terminates the last
+     * skipped line is itself in an earlier line, so it is never emitted. A
+     * blank first line in the window must still print its own newline, so do
+     * not special-case it (doing so dropped leading/empty lines). */
     long current_line = 0;
-    int started_output = 0;
 
     for (long i = 0; i < total_bytes; i++) {
-        /* Check if we've reached the lines to output */
         if (current_line >= skip_lines) {
-            if (!started_output && file_buffer[i] == '\n' && current_line == skip_lines) {
-                /* Skip the newline that ends the skip_lines-th line */
-                current_line++;
-                continue;
-            }
-            started_output = 1;
             write_char(1, file_buffer[i]);
         }
-
         if (file_buffer[i] == '\n') {
             current_line++;
         }

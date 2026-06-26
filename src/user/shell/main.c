@@ -9500,7 +9500,9 @@ static void du_recurse(const char *path, long *total_blocks) {
                 for (int k = 0; d->d_name[k] && cp < 510; k++) child[cp++] = d->d_name[k];
                 child[cp] = '\0';
                 struct stat st;
-                if (sys_call2(__NR_stat, (long)child, (long)&st) == 0) {
+                /* lstat so a symlink counts its own blocks, not the target's,
+                 * matching GNU du and avoiding double-counting via links. */
+                if (sys_lstat_call(child, &st) == 0) {
                     *total_blocks += st.st_blocks;
                 }
                 if (d->d_type == 4) du_recurse(child, total_blocks);

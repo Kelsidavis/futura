@@ -8314,8 +8314,10 @@ static int sort_compare_lines(const char lines[][SORT_LINE_MAX], int i, int j,
     }
 
     if (numeric) {
-        /* Parse number from field */
-        int n1 = 0, n2 = 0, neg1 = 0, neg2 = 0;
+        /* Parse number from field. Use long so values beyond ~2e9 (which
+         * overflow a 32-bit int) still compare correctly. */
+        long n1 = 0, n2 = 0;
+        int neg1 = 0, neg2 = 0;
         const char *p = s1;
         while (*p == ' ' || *p == '\t') p++;
         if (*p == '-') { neg1 = 1; p++; }
@@ -8332,8 +8334,11 @@ static int sort_compare_lines(const char lines[][SORT_LINE_MAX], int i, int j,
     } else {
         int len = l1 < l2 ? l1 : l2;
         for (int k = 0; k < len; k++) {
-            if (s1[k] < s2[k]) return reverse ? 1 : -1;
-            if (s1[k] > s2[k]) return reverse ? -1 : 1;
+            /* Compare as unsigned bytes so ordering of bytes >= 0x80 matches
+             * across x86 (signed char) and ARM (unsigned char). */
+            unsigned char c1 = (unsigned char)s1[k], c2 = (unsigned char)s2[k];
+            if (c1 < c2) return reverse ? 1 : -1;
+            if (c1 > c2) return reverse ? -1 : 1;
         }
         if (l1 < l2) return reverse ? 1 : -1;
         if (l1 > l2) return reverse ? -1 : 1;

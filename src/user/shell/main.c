@@ -5896,6 +5896,8 @@ static void uniq_process_fd(int fd, char *prev_line, char *curr_line,
                 }
 
                 line_pos = 0;
+                /* Overflow flush: the triggering char begins the next line. */
+                if (c != '\n') curr_line[line_pos++] = c;
             } else {
                 curr_line[line_pos++] = c;
             }
@@ -6298,6 +6300,9 @@ static void cut_process_fd(int fd, char *line_buf, int char_mode, int char_start
                 line_buf[line_pos] = '\0';
                 cut_process_line(line_buf, char_mode, char_start, char_end, field_num, delimiter);
                 line_pos = 0;
+                /* A non-newline char triggered the flush by overflow; it is the
+                 * start of the next segment, not a separator — keep it. */
+                if (c != '\n') line_buf[line_pos++] = c;
             } else {
                 line_buf[line_pos++] = c;
             }
@@ -37471,7 +37476,13 @@ static void rg_search_file(const char *filepath, const char *pattern, int case_i
                     }
                 }
                 line_pos = 0;
-                line_num++;
+                if (buf[i] == '\n') {
+                    line_num++;
+                } else {
+                    /* Overflow flush mid-line: keep the char and don't advance
+                     * the line number until a real newline arrives. */
+                    line[line_pos++] = buf[i];
+                }
             } else {
                 line[line_pos++] = buf[i];
             }

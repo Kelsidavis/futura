@@ -289,6 +289,15 @@ static inline long sys_stat_call(const char *path, void *statbuf) {
 #endif
 }
 
+static inline long sys_lstat_call(const char *path, void *statbuf) {
+#if defined(__aarch64__)
+    /* ARM64 has no SYS_lstat; newfstatat(AT_FDCWD, path, statbuf, AT_SYMLINK_NOFOLLOW) */
+    return sys_call4(SYS_newfstatat, -100, (long)path, (long)statbuf, 0x100 /*AT_SYMLINK_NOFOLLOW*/);
+#else
+    return sys_call2(SYS_lstat, (long)path, (long)statbuf);
+#endif
+}
+
 static inline long sys_fstat_call(long fd, void *statbuf) {
     return sys_call2(SYS_fstat, fd, (long)statbuf);
 }

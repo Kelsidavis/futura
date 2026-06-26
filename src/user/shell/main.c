@@ -8516,7 +8516,9 @@ static void cmd_ls(int argc, char *argv[]) {
                 fullpath[pi] = '\0';
 
                 struct stat st;
-                int rc = sys_call2(__NR_stat, (long)fullpath, (long)&st);
+                /* lstat, not stat: report the link itself so symlinks show
+                 * as 'l' and dangling links still appear in the listing. */
+                int rc = (int)sys_lstat_call(fullpath, &st);
                 if (rc == 0) {
                     char modebuf[11];
                     format_mode(st.st_mode, modebuf);

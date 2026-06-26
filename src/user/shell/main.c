@@ -6449,9 +6449,10 @@ static int tr_expand_set(const char *set, char *expanded, int max_len) {
 }
 
 /* Helper function to process a file descriptor for tr command */
-static void tr_process_fd(int fd, const char *trans_map, int delete_mode, int squeeze_mode) {
+static void tr_process_fd(int fd, const char *trans_map, int delete_mode,
+                          int squeeze_mode, const unsigned char *squeeze_set) {
     char read_buf[256];
-    char last_char = '\0';
+    int last_char = -1;  /* -1 = no previous output char */
     long bytes_read;
 
     while ((bytes_read = sys_read(fd, read_buf, sizeof(read_buf))) > 0) {
@@ -6464,20 +6465,22 @@ static void tr_process_fd(int fd, const char *trans_map, int delete_mode, int sq
                 if (trans_map[uc] == '\0') {
                     continue;
                 }
-                /* Output character */
-                if (squeeze_mode && c == last_char) {
-                    continue;  /* Skip repeated character */
+                /* Squeeze a run only if the char is in the squeeze set. */
+                if (squeeze_mode && (int)uc == last_char &&
+                    (!squeeze_set || squeeze_set[uc])) {
+                    continue;
                 }
                 write_char(1, c);
-                last_char = c;
+                last_char = (int)uc;
             } else {
                 /* Translate character */
-                char out_char = trans_map[uc];
-                if (squeeze_mode && out_char == last_char) {
-                    continue;  /* Skip repeated character */
+                unsigned char out_char = (unsigned char)trans_map[uc];
+                if (squeeze_mode && (int)out_char == last_char &&
+                    (!squeeze_set || squeeze_set[out_char])) {
+                    continue;
                 }
-                write_char(1, out_char);
-                last_char = out_char;
+                write_char(1, (char)out_char);
+                last_char = (int)out_char;
             }
         }
     }
@@ -6509,8 +6512,10 @@ static void cmd_tr(int argc, char *argv[]) {
         }
     }
 
-    /* Check arguments */
-    int required_args = delete_mode ? 1 : 2;
+    /* Check arguments. A plain translation needs both a source and a
+     * replacement set; delete or squeeze can operate with a single set
+     * (e.g. `tr -s ' '` to collapse runs of spaces). */
+    int required_args = (delete_mode || squeeze_mode) ? 1 : 2;
     if (arg_start + required_args > argc) {
         write_str(2, "tr: missing operands\n");
         write_str(2, "Usage: tr [-d] [-s] <set1> [set2] [file...]\n");
@@ -6518,8 +6523,16 @@ static void cmd_tr(int argc, char *argv[]) {
     }
 
     const char *set1_raw = argv[arg_start];
-    const char *set2_raw = delete_mode ? 0 : argv[arg_start + 1];
-    int file_start = arg_start + required_args;
+    /* set2 is the replacement set for translation. It is absent in delete
+     * mode and in squeeze-only mode where a single set was supplied. */
+    const char *set2_raw = 0;
+    int file_start;
+    if (!delete_mode && arg_start + 1 < argc) {
+        set2_raw = argv[arg_start + 1];
+        file_start = arg_start + 2;
+    } else {
+        file_start = arg_start + 1;
+    }
 
     /* Expand character ranges (e.g., a-z, A-Z, 0-9) */
     static char set1_expanded[512];
@@ -6543,7 +6556,7 @@ static void cmd_tr(int argc, char *argv[]) {
         for (const char *p = set1; *p; p++) {
             trans_map[(unsigned char)*p] = '\0';  /* Mark for deletion */
         }
-    } else {
+    } else if (set2) {
         /* Build translation map */
         const char *p1 = set1;
         const char *p2 = set2;
@@ -6561,11 +6574,22 @@ static void cmd_tr(int argc, char *argv[]) {
             }
         }
     }
+    /* else: squeeze-only with a single set leaves the map as identity. */
+
+    /* Squeeze membership: collapse runs of the replacement set when
+     * translating, otherwise of the single set provided. */
+    static unsigned char squeeze_set[256];
+    if (squeeze_mode) {
+        for (int i = 0; i < 256; i++) squeeze_set[i] = 0;
+        const char *sq = set2 ? set2 : set1;
+        for (const char *p = sq; *p; p++) squeeze_set[(unsigned char)*p] = 1;
+    }
+    const unsigned char *sqset = squeeze_mode ? squeeze_set : 0;
 
     /* Process files or stdin */
     if (file_start >= argc) {
         /* Read from stdin */
-        tr_process_fd(0, trans_map, delete_mode, squeeze_mode);
+        tr_process_fd(0, trans_map, delete_mode, squeeze_mode, sqset);
     } else {
         /* Process each file */
         for (int file_idx = file_start; file_idx < argc; file_idx++) {
@@ -6579,7 +6603,7 @@ static void cmd_tr(int argc, char *argv[]) {
                 continue;
             }
 
-            tr_process_fd(fd, trans_map, delete_mode, squeeze_mode);
+            tr_process_fd(fd, trans_map, delete_mode, squeeze_mode, sqset);
             sys_close(fd);
         }
     }

@@ -13973,51 +13973,76 @@ watch_sleep:
         /* mktemp — create a unique temp file or directory */
         int make_dir = 0;
         const char *parent = "/tmp";
+        const char *templ = NULL;
         int argi = 1;
-        while (argi < argc && argv[argi][0] == '-') {
-            if (argv[argi][1] == 'd') {
-                make_dir = 1;
-            } else if (argv[argi][1] == 'p' && argi + 1 < argc) {
+        while (argi < argc) {
+            if (argv[argi][0] == '-' && argv[argi][1] != '\0') {
+                if (argv[argi][1] == 'd') make_dir = 1;
+                else if (argv[argi][1] == 'p' && argi + 1 < argc) { argi++; parent = argv[argi]; }
                 argi++;
-                parent = argv[argi];
+            } else {
+                templ = argv[argi];  /* TEMPLATE operand */
+                argi++;
             }
-            argi++;
         }
+
         struct { long tv_sec; long tv_nsec; } ts = {0, 0};
         sys_call2(SYS_clock_gettime, 1, (long)&ts);
-        char path[128];
-        int p = 0;
-        for (int i = 0; parent[i] && p < 100; i++) path[p++] = parent[i];
-        const char *suffix = "/tmp.";
-        for (int i = 0; suffix[i]; i++) path[p++] = suffix[i];
-        unsigned int r = (unsigned int)(ts.tv_nsec ^ ts.tv_sec);
-        for (int i = 0; i < 8; i++) {
-            r = r * 1103515245 + 12345;
-            int c = ((r >> 16) & 0x1F);
-            path[p++] = (c < 10) ? '0' + c : 'a' + c - 10;
+
+        /* Build the path: honor a TEMPLATE if given (placed under the parent
+         * dir when it has no slash), otherwise default to tmp.XXXXXXXX. */
+        char path[256];
+        int p = 0, xcount = 0;
+        if (templ) {
+            int tlen = 0; while (templ[tlen]) tlen++;
+            while (xcount < tlen && templ[tlen - 1 - xcount] == 'X') xcount++;
+            int has_slash = 0;
+            for (int i = 0; templ[i]; i++) if (templ[i] == '/') has_slash = 1;
+            if (!has_slash) {
+                for (int i = 0; parent[i] && p < 200; i++) path[p++] = parent[i];
+                if (p > 0 && path[p-1] != '/') path[p++] = '/';
+            }
+            for (int i = 0; templ[i] && p < 240; i++) path[p++] = templ[i];
+        } else {
+            for (int i = 0; parent[i] && p < 200; i++) path[p++] = parent[i];
+            const char *suffix = "/tmp.XXXXXXXX";
+            for (int i = 0; suffix[i] && p < 240; i++) path[p++] = suffix[i];
+            xcount = 8;
+        }
+        /* A template needs a run of trailing X's; append one if it lacks them. */
+        if (xcount < 3) {
+            const char *ext = ".XXXXXX";
+            for (int i = 0; ext[i] && p < 247; i++) path[p++] = ext[i];
+            xcount = 6;
         }
         path[p] = '\0';
-        if (make_dir) {
-            long rc = sys_mkdir(path, 0700);
-            if (rc == 0) {
-                write_str(1, path);
-                write_char(1, '\n');
-            } else {
-                write_str(2, "mktemp: failed to create directory\n");
-                return 1;
+        int xstart = p - xcount;
+
+        /* Fill the X run with random characters, retrying on collision. O_EXCL
+         * (and mkdir's own exclusivity) guarantees we never reuse an existing
+         * name. */
+        unsigned int r = (unsigned int)(ts.tv_nsec ^ (ts.tv_sec << 1) ^ 0x9e3779b9u);
+        int created = 0;
+        for (int attempt = 0; attempt < 64 && !created; attempt++) {
+            for (int i = 0; i < xcount; i++) {
+                r = r * 1103515245 + 12345;
+                int c = ((r >> 16) & 0x1F);
+                path[xstart + i] = (c < 10) ? ('0' + c) : ('a' + c - 10);
             }
-        } else {
-            int fd = sys_open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
-            if (fd >= 0) {
-                sys_close(fd);
-                write_str(1, path);
-                write_char(1, '\n');
+            if (make_dir) {
+                if (sys_mkdir(path, 0700) == 0) created = 1;
             } else {
-                write_str(2, "mktemp: failed\n");
-                return 1;
+                int fd = sys_open(path, O_WRONLY | O_CREAT | O_EXCL, 0600);
+                if (fd >= 0) { sys_close(fd); created = 1; }
             }
         }
-        return 0;
+        if (created) {
+            write_str(1, path);
+            write_char(1, '\n');
+            return 0;
+        }
+        write_str(2, make_dir ? "mktemp: failed to create directory\n" : "mktemp: failed\n");
+        return 1;
     } else if (strcmp_simple(argv[0], "source") == 0 ||
                (argv[0][0] == '.' && argv[0][1] == '\0')) {
         cmd_source(argc, argv);

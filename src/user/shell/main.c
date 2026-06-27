@@ -4854,13 +4854,16 @@ static int expand_globs(int argc, char *argv[], int max_args) {
         if (ls >= 0) { int dl = 0; for (int j = 0; j < ls && dl < 255; j++) dir[dl++] = argv[i][j]; if (!dl) dir[dl++] = '/'; dir[dl] = '\0'; pat = argv[i] + ls + 1; }
         struct { unsigned long long d_ino; long long d_off; unsigned short d_reclen; unsigned char d_type; char d_name[256]; } *d;
         int fd = sys_open(dir, O_RDONLY, 0), matched = 0;
+        int mstart = nc;  /* first match index for this pattern */
         if (fd >= 0) {
             char db[1024]; long n;
             while ((n = sys_getdents64(fd, db, sizeof(db))) > 0 && nc < max_args - 1) {
                 char *ptr = db;
                 while (ptr < db + n && nc < max_args - 1) {
                     d = (void *)ptr;
-                    if (d->d_name[0] != '.' && glob_match(pat, d->d_name)) {
+                    /* A leading '.' is only matched when the pattern itself
+                     * starts with '.', so * skips dotfiles but .* finds them. */
+                    if ((d->d_name[0] != '.' || pat[0] == '.') && glob_match(pat, d->d_name)) {
                         int pl = 0;
                         if (ls >= 0) { for (int k = 0; dir[k] && bp+pl < 2040; k++) _gbuf[bp+pl++] = dir[k]; _gbuf[bp+pl++] = '/'; }
                         for (int k = 0; d->d_name[k] && bp+pl < 2046; k++) _gbuf[bp+pl++] = d->d_name[k];
@@ -4870,6 +4873,14 @@ static int expand_globs(int argc, char *argv[], int max_args) {
                 }
             }
             sys_close(fd);
+        }
+        /* Sort this pattern's matches lexicographically, as shells do, so
+         * expansions like *.txt are deterministic. */
+        for (int a = mstart + 1; a < nc; a++) {
+            char *key = _gptrs[a];
+            int b = a - 1;
+            while (b >= mstart && strcmp_simple(_gptrs[b], key) > 0) { _gptrs[b + 1] = _gptrs[b]; b--; }
+            _gptrs[b + 1] = key;
         }
         if (!matched) _gptrs[nc++] = argv[i];
     }

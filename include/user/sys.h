@@ -302,6 +302,17 @@ static inline long sys_fstat_call(long fd, void *statbuf) {
     return sys_call2(SYS_fstat, fd, (long)statbuf);
 }
 
+static inline long sys_utime_now(const char *path) {
+    /* utimensat(AT_FDCWD, path, NULL, 0) — set atime+mtime to the current
+     * time. The syscall number is the Linux generic 88 on ARM64 and the
+     * x86_64 number 280. */
+#if defined(__aarch64__)
+    return sys_call4(88, -100 /*AT_FDCWD*/, (long)path, 0, 0);
+#else
+    return sys_call4(280, -100 /*AT_FDCWD*/, (long)path, 0, 0);
+#endif
+}
+
 static inline long sys_chmod_call(const char *path, long mode) {
 #if defined(__aarch64__)
     /* fchmodat(AT_FDCWD, path, mode, 0) */

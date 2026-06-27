@@ -8912,17 +8912,19 @@ static void cmd_touch(int argc, char *argv[]) {
     for (int i = 1; i < argc; i++) {
         const char *path = argv[i];
 
-        /* Create file by opening with O_CREAT and then closing */
+        /* Create the file if it does not exist. */
         int fd = sys_open(path, O_CREAT | O_WRONLY, 0644);
-        if (fd < 0) {
+        if (fd >= 0) sys_close(fd);
+
+        /* Update the access and modification times to now — touch's main job,
+         * which the create-and-close above does not do for an existing file.
+         * Only a file that can neither be created nor stamped is an error. */
+        long ut = sys_utime_now(path);
+        if (fd < 0 && ut < 0) {
             write_str(2, "touch: cannot touch '");
             write_str(2, path);
             write_str(2, "'\n");
-            continue;
         }
-
-        /* Close the file immediately */
-        sys_close(fd);
     }
 }
 

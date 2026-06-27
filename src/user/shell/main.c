@@ -9948,10 +9948,13 @@ static void cmd_realpath(int argc, char *argv[]) {
                 /* Current dir — skip */
                 continue;
             } else if (clen == 2 && resolved[cstart] == '.' && resolved[cstart + 1] == '.') {
-                /* Parent dir — pop last component */
+                /* Parent dir — pop the last component *and* its separator, so
+                 * /a/b/.. becomes /a, not /a/ (which would later collapse into
+                 * a doubled slash like /a//c). */
                 if (olen > 1) {
-                    olen--; /* remove trailing slash or char */
+                    olen--; /* drop last component char */
                     while (olen > 1 && out[olen - 1] != '/') olen--;
+                    if (olen > 1) olen--; /* drop the separating slash too */
                 }
                 continue;
             }
@@ -9979,10 +9982,13 @@ static void cmd_realpath(int argc, char *argv[]) {
                         /* Reset output to root */
                         olen = 1; out[0] = '/';
                     } else {
-                        /* Relative symlink — pop current component, prepend parent */
+                        /* Relative symlink — pop current component (and its
+                         * separator) so the target is joined to the parent
+                         * without a doubled slash. */
                         if (olen > 1) {
                             olen--;
                             while (olen > 1 && out[olen - 1] != '/') olen--;
+                            if (olen > 1) olen--;
                         }
                         out[olen] = '\0';
                         for (int j = 0; lnk[j] && tlen < 1020; j++)

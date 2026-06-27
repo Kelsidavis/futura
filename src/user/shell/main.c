@@ -10290,6 +10290,20 @@ static int simple_atoi(const char *str) {
 }
 
 /* Built-in: test - evaluate conditional expressions */
+/* Stat helper for the test/[ builtin. Returns 0 on success and reports the
+ * file's mode and size from the kernel stat layout. */
+static int test_stat(const char *path, unsigned int *mode, long *size) {
+    struct { uint64_t dev; uint64_t ino; uint64_t nlink; uint32_t mode; uint32_t uid;
+             uint32_t gid; uint32_t _pad; uint64_t rdev; int64_t size; int64_t blksize;
+             int64_t blocks; uint64_t atime_sec; uint64_t atime_nsec;
+             uint64_t mtime_sec; uint64_t mtime_nsec;
+             uint64_t ctime_sec; uint64_t ctime_nsec; } st;
+    if (sys_stat_call(path, &st) != 0) return -1;
+    if (mode) *mode = st.mode;
+    if (size) *size = (long)st.size;
+    return 0;
+}
+
 static int cmd_test(int argc, char *argv[]) {
     /* Handle [ command - last arg should be ] */
     int is_bracket = (strcmp_simple(argv[0], "[") == 0);
@@ -10322,22 +10336,19 @@ static int cmd_test(int argc, char *argv[]) {
         } else if (strcmp_simple(op, "-z") == 0) {
             /* String is empty */
             return (arg[0] == '\0') ? 0 : 1;
-        } else if (strcmp_simple(op, "-e") == 0 || strcmp_simple(op, "-f") == 0) {
-            /* File exists (we don't have stat yet, so just try to open) */
-            int fd = sys_open(arg, 0, 0);
-            if (fd >= 0) {
-                sys_close(fd);
+        } else if (strcmp_simple(op, "-e") == 0) {
+            /* Path exists (any type) */
+            return (test_stat(arg, NULL, NULL) == 0) ? 0 : 1;
+        } else if (strcmp_simple(op, "-f") == 0) {
+            /* Regular file (not a directory or other special file) */
+            unsigned int mode = 0;
+            if (test_stat(arg, &mode, NULL) == 0 && (mode & 0170000) == 0100000)
                 return 0;
-            }
             return 1;
         } else if (strcmp_simple(op, "-d") == 0) {
             /* Directory exists */
-            struct { uint64_t dev; uint64_t ino; uint64_t nlink; uint32_t mode; uint32_t uid;
-                     uint32_t gid; uint32_t _pad; uint64_t rdev; int64_t size; int64_t blksize;
-                     int64_t blocks; uint64_t atime_sec; uint64_t atime_nsec;
-                     uint64_t mtime_sec; uint64_t mtime_nsec;
-                     uint64_t ctime_sec; uint64_t ctime_nsec; } st;
-            if (sys_stat_call(arg, &st) == 0 && (st.mode & 0170000) == 0040000)
+            unsigned int mode = 0;
+            if (test_stat(arg, &mode, NULL) == 0 && (mode & 0170000) == 0040000)
                 return 0;
             return 1;
         } else if (strcmp_simple(op, "-r") == 0) {
@@ -10351,18 +10362,15 @@ static int cmd_test(int argc, char *argv[]) {
             if (fd >= 0) { sys_close(fd); return 0; }
             return 1;
         } else if (strcmp_simple(op, "-x") == 0) {
-            /* File is executable (simplified: check if exists and openable) */
-            int fd = sys_open(arg, 0, 0);
-            if (fd >= 0) { sys_close(fd); return 0; }
+            /* File exists and has an execute bit set */
+            unsigned int mode = 0;
+            if (test_stat(arg, &mode, NULL) == 0 && (mode & 0111))
+                return 0;
             return 1;
         } else if (strcmp_simple(op, "-s") == 0) {
             /* File has nonzero size */
-            struct { uint64_t dev; uint64_t ino; uint64_t nlink; uint32_t mode; uint32_t uid;
-                     uint32_t gid; uint32_t _pad; uint64_t rdev; int64_t size; int64_t blksize;
-                     int64_t blocks; uint64_t atime_sec; uint64_t atime_nsec;
-                     uint64_t mtime_sec; uint64_t mtime_nsec;
-                     uint64_t ctime_sec; uint64_t ctime_nsec; } st;
-            if (sys_stat_call(arg, &st) == 0 && st.size > 0)
+            long size = 0;
+            if (test_stat(arg, NULL, &size) == 0 && size > 0)
                 return 0;
             return 1;
         } else if (strcmp_simple(op, "-L") == 0 || strcmp_simple(op, "-h") == 0) {

@@ -9821,20 +9821,45 @@ static void cmd_tree(int argc, char *argv[]) {
 /* Built-in: ln - Create links */
 static void cmd_ln(int argc, char *argv[]) {
     int symbolic = 0;
+    int force = 0;
     int arg_start = 1;
 
-    if (argc > 1 && argv[1][0] == '-' && argv[1][1] == 's') {
-        symbolic = 1;
-        arg_start = 2;
+    /* Accept clustered flags such as -sf / -fs, not just a bare -s. */
+    while (arg_start < argc && argv[arg_start][0] == '-' && argv[arg_start][1] != '\0') {
+        for (const char *f = argv[arg_start] + 1; *f; f++) {
+            if (*f == 's') symbolic = 1;
+            else if (*f == 'f') force = 1;
+        }
+        arg_start++;
     }
 
-    if (argc - arg_start < 2) {
-        write_str(2, "usage: ln [-s] <target> <linkname>\n");
+    int nops = argc - arg_start;
+    if (nops < 1) {
+        write_str(2, "usage: ln [-sf] <target> [linkname]\n");
         return;
     }
 
     const char *target = argv[arg_start];
-    const char *linkname = argv[arg_start + 1];
+    const char *linkname;
+    char lbuf[512];
+    if (nops >= 2) {
+        linkname = argv[arg_start + 1];
+    } else {
+        /* One operand: create the link in the current directory using the
+         * target's basename (ln -s ../foo creates ./foo). */
+        const char *base = target;
+        for (const char *p = target; *p; p++) if (*p == '/') base = p + 1;
+        if (!*base) {
+            write_str(2, "ln: missing link name for '"); write_str(2, target); write_str(2, "'\n");
+            return;
+        }
+        int k = 0; while (base[k] && k < 511) { lbuf[k] = base[k]; k++; }
+        lbuf[k] = '\0';
+        linkname = lbuf;
+    }
+
+    /* -f: remove an existing destination first so the link can be created. */
+    if (force) sys_unlink(linkname);
 
     if (symbolic) {
         /* symlink(target, linkpath) — x86_64: 88, ARM64: 36 */

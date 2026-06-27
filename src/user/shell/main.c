@@ -687,6 +687,9 @@ struct redir_info {
     char *input_file;
     enum redir_type output_type;
     char *output_file;
+    enum redir_type err_type;   /* 2> (OUTPUT) / 2>> (APPEND) to err_file */
+    char *err_file;
+    int err_to_out;             /* 2>&1 — stderr follows stdout */
 };
 
 /* Simple write syscall wrapper */
@@ -16927,6 +16930,9 @@ static int parse_redirections(int argc, char *argv[], struct redir_info *redir) 
     redir->input_file = (char *)0;
     redir->output_type = REDIR_NONE;
     redir->output_file = (char *)0;
+    redir->err_type = REDIR_NONE;
+    redir->err_file = (char *)0;
+    redir->err_to_out = 0;
 
     for (int i = 0; i < argc; i++) {
         if (strcmp_simple(argv[i], "<") == 0) {
@@ -16949,6 +16955,39 @@ static int parse_redirections(int argc, char *argv[], struct redir_info *redir) 
                 redir->output_type = REDIR_APPEND;
                 redir->output_file = argv[i + 1];
                 i++;  /* Skip the filename */
+            }
+        } else if (strcmp_simple(argv[i], "2>") == 0) {
+            /* stderr to file (truncate) */
+            if (i + 1 < argc) {
+                redir->err_type = REDIR_OUTPUT;
+                redir->err_file = argv[i + 1];
+                i++;
+            }
+        } else if (strcmp_simple(argv[i], "2>>") == 0) {
+            /* stderr to file (append) */
+            if (i + 1 < argc) {
+                redir->err_type = REDIR_APPEND;
+                redir->err_file = argv[i + 1];
+                i++;
+            }
+        } else if (strcmp_simple(argv[i], "2>&1") == 0) {
+            /* stderr follows wherever stdout points */
+            redir->err_to_out = 1;
+        } else if (strcmp_simple(argv[i], "&>") == 0) {
+            /* both stdout and stderr to file (truncate) */
+            if (i + 1 < argc) {
+                redir->output_type = REDIR_OUTPUT;
+                redir->output_file = argv[i + 1];
+                redir->err_to_out = 1;
+                i++;
+            }
+        } else if (strcmp_simple(argv[i], "&>>") == 0) {
+            /* both stdout and stderr to file (append) */
+            if (i + 1 < argc) {
+                redir->output_type = REDIR_APPEND;
+                redir->output_file = argv[i + 1];
+                redir->err_to_out = 1;
+                i++;
             }
         } else {
             /* Regular argument - keep it */
@@ -16998,6 +17037,28 @@ static int apply_redirections(const struct redir_info *redir) {
         }
         sys_dup2(fd, 1);  /* Redirect stdout */
         sys_close(fd);
+    }
+
+    /* Handle stderr redirection to a file (applied after stdout so 2>&1 below
+     * can copy the final stdout target). */
+    if (redir->err_type != REDIR_NONE && redir->err_file) {
+        int flags = (redir->err_type == REDIR_APPEND)
+            ? (O_WRONLY | O_CREAT | O_APPEND)
+            : (O_WRONLY | O_CREAT | O_TRUNC);
+        int fd = sys_open(redir->err_file, flags, S_IRUSR | S_IWUSR);
+        if (fd < 0) {
+            write_str(2, "Error: cannot open error file '");
+            write_str(2, redir->err_file);
+            write_str(2, "'\n");
+            return -1;
+        }
+        sys_dup2(fd, 2);
+        sys_close(fd);
+    }
+
+    /* 2>&1: point stderr at whatever stdout now refers to. */
+    if (redir->err_to_out) {
+        sys_dup2(1, 2);
     }
 
     return 0;
@@ -17075,8 +17136,9 @@ static int execute_pipeline(int num_stages, char *stages[], int background, cons
 
             /* Execute directly if builtin */
             if (is_builtin(argv[0])) {
-                int saved_stdin = -1, saved_stdout = -1;
-                int has_redir = (redir.input_type != REDIR_NONE || redir.output_type != REDIR_NONE);
+                int saved_stdin = -1, saved_stdout = -1, saved_stderr = -1;
+                int has_redir = (redir.input_type != REDIR_NONE || redir.output_type != REDIR_NONE
+                                 || redir.err_type != REDIR_NONE || redir.err_to_out);
 
                 /* Save and apply redirections for builtins */
                 if (has_redir) {
@@ -17099,11 +17161,27 @@ static int execute_pipeline(int num_stages, char *stages[], int background, cons
                             sys_close(fd);
                         }
                     }
+                    if (redir.err_type != REDIR_NONE && redir.err_file) {
+                        saved_stderr = sys_dup(2);
+                        int flags = (redir.err_type == REDIR_APPEND)
+                            ? (O_WRONLY | O_CREAT | O_APPEND)
+                            : (O_WRONLY | O_CREAT | O_TRUNC);
+                        int fd = sys_open(redir.err_file, flags, 0644);
+                        if (fd >= 0) {
+                            sys_dup2(fd, 2);
+                            sys_close(fd);
+                        }
+                    } else if (redir.err_to_out) {
+                        /* 2>&1: stderr follows the (already redirected) stdout */
+                        saved_stderr = sys_dup(2);
+                        sys_dup2(1, 2);
+                    }
                 }
 
                 int result = execute_command(argc, argv);
 
-                /* Restore original fds */
+                /* Restore original fds (stderr first, mirroring apply order) */
+                if (saved_stderr >= 0) { sys_dup2(saved_stderr, 2); sys_close(saved_stderr); }
                 if (saved_stdout >= 0) { sys_dup2(saved_stdout, 1); sys_close(saved_stdout); }
                 if (saved_stdin >= 0) { sys_dup2(saved_stdin, 0); sys_close(saved_stdin); }
 

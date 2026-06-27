@@ -14391,32 +14391,43 @@ watch_sleep:
         } else if (argc >= 3 && argv[1][0] != '-') {
             suffix = argv[2];
         }
-        /* Strip directory */
-        const char *p = path, *last = p;
-        while (*p) { if (*p == '/') last = p + 1; p++; }
-        /* Strip trailing slashes */
-        int blen = 0; while (last[blen]) blen++;
-        while (blen > 1 && last[blen-1] == '/') blen--;
+        /* Strip trailing slashes before taking the last component, so
+         * `basename /usr/bin/` yields "bin" and `basename /` yields "/". */
+        int len = 0; while (path[len]) len++;
+        if (len == 0) { write_char(1, '\n'); return 0; }
+        while (len > 1 && path[len-1] == '/') len--;
+        if (len == 1 && path[0] == '/') { write_str(1, "/\n"); return 0; }
+        int start = 0;
+        for (int i = 0; i < len; i++) if (path[i] == '/') start = i + 1;
+        int blen = len - start;
+        const char *base = path + start;
         /* Strip suffix if specified */
         if (suffix && suffix[0]) {
             int slen = 0; while (suffix[slen]) slen++;
             if (blen > slen) {
                 int match = 1;
                 for (int i = 0; i < slen; i++)
-                    if (last[blen - slen + i] != suffix[i]) { match = 0; break; }
+                    if (base[blen - slen + i] != suffix[i]) { match = 0; break; }
                 if (match) blen -= slen;
             }
         }
-        sys_write(1, last, blen); write_char(1, '\n');
+        sys_write(1, base, blen); write_char(1, '\n');
         return 0;
     } else if (strcmp_simple(argv[0], "dirname") == 0) {
         if (argc < 2) { write_str(2, "usage: dirname <path>\n"); return 1; }
         const char *p = argv[1];
+        /* Trailing slashes are ignored, then the last component is removed,
+         * so `dirname /usr/bin/` yields "/usr" and `dirname /usr/` yields "/". */
+        int len = 0; while (p[len]) len++;
+        if (len == 0) { write_str(1, ".\n"); return 0; }
+        while (len > 1 && p[len-1] == '/') len--;
         int last_slash = -1;
-        for (int i = 0; p[i]; i++) { if (p[i] == '/') last_slash = i; }
-        if (last_slash <= 0) { write_str(1, last_slash == 0 ? "/" : "."); }
-        else { for (int i = 0; i < last_slash; i++) write_char(1, p[i]); }
-        write_char(1, '\n');
+        for (int i = 0; i < len; i++) if (p[i] == '/') last_slash = i;
+        if (last_slash < 0) { write_str(1, ".\n"); return 0; }
+        int dl = last_slash;
+        while (dl > 1 && p[dl-1] == '/') dl--;
+        if (dl == 0) { write_str(1, "/\n"); return 0; }
+        sys_write(1, p, dl); write_char(1, '\n');
         return 0;
     } else if (strcmp_simple(argv[0], "realpath") == 0) {
         cmd_realpath(argc, argv);

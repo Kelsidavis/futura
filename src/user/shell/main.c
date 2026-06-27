@@ -19144,32 +19144,39 @@ static void cmd_comm(int argc, char *argv[]) {
     /* Compare line by line */
     char *p1 = f1, *p2 = f2;
     while (*p1 || *p2) {
-        /* Extract current lines */
+        /* Extract current lines, remembering where each started so a line can
+         * be re-examined against the other file's next line. */
         char l1[256] = {0}, l2[256] = {0};
+        char *save1 = p1, *save2 = p2;
         int i;
         for (i = 0; *p1 && *p1 != '\n' && i < 255; i++) l1[i] = *p1++;
         l1[i] = '\0'; if (*p1 == '\n') p1++;
         for (i = 0; *p2 && *p2 != '\n' && i < 255; i++) l2[i] = *p2++;
         l2[i] = '\0'; if (*p2 == '\n') p2++;
         if (!l1[0] && !l2[0]) break;
-        int c = strcmp_simple(l1, l2);
-        if (c == 0 && l1[0]) {
+        /* Once one file is exhausted, every remaining line of the other is
+         * unique to it (otherwise compare the two current lines). */
+        int c;
+        if (!l1[0]) c = 1;
+        else if (!l2[0]) c = -1;
+        else c = strcmp_simple(l1, l2);
+        if (c == 0) {
             if (!suppress3) {
                 if (!suppress1) write_str(1, "\t");
                 if (!suppress2) write_str(1, "\t");
                 write_str(1, l1); write_str(1, "\n");
             }
-        } else if (c < 0 && l1[0]) {
-            if (!suppress1) {
-                write_str(1, l1); write_str(1, "\n");
-            }
-            p2 -= (i + 1);  /* Rewind p2 */
-        } else if (l2[0]) {
+        } else if (c < 0) {
+            /* Unique to file1 → column 1; re-examine file2's line next. */
+            if (!suppress1) { write_str(1, l1); write_str(1, "\n"); }
+            p2 = save2;
+        } else {
+            /* Unique to file2 → column 2; re-examine file1's line next. */
             if (!suppress2) {
                 if (!suppress1) write_str(1, "\t");
                 write_str(1, l2); write_str(1, "\n");
             }
-            if (l1[0]) { int j = 0; while (l1[j]) j++; p1 -= (j + 1); }  /* Rewind p1 */
+            p1 = save1;
         }
     }
 }

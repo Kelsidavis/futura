@@ -1407,6 +1407,17 @@ static void expand_variables(char *dest, const char *src, size_t dest_size) {
     const char *p = src;
 
     while (*p && dest_pos < dest_size - 1) {
+        if (*p == '\'') {
+            /* Single-quoted span: copy verbatim with no expansion, so
+             * echo '$HOME' prints literally and awk '{print $1}' keeps its
+             * $1. The quotes are preserved for the tokenizer to strip later. */
+            dest[dest_pos++] = *p++;
+            while (*p && *p != '\'' && dest_pos < dest_size - 1)
+                dest[dest_pos++] = *p++;
+            if (*p == '\'' && dest_pos < dest_size - 1)
+                dest[dest_pos++] = *p++;
+            continue;
+        }
         if (*p == '$') {
             p++;
             /* Special variables */

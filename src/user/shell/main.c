@@ -9106,7 +9106,7 @@ static unsigned long tar_checksum(const char *hdr) {
 static void tar_add_file(int archive_fd, const char *path) {
     /* Stat the file to get size and type */
     struct stat st;
-    if (sys_call2(__NR_stat, (long)path, (long)&st) < 0) return;
+    if (sys_stat_call(path, &st) < 0) return;
 
     /* Build 512-byte header */
     static char hdr[512];
@@ -9174,7 +9174,7 @@ static void tar_add_recursive(int archive_fd, const char *path) {
 
     /* Check if directory */
     struct stat dst;
-    if (sys_call2(__NR_stat, (long)path, (long)&dst) < 0) return;
+    if (sys_stat_call(path, &dst) < 0) return;
     if ((dst.st_mode & 0170000) != 0040000) return;  /* Not a directory */
 
     int fd = sys_open(path, O_RDONLY, 0);
@@ -9520,7 +9520,7 @@ static void cmd_which(int argc, char *argv[]) {
             pbuf[j] = '\0';
             /* Check if file exists */
             struct stat st;
-            if (sys_call2(__NR_stat, (long)pbuf, (long)&st) == 0) {
+            if (sys_stat_call(pbuf, &st) == 0) {
                 write_str(1, pbuf);
                 write_str(1, "\n");
                 return;
@@ -9993,7 +9993,7 @@ static void cmd_realpath(int argc, char *argv[]) {
         /* Verify path exists (unless -m: missing OK) */
         if (!no_exist) {
             struct stat st;
-            if (sys_call2(__NR_stat, (long)out, (long)&st) < 0) {
+            if (sys_stat_call(out, &st) < 0) {
                 if (!quiet) {
                     write_str(2, "realpath: ");
                     write_str(2, argv[a]);
@@ -10119,7 +10119,7 @@ static void cmd_stat(int argc, char *argv[]) {
         return;
     }
     struct stat st;
-    long ret = sys_call2(__NR_stat, (long)argv[1], (long)&st);
+    long ret = sys_stat_call(argv[1], &st);
     if (ret < 0) {
         write_str(2, "stat: ");
         write_str(2, argv[1]);
@@ -14254,7 +14254,7 @@ watch_sleep:
                     for (size_t k = 0; k < cl; k++) pb[j++] = argv[1][k];
                     pb[j] = '\0';
                     struct stat st;
-                    if (sys_call2(__NR_stat, (long)pb, (long)&st) == 0) {
+                    if (sys_stat_call(pb, &st) == 0) {
                         write_str(1, argv[1]);
                         write_str(1, " is ");
                         write_str(1, pb);
@@ -19988,7 +19988,7 @@ struct make_target {
 
 static long make_get_mtime(const char *path) {
     struct stat st;
-    if (sys_call2(__NR_stat, (long)path, (long)&st) < 0) return -1;
+    if (sys_stat_call(path, &st) < 0) return -1;
     return (long)st.st_mtim.tv_sec;
 }
 
@@ -25650,7 +25650,7 @@ static void cmd_hd(int argc, char *argv[]) {
     new_argv[new_argc] = (char *)0;
     cmd_hexdump(new_argc, new_argv);
 }
-static void cmd_lsns(int argc, char *argv[]) { const char *ft=NULL; for(int i=1;i<argc;i++){if(strcmp_simple(argv[i],"-t")==0&&i+1<argc)ft=argv[++i];} write_str(1,"        NS TYPE   NPROCS   PID COMMAND\n"); int pfd=sys_open("/proc",O_RDONLY,0); if(pfd<0){write_str(2,"lsns: cannot open /proc\n");return;} struct linux_dirent64{unsigned long long d_ino;long long d_off;unsigned short d_reclen;unsigned char d_type;char d_name[256];}; char db[4096]; static const char*nn[]={"cgroup","ipc","mnt","net","pid","user","uts"}; long nr; while((nr=sys_getdents64(pfd,db,sizeof(db)))>0){char*pt=db;while(pt<db+nr){struct linux_dirent64*d=(struct linux_dirent64*)pt;pt+=d->d_reclen;if(d->d_name[0]<'1'||d->d_name[0]>'9')continue;int pid=0;for(int k=0;d->d_name[k]>='0'&&d->d_name[k]<='9';k++)pid=pid*10+(d->d_name[k]-'0');char cp[64],cm[64];int ci=0;const char*px="/proc/";while(*px)cp[ci++]=*px++;{int v=pid;char rv[12];int rp=0;if(v==0)rv[rp++]='0';else while(v>0){rv[rp++]='0'+(v%10);v/=10;}while(rp>0)cp[ci++]=rv[--rp];}const char*sf="/comm";while(*sf)cp[ci++]=*sf++;cp[ci]='\0';cm[0]='-';cm[1]='\0';int cf=sys_open(cp,O_RDONLY,0);if(cf>=0){long cr=sys_read(cf,cm,63);if(cr>0){if(cm[cr-1]=='\n')cr--;cm[cr]='\0';}sys_close(cf);}for(int ni=0;ni<7;ni++){if(ft&&strcmp_simple(ft,nn[ni])!=0)continue;char np[80];int npi=0;px="/proc/";while(*px)np[npi++]=*px++;{int v=pid;char rv[12];int rp=0;if(v==0)rv[rp++]='0';else while(v>0){rv[rp++]='0'+(v%10);v/=10;}while(rp>0)np[npi++]=rv[--rp];}const char*ns="/ns/";while(*ns)np[npi++]=*ns++;const char*t=nn[ni];while(*t)np[npi++]=*t++;np[npi]='\0';struct stat st;if(sys_call2(__NR_stat,(long)np,(long)&st)==0){char nb[20];int_to_str((long)st.st_ino,nb,20);int nl=0;while(nb[nl])nl++;for(int s=0;s<10-nl;s++)write_str(1," ");write_str(1,nb);write_str(1," ");write_str(1,nn[ni]);int tl=0;while(nn[ni][tl])tl++;for(int s=tl;s<7;s++)write_str(1," ");write_str(1,"      1 ");char pb[12];int_to_str(pid,pb,12);int pl=0;while(pb[pl])pl++;for(int s=0;s<5-pl;s++)write_str(1," ");write_str(1,pb);write_str(1," ");write_str(1,cm);write_str(1,"\n");}}}}sys_close(pfd);}
+static void cmd_lsns(int argc, char *argv[]) { const char *ft=NULL; for(int i=1;i<argc;i++){if(strcmp_simple(argv[i],"-t")==0&&i+1<argc)ft=argv[++i];} write_str(1,"        NS TYPE   NPROCS   PID COMMAND\n"); int pfd=sys_open("/proc",O_RDONLY,0); if(pfd<0){write_str(2,"lsns: cannot open /proc\n");return;} struct linux_dirent64{unsigned long long d_ino;long long d_off;unsigned short d_reclen;unsigned char d_type;char d_name[256];}; char db[4096]; static const char*nn[]={"cgroup","ipc","mnt","net","pid","user","uts"}; long nr; while((nr=sys_getdents64(pfd,db,sizeof(db)))>0){char*pt=db;while(pt<db+nr){struct linux_dirent64*d=(struct linux_dirent64*)pt;pt+=d->d_reclen;if(d->d_name[0]<'1'||d->d_name[0]>'9')continue;int pid=0;for(int k=0;d->d_name[k]>='0'&&d->d_name[k]<='9';k++)pid=pid*10+(d->d_name[k]-'0');char cp[64],cm[64];int ci=0;const char*px="/proc/";while(*px)cp[ci++]=*px++;{int v=pid;char rv[12];int rp=0;if(v==0)rv[rp++]='0';else while(v>0){rv[rp++]='0'+(v%10);v/=10;}while(rp>0)cp[ci++]=rv[--rp];}const char*sf="/comm";while(*sf)cp[ci++]=*sf++;cp[ci]='\0';cm[0]='-';cm[1]='\0';int cf=sys_open(cp,O_RDONLY,0);if(cf>=0){long cr=sys_read(cf,cm,63);if(cr>0){if(cm[cr-1]=='\n')cr--;cm[cr]='\0';}sys_close(cf);}for(int ni=0;ni<7;ni++){if(ft&&strcmp_simple(ft,nn[ni])!=0)continue;char np[80];int npi=0;px="/proc/";while(*px)np[npi++]=*px++;{int v=pid;char rv[12];int rp=0;if(v==0)rv[rp++]='0';else while(v>0){rv[rp++]='0'+(v%10);v/=10;}while(rp>0)np[npi++]=rv[--rp];}const char*ns="/ns/";while(*ns)np[npi++]=*ns++;const char*t=nn[ni];while(*t)np[npi++]=*t++;np[npi]='\0';struct stat st;if(sys_stat_call(np, &st)==0){char nb[20];int_to_str((long)st.st_ino,nb,20);int nl=0;while(nb[nl])nl++;for(int s=0;s<10-nl;s++)write_str(1," ");write_str(1,nb);write_str(1," ");write_str(1,nn[ni]);int tl=0;while(nn[ni][tl])tl++;for(int s=tl;s<7;s++)write_str(1," ");write_str(1,"      1 ");char pb[12];int_to_str(pid,pb,12);int pl=0;while(pb[pl])pl++;for(int s=0;s<5-pl;s++)write_str(1," ");write_str(1,pb);write_str(1," ");write_str(1,cm);write_str(1,"\n");}}}}sys_close(pfd);}
 static void cmd_prlimit(int argc, char *argv[]) { int tp=0,sn=-1,cs=-1; for(int i=1;i<argc;i++){if(strcmp_simple(argv[i],"-p")==0&&i+1<argc){const char*p=argv[++i];while(*p>='0'&&*p<='9')tp=tp*10+(*p++-'0');}else if(argv[i][0]=='-'&&argv[i][1]=='-'&&argv[i][2]=='n'&&argv[i][3]=='o'&&argv[i][4]=='f'&&argv[i][5]=='i'&&argv[i][6]=='l'&&argv[i][7]=='e'&&argv[i][8]=='='){const char*p=argv[i]+9;sn=0;while(*p>='0'&&*p<='9')sn=sn*10+(*p++-'0');}else{cs=i;break;}} if(sn>=0&&cs>=0){uint64_t rl[2];rl[0]=(uint64_t)sn;rl[1]=(uint64_t)sn;sys_call4(SYS_prlimit64,0,7,(long)rl,0);int sa=argc-cs;char*sv[64];for(int i=0;i<sa&&i<63;i++)sv[i]=argv[i+cs];sv[sa]=NULL;execute_command(sa,sv);return;} static const struct{int r;const char*n;}rl[]={{0,"RLIMIT_CPU        "},{1,"RLIMIT_FSIZE      "},{2,"RLIMIT_DATA       "},{3,"RLIMIT_STACK      "},{4,"RLIMIT_CORE       "},{5,"RLIMIT_RSS        "},{6,"RLIMIT_NPROC      "},{7,"RLIMIT_NOFILE     "},{8,"RLIMIT_MEMLOCK    "},{9,"RLIMIT_AS         "},{10,"RLIMIT_LOCKS      "},{11,"RLIMIT_SIGPENDING "},{12,"RLIMIT_MSGQUEUE   "},{15,"RLIMIT_RTPRIO     "}}; write_str(1,"RESOURCE                SOFT      HARD\n"); for(int i=0;i<(int)(sizeof(rl)/sizeof(rl[0]));i++){uint64_t rv[2]={0,0};long r=sys_call4(SYS_prlimit64,tp,rl[i].r,0,(long)rv);write_str(1,rl[i].n);if(r<0){write_str(1,"  (error)\n");continue;}char b[20];if(rv[0]==(uint64_t)-1)write_str(1," unlimited");else{int_to_str((long)rv[0],b,20);int l=0;while(b[l])l++;for(int s=0;s<10-l;s++)write_str(1," ");write_str(1,b);}if(rv[1]==(uint64_t)-1)write_str(1," unlimited");else{int_to_str((long)rv[1],b,20);int l=0;while(b[l])l++;for(int s=0;s<10-l;s++)write_str(1," ");write_str(1,b);}write_str(1,"\n");}}
 static void cmd_taskset(int argc, char *argv[]) { if(argc<2){write_str(2,"usage: taskset [-p] [-a] [-c] [mask] [PID|cmd]\n");return;} int sp=0,ag=1,all_threads=0,cpu_list=0; while(ag<argc&&argv[ag][0]=='-'){if(strcmp_simple(argv[ag],"-p")==0){sp=1;}else if(strcmp_simple(argv[ag],"-a")==0){all_threads=1;}else if(strcmp_simple(argv[ag],"-c")==0){cpu_list=1;}else if(strcmp_simple(argv[ag],"-ap")==0||strcmp_simple(argv[ag],"-pa")==0){sp=1;all_threads=1;}else if(strcmp_simple(argv[ag],"-cp")==0||strcmp_simple(argv[ag],"-pc")==0){sp=1;cpu_list=1;}else break;ag++;}(void)all_threads;(void)cpu_list; if(sp){if(ag>=argc){write_str(2,"taskset: missing PID\n");return;}int pid=0;unsigned long mk=0;int sm=0;if(ag+1<argc){const char*p=argv[ag];if(p[0]=='0'&&p[1]=='x'){p+=2;while(*p){mk<<=4;if(*p>='0'&&*p<='9')mk|=(unsigned long)(*p-'0');else if(*p>='a'&&*p<='f')mk|=(unsigned long)(*p-'a'+10);else if(*p>='A'&&*p<='F')mk|=(unsigned long)(*p-'A'+10);p++;}}else while(*p>='0'&&*p<='9')mk=mk*10+(unsigned long)(*p++-'0');sm=1;ag++;p=argv[ag];while(*p>='0'&&*p<='9')pid=pid*10+(*p++-'0');}else{const char*p=argv[ag];while(*p>='0'&&*p<='9')pid=pid*10+(*p++-'0');}if(sm){long r=sys_call3(SYS_sched_setaffinity,pid,sizeof(mk),(long)&mk);if(r<0){write_str(2,"taskset: failed\n");return;}write_str(1,"pid ");char pb[12];int_to_str(pid,pb,12);write_str(1,pb);write_str(1,"'s new affinity mask: ");}else{write_str(1,"pid ");char pb[12];int_to_str(pid,pb,12);write_str(1,pb);write_str(1,"'s current affinity mask: ");}unsigned long gm=0;sys_call3(SYS_sched_getaffinity,pid,sizeof(gm),(long)&gm);char hb[20];hb[0]='0';hb[1]='x';int hi=2;int st=0;for(int b=60;b>=0;b-=4){int n=(int)((gm>>b)&0xf);if(n||st||b==0){hb[hi++]=(char)(n<10?'0'+n:'a'+n-10);st=1;}}hb[hi]='\0';write_str(1,hb);write_str(1,"\n");}else{if(ag+1>=argc){write_str(2,"usage: taskset [mask] cmd\n");return;}unsigned long mk=0;const char*p=argv[ag];if(p[0]=='0'&&p[1]=='x'){p+=2;while(*p){mk<<=4;if(*p>='0'&&*p<='9')mk|=(unsigned long)(*p-'0');else if(*p>='a'&&*p<='f')mk|=(unsigned long)(*p-'a'+10);else if(*p>='A'&&*p<='F')mk|=(unsigned long)(*p-'A'+10);p++;}}else while(*p>='0'&&*p<='9')mk=mk*10+(unsigned long)(*p++-'0');ag++;sys_call3(SYS_sched_setaffinity,0,sizeof(mk),(long)&mk);int sa=argc-ag;char*sv[64];for(int i=0;i<sa&&i<63;i++)sv[i]=argv[i+ag];sv[sa]=NULL;execute_command(sa,sv);}}
 static void cmd_chrt(int argc, char *argv[]) { if(argc<2){write_str(2,"usage: chrt [-f|-r|-o|-b] [-p] [prio] [PID|cmd]\n");return;} int po=-1,pr=0,sp=0,ag=1; while(ag<argc&&argv[ag][0]=='-'){const char*f=argv[ag];if(strcmp_simple(f,"-f")==0)po=1;else if(strcmp_simple(f,"-r")==0)po=2;else if(strcmp_simple(f,"-o")==0)po=0;else if(strcmp_simple(f,"-b")==0)po=3;else if(strcmp_simple(f,"-p")==0)sp=1;else break;ag++;} if(sp){int pid=0;if(ag<argc){const char*p=argv[ag];while(*p>='0'&&*p<='9')pid=pid*10+(*p++-'0');}long cp=sys_call1(SYS_sched_getscheduler,pid);int pm[1]={0};sys_call2(SYS_sched_getparam,pid,(long)pm);write_str(1,"pid ");char pb[12];int_to_str(pid,pb,12);write_str(1,pb);write_str(1,"'s current scheduling policy: ");if(cp==0)write_str(1,"SCHED_OTHER");else if(cp==1)write_str(1,"SCHED_FIFO");else if(cp==2)write_str(1,"SCHED_RR");else if(cp==3)write_str(1,"SCHED_BATCH");else if(cp==5)write_str(1,"SCHED_IDLE");else{char nb[12];int_to_str(cp,nb,12);write_str(1,nb);}write_str(1,"\npid ");write_str(1,pb);write_str(1,"'s current scheduling priority: ");char prb[12];int_to_str(pm[0],prb,12);write_str(1,prb);write_str(1,"\n");return;} if(ag<argc){const char*p=argv[ag];while(*p>='0'&&*p<='9')pr=pr*10+(*p++-'0');ag++;}if(ag>=argc){write_str(2,"chrt: missing command\n");return;}if(po<0)po=1;int sm[1];sm[0]=pr;long r=sys_call3(SYS_sched_setscheduler,0,po,(long)sm);if(r<0)write_str(2,"chrt: failed to set scheduling policy\n");int sa=argc-ag;char*sv[64];for(int i=0;i<sa&&i<63;i++)sv[i]=argv[i+ag];sv[sa]=NULL;execute_command(sa,sv);}
@@ -25789,7 +25789,7 @@ static void cmd_stdbuf(int argc, char *argv[]) {
     sv[sa] = NULL;
     execute_command(sa, sv);
 }
-static void cmd_fuser(int argc, char *argv[]) { int dk=0,fs=1;if(argc>=2&&strcmp_simple(argv[1],"-k")==0){dk=1;fs=2;}if(fs>=argc){write_str(2,"usage: fuser [-k] file...\n");return;}for(int fi=fs;fi<argc;fi++){const char*tg=argv[fi];struct stat ts;if(sys_call2(__NR_stat,(long)tg,(long)&ts)<0){write_str(2,"fuser: ");write_str(2,tg);write_str(2,": No such file\n");continue;}write_str(1,tg);write_str(1,":");struct linux_dirent64{unsigned long long d_ino;long long d_off;unsigned short d_reclen;unsigned char d_type;char d_name[256];};int pf=sys_open("/proc",O_RDONLY,0);if(pf<0)continue;char db[4096];long nr;while((nr=sys_getdents64(pf,db,sizeof(db)))>0){char*pt=db;while(pt<db+nr){struct linux_dirent64*d=(struct linux_dirent64*)pt;pt+=d->d_reclen;if(d->d_name[0]<'1'||d->d_name[0]>'9')continue;int pid=0;for(int k=0;d->d_name[k]>='0'&&d->d_name[k]<='9';k++)pid=pid*10+(d->d_name[k]-'0');char fd[64];int fp=0;const char*px="/proc/";while(*px)fd[fp++]=*px++;{int v=pid;char rv[12];int rp=0;if(v==0)rv[rp++]='0';else while(v>0){rv[rp++]='0'+(v%10);v/=10;}while(rp>0)fd[fp++]=rv[--rp];}const char*sf="/fd";while(*sf)fd[fp++]=*sf++;fd[fp]='\0';int ff=sys_open(fd,O_RDONLY,0);if(ff<0)continue;char fb[2048];long fn;int fo=0;while(!fo&&(fn=sys_getdents64(ff,fb,sizeof(fb)))>0){char*fp2=fb;while(fp2<fb+fn){struct linux_dirent64*fe=(struct linux_dirent64*)fp2;fp2+=fe->d_reclen;if(fe->d_name[0]=='.')continue;char fdp[80];int pp=0;for(int k=0;fd[k]&&pp<70;k++)fdp[pp++]=fd[k];fdp[pp++]='/';for(int k=0;fe->d_name[k]&&pp<78;k++)fdp[pp++]=fe->d_name[k];fdp[pp]='\0';struct stat fs2;if(sys_call2(__NR_stat,(long)fdp,(long)&fs2)==0&&fs2.st_ino==ts.st_ino&&fs2.st_dev==ts.st_dev){write_str(1," ");char pb[12];int_to_str(pid,pb,12);write_str(1,pb);if(dk)sys_kill(pid,9);fo=1;break;}}}sys_close(ff);}}sys_close(pf);write_str(1,"\n");}}
+static void cmd_fuser(int argc, char *argv[]) { int dk=0,fs=1;if(argc>=2&&strcmp_simple(argv[1],"-k")==0){dk=1;fs=2;}if(fs>=argc){write_str(2,"usage: fuser [-k] file...\n");return;}for(int fi=fs;fi<argc;fi++){const char*tg=argv[fi];struct stat ts;if(sys_stat_call(tg, &ts)<0){write_str(2,"fuser: ");write_str(2,tg);write_str(2,": No such file\n");continue;}write_str(1,tg);write_str(1,":");struct linux_dirent64{unsigned long long d_ino;long long d_off;unsigned short d_reclen;unsigned char d_type;char d_name[256];};int pf=sys_open("/proc",O_RDONLY,0);if(pf<0)continue;char db[4096];long nr;while((nr=sys_getdents64(pf,db,sizeof(db)))>0){char*pt=db;while(pt<db+nr){struct linux_dirent64*d=(struct linux_dirent64*)pt;pt+=d->d_reclen;if(d->d_name[0]<'1'||d->d_name[0]>'9')continue;int pid=0;for(int k=0;d->d_name[k]>='0'&&d->d_name[k]<='9';k++)pid=pid*10+(d->d_name[k]-'0');char fd[64];int fp=0;const char*px="/proc/";while(*px)fd[fp++]=*px++;{int v=pid;char rv[12];int rp=0;if(v==0)rv[rp++]='0';else while(v>0){rv[rp++]='0'+(v%10);v/=10;}while(rp>0)fd[fp++]=rv[--rp];}const char*sf="/fd";while(*sf)fd[fp++]=*sf++;fd[fp]='\0';int ff=sys_open(fd,O_RDONLY,0);if(ff<0)continue;char fb[2048];long fn;int fo=0;while(!fo&&(fn=sys_getdents64(ff,fb,sizeof(fb)))>0){char*fp2=fb;while(fp2<fb+fn){struct linux_dirent64*fe=(struct linux_dirent64*)fp2;fp2+=fe->d_reclen;if(fe->d_name[0]=='.')continue;char fdp[80];int pp=0;for(int k=0;fd[k]&&pp<70;k++)fdp[pp++]=fd[k];fdp[pp++]='/';for(int k=0;fe->d_name[k]&&pp<78;k++)fdp[pp++]=fe->d_name[k];fdp[pp]='\0';struct stat fs2;if(sys_stat_call(fdp, &fs2)==0&&fs2.st_ino==ts.st_ino&&fs2.st_dev==ts.st_dev){write_str(1," ");char pb[12];int_to_str(pid,pb,12);write_str(1,pb);if(dk)sys_kill(pid,9);fo=1;break;}}}sys_close(ff);}}sys_close(pf);write_str(1,"\n");}}
 /* __ findmnt: find a filesystem __ */
 static void cmd_findmnt(int argc, char *argv[]) { const char*tgt=NULL;int raw=0;for(int i=1;i<argc;i++){if(strcmp_simple(argv[i],"--raw")==0||strcmp_simple(argv[i],"-r")==0)raw=1;else if(strcmp_simple(argv[i],"--version")==0){write_str(1,"findmnt from futura-util 2.40\n");return;}else if(argv[i][0]!='-')tgt=argv[i];}int fd=sys_open("/proc/mounts",O_RDONLY,0);if(fd<0){write_str(2,"findmnt: cannot open /proc/mounts\n");return;}char buf[4096];long nr=sys_read(fd,buf,sizeof(buf)-1);sys_close(fd);if(nr<=0)return;buf[nr]='\0';if(!raw)write_str(1,"TARGET                          SOURCE     FSTYPE  OPTIONS\n");char*p=buf;while(*p){char dev[128],mp[128],fs[64],opts[256];int di=0,mi=0,fi=0,oi=0;while(*p&&*p!=' '&&di<126)dev[di++]=*p++;dev[di]='\0';while(*p==' ')p++;while(*p&&*p!=' '&&mi<126)mp[mi++]=*p++;mp[mi]='\0';while(*p==' ')p++;while(*p&&*p!=' '&&fi<62)fs[fi++]=*p++;fs[fi]='\0';while(*p==' ')p++;while(*p&&*p!=' '&&*p!='\n'&&oi<254)opts[oi++]=*p++;opts[oi]='\0';while(*p&&*p!='\n')p++;if(*p=='\n')p++;if(tgt&&strcmp_simple(mp,tgt)!=0&&strcmp_simple(dev,tgt)!=0)continue;if(raw){write_str(1,mp);write_str(1," ");write_str(1,dev);write_str(1," ");write_str(1,fs);write_str(1," ");write_str(1,opts);write_str(1,"\n");}else{write_str(1,mp);int ml=0;while(mp[ml])ml++;for(int s=ml;s<32;s++)write_str(1," ");write_str(1,dev);int dl=0;while(dev[dl])dl++;for(int s=dl;s<11;s++)write_str(1," ");write_str(1,fs);int fl=0;while(fs[fl])fl++;for(int s=fl;s<8;s++)write_str(1," ");write_str(1,opts);write_str(1,"\n");}}(void)argc;}
 /* __ lsmem: list memory ranges __ */
@@ -28044,7 +28044,7 @@ static void cmd_xz(int argc, char *argv[]) {
             /* List mode */
             for (int j = i + 1; j < argc; j++) {
                 struct stat st;
-                if (sys_call2(__NR_stat, (long)argv[j], (long)&st) == 0) {
+                if (sys_stat_call(argv[j], &st) == 0) {
                     write_str(1, "Strms  Blocks   Compressed Uncompressed  Ratio  Check   Filename\n");
                     write_str(1, "    1       1        ");
                     char nb[20]; int_to_str((int)st.st_size, nb, 20); write_str(1, nb);
@@ -28222,7 +28222,7 @@ static void cmd_gzip(int argc, char *argv[]) {
         write_str(1, "  compressed uncompressed  ratio uncompressed_name\n");
         for (int f = file_start; f < argc; f++) {
             struct stat st;
-            if (sys_call2(__NR_stat, (long)argv[f], (long)&st) == 0) {
+            if (sys_stat_call(argv[f], &st) == 0) {
                 char nb[20];
                 write_str(1, "  ");
                 int_to_str((int)st.st_size, nb, 20); write_str(1, nb);
@@ -30267,7 +30267,7 @@ static void cmd_setfattr(int argc, char *argv[]) {
     }
     /* Verify file exists */
     struct stat st;
-    if (sys_call2(__NR_stat, (long)file, (long)&st) < 0) {
+    if (sys_stat_call(file, &st) < 0) {
         write_str(2, "setfattr: "); write_str(2, file); write_str(2, ": No such file\n");
         return;
     }
@@ -30310,7 +30310,7 @@ static void cmd_getfattr(int argc, char *argv[]) {
         return;
     }
     struct stat st;
-    if (sys_call2(__NR_stat, (long)file, (long)&st) < 0) {
+    if (sys_stat_call(file, &st) < 0) {
         write_str(2, "getfattr: "); write_str(2, file); write_str(2, ": No such file\n");
         return;
     }
@@ -30355,7 +30355,7 @@ static void cmd_attr(int argc, char *argv[]) {
         return;
     }
     struct stat st;
-    if (sys_call2(__NR_stat, (long)file, (long)&st) < 0) {
+    if (sys_stat_call(file, &st) < 0) {
         write_str(2, "attr: "); write_str(2, file); write_str(2, ": No such file\n");
         return;
     }
@@ -30390,7 +30390,7 @@ static void cmd_attr(int argc, char *argv[]) {
 /* ── chattr: change file attributes (ext2/ext4 flags) ── */
 static void chattr_apply(const char *mode, const char *path, int recursive) {
     struct stat st;
-    if (sys_call2(__NR_stat, (long)path, (long)&st) < 0) {
+    if (sys_stat_call(path, &st) < 0) {
         write_str(2, "chattr: "); write_str(2, path); write_str(2, ": No such file or directory\n");
         return;
     }
@@ -30486,7 +30486,7 @@ static void cmd_lsattr(int argc, char *argv[]) {
     } else {
         for (int i = start; i < argc; i++) {
             struct stat st;
-            if (sys_call2(__NR_stat, (long)argv[i], (long)&st) < 0) {
+            if (sys_stat_call(argv[i], &st) < 0) {
                 write_str(2, "lsattr: "); write_str(2, argv[i]); write_str(2, ": No such file\n");
                 continue;
             }
@@ -30511,7 +30511,7 @@ static void cmd_getcap(int argc, char *argv[]) {
     }
     for (int i = start; i < argc; i++) {
         struct stat st;
-        if (sys_call2(__NR_stat, (long)argv[i], (long)&st) < 0) {
+        if (sys_stat_call(argv[i], &st) < 0) {
             write_str(2, "getcap: "); write_str(2, argv[i]); write_str(2, ": No such file\n");
             continue;
         }
@@ -30535,7 +30535,7 @@ static void cmd_setcap(int argc, char *argv[]) {
         /* Remove caps */
         for (int i = 2; i < argc; i++) {
             struct stat st;
-            if (sys_call2(__NR_stat, (long)argv[i], (long)&st) < 0) {
+            if (sys_stat_call(argv[i], &st) < 0) {
                 write_str(2, "setcap: "); write_str(2, argv[i]); write_str(2, ": No such file\n");
                 continue;
             }
@@ -30547,7 +30547,7 @@ static void cmd_setcap(int argc, char *argv[]) {
     const char *caps = argv[1];
     const char *file = argv[argc - 1];
     struct stat st;
-    if (sys_call2(__NR_stat, (long)file, (long)&st) < 0) {
+    if (sys_stat_call(file, &st) < 0) {
         write_str(2, "setcap: "); write_str(2, file); write_str(2, ": No such file\n");
         return;
     }
@@ -30591,7 +30591,7 @@ static void cmd_xattr(int argc, char *argv[]) {
         return;
     }
     struct stat st;
-    if (sys_call2(__NR_stat, (long)file, (long)&st) < 0) {
+    if (sys_stat_call(file, &st) < 0) {
         write_str(2, "xattr: "); write_str(2, file); write_str(2, ": No such file\n");
         return;
     }
@@ -30634,7 +30634,7 @@ static void cmd_restorecon(int argc, char *argv[]) {
     }
     for (int i = start; i < argc; i++) {
         struct stat st;
-        if (sys_call2(__NR_stat, (long)argv[i], (long)&st) < 0) {
+        if (sys_stat_call(argv[i], &st) < 0) {
             write_str(2, "restorecon: "); write_str(2, argv[i]); write_str(2, ": No such file\n");
             continue;
         }
@@ -30704,7 +30704,7 @@ static void cmd_chcon(int argc, char *argv[]) {
     int processed = 0;
     if (file_start == -2 && context) {
         struct stat st;
-        if (sys_call2(__NR_stat, (long)context, (long)&st) < 0) {
+        if (sys_stat_call(context, &st) < 0) {
             write_str(2, "chcon: "); write_str(2, context); write_str(2, ": No such file\n");
         } else {
             if (verbose) {
@@ -30719,7 +30719,7 @@ static void cmd_chcon(int argc, char *argv[]) {
     }
     for (int i = (file_start > 0 ? file_start : argc); i < argc; i++) {
         struct stat st;
-        if (sys_call2(__NR_stat, (long)argv[i], (long)&st) < 0) {
+        if (sys_stat_call(argv[i], &st) < 0) {
             write_str(2, "chcon: "); write_str(2, argv[i]); write_str(2, ": No such file\n");
             continue;
         }
@@ -31101,7 +31101,7 @@ __attribute__((used)) static void cmd_tic(int argc, char *argv[]) {
     }
     /* Check if source file exists */
     struct stat st;
-    if (sys_call2(__NR_stat, (long)source, (long)&st) < 0) {
+    if (sys_stat_call(source, &st) < 0) {
         write_str(2, "tic: can't open ");
         write_str(2, source);
         write_str(2, "\n");
@@ -37613,7 +37613,7 @@ static void cmd_rg(int argc, char *argv[]) {
     int total = 0;
     /* Check if path is a file or directory */
     struct stat st;
-    if (sys_call2(__NR_stat, (long)path, (long)&st) == 0 && (st.st_mode & 0170000) == 0100000) {
+    if (sys_stat_call(path, &st) == 0 && (st.st_mode & 0170000) == 0100000) {
         rg_search_file(path, pattern, case_i, show_n, count_only, &total);
     } else {
         rg_recurse(path, pattern, case_i, show_n, count_only, show_hidden, &total);
@@ -37819,7 +37819,7 @@ static void cmd_exa(int argc, char *argv[]) {
                     while (*p && pi < 1023) fpath[pi++] = *p++;
                     fpath[pi] = '\0';
                     struct stat st;
-                    if (sys_call2(__NR_stat, (long)fpath, (long)&st) == 0) {
+                    if (sys_stat_call(fpath, &st) == 0) {
                         char nb[16];
                         if (st.st_size < 1024) {
                             int_to_str((int)st.st_size, nb, 16);
@@ -43717,7 +43717,7 @@ static void cmd_namei(int argc, char *argv[]) {
                 const char *q = argv[i];
                 while (q < p && fi < 510) fullpath[fi++] = *q++;
                 fullpath[fi] = '\0';
-                if (sys_call2(__NR_stat, (long)fullpath, (long)&st) == 0) {
+                if (sys_stat_call(fullpath, &st) == 0) {
                     if (long_list) {
                         if ((st.st_mode & 0170000) == 0040000)
                             write_str(1, "drwxr-xr-x ");
@@ -43822,7 +43822,7 @@ static void cmd_fincore(int argc, char *argv[]) {
     for (int i = 1; i < argc; i++) {
         if (argv[i][0] == '-') continue;
         struct stat st;
-        if (sys_call2(__NR_stat, (long)argv[i], (long)&st) < 0) {
+        if (sys_stat_call(argv[i], &st) < 0) {
             write_str(2, "fincore: cannot stat ");
             write_str(2, argv[i]);
             write_str(2, "\n");
@@ -49847,7 +49847,7 @@ static void cmd_gdb(int argc, char *argv[]) {
     write_str(1, "...\n");
     /* Check if file exists */
     struct stat sbuf;
-    if (sys_call2(__NR_stat, (long)prog, (long)&sbuf) < 0) {
+    if (sys_stat_call(prog, &sbuf) < 0) {
         write_str(1, "(No debugging symbols found)\nLoading symbols for builtin command '");
         write_str(1, prog);
         write_str(1, "'...done.\n");
@@ -50080,7 +50080,7 @@ static void cmd_objcopy(int argc, char *argv[]) {
     if (!input || !output) { write_str(2, "objcopy: need input and output files\n"); return; }
     /* Check input exists */
     struct stat sbuf;
-    if (sys_call2(__NR_stat, (long)input, (long)&sbuf) < 0) {
+    if (sys_stat_call(input, &sbuf) < 0) {
         write_str(2, "objcopy: '"); write_str(2, input);
         write_str(2, "': No such file\n"); return;
     }

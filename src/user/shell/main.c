@@ -22129,43 +22129,12 @@ int main(int argc, char **argv, char **envp) {
             continue;
         }
 
-        /* Check for variable assignment */
-        char var_name[MAX_VAR_NAME];
-        char var_value[MAX_VAR_VALUE];
-        if (is_var_assignment(cmdline, var_name, var_value)) {
-            /* Expand variables in the value */
-            char expanded_value[MAX_VAR_VALUE];
-            expand_variables(expanded_value, var_value, MAX_VAR_VALUE);
-            set_var(var_name, expanded_value, 0);
-            last_exit_status = 0;
-            continue;
-        }
-
-        /* Expand aliases: check if first word matches an alias */
-        {
-            char *first = cmdline;
-            while (*first == ' ' || *first == '\t') first++;
-            char word[32];
-            int wl = 0;
-            while (first[wl] && first[wl] != ' ' && first[wl] != '\t' && wl < 31) { word[wl] = first[wl]; wl++; }
-            word[wl] = '\0';
-            const char *aval = get_alias(word);
-            if (aval) {
-                char tmp[512];
-                int tp = 0;
-                for (const char *a = aval; *a && tp < 500; a++) tmp[tp++] = *a;
-                for (const char *r = first + wl; *r && tp < 510; r++) tmp[tp++] = *r;
-                tmp[tp] = '\0';
-                for (int j = 0; j <= tp; j++) cmdline[j] = tmp[j];
-            }
-        }
-
-        /* Expand variables in command line */
-        char expanded_cmdline[512];
-        expand_variables(expanded_cmdline, cmdline, sizeof(expanded_cmdline));
-
-        /* Execute command chain (handles &&, ||, and pipelines) */
-        int status = execute_command_chain(expanded_cmdline);
+        /* Dispatch the whole line through execute_full_line, which splits on
+         * ';' (respecting quotes) and applies variable assignment, alias and
+         * variable expansion per segment — so interactive `cmd1; cmd2` runs
+         * both commands instead of feeding "; cmd2" to cmd1 as arguments,
+         * matching how sourced scripts are handled. */
+        int status = execute_full_line(cmdline);
         last_exit_status = (status < 0) ? 1 : 0;
     }
 

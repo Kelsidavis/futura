@@ -9608,104 +9608,108 @@ static void cmd_du(int argc, char *argv[]) {
     (void)summary; /* -s is default behavior (only show total) */
 }
 
+/* Apply a symbolic chmod spec ([ugoa]*[+-=][rwxst]*, comma-separated) to a
+ * starting mode and return the result. */
+static unsigned int chmod_apply_symbolic(const char *ms, unsigned int mode) {
+    const char *p = ms;
+    while (*p) {
+        /* Parse who: u, g, o, a (default a if none specified) */
+        int who_u = 0, who_g = 0, who_o = 0;
+        while (*p == 'u' || *p == 'g' || *p == 'o' || *p == 'a') {
+            if (*p == 'u') who_u = 1;
+            else if (*p == 'g') who_g = 1;
+            else if (*p == 'o') who_o = 1;
+            else { who_u = 1; who_g = 1; who_o = 1; }
+            p++;
+        }
+        if (!who_u && !who_g && !who_o) { who_u = 1; who_g = 1; who_o = 1; }
+
+        /* Parse operator: +, -, = */
+        char op = *p;
+        if (op != '+' && op != '-' && op != '=') break;
+        p++;
+
+        /* Parse permission bits: r, w, x, s, t */
+        unsigned int bits = 0;
+        while (*p && *p != ',' && *p != 'u' && *p != 'g' && *p != 'o' && *p != 'a'
+               && *p != '+' && *p != '-' && *p != '=') {
+            if (*p == 'r') {
+                if (who_u) bits |= 0400;
+                if (who_g) bits |= 0040;
+                if (who_o) bits |= 0004;
+            } else if (*p == 'w') {
+                if (who_u) bits |= 0200;
+                if (who_g) bits |= 0020;
+                if (who_o) bits |= 0002;
+            } else if (*p == 'x') {
+                if (who_u) bits |= 0100;
+                if (who_g) bits |= 0010;
+                if (who_o) bits |= 0001;
+            } else if (*p == 's') {
+                if (who_u) bits |= 04000;
+                if (who_g) bits |= 02000;
+            } else if (*p == 't') {
+                bits |= 01000;
+            }
+            p++;
+        }
+
+        /* Apply operation */
+        if (op == '+') mode |= bits;
+        else if (op == '-') mode &= ~bits;
+        else { /* '=' */
+            unsigned int mask = 0;
+            if (who_u) mask |= 04700;
+            if (who_g) mask |= 02070;
+            if (who_o) mask |= 01007;
+            mode = (mode & ~mask) | (bits & mask);
+        }
+
+        if (*p == ',') p++;  /* Multiple clauses: u+x,g-w */
+    }
+    return mode;
+}
+
 static void cmd_chmod(int argc, char *argv[]) {
     if (argc < 3) {
-        write_str(2, "usage: chmod <mode> <file>\n");
+        write_str(2, "usage: chmod <mode> <file>...\n");
         write_str(2, "  mode: octal (e.g. 755) or symbolic (e.g. u+x, g-w, o+r, a+rwx)\n");
         return;
     }
     const char *ms = argv[1];
-    unsigned int mode = 0;
-    int symbolic = 0;
-
-    /* Check if mode is symbolic (starts with u/g/o/a or +/-) */
-    if ((ms[0] >= 'a' && ms[0] <= 'z') || ms[0] == '+' || ms[0] == '-') {
-        /* Symbolic mode: need current mode first via stat */
-        struct { uint64_t dev; uint64_t ino; uint64_t nlink; uint32_t mode; uint32_t uid;
-                 uint32_t gid; uint32_t _pad; uint64_t rdev; int64_t size; int64_t blksize;
-                 int64_t blocks; uint64_t atime_sec; uint64_t atime_nsec;
-                 uint64_t mtime_sec; uint64_t mtime_nsec;
-                 uint64_t ctime_sec; uint64_t ctime_nsec; } st;
-        long sr = sys_stat_call(argv[2], &st);
-        if (sr < 0) {
-            write_str(2, "chmod: cannot stat file\n");
-            return;
-        }
-        mode = st.mode & 07777;
-        symbolic = 1;
-
-        /* Parse symbolic mode string: [ugoa]*[+-=][rwxXst]* */
-        const char *p = ms;
-        while (*p) {
-            /* Parse who: u, g, o, a (default a if none specified) */
-            int who_u = 0, who_g = 0, who_o = 0;
-            while (*p == 'u' || *p == 'g' || *p == 'o' || *p == 'a') {
-                if (*p == 'u') who_u = 1;
-                else if (*p == 'g') who_g = 1;
-                else if (*p == 'o') who_o = 1;
-                else if (*p == 'a') { who_u = 1; who_g = 1; who_o = 1; }
-                p++;
-            }
-            if (!who_u && !who_g && !who_o) { who_u = 1; who_g = 1; who_o = 1; }
-
-            /* Parse operator: +, -, = */
-            char op = *p;
-            if (op != '+' && op != '-' && op != '=') break;
-            p++;
-
-            /* Parse permission bits: r, w, x, s, t */
-            unsigned int bits = 0;
-            while (*p && *p != ',' && *p != 'u' && *p != 'g' && *p != 'o' && *p != 'a'
-                   && *p != '+' && *p != '-' && *p != '=') {
-                if (*p == 'r') {
-                    if (who_u) bits |= 0400;
-                    if (who_g) bits |= 0040;
-                    if (who_o) bits |= 0004;
-                } else if (*p == 'w') {
-                    if (who_u) bits |= 0200;
-                    if (who_g) bits |= 0020;
-                    if (who_o) bits |= 0002;
-                } else if (*p == 'x') {
-                    if (who_u) bits |= 0100;
-                    if (who_g) bits |= 0010;
-                    if (who_o) bits |= 0001;
-                } else if (*p == 's') {
-                    if (who_u) bits |= 04000;
-                    if (who_g) bits |= 02000;
-                } else if (*p == 't') {
-                    bits |= 01000;
-                }
-                p++;
-            }
-
-            /* Apply operation */
-            if (op == '+') mode |= bits;
-            else if (op == '-') mode &= ~bits;
-            else if (op == '=') {
-                unsigned int mask = 0;
-                if (who_u) mask |= 04700;
-                if (who_g) mask |= 02070;
-                if (who_o) mask |= 01007;
-                mode = (mode & ~mask) | (bits & mask);
-            }
-
-            if (*p == ',') p++;  /* Multiple clauses: u+x,g-w */
-        }
-    } else {
-        /* Octal mode */
+    int symbolic = ((ms[0] >= 'a' && ms[0] <= 'z') || ms[0] == '+' || ms[0] == '-');
+    unsigned int octal_mode = 0;
+    if (!symbolic) {
         for (int i = 0; ms[i]; i++) {
             if (ms[i] < '0' || ms[i] > '7') {
                 write_str(2, "chmod: invalid mode (use octal e.g. 755, or symbolic e.g. u+x)\n");
                 return;
             }
-            mode = (mode << 3) | (unsigned int)(ms[i] - '0');
+            octal_mode = (octal_mode << 3) | (unsigned int)(ms[i] - '0');
         }
     }
-    (void)symbolic;
-    /* chmod syscall: x86_64=90, ARM64 uses fchmodat */
-    long ret = sys_chmod_call(argv[2], mode);
-    if (ret < 0) {
-        write_str(2, "chmod: failed\n");
+
+    /* Apply to every file operand, not just the first. Symbolic modes are
+     * recomputed per file from that file's current permissions. */
+    for (int f = 2; f < argc; f++) {
+        unsigned int mode;
+        if (symbolic) {
+            struct { uint64_t dev; uint64_t ino; uint64_t nlink; uint32_t mode; uint32_t uid;
+                     uint32_t gid; uint32_t _pad; uint64_t rdev; int64_t size; int64_t blksize;
+                     int64_t blocks; uint64_t atime_sec; uint64_t atime_nsec;
+                     uint64_t mtime_sec; uint64_t mtime_nsec;
+                     uint64_t ctime_sec; uint64_t ctime_nsec; } st;
+            if (sys_stat_call(argv[f], &st) < 0) {
+                write_str(2, "chmod: cannot stat '"); write_str(2, argv[f]); write_str(2, "'\n");
+                continue;
+            }
+            mode = chmod_apply_symbolic(ms, st.mode & 07777);
+        } else {
+            mode = octal_mode;
+        }
+        if (sys_chmod_call(argv[f], mode) < 0) {
+            write_str(2, "chmod: failed on '"); write_str(2, argv[f]); write_str(2, "'\n");
+        }
     }
 }
 

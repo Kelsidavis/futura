@@ -28002,7 +28002,7 @@ static void cmd_pigz(int argc, char *argv[]) {
             while ((n = sys_read(in_fd, buf, sizeof(buf))) > 0) sys_write(out_fd, buf, n);
             sys_close(in_fd);
             if (!to_stdout) sys_close(out_fd);
-            if (!keep && !to_stdout) sys_call2(__NR_unlink, (long)argv[f], 0);
+            if (!keep && !to_stdout) sys_unlink(argv[f]);
             if (!to_stdout) { write_str(1, argv[f]); write_str(1, " -> "); write_str(1, outname); write_str(1, "\n"); }
         } else {
             /* Compress: copy file with .gz extension */
@@ -28021,7 +28021,7 @@ static void cmd_pigz(int argc, char *argv[]) {
             while ((n = sys_read(in_fd, buf, sizeof(buf))) > 0) sys_write(out_fd, buf, n);
             sys_close(in_fd);
             if (!to_stdout) sys_close(out_fd);
-            if (!keep && !to_stdout) sys_call2(__NR_unlink, (long)argv[f], 0);
+            if (!keep && !to_stdout) sys_unlink(argv[f]);
             if (!to_stdout) { write_str(1, argv[f]); write_str(1, " -> "); write_str(1, outname); write_str(1, "\n"); }
         }
     }
@@ -28083,7 +28083,7 @@ static void cmd_xz(int argc, char *argv[]) {
             while ((n = sys_read(in_fd, buf, sizeof(buf))) > 0) sys_write(out_fd, buf, n);
             sys_close(in_fd);
             if (!to_stdout) sys_close(out_fd);
-            if (!keep && !to_stdout) sys_call2(__NR_unlink, (long)argv[f], 0);
+            if (!keep && !to_stdout) sys_unlink(argv[f]);
             if (!to_stdout) { write_str(1, argv[f]); write_str(1, " -> "); write_str(1, outname); write_str(1, "\n"); }
         } else {
             char outname[256];
@@ -28101,7 +28101,7 @@ static void cmd_xz(int argc, char *argv[]) {
             while ((n = sys_read(in_fd, buf, sizeof(buf))) > 0) sys_write(out_fd, buf, n);
             sys_close(in_fd);
             if (!to_stdout) sys_close(out_fd);
-            if (!keep && !to_stdout) sys_call2(__NR_unlink, (long)argv[f], 0);
+            if (!keep && !to_stdout) sys_unlink(argv[f]);
             if (!to_stdout) { write_str(1, argv[f]); write_str(1, " -> "); write_str(1, outname); write_str(1, "\n"); }
         }
     }
@@ -28150,7 +28150,7 @@ static void cmd_bzip2(int argc, char *argv[]) {
             while ((n = sys_read(in_fd, buf, sizeof(buf))) > 0) sys_write(out_fd, buf, n);
             sys_close(in_fd);
             if (!to_stdout) sys_close(out_fd);
-            if (!keep && !to_stdout) sys_call2(__NR_unlink, (long)argv[f], 0);
+            if (!keep && !to_stdout) sys_unlink(argv[f]);
             if (!to_stdout) { write_str(1, argv[f]); write_str(1, " -> "); write_str(1, outname); write_str(1, "\n"); }
         } else {
             char outname[256];
@@ -28168,7 +28168,7 @@ static void cmd_bzip2(int argc, char *argv[]) {
             while ((n = sys_read(in_fd, buf, sizeof(buf))) > 0) sys_write(out_fd, buf, n);
             sys_close(in_fd);
             if (!to_stdout) sys_close(out_fd);
-            if (!keep && !to_stdout) sys_call2(__NR_unlink, (long)argv[f], 0);
+            if (!keep && !to_stdout) sys_unlink(argv[f]);
             if (!to_stdout) { write_str(1, argv[f]); write_str(1, " -> "); write_str(1, outname); write_str(1, "\n"); }
         }
     }
@@ -28250,7 +28250,7 @@ static void cmd_gzip(int argc, char *argv[]) {
             while ((n = sys_read(in_fd, buf, sizeof(buf))) > 0) sys_write(out_fd, buf, n);
             sys_close(in_fd);
             if (!to_stdout) sys_close(out_fd);
-            if (!keep && !to_stdout) sys_call2(__NR_unlink, (long)argv[f], 0);
+            if (!keep && !to_stdout) sys_unlink(argv[f]);
             if (!to_stdout) { write_str(1, argv[f]); write_str(1, " -> "); write_str(1, outname); write_str(1, "\n"); }
         } else {
             char outname[256];
@@ -28268,7 +28268,7 @@ static void cmd_gzip(int argc, char *argv[]) {
             while ((n = sys_read(in_fd, buf, sizeof(buf))) > 0) sys_write(out_fd, buf, n);
             sys_close(in_fd);
             if (!to_stdout) sys_close(out_fd);
-            if (!keep && !to_stdout) sys_call2(__NR_unlink, (long)argv[f], 0);
+            if (!keep && !to_stdout) sys_unlink(argv[f]);
             if (!to_stdout) { write_str(1, argv[f]); write_str(1, " -> "); write_str(1, outname); write_str(1, "\n"); }
         }
     }

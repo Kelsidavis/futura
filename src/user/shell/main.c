@@ -3444,6 +3444,29 @@ static void cmd_wget(int argc, char *argv[]) {
 }
 
 /* Built-in: seq - Print sequence of numbers */
+/* Emit one seq value, honoring the separator-before-all-but-first rule and
+ * -w zero padding. Zeros are inserted after a leading '-' so negative values
+ * read as -09, not 0-9. */
+static void seq_emit_num(int i, int equal_width, int width, const char *sep, int *first) {
+    char buf[16];
+    if (!*first) write_str(1, sep);
+    int_to_str(i, buf, 16);
+    if (equal_width) {
+        int len = (int)strlen_simple(buf);
+        if (buf[0] == '-') {
+            write_char(1, '-');
+            for (int p = len; p < width; p++) write_char(1, '0');
+            write_str(1, buf + 1);
+        } else {
+            for (int p = len; p < width; p++) write_char(1, '0');
+            write_str(1, buf);
+        }
+    } else {
+        write_str(1, buf);
+    }
+    *first = 0;
+}
+
 static void cmd_seq(int argc, char *argv[]) {
     int start = 1, end_val = 0, step = 1;
     const char *sep = "\n";
@@ -3493,32 +3516,16 @@ static void cmd_seq(int argc, char *argv[]) {
         if (w2 > width) width = w2;
     }
 
-    char buf[16];
     int first = 1;
     if (step > 0) {
-        for (int i = start; i <= end_val; i += step) {
-            if (!first) write_str(1, sep);
-            int_to_str(i, buf, 16);
-            if (equal_width) {
-                int len = (int)strlen_simple(buf);
-                for (int p = len; p < width; p++) write_char(1, '0');
-            }
-            write_str(1, buf);
-            first = 0;
-        }
+        for (int i = start; i <= end_val; i += step)
+            seq_emit_num(i, equal_width, width, sep, &first);
     } else {
-        for (int i = start; i >= end_val; i += step) {
-            if (!first) write_str(1, sep);
-            int_to_str(i, buf, 16);
-            if (equal_width) {
-                int len = (int)strlen_simple(buf);
-                for (int p = len; p < width; p++) write_char(1, '0');
-            }
-            write_str(1, buf);
-            first = 0;
-        }
+        for (int i = start; i >= end_val; i += step)
+            seq_emit_num(i, equal_width, width, sep, &first);
     }
-    write_char(1, '\n');
+    /* An empty range produces no output at all, not a bare newline. */
+    if (!first) write_char(1, '\n');
 }
 
 

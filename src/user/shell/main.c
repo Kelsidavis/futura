@@ -14300,7 +14300,12 @@ watch_sleep:
         if (argc < 2) return 0;
         const char *fmt = argv[1];
         int ai = 2;
-        for (int i = 0; fmt[i]; i++) {
+        /* The format is reused until every argument is consumed (printf '%s\n'
+         * a b c prints three lines). A pass that consumes no argument — a plain
+         * string, or one with no conversions — runs exactly once. */
+        do {
+            int start_ai = ai;
+            for (int i = 0; fmt[i]; i++) {
             if (fmt[i] == '\\' && fmt[i+1]) {
                 i++;
                 switch (fmt[i]) {
@@ -14335,15 +14340,19 @@ watch_sleep:
                 }
             } else if (fmt[i] == '%' && fmt[i+1]) {
                 i++;
-                if (fmt[i] == 's' && ai < argc) {
-                    write_str(1, argv[ai++]);
-                } else if (fmt[i] == 'd' && ai < argc) {
+                /* A missing argument is an empty string for %s/%c and zero for
+                 * the numeric conversions, matching printf. */
+                if (fmt[i] == 's') {
+                    if (ai < argc) write_str(1, argv[ai++]);
+                } else if (fmt[i] == 'd' || fmt[i] == 'i') {
                     /* Parse integer and format it */
                     long val = 0; int neg = 0;
-                    const char *p = argv[ai++];
-                    if (*p == '-') { neg = 1; p++; }
-                    while (*p >= '0' && *p <= '9') val = val * 10 + (*p++ - '0');
-                    if (neg) val = -val;
+                    if (ai < argc) {
+                        const char *p = argv[ai++];
+                        if (*p == '-') { neg = 1; p++; }
+                        while (*p >= '0' && *p <= '9') val = val * 10 + (*p++ - '0');
+                        if (neg) val = -val;
+                    }
                     char nbuf[24]; int ni = 0;
                     if (val < 0) { write_char(1, '-'); val = -val; }
                     if (val == 0) { write_char(1, '0'); }
@@ -14351,11 +14360,13 @@ watch_sleep:
                         while (val > 0) { nbuf[ni++] = '0' + (char)(val % 10); val /= 10; }
                         while (ni > 0) write_char(1, nbuf[--ni]);
                     }
-                } else if (fmt[i] == 'x' && ai < argc) {
+                } else if (fmt[i] == 'x') {
                     /* Hex format */
                     long val = 0;
-                    const char *p = argv[ai++];
-                    while (*p >= '0' && *p <= '9') val = val * 10 + (*p++ - '0');
+                    if (ai < argc) {
+                        const char *p = argv[ai++];
+                        while (*p >= '0' && *p <= '9') val = val * 10 + (*p++ - '0');
+                    }
                     if (val == 0) { write_char(1, '0'); }
                     else {
                         char hbuf[20]; int hi = 0;
@@ -14363,19 +14374,21 @@ watch_sleep:
                         while (val > 0) { hbuf[hi++] = hex[val & 0xF]; val >>= 4; }
                         while (hi > 0) write_char(1, hbuf[--hi]);
                     }
-                } else if (fmt[i] == 'o' && ai < argc) {
+                } else if (fmt[i] == 'o') {
                     /* Octal format */
                     long val = 0;
-                    const char *p = argv[ai++];
-                    while (*p >= '0' && *p <= '9') val = val * 10 + (*p++ - '0');
+                    if (ai < argc) {
+                        const char *p = argv[ai++];
+                        while (*p >= '0' && *p <= '9') val = val * 10 + (*p++ - '0');
+                    }
                     if (val == 0) { write_char(1, '0'); }
                     else {
                         char obuf[24]; int oi = 0;
                         while (val > 0) { obuf[oi++] = '0' + (char)(val & 7); val >>= 3; }
                         while (oi > 0) write_char(1, obuf[--oi]);
                     }
-                } else if (fmt[i] == 'c' && ai < argc) {
-                    write_char(1, argv[ai++][0]);
+                } else if (fmt[i] == 'c') {
+                    if (ai < argc) write_char(1, argv[ai++][0]);
                 } else if (fmt[i] == '%') {
                     write_char(1, '%');
                 } else {
@@ -14384,7 +14397,12 @@ watch_sleep:
             } else {
                 write_char(1, fmt[i]);
             }
-        }
+            }
+            /* Stop when the arguments are exhausted, or when a whole pass
+             * consumed none (otherwise a conversion-free format would loop). */
+            if (ai >= argc) break;
+            if (ai == start_ai) break;
+        } while (1);
         return 0;
     } else if (strcmp_simple(argv[0], "basename") == 0) {
         /* basename [-s SUFFIX] PATH [SUFFIX]

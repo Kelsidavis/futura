@@ -1418,6 +1418,17 @@ static void expand_variables(char *dest, const char *src, size_t dest_size) {
                 dest[dest_pos++] = *p++;
             continue;
         }
+        if (*p == '~' && (p == src || p[-1] == ' ' || p[-1] == '\t') &&
+            (p[1] == '/' || p[1] == '\0' || p[1] == ' ' || p[1] == '\t')) {
+            /* Tilde at the start of a word expands to $HOME (~ alone or ~/path);
+             * a tilde mid-word or inside quotes is left untouched. */
+            const char *home = get_var("HOME");
+            if (!home || !home[0]) home = "/";
+            while (*home && dest_pos < dest_size - 1)
+                dest[dest_pos++] = *home++;
+            p++;
+            continue;
+        }
         if (*p == '$') {
             p++;
             /* Special variables */

@@ -1589,7 +1589,7 @@ static void expand_variables(char *dest, const char *src, size_t dest_size) {
 }
 
 /* Parse command line into arguments */
-static int parse_command(char *line, char *argv[], int max_args) {
+static int parse_command_q(char *line, char *argv[], int max_args, unsigned char *quoted_out) {
     int argc = 0;
     char *p = line;
 
@@ -1601,8 +1601,11 @@ static int parse_command(char *line, char *argv[], int max_args) {
 
         if (!*p) break;
 
+        int was_quoted = 0;
+
         /* Handle quoted strings */
         if (*p == '"') {
+            was_quoted = 1;
             p++;
             argv[argc] = p;
             while (*p && *p != '"') {
@@ -1613,6 +1616,7 @@ static int parse_command(char *line, char *argv[], int max_args) {
                 p++;
             }
         } else if (*p == '\'') {
+            was_quoted = 1;
             p++;
             argv[argc] = p;
             while (*p && *p != '\'') {
@@ -1633,11 +1637,16 @@ static int parse_command(char *line, char *argv[], int max_args) {
             }
         }
 
+        if (quoted_out) quoted_out[argc] = (unsigned char)was_quoted;
         argc++;
     }
 
     argv[argc] = NULL;
     return argc;
+}
+
+static int parse_command(char *line, char *argv[], int max_args) {
+    return parse_command_q(line, argv, max_args, (unsigned char *)0);
 }
 
 /* Forward declarations */
@@ -4857,11 +4866,13 @@ static int glob_match(const char *pat, const char *str) {
 
 static char _gbuf[2048];
 static char *_gptrs[64];
-static int expand_globs(int argc, char *argv[], int max_args) {
+static int expand_globs_q(int argc, char *argv[], int max_args, const unsigned char *quoted) {
     int nc = 0, bp = 0;
     for (int i = 0; i < argc && nc < max_args - 1; i++) {
         int hg = 0;
-        for (const char *p = argv[i]; *p; p++) if (*p == '*' || *p == '?') hg = 1;
+        /* A quoted token is literal — `echo '*'` must not be globbed. */
+        if (!quoted || !quoted[i])
+            for (const char *p = argv[i]; *p; p++) if (*p == '*' || *p == '?') hg = 1;
         if (!hg) { _gptrs[nc++] = argv[i]; continue; }
         char dir[256] = "."; const char *pat = argv[i]; int ls = -1;
         for (int j = 0; argv[i][j]; j++) if (argv[i][j] == '/') ls = j;
@@ -4902,6 +4913,10 @@ static int expand_globs(int argc, char *argv[], int max_args) {
     for (int i = 0; i < nc; i++) argv[i] = _gptrs[i];
     argv[nc] = NULL;
     return nc;
+}
+
+static int expand_globs(int argc, char *argv[], int max_args) {
+    return expand_globs_q(argc, argv, max_args, (const unsigned char *)0);
 }
 
 /* Built-in: history */
@@ -17133,8 +17148,9 @@ static int execute_pipeline(int num_stages, char *stages[], int background, cons
     /* Single command - no piping needed */
     if (num_stages == 1) {
         char *argv[32];
-        int argc = parse_command(stages[0], argv, 32);
-        if (argc > 0) argc = expand_globs(argc, argv, 32);
+        unsigned char arg_quoted[32];
+        int argc = parse_command_q(stages[0], argv, 32, arg_quoted);
+        if (argc > 0) argc = expand_globs_q(argc, argv, 32, arg_quoted);
         if (argc > 0) {
             /* Parse redirections */
             struct redir_info redir;
@@ -17268,9 +17284,10 @@ static int execute_pipeline(int num_stages, char *stages[], int background, cons
     /* Spawn processes for each stage */
     for (int i = 0; i < num_stages; i++) {
         char *argv[32];
-        int argc = parse_command(stages[i], argv, 32);
+        unsigned char arg_quoted[32];
+        int argc = parse_command_q(stages[i], argv, 32, arg_quoted);
 
-        if (argc > 0) argc = expand_globs(argc, argv, 32);
+        if (argc > 0) argc = expand_globs_q(argc, argv, 32, arg_quoted);
         if (argc == 0) continue;
 
         /* Parse redirections */

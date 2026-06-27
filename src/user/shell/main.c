@@ -8937,8 +8937,15 @@ static int cp_copy_file(const char *src_path, const char *dst_path) {
         return -1;
     }
 
+    /* Preserve the source's permission bits (notably the execute bit) when
+     * creating the destination, rather than forcing every copy to 0644. The
+     * mode only takes effect when the file is newly created, matching cp. */
+    struct stat src_st;
+    long dst_mode = (sys_stat_call(src_path, &src_st) == 0)
+                        ? (long)(src_st.st_mode & 0777) : 0644;
+
     /* Open destination file for writing (create if needed) */
-    int dst_fd = sys_open(dst_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    int dst_fd = sys_open(dst_path, O_WRONLY | O_CREAT | O_TRUNC, dst_mode);
     if (dst_fd < 0) {
         write_str(2, "cp: cannot create '");
         write_str(2, dst_path);
@@ -9436,8 +9443,14 @@ static void cmd_mv(int argc, char *argv[]) {
         return;
     }
 
+    /* A move must keep the file's permissions, so create the destination
+     * with the source's mode rather than a fixed 0644. */
+    struct stat mv_src_st;
+    long mv_dst_mode = (sys_stat_call(src_path, &mv_src_st) == 0)
+                           ? (long)(mv_src_st.st_mode & 0777) : 0644;
+
     /* Open destination file for writing (create if needed) */
-    int dst_fd = sys_open(dst_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    int dst_fd = sys_open(dst_path, O_WRONLY | O_CREAT | O_TRUNC, mv_dst_mode);
     if (dst_fd < 0) {
         write_str(2, "mv: cannot create '");
         write_str(2, dst_path);

@@ -1504,6 +1504,95 @@ static long arith_expr_eval(const char **s) {
     return v;
 }
 
+static int glob_match(const char *pat, const char *str);  /* defined later */
+
+/* Does glob pattern `pat` match the first `n` characters of `s`? */
+static int str_glob_prefix(const char *pat, const char *s, int n) {
+    char tmp[256];
+    if (n > 255) n = 255;
+    for (int i = 0; i < n; i++) tmp[i] = s[i];
+    tmp[n] = '\0';
+    return glob_match(pat, tmp);
+}
+
+/* Expand a ${...} parameter expression (the text between the braces) into
+ * dest. Supports ${VAR}, ${#VAR} (length), ${VAR:-/:+/:=word} (defaults),
+ * ${VAR#pat}/${VAR##pat} (strip prefix), ${VAR%pat}/${VAR%%pat} (strip
+ * suffix) and ${VAR/old/new} / ${VAR//old/new} (substitute). */
+static void emit_param_expansion(const char *brace, char *dest, size_t *dpos, size_t dsize) {
+    if (brace[0] == '#' && brace[1]) {
+        const char *value = get_var(brace + 1);
+        int len = 0; while (value[len]) len++;
+        char nb[16]; int ni = 0;
+        if (len == 0) nb[ni++] = '0';
+        else { char t[16]; int tj = 0; int v = len;
+               while (v > 0) { t[tj++] = '0' + (char)(v % 10); v /= 10; }
+               while (tj > 0) nb[ni++] = t[--tj]; }
+        nb[ni] = '\0';
+        for (int i = 0; nb[i] && *dpos < dsize - 1; i++) dest[(*dpos)++] = nb[i];
+        return;
+    }
+
+    char name[MAX_VAR_NAME]; int nl = 0;
+    const char *b = brace;
+    while (*b && ((*b >= 'A' && *b <= 'Z') || (*b >= 'a' && *b <= 'z') ||
+                  (*b >= '0' && *b <= '9') || *b == '_') && nl < MAX_VAR_NAME - 1)
+        name[nl++] = *b++;
+    name[nl] = '\0';
+    const char *value = get_var(name);
+    int vlen = 0; while (value[vlen]) vlen++;
+
+    if (*b == '#' || *b == '%') {
+        char opc = *b++; int lng = 0; if (*b == opc) { lng = 1; b++; }
+        const char *pat = b;
+        if (opc == '#') {  /* strip matching prefix */
+            int cut = 0;
+            if (lng) { for (int i = vlen; i >= 0; i--) if (str_glob_prefix(pat, value, i)) { cut = i; break; } }
+            else     { for (int i = 0; i <= vlen; i++) if (str_glob_prefix(pat, value, i)) { cut = i; break; } }
+            for (const char *o = value + cut; *o && *dpos < dsize - 1; o++) dest[(*dpos)++] = *o;
+        } else {           /* strip matching suffix */
+            int keep = vlen;
+            if (lng) { for (int i = 0; i <= vlen; i++) if (glob_match(pat, value + i)) { keep = i; break; } }
+            else     { for (int i = vlen; i >= 0; i--) if (glob_match(pat, value + i)) { keep = i; break; } }
+            for (int i = 0; i < keep && *dpos < dsize - 1; i++) dest[(*dpos)++] = value[i];
+        }
+        return;
+    }
+
+    if (*b == '/') {  /* substitute first (or all with //) occurrences */
+        int all = 0; b++; if (*b == '/') { all = 1; b++; }
+        char oldp[128]; int k = 0;
+        while (*b && *b != '/' && k < 127) oldp[k++] = *b++;
+        oldp[k] = '\0';
+        const char *newp = ""; if (*b == '/') { b++; newp = b; }
+        if (k == 0) { for (const char *o = value; *o && *dpos < dsize - 1; o++) dest[(*dpos)++] = *o; return; }
+        const char *v = value;
+        while (*v && *dpos < dsize - 1) {
+            int m = 1; for (int j = 0; j < k; j++) if (v[j] != oldp[j]) { m = 0; break; }
+            if (m) {
+                for (const char *np = newp; *np && *dpos < dsize - 1; np++) dest[(*dpos)++] = *np;
+                v += k;
+                if (!all) { for (; *v && *dpos < dsize - 1; v++) dest[(*dpos)++] = *v; return; }
+            } else {
+                dest[(*dpos)++] = *v; v++;
+            }
+        }
+        return;
+    }
+
+    /* Default-value forms */
+    if (*b == ':') b++;  /* treat unset and empty alike */
+    char op = 0;
+    if (*b == '-' || *b == '+' || *b == '=') op = *b++;
+    const char *word = b;
+    int has = (value && value[0]);
+    const char *out = value;
+    if (op == '-') out = has ? value : word;
+    else if (op == '+') out = has ? word : "";
+    else if (op == '=') { if (!has) { set_var(name, word, 0); out = word; } else out = value; }
+    for (; out && *out && *dpos < dsize - 1; out++) dest[(*dpos)++] = *out;
+}
+
 /* Expand variables in a string (e.g., $VAR or ${VAR}) */
 static void expand_variables(char *dest, const char *src, size_t dest_size) {
     size_t dest_pos = 0;
@@ -1641,9 +1730,8 @@ static void expand_variables(char *dest, const char *src, size_t dest_size) {
                 continue;
             }
             if (*p == '{') {
-                /* ${VAR} and the common modifiers: ${#VAR} (length),
-                 * ${VAR:-word} (default), ${VAR:+word} (alternate),
-                 * ${VAR:=word} (assign default). */
+                /* ${VAR} and modifiers (#length, :-/:+/:= defaults,
+                 * #/##/%/%% prefix/suffix strip, / // substitute). */
                 p++;
                 char brace[256];
                 int bl = 0;
@@ -1652,44 +1740,7 @@ static void expand_variables(char *dest, const char *src, size_t dest_size) {
                 }
                 brace[bl] = '\0';
                 if (*p == '}') p++;  /* Skip closing brace */
-
-                if (brace[0] == '#' && brace[1]) {
-                    /* ${#VAR} → length of VAR */
-                    const char *value = get_var(brace + 1);
-                    int len = 0; while (value[len]) len++;
-                    char nb[16]; int ni = 0;
-                    if (len == 0) nb[ni++] = '0';
-                    else { char t[16]; int tj = 0; int v = len;
-                           while (v > 0) { t[tj++] = '0' + (char)(v % 10); v /= 10; }
-                           while (tj > 0) nb[ni++] = t[--tj]; }
-                    nb[ni] = '\0';
-                    for (int i = 0; nb[i] && dest_pos < dest_size - 1; i++)
-                        dest[dest_pos++] = nb[i];
-                } else {
-                    /* Split NAME[:][-+=]WORD */
-                    char name[MAX_VAR_NAME]; int nl = 0;
-                    char *b = brace;
-                    while (*b && ((*b >= 'A' && *b <= 'Z') || (*b >= 'a' && *b <= 'z') ||
-                                  (*b >= '0' && *b <= '9') || *b == '_') && nl < MAX_VAR_NAME - 1)
-                        name[nl++] = *b++;
-                    name[nl] = '\0';
-                    if (*b == ':') b++;  /* treat unset and empty alike */
-                    char op = 0;
-                    if (*b == '-' || *b == '+' || *b == '=') op = *b++;
-                    const char *word = b;  /* default / alternate text */
-
-                    const char *value = get_var(name);
-                    int has = (value && value[0]);  /* set and non-empty */
-                    const char *out = value;
-                    if (op == '-') out = has ? value : word;
-                    else if (op == '+') out = has ? word : "";
-                    else if (op == '=') {
-                        if (!has) { set_var(name, word, 0); out = word; }
-                        else out = value;
-                    }
-                    while (out && *out && dest_pos < dest_size - 1)
-                        dest[dest_pos++] = *out++;
-                }
+                emit_param_expansion(brace, dest, &dest_pos, dest_size);
             } else {
                 /* $VAR syntax */
                 char var_name[MAX_VAR_NAME];

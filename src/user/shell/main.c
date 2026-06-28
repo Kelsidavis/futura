@@ -1401,6 +1401,109 @@ static int is_var_assignment(const char *line, char *name, char *value) {
     return 1;
 }
 
+/* Recursive-descent integer evaluator for $(( )). Supports + - * / %, unary
+ * +/-/!/~, parentheses, < <= > >= == != and && ||, with C precedence. Bare
+ * identifiers resolve to shell variables (0 if unset or non-numeric). */
+static long arith_expr_eval(const char **s);
+static void arith_ws(const char **s) { while (**s == ' ' || **s == '\t') (*s)++; }
+
+static long arith_factor(const char **s) {
+    arith_ws(s);
+    if (**s == '$') (*s)++;  /* tolerate $var written inside $(( )) */
+    if (**s == '(') { (*s)++; long v = arith_expr_eval(s); arith_ws(s); if (**s == ')') (*s)++; return v; }
+    if (**s == '-') { (*s)++; return -arith_factor(s); }
+    if (**s == '+') { (*s)++; return arith_factor(s); }
+    if (**s == '!') { (*s)++; return !arith_factor(s); }
+    if (**s == '~') { (*s)++; return ~arith_factor(s); }
+    if (**s >= '0' && **s <= '9') {
+        long v = 0;
+        if (**s == '0' && ((*s)[1] == 'x' || (*s)[1] == 'X')) {
+            *s += 2;
+            for (;;) { char c = **s; int d;
+                if (c >= '0' && c <= '9') d = c - '0';
+                else if (c >= 'a' && c <= 'f') d = c - 'a' + 10;
+                else if (c >= 'A' && c <= 'F') d = c - 'A' + 10;
+                else break;
+                v = v * 16 + d; (*s)++;
+            }
+            return v;
+        }
+        while (**s >= '0' && **s <= '9') { v = v * 10 + (**s - '0'); (*s)++; }
+        return v;
+    }
+    if ((**s >= 'a' && **s <= 'z') || (**s >= 'A' && **s <= 'Z') || **s == '_') {
+        char nm[MAX_VAR_NAME]; int n = 0;
+        while (((**s >= 'a' && **s <= 'z') || (**s >= 'A' && **s <= 'Z') ||
+                (**s >= '0' && **s <= '9') || **s == '_') && n < MAX_VAR_NAME - 1) {
+            nm[n++] = **s; (*s)++;
+        }
+        nm[n] = '\0';
+        const char *val = get_var(nm);
+        long v = 0; int neg = 0;
+        if (val) { const char *q = val; while (*q == ' ') q++;
+                   if (*q == '-') { neg = 1; q++; }
+                   while (*q >= '0' && *q <= '9') { v = v * 10 + (*q - '0'); q++; }
+                   if (neg) v = -v; }
+        return v;
+    }
+    return 0;
+}
+static long arith_term(const char **s) {
+    long v = arith_factor(s);
+    for (;;) { arith_ws(s); char c = **s;
+        if (c == '*') { (*s)++; v = v * arith_factor(s); }
+        else if (c == '/') { (*s)++; long d = arith_factor(s); v = d ? v / d : 0; }
+        else if (c == '%') { (*s)++; long d = arith_factor(s); v = d ? v % d : 0; }
+        else break;
+    }
+    return v;
+}
+static long arith_addsub(const char **s) {
+    long v = arith_term(s);
+    for (;;) { arith_ws(s); char c = **s;
+        if (c == '+') { (*s)++; v = v + arith_term(s); }
+        else if (c == '-') { (*s)++; v = v - arith_term(s); }
+        else break;
+    }
+    return v;
+}
+static long arith_rel(const char **s) {
+    long v = arith_addsub(s);
+    for (;;) { arith_ws(s); char c = **s, c2 = (*s)[1];
+        if (c == '<' && c2 == '=') { *s += 2; v = (v <= arith_addsub(s)); }
+        else if (c == '>' && c2 == '=') { *s += 2; v = (v >= arith_addsub(s)); }
+        else if (c == '<' && c2 != '<') { (*s)++; v = (v < arith_addsub(s)); }
+        else if (c == '>' && c2 != '>') { (*s)++; v = (v > arith_addsub(s)); }
+        else break;
+    }
+    return v;
+}
+static long arith_eq(const char **s) {
+    long v = arith_rel(s);
+    for (;;) { arith_ws(s); char c = **s, c2 = (*s)[1];
+        if (c == '=' && c2 == '=') { *s += 2; v = (v == arith_rel(s)); }
+        else if (c == '!' && c2 == '=') { *s += 2; v = (v != arith_rel(s)); }
+        else break;
+    }
+    return v;
+}
+static long arith_logand(const char **s) {
+    long v = arith_eq(s);
+    for (;;) { arith_ws(s);
+        if (**s == '&' && (*s)[1] == '&') { *s += 2; long r = arith_eq(s); v = (v && r); }
+        else break;
+    }
+    return v;
+}
+static long arith_expr_eval(const char **s) {
+    long v = arith_logand(s);
+    for (;;) { arith_ws(s);
+        if (**s == '|' && (*s)[1] == '|') { *s += 2; long r = arith_logand(s); v = (v || r); }
+        else break;
+    }
+    return v;
+}
+
 /* Expand variables in a string (e.g., $VAR or ${VAR}) */
 static void expand_variables(char *dest, const char *src, size_t dest_size) {
     size_t dest_pos = 0;
@@ -1466,39 +1569,9 @@ static void expand_variables(char *dest, const char *src, size_t dest_size) {
                     p++;
                 }
                 expr[el] = '\0';
-                /* Simple arithmetic: parse "a OP b" */
-                long result = 0;
-                char *ep = expr;
-                while (*ep == ' ') ep++;
-                /* Parse first operand */
-                long a = 0; int neg = 0;
-                if (*ep == '-') { neg = 1; ep++; }
-                while (*ep >= '0' && *ep <= '9') { a = a * 10 + (*ep - '0'); ep++; }
-                if (neg) a = -a;
-                while (*ep == ' ') ep++;
-                if (*ep) {
-                    char op = *ep++; char op2 = 0;
-                    if (*ep == '=' || *ep == op) { op2 = *ep++; }
-                    while (*ep == ' ') ep++;
-                    long b = 0; neg = 0;
-                    if (*ep == '-') { neg = 1; ep++; }
-                    while (*ep >= '0' && *ep <= '9') { b = b * 10 + (*ep - '0'); ep++; }
-                    if (neg) b = -b;
-                    if (op == '+') result = a + b;
-                    else if (op == '-') result = a - b;
-                    else if (op == '*') result = a * b;
-                    else if (op == '/' && b != 0) result = a / b;
-                    else if (op == '%' && b != 0) result = a % b;
-                    else if (op == '<' && op2 == '=') result = a <= b;
-                    else if (op == '>' && op2 == '=') result = a >= b;
-                    else if (op == '<') result = a < b;
-                    else if (op == '>') result = a > b;
-                    else if (op == '=' && op2 == '=') result = a == b;
-                    else if (op == '!' && op2 == '=') result = a != b;
-                    else result = a;
-                } else {
-                    result = a;
-                }
+                /* Evaluate with full operator precedence and parentheses. */
+                const char *ep = expr;
+                long result = arith_expr_eval(&ep);
                 /* Convert to string */
                 char rbuf[20];
                 int ri = 0;

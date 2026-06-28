@@ -1580,6 +1580,43 @@ static void emit_param_expansion(const char *brace, char *dest, size_t *dpos, si
         return;
     }
 
+    if (*b == '^' || *b == ',') {
+        /* ${VAR^^}/${VAR,,} convert all; ${VAR^}/${VAR,} convert the first. */
+        char cop = *b;
+        int allc = (b[1] == cop);
+        int first = 1;
+        for (const char *v = value; *v && *dpos < dsize - 1; v++) {
+            char c = *v;
+            if (allc || first) {
+                if (cop == '^' && c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
+                else if (cop == ',' && c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+            }
+            dest[(*dpos)++] = c;
+            first = 0;
+        }
+        return;
+    }
+
+    if (*b == ':' && b[1] != '-' && b[1] != '+' && b[1] != '=' && b[1] != '?') {
+        /* ${VAR:offset[:length]} substring (non-negative offset/length). */
+        const char *bb = b + 1;
+        while (*bb == ' ') bb++;
+        int off = 0; while (*bb >= '0' && *bb <= '9') { off = off * 10 + (*bb - '0'); bb++; }
+        int vlen = 0; while (value[vlen]) vlen++;
+        if (off > vlen) off = vlen;
+        int len = vlen - off;
+        if (*bb == ':') {
+            bb++; while (*bb == ' ') bb++;
+            int l = 0, have = 0;
+            while (*bb >= '0' && *bb <= '9') { l = l * 10 + (*bb - '0'); bb++; have = 1; }
+            if (have) len = l;
+        }
+        if (off + len > vlen) len = vlen - off;
+        if (len < 0) len = 0;
+        for (int i = 0; i < len && *dpos < dsize - 1; i++) dest[(*dpos)++] = value[off + i];
+        return;
+    }
+
     /* Default-value forms */
     if (*b == ':') b++;  /* treat unset and empty alike */
     char op = 0;

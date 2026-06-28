@@ -5103,15 +5103,18 @@ static int expand_globs(int argc, char *argv[], int max_args) {
  * nesting or multiple groups (the common for-loop / mkdir cases). */
 static char _brace_buf[2048];
 static char *_brace_ptrs[128];
-static int expand_braces(int argc, char *argv[], int max_args) {
+static unsigned char _brace_q[128];
+static int expand_braces_q(int argc, char *argv[], int max_args,
+                           const unsigned char *qin, unsigned char *qout) {
     int nc = 0, bp = 0;
     for (int i = 0; i < argc && nc < max_args - 1; i++) {
         const char *word = argv[i];
+        int wq = (qin && qin[i]);  /* quoted token: leave braces literal */
         const char *lb = 0;
-        for (const char *q = word; *q; q++) if (*q == '{') { lb = q; break; }
+        if (!wq) for (const char *q = word; *q; q++) if (*q == '{') { lb = q; break; }
         const char *rb = 0;
         if (lb) for (const char *q = lb + 1; *q; q++) if (*q == '}') { rb = q; break; }
-        if (!lb || !rb) { _brace_ptrs[nc++] = argv[i]; continue; }
+        if (!lb || !rb) { if (qout) qout[nc] = (unsigned char)wq; _brace_ptrs[nc++] = argv[i]; continue; }
         int prelen = (int)(lb - word);
         const char *suf = rb + 1;
         const char *dots = 0;
@@ -5147,6 +5150,7 @@ static int expand_braces(int argc, char *argv[], int max_args) {
                 }
                 for (const char *s = suf; *s && bp < 2046; s++) _brace_buf[bp++] = *s;
                 _brace_buf[bp++] = '\0';
+                if (qout) qout[nc] = 0;  /* generated words are subject to globbing */
                 _brace_ptrs[nc++] = w;
                 emitted++;
             }
@@ -5164,18 +5168,23 @@ static int expand_braces(int argc, char *argv[], int max_args) {
                     for (const char *s = istart; s < iend && bp < 2046; s++) _brace_buf[bp++] = *s;
                     for (const char *s = suf; *s && bp < 2046; s++) _brace_buf[bp++] = *s;
                     _brace_buf[bp++] = '\0';
+                    if (qout) qout[nc] = 0;
                     _brace_ptrs[nc++] = w;
                     emitted++;
                     if (iend < rb) istart = iend + 1; else break;
                 }
             }
         }
-        if (!emitted) _brace_ptrs[nc++] = argv[i];
+        if (!emitted) { if (qout) qout[nc] = (unsigned char)wq; _brace_ptrs[nc++] = argv[i]; }
     }
     _brace_ptrs[nc] = NULL;
     for (int i = 0; i < nc; i++) argv[i] = _brace_ptrs[i];
     argv[nc] = NULL;
     return nc;
+}
+
+static int expand_braces(int argc, char *argv[], int max_args) {
+    return expand_braces_q(argc, argv, max_args, (const unsigned char *)0, (unsigned char *)0);
 }
 
 /* Built-in: history */
@@ -17409,7 +17418,9 @@ static int execute_pipeline(int num_stages, char *stages[], int background, cons
         char *argv[32];
         unsigned char arg_quoted[32];
         int argc = parse_command_q(stages[0], argv, 32, arg_quoted);
-        if (argc > 0) argc = expand_globs_q(argc, argv, 32, arg_quoted);
+        const unsigned char *qcur = arg_quoted;
+        if (argc > 0) { argc = expand_braces_q(argc, argv, 32, arg_quoted, _brace_q); qcur = _brace_q; }
+        if (argc > 0) argc = expand_globs_q(argc, argv, 32, qcur);
         if (argc > 0) {
             /* Parse redirections */
             struct redir_info redir;
@@ -17545,8 +17556,10 @@ static int execute_pipeline(int num_stages, char *stages[], int background, cons
         char *argv[32];
         unsigned char arg_quoted[32];
         int argc = parse_command_q(stages[i], argv, 32, arg_quoted);
+        const unsigned char *qcur = arg_quoted;
+        if (argc > 0) { argc = expand_braces_q(argc, argv, 32, arg_quoted, _brace_q); qcur = _brace_q; }
 
-        if (argc > 0) argc = expand_globs_q(argc, argv, 32, arg_quoted);
+        if (argc > 0) argc = expand_globs_q(argc, argv, 32, qcur);
         if (argc == 0) continue;
 
         /* Parse redirections */

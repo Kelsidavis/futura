@@ -22433,13 +22433,28 @@ int main(int argc, char **argv, char **envp) {
                     }
                     body[bl] = '\0';
                     while (*cp == ' ') cp++;
-                    /* Check if pattern matches (support * wildcard) */
-                    if (!matched && (glob_match(pat, exp_word) ||
-                                     (pat[0] == '*' && pat[1] == '\0'))) {
-                        char exp_body[512];
-                        expand_variables(exp_body, body, sizeof(exp_body));
-                        execute_command_chain(exp_body);
-                        matched = 1;
+                    /* Match against the pattern, splitting | alternatives so
+                     * `a|b|c)` matches any of them (glob_match handles *). */
+                    if (!matched) {
+                        int pmatch = 0;
+                        char *ps = pat;
+                        if (*ps == '(') ps++;  /* tolerate the optional ( prefix */
+                        while (*ps && !pmatch) {
+                            char alt[64]; int al = 0;
+                            while (*ps && *ps != '|' && al < 63) alt[al++] = *ps++;
+                            alt[al] = '\0';
+                            char *as = alt; while (*as == ' ') as++;
+                            int ae = (int)strlen_simple(as);
+                            while (ae > 0 && as[ae-1] == ' ') as[--ae] = '\0';
+                            if (glob_match(as, exp_word)) pmatch = 1;
+                            if (*ps == '|') ps++;
+                        }
+                        if (pmatch) {
+                            char exp_body[512];
+                            expand_variables(exp_body, body, sizeof(exp_body));
+                            execute_command_chain(exp_body);
+                            matched = 1;
+                        }
                     }
                 }
             }

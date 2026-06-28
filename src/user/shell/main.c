@@ -5097,6 +5097,87 @@ static int expand_globs(int argc, char *argv[], int max_args) {
     return expand_globs_q(argc, argv, max_args, (const unsigned char *)0);
 }
 
+/* Brace expansion for a single group per word: {a,b,c} comma lists and
+ * {N..M} numeric ranges (with zero padding from a leading-zero start), with
+ * prefix/suffix preserved. Words without a {..}/{,} group pass through. No
+ * nesting or multiple groups (the common for-loop / mkdir cases). */
+static char _brace_buf[2048];
+static char *_brace_ptrs[128];
+static int expand_braces(int argc, char *argv[], int max_args) {
+    int nc = 0, bp = 0;
+    for (int i = 0; i < argc && nc < max_args - 1; i++) {
+        const char *word = argv[i];
+        const char *lb = 0;
+        for (const char *q = word; *q; q++) if (*q == '{') { lb = q; break; }
+        const char *rb = 0;
+        if (lb) for (const char *q = lb + 1; *q; q++) if (*q == '}') { rb = q; break; }
+        if (!lb || !rb) { _brace_ptrs[nc++] = argv[i]; continue; }
+        int prelen = (int)(lb - word);
+        const char *suf = rb + 1;
+        const char *dots = 0;
+        for (const char *q = lb + 1; q + 1 < rb; q++) if (q[0] == '.' && q[1] == '.') { dots = q; break; }
+        int emitted = 0;
+        if (dots) {
+            int a = 0, b = 0, na = 0, nb = 0;
+            const char *q = lb + 1;
+            if (*q == '-') { na = 1; q++; }
+            while (q < dots && *q >= '0' && *q <= '9') a = a * 10 + (*q++ - '0');
+            if (na) a = -a;
+            q = dots + 2;
+            if (*q == '-') { nb = 1; q++; }
+            while (q < rb && *q >= '0' && *q <= '9') b = b * 10 + (*q++ - '0');
+            if (nb) b = -b;
+            int width = 0;
+            { const char *c0 = lb + 1; if (*c0 == '-') c0++;
+              if (*c0 == '0' && c0 + 1 < dots) width = (int)(dots - (lb + 1)); }
+            int step = (a <= b) ? 1 : -1;
+            for (int v = a; (step > 0) ? (v <= b) : (v >= b); v += step) {
+                if (nc >= max_args - 1 || bp > 2000) break;
+                char *w = _brace_buf + bp;
+                for (int k = 0; k < prelen && bp < 2040; k++) _brace_buf[bp++] = word[k];
+                char num[16]; int_to_str(v, num, 16);
+                int numlen = (int)strlen_simple(num);
+                if (width > 0) {
+                    int z = 0;
+                    if (num[0] == '-') { _brace_buf[bp++] = '-'; z = 1; }
+                    for (int pad = width - numlen; pad > 0 && bp < 2040; pad--) _brace_buf[bp++] = '0';
+                    for (; num[z] && bp < 2040; z++) _brace_buf[bp++] = num[z];
+                } else {
+                    for (int z = 0; num[z] && bp < 2040; z++) _brace_buf[bp++] = num[z];
+                }
+                for (const char *s = suf; *s && bp < 2046; s++) _brace_buf[bp++] = *s;
+                _brace_buf[bp++] = '\0';
+                _brace_ptrs[nc++] = w;
+                emitted++;
+            }
+        } else {
+            int has_comma = 0;
+            for (const char *q = lb + 1; q < rb; q++) if (*q == ',') { has_comma = 1; break; }
+            if (has_comma) {
+                const char *istart = lb + 1;
+                for (;;) {
+                    const char *iend = istart;
+                    while (iend < rb && *iend != ',') iend++;
+                    if (nc >= max_args - 1 || bp > 2000) break;
+                    char *w = _brace_buf + bp;
+                    for (int k = 0; k < prelen && bp < 2040; k++) _brace_buf[bp++] = word[k];
+                    for (const char *s = istart; s < iend && bp < 2046; s++) _brace_buf[bp++] = *s;
+                    for (const char *s = suf; *s && bp < 2046; s++) _brace_buf[bp++] = *s;
+                    _brace_buf[bp++] = '\0';
+                    _brace_ptrs[nc++] = w;
+                    emitted++;
+                    if (iend < rb) istart = iend + 1; else break;
+                }
+            }
+        }
+        if (!emitted) _brace_ptrs[nc++] = argv[i];
+    }
+    _brace_ptrs[nc] = NULL;
+    for (int i = 0; i < nc; i++) argv[i] = _brace_ptrs[i];
+    argv[nc] = NULL;
+    return nc;
+}
+
 /* Built-in: history */
 /* Built-in: more — simple pager (24 lines at a time) */
 /* less: scrollable pager with search, page up/down, line navigation */
@@ -22091,6 +22172,7 @@ int main(int argc, char **argv, char **envp) {
                     wargc++;
                   }
                   wargv[wargc] = NULL;
+                  wargc = expand_braces(wargc, wargv, 64);
                   wargc = expand_globs(wargc, wargv, 64);
                 }
                 for (int wi = 0; wi < wargc; wi++) {

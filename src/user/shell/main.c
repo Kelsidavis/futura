@@ -1641,20 +1641,54 @@ static void expand_variables(char *dest, const char *src, size_t dest_size) {
                 continue;
             }
             if (*p == '{') {
-                /* ${VAR} syntax */
+                /* ${VAR} and the common modifiers: ${#VAR} (length),
+                 * ${VAR:-word} (default), ${VAR:+word} (alternate),
+                 * ${VAR:=word} (assign default). */
                 p++;
-                char var_name[MAX_VAR_NAME];
-                int name_len = 0;
-                while (*p && *p != '}' && name_len < MAX_VAR_NAME - 1) {
-                    var_name[name_len++] = *p++;
+                char brace[256];
+                int bl = 0;
+                while (*p && *p != '}' && bl < 255) {
+                    brace[bl++] = *p++;
                 }
-                var_name[name_len] = '\0';
+                brace[bl] = '\0';
                 if (*p == '}') p++;  /* Skip closing brace */
 
-                /* Get variable value */
-                const char *value = get_var(var_name);
-                while (*value && dest_pos < dest_size - 1) {
-                    dest[dest_pos++] = *value++;
+                if (brace[0] == '#' && brace[1]) {
+                    /* ${#VAR} → length of VAR */
+                    const char *value = get_var(brace + 1);
+                    int len = 0; while (value[len]) len++;
+                    char nb[16]; int ni = 0;
+                    if (len == 0) nb[ni++] = '0';
+                    else { char t[16]; int tj = 0; int v = len;
+                           while (v > 0) { t[tj++] = '0' + (char)(v % 10); v /= 10; }
+                           while (tj > 0) nb[ni++] = t[--tj]; }
+                    nb[ni] = '\0';
+                    for (int i = 0; nb[i] && dest_pos < dest_size - 1; i++)
+                        dest[dest_pos++] = nb[i];
+                } else {
+                    /* Split NAME[:][-+=]WORD */
+                    char name[MAX_VAR_NAME]; int nl = 0;
+                    char *b = brace;
+                    while (*b && ((*b >= 'A' && *b <= 'Z') || (*b >= 'a' && *b <= 'z') ||
+                                  (*b >= '0' && *b <= '9') || *b == '_') && nl < MAX_VAR_NAME - 1)
+                        name[nl++] = *b++;
+                    name[nl] = '\0';
+                    if (*b == ':') b++;  /* treat unset and empty alike */
+                    char op = 0;
+                    if (*b == '-' || *b == '+' || *b == '=') op = *b++;
+                    const char *word = b;  /* default / alternate text */
+
+                    const char *value = get_var(name);
+                    int has = (value && value[0]);  /* set and non-empty */
+                    const char *out = value;
+                    if (op == '-') out = has ? value : word;
+                    else if (op == '+') out = has ? word : "";
+                    else if (op == '=') {
+                        if (!has) { set_var(name, word, 0); out = word; }
+                        else out = value;
+                    }
+                    while (out && *out && dest_pos < dest_size - 1)
+                        dest[dest_pos++] = *out++;
                 }
             } else {
                 /* $VAR syntax */

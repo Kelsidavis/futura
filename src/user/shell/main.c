@@ -22073,15 +22073,20 @@ int main(int argc, char **argv, char **envp) {
                     while (trim > 0 && (body[trim-1] == ' ' || body[trim-1] == ';')) trim--;
                     body[trim] = '\0';
                 }
-                /* Expand globs in word list, then iterate */
+                /* Expand variables and command substitutions in the word
+                 * list first, then split on whitespace and glob, so
+                 * `for x in $LIST`, `for f in $(ls)` and `for f in *.c` all
+                 * work. Splitting on newlines too handles $(cmd) output. */
+                char wlist[512];
+                expand_variables(wlist, p, sizeof(wlist));
                 char *wargv[64];
                 int wargc = 0;
-                { char *ws = p;
+                { char *ws = wlist;
                   while (*ws && wargc < 63) {
-                    while (*ws == ' ') ws++;
+                    while (*ws == ' ' || *ws == '\t' || *ws == '\n') ws++;
                     if (!*ws) break;
                     wargv[wargc] = ws;
-                    while (*ws && *ws != ' ') ws++;
+                    while (*ws && *ws != ' ' && *ws != '\t' && *ws != '\n') ws++;
                     if (*ws) *ws++ = '\0';
                     wargc++;
                   }

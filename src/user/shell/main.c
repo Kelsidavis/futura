@@ -22347,7 +22347,18 @@ int main(int argc, char **argv, char **envp) {
                 if (execute_command_chain(exp_c) != 0) break;
                 char exp_b[512];
                 expand_variables(exp_b, wbody, sizeof(exp_b));
-                execute_command_chain(exp_b);
+                /* Run each ';'-separated command in the body, so an increment
+                 * like `i=$((i+1))` after the work command actually runs. */
+                char *bcmd = exp_b;
+                while (*bcmd) {
+                    char *semi = bcmd;
+                    while (*semi && *semi != ';') semi++;
+                    char sc = *semi; *semi = '\0';
+                    while (*bcmd == ' ') bcmd++;
+                    if (*bcmd) execute_command_chain(bcmd);
+                    if (sc == '\0') break;
+                    bcmd = semi + 1;
+                }
                 iters++;
             }
             last_exit_status = 0;
@@ -22386,7 +22397,17 @@ int main(int argc, char **argv, char **envp) {
                 if (execute_command_chain(exp_c) == 0) break;  /* until: stop when condition succeeds */
                 char exp_b[512];
                 expand_variables(exp_b, ubody, sizeof(exp_b));
-                execute_command_chain(exp_b);
+                /* Run each ';'-separated command in the body. */
+                char *bcmd = exp_b;
+                while (*bcmd) {
+                    char *semi = bcmd;
+                    while (*semi && *semi != ';') semi++;
+                    char sc = *semi; *semi = '\0';
+                    while (*bcmd == ' ') bcmd++;
+                    if (*bcmd) execute_command_chain(bcmd);
+                    if (sc == '\0') break;
+                    bcmd = semi + 1;
+                }
                 iters++;
             }
             last_exit_status = 0;

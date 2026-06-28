@@ -1544,13 +1544,16 @@ static void expand_variables(char *dest, const char *src, size_t dest_size) {
                     char obuf[256];
                     long nr;
                     while ((nr = sys_read(pipefd[0], obuf, sizeof(obuf))) > 0) {
+                        /* Copy everything verbatim; trailing newlines are
+                         * stripped once below. Trimming per read chunk dropped
+                         * internal newlines that happened to fall on a chunk
+                         * boundary, mangling multi-line output. */
                         for (long j = 0; j < nr && dest_pos < dest_size - 1; j++) {
-                            if (obuf[j] != '\n' || j < nr - 1) /* trim trailing newline */
-                                dest[dest_pos++] = obuf[j];
+                            dest[dest_pos++] = obuf[j];
                         }
                     }
                     sys_close(pipefd[0]);
-                    /* Trim trailing newlines */
+                    /* Command substitution strips only trailing newlines. */
                     while (dest_pos > 0 && dest[dest_pos-1] == '\n') dest_pos--;
                     int status;
                     extern long sys_waitpid(int, int *, int);

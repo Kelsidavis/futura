@@ -75759,6 +75759,201 @@ __attribute__((noinline)) static void test_miscellaneous_extended(void) {
     }
 }
 
+/* Tests 2730-2741: POSIX corner cases with definite specified answers — the
+ * sort of subtle behavior where bugs hide (sparse holes, O_APPEND ignoring
+ * lseek, dup2 self-no-op, access-mode enforcement, errno on edge inputs). */
+__attribute__((noinline)) static void test_posix_corner_cases(void) {
+    extern long sys_open(const char *path, int flags, int mode);
+    extern long sys_close(int fd);
+    extern long sys_read(int fd, void *buf, size_t count);
+    extern long sys_write(int fd, const void *buf, size_t count);
+    extern long sys_lseek(int fd, long offset, int whence);
+    extern long sys_unlink(const char *path);
+    extern long sys_rmdir(const char *path);
+    extern long sys_mkdir(const char *path, uint32_t mode);
+    extern long sys_dup2(int oldfd, int newfd);
+    extern long sys_ftruncate(int fd, uint64_t length);
+
+    fut_printf("[MISC-TEST] Tests 2730-2741: POSIX corner cases\n");
+
+    /* 2730: lseek to a negative offset → EINVAL */
+    fut_printf("[MISC-TEST] Test 2730: lseek negative offset\n");
+    {
+        long fd = sys_open("/cc_2730.txt", O_CREAT | O_RDWR, 0644);
+        long r = (fd >= 0) ? sys_lseek((int)fd, -1, SEEK_SET) : fd;
+        if (r == -EINVAL) fut_test_pass();
+        else { fut_printf("[MISC-TEST] FAIL 2730: lseek(-1)=%ld\n", r); fut_test_fail(2730); }
+        if (fd >= 0) sys_close((int)fd);
+        sys_unlink("/cc_2730.txt");
+    }
+
+    /* 2731: a hole created by seeking past EOF then writing reads back as zeros */
+    fut_printf("[MISC-TEST] Test 2731: sparse hole reads as zeros\n");
+    {
+        long fd = sys_open("/cc_2731.txt", O_CREAT | O_RDWR | O_TRUNC, 0644);
+        int ok = 0;
+        if (fd >= 0) {
+            sys_lseek((int)fd, 4, SEEK_SET);
+            sys_write((int)fd, "X", 1);
+            sys_lseek((int)fd, 0, SEEK_SET);
+            char buf[5] = {1, 1, 1, 1, 1};
+            long n = sys_read((int)fd, buf, 5);
+            if (n == 5 && !buf[0] && !buf[1] && !buf[2] && !buf[3] && buf[4] == 'X') ok = 1;
+            else fut_printf("[MISC-TEST] FAIL 2731: n=%ld b=%d,%d,%d,%d,%d\n",
+                            n, buf[0], buf[1], buf[2], buf[3], buf[4]);
+        }
+        if (ok) fut_test_pass(); else fut_test_fail(2731);
+        if (fd >= 0) sys_close((int)fd);
+        sys_unlink("/cc_2731.txt");
+    }
+
+    /* 2732: dup2(fd, fd) with a valid fd returns fd and leaves it open */
+    fut_printf("[MISC-TEST] Test 2732: dup2(fd,fd) is a no-op\n");
+    {
+        long fd = sys_open("/cc_2732.txt", O_CREAT | O_RDWR, 0644);
+        int ok = 0;
+        if (fd >= 0) {
+            long r = sys_dup2((int)fd, (int)fd);
+            long w = sys_write((int)fd, "Z", 1);
+            if (r == fd && w == 1) ok = 1;
+            else fut_printf("[MISC-TEST] FAIL 2732: dup2=%ld write=%ld\n", r, w);
+        }
+        if (ok) fut_test_pass(); else fut_test_fail(2732);
+        if (fd >= 0) sys_close((int)fd);
+        sys_unlink("/cc_2732.txt");
+    }
+
+    /* 2733: O_CREAT|O_EXCL on an existing file → EEXIST */
+    fut_printf("[MISC-TEST] Test 2733: O_EXCL on existing\n");
+    {
+        long fd = sys_open("/cc_2733.txt", O_CREAT | O_RDWR, 0644);
+        if (fd >= 0) sys_close((int)fd);
+        long r = sys_open("/cc_2733.txt", O_CREAT | O_EXCL | O_RDWR, 0644);
+        if (r == -EEXIST) fut_test_pass();
+        else { fut_printf("[MISC-TEST] FAIL 2733: excl=%ld\n", r); fut_test_fail(2733); if (r >= 0) sys_close((int)r); }
+        sys_unlink("/cc_2733.txt");
+    }
+
+    /* 2734: writing to an O_RDONLY fd → EBADF */
+    fut_printf("[MISC-TEST] Test 2734: write to O_RDONLY\n");
+    {
+        long fd = sys_open("/cc_2734.txt", O_CREAT | O_RDONLY, 0644);
+        long r = (fd >= 0) ? sys_write((int)fd, "x", 1) : fd;
+        if (r == -EBADF) fut_test_pass();
+        else { fut_printf("[MISC-TEST] FAIL 2734: write-rdonly=%ld\n", r); fut_test_fail(2734); }
+        if (fd >= 0) sys_close((int)fd);
+        sys_unlink("/cc_2734.txt");
+    }
+
+    /* 2735: reading from an O_WRONLY fd → EBADF */
+    fut_printf("[MISC-TEST] Test 2735: read from O_WRONLY\n");
+    {
+        long fd = sys_open("/cc_2735.txt", O_CREAT | O_WRONLY, 0644);
+        char b[4];
+        long r = (fd >= 0) ? sys_read((int)fd, b, 4) : fd;
+        if (r == -EBADF) fut_test_pass();
+        else { fut_printf("[MISC-TEST] FAIL 2735: read-wronly=%ld\n", r); fut_test_fail(2735); }
+        if (fd >= 0) sys_close((int)fd);
+        sys_unlink("/cc_2735.txt");
+    }
+
+    /* 2736: rmdir on a non-empty directory → ENOTEMPTY */
+    fut_printf("[MISC-TEST] Test 2736: rmdir non-empty\n");
+    {
+        sys_mkdir("/cc_2736d", 0755);
+        long cf = sys_open("/cc_2736d/f", O_CREAT | O_RDWR, 0644);
+        if (cf >= 0) sys_close((int)cf);
+        long r = sys_rmdir("/cc_2736d");
+        if (r == -ENOTEMPTY) fut_test_pass();
+        else { fut_printf("[MISC-TEST] FAIL 2736: rmdir-nonempty=%ld\n", r); fut_test_fail(2736); }
+        sys_unlink("/cc_2736d/f");
+        sys_rmdir("/cc_2736d");
+    }
+
+    /* 2737: O_APPEND forces writes to the end even after lseek to the start */
+    fut_printf("[MISC-TEST] Test 2737: O_APPEND ignores lseek\n");
+    {
+        long fd = sys_open("/cc_2737.txt", O_CREAT | O_RDWR | O_TRUNC, 0644);
+        int ok = 0;
+        if (fd >= 0) {
+            sys_write((int)fd, "AAAA", 4);
+            sys_close((int)fd);
+            fd = sys_open("/cc_2737.txt", O_WRONLY | O_APPEND, 0644);
+            if (fd >= 0) {
+                sys_lseek((int)fd, 0, SEEK_SET);
+                sys_write((int)fd, "BB", 2);
+                sys_close((int)fd);
+            }
+            fd = sys_open("/cc_2737.txt", O_RDONLY, 0644);
+            char buf[8] = {0};
+            long n = (fd >= 0) ? sys_read((int)fd, buf, 8) : -1;
+            if (n == 6 && buf[0] == 'A' && buf[3] == 'A' && buf[4] == 'B' && buf[5] == 'B') ok = 1;
+            else fut_printf("[MISC-TEST] FAIL 2737: n=%ld buf=%c%c%c%c%c%c\n",
+                            n, buf[0], buf[1], buf[2], buf[3], buf[4], buf[5]);
+        }
+        if (ok) fut_test_pass(); else fut_test_fail(2737);
+        if (fd >= 0) sys_close((int)fd);
+        sys_unlink("/cc_2737.txt");
+    }
+
+    /* 2738: O_TRUNC zeroes the length of an existing file */
+    fut_printf("[MISC-TEST] Test 2738: O_TRUNC empties file\n");
+    {
+        long fd = sys_open("/cc_2738.txt", O_CREAT | O_RDWR, 0644);
+        if (fd >= 0) { sys_write((int)fd, "hello", 5); sys_close((int)fd); }
+        fd = sys_open("/cc_2738.txt", O_RDWR | O_TRUNC, 0644);
+        char b[8] = {1, 1, 1, 1, 1, 1, 1, 1};
+        long n = (fd >= 0) ? sys_read((int)fd, b, 8) : -1;
+        if (n == 0) fut_test_pass();
+        else { fut_printf("[MISC-TEST] FAIL 2738: read-after-trunc=%ld\n", n); fut_test_fail(2738); }
+        if (fd >= 0) sys_close((int)fd);
+        sys_unlink("/cc_2738.txt");
+    }
+
+    /* 2739: close of an invalid fd → EBADF */
+    fut_printf("[MISC-TEST] Test 2739: close(badfd)\n");
+    {
+        long r = sys_close(99999);
+        if (r == -EBADF) fut_test_pass();
+        else { fut_printf("[MISC-TEST] FAIL 2739: close(99999)=%ld\n", r); fut_test_fail(2739); }
+    }
+
+    /* 2740: ftruncate that grows a file zero-fills the new bytes */
+    fut_printf("[MISC-TEST] Test 2740: ftruncate grow zero-fills\n");
+    {
+        long fd = sys_open("/cc_2740.txt", O_CREAT | O_RDWR | O_TRUNC, 0644);
+        int ok = 0;
+        if (fd >= 0) {
+            sys_write((int)fd, "Q", 1);
+            sys_ftruncate((int)fd, 4);
+            sys_lseek((int)fd, 0, SEEK_SET);
+            char b[4] = {1, 1, 1, 1};
+            long n = sys_read((int)fd, b, 4);
+            if (n == 4 && b[0] == 'Q' && !b[1] && !b[2] && !b[3]) ok = 1;
+            else fut_printf("[MISC-TEST] FAIL 2740: n=%ld b=%d,%d,%d,%d\n", n, b[0], b[1], b[2], b[3]);
+        }
+        if (ok) fut_test_pass(); else fut_test_fail(2740);
+        if (fd >= 0) sys_close((int)fd);
+        sys_unlink("/cc_2740.txt");
+    }
+
+    /* 2741: lseek(SEEK_END) reports the file size */
+    fut_printf("[MISC-TEST] Test 2741: lseek SEEK_END = size\n");
+    {
+        long fd = sys_open("/cc_2741.txt", O_CREAT | O_RDWR | O_TRUNC, 0644);
+        int ok = 0;
+        if (fd >= 0) {
+            sys_write((int)fd, "12345", 5);
+            long end = sys_lseek((int)fd, 0, SEEK_END);
+            if (end == 5) ok = 1;
+            else fut_printf("[MISC-TEST] FAIL 2741: SEEK_END=%ld\n", end);
+        }
+        if (ok) fut_test_pass(); else fut_test_fail(2741);
+        if (fd >= 0) sys_close((int)fd);
+        sys_unlink("/cc_2741.txt");
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -80160,6 +80355,7 @@ void fut_misc_test_thread(void *arg) {
     test_filesystem_extended(); /* Tests 2710-2719: readv/writev pipe, pread/pwrite, sendfile, fstatat, renameat2, mknodat, flock, fadvise, fallocate, statfs */
     test_networking_extended(); /* Tests 2720-2724: socketpair, getsockname, getpeername, SO_ERROR, SCM_RIGHTS */
     test_miscellaneous_extended(); /* Tests 2725-2729: sysinfo, uname, clock_getres, timer_create, /dev/urandom */
+    test_posix_corner_cases(); /* Tests 2730-2741: POSIX corner cases (sparse, O_APPEND, dup2 self, access modes) */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

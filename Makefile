@@ -3221,9 +3221,13 @@ test-iso: kernel
 	@grub-mkrescue -o futura.iso iso/ 2>&1 | grep -E "(completed|error)" || echo "ISO build complete"
 	@mv iso/boot/grub/grub.cfg.bak iso/boot/grub/grub.cfg
 
-# Automated QEMU run with deterministic isa-debug-exit completion
+# Automated QEMU run with deterministic isa-debug-exit completion.
+# Build the QEMU/VirtIO driver profile (not the default DRIVERS=all real-hw
+# profile): the harness boots under QEMU, so it needs the VirtIO drivers, and
+# the in-kernel tests (e.g. /proc/modules expecting the monolithic empty list)
+# are written against DRIVERS=qemu, matching CI.
 test:
-	@$(MAKE) ENABLE_WAYLAND=0 test-iso disk
+	@$(MAKE) ENABLE_WAYLAND=0 DRIVERS=qemu test-iso disk
 	@# Kill any stale QEMU holding the disk image lock
 	@fuser -k $(QEMU_DISK_IMG) 2>/dev/null || true
 	@echo "Testing kernel under QEMU (isa-debug-exit, 900s timeout)..."

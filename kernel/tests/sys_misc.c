@@ -75954,6 +75954,159 @@ __attribute__((noinline)) static void test_posix_corner_cases(void) {
     }
 }
 
+/* Tests 2742-2752: rarer/trickier error-path behaviors where bugs hide —
+ * negative pread/pwrite offsets, O_DIRECTORY/O_NOFOLLOW enforcement, readlink
+ * on a non-link, getdents on a file, AT_REMOVEDIR on a file, writev iovcnt
+ * validation, invalid fcntl cmd, symlink round-trip, rename-into-own-subdir. */
+__attribute__((noinline)) static void test_posix_corner_cases2(void) {
+    extern long sys_open(const char *path, int flags, int mode);
+    extern long sys_close(int fd);
+    extern long sys_unlink(const char *path);
+    extern long sys_rmdir(const char *path);
+    extern long sys_mkdir(const char *path, uint32_t mode);
+    extern long sys_pread64(unsigned int fd, void *buf, size_t count, int64_t offset);
+    extern long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset);
+    extern long sys_readlink(const char *path, char *buf, size_t bufsiz);
+    extern long sys_getdents64(unsigned int fd, void *dirp, unsigned int count);
+    extern long sys_unlinkat(int dirfd, const char *pathname, int flags);
+    extern ssize_t sys_writev(int fd, const struct iovec *iov, int iovcnt);
+    extern long sys_fcntl(int fd, int cmd, uint64_t arg);
+    extern long sys_symlink(const char *target, const char *linkpath);
+    extern long sys_rename(const char *oldpath, const char *newpath);
+
+    fut_printf("[MISC-TEST] Tests 2742-2752: rarer corner cases\n");
+
+    /* 2742: pread at a negative offset → EINVAL */
+    fut_printf("[MISC-TEST] Test 2742: pread negative offset\n");
+    {
+        long fd = sys_open("/cc2_2742", O_CREAT | O_RDWR, 0644);
+        char b[4];
+        long r = (fd >= 0) ? sys_pread64((unsigned)fd, b, 4, -1) : fd;
+        if (r == -EINVAL) fut_test_pass();
+        else { fut_printf("[MISC-TEST] FAIL 2742: pread=%ld\n", r); fut_test_fail(2742); }
+        if (fd >= 0) sys_close((int)fd);
+        sys_unlink("/cc2_2742");
+    }
+
+    /* 2743: pwrite at a negative offset → EINVAL */
+    fut_printf("[MISC-TEST] Test 2743: pwrite negative offset\n");
+    {
+        long fd = sys_open("/cc2_2743", O_CREAT | O_RDWR, 0644);
+        long r = (fd >= 0) ? sys_pwrite64((unsigned)fd, "x", 1, -1) : fd;
+        if (r == -EINVAL) fut_test_pass();
+        else { fut_printf("[MISC-TEST] FAIL 2743: pwrite=%ld\n", r); fut_test_fail(2743); }
+        if (fd >= 0) sys_close((int)fd);
+        sys_unlink("/cc2_2743");
+    }
+
+    /* 2744: O_DIRECTORY on a regular file → ENOTDIR */
+    fut_printf("[MISC-TEST] Test 2744: O_DIRECTORY on file\n");
+    {
+        long fd = sys_open("/cc2_2744", O_CREAT | O_RDWR, 0644);
+        if (fd >= 0) sys_close((int)fd);
+        long r = sys_open("/cc2_2744", 0200000 /*O_DIRECTORY*/ | O_RDONLY, 0);
+        if (r == -ENOTDIR) fut_test_pass();
+        else { fut_printf("[MISC-TEST] FAIL 2744: open=%ld\n", r); fut_test_fail(2744); if (r >= 0) sys_close((int)r); }
+        sys_unlink("/cc2_2744");
+    }
+
+    /* 2745: readlink on a non-symlink → EINVAL */
+    fut_printf("[MISC-TEST] Test 2745: readlink non-symlink\n");
+    {
+        long fd = sys_open("/cc2_2745", O_CREAT | O_RDWR, 0644);
+        if (fd >= 0) sys_close((int)fd);
+        char buf[64];
+        long r = sys_readlink("/cc2_2745", buf, sizeof(buf));
+        if (r == -EINVAL) fut_test_pass();
+        else { fut_printf("[MISC-TEST] FAIL 2745: readlink=%ld\n", r); fut_test_fail(2745); }
+        sys_unlink("/cc2_2745");
+    }
+
+    /* 2746: getdents64 on a regular-file fd → ENOTDIR */
+    fut_printf("[MISC-TEST] Test 2746: getdents on file\n");
+    {
+        long fd = sys_open("/cc2_2746", O_CREAT | O_RDONLY, 0644);
+        char db[256];
+        long r = (fd >= 0) ? sys_getdents64((unsigned)fd, db, sizeof(db)) : fd;
+        if (r == -ENOTDIR) fut_test_pass();
+        else { fut_printf("[MISC-TEST] FAIL 2746: getdents=%ld\n", r); fut_test_fail(2746); }
+        if (fd >= 0) sys_close((int)fd);
+        sys_unlink("/cc2_2746");
+    }
+
+    /* 2747: unlinkat(AT_REMOVEDIR) on a regular file → ENOTDIR */
+    fut_printf("[MISC-TEST] Test 2747: AT_REMOVEDIR on file\n");
+    {
+        long fd = sys_open("/cc2_2747", O_CREAT | O_RDWR, 0644);
+        if (fd >= 0) sys_close((int)fd);
+        long r = sys_unlinkat(AT_FDCWD, "/cc2_2747", 0x200 /*AT_REMOVEDIR*/);
+        if (r == -ENOTDIR) fut_test_pass();
+        else { fut_printf("[MISC-TEST] FAIL 2747: unlinkat=%ld\n", r); fut_test_fail(2747); }
+        sys_unlink("/cc2_2747");
+    }
+
+    /* 2748: writev with a negative iovcnt → EINVAL */
+    fut_printf("[MISC-TEST] Test 2748: writev negative iovcnt\n");
+    {
+        long fd = sys_open("/cc2_2748", O_CREAT | O_RDWR, 0644);
+        struct iovec iov = { .iov_base = (void *)"x", .iov_len = 1 };
+        long r = (fd >= 0) ? sys_writev((int)fd, &iov, -1) : fd;
+        if (r == -EINVAL) fut_test_pass();
+        else { fut_printf("[MISC-TEST] FAIL 2748: writev=%ld\n", r); fut_test_fail(2748); }
+        if (fd >= 0) sys_close((int)fd);
+        sys_unlink("/cc2_2748");
+    }
+
+    /* 2749: fcntl with an unknown command → EINVAL */
+    fut_printf("[MISC-TEST] Test 2749: fcntl invalid cmd\n");
+    {
+        long fd = sys_open("/cc2_2749", O_CREAT | O_RDWR, 0644);
+        long r = (fd >= 0) ? sys_fcntl((int)fd, 99999, 0) : fd;
+        if (r == -EINVAL) fut_test_pass();
+        else { fut_printf("[MISC-TEST] FAIL 2749: fcntl=%ld\n", r); fut_test_fail(2749); }
+        if (fd >= 0) sys_close((int)fd);
+        sys_unlink("/cc2_2749");
+    }
+
+    /* 2750: symlink + readlink round-trip */
+    fut_printf("[MISC-TEST] Test 2750: symlink/readlink round-trip\n");
+    {
+        sys_unlink("/cc2_2750_lnk");
+        long sr = sys_symlink("/target/path", "/cc2_2750_lnk");
+        char buf[64] = {0};
+        long rl = sys_readlink("/cc2_2750_lnk", buf, sizeof(buf));
+        int ok = (sr == 0 && rl == 12 &&
+                  buf[0] == '/' && buf[1] == 't' && buf[7] == '/' && buf[11] == 'h');
+        if (ok) fut_test_pass();
+        else { fut_printf("[MISC-TEST] FAIL 2750: sr=%ld rl=%ld buf=%s\n", sr, rl, buf); fut_test_fail(2750); }
+        sys_unlink("/cc2_2750_lnk");
+    }
+
+    /* 2751: O_NOFOLLOW on a terminal symlink → ELOOP */
+    fut_printf("[MISC-TEST] Test 2751: O_NOFOLLOW on symlink\n");
+    {
+        sys_unlink("/cc2_2751_lnk");
+        sys_symlink("/cc2_2751_tgt", "/cc2_2751_lnk");
+        long r = sys_open("/cc2_2751_lnk", 0400000 /*O_NOFOLLOW*/ | O_RDONLY, 0);
+        if (r == -ELOOP) fut_test_pass();
+        else { fut_printf("[MISC-TEST] FAIL 2751: open=%ld\n", r); fut_test_fail(2751); if (r >= 0) sys_close((int)r); }
+        sys_unlink("/cc2_2751_lnk");
+    }
+
+    /* 2752: rename a directory into a subdirectory of itself → EINVAL */
+    fut_printf("[MISC-TEST] Test 2752: rename into own subdir\n");
+    {
+        sys_mkdir("/cc2_2752a", 0755);
+        sys_mkdir("/cc2_2752a/b", 0755);
+        long r = sys_rename("/cc2_2752a", "/cc2_2752a/b/c");
+        if (r == -EINVAL) fut_test_pass();
+        else { fut_printf("[MISC-TEST] FAIL 2752: rename=%ld\n", r); fut_test_fail(2752); }
+        sys_rmdir("/cc2_2752a/b/c");
+        sys_rmdir("/cc2_2752a/b");
+        sys_rmdir("/cc2_2752a");
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -80356,6 +80509,7 @@ void fut_misc_test_thread(void *arg) {
     test_networking_extended(); /* Tests 2720-2724: socketpair, getsockname, getpeername, SO_ERROR, SCM_RIGHTS */
     test_miscellaneous_extended(); /* Tests 2725-2729: sysinfo, uname, clock_getres, timer_create, /dev/urandom */
     test_posix_corner_cases(); /* Tests 2730-2741: POSIX corner cases (sparse, O_APPEND, dup2 self, access modes) */
+    test_posix_corner_cases2(); /* Tests 2742-2752: rarer error paths (O_NOFOLLOW, rename-into-subdir, etc.) */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

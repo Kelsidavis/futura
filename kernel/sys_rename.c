@@ -222,6 +222,18 @@ long sys_rename(const char *oldpath, const char *newpath) {
         return 0;
     }
 
+    /* POSIX: a directory may not be renamed into one of its own descendants
+     * (e.g. `mv /a /a/b/c`). Detect this from the resolved absolute paths and
+     * fail with EINVAL up front. Otherwise the cross-directory rename below
+     * tries to hard-link the directory into the new parent, which fails with a
+     * misleading EPERM and only avoids corrupting the tree by accident. */
+    {
+        size_t olen = strlen(old_buf);
+        if (strncmp(new_buf, old_buf, olen) == 0 && new_buf[olen] == '/') {
+            return -EINVAL;
+        }
+    }
+
     /* Phase 2: Calculate path lengths */
     size_t old_len = strlen(old_buf);
     size_t new_len = strlen(new_buf);

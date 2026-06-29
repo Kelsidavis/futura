@@ -76107,6 +76107,125 @@ __attribute__((noinline)) static void test_posix_corner_cases2(void) {
     }
 }
 
+/* Tests 2753-2762: signal/time/fs corner cases — kill errno paths, clock and
+ * nanosleep validation, hard-linking a directory, symlink-cycle ELOOP, access
+ * on a missing path, a file used as a path component, dup3 self-EINVAL (which
+ * must differ from dup2's no-op), and symlink onto an existing name. */
+__attribute__((noinline)) static void test_posix_corner_cases3(void) {
+    extern long sys_open(const char *path, int flags, int mode);
+    extern long sys_close(int fd);
+    extern long sys_unlink(const char *path);
+    extern long sys_rmdir(const char *path);
+    extern long sys_mkdir(const char *path, uint32_t mode);
+    extern long sys_kill(int pid, int sig);
+    extern long sys_clock_gettime(int clock_id, fut_timespec_t *tp);
+    extern long sys_nanosleep(const fut_timespec_t *req, fut_timespec_t *rem);
+    extern long sys_link(const char *oldpath, const char *newpath);
+    extern long sys_symlink(const char *target, const char *linkpath);
+    extern long sys_access(const char *pathname, int mode);
+    extern long sys_dup3(int oldfd, int newfd, int flags);
+
+    fut_printf("[MISC-TEST] Tests 2753-2762: signal/time/fs corner cases\n");
+
+    /* 2753: kill with an out-of-range signal number → EINVAL */
+    fut_printf("[MISC-TEST] Test 2753: kill invalid signal\n");
+    {
+        long r = sys_kill(1, 9999);
+        if (r == -EINVAL) fut_test_pass();
+        else { fut_printf("[MISC-TEST] FAIL 2753: kill=%ld\n", r); fut_test_fail(2753); }
+    }
+
+    /* 2754: kill(sig=0) to a non-existent pid → ESRCH */
+    fut_printf("[MISC-TEST] Test 2754: kill nonexistent pid\n");
+    {
+        long r = sys_kill(999999, 0);
+        if (r == -ESRCH) fut_test_pass();
+        else { fut_printf("[MISC-TEST] FAIL 2754: kill=%ld\n", r); fut_test_fail(2754); }
+    }
+
+    /* 2755: clock_gettime with an unknown clock id → EINVAL */
+    fut_printf("[MISC-TEST] Test 2755: clock_gettime bad clockid\n");
+    {
+        fut_timespec_t ts = {0, 0};
+        long r = sys_clock_gettime(99, &ts);
+        if (r == -EINVAL) fut_test_pass();
+        else { fut_printf("[MISC-TEST] FAIL 2755: clock_gettime=%ld\n", r); fut_test_fail(2755); }
+    }
+
+    /* 2756: nanosleep with tv_nsec outside [0,1e9) → EINVAL */
+    fut_printf("[MISC-TEST] Test 2756: nanosleep bad nsec\n");
+    {
+        fut_timespec_t req = { .tv_sec = 0, .tv_nsec = -1 };
+        long r = sys_nanosleep(&req, NULL);
+        if (r == -EINVAL) fut_test_pass();
+        else { fut_printf("[MISC-TEST] FAIL 2756: nanosleep=%ld\n", r); fut_test_fail(2756); }
+    }
+
+    /* 2757: hard-linking a directory → EPERM */
+    fut_printf("[MISC-TEST] Test 2757: link to directory\n");
+    {
+        sys_mkdir("/cc3_2757d", 0755);
+        long r = sys_link("/cc3_2757d", "/cc3_2757l");
+        if (r == -EPERM) fut_test_pass();
+        else { fut_printf("[MISC-TEST] FAIL 2757: link=%ld\n", r); fut_test_fail(2757); }
+        sys_unlink("/cc3_2757l");
+        sys_rmdir("/cc3_2757d");
+    }
+
+    /* 2758: a symlink cycle resolves to ELOOP */
+    fut_printf("[MISC-TEST] Test 2758: symlink loop\n");
+    {
+        sys_unlink("/cc3_2758a"); sys_unlink("/cc3_2758b");
+        sys_symlink("/cc3_2758b", "/cc3_2758a");
+        sys_symlink("/cc3_2758a", "/cc3_2758b");
+        long r = sys_open("/cc3_2758a", O_RDONLY, 0);
+        if (r == -ELOOP) fut_test_pass();
+        else { fut_printf("[MISC-TEST] FAIL 2758: open=%ld\n", r); fut_test_fail(2758); if (r >= 0) sys_close((int)r); }
+        sys_unlink("/cc3_2758a"); sys_unlink("/cc3_2758b");
+    }
+
+    /* 2759: access() on a missing path → ENOENT */
+    fut_printf("[MISC-TEST] Test 2759: access nonexistent\n");
+    {
+        long r = sys_access("/cc3_2759_nope", 0 /* F_OK */);
+        if (r == -ENOENT) fut_test_pass();
+        else { fut_printf("[MISC-TEST] FAIL 2759: access=%ld\n", r); fut_test_fail(2759); }
+    }
+
+    /* 2760: a regular file used as an intermediate path component → ENOTDIR */
+    fut_printf("[MISC-TEST] Test 2760: file as path component\n");
+    {
+        long fd = sys_open("/cc3_2760f", O_CREAT | O_RDWR, 0644);
+        if (fd >= 0) sys_close((int)fd);
+        long r = sys_open("/cc3_2760f/x", O_RDONLY, 0);
+        if (r == -ENOTDIR) fut_test_pass();
+        else { fut_printf("[MISC-TEST] FAIL 2760: open=%ld\n", r); fut_test_fail(2760); if (r >= 0) sys_close((int)r); }
+        sys_unlink("/cc3_2760f");
+    }
+
+    /* 2761: dup3(fd, fd, 0) → EINVAL (unlike dup2, which is a no-op) */
+    fut_printf("[MISC-TEST] Test 2761: dup3 same fd\n");
+    {
+        long fd = sys_open("/cc3_2761", O_CREAT | O_RDWR, 0644);
+        long r = (fd >= 0) ? sys_dup3((int)fd, (int)fd, 0) : fd;
+        if (r == -EINVAL) fut_test_pass();
+        else { fut_printf("[MISC-TEST] FAIL 2761: dup3=%ld\n", r); fut_test_fail(2761); }
+        if (fd >= 0) sys_close((int)fd);
+        sys_unlink("/cc3_2761");
+    }
+
+    /* 2762: symlink() when the link path already exists → EEXIST */
+    fut_printf("[MISC-TEST] Test 2762: symlink existing path\n");
+    {
+        long fd = sys_open("/cc3_2762", O_CREAT | O_RDWR, 0644);
+        if (fd >= 0) sys_close((int)fd);
+        long r = sys_symlink("/whatever", "/cc3_2762");
+        if (r == -EEXIST) fut_test_pass();
+        else { fut_printf("[MISC-TEST] FAIL 2762: symlink=%ld\n", r); fut_test_fail(2762); }
+        sys_unlink("/cc3_2762");
+    }
+}
+
 void fut_misc_test_thread(void *arg) {
     (void)arg;
 
@@ -80510,6 +80629,7 @@ void fut_misc_test_thread(void *arg) {
     test_miscellaneous_extended(); /* Tests 2725-2729: sysinfo, uname, clock_getres, timer_create, /dev/urandom */
     test_posix_corner_cases(); /* Tests 2730-2741: POSIX corner cases (sparse, O_APPEND, dup2 self, access modes) */
     test_posix_corner_cases2(); /* Tests 2742-2752: rarer error paths (O_NOFOLLOW, rename-into-subdir, etc.) */
+    test_posix_corner_cases3(); /* Tests 2753-2762: signal/time/fs corner cases (kill, clock, symlink loop, dup3) */
 
     fut_printf("[MISC-TEST] ========================================\n");
     fut_printf("[MISC-TEST] All miscellaneous syscall tests done\n");

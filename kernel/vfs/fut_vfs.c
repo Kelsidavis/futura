@@ -971,9 +971,20 @@ static const char *resolve_path_to_abs(const char *path, char *abs_buf) {
  * @param vnode  Pointer to store result vnode
  * @return 0 on success, negative error code on failure
  */
-static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
+static int lookup_vnode_d(const char *path, struct fut_vnode **vnode, int depth) {
     if (!path || !vnode) {
         return -EINVAL;
+    }
+
+    /* Bound recursive symlink resolution. The symlink-following path below
+     * calls back into lookup_vnode_d on the link target, so a cycle
+     * (a -> b -> a) would recurse until the kernel stack overflows and the
+     * CPU faults (GPF) instead of returning an error. Because each level is a
+     * real ~1KB stack frame (not an iterative step), cap the chain well below
+     * Linux's MAXSYMLINKS=40 — 20 is far beyond any legitimate chain yet leaves
+     * ample headroom on the 64 KB kernel stack — and report ELOOP. */
+    if (depth > 20) {
+        return -ELOOP;
     }
 
     /* Resolve relative paths against current task's cwd */
@@ -1221,8 +1232,8 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
                     /* Release the symlink vnode */
                     release_lookup_ref(next);
 
-                    /* Recursively resolve the symlink target */
-                    int symlink_ret = lookup_vnode(resolve_path, &next);
+                    /* Recursively resolve the symlink target (depth-bounded) */
+                    int symlink_ret = lookup_vnode_d(resolve_path, &next, depth + 1);
                     if (symlink_ret < 0) {
                         release_lookup_ref(current);
                                     VFSDBG("[vfs] ELOOP: failed to resolve symlink target '%s' ret=%d\n", link_target, symlink_ret);
@@ -1265,6 +1276,12 @@ static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
     if (effective_root == root_vnode)
         vfs_dcache_insert(path, current);
     return 0;
+}
+
+/* Public entry: resolve a path to a vnode, starting a fresh symlink-depth
+ * chain. The recursive worker (lookup_vnode_d) bounds symlink cycles. */
+static int lookup_vnode(const char *path, struct fut_vnode **vnode) {
+    return lookup_vnode_d(path, vnode, 0);
 }
 
 static int lookup_parent_and_name(const char *path,

@@ -128,6 +128,28 @@ static void add_setting(const char *label, const char *value) {
     s_copy(p->value, value, sizeof(p->value));
 }
 
+/* Read a small /proc file into buf (NUL-terminated). Returns bytes read, or -1. */
+static int read_proc_file(const char *path, char *buf, int bufsz) {
+    int fd = sys_open(path, O_RDONLY, 0);
+    if (fd < 0) return -1;
+    int total = 0;
+    long n;
+    while (total < bufsz - 1 && (n = sys_read(fd, buf + total, bufsz - 1 - total)) > 0)
+        total += (int)n;
+    buf[total] = '\0';
+    sys_close(fd);
+    return total;
+}
+
+/* Append a decimal number to dst at *pos, bounded by cap. */
+static void append_num(char *dst, int *pos, int cap, long v) {
+    char rev[24]; int ri = 0;
+    if (v == 0) rev[ri++] = '0';
+    else while (v > 0 && ri < 23) { rev[ri++] = (char)('0' + v % 10); v /= 10; }
+    while (ri > 0 && *pos < cap - 1) dst[(*pos)++] = rev[--ri];
+    dst[*pos] = '\0';
+}
+
 static void refresh_procs(void) {
     proc_count = 0;
 
@@ -173,6 +195,44 @@ static void refresh_procs(void) {
         add_setting("Display", disp);
     }
     add_setting("Compositor",     "futura-wayland");
+
+    /* Total memory from /proc/meminfo (MemTotal: N kB), shown in MB. */
+    {
+        char mb[512];
+        char mem[24] = "(unknown)";
+        if (read_proc_file("/proc/meminfo", mb, sizeof(mb)) > 0) {
+            const char *p = mb;
+            while (*p) {
+                if (p[0]=='M'&&p[1]=='e'&&p[2]=='m'&&p[3]=='T'&&p[4]=='o'&&
+                    p[5]=='t'&&p[6]=='a'&&p[7]=='l') { p += 8; break; }
+                while (*p && *p != '\n') p++;
+                if (*p) p++;
+            }
+            while (*p == ':' || *p == ' ') p++;
+            long kb = 0; int got = 0;
+            while (*p >= '0' && *p <= '9') { kb = kb * 10 + (*p - '0'); p++; got = 1; }
+            if (got) { int n = 0; append_num(mem, &n, (int)sizeof(mem), kb / 1024);
+                       if (n < (int)sizeof(mem) - 3) { mem[n++]=' '; mem[n++]='M'; mem[n++]='B'; mem[n]='\0'; } }
+        }
+        add_setting("Memory", mem);
+    }
+
+    /* Uptime from /proc/uptime (seconds), shown as Dd Hh Mm. */
+    {
+        char ub[64];
+        char up[24] = "(unknown)";
+        if (read_proc_file("/proc/uptime", ub, sizeof(ub)) > 0) {
+            long secs = 0; const char *p = ub;
+            while (*p >= '0' && *p <= '9') { secs = secs * 10 + (*p - '0'); p++; }
+            long d = secs / 86400, hh = (secs % 86400) / 3600, mm = (secs % 3600) / 60;
+            int n = 0;
+            if (d > 0) { append_num(up, &n, (int)sizeof(up), d); if (n < 22) up[n++]='d'; if (n < 22) up[n++]=' '; }
+            append_num(up, &n, (int)sizeof(up), hh); if (n < 22) up[n++]='h'; if (n < 22) up[n++]=' ';
+            append_num(up, &n, (int)sizeof(up), mm); if (n < 22) up[n++]='m';
+            up[n] = '\0';
+        }
+        add_setting("Uptime", up);
+    }
 
     /* Hostname via uname(2) — picks up sethostname() changes instead
      * of always showing the boot-time literal. */

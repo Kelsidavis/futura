@@ -150,12 +150,44 @@ static const char *type_label(unsigned char t) {
     }
 }
 
+/* stat the entry under the current directory and return its byte size,
+ * or -1 if it can't be stat'd or isn't a plain file. */
+static long entry_size(const char *name) {
+    char path[320];
+    int pi = 0;
+    for (int i = 0; cwd[i] && pi < 300; i++) path[pi++] = cwd[i];
+    if (pi > 0 && path[pi - 1] != '/') path[pi++] = '/';
+    for (int i = 0; name[i] && pi < 318; i++) path[pi++] = name[i];
+    path[pi] = '\0';
+    struct kstat { uint64_t dev, ino, nlink; uint32_t mode, uid, gid, pad;
+                   uint64_t rdev; int64_t size, blksize, blocks;
+                   uint64_t at_s, at_n, mt_s, mt_n, ct_s, ct_n; } st;
+    if (sys_stat_call(path, &st) < 0) return -1;
+    return (long)st.size;
+}
+
+/* Format a byte size as a short human-readable string ("512B", "4K", "2M"). */
+static void fmt_size(long sz, char *out) {
+    if (sz < 0) { out[0] = '-'; out[1] = '\0'; return; }
+    static const char units[] = "BKMG";
+    int ui = 0; long v = sz;
+    while (v >= 1024 && ui < 3) { v = (v + 512) / 1024; ui++; }
+    char rev[16]; int ri = 0;
+    if (v == 0) rev[ri++] = '0';
+    else while (v > 0) { rev[ri++] = (char)('0' + v % 10); v /= 10; }
+    int oi = 0;
+    while (ri > 0) out[oi++] = rev[--ri];
+    out[oi++] = units[ui];
+    out[oi] = '\0';
+}
+
 static void add_entry(const char *name, unsigned char dtype) {
     if (proc_count >= SM_MAX_PROCS) return;
     struct proc_info *p = &procs[proc_count++];
     p->pid = 0;
     p->state[0] = '\0';
-    p->rss_kb = 0;
+    /* Only plain files carry a meaningful size in the listing. */
+    p->rss_kb = (dtype == FT_REG) ? entry_size(name) : -1;
     p->type = dtype;
     s_copy(p->name, name, sizeof(p->name));
     s_copy(p->value, type_label(dtype), sizeof(p->value));
@@ -365,6 +397,8 @@ static void redraw_all(struct client_state *state) {
         draw_text(px, w, h, stride, x, cy, "TYPE", 4, COL_DIM, COL_BG);
         x += 6 * FONT_WIDTH;
         draw_text(px, w, h, stride, x, cy, "NAME", 4, COL_DIM, COL_BG);
+        /* SIZE header, right-aligned over the size column */
+        draw_text(px, w, h, stride, w - SM_PAD - 4 * FONT_WIDTH, cy, "SIZE", 4, COL_DIM, COL_BG);
         /* Underline */
         fill_rect(px, stride, SM_PAD, col_y + SM_ROW_H - 2, w - 2 * SM_PAD, 1, 0xFF313244u);
     }
@@ -395,14 +429,22 @@ static void redraw_all(struct client_state *state) {
         draw_text(px, w, h, stride, x, cy, p->value, vlen, type_col, row_bg);
         x += 6 * FONT_WIDTH;
 
-        /* Name */
+        /* Name — leave room for the size column on the right edge. */
+        int size_colw = 9 * FONT_WIDTH;
         int nlen = (int)strlen(p->name);
-        int maxn = (w - SM_PAD - x) / FONT_WIDTH;
+        int maxn = (w - SM_PAD - x - size_colw) / FONT_WIDTH;
         if (nlen > maxn) nlen = maxn;
         if (nlen > 0) {
             uint32_t name_col = (p->type == FT_DIR) ? COL_ACCENT : COL_TEXT;
             draw_text(px, w, h, stride, x, cy, p->name, nlen, name_col, row_bg);
         }
+
+        /* Size, right-aligned. */
+        char szbuf[16];
+        fmt_size(p->rss_kb, szbuf);
+        int szlen = (int)strlen(szbuf);
+        draw_text(px, w, h, stride, w - SM_PAD - szlen * FONT_WIDTH, cy,
+                  szbuf, szlen, COL_DIM, row_bg);
     }
 
     /* Scroll indicator on right edge */

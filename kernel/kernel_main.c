@@ -2595,10 +2595,12 @@ void fut_kernel_main(void) {
         extern int rtl8111_init(void);
         extern int igc_init(void);
         extern int i211_init(void);
+        extern int rtw89_init(void);
 
         rtl8111_init();
         igc_init();
         i211_init();
+        rtw89_init();
     }
 
     /* Audio */

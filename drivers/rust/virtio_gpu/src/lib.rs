@@ -10,6 +10,7 @@
 #![forbid(unsafe_op_in_unsafe_fn)]
 
 use core::ffi::c_void;
+use core::mem::{offset_of, size_of};
 use core::ptr::{self, read_volatile, write_volatile};
 use common::{log, SpinLock};
 
@@ -158,6 +159,26 @@ struct VirtqUsed {
     idx: u16,
     ring: [VirtqUsedElem; VIRTIO_RING_SIZE],
     avail_event: u16,
+}
+
+#[inline(always)]
+unsafe fn vq_read_avail_idx(p: *const VirtqAvail) -> u16 {
+    unsafe { p.byte_add(offset_of!(VirtqAvail, idx)).cast::<u16>().read_volatile() }
+}
+#[inline(always)]
+unsafe fn vq_write_avail_idx(p: *mut VirtqAvail, val: u16) {
+    unsafe { p.byte_add(offset_of!(VirtqAvail, idx)).cast::<u16>().write_volatile(val) }
+}
+#[inline(always)]
+unsafe fn vq_write_avail_ring(p: *mut VirtqAvail, slot: usize, val: u16) {
+    unsafe {
+        p.byte_add(offset_of!(VirtqAvail, ring) + slot * size_of::<u16>())
+            .cast::<u16>().write_volatile(val)
+    }
+}
+#[inline(always)]
+unsafe fn vq_read_used_idx(p: *const VirtqUsed) -> u16 {
+    unsafe { p.byte_add(offset_of!(VirtqUsed, idx)).cast::<u16>().read_volatile() }
 }
 
 /* Device state */
@@ -535,13 +556,11 @@ impl VirtioGpuDevice {
             });
         }
 
-        /* Add to available ring. Volatile reads/writes through addr_of
-         * avoid materializing & references over device-shared DMA memory. */
-        let avail_idx_val = unsafe { read_volatile(ptr::addr_of!((*self.avail).idx)) };
+        let avail_idx_val = unsafe { vq_read_avail_idx(self.avail) };
         let avail_slot = (avail_idx_val % VIRTIO_RING_SIZE as u16) as usize;
-        unsafe { write_volatile(ptr::addr_of_mut!((*self.avail).ring[avail_slot]), cmd_desc_idx); }
+        unsafe { vq_write_avail_ring(self.avail, avail_slot, cmd_desc_idx); }
         unsafe { core::arch::asm!("dsb sy"); }
-        unsafe { write_volatile(ptr::addr_of_mut!((*self.avail).idx), avail_idx_val.wrapping_add(1)); }
+        unsafe { vq_write_avail_idx(self.avail, avail_idx_val.wrapping_add(1)); }
         unsafe { core::arch::asm!("dsb sy"); }
 
         /* Notify device via notify region */
@@ -550,9 +569,9 @@ impl VirtioGpuDevice {
         }
 
         /* Wait for response */
-        let last_used_idx = unsafe { read_volatile(ptr::addr_of!((*self.used).idx)) };
+        let last_used_idx = unsafe { vq_read_used_idx(self.used) };
         let mut timeout = 1000000;
-        while unsafe { read_volatile(ptr::addr_of!((*self.used).idx)) } == last_used_idx && timeout > 0 {
+        while unsafe { vq_read_used_idx(self.used) } == last_used_idx && timeout > 0 {
             unsafe { core::arch::asm!("dsb sy"); }
             timeout -= 1;
         }

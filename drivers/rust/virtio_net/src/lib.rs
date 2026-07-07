@@ -12,6 +12,7 @@
 use core::arch::asm;
 use core::cell::UnsafeCell;
 use core::ffi::c_void;
+use core::mem::{offset_of, size_of};
 use core::ptr::{self, write_volatile, addr_of_mut, addr_of};
 use core::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 
@@ -220,6 +221,33 @@ struct VirtqUsed {
     ring: [VirtqUsedElem; QUEUE_SIZE as usize],
 }
 
+#[inline(always)]
+unsafe fn vq_read_avail_idx(p: *const VirtqAvail) -> u16 {
+    unsafe { p.byte_add(offset_of!(VirtqAvail, idx)).cast::<u16>().read_volatile() }
+}
+#[inline(always)]
+unsafe fn vq_write_avail_idx(p: *mut VirtqAvail, val: u16) {
+    unsafe { p.byte_add(offset_of!(VirtqAvail, idx)).cast::<u16>().write_volatile(val) }
+}
+#[inline(always)]
+unsafe fn vq_write_avail_ring(p: *mut VirtqAvail, slot: usize, val: u16) {
+    unsafe {
+        p.byte_add(offset_of!(VirtqAvail, ring) + slot * size_of::<u16>())
+            .cast::<u16>().write_volatile(val)
+    }
+}
+#[inline(always)]
+unsafe fn vq_read_used_idx(p: *const VirtqUsed) -> u16 {
+    unsafe { p.byte_add(offset_of!(VirtqUsed, idx)).cast::<u16>().read_volatile() }
+}
+#[inline(always)]
+unsafe fn vq_read_used_elem(p: *const VirtqUsed, slot: usize) -> VirtqUsedElem {
+    unsafe {
+        p.byte_add(offset_of!(VirtqUsed, ring) + slot * size_of::<VirtqUsedElem>())
+            .cast::<VirtqUsedElem>().read_volatile()
+    }
+}
+
 #[repr(C, packed)]
 #[allow(dead_code)]
 struct VirtioNetHdr {
@@ -354,15 +382,11 @@ impl VirtQueue {
                 next: 0,
             });
 
-            // Raw-pointer volatile accesses to the device-shared avail ring,
-            // mirroring enqueue_rx: never form an &mut to DMA memory, and keep
-            // the device/CPU views consistent across the boundary. The previous
-            // &mut + plain stores could be reordered/elided around the fence.
-            let avail_idx = ptr::read_volatile(addr_of!((*self.avail).idx));
+            let avail_idx = vq_read_avail_idx(self.avail);
             let slot = avail_idx % self.size;
-            write_volatile(addr_of_mut!((*self.avail).ring[slot as usize]), desc_idx);
+            vq_write_avail_ring(self.avail, slot as usize, desc_idx);
             core::sync::atomic::fence(Ordering::SeqCst);
-            write_volatile(addr_of_mut!((*self.avail).idx), avail_idx.wrapping_add(1));
+            vq_write_avail_idx(self.avail, avail_idx.wrapping_add(1));
         }
 
         self.next_avail.fetch_add(1, Ordering::Release);
@@ -385,15 +409,11 @@ impl VirtQueue {
                 next: 0,
             });
 
-            // Use raw-pointer accesses instead of creating an &mut to
-            // device-shared ring memory. Volatile keeps the device/CPU
-            // views consistent across the DMA boundary; addr_of avoids
-            // the &mut deref that CodeQL flagged as access-invalid-pointer.
-            let avail_idx = ptr::read_volatile(addr_of!((*self.avail).idx));
+            let avail_idx = vq_read_avail_idx(self.avail);
             let slot = avail_idx % self.size;
-            write_volatile(addr_of_mut!((*self.avail).ring[slot as usize]), desc_idx);
+            vq_write_avail_ring(self.avail, slot as usize, desc_idx);
             core::sync::atomic::fence(Ordering::SeqCst);
-            write_volatile(addr_of_mut!((*self.avail).idx), avail_idx.wrapping_add(1));
+            vq_write_avail_idx(self.avail, avail_idx.wrapping_add(1));
         }
 
         self.next_avail.fetch_add(1, Ordering::Release);
@@ -402,7 +422,7 @@ impl VirtQueue {
 
     fn has_used(&self) -> bool {
         let last = self.last_used.load(Ordering::Acquire);
-        let used_idx = unsafe { ptr::read_volatile(addr_of!((*self.used).idx)) };
+        let used_idx = unsafe { vq_read_used_idx(self.used) };
         used_idx != last
     }
 
@@ -415,7 +435,7 @@ impl VirtQueue {
         let slot = last % self.size;
 
         unsafe {
-            let elem = (*self.used).ring[slot as usize];
+            let elem = vq_read_used_elem(self.used, slot as usize);
             self.last_used.store(last.wrapping_add(1), Ordering::Release);
             self.free_desc(elem.id as u16);
             Some((elem.id as u16, elem.len))

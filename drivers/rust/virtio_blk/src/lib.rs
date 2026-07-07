@@ -16,7 +16,7 @@
 use core::arch::asm;
 use core::cmp::min;
 use core::ffi::{c_char, c_void};
-use core::mem::{size_of, MaybeUninit};
+use core::mem::{offset_of, size_of, MaybeUninit};
 use core::ptr::{self, write_volatile, read_volatile};
 use core::sync::atomic::{AtomicU16, AtomicU64, AtomicU8, Ordering};
 
@@ -1602,14 +1602,18 @@ impl VirtioBlkDevice {
 
     #[cfg(target_arch = "x86_64")]
     fn read_geometry(&mut self) {
+        let cfg = self.config;
+        if cfg.is_null() {
+            return;
+        }
         unsafe {
-            if self.config.is_null() {
-                return;
-            }
-            self.capacity_sectors = read_volatile(ptr::addr_of!((*self.config).capacity));
-            let blk_size = read_volatile(ptr::addr_of!((*self.config).blk_size));
+            self.capacity_sectors = cfg.byte_add(offset_of!(VirtioBlkConfig, capacity))
+                .cast::<u64>().read_volatile();
+            let blk_size = cfg.byte_add(offset_of!(VirtioBlkConfig, blk_size))
+                .cast::<u32>().read_volatile();
             self.block_size = if blk_size == 0 { 512 } else { blk_size };
-            self.has_flush = read_volatile(ptr::addr_of!((*self.config).writeback)) != 0;
+            self.has_flush = cfg.byte_add(offset_of!(VirtioBlkConfig, writeback))
+                .cast::<u8>().read_volatile() != 0;
         }
     }
 

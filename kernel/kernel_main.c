@@ -2507,6 +2507,9 @@ void fut_kernel_main(void) {
              * value there). This is a codec driver — calling it only
              * makes sense once an HDA controller driver exposes a verb
              * callback, which doesn't exist yet on bare metal. */
+            extern int iwlwifi_init(void);
+            fut_printf("[INIT] Intel: entering iwlwifi_init\n");
+            iwlwifi_init();
         }
     }
 #endif /* DRIVERS_INTEL || DRIVERS_ALL */
@@ -2626,6 +2629,7 @@ void fut_kernel_main(void) {
         extern int acpi_ec_init(uint16_t data_port, uint16_t cmd_port);
         extern int acpi_thermal_init(void *ec_read);   /* Option<EcReadFn> */
         extern int acpi_battery_init(void *ec_read);   /* Option<EcReadFn> */
+        extern int acpi_backlight_init(void *gpu_mmio, void *ec_read, void *ec_write);
         extern int acpi_button_init(uint16_t pm1a_evt, uint16_t pm1a_en);
         /* ChromeOS EC: probe LPC memmap at 0x900 for 'EC' signature
          * and, if present, send HELLO + GET_VERSION + GET_BOARD_VERSION
@@ -2664,6 +2668,7 @@ void fut_kernel_main(void) {
         acpi_ec_init(0, 0);
         acpi_thermal_init(NULL);
         acpi_battery_init(NULL);
+        acpi_backlight_init(NULL, NULL, NULL);
         cros_ec_init();
     }
 

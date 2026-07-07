@@ -137,6 +137,13 @@ enum sysfs_kind {
     SYSFS_NET_ETH0_MTU,
     SYSFS_NET_ETH0_ADDRESS,
     SYSFS_NET_ETH0_FLAGS,
+    /* /sys/class/backlight/ */
+    SYSFS_CLASS_BACKLIGHT_DIR,
+    SYSFS_CLASS_BL_INTEL_DIR,
+    SYSFS_BL_BRIGHTNESS,
+    SYSFS_BL_MAX_BRIGHTNESS,
+    SYSFS_BL_ACTUAL_BRIGHTNESS,
+    SYSFS_BL_TYPE,
     /* /sys/class/power_supply/ */
     SYSFS_CLASS_POWER_SUPPLY_DIR,
     SYSFS_CLASS_PS_BAT0_DIR,
@@ -241,6 +248,12 @@ typedef struct {
 #define SYSFS_INO_TTY_CONSOLE_ACTIVE 602ULL
 #define SYSFS_INO_TTY_TTY0_ACTIVE   603ULL
 #define SYSFS_INO_FS_CGROUP_CTRL    610ULL
+#define SYSFS_INO_CLASS_BACKLIGHT    613ULL
+#define SYSFS_INO_CLASS_BL_INTEL    614ULL
+#define SYSFS_INO_BL_BRIGHTNESS     615ULL
+#define SYSFS_INO_BL_MAX_BRIGHTNESS 616ULL
+#define SYSFS_INO_BL_ACTUAL_BRIGHTNESS 617ULL
+#define SYSFS_INO_BL_TYPE           618ULL
 #define SYSFS_INO_CLASS_POWER_SUPPLY 620ULL
 #define SYSFS_INO_CLASS_PS_BAT0     621ULL
 #define SYSFS_INO_PS_BAT0_CAPACITY  622ULL
@@ -302,6 +315,10 @@ __attribute__((weak)) int  acpi_battery_percentage(void)  { return -1; }
 __attribute__((weak)) bool acpi_battery_is_present(void)  { return false; }
 __attribute__((weak)) bool acpi_battery_is_charging(void) { return false; }
 __attribute__((weak)) int  acpi_battery_voltage_mv(void)  { return -1; }
+
+/* Weak backlight stubs — overridden when acpi_backlight is linked. */
+__attribute__((weak)) int  acpi_backlight_get(void)  { return -1; }
+__attribute__((weak)) int  acpi_backlight_max(void)  { return 100; }
 
 /* ============================================================
  *   File content generators
@@ -624,6 +641,22 @@ static ssize_t sysfs_file_read(struct fut_vnode *vnode, void *buf,
             total = sysfs_gen_str(tmp, sizeof(tmp), "enabled\n");
             break;
 
+        /* /sys/class/backlight/intel_backlight/ files */
+        case SYSFS_BL_BRIGHTNESS:
+        case SYSFS_BL_ACTUAL_BRIGHTNESS: {
+            int bl = acpi_backlight_get();
+            total = sysfs_gen_i32(tmp, sizeof(tmp), bl >= 0 ? bl : 0);
+            break;
+        }
+        case SYSFS_BL_MAX_BRIGHTNESS: {
+            int mx = acpi_backlight_max();
+            total = sysfs_gen_i32(tmp, sizeof(tmp), mx >= 0 ? mx : 100);
+            break;
+        }
+        case SYSFS_BL_TYPE:
+            total = sysfs_gen_str(tmp, sizeof(tmp), "raw\n");
+            break;
+
         /* /sys/class/power_supply/BAT0/ files */
         case SYSFS_PS_BAT0_CAPACITY: {
             int pct = acpi_battery_percentage();
@@ -737,6 +770,7 @@ static const sysfs_de_t class_entries[] = {
     DE_DIR("rtc",     SYSFS_INO_CLASS_RTC,     SYSFS_CLASS_RTC_DIR),
     DE_DIR("thermal",      SYSFS_INO_CLASS_THERMAL,      SYSFS_CLASS_THERMAL_DIR),
     DE_DIR("power_supply", SYSFS_INO_CLASS_POWER_SUPPLY, SYSFS_CLASS_POWER_SUPPLY_DIR),
+    DE_DIR("backlight",    SYSFS_INO_CLASS_BACKLIGHT,    SYSFS_CLASS_BACKLIGHT_DIR),
 };
 #define CLASS_N (sizeof(class_entries)/sizeof(class_entries[0]))
 
@@ -778,6 +812,25 @@ static const sysfs_de_t ps_bat0_entries[] = {
     DE_REG("present",     SYSFS_INO_PS_BAT0_PRESENT,     SYSFS_PS_BAT0_PRESENT),
 };
 #define PS_BAT0_N (sizeof(ps_bat0_entries)/sizeof(ps_bat0_entries[0]))
+
+/* /sys/class/backlight/ */
+static const sysfs_de_t class_backlight_entries[] = {
+    DE_DIR(".",              SYSFS_INO_CLASS_BACKLIGHT,  SYSFS_CLASS_BACKLIGHT_DIR),
+    DE_DIR("..",             SYSFS_INO_CLASS,            SYSFS_CLASS_DIR),
+    DE_DIR("intel_backlight", SYSFS_INO_CLASS_BL_INTEL, SYSFS_CLASS_BL_INTEL_DIR),
+};
+#define CLASS_BL_N (sizeof(class_backlight_entries)/sizeof(class_backlight_entries[0]))
+
+/* /sys/class/backlight/intel_backlight/ */
+static const sysfs_de_t bl_intel_entries[] = {
+    DE_DIR(".",                SYSFS_INO_CLASS_BL_INTEL,       SYSFS_CLASS_BL_INTEL_DIR),
+    DE_DIR("..",               SYSFS_INO_CLASS_BACKLIGHT,      SYSFS_CLASS_BACKLIGHT_DIR),
+    DE_REG("brightness",       SYSFS_INO_BL_BRIGHTNESS,       SYSFS_BL_BRIGHTNESS),
+    DE_REG("max_brightness",   SYSFS_INO_BL_MAX_BRIGHTNESS,   SYSFS_BL_MAX_BRIGHTNESS),
+    DE_REG("actual_brightness", SYSFS_INO_BL_ACTUAL_BRIGHTNESS, SYSFS_BL_ACTUAL_BRIGHTNESS),
+    DE_REG("type",             SYSFS_INO_BL_TYPE,             SYSFS_BL_TYPE),
+};
+#define BL_INTEL_N (sizeof(bl_intel_entries)/sizeof(bl_intel_entries[0]))
 
 /* /sys/class/rtc/ */
 static const sysfs_de_t class_rtc_entries[] = {
@@ -1189,6 +1242,8 @@ static int sysfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         case SYSFS_CLASS_TZ0_DIR:    return sysfs_table_readdir(tz0_entries, TZ0_N, cookie, de);
         case SYSFS_CLASS_POWER_SUPPLY_DIR: return sysfs_table_readdir(class_power_supply_entries, CLASS_PS_N, cookie, de);
         case SYSFS_CLASS_PS_BAT0_DIR: return sysfs_table_readdir(ps_bat0_entries, PS_BAT0_N, cookie, de);
+        case SYSFS_CLASS_BACKLIGHT_DIR: return sysfs_table_readdir(class_backlight_entries, CLASS_BL_N, cookie, de);
+        case SYSFS_CLASS_BL_INTEL_DIR: return sysfs_table_readdir(bl_intel_entries, BL_INTEL_N, cookie, de);
         case SYSFS_KERNEL_SECURITY_DIR: return sysfs_table_readdir(security_entries, SECURITY_N, cookie, de);
         default:
             return sysfs_empty_readdir(dir, cookie, de);
@@ -1309,6 +1364,10 @@ static int sysfs_dir_lookup(struct fut_vnode *dir, const char *name,
             return sysfs_table_lookup(mnt, class_power_supply_entries, CLASS_PS_N, name, result);
         case SYSFS_CLASS_PS_BAT0_DIR:
             return sysfs_table_lookup(mnt, ps_bat0_entries, PS_BAT0_N, name, result);
+        case SYSFS_CLASS_BACKLIGHT_DIR:
+            return sysfs_table_lookup(mnt, class_backlight_entries, CLASS_BL_N, name, result);
+        case SYSFS_CLASS_BL_INTEL_DIR:
+            return sysfs_table_lookup(mnt, bl_intel_entries, BL_INTEL_N, name, result);
         case SYSFS_KERNEL_SECURITY_DIR:
             return sysfs_table_lookup(mnt, security_entries, SECURITY_N, name, result);
         default:

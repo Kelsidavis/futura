@@ -110,9 +110,11 @@ static void draw_char(uint32_t *framebuffer, int fb_width, int x, int y, char c,
         /* Z */ {0x1F, 0x02, 0x04, 0x08, 0x1F},
     };
 
+    static const uint8_t glyph_pct[5] = {0x19, 0x1A, 0x04, 0x0B, 0x13}; /* % */
     const uint8_t *glyph = NULL;
     if (c >= '0' && c <= '9') glyph = font_digits[c - '0'];
     else if (c == ':') glyph = font_digits[10];
+    else if (c == '%') glyph = glyph_pct;
     else if (c >= 'A' && c <= 'Z') glyph = font_alpha[c - 'A'];
     else if (c >= 'a' && c <= 'z') glyph = font_alpha[c - 'a'];
     else return;
@@ -232,6 +234,49 @@ static void get_clock_string(char *buf) {
     }
 }
 
+/* Read battery percentage from sysfs. Returns -1 if no battery. */
+static int get_battery_pct(void) {
+    int fd = sys_open("/sys/class/power_supply/BAT0/capacity", 0 /*O_RDONLY*/, 0);
+    if (fd < 0) return -1;
+    char buf[8];
+    ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
+    sys_close(fd);
+    if (n <= 0) return -1;
+    buf[n] = '\0';
+    int pct = 0;
+    for (int i = 0; i < n && buf[i] >= '0' && buf[i] <= '9'; i++)
+        pct = pct * 10 + (buf[i] - '0');
+    return (pct >= 0 && pct <= 100) ? pct : -1;
+}
+
+/* Read battery charge status from sysfs. */
+static bool get_battery_charging(void) {
+    int fd = sys_open("/sys/class/power_supply/BAT0/status", 0, 0);
+    if (fd < 0) return false;
+    char buf[16];
+    ssize_t n = sys_read(fd, buf, sizeof(buf) - 1);
+    sys_close(fd);
+    if (n <= 0) return false;
+    buf[n] = '\0';
+    return (buf[0] == 'C'); /* "Charging" starts with C */
+}
+
+/* Format battery string: "BAT 73%" or "CHG 73%" or empty. */
+static int get_battery_string(char *buf, int bufsz) {
+    int pct = get_battery_pct();
+    if (pct < 0) return 0;
+    bool charging = get_battery_charging();
+    const char *prefix = charging ? "CHG " : "BAT ";
+    int i = 0;
+    while (*prefix && i < bufsz - 1) buf[i++] = *prefix++;
+    if (pct >= 100) { buf[i++] = '1'; buf[i++] = '0'; buf[i++] = '0'; }
+    else if (pct >= 10) { buf[i++] = (char)('0' + pct / 10); buf[i++] = (char)('0' + pct % 10); }
+    else { buf[i++] = (char)('0' + pct); }
+    if (i < bufsz - 1) buf[i++] = '%';
+    buf[i] = '\0';
+    return i;
+}
+
 static void panel_draw(struct panel_state *state) {
     /* Gradient background: subtle vertical gradient for depth */
     for (int y = 0; y < PANEL_HEIGHT; y++) {
@@ -263,11 +308,29 @@ static void panel_draw(struct panel_state *state) {
     /* Branding: "FUTURA" left of center */
     draw_text(state->shm_data, PANEL_WIDTH, 90, 11, "FUTURA", ACCENT_COLOR);
 
+    /* Battery indicator (right side, left of clock). */
+    char bat_str[12];
+    int bat_len = get_battery_string(bat_str, sizeof(bat_str));
+    int bat_width = bat_len * 6;
+    /* Clock position and battery position are both right-aligned. Clock
+     * is 13 chars = 78px + 12px margin. Battery sits to its left with
+     * a 12px gap. */
+    int clock_x = PANEL_WIDTH - 90;
+    if (bat_len > 0) {
+        int bat_x = clock_x - bat_width - 12;
+        int pct = get_battery_pct();
+        uint32_t bat_color = TEXT_DIM;
+        if (pct >= 0 && pct <= 20) bat_color = 0xFFE06060;       /* red */
+        else if (pct >= 0 && pct <= 40) bat_color = 0xFFE0A040;  /* orange */
+        else if (pct > 80) bat_color = 0xFF60C060;                /* green */
+        draw_text(state->shm_data, PANEL_WIDTH, bat_x, 11, bat_str, bat_color);
+    }
+
     /* Draw "MMM DD  HH:MM" (right side). 13 chars × 6px stride = 78px,
      * + ~12px right margin = position at PANEL_WIDTH - 90. */
     char clock_str[14];
     get_clock_string(clock_str);
-    draw_text(state->shm_data, PANEL_WIDTH, PANEL_WIDTH - 90, 11, clock_str, TEXT_COLOR);
+    draw_text(state->shm_data, PANEL_WIDTH, clock_x, 11, clock_str, TEXT_COLOR);
 
     wl_surface_attach(state->surface, state->buffer, 0, 0);
     wl_surface_damage_buffer(state->surface, 0, 0, PANEL_WIDTH, PANEL_HEIGHT);
@@ -295,12 +358,15 @@ static void frame_callback(void *data, struct wl_callback *callback, uint32_t ti
      * transitions already trigger an out-of-band panel_draw() from
      * pointer_motion(), so we just need to catch the minute roll. */
     static char last_time_str[14] = {0};
+    static int last_bat_pct = -2;
     char now_time_str[14];
     get_clock_string(now_time_str);
     bool changed = false;
     for (int i = 0; i < 14; i++) {
         if (last_time_str[i] != now_time_str[i]) { changed = true; break; }
     }
+    int cur_bat = get_battery_pct();
+    if (cur_bat != last_bat_pct) { changed = true; last_bat_pct = cur_bat; }
     if (changed) {
         for (int i = 0; i < 14; i++) last_time_str[i] = now_time_str[i];
         panel_draw(state);

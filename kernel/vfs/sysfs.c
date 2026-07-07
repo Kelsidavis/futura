@@ -137,6 +137,14 @@ enum sysfs_kind {
     SYSFS_NET_ETH0_MTU,
     SYSFS_NET_ETH0_ADDRESS,
     SYSFS_NET_ETH0_FLAGS,
+    /* /sys/class/power_supply/ */
+    SYSFS_CLASS_POWER_SUPPLY_DIR,
+    SYSFS_CLASS_PS_BAT0_DIR,
+    SYSFS_PS_BAT0_CAPACITY,
+    SYSFS_PS_BAT0_STATUS,
+    SYSFS_PS_BAT0_TYPE,
+    SYSFS_PS_BAT0_VOLTAGE,
+    SYSFS_PS_BAT0_PRESENT,
     /* /sys/class/tty/console/ and tty0/ */
     SYSFS_CLASS_TTY_CONSOLE_DIR,
     SYSFS_CLASS_TTY_TTY0_DIR,
@@ -233,6 +241,13 @@ typedef struct {
 #define SYSFS_INO_TTY_CONSOLE_ACTIVE 602ULL
 #define SYSFS_INO_TTY_TTY0_ACTIVE   603ULL
 #define SYSFS_INO_FS_CGROUP_CTRL    610ULL
+#define SYSFS_INO_CLASS_POWER_SUPPLY 620ULL
+#define SYSFS_INO_CLASS_PS_BAT0     621ULL
+#define SYSFS_INO_PS_BAT0_CAPACITY  622ULL
+#define SYSFS_INO_PS_BAT0_STATUS    623ULL
+#define SYSFS_INO_PS_BAT0_TYPE      624ULL
+#define SYSFS_INO_PS_BAT0_VOLTAGE   625ULL
+#define SYSFS_INO_PS_BAT0_PRESENT   626ULL
 #define SYSFS_INO_CLASS_NET_LO      526ULL
 #define SYSFS_INO_NET_LO_IFINDEX    527ULL
 #define SYSFS_INO_NET_LO_OPERSTATE  528ULL
@@ -281,6 +296,12 @@ static struct fut_vnode *sysfs_alloc_vnode(struct fut_mount *mount,
     fut_vnode_lock_init(v);
     return v;
 }
+
+/* Weak battery stubs — overridden when acpi_battery is linked. */
+__attribute__((weak)) int  acpi_battery_percentage(void)  { return -1; }
+__attribute__((weak)) bool acpi_battery_is_present(void)  { return false; }
+__attribute__((weak)) bool acpi_battery_is_charging(void) { return false; }
+__attribute__((weak)) int  acpi_battery_voltage_mv(void)  { return -1; }
 
 /* ============================================================
  *   File content generators
@@ -603,6 +624,39 @@ static ssize_t sysfs_file_read(struct fut_vnode *vnode, void *buf,
             total = sysfs_gen_str(tmp, sizeof(tmp), "enabled\n");
             break;
 
+        /* /sys/class/power_supply/BAT0/ files */
+        case SYSFS_PS_BAT0_CAPACITY: {
+            int pct = acpi_battery_percentage();
+            total = sysfs_gen_i32(tmp, sizeof(tmp), pct >= 0 ? pct : 100);
+            break;
+        }
+        case SYSFS_PS_BAT0_STATUS: {
+            if (!acpi_battery_is_present())
+                total = sysfs_gen_str(tmp, sizeof(tmp), "Not charging\n");
+            else if (acpi_battery_is_charging())
+                total = sysfs_gen_str(tmp, sizeof(tmp), "Charging\n");
+            else {
+                int pct = acpi_battery_percentage();
+                total = sysfs_gen_str(tmp, sizeof(tmp),
+                    pct >= 100 ? "Full\n" : "Discharging\n");
+            }
+            break;
+        }
+        case SYSFS_PS_BAT0_TYPE:
+            total = sysfs_gen_str(tmp, sizeof(tmp), "Battery\n");
+            break;
+        case SYSFS_PS_BAT0_VOLTAGE: {
+            int mv = acpi_battery_voltage_mv();
+            total = sysfs_gen_i32(tmp, sizeof(tmp),
+                mv > 0 ? mv * 1000 : 0);
+            break;
+        }
+        case SYSFS_PS_BAT0_PRESENT: {
+            total = sysfs_gen_i32(tmp, sizeof(tmp),
+                acpi_battery_is_present() ? 1 : 0);
+            break;
+        }
+
         default:
             return -EINVAL;
     }
@@ -681,7 +735,8 @@ static const sysfs_de_t class_entries[] = {
     DE_DIR("block",  SYSFS_INO_CLASS_BLOCK, SYSFS_CLASS_BLOCK_DIR),
     DE_DIR("tty",    SYSFS_INO_CLASS_TTY,   SYSFS_CLASS_TTY_DIR),
     DE_DIR("rtc",     SYSFS_INO_CLASS_RTC,     SYSFS_CLASS_RTC_DIR),
-    DE_DIR("thermal", SYSFS_INO_CLASS_THERMAL, SYSFS_CLASS_THERMAL_DIR),
+    DE_DIR("thermal",      SYSFS_INO_CLASS_THERMAL,      SYSFS_CLASS_THERMAL_DIR),
+    DE_DIR("power_supply", SYSFS_INO_CLASS_POWER_SUPPLY, SYSFS_CLASS_POWER_SUPPLY_DIR),
 };
 #define CLASS_N (sizeof(class_entries)/sizeof(class_entries[0]))
 
@@ -703,6 +758,26 @@ static const sysfs_de_t tz0_entries[] = {
     DE_REG("mode",   SYSFS_INO_TZ0_MODE,      SYSFS_TZ0_MODE),
 };
 #define TZ0_N (sizeof(tz0_entries)/sizeof(tz0_entries[0]))
+
+/* /sys/class/power_supply/ */
+static const sysfs_de_t class_power_supply_entries[] = {
+    DE_DIR(".",    SYSFS_INO_CLASS_POWER_SUPPLY, SYSFS_CLASS_POWER_SUPPLY_DIR),
+    DE_DIR("..",   SYSFS_INO_CLASS,              SYSFS_CLASS_DIR),
+    DE_DIR("BAT0", SYSFS_INO_CLASS_PS_BAT0,     SYSFS_CLASS_PS_BAT0_DIR),
+};
+#define CLASS_PS_N (sizeof(class_power_supply_entries)/sizeof(class_power_supply_entries[0]))
+
+/* /sys/class/power_supply/BAT0/ */
+static const sysfs_de_t ps_bat0_entries[] = {
+    DE_DIR(".",           SYSFS_INO_CLASS_PS_BAT0,        SYSFS_CLASS_PS_BAT0_DIR),
+    DE_DIR("..",          SYSFS_INO_CLASS_POWER_SUPPLY,   SYSFS_CLASS_POWER_SUPPLY_DIR),
+    DE_REG("capacity",    SYSFS_INO_PS_BAT0_CAPACITY,    SYSFS_PS_BAT0_CAPACITY),
+    DE_REG("status",      SYSFS_INO_PS_BAT0_STATUS,      SYSFS_PS_BAT0_STATUS),
+    DE_REG("type",        SYSFS_INO_PS_BAT0_TYPE,        SYSFS_PS_BAT0_TYPE),
+    DE_REG("voltage_now", SYSFS_INO_PS_BAT0_VOLTAGE,     SYSFS_PS_BAT0_VOLTAGE),
+    DE_REG("present",     SYSFS_INO_PS_BAT0_PRESENT,     SYSFS_PS_BAT0_PRESENT),
+};
+#define PS_BAT0_N (sizeof(ps_bat0_entries)/sizeof(ps_bat0_entries[0]))
 
 /* /sys/class/rtc/ */
 static const sysfs_de_t class_rtc_entries[] = {
@@ -1112,6 +1187,8 @@ static int sysfs_dir_readdir(struct fut_vnode *dir, uint64_t *cookie,
         case SYSFS_CLASS_RTC0_DIR:   return sysfs_table_readdir(rtc0_entries, RTC0_N, cookie, de);
         case SYSFS_CLASS_THERMAL_DIR: return sysfs_table_readdir(class_thermal_entries, CLASS_THERMAL_N, cookie, de);
         case SYSFS_CLASS_TZ0_DIR:    return sysfs_table_readdir(tz0_entries, TZ0_N, cookie, de);
+        case SYSFS_CLASS_POWER_SUPPLY_DIR: return sysfs_table_readdir(class_power_supply_entries, CLASS_PS_N, cookie, de);
+        case SYSFS_CLASS_PS_BAT0_DIR: return sysfs_table_readdir(ps_bat0_entries, PS_BAT0_N, cookie, de);
         case SYSFS_KERNEL_SECURITY_DIR: return sysfs_table_readdir(security_entries, SECURITY_N, cookie, de);
         default:
             return sysfs_empty_readdir(dir, cookie, de);
@@ -1228,6 +1305,10 @@ static int sysfs_dir_lookup(struct fut_vnode *dir, const char *name,
             return sysfs_table_lookup(mnt, class_thermal_entries, CLASS_THERMAL_N, name, result);
         case SYSFS_CLASS_TZ0_DIR:
             return sysfs_table_lookup(mnt, tz0_entries, TZ0_N, name, result);
+        case SYSFS_CLASS_POWER_SUPPLY_DIR:
+            return sysfs_table_lookup(mnt, class_power_supply_entries, CLASS_PS_N, name, result);
+        case SYSFS_CLASS_PS_BAT0_DIR:
+            return sysfs_table_lookup(mnt, ps_bat0_entries, PS_BAT0_N, name, result);
         case SYSFS_KERNEL_SECURITY_DIR:
             return sysfs_table_lookup(mnt, security_entries, SECURITY_N, name, result);
         default:

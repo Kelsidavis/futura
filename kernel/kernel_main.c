@@ -2341,6 +2341,8 @@ void fut_kernel_main(void) {
             extern int amd_mp2_init(void);
             extern int amd_umc_init(void);
             extern int amd_xgbe_init(void);
+            extern int amd_gpu_init(void);
+            extern int amd_gpu_sdma_init(void);
 
             amd_smn_init();
             amd_df_init();
@@ -2359,6 +2361,9 @@ void fut_kernel_main(void) {
             amd_mp2_init();
             amd_umc_init();
             amd_xgbe_init();
+            fut_printf("[INIT] AMD: entering amd_gpu_init\n");
+            amd_gpu_init();
+            amd_gpu_sdma_init();
         }
     }
 #endif /* DRIVERS_AMD || DRIVERS_ALL */

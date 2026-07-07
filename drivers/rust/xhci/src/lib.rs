@@ -1046,6 +1046,7 @@ struct DeviceSlot {
     ep0_cycle: bool,
     bulk_in:  BulkEp,
     bulk_out: BulkEp,
+    intr_in:  BulkEp,
     // Captured during enumeration so the late-boot summary can re-print
     // device identity without re-issuing GET_DESCRIPTOR.
     vendor_id: u16,
@@ -1089,6 +1090,7 @@ impl DeviceSlot {
             ep0_cycle: false,
             bulk_in: BulkEp::empty(),
             bulk_out: BulkEp::empty(),
+            intr_in: BulkEp::empty(),
             vendor_id: 0,
             product_id: 0,
             dev_class: 0,
@@ -1595,6 +1597,7 @@ fn set_configuration(ctrl: &mut XhciController, slot_id: u32, config_value: u8) 
 // EP Context Type field values.
 const EP_TYPE_BULK_OUT: u8 = 2;
 const EP_TYPE_BULK_IN:  u8 = 6;
+const EP_TYPE_INTR_IN:  u8 = 7;
 
 /// Allocate a transfer ring for a non-EP0 endpoint. Installs the
 /// trailing Link TRB so the HC wraps cleanly. Returns (virt, phys).
@@ -1696,6 +1699,18 @@ fn configure_bulk_endpoints(ctrl: &mut XhciController, slot_id: u32) -> bool {
             slot.bulk_in.max_packet,
             slot.bulk_in.tring_phys,
             slot.bulk_in.cycle,
+        );
+        add_flags |= 1 << dci;
+        if dci > max_dci { max_dci = dci; }
+    }
+    if slot.intr_in.is_active() {
+        let dci = slot.intr_in.dci();
+        write_ep_context(
+            cs, in_ctx, dci,
+            EP_TYPE_INTR_IN,
+            slot.intr_in.max_packet,
+            slot.intr_in.tring_phys,
+            slot.intr_in.cycle,
         );
         add_flags |= 1 << dci;
         if dci > max_dci { max_dci = dci; }
@@ -1805,6 +1820,8 @@ fn bulk_transfer(
         &mut slot.bulk_in
     } else if slot.bulk_out.addr == ep_addr {
         &mut slot.bulk_out
+    } else if slot.intr_in.addr == ep_addr {
+        &mut slot.intr_in
     } else {
         return Err(0xFD);
     };
@@ -1843,6 +1860,12 @@ struct UsbStorageLastAttach {
 }
 
 unsafe extern "C" {
+    fn usb_bluetooth_attach(
+        slot_id: u32,
+        intr_in_ep: u8,
+        bulk_in_ep: u8,
+        bulk_out_ep: u8,
+    );
     fn usb_storage_attach(
         dev_id: u32,
         bulk_in_ep: u8,
@@ -1896,6 +1919,37 @@ pub extern "C" fn xhci_bulk_transfer(
 
 unsafe extern "C" fn xhci_bulk_thunk(dev: u32, ep: u8, data: *mut u8, len: u32) -> i32 {
     xhci_bulk_transfer(dev, ep, data, len)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn xhci_control_transfer_ext(
+    slot_id: u32,
+    bm_request_type: u8,
+    b_request: u8,
+    w_value: u16,
+    w_index: u16,
+    data: *mut u8,
+    data_len: u16,
+) -> i32 {
+    let ctrl = unsafe {
+        match (*core::ptr::addr_of_mut!(XHCI)).as_mut() {
+            Some(c) => c,
+            None => return -19, // ENODEV
+        }
+    };
+    match control_transfer(ctrl, slot_id, bm_request_type, b_request,
+                           w_value, w_index, data, data_len) {
+        Ok(n) => n as i32,
+        Err(cc) => {
+            unsafe {
+                fut_printf(
+                    b"xhci: control_transfer slot=%u cc=%u\n\0".as_ptr(),
+                    slot_id, cc,
+                );
+            }
+            -5 // EIO
+        }
+    }
 }
 
 /// Walk every connected/enabled root-hub port and enumerate the device
@@ -2085,6 +2139,12 @@ fn enumerate_devices(ctrl: &mut XhciController) {
         let mut msc_bulk_in_mps: u16 = 0;
         let mut msc_bulk_out: u8 = 0;
         let mut msc_bulk_out_mps: u16 = 0;
+        let mut bt_intr_in: u8 = 0;
+        let mut bt_intr_in_mps: u16 = 0;
+        let mut bt_bulk_in: u8 = 0;
+        let mut bt_bulk_in_mps: u16 = 0;
+        let mut bt_bulk_out: u8 = 0;
+        let mut bt_bulk_out_mps: u16 = 0;
         while off + 2 <= buf_end {
             let dlen = unsafe { *cfg_buf.add(off) } as usize;
             let dtype = unsafe { *cfg_buf.add(off + 1) };
@@ -2102,6 +2162,7 @@ fn enumerate_devices(ctrl: &mut XhciController) {
                     0x08 => b"Mass Storage\0".as_ptr(),
                     0x09 => b"Hub\0".as_ptr(),
                     0x0e => b"Video\0".as_ptr(),
+                    0xe0 => b"Wireless\0".as_ptr(),
                     _    => b"-\0".as_ptr(),
                 };
                 unsafe {
@@ -2129,7 +2190,9 @@ fn enumerate_devices(ctrl: &mut XhciController) {
                     let hi = *cfg_buf.add(off + 5) as u16;
                     lo | (hi << 8)
                 } & 0x07FF;
-                let is_bulk = (ep_attr & 0x03) == 2;
+                let ep_type = ep_attr & 0x03;
+                let is_bulk = ep_type == 2;
+                let is_intr = ep_type == 3;
                 let is_in   = (ep_addr & 0x80) != 0;
                 if is_bulk && cur_if_class == 0x08
                     && cur_if_sub == 0x06 && cur_if_proto == 0x50
@@ -2140,6 +2203,19 @@ fn enumerate_devices(ctrl: &mut XhciController) {
                     } else {
                         msc_bulk_out = ep_addr;
                         msc_bulk_out_mps = mps;
+                    }
+                }
+                // BT HCI: class 0xE0 subclass 0x01 protocol 0x01
+                if cur_if_class == 0xe0 && cur_if_sub == 0x01 && cur_if_proto == 0x01 {
+                    if is_intr && is_in && bt_intr_in == 0 {
+                        bt_intr_in = ep_addr;
+                        bt_intr_in_mps = mps;
+                    } else if is_bulk && is_in && bt_bulk_in == 0 {
+                        bt_bulk_in = ep_addr;
+                        bt_bulk_in_mps = mps;
+                    } else if is_bulk && !is_in && bt_bulk_out == 0 {
+                        bt_bulk_out = ep_addr;
+                        bt_bulk_out_mps = mps;
                     }
                 }
             }
@@ -2212,6 +2288,49 @@ fn enumerate_devices(ctrl: &mut XhciController) {
                 }
             }
         }
+        // BT HCI USB: class 0xE0 subclass 0x01 protocol 0x01
+        if bt_intr_in != 0 && bt_bulk_in != 0 && bt_bulk_out != 0 {
+            let setup_ok = unsafe {
+                let s = slot_mut(slot_id).unwrap();
+                let r_intr = alloc_endpoint_tring();
+                let r_in   = alloc_endpoint_tring();
+                let r_out  = alloc_endpoint_tring();
+                match (r_intr, r_in, r_out) {
+                    (Some((iv, ip)), Some((biv, bip)), Some((bov, bop))) => {
+                        s.intr_in = BulkEp {
+                            addr: bt_intr_in, max_packet: bt_intr_in_mps,
+                            tring_virt: iv, tring_phys: ip,
+                            enqueue: 0, cycle: true,
+                        };
+                        s.bulk_in = BulkEp {
+                            addr: bt_bulk_in, max_packet: bt_bulk_in_mps,
+                            tring_virt: biv, tring_phys: bip,
+                            enqueue: 0, cycle: true,
+                        };
+                        s.bulk_out = BulkEp {
+                            addr: bt_bulk_out, max_packet: bt_bulk_out_mps,
+                            tring_virt: bov, tring_phys: bop,
+                            enqueue: 0, cycle: true,
+                        };
+                        true
+                    }
+                    _ => false,
+                }
+            };
+            if setup_ok && configure_bulk_endpoints(ctrl, slot_id) {
+                unsafe {
+                    fut_printf(
+                        b"xhci: slot %u: BT HCI endpoints ready (intr=0x%02x bulk_in=0x%02x bulk_out=0x%02x)\n\0".as_ptr(),
+                        slot_id,
+                        bt_intr_in as u32, bt_bulk_in as u32, bt_bulk_out as u32,
+                    );
+                    usb_bluetooth_attach(
+                        slot_id, bt_intr_in, bt_bulk_in, bt_bulk_out,
+                    );
+                }
+            }
+        }
+
         unsafe { free_page(cfg_buf); }
     }
     unsafe {

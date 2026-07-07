@@ -564,8 +564,8 @@ impl VirtioGpuDevice {
         unsafe { core::arch::asm!("dsb sy"); }
 
         /* Notify device via notify region */
-        if !self.notify_base.is_null() {
-            unsafe { write_volatile(self.notify_base as *mut u16, 0); }
+        if let Some(nb) = core::ptr::NonNull::new(self.notify_base) {
+            unsafe { nb.cast::<u16>().as_ptr().write_volatile(0); }
         }
 
         /* Wait for response */

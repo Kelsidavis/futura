@@ -2625,6 +2625,7 @@ void fut_kernel_main(void) {
                                 uint16_t pm_tmr,   uint16_t gpe0);
         extern int acpi_ec_init(uint16_t data_port, uint16_t cmd_port);
         extern int acpi_thermal_init(void *ec_read);   /* Option<EcReadFn> */
+        extern int acpi_battery_init(void *ec_read);   /* Option<EcReadFn> */
         extern int acpi_button_init(uint16_t pm1a_evt, uint16_t pm1a_en);
         /* ChromeOS EC: probe LPC memmap at 0x900 for 'EC' signature
          * and, if present, send HELLO + GET_VERSION + GET_BOARD_VERSION
@@ -2662,6 +2663,7 @@ void fut_kernel_main(void) {
         }
         acpi_ec_init(0, 0);
         acpi_thermal_init(NULL);
+        acpi_battery_init(NULL);
         cros_ec_init();
     }
 

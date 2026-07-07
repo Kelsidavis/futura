@@ -1860,6 +1860,9 @@ struct UsbStorageLastAttach {
 }
 
 unsafe extern "C" {
+    fn usb_video_attach(
+        slot_id: u32, vc_iface: u8, vs_iface: u8, bulk_in_ep: u8,
+    );
     fn usb_bluetooth_attach(
         slot_id: u32,
         intr_in_ep: u8,
@@ -2145,6 +2148,10 @@ fn enumerate_devices(ctrl: &mut XhciController) {
         let mut bt_bulk_in_mps: u16 = 0;
         let mut bt_bulk_out: u8 = 0;
         let mut bt_bulk_out_mps: u16 = 0;
+        let mut uvc_vc_iface: u8 = 0;
+        let mut uvc_vs_iface: u8 = 0;
+        let mut uvc_bulk_in: u8 = 0;
+        let mut uvc_bulk_in_mps: u16 = 0;
         while off + 2 <= buf_end {
             let dlen = unsafe { *cfg_buf.add(off) } as usize;
             let dtype = unsafe { *cfg_buf.add(off + 1) };
@@ -2181,6 +2188,12 @@ fn enumerate_devices(ctrl: &mut XhciController) {
                         }
                     }
                 }
+                // Capture UVC interface numbers
+                if cur_if_class == 0x0e && cur_if_sub == 0x01 {
+                    uvc_vc_iface = if_num;
+                } else if cur_if_class == 0x0e && cur_if_sub == 0x02 {
+                    uvc_vs_iface = if_num;
+                }
             } else if dtype == 5 && dlen >= 7 {
                 // Endpoint descriptor.
                 let ep_addr = unsafe { *cfg_buf.add(off + 2) };
@@ -2216,6 +2229,13 @@ fn enumerate_devices(ctrl: &mut XhciController) {
                     } else if is_bulk && !is_in && bt_bulk_out == 0 {
                         bt_bulk_out = ep_addr;
                         bt_bulk_out_mps = mps;
+                    }
+                }
+                // UVC Video Streaming: class 0x0E subclass 0x02
+                if cur_if_class == 0x0e && cur_if_sub == 0x02 {
+                    if is_bulk && is_in && uvc_bulk_in == 0 {
+                        uvc_bulk_in = ep_addr;
+                        uvc_bulk_in_mps = mps;
                     }
                 }
             }
@@ -2285,6 +2305,36 @@ fn enumerate_devices(ctrl: &mut XhciController) {
                     if let Some(s) = slot_mut(slot_id) {
                         s.attach_stage = 3;
                     }
+                }
+            }
+        }
+        // UVC Video: class 0x0E with both VC and VS interfaces
+        if uvc_vc_iface != 0 && uvc_vs_iface != 0 && uvc_bulk_in != 0 {
+            let setup_ok = unsafe {
+                let s = slot_mut(slot_id).unwrap();
+                let r_in = alloc_endpoint_tring();
+                match r_in {
+                    Some((iv, ip)) => {
+                        s.bulk_in = BulkEp {
+                            addr: uvc_bulk_in, max_packet: uvc_bulk_in_mps,
+                            tring_virt: iv, tring_phys: ip,
+                            enqueue: 0, cycle: true,
+                        };
+                        true
+                    }
+                    _ => false,
+                }
+            };
+            if setup_ok && configure_bulk_endpoints(ctrl, slot_id) {
+                unsafe {
+                    fut_printf(
+                        b"xhci: slot %u: UVC endpoints ready (VC=%u VS=%u bulk_in=0x%02x)\n\0".as_ptr(),
+                        slot_id,
+                        uvc_vc_iface as u32, uvc_vs_iface as u32, uvc_bulk_in as u32,
+                    );
+                    usb_video_attach(
+                        slot_id, uvc_vc_iface, uvc_vs_iface, uvc_bulk_in,
+                    );
                 }
             }
         }

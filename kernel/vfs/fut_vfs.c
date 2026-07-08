@@ -1823,39 +1823,60 @@ int fut_vfs_readdir_fd(int fd, uint64_t *cookie, struct fut_vdirent *dirent) {
         return -EINVAL;
     }
 
-    struct fut_file *file = vfs_get_file(fd);
+    /* Resolve with a reference held (fut_file_get) so a concurrent
+     * close() on another CPU can't free the file mid-readdir — the
+     * bare vfs_get_file() load had the same SMP use-after-free window
+     * as the read/write paths. Kernel-internal fds that only live in
+     * the global file_table (no current task slot) fall back to the
+     * bare load; those are not exposed to user close() races. */
+    fut_task_t *rd_task = fut_task_current();
+    struct fut_file *file = rd_task ? fut_file_get(rd_task, fd) : NULL;
+    bool have_ref = (file != NULL);
+    if (!file) {
+        file = vfs_get_file(fd);
+    }
     if (!file) {
         return -EBADF;
     }
 
+    int ret;
     struct fut_vnode *dir = file->vnode;
     if (!dir) {
-        return -EBADF;
+        ret = -EBADF;
+        goto out;
     }
 
     if (dir->type != VN_DIR) {
-        return -ENOTDIR;
+        ret = -ENOTDIR;
+        goto out;
     }
 
     if (!dir->ops || !dir->ops->readdir) {
-        return -ENOSYS;
+        ret = -ENOSYS;
+        goto out;
     }
 
-    /* Use the file descriptor's offset as the starting cookie */
-    uint64_t pos = file->offset;
+    {
+        /* Use the file descriptor's offset as the starting cookie */
+        uint64_t pos = file->offset;
 
-    /* Call the vnode's readdir operation */
-    int ret = dir->ops->readdir(dir, &pos, dirent);
+        /* Call the vnode's readdir operation */
+        ret = dir->ops->readdir(dir, &pos, dirent);
 
-    /* Update the file descriptor's offset for next read.
-     * readdir returns 0 (FuturaFS) or 1 (ramfs) on success, negative on error/end. */
-    if (ret >= 0) {
-        file->offset = pos;
+        /* Update the file descriptor's offset for next read.
+         * readdir returns 0 (FuturaFS) or 1 (ramfs) on success, negative on error/end. */
+        if (ret >= 0) {
+            file->offset = pos;
+        }
+
+        /* Return the updated cookie to caller */
+        *cookie = pos;
     }
 
-    /* Return the updated cookie to caller */
-    *cookie = pos;
-
+out:
+    if (have_ref) {
+        fut_file_put(file);
+    }
     return ret;
 }
 

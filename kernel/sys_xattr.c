@@ -176,11 +176,18 @@ static long vnode_removexattr_nofollow(const char *path_buf, const char *name) {
     return ret;
 }
 
-/* Resolve fd to vnode (caller must not unref — vnode is owned by the file). */
-static struct fut_vnode *vnode_from_fd(struct fut_task *task, int fd) {
+/* Resolve fd to its file with a reference held (fut_file_get), so a
+ * concurrent close() on another CPU can't free the file — and with it
+ * the vnode — mid-operation. Returns NULL for a bad fd or a file with
+ * no vnode. Caller must fut_file_put() a non-NULL return. */
+static struct fut_file *xattr_file_from_fd(struct fut_task *task, int fd) {
     if (fd < 0 || fd >= task->max_fds) return NULL;
-    struct fut_file *file = vfs_get_file_from_task(task, fd);
-    return file ? file->vnode : NULL;
+    struct fut_file *file = fut_file_get(task, fd);
+    if (file && !file->vnode) {
+        fut_file_put(file);
+        return NULL;
+    }
+    return file;
 }
 
 /* ENODATA (61) provided by errno.h for missing xattr */
@@ -673,8 +680,9 @@ long sys_fsetxattr(int fd, const char *name, const void *value,
         return ret;
     }
 
-    struct fut_vnode *vnode = vnode_from_fd(task, fd);
-    if (!vnode) return -EBADF;
+    struct fut_file *xfile = xattr_file_from_fd(task, fd);
+    if (!xfile) return -EBADF;
+    struct fut_vnode *vnode = xfile->vnode;
 
     uint8_t f_stack_buf[2048];
     void *kvalue = NULL;
@@ -684,11 +692,15 @@ long sys_fsetxattr(int fd, const char *name, const void *value,
             kvalue = f_stack_buf;
         } else {
             kvalue = fut_malloc(size);
-            if (!kvalue) return -ENOMEM;
+            if (!kvalue) {
+                fut_file_put(xfile);
+                return -ENOMEM;
+            }
             kvalue_on_heap = true;
         }
         if (xattr_copy_from_user(kvalue, value, size) != 0) {
             if (kvalue_on_heap) fut_free(kvalue);
+            fut_file_put(xfile);
             return -EFAULT;
         }
     }
@@ -698,6 +710,7 @@ long sys_fsetxattr(int fd, const char *name, const void *value,
         ret = vnode_generic_setxattr(vnode, name_buf, kvalue, size, flags);
     }
     if (kvalue_on_heap) fut_free(kvalue);
+    fut_file_put(xfile);
     return ret;
 }
 
@@ -872,8 +885,9 @@ long sys_fgetxattr(int fd, const char *name, void *value, size_t size) {
         return ret;
     }
 
-    struct fut_vnode *vnode = vnode_from_fd(task, fd);
-    if (!vnode) return -EBADF;
+    struct fut_file *xfile = xattr_file_from_fd(task, fd);
+    if (!xfile) return -EBADF;
+    struct fut_vnode *vnode = xfile->vnode;
 
     ssize_t attr_size;
     if (vnode->ops && vnode->ops->getxattr) {
@@ -881,9 +895,9 @@ long sys_fgetxattr(int fd, const char *name, void *value, size_t size) {
     } else {
         attr_size = vnode_generic_getxattr(vnode, name_buf, NULL, 0);
     }
-    if (attr_size < 0) return (long)attr_size;
-    if (size == 0) return (long)attr_size;
-    if ((size_t)attr_size > size) return -ERANGE;
+    if (attr_size < 0) { fut_file_put(xfile); return (long)attr_size; }
+    if (size == 0) { fut_file_put(xfile); return (long)attr_size; }
+    if ((size_t)attr_size > size) { fut_file_put(xfile); return -ERANGE; }
 
     /* Small xattr values use stack buffer (see 9cb78449). */
     uint8_t f_stack_buf[2048];
@@ -893,7 +907,10 @@ long sys_fgetxattr(int fd, const char *name, void *value, size_t size) {
         kbuf = f_stack_buf;
     } else {
         kbuf = fut_malloc((size_t)attr_size + 1);
-        if (!kbuf) return -ENOMEM;
+        if (!kbuf) {
+            fut_file_put(xfile);
+            return -ENOMEM;
+        }
         kbuf_on_heap = true;
     }
     ssize_t got;
@@ -904,14 +921,17 @@ long sys_fgetxattr(int fd, const char *name, void *value, size_t size) {
     }
     if (got < 0) {
         if (kbuf_on_heap) fut_free(kbuf);
+        fut_file_put(xfile);
         return (long)got;
     }
     if ((size_t)got > (size_t)attr_size) got = (ssize_t)attr_size;
     if (value && xattr_copy_to_user(value, kbuf, (size_t)got) != 0) {
         if (kbuf_on_heap) fut_free(kbuf);
+        fut_file_put(xfile);
         return -EFAULT;
     }
     if (kbuf_on_heap) fut_free(kbuf);
+    fut_file_put(xfile);
     return (long)got;
 }
 
@@ -1067,8 +1087,9 @@ long sys_flistxattr(int fd, char *list, size_t size) {
         return -EFAULT;
     }
 
-    struct fut_vnode *vnode = vnode_from_fd(task, fd);
-    if (!vnode) return -EBADF;
+    struct fut_file *xfile = xattr_file_from_fd(task, fd);
+    if (!xfile) return -EBADF;
+    struct fut_vnode *vnode = xfile->vnode;
 
     ssize_t total;
     if (vnode->ops && vnode->ops->listxattr) {
@@ -1076,9 +1097,9 @@ long sys_flistxattr(int fd, char *list, size_t size) {
     } else {
         total = vnode_generic_listxattr(vnode, NULL, 0);
     }
-    if (total < 0) return (long)total;
-    if (size == 0) return (long)total;
-    if ((size_t)total > size) return -ERANGE;
+    if (total < 0) { fut_file_put(xfile); return (long)total; }
+    if (size == 0) { fut_file_put(xfile); return (long)total; }
+    if ((size_t)total > size) { fut_file_put(xfile); return -ERANGE; }
 
     char list_stack_buf[2048];
     char *kbuf;
@@ -1087,7 +1108,10 @@ long sys_flistxattr(int fd, char *list, size_t size) {
         kbuf = list_stack_buf;
     } else {
         kbuf = fut_malloc((size_t)total + 1);
-        if (!kbuf) return -ENOMEM;
+        if (!kbuf) {
+            fut_file_put(xfile);
+            return -ENOMEM;
+        }
         kbuf_on_heap = true;
     }
     ssize_t got;
@@ -1098,14 +1122,17 @@ long sys_flistxattr(int fd, char *list, size_t size) {
     }
     if (got < 0) {
         if (kbuf_on_heap) fut_free(kbuf);
+        fut_file_put(xfile);
         return (long)got;
     }
     if ((size_t)got > (size_t)total) got = (ssize_t)total;
     if (got > 0 && list && xattr_copy_to_user(list, kbuf, (size_t)got) != 0) {
         if (kbuf_on_heap) fut_free(kbuf);
+        fut_file_put(xfile);
         return -EFAULT;
     }
     if (kbuf_on_heap) fut_free(kbuf);
+    fut_file_put(xfile);
     return (long)got;
 }
 
@@ -1195,10 +1222,15 @@ long sys_fremovexattr(int fd, const char *name) {
         return ret;
     }
 
-    struct fut_vnode *vnode = vnode_from_fd(task, fd);
-    if (!vnode) return -EBADF;
+    struct fut_file *xfile = xattr_file_from_fd(task, fd);
+    if (!xfile) return -EBADF;
+    struct fut_vnode *vnode = xfile->vnode;
+    long rret;
     if (vnode->ops && vnode->ops->removexattr) {
-        return vnode->ops->removexattr(vnode, name_buf);
+        rret = vnode->ops->removexattr(vnode, name_buf);
+    } else {
+        rret = vnode_generic_removexattr(vnode, name_buf);
     }
-    return vnode_generic_removexattr(vnode, name_buf);
+    fut_file_put(xfile);
+    return rret;
 }

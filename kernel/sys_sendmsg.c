@@ -580,11 +580,15 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
                                 return -ENOBUFS;
                             }
                             for (int fi = 0; fi < nfds; fi++) {
-                                /* Look up the file in the sender's FD table */
-                                struct fut_file *file = vfs_get_file_from_task(
+                                /* Resolve-and-ref atomically against a
+                                 * concurrent close() (fut_file_get); the
+                                 * reference it takes becomes the in-flight
+                                 * reference owned by the fd queue, released
+                                 * when the receiver claims or the socket
+                                 * drains the queue. */
+                                struct fut_file *file = fut_file_get(
                                     (struct fut_task *)task, fds[fi]);
                                 if (file) {
-                                    vfs_file_ref(file);  /* Increment refcount for in-flight reference */
                                     uint32_t tail = sock->pair->fd_queue_tail;
                                     sock->pair->fd_queue[tail] = file;
                                     sock->pair->fd_queue_tail =

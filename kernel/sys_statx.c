@@ -367,12 +367,19 @@ long sys_statx(int dirfd, const char *pathname, int flags,
         if (local_dirfd < 0 || local_dirfd >= task->max_fds)
             return -EBADF;
 
-        struct fut_file *file = vfs_get_file_from_task(task, local_dirfd);
-        if (!file || !file->vnode)
+        /* Ref across the fill so a concurrent close() on another CPU
+         * can't free the file (and vnode) underneath us. */
+        struct fut_file *file = fut_file_get(task, local_dirfd);
+        if (!file)
             return -EBADF;
+        if (!file->vnode) {
+            fut_file_put(file);
+            return -EBADF;
+        }
 
         vnode = file->vnode;
         fill_statx_from_vnode(vnode, &kernel_sx, local_mask);
+        fut_file_put(file);
     } else {
         /* Resolve path to a full path based on dirfd */
         char resolved_path[256];
@@ -392,18 +399,28 @@ long sys_statx(int dirfd, const char *pathname, int flags,
             if (local_dirfd < 0 || local_dirfd >= task->max_fds)
                 return -EBADF;
 
-            struct fut_file *dir_file = vfs_get_file_from_task(task, local_dirfd);
-            if (!dir_file || !dir_file->vnode)
+            /* Ref while reading dir_file->path so a concurrent close()
+             * on another CPU can't free the file mid-resolve. */
+            struct fut_file *dir_file = fut_file_get(task, local_dirfd);
+            if (!dir_file)
                 return -EBADF;
-            if (dir_file->vnode->type != VN_DIR)
+            if (!dir_file->vnode) {
+                fut_file_put(dir_file);
+                return -EBADF;
+            }
+            if (dir_file->vnode->type != VN_DIR) {
+                fut_file_put(dir_file);
                 return -ENOTDIR;
+            }
 
             if (dir_file->path) {
                 size_t dir_len = strlen(dir_file->path);
                 size_t rel_len = strnlen(path_buf, sizeof(resolved_path) - 1);
                 int has_trail = (dir_len > 0 && dir_file->path[dir_len - 1] == '/');
-                if (dir_len + (has_trail ? 0 : 1) + rel_len >= sizeof(resolved_path))
+                if (dir_len + (has_trail ? 0 : 1) + rel_len >= sizeof(resolved_path)) {
+                    fut_file_put(dir_file);
                     return -ENAMETOOLONG;
+                }
                 size_t pos = 0;
                 for (size_t j = 0; j < dir_len; j++) resolved_path[pos++] = dir_file->path[j];
                 if (!has_trail) resolved_path[pos++] = '/';
@@ -413,6 +430,7 @@ long sys_statx(int dirfd, const char *pathname, int flags,
                 __builtin_memcpy(resolved_path, path_buf, len);
                 resolved_path[len] = '\0';
             }
+            fut_file_put(dir_file);
         }
 
         /* Perform the stat via VFS to get the vnode.

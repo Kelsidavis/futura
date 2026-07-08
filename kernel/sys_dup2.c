@@ -209,8 +209,12 @@ long sys_dup2(int oldfd, int newfd) {
     const char *newfd_category = fut_fd_category(local_newfd);
     (void)newfd_category;  /* Used only in debug logging */
 
-    /* Get the file structure for oldfd from current task's FD table */
-    struct fut_file *old_file = vfs_get_file_from_task(task, local_oldfd);
+    /* Get the file structure for oldfd, taking a reference atomically
+     * against a concurrent close() (fut_file_get) — the old bare load
+     * left a window where close() on another CPU freed the struct
+     * before the vfs_file_ref below. Every exit must fut_file_put()
+     * this resolve-reference (distinct from the new-slot ref). */
+    struct fut_file *old_file = fut_file_get(task, local_oldfd);
     if (!old_file) {
         DUP2_LOG("[DUP2] dup2(oldfd=%d, newfd=%d [%s]) -> EBADF (oldfd not open)\n",
                    local_oldfd, local_newfd, newfd_category);
@@ -227,6 +231,7 @@ long sys_dup2(int oldfd, int newfd) {
 
         DUP2_LOG("[DUP2] dup2(oldfd=%d, newfd=%d [%s], op=%s) -> %d (%s)\n",
                    local_oldfd, local_newfd, newfd_category, operation_type, local_newfd, operation_desc);
+        fut_file_put(old_file);
         return local_newfd;
     }
 
@@ -252,6 +257,7 @@ long sys_dup2(int oldfd, int newfd) {
              * (would require billions of dup calls) but check defensively */
             fut_printf("[DUP2] dup2(oldfd=%d, newfd=%d) -> EMFILE (refcount overflow)\n",
                        local_oldfd, local_newfd);
+            fut_file_put(old_file);
             return -EMFILE;
         }
         vfs_file_ref(old_file);
@@ -288,6 +294,7 @@ long sys_dup2(int oldfd, int newfd) {
 
         DUP2_LOG("[DUP2] dup2(oldfd=%d, newfd=%d [%s], op=%s) -> %d (%s)\n",
                    local_oldfd, local_newfd, newfd_category, operation_type, ret, error_desc);
+        fut_file_put(old_file);
         return ret;
     }
 
@@ -299,6 +306,7 @@ long sys_dup2(int oldfd, int newfd) {
                local_oldfd, local_newfd, newfd_category, operation_type, old_file->refcount, local_newfd,
                operation_desc);
 
+    fut_file_put(old_file);
     return local_newfd;
 }
 
@@ -396,8 +404,11 @@ long sys_dup3(int oldfd, int newfd, int flags) {
         }
     }
 
-    /* Get the file structure for oldfd */
-    struct fut_file *old_file = vfs_get_file_from_task(task, local_oldfd);
+    /* Get the file structure for oldfd, taking a reference atomically
+     * against a concurrent close() (fut_file_get) — same race as the
+     * sys_dup2 resolve. Every exit must fut_file_put() this
+     * resolve-reference (distinct from the new-slot ref below). */
+    struct fut_file *old_file = fut_file_get(task, local_oldfd);
     if (!old_file) {
         fut_printf("[DUP3] dup3(oldfd=%d, newfd=%d, flags=0x%x) -> EBADF (oldfd not open)\n",
                    local_oldfd, local_newfd, local_flags);
@@ -410,6 +421,7 @@ long sys_dup3(int oldfd, int newfd, int flags) {
         if (old_file->refcount >= UINT32_MAX) {
             fut_printf("[DUP3] dup3(oldfd=%d, newfd=%d, flags=0x%x) -> EMFILE (refcount overflow)\n",
                        local_oldfd, local_newfd, local_flags);
+            fut_file_put(old_file);
             return -EMFILE;
         }
         vfs_file_ref(old_file);
@@ -442,6 +454,7 @@ long sys_dup3(int oldfd, int newfd, int flags) {
         }
         fut_printf("[DUP3] dup3(oldfd=%d, newfd=%d, flags=0x%x) -> %d (%s)\n",
                    local_oldfd, local_newfd, local_flags, ret, error_desc);
+        fut_file_put(old_file);
         return ret;
     }
 
@@ -458,5 +471,6 @@ long sys_dup3(int oldfd, int newfd, int flags) {
     /* Propagate socket ownership if oldfd is a socket */
     propagate_socket_dup(local_oldfd, local_newfd);
 
+    fut_file_put(old_file);
     return local_newfd;
 }

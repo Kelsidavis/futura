@@ -96,21 +96,31 @@ long sys_copy_file_range(int fd_in, int64_t *off_in,
         return -EBADF;
     }
 
-    struct fut_file *f_in  = vfs_get_file_from_task(task, fd_in);
-    struct fut_file *f_out = vfs_get_file_from_task(task, fd_out);
+    /* Hold references on both files for the whole copy so a concurrent
+     * close() on another CPU can't free either mid-transfer. Every
+     * exit below must put both (fut_file_put is NULL-safe). */
+    struct fut_file *f_in  = fut_file_get(task, fd_in);
+    struct fut_file *f_out = fut_file_get(task, fd_out);
     if (!f_in || !f_out) {
+        fut_file_put(f_in);
+        fut_file_put(f_out);
         return -EBADF;
     }
 
     /* O_PATH fds cannot be used for I/O — only path-based operations */
-    if ((f_in->flags & O_PATH) || (f_out->flags & O_PATH))
+    if ((f_in->flags & O_PATH) || (f_out->flags & O_PATH)) {
+        fut_file_put(f_in);
+        fut_file_put(f_out);
         return -EBADF;
+    }
 
     /* fd_in must be readable, fd_out must be writable */
-    if ((f_in->flags & O_ACCMODE) == O_WRONLY)
+    if (((f_in->flags & O_ACCMODE) == O_WRONLY) ||
+        ((f_out->flags & O_ACCMODE) == O_RDONLY)) {
+        fut_file_put(f_in);
+        fut_file_put(f_out);
         return -EBADF;
-    if ((f_out->flags & O_ACCMODE) == O_RDONLY)
-        return -EBADF;
+    }
 
     /* Both FDs must be regular files (Linux 5.3+).
      * Sockets and pipes are not supported by copy_file_range.  Linux
@@ -121,28 +131,55 @@ long sys_copy_file_range(int fd_in, int64_t *off_in,
      * Treat vnode-less fds (pipes/sockets via chr_ops) as EINVAL like
      * the non-VN_REG case, not EBADF — fdget succeeded so the
      * descriptor is valid, it just isn't a regular file. */
-    if (!f_in->vnode || !f_out->vnode)
+    if (!f_in->vnode || !f_out->vnode) {
+        fut_file_put(f_in);
+        fut_file_put(f_out);
         return -EINVAL;
-    if (f_in->vnode->type == VN_DIR || f_out->vnode->type == VN_DIR)
+    }
+    if (f_in->vnode->type == VN_DIR || f_out->vnode->type == VN_DIR) {
+        fut_file_put(f_in);
+        fut_file_put(f_out);
         return -EISDIR;
-    if (f_in->vnode->type != VN_REG || f_out->vnode->type != VN_REG)
+    }
+    if (f_in->vnode->type != VN_REG || f_out->vnode->type != VN_REG) {
+        fut_file_put(f_in);
+        fut_file_put(f_out);
         return -EINVAL;
+    }
 
     /* Ensure both vnodes have the required ops */
-    if (!f_in->vnode->ops || !f_in->vnode->ops->read)
+    if (!f_in->vnode->ops || !f_in->vnode->ops->read ||
+        !f_out->vnode->ops || !f_out->vnode->ops->write) {
+        fut_file_put(f_in);
+        fut_file_put(f_out);
         return -EINVAL;
-    if (!f_out->vnode->ops || !f_out->vnode->ops->write)
-        return -EINVAL;
+    }
 
     /* Read explicit offsets if provided */
     int64_t pos_in = -1, pos_out = -1;
     if (off_in) {
-        if (cfr_read_offset(off_in, &pos_in) != 0) return -EFAULT;
-        if (pos_in < 0) return -EINVAL;
+        if (cfr_read_offset(off_in, &pos_in) != 0) {
+            fut_file_put(f_in);
+            fut_file_put(f_out);
+            return -EFAULT;
+        }
+        if (pos_in < 0) {
+            fut_file_put(f_in);
+            fut_file_put(f_out);
+            return -EINVAL;
+        }
     }
     if (off_out) {
-        if (cfr_read_offset(off_out, &pos_out) != 0) return -EFAULT;
-        if (pos_out < 0) return -EINVAL;
+        if (cfr_read_offset(off_out, &pos_out) != 0) {
+            fut_file_put(f_in);
+            fut_file_put(f_out);
+            return -EFAULT;
+        }
+        if (pos_out < 0) {
+            fut_file_put(f_in);
+            fut_file_put(f_out);
+            return -EINVAL;
+        }
     }
 
     /* Cap to prevent excessive kernel memory allocation */
@@ -163,6 +200,8 @@ long sys_copy_file_range(int fd_in, int64_t *off_in,
         int64_t a_end = a_start + (int64_t)len;
         int64_t b_end = b_start + (int64_t)len;
         if (a_start < b_end && b_start < a_end) {
+            fut_file_put(f_in);
+            fut_file_put(f_out);
             return -EINVAL;
         }
     }
@@ -180,6 +219,8 @@ long sys_copy_file_range(int fd_in, int64_t *off_in,
     } else {
         kbuf = fut_malloc(buf_size);
         if (!kbuf) {
+            fut_file_put(f_in);
+            fut_file_put(f_out);
             return -ENOMEM;
         }
         kbuf_on_heap = true;
@@ -227,6 +268,8 @@ long sys_copy_file_range(int fd_in, int64_t *off_in,
         if (nwritten <= 0) {
             if (total_copied == 0) {
                 if (kbuf_on_heap) fut_free(kbuf);
+                fut_file_put(f_in);
+                fut_file_put(f_out);
                 return nwritten < 0 ? nwritten : -EIO;
             }
             break;  /* Partial copy — return bytes copied so far */
@@ -281,5 +324,7 @@ long sys_copy_file_range(int fd_in, int64_t *off_in,
         }
     }
 
+    fut_file_put(f_in);
+    fut_file_put(f_out);
     return (long)total_copied;
 }

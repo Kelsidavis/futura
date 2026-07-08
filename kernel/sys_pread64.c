@@ -259,8 +259,10 @@ long sys_pread64(unsigned int fd, void *buf, size_t count, int64_t offset) {
         return -EINVAL;
     }
 
-    /* Get file structure from FD */
-    struct fut_file *file = vfs_get_file_from_task(task, (int)fd);
+    /* Get file structure from FD, holding a reference so a concurrent
+     * close() on another CPU can't free it mid-read. Every exit below
+     * must fut_file_put(). */
+    struct fut_file *file = fut_file_get(task, (int)fd);
     if (!file) {
         fut_printf("[PREAD64] pread64(fd=%u [%s], count=%zu [%s], offset=%ld [%s]) -> EBADF "
                    "(fd not open, pid=%d)\n",
@@ -269,19 +271,25 @@ long sys_pread64(unsigned int fd, void *buf, size_t count, int64_t offset) {
     }
 
     /* O_PATH fds cannot be used for I/O — only path-based operations */
-    if (file->flags & O_PATH)
+    if (file->flags & O_PATH) {
+        fut_file_put(file);
         return -EBADF;
+    }
 
     /* Check that fd was opened for reading (not write-only) */
-    if ((file->flags & O_ACCMODE) == O_WRONLY)
+    if ((file->flags & O_ACCMODE) == O_WRONLY) {
+        fut_file_put(file);
         return -EBADF;
+    }
 
     /* pread64() is not valid on non-seekable fds (pipes, sockets, eventfd, etc.)
      * Also covers named FIFOs: they have both chr_ops and vnode (VN_FIFO). */
     if ((file->chr_ops && !file->vnode &&
          (((file->flags & O_ACCMODE) != O_RDWR) || (file->flags & FUT_F_UNSEEKABLE))) ||
-        (file->vnode && file->vnode->type == VN_FIFO))
+        (file->vnode && file->vnode->type == VN_FIFO)) {
+        fut_file_put(file);
         return -ESPIPE;
+    }
 
     /* Handle chr_ops files (memfd, etc.) — call chr_ops->read with given offset */
     if (file->chr_ops && file->chr_ops->read) {
@@ -293,7 +301,10 @@ long sys_pread64(unsigned int fd, void *buf, size_t count, int64_t offset) {
             kbuf = chr_stack_buf;
         } else {
             kbuf = fut_malloc(count);
-            if (!kbuf) return -ENOMEM;
+            if (!kbuf) {
+                fut_file_put(file);
+                return -ENOMEM;
+            }
             chr_kbuf_on_heap = true;
         }
         ssize_t ret = file->chr_ops->read(file->chr_inode, file->chr_private,
@@ -309,15 +320,18 @@ long sys_pread64(unsigned int fd, void *buf, size_t count, int64_t offset) {
             cp_ret = fut_copy_to_user(buf, kbuf, (size_t)ret);
             if (cp_ret != 0) {
                 if (chr_kbuf_on_heap) fut_free(kbuf);
+                fut_file_put(file);
                 return -EFAULT;
             }
         }
         if (chr_kbuf_on_heap) fut_free(kbuf);
+        fut_file_put(file);
         return ret;
     }
 
     /* Phase 2: Validate vnode and read operation */
     if (!file->vnode || !file->vnode->ops || !file->vnode->ops->read) {
+        fut_file_put(file);
         return -EINVAL;
     }
 
@@ -331,6 +345,7 @@ long sys_pread64(unsigned int fd, void *buf, size_t count, int64_t offset) {
     } else {
         kbuf = fut_malloc(count);
         if (!kbuf) {
+            fut_file_put(file);
             return -ENOMEM;
         }
         kbuf_on_heap = true;
@@ -358,6 +373,7 @@ long sys_pread64(unsigned int fd, void *buf, size_t count, int64_t offset) {
                    fd, fd_category, file->vnode->ino, count, count_category,
                    offset, offset_category, (int)ret, error_desc, task->pid);
         if (kbuf_on_heap) fut_free(kbuf);
+        fut_file_put(file);
         return ret;
     }
 
@@ -374,6 +390,7 @@ long sys_pread64(unsigned int fd, void *buf, size_t count, int64_t offset) {
                        fd, fd_category, file->vnode->ino, count, count_category,
                        offset, offset_category, ret, task->pid);
             if (kbuf_on_heap) fut_free(kbuf);
+            fut_file_put(file);
             return -EFAULT;
         }
     }
@@ -392,5 +409,6 @@ long sys_pread64(unsigned int fd, void *buf, size_t count, int64_t offset) {
                "bytes_read=%zd%s) -> %zd (Phase 3: VFS readiness checking)\n",
                fd, fd_category, file->vnode->ino, count, count_category,
                offset, offset_category, ret, eof_marker, ret);
+    fut_file_put(file);
     return ret;
 }

@@ -217,8 +217,11 @@ long sys_utimensat(int dirfd, const char *pathname, const fut_timespec_t *times,
             return -EBADF;
         }
 
-        /* Get file structure from dirfd */
-        struct fut_file *file = vfs_get_file_from_task(task, dirfd);
+        /* Get file structure from dirfd, holding a reference so a
+         * concurrent close() on another CPU can't free the file (and
+         * vnode) mid-setattr. Every exit in this branch must
+         * fut_file_put(). */
+        struct fut_file *file = fut_file_get(task, dirfd);
         if (!file) {
             fut_printf("[UTIMENSAT] utimensat(dirfd=%d, pathname=NULL) -> EBADF "
                        "(fd not open)\n", dirfd);
@@ -228,6 +231,7 @@ long sys_utimensat(int dirfd, const char *pathname, const fut_timespec_t *times,
         if (!file->vnode) {
             fut_printf("[UTIMENSAT] utimensat(dirfd=%d, pathname=NULL) -> EBADF "
                        "(file has no vnode)\n", dirfd);
+            fut_file_put(file);
             return -EBADF;
         }
 
@@ -237,6 +241,7 @@ long sys_utimensat(int dirfd, const char *pathname, const fut_timespec_t *times,
         if (!vnode->ops || !vnode->ops->setattr) {
             fut_printf("[UTIMENSAT] utimensat(dirfd=%d [futimens], vnode_ino=%lu) -> ENOSYS "
                        "(filesystem doesn't support setattr)\n", dirfd, vnode->ino);
+            fut_file_put(file);
             return -ENOSYS;
         }
 
@@ -291,11 +296,13 @@ long sys_utimensat(int dirfd, const char *pathname, const fut_timespec_t *times,
             fut_printf("[UTIMENSAT] utimensat(dirfd=%d [futimens], vnode_ino=%lu, times=%s, "
                        "pid=%d) -> %d (setattr failed)\n",
                        dirfd, vnode->ino, time_spec_desc, task->pid, ret);
+            fut_file_put(file);
             return ret;
         }
 
         /* Success path silent — fires on every `touch`, `cp -p`, etc. */
         (void)time_spec_desc; (void)flags_desc;
+        fut_file_put(file);
         return 0;
     }
 
@@ -386,8 +393,10 @@ long sys_utimensat(int dirfd, const char *pathname, const fut_timespec_t *times,
             return -EBADF;
         }
 
-        /* Get file structure from dirfd */
-        struct fut_file *dir_file = vfs_get_file_from_task(task, dirfd);
+        /* Get file structure from dirfd, holding a reference so a
+         * concurrent close() on another CPU can't free it while we
+         * read dir_file->path. */
+        struct fut_file *dir_file = fut_file_get(task, dirfd);
 
         if (!dir_file) {
             fut_printf("[UTIMENSAT] utimensat(dirfd=%d) -> EBADF (dirfd not open)\n", dirfd);
@@ -397,12 +406,14 @@ long sys_utimensat(int dirfd, const char *pathname, const fut_timespec_t *times,
         /* Verify dirfd refers to a directory */
         if (!dir_file->vnode) {
             fut_printf("[UTIMENSAT] utimensat(dirfd=%d) -> EBADF (dirfd has no vnode)\n", dirfd);
+            fut_file_put(dir_file);
             return -EBADF;
         }
 
         /* Check if vnode is a directory */
         if (dir_file->vnode->type != VN_DIR) {
             fut_printf("[UTIMENSAT] utimensat(dirfd=%d) -> ENOTDIR (dirfd not a directory)\n", dirfd);
+            fut_file_put(dir_file);
             return -ENOTDIR;
         }
 
@@ -412,6 +423,7 @@ long sys_utimensat(int dirfd, const char *pathname, const fut_timespec_t *times,
             size_t rel_len = strnlen(path_buf, sizeof(resolved_path) - 1);
             bool has_trail = (dir_len > 0 && dir_file->path[dir_len - 1] == '/');
             if (dir_len + (has_trail ? 0 : 1) + rel_len >= sizeof(resolved_path)) {
+                fut_file_put(dir_file);
                 return -ENAMETOOLONG;
             }
             size_t pos = 0;
@@ -424,6 +436,7 @@ long sys_utimensat(int dirfd, const char *pathname, const fut_timespec_t *times,
             memcpy(resolved_path, path_buf, len);
             resolved_path[len] = '\0';
         }
+        fut_file_put(dir_file);
     }
 
     /* Lookup the vnode; AT_SYMLINK_NOFOLLOW means don't follow the final symlink */

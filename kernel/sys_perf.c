@@ -329,9 +329,13 @@ long sys_perf_event_open(const void *attr, int pid, int cpu,
         if (flags & PERF_FLAG_FD_NO_GROUP) return -EINVAL;
         fut_task_t *gt = fut_task_current();
         if (!gt) return -ESRCH;
-        struct fut_file *gf = vfs_get_file_from_task(gt, group_fd);
+        /* Ref across the chr_ops check so a concurrent close() on
+         * another CPU can't free the file under us. */
+        struct fut_file *gf = fut_file_get(gt, group_fd);
         if (!gf) return -EBADF;
-        if (gf->chr_ops != &perf_fops) return -EINVAL;
+        bool is_perf = (gf->chr_ops == &perf_fops);
+        fut_file_put(gf);
+        if (!is_perf) return -EINVAL;
     }
 
     /* Copy perf_event_attr from user before reading any fields. The

@@ -267,7 +267,9 @@ long sys_openat2(int dirfd, const char *path, const struct open_how *how,
      * RESOLVE_BENEATH check (reused below) prevents ".." escape.
      * On Linux, RESOLVE_IN_ROOT implies RESOLVE_BENEATH semantics. */
     if ((kow.resolve & RESOLVE_IN_ROOT) && dirfd != AT_FDCWD) {
-        struct fut_file *root_file = vfs_get_file_from_task(task, dirfd);
+        /* Ref while reading root_file->path so a concurrent close()
+         * on another CPU can't free the file mid-read. */
+        struct fut_file *root_file = fut_file_get(task, dirfd);
         if (root_file && root_file->path) {
             if (kpath[0] == '/') {
                 /* Rewrite absolute path: prepend dirfd's path.
@@ -285,6 +287,7 @@ long sys_openat2(int dirfd, const char *path, const struct open_how *how,
                 }
             }
         }
+        fut_file_put(root_file);
         /* RESOLVE_IN_ROOT implies containment — fall through to BENEATH check */
         kow.resolve |= RESOLVE_BENEATH;
     }
@@ -292,7 +295,9 @@ long sys_openat2(int dirfd, const char *path, const struct open_how *how,
     /* Enforce RESOLVE_BENEATH: the final resolved path must remain within
      * the dirfd's subtree.  Returns -EXDEV on violation (matching Linux). */
     if ((kow.resolve & RESOLVE_BENEATH) && dirfd != AT_FDCWD) {
-        struct fut_file *dir_file = vfs_get_file_from_task(task, dirfd);
+        /* Ref while reading dir_file->path so a concurrent close()
+         * on another CPU can't free the file mid-check. */
+        struct fut_file *dir_file = fut_file_get(task, dirfd);
         if (dir_file && dir_file->path) {
             char raw_buf[FUT_VFS_PATH_BUFFER_SIZE];
             char norm_buf[FUT_VFS_PATH_BUFFER_SIZE];
@@ -307,15 +312,21 @@ long sys_openat2(int dirfd, const char *path, const struct open_how *how,
                 /* Relative path: combine with dirfd's path, then normalize */
                 int rc = fut_vfs_resolve_at(task, dirfd, kpath,
                                             raw_buf, sizeof(raw_buf));
-                if (rc < 0) return -EXDEV;
+                if (rc < 0) {
+                    fut_file_put(dir_file);
+                    return -EXDEV;
+                }
                 if (normalize_abs_path(raw_buf, norm_buf, sizeof(norm_buf)) == 0)
                     to_check = norm_buf;
                 else
                     to_check = raw_buf;
             }
-            if (!path_is_within(to_check, dir_file->path))
+            if (!path_is_within(to_check, dir_file->path)) {
+                fut_file_put(dir_file);
                 return -EXDEV;
+            }
         }
+        fut_file_put(dir_file);
     }
 
     /* Set transient VFS flags for path resolution control */

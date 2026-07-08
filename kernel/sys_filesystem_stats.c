@@ -255,8 +255,9 @@ long sys_fstatfs(int fd, struct fut_linux_statfs *buf) {
         return -EBADF;
     }
 
-    /* Get file structure */
-    struct fut_file *file = vfs_get_file_from_task(task, fd);
+    /* Get file structure, holding a reference so a concurrent close()
+     * on another CPU can't free it while we read path/vnode. */
+    struct fut_file *file = fut_file_get(task, fd);
     if (!file) {
         fut_printf("[FSTATFS] fstatfs(fd=%d, pid=%d) -> EBADF (fd not open)\n", fd, task->pid);
         return -EBADF;
@@ -266,6 +267,7 @@ long sys_fstatfs(int fd, struct fut_linux_statfs *buf) {
     if (!buf) {
         fut_printf("[FSTATFS] fstatfs(fd=%d, buf=NULL, pid=%d) -> EFAULT (null buffer)\n",
                    fd, task->pid);
+        fut_file_put(file);
         return -EFAULT;
     }
 
@@ -281,6 +283,7 @@ long sys_fstatfs(int fd, struct fut_linux_statfs *buf) {
             mp = file->vnode->mount->mountpoint;
         stats.f_type = statfs_magic_for_path(mp);
     }
+    fut_file_put(file);
 
     /* Copy to userspace buffer */
     if (statfs_copy_to_buf(buf, &stats, sizeof(struct fut_linux_statfs)) != 0) {
@@ -347,8 +350,10 @@ long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
         return -EBADF;
     }
 
-    /* Get file structure */
-    struct fut_file *file = vfs_get_file_from_task(task, fd);
+    /* Get file structure, holding a reference so a concurrent close()
+     * on another CPU can't free the file (and vnode) mid-fallocate.
+     * Every exit below must fut_file_put(). */
+    struct fut_file *file = fut_file_get(task, fd);
     if (!file) {
         fut_printf("[FALLOCATE] fallocate(fd=%d, mode=0x%x, offset=%lu, len=%lu, pid=%d) -> EBADF "
                    "(fd not open)\n",
@@ -357,8 +362,10 @@ long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
     }
 
     /* O_PATH fds cannot be used for I/O — only path-based operations */
-    if (file->flags & O_PATH)
+    if (file->flags & O_PATH) {
+        fut_file_put(file);
         return -EBADF;
+    }
 
     /* Validate mode flags (values must match Linux uapi/linux/falloc.h).
      * Linux's vfs_fallocate validates offset/len and mode FIRST, then
@@ -379,6 +386,7 @@ long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
         fut_printf("[FALLOCATE] fallocate(fd=%d, mode=0x%x, pid=%d) -> EINVAL "
                    "(invalid mode flags)\n",
                    fd, mode, task->pid);
+        fut_file_put(file);
         return -EINVAL;
     }
 
@@ -387,6 +395,7 @@ long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
         fut_printf("[FALLOCATE] fallocate(fd=%d, mode=0x%x, pid=%d) -> EINVAL "
                    "(PUNCH_HOLE requires KEEP_SIZE)\n",
                    fd, mode, task->pid);
+        fut_file_put(file);
         return -EINVAL;
     }
 
@@ -412,26 +421,31 @@ long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
         fut_printf("[FALLOCATE] fallocate(fd=%d, mode=0x%x, pid=%d) -> EOPNOTSUPP "
                    "(PUNCH_HOLE | ZERO_RANGE)\n",
                    fd, mode, task->pid);
+        fut_file_put(file);
         return -EOPNOTSUPP;
     }
     if ((mode & FALLOC_FL_COLLAPSE_RANGE) && (mode & ~FALLOC_FL_COLLAPSE_RANGE)) {
         fut_printf("[FALLOCATE] fallocate(fd=%d, mode=0x%x, pid=%d) -> EINVAL "
                    "(COLLAPSE_RANGE must be exclusive)\n",
                    fd, mode, task->pid);
+        fut_file_put(file);
         return -EINVAL;
     }
     if ((mode & FALLOC_FL_INSERT_RANGE) && (mode & ~FALLOC_FL_INSERT_RANGE)) {
         fut_printf("[FALLOCATE] fallocate(fd=%d, mode=0x%x, pid=%d) -> EINVAL "
                    "(INSERT_RANGE must be exclusive)\n",
                    fd, mode, task->pid);
+        fut_file_put(file);
         return -EINVAL;
     }
 
     /* fallocate requires write access — checked AFTER mode validation
      * so libc wrappers see the same EINVAL-vs-EBADF separation Linux
      * gives them. */
-    if ((file->flags & O_ACCMODE) == O_RDONLY)
+    if ((file->flags & O_ACCMODE) == O_RDONLY) {
+        fut_file_put(file);
         return -EBADF;
+    }
 
     /* Validate offset and length. Linux's fallocate(2) returns EINVAL for
      * offset < 0 OR len <= 0 (mm/fallocate.c:do_fallocate); the previous
@@ -443,12 +457,14 @@ long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
         fut_printf("[FALLOCATE] fallocate(fd=%d, offset=%lu, len=0, pid=%d) -> EINVAL "
                    "(zero length)\n",
                    fd, offset, task->pid);
+        fut_file_put(file);
         return -EINVAL;
     }
     if (offset > INT64_MAX || len > INT64_MAX || (offset + len) > INT64_MAX) {
         fut_printf("[FALLOCATE] fallocate(fd=%d, offset=%lu, len=%lu, pid=%d) -> EINVAL "
                    "(offset/len overflow)\n",
                    fd, offset, len, task->pid);
+        fut_file_put(file);
         return -EINVAL;
     }
 
@@ -476,6 +492,7 @@ long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
                            fd, offset, len, task->pid,
                            (unsigned long)(offset + len),
                            (unsigned long long)fsize_limit);
+                fut_file_put(file);
                 return -EFBIG;
             }
         }
@@ -515,8 +532,10 @@ long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
                     fut_printf("[FALLOCATE] fallocate(fd=%d, mode=0, offset=%lu, len=%lu, pid=%d) "
                                "-> %d (truncate failed)\n",
                                fd, offset, len, task->pid, ret);
+                    fut_file_put(file);
                     return ret;
                 }
+                fut_file_put(file);
                 return 0;
             }
         }
@@ -535,6 +554,7 @@ long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
             fut_printf("[FALLOCATE] fallocate(fd=%d, mode=0x%x [%s], pid=%d) -> EOPNOTSUPP "
                        "(filesystem does not support write)\n",
                        fd, mode, op_type, task->pid);
+            fut_file_put(file);
             return -EOPNOTSUPP;
         }
 
@@ -543,6 +563,7 @@ long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
             fut_printf("[FALLOCATE] fallocate(fd=%d, mode=0x%x [%s], offset=%lu >= size=%llu, pid=%d) "
                        "-> 0 (range beyond EOF, no-op)\n",
                        fd, mode, op_type, offset, (unsigned long long)vnode->size, task->pid);
+            fut_file_put(file);
             return 0;
         }
 
@@ -563,6 +584,7 @@ long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
                 fut_printf("[FALLOCATE] fallocate(fd=%d, mode=0x%x [%s], pid=%d) -> %zd "
                            "(write zero failed at offset %llu)\n",
                            fd, mode, op_type, task->pid, written, (unsigned long long)cur_off);
+                fut_file_put(file);
                 return (long)written;
             }
             cur_off   += (uint64_t)written;
@@ -578,20 +600,24 @@ long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
     if (mode & FALLOC_FL_COLLAPSE_RANGE) {
         /* COLLAPSE_RANGE must not be combined with other flags */
         if (mode != FALLOC_FL_COLLAPSE_RANGE) {
+            fut_file_put(file);
             return -EINVAL;
         }
 
         if (!vnode || !vnode->ops || !vnode->ops->read || !vnode->ops->write) {
+            fut_file_put(file);
             return -EOPNOTSUPP;
         }
 
         /* Linux requires block-aligned offset and len */
         if ((offset & 0xFFF) || (len & 0xFFF)) {
+            fut_file_put(file);
             return -EINVAL;
         }
 
         /* Range must be within the file; cannot collapse past EOF */
         if (offset + len > vnode->size) {
+            fut_file_put(file);
             return -EINVAL;
         }
 
@@ -606,7 +632,10 @@ long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
         extern void *fut_malloc(uint64_t size);
         extern void  fut_free(void *p);
         uint8_t *chunk_buf = fut_malloc(CHUNK);
-        if (!chunk_buf) return -ENOMEM;
+        if (!chunk_buf) {
+            fut_file_put(file);
+            return -ENOMEM;
+        }
 
         while (tail_bytes > 0) {
             size_t chunk = (tail_bytes > CHUNK) ? CHUNK : (size_t)tail_bytes;
@@ -635,20 +664,24 @@ long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
     if (mode & FALLOC_FL_INSERT_RANGE) {
         /* INSERT_RANGE must not be combined with other flags */
         if (mode != FALLOC_FL_INSERT_RANGE) {
+            fut_file_put(file);
             return -EINVAL;
         }
 
         if (!vnode || !vnode->ops || !vnode->ops->read || !vnode->ops->write) {
+            fut_file_put(file);
             return -EOPNOTSUPP;
         }
 
         /* Linux requires block-aligned offset and len */
         if ((offset & 0xFFF) || (len & 0xFFF)) {
+            fut_file_put(file);
             return -EINVAL;
         }
 
         /* Offset must be within the file */
         if (offset > vnode->size) {
+            fut_file_put(file);
             return -EINVAL;
         }
 
@@ -656,7 +689,10 @@ long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
         uint64_t new_size = vnode->size + len;
         if (vnode->ops->truncate) {
             int ret = vnode->ops->truncate(vnode, new_size);
-            if (ret < 0) return (long)ret;
+            if (ret < 0) {
+                fut_file_put(file);
+                return (long)ret;
+            }
         } else {
             vnode->size = new_size;
         }
@@ -670,7 +706,10 @@ long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
         extern void *fut_malloc(uint64_t size);
         extern void  fut_free(void *p);
         uint8_t *chunk_buf = fut_malloc(CHUNK);
-        if (!chunk_buf) return -ENOMEM;
+        if (!chunk_buf) {
+            fut_file_put(file);
+            return -ENOMEM;
+        }
 
         while (tail_bytes > 0) {
             size_t chunk = (tail_bytes > CHUNK) ? CHUNK : (size_t)tail_bytes;
@@ -698,6 +737,7 @@ long sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
         goto clear_suid;
     }
 
+    fut_file_put(file);
     return 0;
 
 clear_suid:
@@ -718,6 +758,7 @@ clear_suid:
             }
         }
     }
+    fut_file_put(file);
     return 0;
 }
 

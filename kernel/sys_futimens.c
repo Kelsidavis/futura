@@ -222,8 +222,10 @@ long sys_futimens(int fd, const fut_timespec_t *times) {
         return -EBADF;
     }
 
-    /* Look up file object from fd table */
-    struct fut_file *file = vfs_get_file_from_task(task, local_fd);
+    /* Look up file object from fd table, holding a reference so a
+     * concurrent close() on another CPU can't free the file (and its
+     * vnode) mid-setattr. Every exit below must fut_file_put(). */
+    struct fut_file *file = fut_file_get(task, local_fd);
     if (!file) {
         fut_printf("[FUTIMENS] futimens(fd=%d [%s], times=%p, op=%s) -> EBADF "
                    "(fd not open)\n",
@@ -236,6 +238,7 @@ long sys_futimens(int fd, const fut_timespec_t *times) {
         fut_printf("[FUTIMENS] futimens(fd=%d [%s], times=%p, op=%s) -> EINVAL "
                    "(file vnode is NULL)\n",
                    local_fd, fd_desc, local_times, operation_type);
+        fut_file_put(file);
         return -EINVAL;
     }
 
@@ -284,6 +287,7 @@ long sys_futimens(int fd, const fut_timespec_t *times) {
         fut_printf("[FUTIMENS] futimens(fd=%d [%s], times=%p, op=%s, ino=%lu) -> ENOSYS "
                    "(filesystem doesn't support setattr)\n",
                    local_fd, fd_desc, local_times, operation_type, file->vnode->ino);
+        fut_file_put(file);
         return -ENOSYS;
     }
 
@@ -307,6 +311,7 @@ long sys_futimens(int fd, const fut_timespec_t *times) {
         }
         fut_printf("[FUTIMENS] futimens(fd=%d [%s], times=%p, op=%s, ino=%lu) -> %d (%s)\n",
                    local_fd, fd_desc, local_times, operation_type, file->vnode->ino, ret, error_desc);
+        fut_file_put(file);
         return ret;
     }
 
@@ -320,5 +325,6 @@ long sys_futimens(int fd, const fut_timespec_t *times) {
 
     /* Success path silent — fires on every `touch`/`cp -p`. */
     (void)fd_desc; (void)operation_type;
+    fut_file_put(file);
     return 0;
 }

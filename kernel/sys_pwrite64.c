@@ -215,8 +215,10 @@ long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset
     /* Categorize offset */
     const char *offset_category = fut_offset_category(local_offset);
 
-    /* Get file structure from FD */
-    struct fut_file *file = vfs_get_file_from_task(task, (int)local_fd);
+    /* Get file structure from FD, holding a reference so a concurrent
+     * close() on another CPU can't free it mid-write. Every exit below
+     * must fut_file_put(). */
+    struct fut_file *file = fut_file_get(task, (int)local_fd);
     if (!file) {
         fut_printf("[PWRITE64] pwrite64(fd=%u [%s], count=%zu [%s], offset=%ld [%s]) -> EBADF "
                    "(fd not open, pid=%d)\n",
@@ -225,19 +227,25 @@ long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset
     }
 
     /* O_PATH fds cannot be used for I/O — only path-based operations */
-    if (file->flags & O_PATH)
+    if (file->flags & O_PATH) {
+        fut_file_put(file);
         return -EBADF;
+    }
 
     /* Check that fd was opened for writing (not read-only) */
-    if ((file->flags & O_ACCMODE) == O_RDONLY)
+    if ((file->flags & O_ACCMODE) == O_RDONLY) {
+        fut_file_put(file);
         return -EBADF;
+    }
 
     /* pwrite64() is not valid on non-seekable fds (pipes, sockets, eventfd, etc.)
      * Also covers named FIFOs: they have both chr_ops and vnode (VN_FIFO). */
     if ((file->chr_ops && !file->vnode &&
          (((file->flags & O_ACCMODE) != O_RDWR) || (file->flags & FUT_F_UNSEEKABLE))) ||
-        (file->vnode && file->vnode->type == VN_FIFO))
+        (file->vnode && file->vnode->type == VN_FIFO)) {
+        fut_file_put(file);
         return -ESPIPE;
+    }
 
     /* Handle chr_ops files: dispatch to chr_ops->write with given offset.
      * Seekable chr_ops files (memfd, devfs) support positional I/O. */
@@ -250,7 +258,10 @@ long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset
                 kbuf = chr_stack_buf;
             } else {
                 kbuf = fut_malloc(local_count);
-                if (!kbuf) return -ENOMEM;
+                if (!kbuf) {
+                    fut_file_put(file);
+                    return -ENOMEM;
+                }
                 chr_kbuf_on_heap = true;
             }
             int cp_ret;
@@ -263,14 +274,17 @@ long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset
             cp_ret = fut_copy_from_user(kbuf, local_buf, local_count);
             if (cp_ret != 0) {
                 if (chr_kbuf_on_heap) fut_free(kbuf);
+                fut_file_put(file);
                 return -EFAULT;
             }
             off_t pos = (off_t)local_offset;
             ssize_t ret = file->chr_ops->write(file->chr_inode, file->chr_private,
                                                 kbuf, local_count, &pos);
             if (chr_kbuf_on_heap) fut_free(kbuf);
+            fut_file_put(file);
             return ret;
         }
+        fut_file_put(file);
         return -EINVAL;
     }
 
@@ -280,6 +294,7 @@ long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset
                    "offset=%ld [%s]) -> EISDIR (is directory, pid=%d)\n",
                    local_fd, fd_category, file->vnode->ino, local_count, count_category,
                    local_offset, offset_category, task->pid);
+        fut_file_put(file);
         return -EISDIR;
     }
 
@@ -288,6 +303,7 @@ long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset
         fut_printf("[PWRITE64] pwrite64(fd=%u [%s], count=%zu [%s], offset=%ld [%s]) -> EINVAL "
                    "(no write operation, pid=%d)\n",
                    local_fd, fd_category, local_count, count_category, local_offset, offset_category, task->pid);
+        fut_file_put(file);
         return -EINVAL;
     }
 
@@ -305,6 +321,7 @@ long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset
                        "(kernel buffer allocation failed, pid=%d)\n",
                        local_fd, fd_category, file->vnode->ino, local_count, count_category,
                        local_offset, offset_category, task->pid);
+            fut_file_put(file);
             return -ENOMEM;
         }
         kbuf_on_heap = true;
@@ -322,6 +339,7 @@ long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset
                    local_fd, fd_category, file->vnode->ino, local_count, count_category,
                    local_offset, offset_category, task->pid);
         if (kbuf_on_heap) fut_free(kbuf);
+        fut_file_put(file);
         return -EFAULT;
     }
 
@@ -350,6 +368,7 @@ long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset
                    local_fd, fd_category, file->vnode->ino, local_count, count_category,
                    local_offset, offset_category, (int)ret, error_desc, task->pid);
         if (kbuf_on_heap) fut_free(kbuf);
+        fut_file_put(file);
         return ret;
     }
 
@@ -382,5 +401,6 @@ long sys_pwrite64(unsigned int fd, const void *buf, size_t count, int64_t offset
                "bytes_written=%zd) -> %zd (VFS write operation delegation)\n",
                local_fd, fd_category, file->vnode->ino, local_count, count_category,
                local_offset, offset_category, ret, ret);
+    fut_file_put(file);
     return ret;
 }

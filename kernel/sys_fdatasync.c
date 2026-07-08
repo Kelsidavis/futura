@@ -129,19 +129,26 @@ long sys_fdatasync(int fd) {
         return -EBADF;
     }
 
-    /* Get the file structure for fd from current task's FD table */
-    struct fut_file *file = vfs_get_file_from_task(task, local_fd);
+    /* Get the file structure for fd, holding a reference so a
+     * concurrent close() on another CPU can't free it mid-flush.
+     * Single exit through out:. */
+    struct fut_file *file = fut_file_get(task, local_fd);
     if (!file) {
         return -EBADF;
     }
 
+    int ret = 0;
+
     /* O_PATH fds cannot be used for I/O */
-    if (file->flags & O_PATH)
-        return -EBADF;
+    if (file->flags & O_PATH) {
+        ret = -EBADF;
+        goto out;
+    }
 
     /* Character devices (via chr_ops) are not syncable */
     if (file->chr_ops) {
-        return -EINVAL;
+        ret = -EINVAL;
+        goto out;
     }
 
     /* Reject unsyncable vnode types: char devices, FIFOs, sockets */
@@ -156,7 +163,8 @@ long sys_fdatasync(int fd) {
             case VN_FIFO:
             case VN_SOCK:
             default:
-                return -EINVAL;
+                ret = -EINVAL;
+                goto out;
         }
     }
 
@@ -167,14 +175,18 @@ long sys_fdatasync(int fd) {
      * For FuturaFS: writes dirty inode; only flushes bitmaps/superblock
      *              if structural changes (block allocation) occurred. */
     if (file->vnode && file->vnode->ops && file->vnode->ops->datasync) {
-        return file->vnode->ops->datasync(file->vnode);
+        ret = file->vnode->ops->datasync(file->vnode);
+        goto out;
     }
 
     /* Fall back to full sync if no datasync operation available */
     if (file->vnode && file->vnode->ops && file->vnode->ops->sync) {
-        return file->vnode->ops->sync(file->vnode);
+        ret = file->vnode->ops->sync(file->vnode);
+        goto out;
     }
 
     /* No sync operation available (devfs, procfs, etc.) - success */
-    return 0;
+out:
+    fut_file_put(file);
+    return ret;
 }

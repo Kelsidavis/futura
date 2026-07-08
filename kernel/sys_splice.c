@@ -148,18 +148,26 @@ long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
         return -EBADF;
     }
 
-    struct fut_file *file_in  = vfs_get_file_from_task(task, local_fd_in);
-    struct fut_file *file_out = vfs_get_file_from_task(task, local_fd_out);
+    /* Hold references on both files for the whole transfer so a
+     * concurrent close() on another CPU can't free either mid-splice.
+     * Every exit below must put both (fut_file_put is NULL-safe). */
+    struct fut_file *file_in  = fut_file_get(task, local_fd_in);
+    struct fut_file *file_out = fut_file_get(task, local_fd_out);
 
     if (!file_in || !file_out) {
         fut_printf("[SPLICE] splice(fd_in=%d, fd_out=%d) -> EBADF (fd not open)\n",
                    local_fd_in, local_fd_out);
+        fut_file_put(file_in);
+        fut_file_put(file_out);
         return -EBADF;
     }
 
     /* O_PATH fds cannot be used for I/O — only path-based operations */
-    if ((file_in->flags & O_PATH) || (file_out->flags & O_PATH))
+    if ((file_in->flags & O_PATH) || (file_out->flags & O_PATH)) {
+        fut_file_put(file_in);
+        fut_file_put(file_out);
         return -EBADF;
+    }
 
     bool in_is_pipe  = (file_in->chr_ops  != NULL && file_in->chr_ops->read  != NULL);
     bool out_is_pipe = (file_out->chr_ops != NULL && file_out->chr_ops->write != NULL);
@@ -168,15 +176,23 @@ long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
     if (!in_is_pipe && !out_is_pipe) {
         fut_printf("[SPLICE] splice(fd_in=%d, fd_out=%d) -> EINVAL (neither fd is a pipe)\n",
                    local_fd_in, local_fd_out);
+        fut_file_put(file_in);
+        fut_file_put(file_out);
         return -EINVAL;
     }
 
     /* For the non-pipe (file) side, enforce access mode:
      * fd_in must be readable; fd_out must be writable. */
-    if (!in_is_pipe && (file_in->flags & O_ACCMODE) == O_WRONLY)
+    if (!in_is_pipe && (file_in->flags & O_ACCMODE) == O_WRONLY) {
+        fut_file_put(file_in);
+        fut_file_put(file_out);
         return -EBADF;
-    if (!out_is_pipe && (file_out->flags & O_ACCMODE) == O_RDONLY)
+    }
+    if (!out_is_pipe && (file_out->flags & O_ACCMODE) == O_RDONLY) {
+        fut_file_put(file_in);
+        fut_file_put(file_out);
         return -EBADF;
+    }
 
     /* Linux's fs/splice.c:do_splice rejects directory-source splice
      * with -EISDIR (S_ISDIR check inside splice_direct_to_actor /
@@ -187,15 +203,20 @@ long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
      * Surface EISDIR explicitly so libc splice() probes branch
      * correctly.  Same EISDIR/EINVAL split as the matching
      * sendfile / copy_file_range fixes. */
-    if (!in_is_pipe && file_in->vnode && file_in->vnode->type == VN_DIR)
+    if ((!in_is_pipe && file_in->vnode && file_in->vnode->type == VN_DIR) ||
+        (!out_is_pipe && file_out->vnode && file_out->vnode->type == VN_DIR)) {
+        fut_file_put(file_in);
+        fut_file_put(file_out);
         return -EISDIR;
-    if (!out_is_pipe && file_out->vnode && file_out->vnode->type == VN_DIR)
-        return -EISDIR;
+    }
 
     /* ESPIPE: offset not allowed for pipes (must precede EFAULT on
      * offset pointer to match Linux's fs/splice.c gate order). */
-    if (local_off_in  && in_is_pipe)  return -ESPIPE;
-    if (local_off_out && out_is_pipe) return -ESPIPE;
+    if ((local_off_in && in_is_pipe) || (local_off_out && out_is_pipe)) {
+        fut_file_put(file_in);
+        fut_file_put(file_out);
+        return -ESPIPE;
+    }
 
     /* Now that ESPIPE has been ruled out, probe offset pointers.
      * Inherent TOCTOU limitation: userspace can remap pages between the
@@ -207,24 +228,32 @@ long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
             fut_printf("[SPLICE] splice(fd_in=%d, off_in=%p) -> EFAULT "
                        "(off_in not readable)\n",
                        local_fd_in, local_off_in);
+            fut_file_put(file_in);
+            fut_file_put(file_out);
             return -EFAULT;
         }
         if (fut_copy_to_user(local_off_in, &test_offset, sizeof(int64_t)) != 0) {
             fut_printf("[SPLICE] splice(fd_in=%d, off_in=%p) -> EFAULT "
                        "(off_in not writable)\n",
                        local_fd_in, local_off_in);
+            fut_file_put(file_in);
+            fut_file_put(file_out);
             return -EFAULT;
         }
         if (test_offset < 0) {
             fut_printf("[SPLICE] splice(fd_in=%d, off_in=%p, offset=%ld) -> EINVAL "
                        "(negative offset)\n",
                        local_fd_in, local_off_in, test_offset);
+            fut_file_put(file_in);
+            fut_file_put(file_out);
             return -EINVAL;
         }
         if ((uint64_t)test_offset > (uint64_t)(INT64_MAX - local_len)) {
             fut_printf("[SPLICE] splice(fd_in=%d, off_in=%ld, len=%zu) -> EOVERFLOW "
                        "(offset+len would overflow, max_valid_offset=%ld)\n",
                        local_fd_in, test_offset, local_len, (int64_t)(INT64_MAX - local_len));
+            fut_file_put(file_in);
+            fut_file_put(file_out);
             return -EOVERFLOW;
         }
     }
@@ -235,31 +264,42 @@ long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
             fut_printf("[SPLICE] splice(fd_out=%d, off_out=%p) -> EFAULT "
                        "(off_out not readable)\n",
                        local_fd_out, local_off_out);
+            fut_file_put(file_in);
+            fut_file_put(file_out);
             return -EFAULT;
         }
         if (fut_copy_to_user(local_off_out, &test_offset, sizeof(int64_t)) != 0) {
             fut_printf("[SPLICE] splice(fd_out=%d, off_out=%p) -> EFAULT "
                        "(off_out not writable)\n",
                        local_fd_out, local_off_out);
+            fut_file_put(file_in);
+            fut_file_put(file_out);
             return -EFAULT;
         }
         if (test_offset < 0) {
             fut_printf("[SPLICE] splice(fd_out=%d, off_out=%p, offset=%ld) -> EINVAL "
                        "(negative offset)\n",
                        local_fd_out, local_off_out, test_offset);
+            fut_file_put(file_in);
+            fut_file_put(file_out);
             return -EINVAL;
         }
         if ((uint64_t)test_offset > (uint64_t)(INT64_MAX - local_len)) {
             fut_printf("[SPLICE] splice(fd_out=%d, off_out=%ld, len=%zu) -> EOVERFLOW "
                        "(offset+len would overflow, max_valid_offset=%ld)\n",
                        local_fd_out, test_offset, local_len, (int64_t)(INT64_MAX - local_len));
+            fut_file_put(file_in);
+            fut_file_put(file_out);
             return -EOVERFLOW;
         }
     }
 
     /* Zero-length transfer is a valid no-op */
-    if (local_len == 0)
+    if (local_len == 0) {
+        fut_file_put(file_in);
+        fut_file_put(file_out);
         return 0;
+    }
 
     /* SPLICE_F_NONBLOCK: temporarily set nonblock on pipe ends */
     extern bool pipe_get_nonblock(void *priv, bool is_write);
@@ -288,15 +328,22 @@ long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
     }
 
     /* Determine effective read offset */
+    long result;
     int64_t read_off  = 0;
     int64_t write_off = 0;
     if (local_off_in) {
-        if (fut_copy_from_user(&read_off,  local_off_in,  sizeof(int64_t)) != 0) return -EFAULT;
+        if (fut_copy_from_user(&read_off,  local_off_in,  sizeof(int64_t)) != 0) {
+            result = -EFAULT;
+            goto restore_nb;
+        }
     } else {
         read_off = (int64_t)file_in->offset;
     }
     if (local_off_out) {
-        if (fut_copy_from_user(&write_off, local_off_out, sizeof(int64_t)) != 0) return -EFAULT;
+        if (fut_copy_from_user(&write_off, local_off_out, sizeof(int64_t)) != 0) {
+            result = -EFAULT;
+            goto restore_nb;
+        }
     } else {
         write_off = (int64_t)file_out->offset;
     }
@@ -305,7 +352,6 @@ long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
      * 4 KiB on the 64 KiB kernel stack avoids a fut_malloc/fut_free pair
      * per splice() — same pattern as sys_read/sys_write small-syscall
      * stack buffer (commit 8e412f00). */
-    long result;
     const size_t CHUNK = 4096;
     uint8_t kbuf_storage[4096];
     uint8_t *kbuf = kbuf_storage;
@@ -414,6 +460,8 @@ long sys_splice(int fd_in, int64_t *off_in, int fd_out, int64_t *off_out,
 restore_nb:
     if (set_in_nb)  pipe_set_nonblock(file_in->chr_private,  false, false);
     if (set_out_nb) pipe_set_nonblock(file_out->chr_private, true,  false);
+    fut_file_put(file_in);
+    fut_file_put(file_out);
     return result;
 }
 
@@ -504,17 +552,23 @@ long sys_vmsplice(int fd, const void *iov, size_t nr_segs, unsigned int flags) {
         return -EINVAL;
     }
 
-    /* Get file structure for the pipe fd */
+    /* Get file structure for the pipe fd, holding a reference so a
+     * concurrent close() on another CPU can't free it mid-transfer.
+     * Every exit below must fut_file_put(). */
     if (local_fd >= task->max_fds) return -EBADF;
-    struct fut_file *file = vfs_get_file_from_task(task, local_fd);
+    struct fut_file *file = fut_file_get(task, local_fd);
     if (!file) return -EBADF;
 
     /* O_PATH fds cannot be used for I/O */
-    if (file->flags & O_PATH) return -EBADF;
+    if (file->flags & O_PATH) {
+        fut_file_put(file);
+        return -EBADF;
+    }
 
     /* vmsplice requires the fd to be a pipe (write end) */
     if (!file->chr_ops || !file->chr_ops->write) {
         fut_printf("[VMSPLICE] vmsplice(fd=%d) -> EBADF (not a writable pipe)\n", local_fd);
+        fut_file_put(file);
         return -EBADF;
     }
 
@@ -527,12 +581,20 @@ long sys_vmsplice(int fd, const void *iov, size_t nr_segs, unsigned int flags) {
 
     for (size_t i = 0; i < local_nr_segs; i++) {
         struct iovec seg;
-        if (splice_copy_from(&seg, &user_iov[i], sizeof(seg)) != 0)
+        if (splice_copy_from(&seg, &user_iov[i], sizeof(seg)) != 0) {
+            fut_file_put(file);
             return (total > 0) ? total : -EFAULT;
+        }
 
         if (seg.iov_len == 0) continue;
-        if (seg.iov_len > MAX_IOV_LEN) return (total > 0) ? total : -EINVAL;
-        if (!seg.iov_base) return (total > 0) ? total : -EFAULT;
+        if (seg.iov_len > MAX_IOV_LEN) {
+            fut_file_put(file);
+            return (total > 0) ? total : -EINVAL;
+        }
+        if (!seg.iov_base) {
+            fut_file_put(file);
+            return (total > 0) ? total : -EFAULT;
+        }
 
         /* Copy user data into a kernel buffer then write to pipe.
          * Small segments use a stack buffer to avoid hammering the slab
@@ -544,12 +606,16 @@ long sys_vmsplice(int fd, const void *iov, size_t nr_segs, unsigned int flags) {
             kbuf = stack_kbuf;
         } else {
             kbuf = (uint8_t *)fut_malloc(seg.iov_len);
-            if (!kbuf) return (total > 0) ? total : -ENOMEM;
+            if (!kbuf) {
+                fut_file_put(file);
+                return (total > 0) ? total : -ENOMEM;
+            }
             kbuf_on_heap = true;
         }
 
         if (splice_copy_from(kbuf, seg.iov_base, seg.iov_len) != 0) {
             if (kbuf_on_heap) fut_free(kbuf);
+            fut_file_put(file);
             return (total > 0) ? total : -EFAULT;
         }
 
@@ -558,11 +624,15 @@ long sys_vmsplice(int fd, const void *iov, size_t nr_segs, unsigned int flags) {
                                                  kbuf, seg.iov_len, &pos);
         if (kbuf_on_heap) fut_free(kbuf);
 
-        if (nwritten < 0) return (total > 0) ? total : (long)nwritten;
+        if (nwritten < 0) {
+            fut_file_put(file);
+            return (total > 0) ? total : (long)nwritten;
+        }
         total += nwritten;
         if ((size_t)nwritten < seg.iov_len) break;  /* Pipe full */
     }
 
+    fut_file_put(file);
     return total;
 }
 
@@ -637,26 +707,38 @@ long sys_tee(int fd_in, int fd_out, size_t len, unsigned int flags) {
     if (local_fd_in >= task->max_fds || local_fd_out >= task->max_fds)
         return -EBADF;
 
-    struct fut_file *file_in  = vfs_get_file_from_task(task, local_fd_in);
-    struct fut_file *file_out = vfs_get_file_from_task(task, local_fd_out);
+    /* Hold references on both pipe files so a concurrent close() on
+     * another CPU can't free either mid-duplicate. Every exit below
+     * must put both (fut_file_put is NULL-safe). */
+    struct fut_file *file_in  = fut_file_get(task, local_fd_in);
+    struct fut_file *file_out = fut_file_get(task, local_fd_out);
     if (!file_in || !file_out) {
         fut_printf("[TEE] tee(fd_in=%d, fd_out=%d) -> EBADF (fd not open)\n",
                    local_fd_in, local_fd_out);
+        fut_file_put(file_in);
+        fut_file_put(file_out);
         return -EBADF;
     }
 
     /* Both fds must be pipes */
     if (!file_in->chr_ops || !file_in->chr_ops->read) {
         fut_printf("[TEE] tee(fd_in=%d) -> EINVAL (not a readable pipe)\n", local_fd_in);
+        fut_file_put(file_in);
+        fut_file_put(file_out);
         return -EINVAL;
     }
     if (!file_out->chr_ops || !file_out->chr_ops->write) {
         fut_printf("[TEE] tee(fd_out=%d) -> EINVAL (not a writable pipe)\n", local_fd_out);
+        fut_file_put(file_in);
+        fut_file_put(file_out);
         return -EINVAL;
     }
 
-    if (local_len == 0)
+    if (local_len == 0) {
+        fut_file_put(file_in);
+        fut_file_put(file_out);
         return 0;
+    }
 
     /* Peek ALL requested data in a single call.
      *
@@ -687,17 +769,25 @@ long sys_tee(int fd_in, int fd_out, size_t len, unsigned int flags) {
         kbuf = stack_kbuf;
     } else {
         kbuf = (uint8_t *)fut_malloc(peek_len);
-        if (!kbuf) return -ENOMEM;
+        if (!kbuf) {
+            fut_file_put(file_in);
+            fut_file_put(file_out);
+            return -ENOMEM;
+        }
         kbuf_on_heap = true;
     }
 
     ssize_t got = pipe_peek(file_in->chr_private, kbuf, peek_len);
     if (got < 0) {
         if (kbuf_on_heap) fut_free(kbuf);
+        fut_file_put(file_in);
+        fut_file_put(file_out);
         return got;
     }
     if (got == 0) {
         if (kbuf_on_heap) fut_free(kbuf);
+        fut_file_put(file_in);
+        fut_file_put(file_out);
         /* SPLICE_F_NONBLOCK: return -EAGAIN when source pipe is empty */
         if (local_flags & SPLICE_F_NONBLOCK)
             return -EAGAIN;
@@ -711,8 +801,8 @@ long sys_tee(int fd_in, int fd_out, size_t len, unsigned int flags) {
         file_out->chr_inode, file_out->chr_private, kbuf, (size_t)got, &pos);
     if (kbuf_on_heap) fut_free(kbuf);
 
-    if (nwritten < 0)
-        return nwritten;
+    fut_file_put(file_in);
+    fut_file_put(file_out);
 
     /* Success path silent — tee is used in pipelines (`tee >(...) >(...)`)
      * where it fires per buffered chunk. Errors above still trace. */
@@ -828,11 +918,16 @@ long sys_sync_file_range(int fd, int64_t offset, int64_t nbytes, unsigned int fl
         }
     }
 
-    /* Validate fd exists and check O_PATH */
+    /* Validate fd exists and check O_PATH. Ref across the flags read
+     * so a concurrent close() on another CPU can't free the file. */
     if (local_fd >= task->max_fds) return -EBADF;
-    struct fut_file *sfr_file = vfs_get_file_from_task(task, local_fd);
+    struct fut_file *sfr_file = fut_file_get(task, local_fd);
     if (!sfr_file) return -EBADF;
-    if (sfr_file->flags & O_PATH) return -EBADF;
+    if (sfr_file->flags & O_PATH) {
+        fut_file_put(sfr_file);
+        return -EBADF;
+    }
+    fut_file_put(sfr_file);
 
     /* Categorize sync type */
     const char *sync_desc;

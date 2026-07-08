@@ -303,8 +303,10 @@ long sys_fstatat(int dirfd, const char *pathname, void *statbuf, int flags) {
             return -EBADF;
         }
 
-        /* Get file structure from dirfd */
-        struct fut_file *dir_file = vfs_get_file_from_task(task, local_dirfd);
+        /* Get file structure from dirfd, holding a reference so a
+         * concurrent close() on another CPU can't free it while we
+         * read dir_file->path. */
+        struct fut_file *dir_file = fut_file_get(task, local_dirfd);
 
         if (!dir_file) {
             fut_printf("[FSTATAT] fstatat(dirfd=%d) -> EBADF (dirfd not open)\n",
@@ -316,6 +318,7 @@ long sys_fstatat(int dirfd, const char *pathname, void *statbuf, int flags) {
         if (!dir_file->vnode) {
             fut_printf("[FSTATAT] fstatat(dirfd=%d) -> EBADF (dirfd has no vnode)\n",
                        local_dirfd);
+            fut_file_put(dir_file);
             return -EBADF;
         }
 
@@ -323,6 +326,7 @@ long sys_fstatat(int dirfd, const char *pathname, void *statbuf, int flags) {
         if (dir_file->vnode->type != VN_DIR) {
             fut_printf("[FSTATAT] fstatat(dirfd=%d) -> ENOTDIR (dirfd not a directory)\n",
                        local_dirfd);
+            fut_file_put(dir_file);
             return -ENOTDIR;
         }
 
@@ -332,6 +336,7 @@ long sys_fstatat(int dirfd, const char *pathname, void *statbuf, int flags) {
             size_t rel_len = strnlen(path_buf, sizeof(resolved_path) - 1);
             bool has_trail = (dir_len > 0 && dir_file->path[dir_len - 1] == '/');
             if (dir_len + (has_trail ? 0 : 1) + rel_len >= sizeof(resolved_path)) {
+                fut_file_put(dir_file);
                 return -ENAMETOOLONG;
             }
             size_t pos = 0;
@@ -344,6 +349,7 @@ long sys_fstatat(int dirfd, const char *pathname, void *statbuf, int flags) {
             memcpy(resolved_path, path_buf, len);
             resolved_path[len] = '\0';
         }
+        fut_file_put(dir_file);
     }
 
     /* Perform the stat operation via VFS */

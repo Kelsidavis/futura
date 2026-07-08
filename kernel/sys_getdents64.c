@@ -416,8 +416,10 @@ long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
         return -EBADF;
     }
 
-    /* Get file structure from FD */
-    struct fut_file *file = vfs_get_file_from_task(task, (int)fd);
+    /* Get file structure from FD, holding a reference so a concurrent
+     * close() on another CPU can't free it while we iterate the
+     * directory. Every exit below must fut_file_put(). */
+    struct fut_file *file = fut_file_get(task, (int)fd);
     if (!file) {
         fut_printf("[GETDENTS64] getdents64(fd=%u [%s], count=%u [%s]) -> EBADF "
                    "(fd not open, pid=%d)\n", fd, fd_category, count, count_category, task->pid);
@@ -435,6 +437,7 @@ long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
         fut_printf("[GETDENTS64] getdents64(fd=%u [%s]) -> EBADF "
                    "(O_PATH fd cannot be used for directory iteration)\n",
                    fd, fd_category);
+        fut_file_put(file);
         return -EBADF;
     }
 
@@ -455,6 +458,7 @@ long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
         fut_printf("[GETDENTS64] getdents64(fd=%u [%s], type=%s, count=%u [%s]) -> ENOTDIR "
                    "(not a directory, pid=%d)\n",
                    fd, fd_category, file_type, count, count_category, task->pid);
+        fut_file_put(file);
         return -ENOTDIR;
     }
 
@@ -472,6 +476,7 @@ long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
             fut_printf("[GETDENTS64] getdents64(fd=%u [%s], ino=%lu, count=%u [%s]) -> ENOMEM "
                        "(kernel buffer allocation failed, pid=%d)\n",
                        fd, fd_category, file->vnode->ino, count, count_category, task->pid);
+            fut_file_put(file);
             return -ENOMEM;
         }
         kbuf_on_heap = true;
@@ -501,6 +506,7 @@ long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
             /* readdir returns -ENOENT at end of directory, other negatives are errors */
             if (total_bytes == 0 && rc != -ENOENT && rc != -2) {
                 if (kbuf_on_heap) fut_free(kbuf);
+                fut_file_put(file);
                 return rc;  /* Error on first entry */
             }
             break;  /* End of directory or error after partial read */
@@ -520,6 +526,7 @@ long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
                        "(directory offset wrapped, Phase 4)\n",
                        fd);
             if (kbuf_on_heap) fut_free(kbuf);
+            fut_file_put(file);
             return total_bytes > 0 ? (long)total_bytes : -EOVERFLOW;
         }
 
@@ -543,6 +550,7 @@ long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
                        "(name_len %zu would overflow reclen calculation)\n",
                        fd, name_len);
             if (kbuf_on_heap) fut_free(kbuf);
+            fut_file_put(file);
             return total_bytes > 0 ? (long)total_bytes : -EINVAL;
         }
 
@@ -556,6 +564,7 @@ long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
                        "(reclen %zu too large for 8-byte alignment)\n",
                        fd, reclen);
             if (kbuf_on_heap) fut_free(kbuf);
+            fut_file_put(file);
             return total_bytes > 0 ? (long)total_bytes : -EINVAL;
         }
         reclen = (reclen + 7) & ~7;
@@ -596,6 +605,7 @@ long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
                        "(aligned reclen %zu exceeds uint16_t max 65535)\n",
                        fd, vdirent.d_name, reclen);
             if (kbuf_on_heap) fut_free(kbuf);
+            fut_file_put(file);
             return total_bytes > 0 ? (long)total_bytes : -EINVAL;
         }
 
@@ -632,11 +642,13 @@ long sys_getdents64(unsigned int fd, void *dirp, unsigned int count) {
         copy_ret = fut_copy_to_user(dirp, kbuf, total_bytes);
         if (copy_ret != 0) {
             if (kbuf_on_heap) fut_free(kbuf);
+            fut_file_put(file);
             return -EFAULT;
         }
     }
 
     if (kbuf_on_heap) fut_free(kbuf);
 
+    fut_file_put(file);
     return (long)total_bytes;
 }

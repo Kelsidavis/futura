@@ -399,10 +399,14 @@ long sys_pidfd_getfd(int pidfd, int targetfd, unsigned int flags) {
          cur->ruid != target->suid))
         return -EPERM;
 
-    /* Look up targetfd in the target task */
+    /* Look up targetfd in the target task, taking a reference
+     * atomically against a concurrent close() in the target
+     * (fut_file_get takes the target's fd_lock) — the target task
+     * runs concurrently and can close the fd while we duplicate it.
+     * Every exit below must fut_file_put() this resolve-reference. */
     if (!target->fd_table || targetfd >= target->max_fds)
         return -EBADF;
-    struct fut_file *file = vfs_get_file_from_task(target, targetfd);
+    struct fut_file *file = fut_file_get(target, targetfd);
     if (!file)
         return -EBADF;
 
@@ -418,6 +422,7 @@ long sys_pidfd_getfd(int pidfd, int targetfd, unsigned int flags) {
          * struct is released if a parallel close raced us to the last
          * surviving reference. */
         vfs_file_unref(file);
+        fut_file_put(file);
         return newfd;
     }
 
@@ -429,5 +434,6 @@ long sys_pidfd_getfd(int pidfd, int targetfd, unsigned int flags) {
     if (cur->fd_flags && newfd < cur->max_fds)
         cur->fd_flags[newfd] = 1 /* FD_CLOEXEC */;
 
+    fut_file_put(file);
     return newfd;
 }

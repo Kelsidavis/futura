@@ -527,8 +527,10 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
         return -EBADF;
     }
 
-    /* Get file structure from task */
-    struct fut_file *file = vfs_get_file_from_task(task, fd);
+    /* Get file structure from task, holding a reference so a
+     * concurrent close() on another CPU can't free it mid-write.
+     * Every exit below must fut_file_put(). */
+    struct fut_file *file = fut_file_get(task, fd);
     if (!file) {
         fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EBADF (fd not open)\n",
                    fd, iov, iovcnt, offset);
@@ -539,12 +541,14 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
     /* O_PATH fds cannot be used for I/O */
     if (file->flags & O_PATH) {
         if (kernel_iov_on_heap) fut_free(kernel_iov);
+        fut_file_put(file);
         return -EBADF;
     }
 
     /* Check that fd was opened for writing (not read-only) */
     if ((file->flags & O_ACCMODE) == O_RDONLY) {
         if (kernel_iov_on_heap) fut_free(kernel_iov);
+        fut_file_put(file);
         return -EBADF;
     }
 
@@ -553,6 +557,7 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
         fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> ESPIPE (chrdev)\n",
                    fd, iov, iovcnt, offset);
         if (kernel_iov_on_heap) fut_free(kernel_iov);
+        fut_file_put(file);
         return -ESPIPE;
     }
 
@@ -561,6 +566,7 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
         fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EISDIR\n",
                    fd, iov, iovcnt, offset);
         if (kernel_iov_on_heap) fut_free(kernel_iov);
+        fut_file_put(file);
         return -EISDIR;
     }
 
@@ -569,6 +575,7 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
         fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EINVAL (no write op)\n",
                    fd, iov, iovcnt, offset);
         if (kernel_iov_on_heap) fut_free(kernel_iov);
+        fut_file_put(file);
         return -EINVAL;
     }
 
@@ -598,6 +605,7 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
                 fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> ENOMEM (malloc failed at iovec %d)\n",
                            fd, iov, iovcnt, offset, i);
                 if (kernel_iov_on_heap) fut_free(kernel_iov);
+                fut_file_put(file);
                 return -ENOMEM;
             }
             kbuf_on_heap = true;
@@ -612,6 +620,7 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
             fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> EFAULT (copy_from_user data failed at iovec %d)\n",
                        fd, iov, iovcnt, offset, i);
             if (kernel_iov_on_heap) fut_free(kernel_iov);
+            fut_file_put(file);
             return -EFAULT;
         }
 
@@ -630,6 +639,7 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
                 fut_printf("[PWRITEV] pwritev(fd=%d, iov=%p, iovcnt=%d, offset=%ld) -> %ld (write error on iovec %d)\n",
                            fd, iov, iovcnt, offset, n, i);
                 if (kernel_iov_on_heap) fut_free(kernel_iov);
+                fut_file_put(file);
                 return n;
             }
         }
@@ -648,6 +658,7 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
                        "(offset would overflow INT64_MAX after writing %zd bytes)\n",
                        fd, iov, iovcnt, offset, n);
             if (kernel_iov_on_heap) fut_free(kernel_iov);
+            fut_file_put(file);
             return -EOVERFLOW;
         }
         current_offset += n;
@@ -724,5 +735,6 @@ ssize_t sys_pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
         task->io_syscw++;
     }
 
+    fut_file_put(file);
     return total_written;
 }

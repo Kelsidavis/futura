@@ -337,7 +337,12 @@ static inline int fcntl_copy_to_user(void *dst, const void *src, size_t n) {
  * Phase 3 (Completed): File locking (F_SETLK, F_GETLK), ownership (F_SETOWN, F_GETOWN)
  * Phase 4 (Completed): File sealing, lease management, pipe capacity control
  */
-long sys_fcntl(int fd, int cmd, uint64_t arg) {
+/* Body of fcntl, operating on a file the caller has already resolved
+ * AND pinned with fut_file_get (pinned_file may be NULL for a bad fd —
+ * the EBADF paths below handle it). The pin keeps a concurrent close()
+ * on another CPU from freeing the struct anywhere in the ~900 lines of
+ * dispatch below; sys_fcntl drops it on return. */
+static long fcntl_impl(int fd, int cmd, uint64_t arg, struct fut_file *pinned_file) {
     /* ARM64 FIX: Copy parameters to local variables immediately to ensure they're preserved
      * on the stack across potentially blocking calls. VFS operations may block and
      * corrupt register-passed parameters upon resumption. */
@@ -363,8 +368,8 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
     /* Phase 2: Categorize FD range */
     const char *fd_category = fut_fd_category(local_fd);
 
-    /* Get file structure for this fd from task's FD table */
-    struct fut_file *file = vfs_get_file_from_task(task, local_fd);
+    /* File structure for this fd, resolved and pinned by sys_fcntl */
+    struct fut_file *file = pinned_file;
     if (!file) {
         /* F_DUPFD / F_DUPFD_CLOEXEC against an unopened fd is a normal
          * libwayland / libc probe pattern (used to discover the lowest
@@ -1246,4 +1251,17 @@ long sys_fcntl(int fd, int cmd, uint64_t arg) {
          * fills the kernel log. */
         return -EINVAL;
     }
+}
+
+long sys_fcntl(int fd, int cmd, uint64_t arg) {
+    /* Resolve-and-pin the fd once, atomically against a concurrent
+     * close() on another CPU (fut_file_get), then run the dispatch
+     * body with the pinned file. A NULL file flows through so the
+     * EBADF/negative-fd paths in fcntl_impl keep their exact errno
+     * ordering. */
+    fut_task_t *task = fut_task_current();
+    struct fut_file *file = (task && fd >= 0) ? fut_file_get(task, fd) : NULL;
+    long ret = fcntl_impl(fd, cmd, arg, file);
+    fut_file_put(file);
+    return ret;
 }

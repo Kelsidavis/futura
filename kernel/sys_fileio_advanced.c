@@ -198,8 +198,10 @@ long sys_sendfile(int out_fd, int in_fd, int64_t *offset, size_t count) {
         return -EBADF;
     }
 
-    /* Get file structures */
-    struct fut_file *in_file = vfs_get_file_from_task(task, local_in_fd);
+    /* Get file structures, holding references for the whole transfer
+     * so a concurrent close() on another CPU can't free either file
+     * mid-copy. Every exit below must put both (NULL-safe). */
+    struct fut_file *in_file = fut_file_get(task, local_in_fd);
     if (!in_file) {
         fut_printf("[SENDFILE] sendfile(out_fd=%d, in_fd=%d, count=%zu, pid=%d) -> EBADF "
                    "(in_fd not open)\n",
@@ -207,23 +209,29 @@ long sys_sendfile(int out_fd, int in_fd, int64_t *offset, size_t count) {
         return -EBADF;
     }
 
-    struct fut_file *out_file = vfs_get_file_from_task(task, local_out_fd);
+    struct fut_file *out_file = fut_file_get(task, local_out_fd);
     if (!out_file) {
         fut_printf("[SENDFILE] sendfile(out_fd=%d, in_fd=%d, count=%zu, pid=%d) -> EBADF "
                    "(out_fd not open)\n",
                    local_out_fd, local_in_fd, local_count, task->pid);
+        fut_file_put(in_file);
         return -EBADF;
     }
 
     /* O_PATH fds cannot be used for I/O — only path-based operations */
-    if ((in_file->flags & O_PATH) || (out_file->flags & O_PATH))
+    if ((in_file->flags & O_PATH) || (out_file->flags & O_PATH)) {
+        fut_file_put(in_file);
+        fut_file_put(out_file);
         return -EBADF;
+    }
 
     /* Enforce access mode: in_fd must be readable; out_fd must be writable */
-    if ((in_file->flags & O_ACCMODE) == O_WRONLY)
+    if (((in_file->flags & O_ACCMODE) == O_WRONLY) ||
+        ((out_file->flags & O_ACCMODE) == O_RDONLY)) {
+        fut_file_put(in_file);
+        fut_file_put(out_file);
         return -EBADF;
-    if ((out_file->flags & O_ACCMODE) == O_RDONLY)
-        return -EBADF;
+    }
 
     /* Handle offset parameter — Linux uses off_t (signed) */
     int64_t signed_offset = 0;
@@ -234,10 +242,15 @@ long sys_sendfile(int out_fd, int in_fd, int64_t *offset, size_t count) {
             fut_printf("[SENDFILE] sendfile(out_fd=%d, in_fd=%d, count=%zu, pid=%d) -> EFAULT "
                        "(invalid offset pointer)\n",
                        local_out_fd, local_in_fd, local_count, task->pid);
+            fut_file_put(in_file);
+            fut_file_put(out_file);
             return -EFAULT;
         }
-        if (signed_offset < 0)
+        if (signed_offset < 0) {
+            fut_file_put(in_file);
+            fut_file_put(out_file);
             return -EINVAL;
+        }
         start_offset = (uint64_t)signed_offset;
     } else {
         start_offset = in_file->offset;
@@ -253,6 +266,8 @@ long sys_sendfile(int out_fd, int in_fd, int64_t *offset, size_t count) {
      * libc sendfile() wrappers can branch on it like they do on
      * Linux. */
     if (in_file->vnode && in_file->vnode->type == VN_DIR) {
+        fut_file_put(in_file);
+        fut_file_put(out_file);
         return -EISDIR;
     }
 
@@ -260,6 +275,8 @@ long sys_sendfile(int out_fd, int in_fd, int64_t *offset, size_t count) {
     if (!in_file->vnode || !in_file->vnode->ops || !in_file->vnode->ops->read) {
         /* Check chr_ops path too */
         if (!in_file->chr_ops || !in_file->chr_ops->read) {
+            fut_file_put(in_file);
+            fut_file_put(out_file);
             return -EINVAL;
         }
     }
@@ -268,6 +285,8 @@ long sys_sendfile(int out_fd, int in_fd, int64_t *offset, size_t count) {
      * Linux returns EINVAL when in_fd is a socket. */
     extern fut_socket_t *get_socket_from_fd(int fd);
     if (get_socket_from_fd(local_in_fd)) {
+        fut_file_put(in_file);
+        fut_file_put(out_file);
         return -EINVAL;
     }
 
@@ -278,6 +297,8 @@ long sys_sendfile(int out_fd, int in_fd, int64_t *offset, size_t count) {
     if (!out_sock) {
         if (!out_file->vnode || !out_file->vnode->ops || !out_file->vnode->ops->write) {
             if (!out_file->chr_ops || !out_file->chr_ops->write) {
+                fut_file_put(in_file);
+                fut_file_put(out_file);
                 return -EINVAL;
             }
         }
@@ -362,6 +383,8 @@ long sys_sendfile(int out_fd, int in_fd, int64_t *offset, size_t count) {
     if (local_offset) {
         int64_t final_offset = (int64_t)read_offset;
         if (fileio_copy_to_user(local_offset, &final_offset, sizeof(int64_t)) != 0) {
+            fut_file_put(in_file);
+            fut_file_put(out_file);
             return -EFAULT;
         }
     } else {
@@ -369,5 +392,7 @@ long sys_sendfile(int out_fd, int in_fd, int64_t *offset, size_t count) {
         in_file->offset = read_offset;
     }
 
+    fut_file_put(in_file);
+    fut_file_put(out_file);
     return (long)total;
 }

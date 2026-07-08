@@ -186,8 +186,12 @@ long sys_faccessat(int dirfd, const char *pathname, int mode, int flags) {
             return -EINVAL;
         }
 
-        /* Get the vnode for dirfd (or cwd when dirfd == AT_FDCWD) */
+        /* Get the vnode for dirfd (or cwd when dirfd == AT_FDCWD).
+         * For the fd case, hold a file reference across the whole
+         * check so a concurrent close() on another CPU can't free the
+         * file (and vnode) — every exit below puts it (NULL-safe). */
         struct fut_vnode *vnode = NULL;
+        struct fut_file *epfile = NULL;
         if (local_dirfd == AT_FDCWD) {
             /* Look up the cwd vnode by path */
             const char *cwd = (task && task->cwd_cache && task->cwd_cache[0])
@@ -197,18 +201,24 @@ long sys_faccessat(int dirfd, const char *pathname, int mode, int flags) {
         } else {
             if (local_dirfd < 0 || local_dirfd >= task->max_fds)
                 return -EBADF;
-            struct fut_file *epfile = vfs_get_file_from_task(task, local_dirfd);
-            if (!epfile || !epfile->vnode)
+            epfile = fut_file_get(task, local_dirfd);
+            if (!epfile || !epfile->vnode) {
+                fut_file_put(epfile);
                 return -EBADF;
+            }
             vnode = epfile->vnode;
         }
 
-        if (!vnode)
+        if (!vnode) {
+            fut_file_put(epfile);
             return -EBADF;
+        }
 
         /* F_OK: vnode exists */
-        if (local_mode == F_OK)
+        if (local_mode == F_OK) {
+            fut_file_put(epfile);
             return 0;
+        }
 
         uint32_t check_uid_ns = (local_flags & AT_EACCESS) ? task->uid  : task->ruid;
         uint32_t check_gid_ns = (local_flags & AT_EACCESS) ? task->gid  : task->rgid;
@@ -222,8 +232,11 @@ long sys_faccessat(int dirfd, const char *pathname, int mode, int flags) {
              * still needs at least one execute bit (Linux CAP_DAC_OVERRIDE).
              * Directories always grant search to root regardless of mode. */
             if ((local_mode & X_OK) && vnode->type == VN_REG &&
-                !(file_mode & 0111))
+                !(file_mode & 0111)) {
+                fut_file_put(epfile);
                 return -EACCES;
+            }
+            fut_file_put(epfile);
             return 0;
         } else if (check_uid == vnode->uid) {
             perm_bits = (file_mode >> 6) & 7;
@@ -237,6 +250,7 @@ long sys_faccessat(int dirfd, const char *pathname, int mode, int flags) {
             perm_bits = in_group ? ((file_mode >> 3) & 7) : (file_mode & 7);
         }
 
+        fut_file_put(epfile);
         if ((local_mode & R_OK) && !(perm_bits & 4)) return -EACCES;
         if ((local_mode & W_OK) && !(perm_bits & 2)) return -EACCES;
         if ((local_mode & X_OK) && !(perm_bits & 1)) return -EACCES;
@@ -327,8 +341,10 @@ long sys_faccessat(int dirfd, const char *pathname, int mode, int flags) {
             return -EBADF;
         }
 
-        /* Get file structure from dirfd */
-        struct fut_file *dir_file = vfs_get_file_from_task(task, local_dirfd);
+        /* Get file structure from dirfd, holding a reference so a
+         * concurrent close() on another CPU can't free it while we
+         * read dir_file->path. */
+        struct fut_file *dir_file = fut_file_get(task, local_dirfd);
 
         if (!dir_file) {
             fut_printf("[FACCESSAT] faccessat(dirfd=%d) -> EBADF (invalid dirfd)\n",
@@ -340,6 +356,7 @@ long sys_faccessat(int dirfd, const char *pathname, int mode, int flags) {
         if (!dir_file->vnode) {
             fut_printf("[FACCESSAT] faccessat(dirfd=%d) -> EBADF (dirfd has no vnode)\n",
                        local_dirfd);
+            fut_file_put(dir_file);
             return -EBADF;
         }
 
@@ -347,6 +364,7 @@ long sys_faccessat(int dirfd, const char *pathname, int mode, int flags) {
         if (dir_file->vnode->type != VN_DIR) {
             fut_printf("[FACCESSAT] faccessat(dirfd=%d) -> ENOTDIR (dirfd not a directory)\n",
                        local_dirfd);
+            fut_file_put(dir_file);
             return -ENOTDIR;
         }
 
@@ -356,6 +374,7 @@ long sys_faccessat(int dirfd, const char *pathname, int mode, int flags) {
             size_t rel_len = strnlen(path_buf, sizeof(resolved_path) - 1);
             bool has_trail = (dir_len > 0 && dir_file->path[dir_len - 1] == '/');
             if (dir_len + (has_trail ? 0 : 1) + rel_len >= sizeof(resolved_path)) {
+                fut_file_put(dir_file);
                 return -ENAMETOOLONG;
             }
             size_t pos = 0;
@@ -368,6 +387,7 @@ long sys_faccessat(int dirfd, const char *pathname, int mode, int flags) {
             memcpy(resolved_path, path_buf, len);
             resolved_path[len] = '\0';
         }
+        fut_file_put(dir_file);
     }
 
     /* Determine which IDs to use for access check */

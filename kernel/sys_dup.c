@@ -198,8 +198,12 @@ long sys_dup(int oldfd) {
         return -EBADF;
     }
 
-    /* Get the file structure for oldfd from current task's FD table */
-    struct fut_file *old_file = vfs_get_file_from_task(task, local_oldfd);
+    /* Get the file structure for oldfd, taking a reference atomically
+     * against a concurrent close() (fut_file_get) — the bare load left
+     * a window where close() on another CPU freed the struct before
+     * the vfs_file_ref below. Every exit must fut_file_put() this
+     * resolve-reference (distinct from the new-slot ref). */
+    struct fut_file *old_file = fut_file_get(task, local_oldfd);
     if (!old_file) {
         fut_printf("[DUP] dup(oldfd=%d [%s]) -> EBADF (oldfd not open)\n",
                    local_oldfd, oldfd_category);
@@ -222,6 +226,7 @@ long sys_dup(int oldfd) {
         fut_printf("[DUP] dup(oldfd=%d [%s], max_fds=%d) -> %d "
                    "(fd allocation failed)\n",
                    local_oldfd, oldfd_category, task->max_fds, newfd);
+        fut_file_put(old_file);
         return newfd;
     }
 
@@ -231,5 +236,6 @@ long sys_dup(int oldfd) {
     /* Propagate socket ownership if oldfd is a socket */
     propagate_socket_dup(local_oldfd, newfd);
 
+    fut_file_put(old_file);
     return newfd;
 }

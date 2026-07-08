@@ -593,7 +593,9 @@ ssize_t sys_writev(int fd, const struct iovec *iov, int iovcnt) {
      * otherwise an attacker could retain S_ISUID by routing modifications
      * through writev() instead of write(). */
     if (total_written > 0) {
-        struct fut_file *wv_file = vfs_get_file_from_task(task, fd);
+        /* Ref while poking the vnode so a concurrent close() on
+         * another CPU can't free the file underneath us. */
+        struct fut_file *wv_file = fut_file_get(task, fd);
         if (wv_file && wv_file->vnode && wv_file->vnode->type == VN_REG) {
             uint32_t mode = wv_file->vnode->mode;
             int needs_clear = 0;
@@ -607,6 +609,7 @@ ssize_t sys_writev(int fd, const struct iovec *iov, int iovcnt) {
                     wv_file->vnode->mode &= ~(uint32_t)02000;
             }
         }
+        fut_file_put(wv_file);
     }
 
     /* I/O accounting for /proc/<pid>/io */

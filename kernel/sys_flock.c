@@ -165,8 +165,10 @@ long sys_flock(int fd, int operation) {
     /* Phase 2: Categorize FD range - use shared helper */
     const char *fd_category = fut_fd_category(local_fd);
 
-    /* Validate file descriptor */
-    struct fut_file *file = vfs_get_file_from_task(task, local_fd);
+    /* Validate file descriptor, holding a reference so a concurrent
+     * close() on another CPU can't free the file while we wait for or
+     * manipulate the vnode lock. Every exit below must fut_file_put(). */
+    struct fut_file *file = fut_file_get(task, local_fd);
     if (!file) {
         char msg[256];
         int pos = 0;
@@ -212,8 +214,10 @@ long sys_flock(int fd, int operation) {
      * other I/O syscalls already use (read, write, ioctl, fchmod,
      * ftruncate, fadvise, fallocate, vmsplice) so the contract is
      * uniform across the syscall layer. */
-    if (file->flags & O_PATH)
+    if (file->flags & O_PATH) {
+        fut_file_put(file);
         return -EBADF;
+    }
 
     /* Phase 2: Categorize operation */
     int op = local_operation & ~LOCK_NB;
@@ -270,6 +274,7 @@ long sys_flock(int fd, int operation) {
         msg[pos] = '\0';
         fut_printf("%s", msg);
 
+        fut_file_put(file);
         return -EINVAL;
     }
 
@@ -278,6 +283,7 @@ long sys_flock(int fd, int operation) {
     if (!vnode) {
         fut_printf("[FLOCK] flock(fd=%d, operation=%s%s) -> EBADF (no vnode)\n",
                    local_fd, op_name, is_nonblock ? "|LOCK_NB" : "");
+        fut_file_put(file);
         return -EBADF;
     }
 
@@ -293,6 +299,7 @@ long sys_flock(int fd, int operation) {
             fut_printf("[FLOCK] flock(fd=%d [%s], operation=%s%s, pid=%u) -> %d (%s, Phase 3)\n",
                        local_fd, fd_category, op_name, is_nonblock ? "|LOCK_NB" : "",
                        pid, ret, error_desc);
+            fut_file_put(file);
             return ret;
         }
     } else if (op == LOCK_EX) {
@@ -303,6 +310,7 @@ long sys_flock(int fd, int operation) {
             fut_printf("[FLOCK] flock(fd=%d [%s], operation=%s%s, pid=%u) -> %d (%s, Phase 3)\n",
                        local_fd, fd_category, op_name, is_nonblock ? "|LOCK_NB" : "",
                        pid, ret, error_desc);
+            fut_file_put(file);
             return ret;
         }
     } else if (op == LOCK_UN) {
@@ -311,6 +319,7 @@ long sys_flock(int fd, int operation) {
         if (ret < 0) {
             fut_printf("[FLOCK] flock(fd=%d [%s], operation=%s, pid=%u) -> %d (unlock failed, Phase 3)\n",
                        local_fd, fd_category, op_name, pid, ret);
+            fut_file_put(file);
             return ret;
         }
     }
@@ -334,5 +343,6 @@ long sys_flock(int fd, int operation) {
     (void)fd_category; (void)op_name; (void)is_nonblock;
     (void)pid; (void)lock_state; (void)lock_count; (void)lock_owner;
 
+    fut_file_put(file);
     return 0;
 }

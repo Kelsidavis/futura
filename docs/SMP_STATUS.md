@@ -85,14 +85,38 @@ get + single-exit put.
 
 ## Remaining blockers for `smp_sched` default-on
 
-### A. fd-resolvers on the bare loader — hot paths DONE, sweep ongoing
+### A. fd-resolvers on the bare loader — two tranches done, one left
 The `struct fut_file` UAF class (a bare `fd_table[fd]` load raced by a
-concurrent `close()` on another CPU) is fixed for the hot in-VFS
-paths: `read`, `write` (`2e5cde2c`), and `lseek`, `mmap`, `open_at`,
-`resolve_at` (`6ea92d97`), all via `fut_file_get`/`fut_file_put`.
-Still on the bare loader: the legacy `get_file()` helper (readdir) and
-the many fd-resolvers in `kernel/sys_*.c` reached through the public
-`vfs_get_file_from_task` wrapper — a broader mechanical follow-up.
+concurrent `close()` on another CPU) is fixed for:
+- the hot in-VFS paths: `read`, `write` (`2e5cde2c`), and `lseek`,
+  `mmap`, `open_at`, `resolve_at` (`6ea92d97`);
+- every dereferencing caller of the `vfs_get_file_from_task` wrapper
+  in `kernel/sys_*.c` — pread64/pwrite64/preadv/pwritev, write/writev
+  (setuid-clear resolve), fsync/fdatasync/syncfs, flock, fchown,
+  futimens/utimensat, statx/faccessat/fstatat/openat2 (dirfd path
+  resolution), getdents64, the f*xattr family, fstatfs/fallocate,
+  splice/vmsplice/tee/sync_file_range, sendfile, copy_file_range,
+  dup/dup2/dup3, fcntl (body split into `fcntl_impl` with the file
+  pinned by the `sys_fcntl` wrapper), pidfd_getfd (cross-task resolve),
+  perf_event_open group_fd, and sendmsg SCM_RIGHTS (the fd-queue
+  in-flight ref now comes atomically from `fut_file_get`);
+- `fut_vfs_readdir_fd`, which resolved via the legacy bare `get_file()`.
+  The remaining callers of the wrapper only NULL-check the slot
+  (free-fd scans, existence probes) and cannot use-after-free.
+
+**Still on the bare loader (third tranche, not yet swept)**: the
+~45 call sites that resolve through the fd-only helpers
+`vfs_get_file(fd)` / `fut_vfs_get_file(fd)` (legacy `get_file()`:
+per-task load, then global `file_table[]` fallback) — fstat, fchmod,
+ftruncate, fadvise/readahead, epoll's fd checks, mmap's second
+resolve in sys_mmap.c, sockets (sendto/recvfrom/recvmsg/sendmmsg/
+recvmmsg), pty, pipe fcntl helpers, aio, acct, clone3 cgroup_fd,
+elf64 fd-exec, preadv2. Same conversion pattern applies; the helpers
+themselves can't take a ref without changing the contract for all
+callers at once.
+Also unswept: direct `task->fd_table[fd]` dereferences outside the
+helpers (sys_ioctl, sys_select/poll, sys_eventfd, sys_fchdir,
+sys_mqueue, sys_landlock, sys_linkat, epoll internals, …).
 
 ### B. Control-flow corruption at `-smp 4` (distinct bug, UNVALIDATABLE here)
 After the read/write fix, `-smp 4 + smp_sched` runs well past the CAP

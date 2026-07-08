@@ -266,8 +266,11 @@ ssize_t sys_write(int fd, const void *buf, size_t count) {
      * Linux gates the S_ISGID clear on S_IXGRP being set (group-executable),
      * and CAP_FSETID bypasses both. Without this, write()-then-stat() shows
      * S_ISUID still set on a regular file modified by a non-CAP user — a
-     * silent privilege-retention vector. */
-    struct fut_file *write_file = vfs_get_file_from_task(task, local_fd);
+     * silent privilege-retention vector.
+     * Hold a reference so a concurrent close() on another CPU can't
+     * free the struct while fut_vfs_write runs; dropped on every exit
+     * below (fut_file_put tolerates NULL). */
+    struct fut_file *write_file = fut_file_get(task, local_fd);
 
     /* Write to VFS */
     ssize_t ret = fut_vfs_write(local_fd, kbuf, local_count);
@@ -301,6 +304,7 @@ ssize_t sys_write(int fd, const void *buf, size_t count) {
         write_printf("[WRITE] write(fd=%d, count=%lu [%s]) -> %ld (%s)\n",
                    local_fd, local_count, size_category, ret, error_desc);
         if (kbuf_on_heap) fut_free(kbuf);
+        fut_file_put(write_file);
         return ret;
     }
 
@@ -355,5 +359,6 @@ ssize_t sys_write(int fd, const void *buf, size_t count) {
     task->io_wchar += (uint64_t)ret;
     task->io_syscw++;
 
+    fut_file_put(write_file);
     return ret;
 }

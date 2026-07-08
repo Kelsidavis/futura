@@ -68,8 +68,11 @@ long sys_fchown(int fd, uint32_t uid, uint32_t gid) {
     /* Categorize FD */
     const char *fd_category = fut_fd_category(local_fd);
 
-    /* Get the file structure from the file descriptor */
-    struct fut_file *file = vfs_get_file_from_task(task, local_fd);
+    /* Get the file structure from the file descriptor, holding a
+     * reference so a concurrent close() on another CPU can't free the
+     * file (and drop the vnode) mid-chown. Every exit below must
+     * fut_file_put(). */
+    struct fut_file *file = fut_file_get(task, local_fd);
     if (!file) {
         fut_printf("[FCHOWN] fchown(fd=%d [%s], uid=%u, gid=%u) -> EBADF (file not found)\n",
                    local_fd, fd_category, local_uid, local_gid);
@@ -77,14 +80,17 @@ long sys_fchown(int fd, uint32_t uid, uint32_t gid) {
     }
 
     /* O_PATH fds cannot be used for fchown — use fchownat instead */
-    if (file->flags & O_PATH)
+    if (file->flags & O_PATH) {
+        fut_file_put(file);
         return -EBADF;
+    }
 
     /* Get the vnode from the file */
     struct fut_vnode *vnode = file->vnode;
     if (!vnode) {
         fut_printf("[FCHOWN] fchown(fd=%d [%s], uid=%u, gid=%u) -> EBADF (no vnode)\n",
                    local_fd, fd_category, local_uid, local_gid);
+        fut_file_put(file);
         return -EBADF;
     }
 
@@ -112,6 +118,7 @@ long sys_fchown(int fd, uint32_t uid, uint32_t gid) {
                        "-> EPERM (user %u cannot change owner from %u to %u without CAP_CHOWN)\n",
                        local_fd, fd_category, vnode->ino, local_uid, uid_desc, local_gid, gid_desc,
                        task_host_uid, vnode->uid, host_uid);
+            fut_file_put(file);
             return -EPERM;
         }
         capability_status = "CAP_CHOWN (owner transfer)";
@@ -130,6 +137,7 @@ long sys_fchown(int fd, uint32_t uid, uint32_t gid) {
                            "-> EPERM (user %u cannot change group from %u to %u)\n",
                            local_fd, fd_category, vnode->ino, local_uid, uid_desc, local_gid, gid_desc,
                            task_host_uid, vnode->gid, host_gid);
+                fut_file_put(file);
                 return -EPERM;
             }
             bool member = (host_gid == task_host_gid);
@@ -146,6 +154,7 @@ long sys_fchown(int fd, uint32_t uid, uint32_t gid) {
                            "-> EPERM (user %u not a member of target group %u)\n",
                            local_fd, fd_category, vnode->ino, local_uid, uid_desc, local_gid, gid_desc,
                            task_host_uid, host_gid);
+                fut_file_put(file);
                 return -EPERM;
             }
         }
@@ -159,6 +168,7 @@ long sys_fchown(int fd, uint32_t uid, uint32_t gid) {
         fut_printf("[FCHOWN] fchown(fd=%d [%s], vnode_ino=%lu, uid=%u [%s], gid=%u [%s]) "
                    "-> ENOSYS (filesystem doesn't support setattr)\n",
                    local_fd, fd_category, vnode->ino, local_uid, uid_desc, local_gid, gid_desc);
+        fut_file_put(file);
         return -ENOSYS;
     }
 
@@ -199,6 +209,7 @@ long sys_fchown(int fd, uint32_t uid, uint32_t gid) {
                    "-> %d (%s)\n",
                    local_fd, fd_category, vnode->ino, local_uid, uid_desc, local_gid, gid_desc,
                    ret, error_desc);
+        fut_file_put(file);
         return ret;
     }
 
@@ -227,5 +238,6 @@ long sys_fchown(int fd, uint32_t uid, uint32_t gid) {
             inotify_dispatch_event(dir_path, 0x00000004 /* IN_ATTRIB */, vnode->name, 0);
     }
 
+    fut_file_put(file);
     return 0;
 }

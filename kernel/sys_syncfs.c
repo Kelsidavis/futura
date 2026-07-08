@@ -133,15 +133,22 @@ long sys_syncfs(int fd) {
         return -EBADF;
     }
 
-    /* Resolve FD to file structure */
-    struct fut_file *file = vfs_get_file_from_task(task, local_fd);
-    if (!file || !file->vnode) {
+    /* Resolve FD to file structure, holding a reference so a
+     * concurrent close() on another CPU can't free the file (and its
+     * vnode/mount) mid-sync. */
+    struct fut_file *file = fut_file_get(task, local_fd);
+    if (!file) {
+        return -EBADF;
+    }
+    if (!file->vnode) {
+        fut_file_put(file);
         return -EBADF;
     }
 
     /* Get the mount point for this vnode's filesystem */
     struct fut_mount *mount = file->vnode->mount;
     if (!mount) {
+        fut_file_put(file);
         return -EINVAL;
     }
 
@@ -150,5 +157,7 @@ long sys_syncfs(int fd) {
      * bitmaps, superblock in one pass), otherwise falls back to
      * syncing the root vnode only.
      * For ramfs this is a no-op (data already in RAM). */
-    return fut_vfs_sync_fs(mount);
+    int ret = fut_vfs_sync_fs(mount);
+    fut_file_put(file);
+    return ret;
 }

@@ -85,19 +85,33 @@ get + single-exit put.
 
 ## Remaining blockers for `smp_sched` default-on
 
-### A. Remaining fd-resolvers still use the bare loader
-`lseek`, `ioctl`, `fstat`, `sendmsg`, `recvmsg`, `getdents`, and other
-syscalls still resolve fds via `get_file_from_task` without a
-reference — same UAF class as read/write, not yet converted to
-`fut_file_get`/`fut_file_put`. Mechanical sweep.
+### A. fd-resolvers on the bare loader — hot paths DONE, sweep ongoing
+The `struct fut_file` UAF class (a bare `fd_table[fd]` load raced by a
+concurrent `close()` on another CPU) is fixed for the hot in-VFS
+paths: `read`, `write` (`2e5cde2c`), and `lseek`, `mmap`, `open_at`,
+`resolve_at` (`6ea92d97`), all via `fut_file_get`/`fut_file_put`.
+Still on the bare loader: the legacy `get_file()` helper (readdir) and
+the many fd-resolvers in `kernel/sys_*.c` reached through the public
+`vfs_get_file_from_task` wrapper — a broader mechanical follow-up.
 
-### B. Control-flow corruption at `-smp 4` (distinct bug)
+### B. Control-flow corruption at `-smp 4` (distinct bug, UNVALIDATABLE here)
 After the read/write fix, `-smp 4 + smp_sched` runs well past the CAP
 and EPOLL suites, then dies with **Invalid Opcode, RIP in kernel
 stack space** (`0x88xxxxxx`, not `.text` at `0x8020xxxx`–`0x804xxxxx`;
 the bytes at RIP are data). A return address or function pointer was
 overwritten and execution jumped into a stack page. `-smp 2` does not
-hit it. This is the current top blocker.
+hit it.
+
+**This cannot currently be reproduced reliably.** Under `-smp 4` with
+active cross-CPU IPI traffic (concurrent forks → `clone_mm` TLB
+shootdown), QEMU's own TCG hits
+`qemu_mutex_lock_iothread_impl: assertion failed` (a host emulator
+bug, cpus.c:504) and aborts — sometimes before, sometimes after the
+guest crash. `/dev/kvm` is unavailable in this environment, so there
+is no non-TCG path. Diagnosing/validating a fix for blocker B needs
+either KVM or a QEMU build without the MTTCG IPI assertion. `-smp 2`
+(which does not trigger the QEMU bug and passes cleanly) is the
+reliable ceiling here.
 
 ## Debugging notes
 

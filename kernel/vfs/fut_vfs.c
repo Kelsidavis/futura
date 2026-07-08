@@ -2641,38 +2641,45 @@ int fut_vfs_open_at(fut_task_t *task, int dirfd, const char *path, int flags, in
         return -EBADF;
     }
 
-    struct fut_file *dir_file = get_file_from_task(task, dirfd);
+    /* Hold a ref while we read dir_file->vnode/->path; a concurrent
+     * close(dirfd) on another CPU could otherwise free it mid-use.
+     * The path is copied into a local buffer and the ref dropped
+     * before the heavy fut_vfs_open, so the ref isn't held across it. */
+    struct fut_file *dir_file = fut_file_get(task, dirfd);
     if (!dir_file) {
         return -EBADF;
     }
 
     if (!dir_file->vnode || dir_file->vnode->type != VN_DIR) {
+        fut_file_put(dir_file);
         return -ENOTDIR;
     }
 
-    /* We need the directory's path to combine with the relative path.
-     * Use the stored file->path if available. */
-    if (!dir_file->path) {
-        /* No path stored - fall back to treating relative path as CWD-relative */
-        return fut_vfs_open(path, flags, mode);
-    }
-
-    /* Combine dir_path + "/" + rel_path into an absolute path */
+    const char *open_path = path;
     char combined[FUT_VFS_PATH_BUFFER_SIZE];
-    size_t dir_len = strlen(dir_file->path);
-    size_t rel_len = strlen(path);
-    bool has_trail = (dir_len > 0 && dir_file->path[dir_len - 1] == '/');
-    size_t total = dir_len + (has_trail ? 0 : 1) + rel_len;
-    if (total >= FUT_VFS_PATH_BUFFER_SIZE) {
-        return -ENAMETOOLONG;
-    }
-    size_t i = 0;
-    for (size_t j = 0; j < dir_len; j++) combined[i++] = dir_file->path[j];
-    if (!has_trail) combined[i++] = '/';
-    for (size_t j = 0; j < rel_len; j++) combined[i++] = path[j];
-    combined[i] = '\0';
 
-    return fut_vfs_open(combined, flags, mode);
+    /* Combine dir_path + "/" + rel_path into an absolute path when the
+     * directory has a stored path; otherwise fall back to treating the
+     * relative path as CWD-relative. */
+    if (dir_file->path) {
+        size_t dir_len = strlen(dir_file->path);
+        size_t rel_len = strlen(path);
+        bool has_trail = (dir_len > 0 && dir_file->path[dir_len - 1] == '/');
+        size_t total = dir_len + (has_trail ? 0 : 1) + rel_len;
+        if (total >= FUT_VFS_PATH_BUFFER_SIZE) {
+            fut_file_put(dir_file);
+            return -ENAMETOOLONG;
+        }
+        size_t i = 0;
+        for (size_t j = 0; j < dir_len; j++) combined[i++] = dir_file->path[j];
+        if (!has_trail) combined[i++] = '/';
+        for (size_t j = 0; j < rel_len; j++) combined[i++] = path[j];
+        combined[i] = '\0';
+        open_path = combined;
+    }
+
+    fut_file_put(dir_file);
+    return fut_vfs_open(open_path, flags, mode);
 }
 
 int fut_vfs_resolve_at(fut_task_t *task, int dirfd, const char *path, char *out, size_t out_size) {
@@ -2695,23 +2702,30 @@ int fut_vfs_resolve_at(fut_task_t *task, int dirfd, const char *path, char *out,
         return -EBADF;
     }
 
-    struct fut_file *dir_file = get_file_from_task(task, dirfd);
+    /* Hold a ref while reading dir_file->vnode/->path (SMP UAF vs a
+     * concurrent close(dirfd)). Single exit via out: drops it. */
+    struct fut_file *dir_file = fut_file_get(task, dirfd);
     if (!dir_file) {
         return -EBADF;
     }
 
+    int rc;
+
     if (!dir_file->vnode || dir_file->vnode->type != VN_DIR) {
-        return -ENOTDIR;
+        rc = -ENOTDIR;
+        goto out;
     }
 
     if (!dir_file->path) {
         /* No path stored - copy relative path as-is (best-effort) */
         size_t len = strlen(path);
         if (len >= out_size) {
-            return -ENAMETOOLONG;
+            rc = -ENAMETOOLONG;
+            goto out;
         }
         memcpy(out, path, len + 1);
-        return 0;
+        rc = 0;
+        goto out;
     }
 
     /* Combine dir_path + "/" + rel_path */
@@ -2720,14 +2734,18 @@ int fut_vfs_resolve_at(fut_task_t *task, int dirfd, const char *path, char *out,
     bool has_trail = (dir_len > 0 && dir_file->path[dir_len - 1] == '/');
     size_t total = dir_len + (has_trail ? 0 : 1) + rel_len;
     if (total >= out_size) {
-        return -ENAMETOOLONG;
+        rc = -ENAMETOOLONG;
+        goto out;
     }
     size_t i = 0;
     for (size_t j = 0; j < dir_len; j++) out[i++] = dir_file->path[j];
     if (!has_trail) out[i++] = '/';
     for (size_t j = 0; j < rel_len; j++) out[i++] = path[j];
     out[i] = '\0';
-    return 0;
+    rc = 0;
+out:
+    fut_file_put(dir_file);
+    return rc;
 }
 
 ssize_t fut_vfs_read(int fd, void *buf, size_t size) {
@@ -3171,10 +3189,14 @@ int64_t fut_vfs_lseek(int fd, int64_t offset, int whence) {
         return -ESRCH;
     }
 
-    struct fut_file *file = get_file_from_task(task, fd);
+    /* Hold a ref so a concurrent close() can't free the struct while
+     * we read/update file->offset (SMP UAF). Single exit via out:. */
+    struct fut_file *file = fut_file_get(task, fd);
     if (!file) {
         return -EBADF;
     }
+
+    int64_t rc;
 
     /* Non-seekable chr_ops files return ESPIPE per POSIX.
      * Pipes use O_RDONLY/O_WRONLY (set by pipe()/pipe2()).
@@ -3185,8 +3207,10 @@ int64_t fut_vfs_lseek(int fd, int64_t offset, int whence) {
     if ((file->chr_ops && !file->vnode &&
          ((file->flags & O_ACCMODE) != O_RDWR ||
           (file->flags & FUT_F_UNSEEKABLE))) ||
-        (file->vnode && file->vnode->type == VN_FIFO))
-        return -ESPIPE;
+        (file->vnode && file->vnode->type == VN_FIFO)) {
+        rc = -ESPIPE;
+        goto out;
+    }
 
     uint64_t new_offset = file->offset;
 
@@ -3201,8 +3225,7 @@ int64_t fut_vfs_lseek(int fd, int64_t offset, int whence) {
 
     switch (whence) {
     case SEEK_SET:
-        if (offset < 0)
-            return -EINVAL;
+        if (offset < 0) { rc = -EINVAL; goto out; }
         new_offset = (uint64_t)offset;
         break;
     case SEEK_CUR:
@@ -3216,23 +3239,22 @@ int64_t fut_vfs_lseek(int fd, int64_t offset, int whence) {
     case SEEK_DATA:
         /* Dense file: every byte in [0, size) is data.
          * ENXIO if offset >= file_size; otherwise position = offset. */
-        if (offset < 0)
-            return -EINVAL;
-        if (!file->vnode || (uint64_t)offset >= file->vnode->size)
-            return -ENXIO;
+        if (offset < 0) { rc = -EINVAL; goto out; }
+        if (!file->vnode || (uint64_t)offset >= file->vnode->size) { rc = -ENXIO; goto out; }
         file->offset = (uint64_t)offset;
-        return offset;
+        rc = offset;
+        goto out;
     case SEEK_HOLE:
         /* Dense file: only hole is the implicit one at EOF (== file_size).
          * ENXIO if offset > file_size; otherwise position = file_size. */
-        if (offset < 0)
-            return -EINVAL;
-        if (!file->vnode || (uint64_t)offset > file->vnode->size)
-            return -ENXIO;
+        if (offset < 0) { rc = -EINVAL; goto out; }
+        if (!file->vnode || (uint64_t)offset > file->vnode->size) { rc = -ENXIO; goto out; }
         file->offset = file->vnode->size;
-        return (int64_t)file->vnode->size;
+        rc = (int64_t)file->vnode->size;
+        goto out;
     default:
-        return -EINVAL;
+        rc = -EINVAL;
+        goto out;
     }
 
     /* Validate resulting offset is representable in off_t.
@@ -3240,11 +3262,15 @@ int64_t fut_vfs_lseek(int fd, int64_t offset, int whence) {
      * to large uint64_t) and overflow past INT64_MAX.
      * POSIX: EOVERFLOW when resulting offset cannot be represented in off_t. */
     if (new_offset > (uint64_t)INT64_MAX) {
-        return -EOVERFLOW;
+        rc = -EOVERFLOW;
+        goto out;
     }
 
     file->offset = new_offset;
-    return (int64_t)new_offset;
+    rc = (int64_t)new_offset;
+out:
+    fut_file_put(file);
+    return rc;
 }
 
 int fut_vfs_stat(const char *path, struct fut_stat *stat) {
@@ -3396,7 +3422,10 @@ void *fut_vfs_mmap(int fd, void *addr, size_t len, int prot, int flags, off_t of
         return (void *)(intptr_t)(-EPERM);
     }
 
-    struct fut_file *file = get_file_from_task(task, fd);
+    /* Hold a ref across the mapping setup so a concurrent close() on
+     * another CPU can't free the struct while we read its flags/seals
+     * and hand its vnode to fut_mm_map_file (SMP UAF). Single exit. */
+    struct fut_file *file = fut_file_get(task, fd);
     if (!file) {
         fut_printf("[VFS-MMAP] fd=%d not found in task pid=%llu fd_table (max_fds=%d)\n",
                    fd,
@@ -3405,16 +3434,20 @@ void *fut_vfs_mmap(int fd, void *addr, size_t len, int prot, int flags, off_t of
         return (void *)(intptr_t)(-EBADF);
     }
 
+    void *ret;
+
     /* POSIX: MAP_SHARED + PROT_WRITE on a read-only fd must fail with EACCES.
      * Also reject if fd is not open for reading at all. */
     {
         int acc = file->flags & O_ACCMODE;
         if (acc == O_WRONLY) {
             /* Cannot read-map a write-only fd */
-            return (void *)(intptr_t)(-EACCES);
+            ret = (void *)(intptr_t)(-EACCES);
+            goto out;
         }
         if ((prot & PROT_WRITE) && (flags & MAP_SHARED) && acc == O_RDONLY) {
-            return (void *)(intptr_t)(-EACCES);
+            ret = (void *)(intptr_t)(-EACCES);
+            goto out;
         }
     }
 
@@ -3424,29 +3457,39 @@ void *fut_vfs_mmap(int fd, void *addr, size_t len, int prot, int flags, off_t of
      *   (existing mappings may keep writing, but new ones are denied).
      * F_SEAL_SEAL (0x0001): does not affect mmap directly. */
     if (file->seals) {
-        if ((file->seals & 0x0008 /* F_SEAL_WRITE */) && (prot & PROT_WRITE))
-            return (void *)(intptr_t)(-EPERM);
+        if ((file->seals & 0x0008 /* F_SEAL_WRITE */) && (prot & PROT_WRITE)) {
+            ret = (void *)(intptr_t)(-EPERM);
+            goto out;
+        }
         if ((file->seals & 0x0010 /* F_SEAL_FUTURE_WRITE */) &&
-            (prot & PROT_WRITE) && (flags & MAP_SHARED))
-            return (void *)(intptr_t)(-EPERM);
+            (prot & PROT_WRITE) && (flags & MAP_SHARED)) {
+            ret = (void *)(intptr_t)(-EPERM);
+            goto out;
+        }
     }
 
     /* Character devices may have custom mmap implementations */
     if (file->chr_ops && file->chr_ops->mmap) {
-        return file->chr_ops->mmap(file->chr_inode, file->chr_private, addr, len, off, prot, flags);
+        ret = file->chr_ops->mmap(file->chr_inode, file->chr_private, addr, len, off, prot, flags);
+        goto out;
     }
 
     /* Regular files: use generic file-backed mmap */
     if (file->vnode) {
         fut_mm_t *mm = fut_mm_current();
         if (!mm) {
-            return (void *)(intptr_t)(-ENOMEM);
+            ret = (void *)(intptr_t)(-ENOMEM);
+            goto out;
         }
 
-        return fut_mm_map_file(mm, file->vnode, (uintptr_t)addr, len, prot, flags, (uint64_t)off);
+        ret = fut_mm_map_file(mm, file->vnode, (uintptr_t)addr, len, prot, flags, (uint64_t)off);
+        goto out;
     }
 
-    return (void *)(intptr_t)(-ENODEV);
+    ret = (void *)(intptr_t)(-ENODEV);
+out:
+    fut_file_put(file);
+    return ret;
 }
 
 /* ============================================================

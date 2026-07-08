@@ -12,6 +12,10 @@
 #include <kernel/signal.h>
 #include <kernel/fut_siginfo.h>
 #include <kernel/kprintf.h>
+/* Own the ARM64 exception-frame layout in one place.  The C frame must
+ * stay ABI-compatible with arm64_exception_entry.S, so handlers use the
+ * shared regs.h definition instead of a private duplicate. */
+#include <platform/arm64/regs.h>
 /* Forward declarations to avoid header conflicts */
 typedef struct fut_task fut_task_t;
 typedef struct fut_thread fut_thread_t;
@@ -39,46 +43,18 @@ extern int fut_trap_handle_page_fault(void *frame);
 extern void fut_task_signal_exit(int signal);
 extern struct fut_task *fut_task_current(void);
 
-/* Exception frame structure (matches arm64_exception_entry.S) */
-typedef struct {
-    uint64_t x[31];             /* x0-x30 */
-    uint64_t sp;                /* Stack pointer */
-    uint64_t pc;                /* Program counter (ELR_EL1) */
-    uint64_t pstate;            /* Processor state (SPSR_EL1) */
-    uint64_t esr;               /* Exception syndrome register */
-    uint64_t far;               /* Fault address register */
-    uint64_t fpu_state[64];     /* FPU/SIMD registers */
-    uint32_t fpsr;              /* FP status register */
-    uint32_t fpcr;              /* FP control register */
-    uint64_t sp_el0;            /* SP_EL0: user mode stack pointer (offset 808) */
-    uint64_t ttbr0_el1;         /* TTBR0_EL1: user page table base (offset 816) */
-} fut_interrupt_frame_t;
-
-/* Per-CPU interrupt frame pointer (used by fork to clone context).
- * The local fut_interrupt_frame_t typedef is layout-compatible with
- * the kernel-wide struct fut_interrupt_frame (regs.h); the casts at
- * the accessor call sites are the same type-punning the old extern
- * global relied on. */
+/* Per-CPU interrupt frame pointer (used by fork to clone context). */
 #include <kernel/fut_percpu.h>
 #define arm64_set_current_frame(f) \
-    fut_cpu_set_current_frame((struct fut_interrupt_frame *)(f))
+    fut_cpu_set_current_frame(f)
 
-/* ESR_EL1 exception class codes */
-#define ESR_EC_SHIFT        26
-#define ESR_EC_MASK         0x3F
-#define ESR_EC_SVC64        0x15    /* SVC from AArch64 state */
-#define ESR_EC_UNKNOWN      0x00    /* Unknown exception */
-#define ESR_EC_WFX_TRAP     0x01    /* Trapped WFI/WFE instruction */
-#define ESR_EC_ILL_STATE    0x0E    /* Illegal Execution state */
-#define ESR_EC_DABT_EL0     0x24    /* Data abort from lower EL */
-#define ESR_EC_DABT_EL1     0x25    /* Data abort from same EL */
-#define ESR_EC_IABT_EL0     0x20    /* Instruction abort from lower EL */
-#define ESR_EC_IABT_EL1     0x21    /* Instruction abort from same EL */
-#define ESR_EC_BRK64        0x3C    /* BRK instruction (AArch64) — debug breakpoint */
+/* ESR_EL1 exception classes not yet named by regs.h. */
+#define ESR_EC_ILL_STATE    0x0E
+#define ESR_EC_BRK64        0x3C
 
 /* Extract exception class from ESR */
 static inline uint32_t esr_get_ec(uint64_t esr) {
-    return (esr >> ESR_EC_SHIFT) & ESR_EC_MASK;
+    return ESR_EC(esr);
 }
 
 /* Deliver signum to a user-mode exception frame.
@@ -252,11 +228,11 @@ static void handle_unknown(fut_interrupt_frame_t *frame) {
  * - Bit [24:0]: Instruction-Specific Syndrome (ISS) - details about the exception
  *
  * Exception Classes Handled:
- * - ESR_EC_SVC64 (0x15): Supervisor Call (syscall) from AArch64
+ * - ESR_EC_SVC_AARCH64 (0x15): Supervisor Call (syscall) from AArch64
  * - ESR_EC_DABT_* (0x24-0x25): Data Abort (page fault, permission, alignment)
  * - ESR_EC_IABT_* (0x20-0x21): Instruction Abort (TLB miss, permissions)
  * - ESR_EC_UNKNOWN (0x00): Unknown/undefined exception
- * - ESR_EC_WFX_TRAP (0x01): Trapped WFI/WFE instruction
+ * - ESR_EC_WFI_WFE (0x01): Trapped WFI/WFE instruction
  * - ESR_EC_ILL_STATE (0x0E): Illegal execution state
  *
  * Exception Handling Flow:
@@ -319,12 +295,12 @@ void arm64_exception_dispatch(fut_interrupt_frame_t *frame) {
     uint32_t ec = esr_get_ec(esr);
 
     switch (ec) {
-        case ESR_EC_SVC64:
+        case ESR_EC_SVC_AARCH64:
             handle_svc(frame);
             break;
 
-        case ESR_EC_DABT_EL0:
-        case ESR_EC_DABT_EL1:
+        case ESR_EC_DABT_LOWER:
+        case ESR_EC_DABT_CURRENT:
             /* Try to handle as a normal page fault first.  Demand-paging
              * faults can hit thousands of times per process startup; the
              * verbose per-fault tracing that used to live above this
@@ -334,7 +310,7 @@ void arm64_exception_dispatch(fut_interrupt_frame_t *frame) {
                 break;  /* Handled successfully — silent fast path */
             }
 
-            if (ec == ESR_EC_DABT_EL0) {
+            if (ec == ESR_EC_DABT_LOWER) {
                 fut_serial_puts("[EXCEPTION] Data abort from lower EL (userspace)\n");
                 /* Debug: Read MMU configuration registers and saved TTBR0 from frame */
                 uint64_t ttbr0_current, ttbr1, tcr, mair, sctlr;
@@ -402,7 +378,7 @@ void arm64_exception_dispatch(fut_interrupt_frame_t *frame) {
                        (unsigned long long)frame->sp, (unsigned long long)frame->x[30]);
             fut_printf("[DATA-ABORT-DEBUG] X0=0x%016llx X1=0x%016llx\n",
                        (unsigned long long)frame->x[0], (unsigned long long)frame->x[1]);
-            if (ec == ESR_EC_DABT_EL1) {
+            if (ec == ESR_EC_DABT_CURRENT) {
                 /* Kernel data abort — kill the offending thread and let the
                  * scheduler run something else.  We deliberately do NOT call
                  * fut_task_exit_current() here: that path tears down the
@@ -453,7 +429,7 @@ void arm64_exception_dispatch(fut_interrupt_frame_t *frame) {
                                            (void *)(uintptr_t)frame->far);
             break;
 
-        case ESR_EC_IABT_EL0:
+        case ESR_EC_IABT_LOWER:
             fut_serial_puts("[EXCEPTION] Instruction abort from lower EL (userspace)\n");
             /* Instruction fetch fault: page not mapped or not executable.
              * Try demand-paging first (executable mapping may not be loaded). */
@@ -465,7 +441,7 @@ void arm64_exception_dispatch(fut_interrupt_frame_t *frame) {
                                            (void *)(uintptr_t)frame->pc);
             break;
 
-        case ESR_EC_IABT_EL1:
+        case ESR_EC_IABT_CURRENT:
             fut_serial_puts("[EXCEPTION] Instruction abort from same EL (kernel)\n");
             handle_unknown(frame);
             break;
@@ -489,7 +465,7 @@ void arm64_exception_dispatch(fut_interrupt_frame_t *frame) {
             /* Kernel-mode BRK — fall through to unknown handling. */
             /* fallthrough */
         case ESR_EC_UNKNOWN:
-        case ESR_EC_WFX_TRAP:
+        case ESR_EC_WFI_WFE:
         case ESR_EC_ILL_STATE:
             fut_serial_puts("[EXCEPTION] EC=0x");
             {
@@ -502,7 +478,7 @@ void arm64_exception_dispatch(fut_interrupt_frame_t *frame) {
             }
             fut_serial_puts(" (");
             if (ec == ESR_EC_UNKNOWN) fut_serial_puts("Unknown/Undefined");
-            else if (ec == ESR_EC_WFX_TRAP) fut_serial_puts("Trapped WFI/WFE");
+            else if (ec == ESR_EC_WFI_WFE) fut_serial_puts("Trapped WFI/WFE");
             else if (ec == ESR_EC_ILL_STATE) fut_serial_puts("Illegal Execution State");
             fut_serial_puts(")\n");
 
@@ -604,4 +580,3 @@ void arm64_handle_serror(fut_interrupt_frame_t *frame) {
         __asm__ volatile("wfi");
     }
 }
-

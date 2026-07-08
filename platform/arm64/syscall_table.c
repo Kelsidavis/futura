@@ -22,6 +22,7 @@
 #include <kernel/signal.h>
 #include <kernel/fut_task.h>
 #include <kernel/kprintf.h>
+#include <kernel/fut_percpu.h>
 #include <shared/fut_sigevent.h>  /* For struct sigevent, timer_t */
 /* struct fut_stat is provided by kernel/fut_vfs.h (included above) */
 #include <sys/uio.h>              /* For struct iovec */
@@ -1167,23 +1168,24 @@ static int64_t sys_rt_sigreturn_wrapper(uint64_t arg0, uint64_t arg1, uint64_t a
      * Instead, it modifies the exception frame that will be restored by
      * the exception entry code. The return value is ignored.
      *
-     * The exception frame (fut_interrupt_frame_t) is available globally
-     * and has been set by the exception handler before syscall dispatch.
+     * The exception frame (fut_interrupt_frame_t) is per-CPU state,
+     * set by the exception handler before syscall dispatch.
      */
-    extern fut_interrupt_frame_t *fut_current_frame;
+    fut_interrupt_frame_t *cur_frame =
+        (fut_interrupt_frame_t *)fut_cpu_current_frame();
     extern int fut_copy_from_user(void *to, const void *from, size_t size);
     extern int fut_signal_procmask(struct fut_task *task, int how,
                                    const sigset_t *set, sigset_t *oldset);
     extern struct fut_task *fut_task_current(void);
 
-    if (!fut_current_frame) {
+    if (!cur_frame) {
         return -EFAULT;  /* No frame available - shouldn't happen */
     }
 
     /* The signal frame was pushed onto the user stack.
      * The SP register in the current frame points to the rt_sigframe.
      */
-    uint64_t user_sp = fut_current_frame->sp;
+    uint64_t user_sp = cur_frame->sp;
     struct rt_sigframe {
         siginfo_t info;
         ucontext_t uc;
@@ -1199,24 +1201,24 @@ static int64_t sys_rt_sigreturn_wrapper(uint64_t arg0, uint64_t arg1, uint64_t a
 
     /* Restore general purpose registers x0-x30 from saved context */
     for (int i = 0; i < 31; i++) {
-        fut_current_frame->x[i] = local_frame.uc.uc_mcontext.gregs.x[i];
+        cur_frame->x[i] = local_frame.uc.uc_mcontext.gregs.x[i];
     }
 
     /* Restore special registers */
-    fut_current_frame->sp = local_frame.uc.uc_mcontext.gregs.sp;
-    fut_current_frame->pc = local_frame.uc.uc_mcontext.gregs.pc;
-    fut_current_frame->pstate = local_frame.uc.uc_mcontext.gregs.pstate;
-    fut_current_frame->far = local_frame.uc.uc_mcontext.gregs.fault_address;
+    cur_frame->sp = local_frame.uc.uc_mcontext.gregs.sp;
+    cur_frame->pc = local_frame.uc.uc_mcontext.gregs.pc;
+    cur_frame->pstate = local_frame.uc.uc_mcontext.gregs.pstate;
+    cur_frame->far = local_frame.uc.uc_mcontext.gregs.fault_address;
 
     /* Restore NEON/SIMD registers v0-v31 */
     for (int i = 0; i < 32; i++) {
-        fut_current_frame->fpu_state[2*i] = (uint64_t)(local_frame.uc.uc_mcontext.gregs.v[i] & 0xFFFFFFFFFFFFFFFFULL);
-        fut_current_frame->fpu_state[2*i+1] = (uint64_t)((local_frame.uc.uc_mcontext.gregs.v[i] >> 64) & 0xFFFFFFFFFFFFFFFFULL);
+        cur_frame->fpu_state[2*i] = (uint64_t)(local_frame.uc.uc_mcontext.gregs.v[i] & 0xFFFFFFFFFFFFFFFFULL);
+        cur_frame->fpu_state[2*i+1] = (uint64_t)((local_frame.uc.uc_mcontext.gregs.v[i] >> 64) & 0xFFFFFFFFFFFFFFFFULL);
     }
 
     /* Restore floating point control registers */
-    fut_current_frame->fpsr = local_frame.uc.uc_mcontext.gregs.fpsr;
-    fut_current_frame->fpcr = local_frame.uc.uc_mcontext.gregs.fpcr;
+    cur_frame->fpsr = local_frame.uc.uc_mcontext.gregs.fpsr;
+    cur_frame->fpcr = local_frame.uc.uc_mcontext.gregs.fpcr;
 
     /* Restore signal mask */
     struct fut_task *current = fut_task_current();

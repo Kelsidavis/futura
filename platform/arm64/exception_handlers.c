@@ -54,8 +54,14 @@ typedef struct {
     uint64_t ttbr0_el1;         /* TTBR0_EL1: user page table base (offset 816) */
 } fut_interrupt_frame_t;
 
-/* Global interrupt frame pointer (used by fork to clone context) */
-extern fut_interrupt_frame_t *fut_current_frame;
+/* Per-CPU interrupt frame pointer (used by fork to clone context).
+ * The local fut_interrupt_frame_t typedef is layout-compatible with
+ * the kernel-wide struct fut_interrupt_frame (regs.h); the casts at
+ * the accessor call sites are the same type-punning the old extern
+ * global relied on. */
+#include <kernel/fut_percpu.h>
+#define arm64_set_current_frame(f) \
+    fut_cpu_set_current_frame((struct fut_interrupt_frame *)(f))
 
 /* ESR_EL1 exception class codes */
 #define ESR_EC_SHIFT        26
@@ -111,7 +117,7 @@ static void arm64_deliver_exception_signal(fut_interrupt_frame_t *frame,
  *
  * Frame Pointer for Fork:
  * - fork() needs to clone the parent's entire register context
- * - fut_current_frame global points to the exception frame
+ * - the per-CPU current_frame points to the exception frame
  * - The child process restarts with the same register state
  *
  * Signal Delivery:
@@ -126,7 +132,7 @@ static void arm64_deliver_exception_signal(fut_interrupt_frame_t *frame,
  */
 static void handle_svc(fut_interrupt_frame_t *frame) {
     /* Save frame pointer for fork (needs to clone parent's register state) */
-    fut_current_frame = frame;
+    arm64_set_current_frame(frame);
 
     /* Extract syscall number and arguments from frame
      * ARM64 POSIX ABI: syscall# in x8, args in x0-x5
@@ -164,7 +170,7 @@ static void handle_svc(fut_interrupt_frame_t *frame) {
     }
 
     /* Clear frame pointer after syscall completes */
-    fut_current_frame = NULL;
+    arm64_set_current_frame(NULL);
 
     /* PC already points to instruction after SVC, so just return
      * ERET will return to EL0 to continue execution (or jump to signal handler)
@@ -573,9 +579,9 @@ void arm64_handle_irq(fut_interrupt_frame_t *frame) {
     if ((frame->pstate & 0xF) == 0) {
         struct fut_task *task = fut_task_current();
         if (task) {
-            fut_current_frame = frame;
+            arm64_set_current_frame(frame);
             fut_signal_deliver(task, frame);
-            fut_current_frame = NULL;
+            arm64_set_current_frame(NULL);
         }
     }
 }

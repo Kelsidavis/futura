@@ -460,7 +460,7 @@
 #include <sys/resource.h>
 #include <sched.h>
 #include <kernel/debug_config.h>
-extern fut_interrupt_frame_t *fut_current_frame;
+#include <kernel/fut_percpu.h>
 
 /* Total fork count since boot (used by /proc/stat "processes" field) */
 uint64_t g_total_forks = 0;
@@ -880,10 +880,9 @@ static __attribute__((noreturn)) void fork_child_return(void *arg) {
  */
 long sys_fork(void) {
     /* Save the interrupt frame pointer NOW, before any context switches
-     * can clear the global. clone_mm may yield during VMA cloning,
-     * which triggers context switches that overwrite fut_current_frame. */
-    extern fut_interrupt_frame_t *fut_current_frame;
-    fut_interrupt_frame_t *saved_frame = fut_current_frame;
+     * can clear it. clone_mm may yield during VMA cloning, which
+     * triggers context switches that clear this CPU's current_frame. */
+    fut_interrupt_frame_t *saved_frame = fut_cpu_current_frame();
 
     fut_thread_t *parent_thread = fut_thread_current();
     if (!parent_thread) {
@@ -1745,7 +1744,7 @@ static fut_thread_t *clone_thread(fut_thread_t *parent_thread, fut_task_t *child
     }
 
     /* Use the frame saved at sys_fork entry (before any context switches).
-     * The global fut_current_frame can be cleared by context switches
+     * The per-CPU current_frame can be cleared by context switches
      * during clone_mm's VMA cloning yield. */
     fut_interrupt_frame_t *frame = saved_frame;
     if (!frame) {
@@ -2003,7 +2002,7 @@ long sys_clone_thread(uint64_t flags, uint64_t child_stack,
 #endif
 
     /* Snapshot the interrupt frame before any potential context switches */
-    fut_interrupt_frame_t *saved_frame = fut_current_frame;
+    fut_interrupt_frame_t *saved_frame = fut_cpu_current_frame();
     if (!saved_frame)
         return -EINVAL;
 

@@ -934,6 +934,17 @@ void fut_platform_init(uint32_t multiboot_magic __attribute__((unused)),
     pat_init();
     fut_mm_system_init();
 
+    /* Bootstrap GS base to the BSP's per-CPU slot BEFORE the IDT goes
+     * live. The ISR stubs track IRQ-context state via
+     * %gs:PERCPU_OFFSET_IN_INTERRUPT / _CURRENT_FRAME; with GS base
+     * still 0, any early interrupt or exception would write those
+     * offsets into low physical memory. Full per-CPU init (APIC ID,
+     * queue lock, …) still happens later in kernel_main — this only
+     * stamps the self-pointer so GS-relative access lands in the
+     * right structure. */
+    fut_percpu_data[0].self = &fut_percpu_data[0];
+    fut_percpu_set(&fut_percpu_data[0]);
+
     /* Initialize and load IDT */
     fut_serial_puts("[INIT] Initializing IDT...\n");
     fut_idt_init();

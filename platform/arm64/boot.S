@@ -154,6 +154,12 @@ el2_to_el1:
 setup_el1:
     /* We're now at EL1 */
 
+    /* Zero TPIDR_EL1 — UNKNOWN at reset. The per-CPU accessors
+     * (fut_percpu_get) treat NULL as "not yet initialized" and fall
+     * back to the BSP slot; a garbage reset value would instead be
+     * dereferenced as a fut_percpu_t pointer. */
+    msr     tpidr_el1, xzr
+
     /* Set up exception vector table */
     adr     x0, exception_vectors
     msr     vbar_el1, x0
@@ -1177,7 +1183,6 @@ fut_fiq_handler:
 .extern _stack_top
 .extern _bss_start
 .extern _bss_end
-.extern fut_in_interrupt
 
 /* ============================================================
  *   Runtime kernel-load metadata

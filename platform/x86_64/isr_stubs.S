@@ -5,6 +5,14 @@
  * Interrupt Service Routine stubs with full 64-bit register preservation
  */
 
+/* Per-CPU field offsets — MUST stay in sync with the PERCPU_OFFSET_*
+ * constants in include/kernel/fut_percpu.h. IRQ-context state is
+ * per-CPU (accessed via %gs) so one CPU's interrupt entry can never
+ * clobber another CPU's scheduler decisions. GS base is programmed
+ * before the IDT is loaded (platform_init) and never changes. */
+.equ PERCPU_IN_INTERRUPT,  120
+.equ PERCPU_CURRENT_FRAME, 128
+
 .section .text
 
 .extern fut_early_trap_marker
@@ -95,8 +103,6 @@ IRQ 15, 47                              /* Secondary ATA */
 
 /* System call interrupt (128) */
 .extern syscall_entry_c
-.extern fut_in_interrupt
-.extern fut_current_frame
 .global isr_syscall_int80_stub
 .type isr_syscall_int80_stub, @function
 isr_syscall_int80_stub:
@@ -202,8 +208,8 @@ isr_syscall_int80_stub:
      * will see in_irq=true in fut_schedule() and incorrectly use the IRETQ
      * path, saving this INT 0x80 frame (RAX=syscall_number) as irq_frame.
      * When later restored via IRETQ, RAX=syscall_number goes to userspace. */
-    movb $0, fut_in_interrupt(%rip)   /* Clear stale flag (see comment above) */
-    movq %rsp, fut_current_frame(%rip)
+    movq $0, %gs:PERCPU_IN_INTERRUPT   /* Clear stale flag (see comment above) */
+    movq %rsp, %gs:PERCPU_CURRENT_FRAME
 
     /* Extract syscall arguments from saved registers
      * User syscall convention: RAX=syscall#, RDI=arg1, RSI=arg2, RDX=arg3, R10=arg4, R8=arg5, R9=arg6
@@ -240,7 +246,7 @@ isr_syscall_int80_stub:
     /* Clear fut_current_frame to prevent stale pointer usage.
      * fut_in_interrupt was NOT set for INT 0x80 (see entry comment), so
      * no need to clear it here. */
-    movq $0, fut_current_frame(%rip)
+    movq $0, %gs:PERCPU_CURRENT_FRAME
 
     addq $16, %rsp            /* Remove stack arguments */
 
@@ -420,8 +426,8 @@ isr_syscall_fastpath:
      * context switching. Without this, the scheduler uses cooperative switch
      * which loads from thread->context instead of thread->irq_frame, causing
      * state corruption when the next thread was previously preempted. */
-    movq %rsp, fut_current_frame(%rip)
-    movb $1, fut_in_interrupt(%rip)
+    movq %rsp, %gs:PERCPU_CURRENT_FRAME
+    movq $1, %gs:PERCPU_IN_INTERRUPT
 
     /* Extract syscall arguments from saved registers */
     movq 32(%rsp), %rdi           /* RDI = syscall number (from saved RAX) */
@@ -445,8 +451,8 @@ isr_syscall_fastpath:
 
     /* Clear interrupt context flags now that syscall is complete.
      * This must happen before we start restoring registers. */
-    movb $0, fut_in_interrupt(%rip)
-    movq $0, fut_current_frame(%rip)
+    movq $0, %gs:PERCPU_IN_INTERRUPT
+    movq $0, %gs:PERCPU_CURRENT_FRAME
 
     addq $16, %rsp                /* Remove stack arguments */
 
@@ -564,8 +570,8 @@ isr_common_stub:
      * This is critical for exceptions that may terminate threads (e.g., SIGSEGV from
      * page fault). Without this, fut_schedule() uses cooperative switch which doesn't
      * properly handle the exception frame on the stack. */
-    movq %rbp, fut_current_frame(%rip)
-    movb $1, fut_in_interrupt(%rip)
+    movq %rbp, %gs:PERCPU_CURRENT_FRAME
+    movq $1, %gs:PERCPU_IN_INTERRUPT
 
     /* Align stack to 16 bytes for System V ABI */
     andq $-16, %rsp
@@ -575,8 +581,8 @@ isr_common_stub:
     call fut_isr_handler
 
     /* Clear interrupt context flag and frame pointer */
-    movb $0, fut_in_interrupt(%rip)
-    movq $0, fut_current_frame(%rip)
+    movq $0, %gs:PERCPU_IN_INTERRUPT
+    movq $0, %gs:PERCPU_CURRENT_FRAME
 
     /* Restore stack */
     movq %rbp, %rsp
@@ -851,23 +857,23 @@ irq0_timer:
     /* GS intentionally NOT reloaded - must preserve GS_BASE MSR setup */
 
     /* Save interrupt frame pointer before stack alignment */
-    movq %rsp, fut_current_frame(%rip)
+    movq %rsp, %gs:PERCPU_CURRENT_FRAME
 
     /* Align stack to 16 bytes for System V ABI */
     movq %rsp, %rbp
     andq $-16, %rsp
 
     /* Set interrupt context flag */
-    movb $1, fut_in_interrupt(%rip)
+    movq $1, %gs:PERCPU_IN_INTERRUPT
 
     /* Call timer IRQ handler */
     call fut_timer_irq
 
     /* Clear interrupt context flag */
-    movb $0, fut_in_interrupt(%rip)
+    movq $0, %gs:PERCPU_IN_INTERRUPT
 
     /* Clear frame pointer */
-    movq $0, fut_current_frame(%rip)
+    movq $0, %gs:PERCPU_CURRENT_FRAME
 
     /* Restore stack */
     movq %rbp, %rsp
@@ -1045,14 +1051,14 @@ irq1_keyboard:
     movw %ax, %es
 
     /* Save interrupt frame pointer */
-    movq %rsp, fut_current_frame(%rip)
+    movq %rsp, %gs:PERCPU_CURRENT_FRAME
 
     /* Align stack to 16 bytes for System V ABI */
     movq %rsp, %rbp
     andq $-16, %rsp
 
     /* Set interrupt context flag */
-    movb $1, fut_in_interrupt(%rip)
+    movq $1, %gs:PERCPU_IN_INTERRUPT
 
     /* Call keyboard IRQ handler */
     call ps2_irq_keyboard
@@ -1061,10 +1067,10 @@ irq1_keyboard:
     call lapic_send_eoi
 
     /* Clear interrupt context flag */
-    movb $0, fut_in_interrupt(%rip)
+    movq $0, %gs:PERCPU_IN_INTERRUPT
 
     /* Clear frame pointer */
-    movq $0, fut_current_frame(%rip)
+    movq $0, %gs:PERCPU_CURRENT_FRAME
 
     /* Restore stack */
     movq %rbp, %rsp
@@ -1192,14 +1198,14 @@ irq12_mouse:
     movw %ax, %es
 
     /* Save interrupt frame pointer */
-    movq %rsp, fut_current_frame(%rip)
+    movq %rsp, %gs:PERCPU_CURRENT_FRAME
 
     /* Align stack to 16 bytes for System V ABI */
     movq %rsp, %rbp
     andq $-16, %rsp
 
     /* Set interrupt context flag */
-    movb $1, fut_in_interrupt(%rip)
+    movq $1, %gs:PERCPU_IN_INTERRUPT
 
     /* Call mouse IRQ handler */
     call ps2_irq_mouse
@@ -1208,10 +1214,10 @@ irq12_mouse:
     call lapic_send_eoi
 
     /* Clear interrupt context flag */
-    movb $0, fut_in_interrupt(%rip)
+    movq $0, %gs:PERCPU_IN_INTERRUPT
 
     /* Clear frame pointer */
-    movq $0, fut_current_frame(%rip)
+    movq $0, %gs:PERCPU_CURRENT_FRAME
 
     /* Restore stack */
     movq %rbp, %rsp

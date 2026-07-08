@@ -50,6 +50,7 @@
 /* Forward declarations */
 struct fut_thread;
 struct fut_task;
+struct fut_interrupt_frame;
 
 /* Spinlock for synchronization */
 #include "fut_sched.h"
@@ -110,6 +111,25 @@ typedef struct fut_percpu {
      * place waking tasks on the least-loaded CPU. */
     uint64_t load_avg_fixed;             /* EWMA load average (fixed-point) */
 
+    /* IRQ-context tracking — genuinely per-CPU state that used to live
+     * in globals (fut_in_interrupt / fut_current_frame). As globals,
+     * one CPU's ISR entry clobbered another CPU's scheduler decisions
+     * (IRETQ-path vs cooperative-path selection in fut_schedule), which
+     * was the core architectural blocker for SMP bring-up.
+     *
+     * in_interrupt is a full uint64_t so assembly can use movq without
+     * partial-register writes; only 0/1 are ever stored. No atomics:
+     * both fields are only ever accessed by their owning CPU (ISR entry
+     * /exit and the scheduler running on that CPU). */
+    uint64_t in_interrupt;                    /* 1 while in ISR context */
+    struct fut_interrupt_frame *current_frame; /* ISR frame, NULL outside IRQ */
+
+    /* Per-CPU kernel TSS (x86_64): each CPU needs its own TSS — the
+     * descriptor busy-bit makes sharing one TSS #GP on the second ltr,
+     * and a shared rsp0 would hand CPU B's ring-0 stack to CPU A.
+     * Opaque pointer here; platform code owns the actual tss_t. */
+    void *tss;
+
     /* Padding to 128-byte cache line for alignment */
 } __attribute__((aligned(128))) fut_percpu_t;
 
@@ -143,6 +163,9 @@ typedef struct fut_percpu {
 #define PERCPU_OFFSET_LAST_BALANCE_TICK 88  /**< uint64_t last_balance_tick */
 #define PERCPU_OFFSET_SYSCALL_USER_RSP  96  /**< uint64_t syscall_user_rsp */
 #define PERCPU_OFFSET_SYSCALL_KERNEL_RSP 104 /**< uint64_t syscall_kernel_rsp */
+#define PERCPU_OFFSET_LOAD_AVG          112 /**< uint64_t load_avg_fixed */
+#define PERCPU_OFFSET_IN_INTERRUPT      120 /**< uint64_t in_interrupt */
+#define PERCPU_OFFSET_CURRENT_FRAME     128 /**< struct fut_interrupt_frame *current_frame */
 
 /**
  * Global array of per-CPU data structures.
@@ -316,4 +339,44 @@ static inline uint32_t fut_percpu_get_cpu_id(void) {
 static inline uint32_t fut_percpu_get_cpu_index(void) {
     fut_percpu_t *percpu = fut_percpu_get();
     return percpu ? percpu->cpu_index : 0;
+}
+
+/* ============================================================
+ *   Per-CPU IRQ-context state
+ * ============================================================
+ *
+ * These replace the old fut_in_interrupt / fut_current_frame globals.
+ * Per-CPU by nature: each CPU's ISR entry/exit and its scheduler are
+ * the only writers/readers, always on the owning CPU, so no atomics
+ * are needed. x86_64 assembly accesses the same fields directly via
+ * %gs:PERCPU_OFFSET_IN_INTERRUPT / %gs:PERCPU_OFFSET_CURRENT_FRAME.
+ *
+ * The _or_bsp fallback covers the earliest boot window (and ARM64
+ * exception paths before kernel_main programs TPIDR_EL1): before the
+ * per-CPU register is set, the executing CPU is by definition the
+ * BSP, so slot 0 is the correct target.
+ */
+
+static inline fut_percpu_t *fut_percpu_get_or_bsp(void) {
+    fut_percpu_t *p = fut_percpu_get();
+    if (!p || p->self != p) {
+        return &fut_percpu_data[0];
+    }
+    return p;
+}
+
+static inline bool fut_cpu_in_irq(void) {
+    return fut_percpu_get_or_bsp()->in_interrupt != 0;
+}
+
+static inline void fut_cpu_set_in_irq(bool v) {
+    fut_percpu_get_or_bsp()->in_interrupt = v ? 1 : 0;
+}
+
+static inline struct fut_interrupt_frame *fut_cpu_current_frame(void) {
+    return fut_percpu_get_or_bsp()->current_frame;
+}
+
+static inline void fut_cpu_set_current_frame(struct fut_interrupt_frame *f) {
+    fut_percpu_get_or_bsp()->current_frame = f;
 }

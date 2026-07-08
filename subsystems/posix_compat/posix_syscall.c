@@ -1676,26 +1676,27 @@ static int64_t sys_sigreturn_handler(uint64_t frame_ptr, uint64_t arg2, uint64_t
      * On x86_64: signal delivery sets frame->rsp = user_sp (base of rt_sigframe).
      *   The handler's 'ret' pops sigframe.return_address, advancing user RSP to
      *   user_sp + sizeof(long). __restore_rt then calls 'int $0x80' (rt_sigreturn).
-     *   At that point fut_current_frame->rsp == user_sp + sizeof(long), so:
-     *     sigframe_base = fut_current_frame->rsp - sizeof(long)
+     *   At that point the per-CPU frame's rsp == user_sp + sizeof(long), so:
+     *     sigframe_base = frame->rsp - sizeof(long)
      *
      * On ARM64: signal delivery sets frame->sp = user_sp. The handler returns
      *   via 'ret' (br x30) where x30 = sa_restorer, which calls 'svc #0'. At that
      *   point SP is still user_sp (ARM64 ret doesn't pop the stack), so:
-     *     sigframe_base = fut_current_frame->sp
+     *     sigframe_base = frame->sp
      *
      * Using RSI (old approach) is wrong: RSI contains the siginfo_t pointer set at
      * signal delivery, and the signal handler may have clobbered it by the time
      * __restore_rt calls rt_sigreturn.
      */
-    extern fut_interrupt_frame_t *fut_current_frame;
+    fut_interrupt_frame_t *cur_frame =
+        (fut_interrupt_frame_t *)fut_cpu_current_frame();
 #ifdef __x86_64__
-    void *user_frame = fut_current_frame
-        ? (void *)(uintptr_t)(fut_current_frame->rsp - sizeof(long))
+    void *user_frame = cur_frame
+        ? (void *)(uintptr_t)(cur_frame->rsp - sizeof(long))
         : NULL;
 #elif defined(__aarch64__)
-    void *user_frame = fut_current_frame
-        ? (void *)(uintptr_t)fut_current_frame->sp
+    void *user_frame = cur_frame
+        ? (void *)(uintptr_t)cur_frame->sp
         : NULL;
 #else
     void *user_frame = NULL;
@@ -1703,7 +1704,6 @@ static int64_t sys_sigreturn_handler(uint64_t frame_ptr, uint64_t arg2, uint64_t
 
     extern fut_task_t *fut_task_current(void);
     extern int fut_copy_from_user(void *k_dst, const void *u_src, size_t n);
-    extern fut_interrupt_frame_t *fut_current_frame;
     
     fut_task_t *current = fut_task_current();
     if (!current || !user_frame) {
@@ -1727,7 +1727,7 @@ static int64_t sys_sigreturn_handler(uint64_t frame_ptr, uint64_t arg2, uint64_t
 
     /* Restore all general purpose registers from the saved context
      * The registers in uc_mcontext.gregs are in the same order as the interrupt frame */
-    fut_interrupt_frame_t *frame = fut_current_frame;
+    fut_interrupt_frame_t *frame = cur_frame;
     if (frame) {
 #ifdef __x86_64__
         struct sigcontext *ctx = &sigframe.uc.uc_mcontext.gregs;

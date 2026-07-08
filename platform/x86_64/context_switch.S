@@ -3,6 +3,11 @@
  * Preserves full kernel thread state including SIMD context.
  */
 
+/* Per-CPU field offsets — MUST stay in sync with the PERCPU_OFFSET_*
+ * constants in include/kernel/fut_percpu.h (see isr_stubs.S). */
+.equ PERCPU_IN_INTERRUPT,  120
+.equ PERCPU_CURRENT_FRAME, 128
+
 /* Debug serial output - set to 1 to enable verbose context switch tracing */
 .equ DEBUG_SERIAL, 0
 
@@ -214,8 +219,6 @@ fut_switch_context:
  *   +48:  context (672 bytes)
  *   +720: irq_frame (8 bytes pointer to saved interrupt frame)
  */
-.extern fut_in_interrupt
-.extern fut_current_frame
 .extern lapic_base
 
 .global fut_switch_context_irq
@@ -1373,8 +1376,8 @@ fut_switch_context_irq:
      * - fut_current_frame pointing to the old timer frame (on the previous
      *   thread's stack) would be used by the next fut_schedule() call as
      *   the frame to save, even though it belongs to a different thread. */
-    movb $0, fut_in_interrupt(%rip)
-    movq $0, fut_current_frame(%rip)
+    movq $0, %gs:PERCPU_IN_INTERRUPT
+    movq $0, %gs:PERCPU_CURRENT_FRAME
 
     /* CRITICAL: Force IF=1 in RFLAGS of the IRETQ frame.
      * If the thread was preempted during INT 0x80 (where IF=0 due to CPU
@@ -1443,7 +1446,7 @@ fut_switch_context_irq:
 
     /* Clear fut_current_frame so a nested timer interrupt during the cooperative
      * unwind does not incorrectly reuse prev's stale ISR frame pointer. */
-    movq $0, fut_current_frame(%rip)
+    movq $0, %gs:PERCPU_CURRENT_FRAME
 
     /* Send EOI to LAPIC and clear fut_in_interrupt — mirrors the IRETQ path
      * (lines immediately before `iretq`).
@@ -1493,7 +1496,7 @@ fut_switch_context_irq:
      * then find fut_current_frame==NULL and fall through to the cooperative
      * path where it sends a spurious LAPIC EOI.  Clearing it here is simpler
      * and matches what the IRETQ path does at lines 1314-1315. */
-    movb $0, fut_in_interrupt(%rip)
+    movq $0, %gs:PERCPU_IN_INTERRUPT
 
     /* Load next's cooperative context.
      * Context layout (all offsets relative to thread base, context at +48):
@@ -1791,8 +1794,8 @@ fut_resume_user_frame:
     movq %rax, 32(%rsp)
 .resume_ss_ok:
 
-    movb $0, fut_in_interrupt(%rip)
-    movq $0, fut_current_frame(%rip)
+    movq $0, %gs:PERCPU_IN_INTERRUPT
+    movq $0, %gs:PERCPU_CURRENT_FRAME
     orq $0x200, 16(%rsp)
     iretq
 

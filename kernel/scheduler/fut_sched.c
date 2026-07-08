@@ -62,7 +62,6 @@
  *
  *  ── Atomically-tracked scalar flags ──
  *    scheduler_started      _Atomic bool (this file)
- *    fut_in_interrupt       _Atomic bool (this file, x86_64)
  *    percpu_safe            _Atomic bool (fut_thread.c)
  *    clean_fpu_state_initialized  _Atomic bool (fut_thread.c)
  *    next_tid, thread_count       _Atomic uint64_t (fut_thread.c)
@@ -78,11 +77,15 @@
  *    pcpu->queue_depth, work_steal_count
  *                           non-atomic stats; lost-update on SMP is
  *                           cosmetic.
- *    fut_current_frame      written by IRQ entry, read by scheduler.
- *                           Architecturally per-CPU in practice (each
- *                           CPU writes its own frame on its own stack
- *                           before fut_schedule runs); revisit when
- *                           re-enabling SMP.
+ *
+ *  ── Per-CPU IRQ-context state ──
+ *    pcpu->in_interrupt, pcpu->current_frame
+ *                           written by this CPU's ISR entry/exit
+ *                           (via %gs on x86_64), read by the scheduler
+ *                           on the same CPU. Formerly globals, which
+ *                           made one CPU's ISR entry corrupt another
+ *                           CPU's IRETQ/cooperative path selection —
+ *                           the main architectural SMP blocker.
  */
 
 #include "../../include/kernel/fut_sched.h"
@@ -103,6 +106,7 @@
 #endif
 #include <platform/platform.h>
 #include <stdint.h>
+#include <stddef.h>  /* offsetof for the percpu layout asserts below */
 #include <stdatomic.h>
 
 /* External context switch from platform/x86_64/context_switch.S */
@@ -121,20 +125,26 @@ int g_sched_child_runs_first = 0;
 
 /* ============================================================
  *   Interrupt Context Detection
- * ============================================================ */
-
-/* Tracks whether we're currently executing in interrupt context
- * Note: On ARM64 bare metal, C11 atomics cause alignment faults.
- * For bools, volatile is sufficient as stores/loads are naturally atomic.
- */
-#if defined(__aarch64__)
-volatile bool fut_in_interrupt = false;
-#else
-_Atomic bool fut_in_interrupt = false;
-#endif
-
-/* Points to the current interrupt frame when in interrupt context */
-fut_interrupt_frame_t *fut_current_frame = NULL;
+ * ============================================================
+ *
+ * IRQ-context state (in_interrupt flag + current interrupt frame)
+ * lives in fut_percpu_t, not in globals: it is genuinely per-CPU.
+ * As globals, one CPU's ISR entry rewrote the state another CPU's
+ * fut_schedule() was deciding on (IRETQ vs cooperative path) — the
+ * core architectural blocker for SMP. x86_64 assembly writes the
+ * same fields via %gs:PERCPU_OFFSET_*; C code uses the
+ * fut_cpu_in_irq()/fut_cpu_current_frame() accessors from
+ * fut_percpu.h.
+ *
+ * The asm offsets are load-bearing — pin them at compile time. */
+_Static_assert(offsetof(fut_percpu_t, in_interrupt) == PERCPU_OFFSET_IN_INTERRUPT,
+               "in_interrupt offset must match PERCPU_OFFSET_IN_INTERRUPT (asm)");
+_Static_assert(offsetof(fut_percpu_t, current_frame) == PERCPU_OFFSET_CURRENT_FRAME,
+               "current_frame offset must match PERCPU_OFFSET_CURRENT_FRAME (asm)");
+_Static_assert(offsetof(fut_percpu_t, syscall_user_rsp) == PERCPU_OFFSET_SYSCALL_USER_RSP,
+               "syscall_user_rsp offset must match PERCPU_OFFSET_SYSCALL_USER_RSP (asm)");
+_Static_assert(offsetof(fut_percpu_t, syscall_kernel_rsp) == PERCPU_OFFSET_SYSCALL_KERNEL_RSP,
+               "syscall_kernel_rsp offset must match PERCPU_OFFSET_SYSCALL_KERNEL_RSP (asm)");
 
 /* Tracks whether the scheduler has been explicitly started.
  * This prevents premature context switches during early boot when
@@ -961,12 +971,9 @@ void fut_schedule(void) {
     }
     if (prev != next) {
 
-        // Check if we're in interrupt context
-#if defined(__aarch64__)
-        bool in_irq = fut_in_interrupt;  /* Simple load for volatile bool */
-#else
-        bool in_irq = atomic_load_explicit(&fut_in_interrupt, memory_order_acquire);
-#endif
+        // Check if we're in interrupt context (per-CPU state; only this
+        // CPU's ISR entry/exit writes it, so a plain load suffices)
+        bool in_irq = fut_cpu_in_irq();
 
         // CRITICAL: CR3 switching for user threads being resumed from interrupts
         // - Trampolines handle CR3 for newly created threads
@@ -1056,7 +1063,7 @@ void fut_schedule(void) {
         //
         // This is REQUIRED for user threads because their irq_frame contains the
         // correct user-space RIP/RSP, while their context structure may be stale.
-        if (in_irq && fut_current_frame) {
+        if (in_irq && fut_cpu_current_frame()) {
             // IRQ-safe context switch (uses IRET)
             // Pass NULL for prev when terminated to skip saving its state
 #if defined(__aarch64__) && defined(DEBUG_SCHED)
@@ -1065,9 +1072,10 @@ void fut_schedule(void) {
                        (unsigned long long)next->context.pstate,
                        (unsigned long long)next->context.ttbr0_el1);
 #endif
-            /* CRITICAL: Clear interrupt context globals BEFORE IRETQ.
-             * fut_switch_context_irq does IRETQ and never returns, so
-             * fut_in_interrupt and fut_current_frame would remain stale.
+            /* CRITICAL: Clear this CPU's interrupt-context state BEFORE
+             * IRETQ. fut_switch_context_irq does IRETQ and never
+             * returns, so in_interrupt and current_frame would remain
+             * stale.
              * If the resumed thread enters a syscall (INT 0x80) that sleeps
              * and calls fut_schedule(), the stale fut_in_interrupt=1 causes
              * the IRETQ path to be taken for a cooperatively-sleeping thread.
@@ -1076,7 +1084,7 @@ void fut_schedule(void) {
              * to userspace as the "result" instead of the actual return value.
              *
              * The EOI is already sent by fut_switch_context_irq assembly. */
-            fut_switch_context_irq(prev_terminated ? NULL : prev, next, fut_current_frame);
+            fut_switch_context_irq(prev_terminated ? NULL : prev, next, fut_cpu_current_frame());
         } else {
             // Regular cooperative context switch (uses RET)
             // For terminated threads, pass NULL to skip saving their state
@@ -1101,15 +1109,14 @@ void fut_schedule(void) {
                 // Send EOI to LAPIC before abandoning this ISR's stack frame
                 /* lapic_send_eoi provided by lapic.h */
                 lapic_send_eoi();
-                atomic_store_explicit(&fut_in_interrupt, false, memory_order_release);
 #elif defined(__aarch64__)
                 // Send EOI to GIC (fut_irq_send_eoi provided by platform/platform.h)
                 fut_irq_send_eoi(0);  // Timer IRQ
-                fut_in_interrupt = false;
 #endif
-                // Clear fut_current_frame to prevent use of stale frame pointer
-                extern fut_interrupt_frame_t *fut_current_frame;
-                fut_current_frame = NULL;
+                // Clear this CPU's IRQ-context state so later ISRs don't
+                // see a stale frame pointer
+                fut_cpu_set_in_irq(false);
+                fut_cpu_set_current_frame(NULL);
             }
             /* Debug: Log cooperative switch details (disabled - too verbose) */
 

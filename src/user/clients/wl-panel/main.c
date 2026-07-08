@@ -62,8 +62,55 @@ struct panel_state {
 
     uint32_t pointer_x;
     uint32_t pointer_y;
-    bool launcher_hovered;
+    int hovered_launcher;   /* index into launchers[], -1 = none */
 };
+
+/* Launcher buttons across the panel's left edge. Each button is
+ * label_len*6 + 2*LB_PAD_X wide; positions are computed on the fly
+ * so the table is the single source of truth. */
+struct launcher_def {
+    const char *label;
+    const char *path;
+};
+static const struct launcher_def launchers[] = {
+    { "TERM",  "/bin/wl-term" },
+    { "FILES", "/bin/wl-files" },
+    { "EDIT",  "/bin/wl-edit" },
+    { "TASKS", "/bin/wl-sysmon" },
+    { "SETUP", "/bin/wl-settings" },
+};
+#define N_LAUNCHERS ((int)(sizeof(launchers) / sizeof(launchers[0])))
+#define LB_X0     6   /* first button left edge */
+#define LB_Y      4
+#define LB_H      20
+#define LB_PAD_X  8   /* label inset inside a button */
+#define LB_GAP    5   /* spacing between buttons */
+
+static int launcher_label_len(int idx) {
+    int n = 0;
+    while (launchers[idx].label[n]) n++;
+    return n;
+}
+
+static int launcher_width(int idx) {
+    return launcher_label_len(idx) * 6 + 2 * LB_PAD_X;
+}
+
+static int launcher_x(int idx) {
+    int x = LB_X0;
+    for (int i = 0; i < idx; i++) x += launcher_width(i) + LB_GAP;
+    return x;
+}
+
+/* Panel-relative pointer position → launcher index, or -1. */
+static int launcher_hit(uint32_t px, uint32_t py) {
+    if (py < LB_Y || py >= LB_Y + LB_H) return -1;
+    for (int i = 0; i < N_LAUNCHERS; i++) {
+        int x = launcher_x(i);
+        if ((int)px >= x && (int)px < x + launcher_width(i)) return i;
+    }
+    return -1;
+}
 
 /* Draw a simple 5x7 font character — extended with uppercase letters */
 static void draw_char(uint32_t *framebuffer, int fb_width, int x, int y, char c, uint32_t color) {
@@ -295,18 +342,24 @@ static void panel_draw(struct panel_state *state) {
         state->shm_data[(PANEL_HEIGHT - 1) * PANEL_WIDTH + x] = SEPARATOR_COLOR;
     }
 
-    /* Draw launcher button (left side) with rounded-look highlight */
-    uint32_t launcher_color = state->launcher_hovered ? ACCENT_COLOR : 0xFF333340;
-    draw_rect(state->shm_data, PANEL_WIDTH, 6, 4, 72, 20, launcher_color);
-    /* Centre "APPS" inside the 72×20 button rather than nailing it to
-     * x=14 / y=8 (which left a noticeable left/top weight when the
-     * button hovered). 4 chars × 6px stride = 24px wide, glyphs are
-     * 5px tall. Button origin (6, 4); centre = (6 + (72-24)/2,
-     * 4 + (20-5)/2) ≈ (30, 11). */
-    draw_text(state->shm_data, PANEL_WIDTH, 30, 11, "APPS", TEXT_COLOR);
+    /* Launcher buttons across the left edge; the hovered one lights
+     * up with the accent color. Labels are vertically centered in the
+     * 20px-tall buttons (glyphs are 5px tall → y = 4 + (20-5)/2 ≈ 11). */
+    for (int i = 0; i < N_LAUNCHERS; i++) {
+        int x = launcher_x(i);
+        int wdt = launcher_width(i);
+        uint32_t bg = (i == state->hovered_launcher) ? ACCENT_COLOR : 0xFF333340;
+        draw_rect(state->shm_data, PANEL_WIDTH, x, LB_Y, wdt, LB_H, bg);
+        draw_text(state->shm_data, PANEL_WIDTH, x + LB_PAD_X, 11,
+                  launchers[i].label, TEXT_COLOR);
+    }
 
-    /* Branding: "FUTURA" left of center */
-    draw_text(state->shm_data, PANEL_WIDTH, 90, 11, "FUTURA", ACCENT_COLOR);
+    /* Branding: "FUTURA" right of the launcher row */
+    {
+        int brand_x = launcher_x(N_LAUNCHERS - 1) +
+                      launcher_width(N_LAUNCHERS - 1) + 18;
+        draw_text(state->shm_data, PANEL_WIDTH, brand_x, 11, "FUTURA", ACCENT_COLOR);
+    }
 
     /* Battery indicator (right side, left of clock). */
     char bat_str[12];
@@ -393,8 +446,8 @@ static void pointer_leave(void *data, struct wl_pointer *pointer, uint32_t seria
     (void)pointer; (void)serial; (void)surface;
     /* Pointer left the panel — clear the hover highlight and redraw,
      * otherwise the button stays "lit" until the next minute tick. */
-    if (state->launcher_hovered) {
-        state->launcher_hovered = false;
+    if (state->hovered_launcher >= 0) {
+        state->hovered_launcher = -1;
         panel_draw(state);
     }
 }
@@ -406,12 +459,11 @@ static void pointer_motion(void *data, struct wl_pointer *pointer, uint32_t time
     state->pointer_x = wl_fixed_to_int(sx);
     state->pointer_y = wl_fixed_to_int(sy);
 
-    /* Check if hovering over launcher button */
-    bool was_hovered = state->launcher_hovered;
-    state->launcher_hovered = (state->pointer_x >= 6 && state->pointer_x < 78 &&
-                              state->pointer_y >= 4 && state->pointer_y < 24);
+    /* Track which launcher button (if any) the pointer is over */
+    int was_hovered = state->hovered_launcher;
+    state->hovered_launcher = launcher_hit(state->pointer_x, state->pointer_y);
 
-    if (was_hovered != state->launcher_hovered) {
+    if (was_hovered != state->hovered_launcher) {
         panel_draw(state);
     }
 }
@@ -421,26 +473,25 @@ static void pointer_button(void *data, struct wl_pointer *pointer, uint32_t seri
     struct panel_state *state = data;
     (void)pointer; (void)serial; (void)time;
 
-    /* Linux BTN_LEFT (0x110) — only left-clicks launch the terminal.
-     * Without this check, right- or middle-clicking the APPS button also
-     * forked a terminal child, which felt like a stuck launcher. */
+    /* Linux BTN_LEFT (0x110) — only left-clicks launch. Without this
+     * check, right- or middle-clicking a launcher also forked a child,
+     * which felt like a stuck launcher. */
     if (button == 0x110 &&
         button_state == WL_POINTER_BUTTON_STATE_PRESSED &&
-        state->launcher_hovered) {
-        printf("[PANEL] Launcher button clicked - attempting to launch terminal\n");
+        state->hovered_launcher >= 0) {
+        const char *path = launchers[state->hovered_launcher].path;
+        printf("[PANEL] Launching %s\n", path);
 
-        /* Fork and exec a terminal application. The child must inherit
-         * the wayland envvars or it can't connect to the compositor —
-         * launching with envp={NULL} produced terminal processes that
-         * silently exited with wl_display_connect() == NULL. Mirror the
-         * cli_envp set up by the spawner thread in platform_init. */
+        /* Fork and exec the client. The child must inherit the wayland
+         * envvars or it can't connect to the compositor — launching
+         * with envp={NULL} produced children that silently exited with
+         * wl_display_connect() == NULL. Mirror the cli_envp set up by
+         * the spawner thread in platform_init, and forward
+         * TZ_OFFSET_SEC so clock-rendering children agree with the
+         * panel's own timezone. */
         long pid = sys_fork_call();
         if (pid == 0) {
-            /* Child process - launch terminal. Mirror the spawner's
-             * cli_envp and forward TZ_OFFSET_SEC if we received it, so
-             * the terminal child sees the same timezone the panel uses
-             * for its own clock. */
-            const char *argv[] = {"/bin/wl-term", NULL};
+            const char *argv[] = {path, NULL};
             const char *tz = getenv("TZ_OFFSET_SEC");
             char tz_kv[32] = "TZ_OFFSET_SEC=";
             if (tz && *tz) {
@@ -464,17 +515,11 @@ static void pointer_button(void *data, struct wl_pointer *pointer, uint32_t seri
                 tz_kv[0] ? tz_kv : NULL,
                 NULL,
             };
-            sys_execve_call("/bin/wl-term", (char *const *)argv, (char *const *)envp);
-
-            /* If execve fails, try futura-shell as fallback */
-            const char *shell_argv[] = {"/bin/futura-shell", NULL};
-            sys_execve_call("/bin/futura-shell", (char *const *)shell_argv, (char *const *)envp);
-
-            /* If both fail, exit */
-            printf("[PANEL] Failed to launch application\n");
+            sys_execve_call(path, (char *const *)argv, (char *const *)envp);
+            printf("[PANEL] Failed to launch %s\n", path);
             sys_exit(1);
         } else if (pid > 0) {
-            printf("[PANEL] Launched application with PID %ld\n", pid);
+            printf("[PANEL] Launched %s with PID %ld\n", path, pid);
         } else {
             printf("[PANEL] Fork failed: %ld\n", pid);
         }
@@ -623,6 +668,7 @@ int main(void) {
 
     struct panel_state state = {0};
     state.running = true;
+    state.hovered_launcher = -1;
 
     /* Connect to Wayland display */
     state.display = wl_display_connect(NULL);

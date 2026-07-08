@@ -222,11 +222,13 @@ pair_alloc_fail:
     /* Store file back-pointers for O_ASYNC/SIGIO delivery */
     {
         fut_task_t *ftask = fut_task_current();
-        if (ftask && ftask->fd_table) {
-            if (fd0 < ftask->max_fds)
-                s0->socket_file = ftask->fd_table[fd0];
-            if (fd1 < ftask->max_fds)
-                s1->socket_file = ftask->fd_table[fd1];
+        if (ftask) {
+            struct fut_file *f0 = fut_file_get(ftask, fd0);
+            struct fut_file *f1 = fut_file_get(ftask, fd1);
+            s0->socket_file = f0;
+            s1->socket_file = f1;
+            if (f0) fut_file_put(f0);
+            if (f1) fut_file_put(f1);
         }
     }
 
@@ -241,14 +243,14 @@ pair_alloc_fail:
                 /* Atomic to coexist with concurrent fcntl(F_SETFL) /
                  * ioctl(FIONBIO) writers — same pattern as the other
                  * O_NONBLOCK installers (e7392bed). */
-                if (fd0 < task->max_fds) {
-                    struct fut_file *f = __atomic_load_n(&task->fd_table[fd0], __ATOMIC_ACQUIRE);
-                    if (f) __atomic_or_fetch(&f->flags, O_NONBLOCK, __ATOMIC_ACQ_REL);
-                }
-                if (fd1 < task->max_fds) {
-                    struct fut_file *f = __atomic_load_n(&task->fd_table[fd1], __ATOMIC_ACQUIRE);
-                    if (f) __atomic_or_fetch(&f->flags, O_NONBLOCK, __ATOMIC_ACQ_REL);
-                }
+                struct fut_file *f0 = fut_file_get(task, fd0);
+                struct fut_file *f1 = fut_file_get(task, fd1);
+                if (f0)
+                    __atomic_or_fetch(&f0->flags, O_NONBLOCK, __ATOMIC_ACQ_REL);
+                if (f1)
+                    __atomic_or_fetch(&f1->flags, O_NONBLOCK, __ATOMIC_ACQ_REL);
+                if (f0) fut_file_put(f0);
+                if (f1) fut_file_put(f1);
                 /* Also propagate to socket structs so socket_nonblock()
                  * returns true in fut_socket_recv/send. */
                 __atomic_or_fetch(&s0->flags, O_NONBLOCK, __ATOMIC_ACQ_REL);

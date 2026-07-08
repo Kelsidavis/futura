@@ -433,8 +433,8 @@ long sys_clone3(const struct fut_clone_args *uargs, size_t size) {
          * Look up the cgroup path from the fd and add the child PID. */
         if (want_cgroup) {
             /* Get the file path for the cgroup fd */
-            extern struct fut_file *fut_vfs_get_file(int fd);
-            struct fut_file *cg_file = fut_vfs_get_file((int)cgroup_fd);
+            fut_task_t *cg_task = fut_task_current();
+            struct fut_file *cg_file = cg_task ? fut_file_get(cg_task, (int)cgroup_fd) : NULL;
             const char *cg_full_path = (cg_file && cg_file->path) ? cg_file->path : NULL;
             if (cg_full_path) {
                 extern int memcg_add_pid(const char *path, int pid);
@@ -455,6 +455,8 @@ long sys_clone3(const struct fut_clone_args *uargs, size_t size) {
                 fut_printf("[CLONE3] CLONE_INTO_CGROUP: child %ld → cgroup '%s'\n",
                            child_pid, cg_path);
             }
+            if (cg_file)
+                fut_file_put(cg_file);
         }
 
         /* CLONE_PARENT_SETTID: write child PID to parent_tid address */

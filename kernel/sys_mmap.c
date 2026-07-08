@@ -318,8 +318,12 @@ long sys_mmap(void *addr, size_t len, int prot, int flags, int fd, long offset) 
 
     /* O_PATH fds cannot be used for I/O (including memory mapping) */
     {
-        struct fut_file *mmap_file = fut_vfs_get_file(fd);
-        if (mmap_file && (mmap_file->flags & O_PATH))
+        fut_task_t *mmap_task = fut_task_current();
+        struct fut_file *mmap_file = mmap_task ? fut_file_get(mmap_task, fd) : NULL;
+        int is_opath = mmap_file && (mmap_file->flags & O_PATH);
+        if (mmap_file)
+            fut_file_put(mmap_file);
+        if (is_opath)
             return -EBADF;
     }
 

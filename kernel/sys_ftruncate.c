@@ -130,22 +130,27 @@ long sys_ftruncate(int fd, uint64_t length) {
         length_category = "very large (>= 1GB)";
     }
 
-    /* Get the file structure from the file descriptor */
-    struct fut_file *file = fut_vfs_get_file(fd);
+    /* Hold a real file reference while checking flags/seals and mutating
+     * the backing vnode/chrdev. */
+    struct fut_file *file = fut_file_get(task, fd);
     if (!file) {
         fut_printf("[FTRUNCATE] ftruncate(fd=%d [%s], length=%llu [%s]) -> EBADF "
                    "(invalid fd)\n",
                    fd, fd_category, length, length_category);
         return -EBADF;
     }
+    long ret = 0;
 
     /* O_PATH fds cannot be used for I/O — only path-based operations */
-    if (file->flags & O_PATH)
-        return -EBADF;
+    if (file->flags & O_PATH) {
+        ret = -EBADF;
+        goto out;
+    }
 
     /* Enforce file seals (applies to memfd chr_ops files and vnode files alike) */
     if (file->seals & 0x0008 /* F_SEAL_WRITE */) {
-        return -EPERM;
+        ret = -EPERM;
+        goto out;
     }
 
     /* Handle chr_ops files (memfd, etc.) via truncate ioctl.
@@ -157,17 +162,19 @@ long sys_ftruncate(int fd, uint64_t length) {
             long cur = fut_memfd_get_size(file);
             if (cur >= 0) {
                 if ((file->seals & 0x0002) && (uint64_t)length < (uint64_t)cur)
-                    return -EPERM;
+                    { ret = -EPERM; goto out; }
                 if ((file->seals & 0x0004) && (uint64_t)length > (uint64_t)cur)
-                    return -EPERM;
+                    { ret = -EPERM; goto out; }
             }
         }
         if (file->chr_ops->ioctl) {
-            return file->chr_ops->ioctl(file->chr_inode, file->chr_private,
-                                        0xFE10 /* MEMFD_IOC_TRUNCATE */,
-                                        (unsigned long)length);
+            ret = file->chr_ops->ioctl(file->chr_inode, file->chr_private,
+                                       0xFE10 /* MEMFD_IOC_TRUNCATE */,
+                                       (unsigned long)length);
+            goto out;
         }
-        return -EINVAL;
+        ret = -EINVAL;
+        goto out;
     }
 
     /* Get the vnode from the file */
@@ -176,15 +183,16 @@ long sys_ftruncate(int fd, uint64_t length) {
         fut_printf("[FTRUNCATE] ftruncate(fd=%d [%s], length=%llu [%s]) -> EBADF "
                    "(no vnode)\n",
                    fd, fd_category, length, length_category);
-        return -EBADF;
+        ret = -EBADF;
+        goto out;
     }
 
     /* Enforce seal-based size constraints */
     if (vnode->size > 0) {
         if ((file->seals & 0x0002 /* F_SEAL_SHRINK */) && length < vnode->size)
-            return -EPERM;
+            { ret = -EPERM; goto out; }
         if ((file->seals & 0x0004 /* F_SEAL_GROW */) && length > vnode->size)
-            return -EPERM;
+            { ret = -EPERM; goto out; }
     }
 
     /* Cannot truncate a directory */
@@ -192,7 +200,8 @@ long sys_ftruncate(int fd, uint64_t length) {
         fut_printf("[FTRUNCATE] ftruncate(fd=%d [%s], length=%llu [%s]) -> EISDIR "
                    "(cannot truncate directory)\n",
                    fd, fd_category, length, length_category);
-        return -EISDIR;
+        ret = -EISDIR;
+        goto out;
     }
 
     /* POSIX: ftruncate only works on regular files.
@@ -201,7 +210,8 @@ long sys_ftruncate(int fd, uint64_t length) {
         fut_printf("[FTRUNCATE] ftruncate(fd=%d [%s], length=%llu [%s]) -> EINVAL "
                    "(not a regular file, type=%d)\n",
                    fd, fd_category, length, length_category, vnode->type);
-        return -EINVAL;
+        ret = -EINVAL;
+        goto out;
     }
 
     /* Verify file was opened with write permission
@@ -257,7 +267,8 @@ long sys_ftruncate(int fd, uint64_t length) {
         fut_printf("[FTRUNCATE] ftruncate(fd=%d [%s], length=%llu [%s], flags=0x%x) -> EBADF "
                    "(file not opened for writing write permission check)\n",
                    fd, fd_category, length, length_category, file->flags);
-        return -EBADF;
+        ret = -EBADF;
+        goto out;
     }
 
     /* Phase 2: Validate length bounds (16TB maximum file size) */
@@ -266,7 +277,8 @@ long sys_ftruncate(int fd, uint64_t length) {
         fut_printf("[FTRUNCATE] ftruncate(fd=%d [%s], length=%llu [%s]) -> ERANGE "
                    "(length exceeds maximum file size)\n",
                    fd, fd_category, length, length_category);
-        return -ERANGE;
+        ret = -ERANGE;
+        goto out;
     }
 
     /* Enforce RLIMIT_FSIZE: only when extending beyond the soft limit → EFBIG + SIGXFSZ.
@@ -285,12 +297,14 @@ long sys_ftruncate(int fd, uint64_t length) {
             fut_printf("[FTRUNCATE] ftruncate(fd=%d, length=%llu) -> EFBIG "
                        "(exceeds RLIMIT_FSIZE=%llu)\n",
                        fd, length, fsize_limit);
-            return -EFBIG;
+            ret = -EFBIG;
+            goto out;
         }
     }
 
     if (length == vnode->size) {
-        return 0;  /* No-op: size unchanged */
+        ret = 0;  /* No-op: size unchanged */
+        goto out;
     }
 
     /*
@@ -324,7 +338,7 @@ long sys_ftruncate(int fd, uint64_t length) {
             }
             fut_printf("[FTRUNCATE] ftruncate(fd=%d, length=%llu, ino=%lu) -> %d (%s)\n",
                        fd, (unsigned long long)length, vnode->ino, ret, error_desc);
-            return ret;
+            goto out;
         }
 
         /* POSIX/Linux: clear setuid/setgid bits on truncate.
@@ -353,7 +367,8 @@ long sys_ftruncate(int fd, uint64_t length) {
             if (fut_vnode_build_path(vnode->parent, dir_path, sizeof(dir_path)))
                 inotify_dispatch_event(dir_path, 0x00000002 /* IN_MODIFY */, vnode->name, 0);
         }
-        return 0;
+        ret = 0;
+        goto out;
     }
 
     /*
@@ -395,5 +410,7 @@ long sys_ftruncate(int fd, uint64_t length) {
             inotify_dispatch_event(dir_path, 0x00000002 /* IN_MODIFY */, vnode->name, 0);
     }
 
-    return 0;
+out:
+    fut_file_put(file);
+    return ret;
 }

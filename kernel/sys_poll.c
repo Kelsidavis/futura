@@ -48,9 +48,11 @@ static void poll_wire_fds(struct pollfd *kfds, unsigned long nfds,
     extern void fut_inotify_set_epoll_notify(struct fut_file *f, fut_waitq_t *wq);
     for (unsigned long i = 0; i < nfds; i++) {
         int fd = kfds[i].fd;
-        if (fd < 0 || fd >= (int)task->max_fds || !task->fd_table || !task->fd_table[fd])
+        if (fd < 0)
             continue;
-        struct fut_file *file = task->fd_table[fd];
+        struct fut_file *file = fut_file_get(task, fd);
+        if (!file)
+            continue;
         fut_eventfd_set_epoll_notify(file, wq);
         fut_timerfd_set_epoll_notify(file, wq);
         fut_signalfd_set_epoll_notify(file, wq);
@@ -65,6 +67,7 @@ static void poll_wire_fds(struct pollfd *kfds, unsigned long nfds,
             if (sock->state == FUT_SOCK_CONNECTING)
                 sock->connect_notify = wq;
         }
+        fut_file_put(file);
     }
 }
 
@@ -79,9 +82,11 @@ static void poll_unwire_fds(struct pollfd *kfds, unsigned long nfds,
     extern void fut_inotify_set_epoll_notify(struct fut_file *f, fut_waitq_t *wq);
     for (unsigned long i = 0; i < nfds; i++) {
         int fd = kfds[i].fd;
-        if (fd < 0 || fd >= (int)task->max_fds || !task->fd_table || !task->fd_table[fd])
+        if (fd < 0)
             continue;
-        struct fut_file *file = task->fd_table[fd];
+        struct fut_file *file = fut_file_get(task, fd);
+        if (!file)
+            continue;
         fut_eventfd_set_epoll_notify(file, NULL);
         fut_timerfd_set_epoll_notify(file, NULL);
         fut_signalfd_set_epoll_notify(file, NULL);
@@ -97,6 +102,7 @@ static void poll_unwire_fds(struct pollfd *kfds, unsigned long nfds,
             if (sock->connect_notify == wq)
                 sock->connect_notify = NULL;
         }
+        fut_file_put(file);
     }
 }
 
@@ -117,14 +123,7 @@ static struct poll_scan_stats poll_scan_fds(struct pollfd *kfds, unsigned long n
             continue;
         }
 
-        if (kfds[i].fd >= (int)task->max_fds) {
-            kfds[i].revents = POLLNVAL;
-            stats.ready_count++;
-            stats.invalid_count++;
-            continue;
-        }
-
-        struct fut_file *file = task->fd_table[kfds[i].fd];
+        struct fut_file *file = fut_file_get(task, kfds[i].fd);
         if (!file) {
             kfds[i].revents = POLLNVAL;
             stats.ready_count++;
@@ -216,6 +215,7 @@ static struct poll_scan_stats poll_scan_fds(struct pollfd *kfds, unsigned long n
         if (kfds[i].revents != 0) {
             stats.ready_count++;
         }
+        fut_file_put(file);
     }
 
     return stats;

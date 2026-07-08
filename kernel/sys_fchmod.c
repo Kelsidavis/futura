@@ -85,24 +85,35 @@ long sys_fchmod(int fd, uint32_t mode) {
     /* Phase 2: Categorize FD type - use shared helper */
     const char *fd_category = fut_fd_category(local_fd);
 
-    /* Get the file structure from the file descriptor */
-    struct fut_file *file = fut_vfs_get_file(local_fd);
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        fut_printf("[FCHMOD] fchmod(fd=%d [%s], mode=0%o) -> ESRCH (no current task)\n",
+                   local_fd, fd_category, local_mode);
+        return -ESRCH;
+    }
+
+    /* Hold a real reference while dereferencing file/vnode state. */
+    struct fut_file *file = fut_file_get(task, local_fd);
     if (!file) {
         fut_printf("[FCHMOD] fchmod(fd=%d [%s], mode=0%o) -> EBADF (file not found)\n",
                    local_fd, fd_category, local_mode);
         return -EBADF;
     }
+    int ret = 0;
 
     /* O_PATH fds cannot be used for fchmod — use fchmodat instead */
-    if (file->flags & O_PATH)
-        return -EBADF;
+    if (file->flags & O_PATH) {
+        ret = -EBADF;
+        goto out;
+    }
 
     /* Get the vnode from the file */
     struct fut_vnode *vnode = file->vnode;
     if (!vnode) {
         fut_printf("[FCHMOD] fchmod(fd=%d [%s], mode=0%o) -> EBADF (no vnode)\n",
                    local_fd, fd_category, local_mode);
-        return -EBADF;
+        ret = -EBADF;
+        goto out;
     }
 
     /* Phase 2: Categorize permission mode */
@@ -159,15 +170,6 @@ long sys_fchmod(int fd, uint32_t mode) {
 
     const char *special_bits_desc = special_count > 0 ? special_bits_buf : "none";
 
-    /* Phase 3: Get current task for capability checks */
-    fut_task_t *task = fut_task_current();
-    if (!task) {
-        fut_printf("[FCHMOD] fchmod(fd=%d [%s], vnode_ino=%lu, mode=%s, special=%s) "
-                   "-> ESRCH (no current task for capability check)\n",
-                   local_fd, fd_category, vnode->ino, mode_desc, special_bits_desc);
-        return -ESRCH;
-    }
-
     /* Permission check: only owner, root, or CAP_FOWNER can fchmod.
      * Linux uses the effective UID (current_fsuid()) — see the matching
      * comment in sys_chmod. The previous task->ruid check broke setuid
@@ -176,7 +178,8 @@ long sys_fchmod(int fd, uint32_t mode) {
     if (task_host_uid != 0 &&
         !(task->cap_effective & (1ULL << 3 /* CAP_FOWNER */)) &&
         task_host_uid != vnode->uid) {
-        return -EPERM;
+        ret = -EPERM;
+        goto out;
     }
 
     /* Linux: non-root without CAP_FSETID gets S_ISGID silently stripped
@@ -215,7 +218,8 @@ long sys_fchmod(int fd, uint32_t mode) {
         fut_printf("[FCHMOD] fchmod(fd=%d [%s], vnode_ino=%lu, mode=%s, special=%s) "
                    "-> ENOSYS (filesystem doesn't support setattr)\n",
                    local_fd, fd_category, vnode->ino, mode_desc, special_bits_desc);
-        return -ENOSYS;
+        ret = -ENOSYS;
+        goto out;
     }
 
     /* Phase 2: Store old mode for before/after comparison */
@@ -232,7 +236,7 @@ long sys_fchmod(int fd, uint32_t mode) {
     stat.st_mtime = (uint64_t)-1;
 
     /* Call the filesystem's setattr operation */
-    int ret = vnode->ops->setattr(vnode, &stat);
+    ret = vnode->ops->setattr(vnode, &stat);
 
     /* Phase 2: Handle setattr errors with detailed logging */
     if (ret < 0) {
@@ -256,7 +260,7 @@ long sys_fchmod(int fd, uint32_t mode) {
                    "-> %d (%s)\n",
                    local_fd, fd_category, vnode->ino, mode_desc, special_bits_desc,
                    ret, error_desc);
-        return ret;
+        goto out;
     }
 
     /* Phase 2: Build permission change description */
@@ -287,5 +291,7 @@ long sys_fchmod(int fd, uint32_t mode) {
             inotify_dispatch_event(dir_path, 0x00000004 /* IN_ATTRIB */, vnode->name, 0);
     }
 
-    return 0;
+out:
+    fut_file_put(file);
+    return ret;
 }

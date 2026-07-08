@@ -211,23 +211,28 @@ long sys_linkat(int olddirfd, const char *oldpath, int newdirfd, const char *new
         if (local_olddirfd < 0 || local_olddirfd >= task->max_fds || !task->fd_table) {
             return -EBADF;
         }
-        struct fut_file *src_file = task->fd_table[local_olddirfd];
+        struct fut_file *src_file = fut_file_get(task, local_olddirfd);
         if (!src_file || !src_file->vnode) {
+            if (src_file)
+                fut_file_put(src_file);
             return -EBADF;
         }
         struct fut_vnode *src_vnode = src_file->vnode;
         if (src_vnode->type == VN_DIR) {
+            fut_file_put(src_file);
             return -EPERM;  /* Cannot hard-link directories */
         }
 
         /* Use the vnode's ops->link to add a directory entry */
         if (!src_vnode->ops || !src_vnode->ops->link) {
+            fut_file_put(src_file);
             return -EPERM;
         }
         int ret = src_vnode->ops->link(src_vnode, "", resolved_newpath);
         if (ret == 0)
             fut_printf("[LINKAT] AT_EMPTY_PATH: fd=%d linked to '%s'\n",
                        local_olddirfd, resolved_newpath);
+        fut_file_put(src_file);
         return ret;
     }
 

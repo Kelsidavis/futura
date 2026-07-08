@@ -397,10 +397,10 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
             if (!check_read && !check_write && !check_except)
                 continue;
 
-            if (fd >= (int)task->max_fds || !task->fd_table || !task->fd_table[fd])
+            struct fut_file *file = fut_file_get(task, fd);
+            if (!file)
                 return -EBADF;
 
-            struct fut_file *file = task->fd_table[fd];
             uint32_t epoll_req = 0;
             if (check_read)  epoll_req |= EPOLLIN;
             if (check_write) epoll_req |= EPOLLOUT;
@@ -483,6 +483,7 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
             }
             if (counted)
                 ready_count++;
+            fut_file_put(file);
         }
 
         /* If FDs are ready or immediate mode, break */
@@ -524,8 +525,8 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
                 int want = (local_readfds  && fd_isset(wfd, &k_readfds))
                         || (local_writefds && fd_isset(wfd, &k_writefds));
                 if (!want) continue;
-                if (wfd >= (int)task->max_fds || !task->fd_table || !task->fd_table[wfd]) continue;
-                struct fut_file *wfile = task->fd_table[wfd];
+                struct fut_file *wfile = fut_file_get(task, wfd);
+                if (!wfile) continue;
                 fut_eventfd_set_epoll_notify(wfile, &sel_wq);
                 fut_timerfd_set_epoll_notify(wfile, &sel_wq);
                 fut_signalfd_set_epoll_notify(wfile, &sel_wq);
@@ -537,6 +538,7 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
                     if (wsock->pair_reverse) wsock->pair_reverse->epoll_notify = &sel_wq;
                     if (wsock->listener)    wsock->listener->epoll_notify = &sel_wq;
                 }
+                fut_file_put(wfile);
             }
             /* Rescan after wiring to catch events that arrived during setup */
             ready_count = 0;
@@ -548,11 +550,12 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
                 int check_write = local_writefds && fd_isset(fd, &k_writefds);
                 int check_except = local_exceptfds && fd_isset(fd, &k_exceptfds);
                 if (!check_read && !check_write && !check_except) continue;
-                if (fd >= (int)task->max_fds || !task->fd_table || !task->fd_table[fd]) {
+                struct fut_file *file = fut_file_get(task, fd);
+                if (!file) {
                     /* Unwire before returning */
                     for (int ufd = 0; ufd < local_nfds; ufd++) {
-                        if (ufd >= (int)task->max_fds || !task->fd_table || !task->fd_table[ufd]) continue;
-                        struct fut_file *uf = task->fd_table[ufd];
+                        struct fut_file *uf = fut_file_get(task, ufd);
+                        if (!uf) continue;
                         fut_eventfd_set_epoll_notify(uf, NULL);
                         fut_timerfd_set_epoll_notify(uf, NULL);
                         fut_pipe_set_epoll_notify(uf, NULL);
@@ -562,10 +565,10 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
                             if (us->pair_reverse && us->pair_reverse->epoll_notify == &sel_wq) us->pair_reverse->epoll_notify = NULL;
                             if (us->listener    && us->listener->epoll_notify    == &sel_wq) us->listener->epoll_notify = NULL;
                         }
+                        fut_file_put(uf);
                     }
                     return -EBADF;
                 }
-                struct fut_file *file = task->fd_table[fd];
                 uint32_t epoll_req = 0;
                 if (check_read)  epoll_req |= EPOLLIN;
                 if (check_write) epoll_req |= EPOLLOUT;
@@ -609,6 +612,7 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
                 if (check_write && (epoll_ready & (EPOLLOUT | EPOLLERR | EPOLLHUP))) { fd_setbit(fd, &r_writefds); counted = 1; }
                 if (check_except && (epoll_ready & (EPOLLERR | EPOLLPRI))) { fd_setbit(fd, &r_exceptfds); counted = 1; }
                 if (counted) ready_count++;
+                fut_file_put(file);
             }
             if (ready_count == 0) {
                 /* Sleep until an event or timeout.
@@ -666,8 +670,8 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
                         /* Unwire and continue outer loop — next iteration
                          * will re-scan and find the event. */
                         for (int ufd = 0; ufd < local_nfds; ufd++) {
-                            if (ufd >= (int)task->max_fds || !task->fd_table || !task->fd_table[ufd]) continue;
-                            struct fut_file *uf = task->fd_table[ufd];
+                            struct fut_file *uf = fut_file_get(task, ufd);
+                            if (!uf) continue;
                             fut_eventfd_set_epoll_notify(uf, NULL);
                             fut_timerfd_set_epoll_notify(uf, NULL);
                             fut_signalfd_set_epoll_notify(uf, NULL);
@@ -679,6 +683,7 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
                                 if (us->pair_reverse && us->pair_reverse->epoll_notify == &sel_wq) us->pair_reverse->epoll_notify = NULL;
                                 if (us->listener    && us->listener->epoll_notify    == &sel_wq) us->listener->epoll_notify = NULL;
                             }
+                            fut_file_put(uf);
                         }
                         continue;
                     }
@@ -692,8 +697,8 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
                         fut_waitq_remove_thread(&sel_wq, sel_thr);
                         sel_thr->state = FUT_THREAD_RUNNING;
                         for (int ufd = 0; ufd < local_nfds; ufd++) {
-                            if (ufd >= (int)task->max_fds || !task->fd_table || !task->fd_table[ufd]) continue;
-                            struct fut_file *uf = task->fd_table[ufd];
+                            struct fut_file *uf = fut_file_get(task, ufd);
+                            if (!uf) continue;
                             fut_eventfd_set_epoll_notify(uf, NULL);
                             fut_timerfd_set_epoll_notify(uf, NULL);
                             fut_signalfd_set_epoll_notify(uf, NULL);
@@ -705,6 +710,7 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
                                 if (us->pair_reverse && us->pair_reverse->epoll_notify == &sel_wq) us->pair_reverse->epoll_notify = NULL;
                                 if (us->listener    && us->listener->epoll_notify    == &sel_wq) us->listener->epoll_notify = NULL;
                             }
+                            fut_file_put(uf);
                         }
                         return -EAGAIN;
                     }
@@ -714,8 +720,8 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
             }
             /* Unwire */
             for (int ufd = 0; ufd < local_nfds; ufd++) {
-                if (ufd >= (int)task->max_fds || !task->fd_table || !task->fd_table[ufd]) continue;
-                struct fut_file *uf = task->fd_table[ufd];
+                struct fut_file *uf = fut_file_get(task, ufd);
+                if (!uf) continue;
                 fut_eventfd_set_epoll_notify(uf, NULL);
                 fut_timerfd_set_epoll_notify(uf, NULL);
                 fut_signalfd_set_epoll_notify(uf, NULL);
@@ -727,6 +733,7 @@ long sys_select(int nfds, fd_set *readfds, fd_set *writefds,
                     if (us->pair_reverse && us->pair_reverse->epoll_notify == &sel_wq) us->pair_reverse->epoll_notify = NULL;
                     if (us->listener    && us->listener->epoll_notify    == &sel_wq) us->listener->epoll_notify = NULL;
                 }
+                fut_file_put(uf);
             }
         }
         if (ready_count > 0)
@@ -980,12 +987,12 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
             if (!check_read && !check_write && !check_except)
                 continue;
 
-            if (fd >= (int)task->max_fds || !task->fd_table || !task->fd_table[fd]) {
+            struct fut_file *file = fut_file_get(task, fd);
+            if (!file) {
                 ret = -EBADF;
                 goto out_restore_sigmask;
             }
 
-            struct fut_file *file = task->fd_table[fd];
             uint32_t epoll_req = 0;
             if (check_read)  epoll_req |= EPOLLIN;
             if (check_write) epoll_req |= EPOLLOUT;
@@ -1066,6 +1073,7 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
 
             if (counted)
                 ready_count++;
+            fut_file_put(file);
         }
 
         /* If FDs ready or immediate mode, break */
@@ -1108,8 +1116,8 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
                 int want = (local_readfds  && fd_isset(wfd, &k_readfds))
                         || (local_writefds && fd_isset(wfd, &k_writefds));
                 if (!want) continue;
-                if (wfd >= (int)task->max_fds || !task->fd_table || !task->fd_table[wfd]) continue;
-                struct fut_file *wfile = task->fd_table[wfd];
+                struct fut_file *wfile = fut_file_get(task, wfd);
+                if (!wfile) continue;
                 fut_eventfd_set_epoll_notify(wfile, &psel_wq);
                 fut_timerfd_set_epoll_notify(wfile, &psel_wq);
                 fut_signalfd_set_epoll_notify(wfile, &psel_wq);
@@ -1121,6 +1129,7 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
                     if (wsock->pair_reverse) wsock->pair_reverse->epoll_notify = &psel_wq;
                     if (wsock->listener)    wsock->listener->epoll_notify = &psel_wq;
                 }
+                fut_file_put(wfile);
             }
             /* Rescan after wiring to catch events that arrived during setup */
             ready_count = 0;
@@ -1132,8 +1141,8 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
                 int check_write  = local_writefds  && fd_isset(fd, &k_writefds);
                 int check_except = local_exceptfds && fd_isset(fd, &k_exceptfds);
                 if (!check_read && !check_write && !check_except) continue;
-                if (fd >= (int)task->max_fds || !task->fd_table || !task->fd_table[fd]) continue;
-                struct fut_file *file = task->fd_table[fd];
+                struct fut_file *file = fut_file_get(task, fd);
+                if (!file) continue;
                 uint32_t epoll_req = 0;
                 if (check_read)  epoll_req |= EPOLLIN;
                 if (check_write) epoll_req |= EPOLLOUT;
@@ -1177,6 +1186,7 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
                 if (check_write && (epoll_ready & (EPOLLOUT | EPOLLERR | EPOLLHUP))) { fd_setbit(fd, &r_writefds); counted = 1; }
                 if (check_except && (epoll_ready & (EPOLLERR | EPOLLPRI))) { fd_setbit(fd, &r_exceptfds); counted = 1; }
                 if (counted) ready_count++;
+                fut_file_put(file);
             }
             if (ready_count == 0) {
                 /* Same enqueue-before-timer fix as select4 path above */
@@ -1212,8 +1222,8 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
                         fut_waitq_remove_thread(&psel_wq, psel_thr);
                         psel_thr->state = FUT_THREAD_RUNNING;
                         for (int ufd = 0; ufd < local_nfds; ufd++) {
-                            if (ufd >= (int)task->max_fds || !task->fd_table || !task->fd_table[ufd]) continue;
-                            struct fut_file *uf = task->fd_table[ufd];
+                            struct fut_file *uf = fut_file_get(task, ufd);
+                            if (!uf) continue;
                             fut_eventfd_set_epoll_notify(uf, NULL);
                             fut_timerfd_set_epoll_notify(uf, NULL);
                             fut_signalfd_set_epoll_notify(uf, NULL);
@@ -1225,6 +1235,7 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
                                 if (us->pair_reverse && us->pair_reverse->epoll_notify == &psel_wq) us->pair_reverse->epoll_notify = NULL;
                                 if (us->listener    && us->listener->epoll_notify    == &psel_wq) us->listener->epoll_notify = NULL;
                             }
+                            fut_file_put(uf);
                         }
                         return -EAGAIN;
                     }
@@ -1234,8 +1245,8 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
             }
             /* Unwire */
             for (int ufd = 0; ufd < local_nfds; ufd++) {
-                if (ufd >= (int)task->max_fds || !task->fd_table || !task->fd_table[ufd]) continue;
-                struct fut_file *uf = task->fd_table[ufd];
+                struct fut_file *uf = fut_file_get(task, ufd);
+                if (!uf) continue;
                 fut_eventfd_set_epoll_notify(uf, NULL);
                 fut_timerfd_set_epoll_notify(uf, NULL);
                 fut_signalfd_set_epoll_notify(uf, NULL);
@@ -1247,6 +1258,7 @@ long sys_pselect6(int nfds, void *readfds, void *writefds, void *exceptfds,
                     if (us->pair_reverse && us->pair_reverse->epoll_notify == &psel_wq) us->pair_reverse->epoll_notify = NULL;
                     if (us->listener    && us->listener->epoll_notify    == &psel_wq) us->listener->epoll_notify = NULL;
                 }
+                fut_file_put(uf);
             }
         }
         if (ready_count > 0)

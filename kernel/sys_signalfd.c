@@ -377,16 +377,21 @@ long sys_signalfd4(int ufd, const void *mask, size_t sizemask, int flags) {
      * split so fd-validity probes that test EBADF vs EINVAL behave
      * the same way. */
     if (ufd != -1) {
-        if (!task->fd_table || ufd < 0 || ufd >= task->max_fds) return -EBADF;
-        struct fut_file *file = task->fd_table[ufd];
+        struct fut_file *file = fut_file_get(task, ufd);
         if (!file) return -EBADF;
-        if (file->chr_ops != &signalfd_fops || !file->chr_private)
+        if (file->chr_ops != &signalfd_fops || !file->chr_private) {
+            fut_file_put(file);
             return -EINVAL;
+        }
         struct signalfd_file *sfile = (struct signalfd_file *)file->chr_private;
-        if (!sfile->ctx) return -EINVAL;
+        if (!sfile->ctx) {
+            fut_file_put(file);
+            return -EINVAL;
+        }
         fut_spinlock_acquire(&sfile->ctx->lock);
         sfile->ctx->sigmask = sigmask;
         fut_spinlock_release(&sfile->ctx->lock);
+        fut_file_put(file);
         return ufd;
     }
 
@@ -414,10 +419,9 @@ long sys_signalfd4(int ufd, const void *mask, size_t sizemask, int flags) {
         return fd;
     }
 
-    /* Attach fut_file pointer back into context. Acquire-load to pair
-     * with the CAS-allocator that just installed the fd. */
-    if (task->fd_table && fd >= 0 && fd < task->max_fds)
-        sfile->file = __atomic_load_n(&task->fd_table[fd], __ATOMIC_ACQUIRE);
+    /* Attach fut_file pointer back into context while the file is pinned. */
+    struct fut_file *new_file = fut_file_get(task, fd);
+    sfile->file = new_file;
 
     if (!sfile->file) {
         fut_vfs_close(fd);
@@ -433,6 +437,7 @@ long sys_signalfd4(int ufd, const void *mask, size_t sizemask, int flags) {
         if (task->fd_flags && fd < task->max_fds)
             task->fd_flags[fd] |= FD_CLOEXEC;
     }
+    fut_file_put(new_file);
 
     return fd;
 }
@@ -499,16 +504,17 @@ void fut_signalfd_wake_epoll(fut_task_t *task, int signo) {
         return;
     uint64_t bit = 1ULL << (signo - 1);
     for (int i = 0; i < (int)task->max_fds; i++) {
-        struct fut_file *f = task->fd_table[i];
+        struct fut_file *f = fut_file_get(task, i);
         if (!f || f->chr_ops != &signalfd_fops || !f->chr_private)
-            continue;
+            { if (f) fut_file_put(f); continue; }
         struct signalfd_file *sfile = (struct signalfd_file *)f->chr_private;
         if (!sfile->ctx)
-            continue;
+            { fut_file_put(f); continue; }
         if (!(sfile->ctx->sigmask & bit))
-            continue;
+            { fut_file_put(f); continue; }
         if (sfile->ctx->epoll_notify)
             fut_waitq_wake_one(sfile->ctx->epoll_notify);
+        fut_file_put(f);
     }
 }
 

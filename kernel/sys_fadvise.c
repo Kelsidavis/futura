@@ -169,28 +169,38 @@ long sys_fadvise64(int fd, int64_t offset, int64_t len, int advice) {
         return -EBADF;
     }
 
-    struct fut_file *file = fut_vfs_get_file(fd);
+    fut_task_t *task = fut_task_current();
+    if (!task)
+        return -ESRCH;
+
+    struct fut_file *file = fut_file_get(task, fd);
     if (!file) {
         return -EBADF;
     }
+    long ret = 0;
 
     /* O_PATH fds cannot be used for I/O — only path-based operations */
-    if (file->flags & O_PATH)
-        return -EBADF;
+    if (file->flags & O_PATH) {
+        ret = -EBADF;
+        goto out;
+    }
 
     /* Pipes and sockets are not seekable — fadvise doesn't apply */
     if (file->vnode && (file->vnode->type == VN_FIFO || file->vnode->type == VN_SOCK)) {
-        return -ESPIPE;
+        ret = -ESPIPE;
+        goto out;
     }
 
     /* Validate advice parameter */
     if (advice < POSIX_FADV_NORMAL || advice > POSIX_FADV_NOREUSE) {
-        return -EINVAL;
+        ret = -EINVAL;
+        goto out;
     }
 
     /* Validate offset and length */
     if (offset < 0 || len < 0) {
-        return -EINVAL;
+        ret = -EINVAL;
+        goto out;
     }
 
     struct fut_vnode *vnode = file->vnode;
@@ -251,5 +261,7 @@ long sys_fadvise64(int fd, int64_t offset, int64_t len, int advice) {
         break;
     }
 
-    return 0;
+out:
+    fut_file_put(file);
+    return ret;
 }

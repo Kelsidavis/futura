@@ -259,16 +259,20 @@ long sys_acct(const char *filename) {
      * that's either a write-anywhere primitive (device) or a system-
      * wide DoS hang (FIFO with no reader). */
     {
-        struct fut_file *acct_file = fut_vfs_get_file(fd);
+        struct fut_file *acct_file = fut_file_get(task, fd);
         if (acct_file && acct_file->vnode &&
             acct_file->vnode->type != VN_REG) {
+            int acct_type = acct_file->vnode->type;
+            fut_file_put(acct_file);
             fut_vfs_close(fd);
             fut_printf("[ACCT] acct(filename='%s', pid=%llu) -> EACCES "
                        "(not a regular file: type=%d)\n",
                        path_buf, (unsigned long long)task->pid,
-                       acct_file->vnode->type);
+                       acct_type);
             return -EACCES;
         }
+        if (acct_file)
+            fut_file_put(acct_file);
     }
     fut_vfs_close(fd);
 

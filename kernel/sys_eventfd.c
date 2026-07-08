@@ -1082,10 +1082,7 @@ long sys_eventfd2(unsigned int initval, int flags) {
         return fd;
     }
 
-    struct fut_file *file = NULL;
-    if (task->fd_table && fd >= 0 && fd < task->max_fds) {
-        file = task->fd_table[fd];
-    }
+    struct fut_file *file = fut_file_get(task, fd);
     if (!file) {
         fut_printf("[EVENTFD2] BUG: newly created fd %d missing file\n", fd);
         /* fut_vfs_close calls eventfd_release which frees ctx and efile.
@@ -1104,6 +1101,7 @@ long sys_eventfd2(unsigned int initval, int flags) {
         if (efd_task && efd_task->fd_flags && fd < efd_task->max_fds)
             efd_task->fd_flags[fd] |= FD_CLOEXEC;
     }
+    fut_file_put(file);
 
     return fd;
 }
@@ -1398,10 +1396,7 @@ long sys_timerfd_create(int clockid, int flags) {
     }
 
     /* Get the file struct to set flags */
-    struct fut_file *file = NULL;
-    if (task->fd_table && fd >= 0 && fd < task->max_fds) {
-        file = task->fd_table[fd];
-    }
+    struct fut_file *file = fut_file_get(task, fd);
     if (!file) {
         /* fut_vfs_close calls timerfd_release which frees ctx and tfile.
          * Do NOT free them again here to avoid double-free. */
@@ -1419,6 +1414,7 @@ long sys_timerfd_create(int clockid, int flags) {
         if (tfd_task && tfd_task->fd_flags && fd < tfd_task->max_fds)
             tfd_task->fd_flags[fd] |= FD_CLOEXEC;
     }
+    fut_file_put(file);
 
     return fd;
 }
@@ -1476,14 +1472,18 @@ long sys_timerfd_settime(int ufd, int flags,
      * timerfd file (wrong f_op).  Same EBADF/EINVAL split as the
      * matching signalfd / inotify fixes. */
     if (ufd < 0) return -EBADF;
-    if (!task->fd_table || ufd >= task->max_fds) return -EBADF;
-    struct fut_file *file = task->fd_table[ufd];
+    struct fut_file *file = fut_file_get(task, ufd);
     if (!file) return -EBADF;
-    if (file->chr_ops != &timerfd_fops || !file->chr_private)
+    if (file->chr_ops != &timerfd_fops || !file->chr_private) {
+        fut_file_put(file);
         return -EINVAL;
+    }
     struct timerfd_file *tfile = (struct timerfd_file *)file->chr_private;
     struct timerfd_ctx *ctx = tfile->ctx;
-    if (!ctx) return -EINVAL;
+    if (!ctx) {
+        fut_file_put(file);
+        return -EINVAL;
+    }
 
     /* Cancel any existing timer */
     if (ctx->armed) {
@@ -1511,6 +1511,7 @@ long sys_timerfd_settime(int ufd, int flags,
         else
 #endif
         if (fut_copy_to_user(old_value, &old_its, sizeof(old_its)) != 0) {
+            fut_file_put(file);
             return -EFAULT;
         }
     }
@@ -1529,6 +1530,7 @@ long sys_timerfd_settime(int ufd, int flags,
         fut_spinlock_release(&ctx->lock);
         _evfd_irq_restore(tfd_sf);
         /* Timer disarmed */
+        fut_file_put(file);
         return 0;
     }
 
@@ -1578,6 +1580,7 @@ long sys_timerfd_settime(int ufd, int flags,
 
     fut_timer_start(delay_ticks, timerfd_timer_cb, ctx);
 
+    fut_file_put(file);
     return 0;
 }
 
@@ -1598,14 +1601,18 @@ long sys_timerfd_gettime(int ufd, struct itimerspec *curr_value) {
      * eager EINVAL gate; the fut_copy_to_user at the tail already
      * returns EFAULT for NULL via fut_access_ok. */
     if (ufd < 0) return -EBADF;
-    if (!task->fd_table || ufd >= task->max_fds) return -EBADF;
-    struct fut_file *file = task->fd_table[ufd];
+    struct fut_file *file = fut_file_get(task, ufd);
     if (!file) return -EBADF;
-    if (file->chr_ops != &timerfd_fops || !file->chr_private)
+    if (file->chr_ops != &timerfd_fops || !file->chr_private) {
+        fut_file_put(file);
         return -EINVAL;
+    }
     struct timerfd_file *tfile = (struct timerfd_file *)file->chr_private;
     struct timerfd_ctx *ctx = tfile->ctx;
-    if (!ctx) return -EINVAL;
+    if (!ctx) {
+        fut_file_put(file);
+        return -EINVAL;
+    }
 
     struct itimerspec kits = {0};
     unsigned long tfd_gf = _evfd_irq_save();
@@ -1627,12 +1634,15 @@ long sys_timerfd_gettime(int ufd, struct itimerspec *curr_value) {
 #ifdef KERNEL_VIRTUAL_BASE
     if ((uintptr_t)curr_value >= KERNEL_VIRTUAL_BASE) {
         __builtin_memcpy(curr_value, &kits, sizeof(kits));
+        fut_file_put(file);
         return 0;
     }
 #endif
     if (fut_copy_to_user(curr_value, &kits, sizeof(kits)) != 0) {
+        fut_file_put(file);
         return -EFAULT;
     }
+    fut_file_put(file);
     return 0;
 }
 

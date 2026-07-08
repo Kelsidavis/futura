@@ -211,11 +211,13 @@ long sys_fchownat(int dirfd, const char *pathname, uint32_t uid, uint32_t gid, i
             return -EBADF;
         }
 
-        struct fut_file *dirfile = task->fd_table[dirfd];
+        struct fut_file *dirfile = fut_file_get(task, dirfd);
         if (!dirfile || !dirfile->vnode) {
             fut_printf("[FCHOWNAT] fchownat(dirfd=%d [%s], pathname=\"\" [empty, AT_EMPTY_PATH], "
                        "uid=%s, gid=%s, op=%s, flags=%s) -> EBADF (dirfd has no vnode)\n",
                        dirfd, dirfd_desc, uid_desc, gid_desc, operation_type, flags_desc);
+            if (dirfile)
+                fut_file_put(dirfile);
             return -EBADF;
         }
 
@@ -240,6 +242,7 @@ long sys_fchownat(int dirfd, const char *pathname, uint32_t uid, uint32_t gid, i
                        "vnode_ino=%lu, uid=%s, gid=%s, op=%s, flags=%s) -> %d (Phase 3)\n",
                        dirfd, dirfd_desc, vnode->ino, uid_desc, gid_desc,
                        operation_type, flags_desc, ret);
+            fut_file_put(dirfile);
             return ret;
         }
 
@@ -261,6 +264,7 @@ long sys_fchownat(int dirfd, const char *pathname, uint32_t uid, uint32_t gid, i
         fut_printf("[FCHOWNAT] fchownat(dirfd=%d [%s], pathname=\"\" [empty, AT_EMPTY_PATH], "
                    "vnode_ino=%lu, uid=%s, gid=%s, op=%s, flags=%s) -> 0 (dirfd ownership changed, Phase 4: Caching)\n",
                    dirfd, dirfd_desc, vnode->ino, uid_desc, gid_desc, operation_type, flags_desc);
+        fut_file_put(dirfile);
         return 0;
     }
 
@@ -298,10 +302,12 @@ long sys_fchownat(int dirfd, const char *pathname, uint32_t uid, uint32_t gid, i
                        dirfd, path_buf);
             return -EBADF;
         }
-        struct fut_file *dir_file = task->fd_table[dirfd];
+        struct fut_file *dir_file = fut_file_get(task, dirfd);
         if (!dir_file || !dir_file->vnode || dir_file->vnode->type != VN_DIR) {
             fut_printf("[FCHOWNAT] fchownat(dirfd=%d, path='%s') -> EBADF (dirfd not a directory)\n",
                        dirfd, path_buf);
+            if (dir_file)
+                fut_file_put(dir_file);
             return -EBADF;
         }
         if (!dir_file->path) {
@@ -313,6 +319,7 @@ long sys_fchownat(int dirfd, const char *pathname, uint32_t uid, uint32_t gid, i
             size_t rel_len = strlen(path_buf);
             bool has_trail = (dir_len > 0 && dir_file->path[dir_len - 1] == '/');
             if (dir_len + (has_trail ? 0 : 1) + rel_len >= sizeof(combined)) {
+                fut_file_put(dir_file);
                 return -ENAMETOOLONG;
             }
             size_t pos = 0;
@@ -321,6 +328,7 @@ long sys_fchownat(int dirfd, const char *pathname, uint32_t uid, uint32_t gid, i
             for (size_t j = 0; j <= rel_len; j++) combined[pos++] = path_buf[j];
             memcpy(path_buf, combined, pos);
         }
+        fut_file_put(dir_file);
     }
 
     /* Phase 3: AT_SYMLINK_NOFOLLOW - change symlink ownership, not target

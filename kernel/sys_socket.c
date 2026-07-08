@@ -351,8 +351,12 @@ long sys_socket(int domain, int type, int protocol) {
     /* Store file back-pointer for O_ASYNC/SIGIO delivery */
     {
         fut_task_t *ftask = fut_task_current();
-        if (ftask && sockfd < ftask->max_fds && ftask->fd_table)
-            socket->socket_file = ftask->fd_table[sockfd];
+        if (ftask) {
+            struct fut_file *sfile = fut_file_get(ftask, sockfd);
+            socket->socket_file = sfile;
+            if (sfile)
+                fut_file_put(sfile);
+        }
     }
 
     /* Apply SOCK_NONBLOCK and SOCK_CLOEXEC directly on the FD structure
@@ -365,12 +369,11 @@ long sys_socket(int domain, int type, int protocol) {
             if (type_flags & SOCK_NONBLOCK) {
                 /* Atomic to coexist with concurrent fcntl(F_SETFL) /
                  * ioctl(FIONBIO) writers (see da66992b / 59807b40). */
-                if (stask->fd_table) {
-                    struct fut_file *sfile = __atomic_load_n(&stask->fd_table[sockfd],
-                                                             __ATOMIC_ACQUIRE);
-                    if (sfile)
-                        __atomic_or_fetch(&sfile->flags, O_NONBLOCK, __ATOMIC_ACQ_REL);
-                }
+                struct fut_file *sfile = stask ? fut_file_get(stask, sockfd) : NULL;
+                if (sfile)
+                    __atomic_or_fetch(&sfile->flags, O_NONBLOCK, __ATOMIC_ACQ_REL);
+                if (sfile)
+                    fut_file_put(sfile);
                 /* Also set on the socket struct so socket_nonblock()
                  * returns true in fut_socket_recv/send. */
                 __atomic_or_fetch(&socket->flags, O_NONBLOCK, __ATOMIC_ACQ_REL);

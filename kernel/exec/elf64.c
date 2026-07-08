@@ -3017,10 +3017,9 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     /* Resolve the file vnode for the ELF binary so PT_LOAD VMAs can be
      * recorded as file-backed (shown with pathname in /proc/<pid>/maps). */
     struct fut_vnode *elf_vnode = NULL;
-    {
-        struct fut_file *elf_file = fut_vfs_get_file(fd);
-        if (elf_file) elf_vnode = elf_file->vnode;
-    }
+    fut_task_t *elf_task = fut_task_current();
+    struct fut_file *elf_file = elf_task ? fut_file_get(elf_task, fd) : NULL;
+    if (elf_file) elf_vnode = elf_file->vnode;
 
     EXEC_DEBUG("[EXEC] Mapping %u segments...\n", ehdr.e_phnum);
     for (uint16_t i = 0; i < ehdr.e_phnum; ++i) {
@@ -3063,6 +3062,8 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
                                 elf_vnode, foff);
         }
     }
+    if (elf_file)
+        fut_file_put(elf_file);
 
     /* PT_GNU_RELRO: mprotect the relocation-read-only region to PROT_READ.
      * This makes .got, .init_array, etc. read-only after loading, preventing
@@ -3172,12 +3173,13 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
             int max = caller_task->max_fds;
             if (max > (int)task->max_fds) max = (int)task->max_fds;
             for (int i = 0; i < max; i++) {
-                struct fut_file *f = caller_task->fd_table[i];
+                struct fut_file *f = fut_file_get(caller_task, i);
                 int cloexec = (caller_task->fd_flags && (caller_task->fd_flags[i] & FD_CLOEXEC));
                 if (f && !cloexec) {
-                    vfs_file_ref(f);
                     task->fd_table[i] = f;
                     if (task->fd_flags) task->fd_flags[i] = 0;
+                } else if (f) {
+                    fut_file_put(f);
                 }
             }
         }
@@ -4586,10 +4588,9 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
     /* Resolve the file vnode for the ELF binary so PT_LOAD VMAs can be
      * recorded as file-backed (shown with pathname in /proc/<pid>/maps). */
     struct fut_vnode *elf_vnode_arm = NULL;
-    {
-        struct fut_file *elf_file = fut_vfs_get_file(fd);
-        if (elf_file) elf_vnode_arm = elf_file->vnode;
-    }
+    fut_task_t *elf_task_arm = fut_task_current();
+    struct fut_file *elf_file_arm = elf_task_arm ? fut_file_get(elf_task_arm, fd) : NULL;
+    if (elf_file_arm) elf_vnode_arm = elf_file_arm->vnode;
 
     /* Map LOAD segments */
     uintptr_t heap_base_candidate = 0;
@@ -4635,6 +4636,8 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
                                 elf_vnode_arm, foff);
         }
     }
+    if (elf_file_arm)
+        fut_file_put(elf_file_arm);
 
     /* PT_GNU_RELRO: mprotect the relocation-read-only region to PROT_READ.
      * This makes .got, .init_array, etc. read-only after loading, preventing
@@ -4742,12 +4745,13 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
             int max = caller_task->max_fds;
             if (max > (int)task->max_fds) max = (int)task->max_fds;
             for (int i = 0; i < max; i++) {
-                struct fut_file *f = caller_task->fd_table[i];
+                struct fut_file *f = fut_file_get(caller_task, i);
                 int cloexec = (caller_task->fd_flags && (caller_task->fd_flags[i] & FD_CLOEXEC));
                 if (f && !cloexec) {
-                    vfs_file_ref(f);
                     task->fd_table[i] = f;
                     if (task->fd_flags) task->fd_flags[i] = 0;
+                } else if (f) {
+                    fut_file_put(f);
                 }
             }
         }

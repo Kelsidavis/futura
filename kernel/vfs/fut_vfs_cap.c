@@ -90,8 +90,9 @@ fut_handle_t fut_vfs_open_cap(const char *path, int flags, int mode) {
         return FUT_INVALID_HANDLE;
     }
 
-    /* Get the file structure */
-    struct fut_file *file = fut_vfs_get_file(fd);
+    /* Get a temporary pinned file reference while creating the capability. */
+    fut_task_t *task = fut_task_current();
+    struct fut_file *file = task ? fut_file_get(task, fd) : NULL;
     if (!file) {
         fut_vfs_close(fd);
         return FUT_INVALID_HANDLE;
@@ -104,11 +105,13 @@ fut_handle_t fut_vfs_open_cap(const char *path, int flags, int mode) {
     fut_handle_t handle = fut_object_create(FUT_OBJ_FILE, rights, file);
     if (handle == FUT_INVALID_HANDLE) {
         fut_vfs_close(fd);
+        fut_file_put(file);
         return FUT_INVALID_HANDLE;
     }
 
     /* Increment file refcount since object now holds a reference */
     vfs_file_ref(file);
+    fut_file_put(file);
 
     return handle;
 }

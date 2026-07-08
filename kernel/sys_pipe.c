@@ -650,14 +650,18 @@ long sys_pipe(int pipefd[2]) {
 
     /* Fix file access modes: read end is O_RDONLY, write end is O_WRONLY */
     {
-        extern struct fut_file *vfs_get_file(int fd);
-        struct fut_file *rfile = vfs_get_file(read_fd);
-        struct fut_file *wfile = vfs_get_file(write_fd);
+        fut_task_t *task = fut_task_current();
+        struct fut_file *rfile = task ? fut_file_get(task, read_fd) : NULL;
+        struct fut_file *wfile = task ? fut_file_get(task, write_fd) : NULL;
         if (rfile) rfile->flags = O_RDONLY;
         if (wfile) wfile->flags = O_WRONLY;
-        /* Store file pointers for O_ASYNC/SIGIO delivery */
+        /* Store non-owning self back-pointers for O_ASYNC/SIGIO delivery.
+         * The temporary refs above only make setup dereferences safe; owning
+         * these would create a refcount cycle and prevent pipe release. */
         pipe->read_end_file = rfile;
         pipe->write_end_file = wfile;
+        if (rfile) fut_file_put(rfile);
+        if (wfile) fut_file_put(wfile);
     }
 
     /* Copy file descriptors to userspace safely */
@@ -768,14 +772,18 @@ long sys_pipe2(int pipefd[2], int flags) {
 
     /* Fix file access modes: read end is O_RDONLY, write end is O_WRONLY */
     {
-        extern struct fut_file *vfs_get_file(int fd);
-        struct fut_file *rfile = vfs_get_file(read_fd);
-        struct fut_file *wfile = vfs_get_file(write_fd);
+        fut_task_t *task = fut_task_current();
+        struct fut_file *rfile = task ? fut_file_get(task, read_fd) : NULL;
+        struct fut_file *wfile = task ? fut_file_get(task, write_fd) : NULL;
         if (rfile) rfile->flags = O_RDONLY;
         if (wfile) wfile->flags = O_WRONLY;
-        /* Store file pointers for O_ASYNC/SIGIO delivery */
+        /* Store non-owning self back-pointers for O_ASYNC/SIGIO delivery.
+         * The temporary refs above only make setup dereferences safe; owning
+         * these would create a refcount cycle and prevent pipe release. */
         pipe->read_end_file = rfile;
         pipe->write_end_file = wfile;
+        if (rfile) fut_file_put(rfile);
+        if (wfile) fut_file_put(wfile);
     }
 
     /* Apply O_NONBLOCK and O_CLOEXEC directly on the FD structures
@@ -783,9 +791,8 @@ long sys_pipe2(int pipefd[2], int flags) {
      * (Using sys_fcntl would leave a gap where another thread could
      * observe the fd without the requested flags.) */
     if (flags & O_NONBLOCK) {
-        extern struct fut_file *vfs_get_file(int fd);
-        struct fut_file *rf = vfs_get_file(read_fd);
-        struct fut_file *wf = vfs_get_file(write_fd);
+        struct fut_file *rf = pipe->read_end_file;
+        struct fut_file *wf = pipe->write_end_file;
         if (rf) rf->flags |= O_NONBLOCK;
         if (wf) wf->flags |= O_NONBLOCK;
         /* Sync pipe buffer's per-end nonblock flags */

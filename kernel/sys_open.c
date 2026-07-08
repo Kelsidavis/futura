@@ -419,14 +419,18 @@ long sys_open(const char *pathname, int flags, int mode) {
 
     /* Phase 3: Validate O_DIRECTORY flag - file must be a directory */
     if (result >= 0 && (local_flags & O_DIRECTORY)) {
-        struct fut_file *file = fut_vfs_get_file(result);
+        fut_task_t *task = fut_task_current();
+        struct fut_file *file = task ? fut_file_get(task, result) : NULL;
         if (file && file->vnode && file->vnode->type != VN_DIR) {
             /* O_DIRECTORY flag specified but file is not a directory */
+            fut_file_put(file);
             fut_vfs_close(result);
             open_printf("[OPEN] open(path='%s' [%s], O_DIRECTORY) -> ENOTDIR (file is not a directory)\n",
                        kpath, path_type);
             return -ENOTDIR;
         }
+        if (file)
+            fut_file_put(file);
     }
 
     /* Set FD_CLOEXEC if O_CLOEXEC was requested (per-FD flag) */

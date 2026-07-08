@@ -191,8 +191,9 @@ long sys_fstat(int fd, struct fut_stat *statbuf) {
     /* Phase 2: Categorize FD range for diagnostics (Phase 6: use shared helper) */
     const char *fd_category = fut_fd_category(local_fd);
 
-    /* Get the file structure from the file descriptor */
-    struct fut_file *file = fut_vfs_get_file(local_fd);
+    /* Hold a real file reference across metadata inspection so a
+     * concurrent close() cannot free the descriptor object mid-fstat. */
+    struct fut_file *file = fut_file_get(task, local_fd);
     if (!file) {
         fut_printf("[FSTAT] fstat(fd=%d [%s]) -> EBADF (invalid fd, not open)\n",
                    local_fd, fd_category);
@@ -225,8 +226,10 @@ long sys_fstat(int fd, struct fut_stat *statbuf) {
         kernel_stat.st_blksize = 4096;
         kernel_stat.st_ino = (uint64_t)(uintptr_t)file;
         if (fstat_copy_to_user(local_statbuf, &kernel_stat, sizeof(struct fut_stat)) != 0) {
+            fut_file_put(file);
             return -EFAULT;
         }
+        fut_file_put(file);
         return 0;
     }
 
@@ -252,6 +255,7 @@ long sys_fstat(int fd, struct fut_stat *statbuf) {
             }
             fut_printf("[FSTAT] fstat(fd=%d [%s], ino=%llu) -> %d (%s)\n",
                        local_fd, fd_category, vnode->ino, ret, error_desc);
+            fut_file_put(file);
             return ret;
         }
     } else {
@@ -286,8 +290,10 @@ long sys_fstat(int fd, struct fut_stat *statbuf) {
     if (fstat_copy_to_user(local_statbuf, &kernel_stat, sizeof(struct fut_stat)) != 0) {
         fut_printf("[FSTAT] fstat(fd=%d [%s], ino=%llu) -> EFAULT (copy_to_user failed)\n",
                    local_fd, fd_category, kernel_stat.st_ino);
+        fut_file_put(file);
         return -EFAULT;
     }
 
+    fut_file_put(file);
     return 0;
 }

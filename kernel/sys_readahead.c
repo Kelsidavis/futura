@@ -57,17 +57,26 @@ long sys_readahead(int fd, int64_t offset, size_t count) {
     if (offset < 0)
         return -EINVAL;
 
-    struct fut_file *file = fut_vfs_get_file(fd);
+    fut_task_t *task = fut_task_current();
+    if (!task)
+        return -ESRCH;
+
+    struct fut_file *file = fut_file_get(task, fd);
     if (!file)
         return -EBADF;
+    long ret = 0;
 
     /* O_PATH fds cannot be used for I/O — only path-based operations */
-    if (file->flags & O_PATH)
-        return -EBADF;
+    if (file->flags & O_PATH) {
+        ret = -EBADF;
+        goto out;
+    }
 
     /* readahead requires the fd to be readable */
-    if ((file->flags & O_ACCMODE) == O_WRONLY)
-        return -EBADF;
+    if ((file->flags & O_ACCMODE) == O_WRONLY) {
+        ret = -EBADF;
+        goto out;
+    }
 
     /* Linux's ksys_readahead rejects everything that is not a regular
      * file with -EINVAL (man readahead(2): 'fd does not refer to a file
@@ -78,13 +87,15 @@ long sys_readahead(int fd, int64_t offset, size_t count) {
      * rejected FIFO/SOCK and silently returned 0 for everything else,
      * so a caller probing readahead() on a directory got 'success'
      * without any pages actually being prefetched. */
-    if (!file->vnode || file->vnode->type != VN_REG)
-        return -EINVAL;
+    if (!file->vnode || file->vnode->type != VN_REG) {
+        ret = -EINVAL;
+        goto out;
+    }
 
     /* Need a vnode with read capability to prefetch pages */
     struct fut_vnode *vnode = file->vnode;
     if (!vnode || !vnode->ops || !vnode->ops->read)
-        return 0;  /* No file backing — hint accepted as no-op */
+        goto out;  /* No file backing — hint accepted as no-op */
 
     /* Clamp count to 2 MB to prevent excessive prefetch from a single call */
     if (count > (2u * 1024u * 1024u))
@@ -92,7 +103,7 @@ long sys_readahead(int fd, int64_t offset, size_t count) {
 
     /* Zero count is a valid no-op */
     if (count == 0)
-        return 0;
+        goto out;
 
     /* Prefetch page-aligned range into shared page cache */
     uint64_t start = (uint64_t)offset & ~((uint64_t)PAGE_SIZE - 1);
@@ -126,5 +137,7 @@ long sys_readahead(int fd, int64_t offset, size_t count) {
         shared_page_insert(vnode, page_off, phys);
     }
 
-    return 0;
+out:
+    fut_file_put(file);
+    return ret;
 }

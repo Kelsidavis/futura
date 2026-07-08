@@ -364,8 +364,8 @@ void epoll_notify_fd_close(int fd) {
                             sock->connect_notify = NULL;
                     }
                     fut_task_t *t = fut_task_current();
-                    if (t && t->fd_table && fd < t->max_fds) {
-                        struct fut_file *f = t->fd_table[fd];
+                    if (t) {
+                        struct fut_file *f = fut_file_get(t, fd);
                         if (f) {
                             extern void fut_eventfd_set_epoll_notify(struct fut_file *file, fut_waitq_t *wq);
                             extern void fut_timerfd_set_epoll_notify(struct fut_file *file, fut_waitq_t *wq);
@@ -381,6 +381,7 @@ void epoll_notify_fd_close(int fd) {
                             fut_pidfd_set_epoll_notify(f, NULL);
                             fut_inotify_set_epoll_notify(f, NULL);
                             fut_pty_set_epoll_notify(f, NULL);
+                            fut_file_put(f);
                         }
                     }
                 }
@@ -964,8 +965,10 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
         return -EFAULT;
     }
 
-    /* Validate FD exists */
-    struct fut_file *file = fut_vfs_get_file(fd);
+    /* Validate FD exists with a pinned lookup; this dereferences only for
+     * lifetime safety before epoll stores the fd number. */
+    fut_task_t *ctl_task_for_file = fut_task_current();
+    struct fut_file *file = ctl_task_for_file ? fut_file_get(ctl_task_for_file, fd) : NULL;
     if (!file) {
         char msg[256];
         int pos = 0;
@@ -1007,6 +1010,7 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
 
         return -EBADF;
     }
+    fut_file_put(file);
 
     /* Get the epoll set (under lock for thread safety) */
     fut_spinlock_acquire(&epoll_lock);
@@ -1248,8 +1252,8 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
         /* Wire up epoll notification on eventfd, timerfd, signalfd, and pipe */
         {
             fut_task_t *ctl_task = fut_task_current();
-            if (ctl_task && ctl_task->fd_table && fd < ctl_task->max_fds) {
-                struct fut_file *ctl_file = ctl_task->fd_table[fd];
+            if (ctl_task) {
+                struct fut_file *ctl_file = fut_file_get(ctl_task, fd);
                 extern void fut_eventfd_set_epoll_notify(struct fut_file *file, fut_waitq_t *wq);
                 extern void fut_timerfd_set_epoll_notify(struct fut_file *file, fut_waitq_t *wq);
                 extern void fut_signalfd_set_epoll_notify(struct fut_file *file, fut_waitq_t *wq);
@@ -1264,6 +1268,8 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
                 fut_inotify_set_epoll_notify(ctl_file, &set->epoll_waitq);
                 extern void fut_pty_set_epoll_notify(struct fut_file *file, void *wq);
                 fut_pty_set_epoll_notify(ctl_file, &set->epoll_waitq);
+                if (ctl_file)
+                    fut_file_put(ctl_file);
             }
         }
 
@@ -1348,13 +1354,14 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
                 /* Clear signalfd/pty epoll_notify if we had wired it */
                 {
                     fut_task_t *del_task = fut_task_current();
-                    if (del_task && del_task->fd_table && fd < del_task->max_fds) {
+                    if (del_task) {
                         extern void fut_signalfd_set_epoll_notify(struct fut_file *file, fut_waitq_t *wq);
                         extern void fut_pty_set_epoll_notify(struct fut_file *file, void *wq);
-                        struct fut_file *del_file = del_task->fd_table[fd];
+                        struct fut_file *del_file = fut_file_get(del_task, fd);
                         if (del_file) {
                             fut_signalfd_set_epoll_notify(del_file, NULL);
                             fut_pty_set_epoll_notify(del_file, NULL);
+                            fut_file_put(del_file);
                         }
                     }
                 }
@@ -1611,7 +1618,8 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
                 continue;
             }
 
-            struct fut_file *file = fut_vfs_get_file(set->fds[i].fd);
+            fut_task_t *wait_task = fut_task_current();
+            struct fut_file *file = wait_task ? fut_file_get(wait_task, set->fds[i].fd) : NULL;
             if (!file) {
                 /* FD closed - report error event */
                 ready_events[ready_count].events = EPOLLERR | EPOLLHUP;
@@ -1796,8 +1804,11 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
                 }
 
                 /* Cap at maxevents — Linux returns at most maxevents entries */
+                fut_file_put(file);
                 if (ready_count >= maxevents)
                     break;
+            } else {
+                fut_file_put(file);
             }
         }
 
@@ -2141,7 +2152,8 @@ long sys_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
             if (set->fds[i].oneshot_disabled)
                 continue;
 
-            struct fut_file *file = fut_vfs_get_file(set->fds[i].fd);
+            fut_task_t *wait_task = fut_task_current();
+            struct fut_file *file = wait_task ? fut_file_get(wait_task, set->fds[i].fd) : NULL;
             if (!file) {
                 ready_events[ready_count].events = EPOLLERR | EPOLLHUP;
                 ready_events[ready_count].data.u64 = set->fds[i].data;
@@ -2262,8 +2274,11 @@ long sys_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
                     set->fds[i].events = 0;
                     set->fds[i].oneshot_disabled = true;
                 }
+                fut_file_put(file);
                 if (ready_count >= maxevents)
                     break;
+            } else {
+                fut_file_put(file);
             }
         }
 

@@ -599,8 +599,12 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
     /* Store file back-pointer for O_ASYNC/SIGIO delivery */
     {
         fut_task_t *ftask = fut_task_current();
-        if (ftask && newfd < ftask->max_fds && ftask->fd_table)
-            accepted_socket->socket_file = ftask->fd_table[newfd];
+        if (ftask) {
+            struct fut_file *afile = fut_file_get(ftask, newfd);
+            accepted_socket->socket_file = afile;
+            if (afile)
+                fut_file_put(afile);
+        }
     }
 
     /* Handle peer address return if requested */
@@ -820,11 +824,11 @@ long sys_accept4(int sockfd, void *addr, socklen_t *addrlen, int flags) {
                  * in sys_socket recently. atask->fd_table[newfd] without
                  * the guard is a kernel NULL-deref for any caller without
                  * a populated fd_table (early-init / kernel threads). */
-                if (atask->fd_table) {
-                    struct fut_file *afile = atask->fd_table[newfd];
-                    if (afile)
-                        __atomic_or_fetch(&afile->flags, O_NONBLOCK, __ATOMIC_ACQ_REL);
-                }
+                struct fut_file *afile = fut_file_get(atask, (int)newfd);
+                if (afile)
+                    __atomic_or_fetch(&afile->flags, O_NONBLOCK, __ATOMIC_ACQ_REL);
+                if (afile)
+                    fut_file_put(afile);
                 /* Also propagate to socket struct so socket_nonblock()
                  * returns true in fut_socket_recv/send. Atomic to pair
                  * with the F_SETFL/FIONBIO writers (da66992b/7f5da717). */

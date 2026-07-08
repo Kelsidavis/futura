@@ -17,6 +17,7 @@
  */
 
 #include <kernel/errno.h>
+#include <kernel/fut_task.h>
 #include <kernel/fut_vfs.h>
 #include <sys/uio.h>
 #include <stdint.h>
@@ -103,10 +104,13 @@ ssize_t sys_pwritev2(int fd, const struct iovec *iov, int iovcnt,
      * caller-specified offset where Linux writes at EOF — silently
      * losing the atomic-append guarantee. */
     if (flags & RWF_APPEND) {
-        extern struct fut_file *fut_vfs_get_file(int fd);
-        struct fut_file *rwf_file = fut_vfs_get_file(fd);
-        if (!rwf_file || !rwf_file->vnode)
+        fut_task_t *task = fut_task_current();
+        struct fut_file *rwf_file = task ? fut_file_get(task, fd) : NULL;
+        if (!rwf_file || !rwf_file->vnode) {
+            if (rwf_file)
+                fut_file_put(rwf_file);
             return -EBADF;
+        }
 
         fut_spinlock_acquire(&rwf_file->vnode->write_lock);
         int64_t append_off = (int64_t)rwf_file->vnode->size;
@@ -114,6 +118,7 @@ ssize_t sys_pwritev2(int fd, const struct iovec *iov, int iovcnt,
                                    int iovcnt, int64_t offset);
         ssize_t result = sys_pwritev(fd, iov, iovcnt, append_off);
         fut_spinlock_release(&rwf_file->vnode->write_lock);
+        fut_file_put(rwf_file);
         return result;
     }
 

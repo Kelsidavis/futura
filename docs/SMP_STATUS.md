@@ -2,8 +2,8 @@
 
 **Date**: 2026-07-08
 **Status**: 🟡 **Bring-up complete and validated; cross-CPU thread
-placement gated behind `smp_sched` boot flag pending two remaining
-concurrency fixes.**
+placement gated behind `smp_sched` boot flag pending the remaining
+direct fd-table audit and the `-smp 4` control-flow bug.**
 
 - **Default boot** (no flag): every CPU is brought online with full
   per-CPU state (GDT/TSS, IDT, syscall MSRs, LAPIC timer) but stays
@@ -85,7 +85,7 @@ get + single-exit put.
 
 ## Remaining blockers for `smp_sched` default-on
 
-### A. fd-resolvers on the bare loader — two tranches done, one left
+### A. fd-resolvers on the bare loader — fd-helper tranches done, direct sweep left
 The `struct fut_file` UAF class (a bare `fd_table[fd]` load raced by a
 concurrent `close()` on another CPU) is fixed for:
 - the hot in-VFS paths: `read`, `write` (`2e5cde2c`), and `lseek`,
@@ -104,19 +104,30 @@ concurrent `close()` on another CPU) is fixed for:
   The remaining callers of the wrapper only NULL-check the slot
   (free-fd scans, existence probes) and cannot use-after-free.
 
-**Still on the bare loader (third tranche, not yet swept)**: the
-~45 call sites that resolve through the fd-only helpers
-`vfs_get_file(fd)` / `fut_vfs_get_file(fd)` (legacy `get_file()`:
-per-task load, then global `file_table[]` fallback) — fstat, fchmod,
-ftruncate, fadvise/readahead, epoll's fd checks, mmap's second
-resolve in sys_mmap.c, sockets (sendto/recvfrom/recvmsg/sendmmsg/
-recvmmsg), pty, pipe fcntl helpers, aio, acct, clone3 cgroup_fd,
-elf64 fd-exec, preadv2. Same conversion pattern applies; the helpers
-themselves can't take a ref without changing the contract for all
-callers at once.
-Also unswept: direct `task->fd_table[fd]` dereferences outside the
-helpers (sys_ioctl, sys_select/poll, sys_eventfd, sys_fchdir,
-sys_mqueue, sys_landlock, sys_linkat, epoll internals, …).
+The next tranche converted the dereferencing fd-only helper users:
+`fstat`, `fchmod`, `ftruncate`, `fadvise`, `readahead`, the O_DIRECTORY
+and O_PATH validation paths in `open`/`openat`/`mmap`, `preadv2`
+RWF_APPEND, `acct`, `clone3` `CLONE_INTO_CGROUP`, capability-open,
+elf64 fd-exec and inherited-fd cloning, epoll registration/wait
+scans, poll/select wiring and scans, eventfd/timerfd/signalfd setup
+and wake paths, pty helpers, pipe/socket/socketpair/accept setup, and
+small direct-vnode users (`fchdir`, `fchownat`, `linkat`
+`AT_EMPTY_PATH`, `cachestat`). Socket send/recv and AIO fd-only helper
+uses were audited and left as EBADF/existence probes because they do
+not dereference or retain the returned `fut_file_t`.
+
+**Remaining fd follow-up**: direct `task->fd_table[fd]` dereferences
+that still need the same pinning treatment or a documented probe-only
+classification. Known higher-risk sites include `sys_ioctl` (many
+early returns, wants a single-exit wrapper), `sys_mqueue`
+(`mq_fd_lookup` returns `chr_private` without holding the owning file),
+pidfd helpers, inotify/fanotify/userfaultfd/memfd flag setup, procfs
+`/proc/<pid>/fd*` readers, `kcmp`, fork/exec inheritance/close paths,
+and socket bind/connect/listen/getsockopt/setsockopt/getpeername/
+getsockname/shutdown probes that should be rechecked case-by-case.
+Several remaining `fd_table[]` reads are NULL-check-only probes or
+owner-side table mutation during fd creation/dup/close; those should
+stay documented as non-dereferencing once audited.
 
 ### B. Control-flow corruption at `-smp 4` (distinct bug, UNVALIDATABLE here)
 After the read/write fix, `-smp 4 + smp_sched` runs well past the CAP
@@ -139,11 +150,12 @@ reliable ceiling here.
 
 ## Debugging notes
 
-- `smp_sched` is a **multiboot cmdline flag** read from GRUB, *not*
-  the compiled `KAPPEND` fallback. The `test-iso` Makefile target
-  hardcodes the GRUB cmdline; to test with the flag, rebuild the ISO
-  with `smp_sched` appended to the `multiboot2` line in
-  `iso/boot/grub/grub.cfg` (or a copy) and `grub-mkrescue`.
+- `smp_sched` is a multiboot cmdline flag read from GRUB. For the ISO
+  harness, append it to the `multiboot2` line used to build the ISO
+  (the current `test-iso` target hardcodes its test command line) and
+  run QEMU with `-smp 2`. The direct `run` path honors `KAPPEND` and
+  `EXTRA_QEMU_FLAGS`, but boots the initramfs path rather than the
+  full ISO self-test harness.
 - QEMU's MTTCG occasionally aborts under `-smp 4` with its own
   `qemu_mutex_lock_iothread` assertion — a host emulator bug, not
   ours. Use `-accel tcg,thread=single` for deterministic

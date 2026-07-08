@@ -505,11 +505,17 @@ long sys_cachestat(unsigned int fd, const void *cachestat_range,
      * also diverged from Linux's ordering.  Same EBADF-before-EFAULT
      * pattern as the recent fstatfs reorder. */
     if (fd >= (unsigned int)task->max_fds || !task->fd_table) return -EBADF;
-    struct fut_file *file = task->fd_table[fd];
+    struct fut_file *file = fut_file_get(task, (int)fd);
     if (!file) return -EBADF;
 
-    if (flags != 0) return -EINVAL;
-    if (!cachestat_range || !cachestat_buf) return -EFAULT;
+    if (flags != 0) {
+        fut_file_put(file);
+        return -EINVAL;
+    }
+    if (!cachestat_range || !cachestat_buf) {
+        fut_file_put(file);
+        return -EFAULT;
+    }
 
     /* Copy range from user/kernel space */
     struct { uint64_t off; uint64_t len; } range;
@@ -518,8 +524,10 @@ long sys_cachestat(unsigned int fd, const void *cachestat_range,
         __builtin_memcpy(&range, cachestat_range, sizeof(range));
     else
 #endif
-    if (fut_copy_from_user(&range, cachestat_range, sizeof(range)) != 0)
+    if (fut_copy_from_user(&range, cachestat_range, sizeof(range)) != 0) {
+        fut_file_put(file);
         return -EFAULT;
+    }
 
     /* Get file size from vnode; character/pipe/socket fds have no page cache */
     uint64_t file_size = 0;
@@ -573,9 +581,12 @@ long sys_cachestat(unsigned int fd, const void *cachestat_range,
         __builtin_memcpy(cachestat_buf, &result, sizeof(result));
     else
 #endif
-    if (fut_copy_to_user(cachestat_buf, &result, sizeof(result)) != 0)
+    if (fut_copy_to_user(cachestat_buf, &result, sizeof(result)) != 0) {
+        fut_file_put(file);
         return -EFAULT;
+    }
 
+    fut_file_put(file);
     return 0;
 }
 

@@ -771,8 +771,8 @@ int pty_open_slave(int index) {
     }
 
     /* Set file->path so /proc/self/fd/<n> readlink shows /dev/pts/<n> */
-    extern struct fut_file *vfs_get_file(int fd);
-    struct fut_file *file = vfs_get_file(fd);
+    fut_task_t *task = fut_task_current();
+    struct fut_file *file = task ? fut_file_get(task, fd) : NULL;
     if (file) {
         char *path = fut_malloc(20);  /* "/dev/pts/" + up to 2 digits + NUL */
         if (path) {
@@ -791,9 +791,10 @@ int pty_open_slave(int index) {
         extern int fut_vfs_create_file(const char *path, uint32_t mode);
         fut_vfs_create_file(file->path, 0620);  /* crw--w---- like Linux pts */
     }
+    if (file)
+        fut_file_put(file);
 
     /* Set controlling terminal on the opening task (Linux: MKDEV(136, n)) */
-    fut_task_t *task = fut_task_current();
     if (task && task->tty_nr == 0)
         task->tty_nr = (136u << 8) | (uint32_t)index;
 
@@ -893,16 +894,25 @@ void pty_init(void) {
  * For non-PTY fds: returns -1.
  */
 int fut_pty_inject_input(int fd, uint8_t byte) {
-    extern struct fut_file *fut_vfs_get_file(int fd);
-    struct fut_file *file = fut_vfs_get_file(fd);
-    if (!file || !file->chr_private) return -1;
+    fut_task_t *task = fut_task_current();
+    struct fut_file *file = task ? fut_file_get(task, fd) : NULL;
+    if (!file || !file->chr_private) {
+        if (file)
+            fut_file_put(file);
+        return -1;
+    }
 
     struct pty_priv *pp = (struct pty_priv *)file->chr_private;
-    if (pp->tag != PTY_MASTER_TAG && pp->tag != PTY_SLAVE_TAG)
+    if (pp->tag != PTY_MASTER_TAG && pp->tag != PTY_SLAVE_TAG) {
+        fut_file_put(file);
         return -1;
+    }
 
     struct pty_pair *p = pp->pair;
-    if (!p) return -1;
+    if (!p) {
+        fut_file_put(file);
+        return -1;
+    }
 
     fut_spinlock_acquire(&p->lock);
 
@@ -923,6 +933,7 @@ int fut_pty_inject_input(int fd, uint8_t byte) {
     if (pp->tag == PTY_SLAVE_TAG && p->slave_epoll_wq)
         fut_waitq_wake_one(p->slave_epoll_wq);
 
+    fut_file_put(file);
     return 0;
 }
 
@@ -931,13 +942,22 @@ int fut_pty_inject_input(int fd, uint8_t byte) {
  * Returns the pgid, or 0 if fd is not a PTY.
  */
 int fut_pty_get_fg_pgid(int fd) {
-    extern struct fut_file *fut_vfs_get_file(int fd);
-    struct fut_file *file = fut_vfs_get_file(fd);
-    if (!file || !file->chr_private) return 0;
+    fut_task_t *task = fut_task_current();
+    struct fut_file *file = task ? fut_file_get(task, fd) : NULL;
+    if (!file || !file->chr_private) {
+        if (file)
+            fut_file_put(file);
+        return 0;
+    }
     struct pty_priv *pp = (struct pty_priv *)file->chr_private;
-    if (pp->tag != PTY_MASTER_TAG && pp->tag != PTY_SLAVE_TAG) return 0;
+    if (pp->tag != PTY_MASTER_TAG && pp->tag != PTY_SLAVE_TAG) {
+        fut_file_put(file);
+        return 0;
+    }
     struct pty_pair *p = pp->pair;
-    return p ? p->fg_pgid : 0;
+    int pgid = p ? p->fg_pgid : 0;
+    fut_file_put(file);
+    return pgid;
 }
 
 /**
@@ -945,13 +965,24 @@ int fut_pty_get_fg_pgid(int fd) {
  * Returns 0 on success, -1 if fd is not a PTY.
  */
 int fut_pty_set_fg_pgid(int fd, int pgid) {
-    extern struct fut_file *fut_vfs_get_file(int fd);
-    struct fut_file *file = fut_vfs_get_file(fd);
-    if (!file || !file->chr_private) return -1;
+    fut_task_t *task = fut_task_current();
+    struct fut_file *file = task ? fut_file_get(task, fd) : NULL;
+    if (!file || !file->chr_private) {
+        if (file)
+            fut_file_put(file);
+        return -1;
+    }
     struct pty_priv *pp = (struct pty_priv *)file->chr_private;
-    if (pp->tag != PTY_MASTER_TAG && pp->tag != PTY_SLAVE_TAG) return -1;
+    if (pp->tag != PTY_MASTER_TAG && pp->tag != PTY_SLAVE_TAG) {
+        fut_file_put(file);
+        return -1;
+    }
     struct pty_pair *p = pp->pair;
-    if (!p) return -1;
+    if (!p) {
+        fut_file_put(file);
+        return -1;
+    }
     p->fg_pgid = pgid;
+    fut_file_put(file);
     return 0;
 }

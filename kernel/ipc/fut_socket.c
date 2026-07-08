@@ -1834,6 +1834,7 @@ int fut_socket_close(fut_socket_t *socket) {
         fut_waitq_wake_one(socket->pair_reverse->epoll_notify);
 
     SOCKET_LOG("[SOCKET] Socket %u closed\n", socket->socket_id);
+    socket->socket_file = NULL;
     fut_socket_unref(socket);
     return 0;
 }

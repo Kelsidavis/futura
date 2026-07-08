@@ -177,7 +177,7 @@ long sys_fchdir(int fd) {
     }
 
     /* Phase 3: Get file from fd_table and validate it exists */
-    struct fut_file *file = task->fd_table[fd];
+    struct fut_file *file = fut_file_get(task, fd);
     if (!file) {
         fut_printf("[FCHDIR] fchdir(fd=%d [%s], pid=%d) -> EBADF "
                    "(fd not open)\n",
@@ -191,6 +191,7 @@ long sys_fchdir(int fd) {
         fut_printf("[FCHDIR] fchdir(fd=%d [%s], pid=%d) -> EBADF "
                    "(no vnode associated with fd)\n",
                    fd, fd_category, task->pid);
+        fut_file_put(file);
         return -EBADF;
     }
 
@@ -205,6 +206,7 @@ long sys_fchdir(int fd) {
         fut_printf("[FCHDIR] fchdir(fd=%d [%s], vnode_type=%s, pid=%d) -> ENOTDIR "
                    "(target is not a directory)\n",
                    fd, fd_category, type_desc, task->pid);
+        fut_file_put(file);
         return -ENOTDIR;
     }
 
@@ -241,5 +243,6 @@ long sys_fchdir(int fd) {
      * shells and build systems use both interchangeably. Errors
      * above still log explicitly. */
     (void)fd_category; (void)old_dir_ino;
+    fut_file_put(file);
     return 0;
 }

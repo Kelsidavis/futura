@@ -60,41 +60,59 @@ static void udelay(uint32_t usec) {
 /**
  * AP entry point (called from trampoline in 64-bit mode).
  * This is the first C code executed by APs.
+ *
+ * Bring-up order is load-bearing:
+ *   1. lidt            — any exception before this triple-faults silently
+ *   2. per-CPU GDT/TSS — segment reload zeroes GS base, so this MUST
+ *                        precede fut_percpu_set; ltr needs a per-CPU
+ *                        TSS descriptor (busy-bit forbids sharing)
+ *   3. fut_percpu_set  — GS base; ISR stubs write %gs:PERCPU_* from
+ *                        the first interrupt on
+ *   4. syscall MSRs    — LSTAR/STAR/FMASK/EFER.SCE are per-CPU
+ *   5. LAPIC + timer   — BSP-calibrated count so all CPUs tick alike
  */
 void ap_main(uint32_t apic_id) {
     /* Load the kernel IDT into THIS CPU's IDTR before doing anything that
-     * might raise an exception. IDTR is per-CPU; BSP loads it in
-     * fut_idt_init via lidt, but APs come up with an undefined IDTR after
-     * the long-mode trampoline. Without this, any page fault, #GP, etc.
-     * on the AP (e.g. inside kmalloc during fut_sched_init_cpu) becomes a
-     * triple-fault — silent on real hardware. The BSP's IDT is already
-     * fully populated and is shared by every CPU, so a plain lidt is
-     * enough; no per-CPU IDT needed yet. */
+     * might raise an exception. The BSP's IDT is fully populated and is
+     * shared by every CPU (interrupt gates don't have busy bits). */
     extern void fut_idt_load(void);
     fut_idt_load();
 
-    fut_printf("[SMP] AP CPU %u online\n", apic_id);
-
-    /* Initialize LAPIC for this CPU */
-    extern void lapic_init(uint64_t lapic_base);
-    lapic_init(0xFEE00000);  /* Standard LAPIC address */
+    /* Program this CPU's CR0/CR4/XCR0/EFER from the BSP-detected
+     * feature set. Must precede any memset/memcpy: those use SSE
+     * (pxor %xmm...) and the AP arrives with CR4.OSFXSR clear — the
+     * first SSE instruction is an immediate #UD. */
+    extern void cpu_features_init(void);
+    cpu_features_init();
 
     /* Validate APIC ID is within bounds */
     if (apic_id >= MAX_CPUS) {
-        fut_printf("[SMP] ERROR: APIC ID %u exceeds MAX_CPUS (%u), halting AP\n", apic_id, MAX_CPUS);
         for (;;) __asm__ volatile("hlt");
     }
 
     /* Get unique CPU index atomically */
     uint32_t cpu_index = atomic_fetch_add_explicit(&cpu_count, 1, memory_order_seq_cst);
     if (cpu_index >= FUT_MAX_CPUS) {
-        fut_printf("[SMP] ERROR: CPU index %u exceeds FUT_MAX_CPUS, halting AP\n", cpu_index);
         for (;;) __asm__ volatile("hlt");
     }
 
-    /* Initialize per-CPU data for this AP */
+    /* Initialize per-CPU data for this AP (memsets the slot, stamps
+     * self/cpu_id/cpu_index, inits the ready-queue lock). */
     fut_percpu_init(apic_id, cpu_index);
+
+    /* Per-CPU GDT + TSS, then GS base, then syscall MSRs. */
+    extern int fut_tss_init_ap(fut_percpu_t *percpu);
+    extern void fut_syscall_msr_init(void);
+    if (fut_tss_init_ap(&fut_percpu_data[cpu_index]) != 0) {
+        fut_printf("[SMP] ERROR: TSS init failed for CPU %u, halting AP\n", apic_id);
+        for (;;) __asm__ volatile("hlt");
+    }
     fut_percpu_set(&fut_percpu_data[cpu_index]);
+    fut_syscall_msr_init();
+
+    /* Initialize LAPIC for this CPU */
+    extern void lapic_init(uint64_t lapic_base);
+    lapic_init(0xFEE00000);  /* Standard LAPIC address */
 
     /* Mark CPU as online */
     cpu_online[apic_id] = true;
@@ -102,28 +120,33 @@ void ap_main(uint32_t apic_id) {
     fut_printf("[SMP] AP CPU %u initialized as CPU #%u (total CPUs: %u)\n",
                apic_id, cpu_index, atomic_load_explicit(&cpu_count, memory_order_seq_cst));
 
-    /* Initialize scheduler for this CPU (creates per-CPU idle thread).
-     * SMP-DBG bisection prints removed; SMP startup is gated off on
-     * bare metal anyway (acpi_parse_madt skips smp_init), so this code
-     * path isn't currently exercised. */
+    /* Initialize scheduler for this CPU (creates per-CPU idle thread,
+     * sets it as current so the first timer-tick fut_schedule has a
+     * valid prev). */
     extern void fut_sched_init_cpu(void);
     fut_sched_init_cpu();
 
-    /* Set up per-CPU LAPIC timer for preemptive scheduling */
+    /* Per-CPU LAPIC timer for preemptive scheduling. Reuse the BSP's
+     * PIT-calibrated count — re-running the calibration here would
+     * race the BSP for PIT channel 2, and the LAPIC bus frequency is
+     * uniform across cores on every x86 SMP system we target. */
     extern void lapic_timer_periodic(uint32_t initial_count, uint8_t vector);
-    /* LAPIC timer frequency calibration:
-     * Assuming ~1 GHz TSC and divisor of 1:
-     * initial_count = 1,000,000,000 / 100 Hz = 10,000,000
-     * This is a conservative estimate that should work on most systems
-     */
-    #define LAPIC_TIMER_INIT_COUNT 10000000
+    extern uint32_t lapic_timer_get_calibrated_count(void);
+    #define LAPIC_TIMER_FALLBACK_COUNT 10000000
     #define LAPIC_TIMER_INT_VECTOR 32  /* INT_APIC_TIMER */
-    lapic_timer_periodic(LAPIC_TIMER_INIT_COUNT, LAPIC_TIMER_INT_VECTOR);
-    fut_printf("[SMP] AP CPU %u LAPIC timer initialized\n", apic_id);
+    uint32_t timer_count = lapic_timer_get_calibrated_count();
+    if (timer_count == 0) {
+        timer_count = LAPIC_TIMER_FALLBACK_COUNT;
+    }
+    lapic_timer_periodic(timer_count, LAPIC_TIMER_INT_VECTOR);
 
-    fut_printf("[SMP] AP CPU %u entering scheduler loop\n", apic_id);
+    fut_printf("[SMP] AP CPU %u entering idle loop (timer count %u)\n",
+               apic_id, timer_count);
 
-    /* Enter scheduler loop - each CPU independently schedules threads */
+    /* Idle loop. Timer IRQs (vector 32) drive fut_sched_tick →
+     * fut_schedule on this CPU; when a thread lands on our ready
+     * queue the IRQ path context-switches away, and switching back
+     * to the idle thread resumes right here. */
     while (1) {
         __asm__ volatile("sti\n\thlt" ::: "memory");
     }

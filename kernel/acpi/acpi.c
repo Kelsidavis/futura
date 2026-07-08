@@ -11,6 +11,7 @@
 #include <string.h>
 
 #include <kernel/kprintf.h>
+#include <kernel/boot_args.h>
 
 #if defined(__x86_64__)
 #include <platform/x86_64/memory/paging.h>
@@ -329,14 +330,10 @@ void acpi_parse_madt(void) {
     uint64_t io_apic_address = 0;
     uint32_t io_apic_gsi_base = 0;
 
-    /* Store APIC IDs for SMP initialization. apic_ids is currently only
-     * used to count CPUs since smp_init is disabled on bare metal (see
-     * the comment further down); keep collecting them so that re-enabling
-     * SMP later just needs the smp_init() call back. */
+    /* Store APIC IDs for SMP initialization (passed to smp_init below). */
     #define MAX_CPUS 256
     static uint32_t apic_ids[MAX_CPUS];
     uint32_t num_apic_ids = 0;
-    (void)apic_ids;  /* Suppress -Wunused-but-set-variable while smp_init is gated off. */
 
     uint8_t *entry_ptr = (uint8_t *)(madt + 1);  /* Start after header */
     uint8_t *end = (uint8_t *)madt + madt->header.length;
@@ -499,20 +496,25 @@ void acpi_parse_madt(void) {
         }
     }
 
-    /* SMP startup is currently disabled on bare metal: the kernel's heap
-     * and scheduler ready-queue locks have not been validated for true
-     * concurrent CPU access — the AP hangs inside fut_sched_init_cpu on
-     * real hardware (kmalloc / sched queue / global thread list). Under
-     * QEMU the timing happens to avoid the race, but on a Chromebook
-     * with two real cores it deadlocks every time. Boot single-CPU for
-     * now; revisit once heap/sched locking is audited and fixed. */
+    /* SMP bring-up. The architectural blockers that used to hang APs
+     * are fixed: IRQ-context state (in_interrupt/current_frame) is
+     * per-CPU (was globals — cross-CPU scheduler-path corruption),
+     * each AP gets its own GDT/TSS (shared TSS #GPs on the second
+     * ltr; CS from the trampoline GDT decoded as user-data under the
+     * kernel GDT), per-CPU syscall MSRs, and heap/sched locks are
+     * real IRQ-safe spinlocks (2026-05 audit). "nosmp" on the kernel
+     * command line boots single-CPU for debugging. */
     if (num_apic_ids > 1) {
-        fut_printf("[ACPI] Detected %u CPUs, but SMP is disabled for bare-metal boot — running single-CPU\n",
-                   num_apic_ids);
+        if (fut_boot_arg_flag("nosmp")) {
+            fut_printf("[ACPI] Detected %u CPUs, SMP disabled by nosmp boot flag\n",
+                       num_apic_ids);
+        } else {
+            extern void smp_init(uint32_t *ids, uint32_t n);
+            smp_init(apic_ids, num_apic_ids);
+        }
     } else {
         fut_printf("[ACPI] Single-processor system\n");
     }
-    /* [ACPI-DBG] bisection marker removed. */
 }
 #endif  /* __x86_64__ */
 

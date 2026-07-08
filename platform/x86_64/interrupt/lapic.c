@@ -359,6 +359,16 @@ void lapic_timer_disable(void) {
  * @param hz Target frequency in Hz (e.g., 100 for 100Hz)
  * @param vector IDT vector to fire on timer expiry (e.g., 32 for IRQ0)
  */
+/* BSP-calibrated periodic count (DIV_16), consumed by AP bring-up so
+ * every CPU ticks at the same rate without re-running the PIT
+ * calibration (the PIT is a global resource — concurrent calibration
+ * from an AP would fight the BSP's ch2 programming). */
+static uint32_t lapic_timer_calibrated_count = 0;
+
+uint32_t lapic_timer_get_calibrated_count(void) {
+    return lapic_timer_calibrated_count;
+}
+
 void lapic_timer_calibrate_and_start(uint32_t hz, uint8_t vector) {
     if (!lapic_base || !lapic_initialized) {
         /* ACPI MADT parsing didn't call lapic_init successfully on this
@@ -422,6 +432,7 @@ void lapic_timer_calibrate_and_start(uint32_t hz, uint8_t vector) {
      * elapsed ticks = 10ms worth. For hz Hz, period = 1000/hz ms.
      * count = elapsed * (1000 / hz) / 10 = elapsed * 100 / hz */
     uint32_t count = elapsed * 100 / hz;
+    lapic_timer_calibrated_count = count;
 
     fut_printf("[LAPIC-TIMER] Calibrated: %u ticks/10ms, count=%u for %u Hz\n",
                elapsed, count, hz);

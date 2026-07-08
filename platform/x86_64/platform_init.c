@@ -229,6 +229,7 @@ static void fut_serial_init(void);
 static void fut_pic_init(void);
 static void fut_pit_init(void);
 static void fut_idt_init(void);
+void fut_syscall_msr_init(void);
 
 /* Serial debugging functions */
 static void fut_serial_init(void) {
@@ -732,12 +733,32 @@ static void fut_idt_init(void) {
     fut_idt_load();
 
     /* Set up SYSCALL instruction support (x86_64 fast path) */
+    fut_syscall_msr_init();
+}
+
+/**
+ * Program the SYSCALL/SYSRET MSRs for the calling CPU.
+ *
+ * LSTAR/STAR/FMASK and EFER.SCE are per-CPU registers: the BSP calls
+ * this from fut_idt_init, and every AP must call it during its own
+ * bring-up (ap_main) or the first SYSCALL instruction executed on
+ * that AP raises #UD.
+ */
+void fut_syscall_msr_init(void) {
     extern void isr_syscall_fastpath(void);
 
+    #ifndef MSR_EFER
     #define MSR_EFER          0xC0000080
+    #endif
+    #ifndef MSR_STAR
     #define MSR_STAR          0xC0000081
+    #endif
+    #ifndef MSR_LSTAR
     #define MSR_LSTAR         0xC0000082
+    #endif
+    #ifndef MSR_FMASK
     #define MSR_FMASK         0xC0000084
+    #endif
     /* EFER_SCE is defined in regs.h */
 
     /* IA32_LSTAR: Entry point for SYSCALL instruction */

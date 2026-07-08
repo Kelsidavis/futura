@@ -186,6 +186,13 @@ void lapic_timer_oneshot(uint32_t initial_count, uint8_t vector);
 void lapic_timer_periodic(uint32_t initial_count, uint8_t vector);
 
 /**
+ * Periodic count computed by the BSP's PIT calibration (DIV_16).
+ * 0 until lapic_timer_calibrate_and_start has run. AP bring-up uses
+ * this so all CPUs tick at the same rate without touching the PIT.
+ */
+uint32_t lapic_timer_get_calibrated_count(void);
+
+/**
  * Disable LAPIC timer.
  */
 void lapic_timer_disable(void);

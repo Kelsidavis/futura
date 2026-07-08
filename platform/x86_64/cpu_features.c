@@ -91,15 +91,47 @@ static void maybe_print_summary(void) {
     atomic_store_explicit(&g_summary_printed, true, memory_order_release);
 }
 
+/* Apply the already-detected feature set to the CALLING CPU's control
+ * registers. CR0/CR4/XCR0/EFER are per-CPU: detection can be done once
+ * on the BSP, but every AP must program its own registers or the first
+ * SSE instruction it executes (memset/memcpy use pxor) is a #UD. */
+static void cpu_features_apply(const fut_cpu_features_t *f) {
+    uint64_t cr0 = read_cr0();
+    cr0 &= ~CR0_EM;
+    cr0 |= CR0_MP | CR0_NE;
+    write_cr0(cr0);
+
+    uint64_t cr4 = read_cr4();
+    if (f->sse)      cr4 |= CR4_OSFXSR | CR4_OSXMMEXCPT;
+    if (f->pge)      cr4 |= CR4_PGE;
+    if (f->fsgsbase) cr4 |= CR4_FSGSBASE;
+    if (f->osxsave)  cr4 |= CR4_OSXSAVE;
+    if (f->smep)     cr4 |= CR4_SMEP;
+    if (f->smap)     cr4 |= CR4_SMAP;
+    write_cr4(cr4);
+
+    if (f->osxsave) {
+        xsetbv(0, XCR0_X87 | XCR0_SSE);
+    }
+
+    if (f->nx) {
+        uint64_t efer = rdmsr(MSR_EFER);
+        efer |= EFER_NXE;
+        wrmsr(MSR_EFER, efer);
+    }
+}
+
 void cpu_features_init(void) {
     uint32_t expected = 0;
     if (!atomic_compare_exchange_strong_explicit(&g_state, &expected, 1,
                                                  memory_order_acquire,
                                                  memory_order_relaxed)) {
-        /* Another core is initialising; wait until complete and try to print summary */
+        /* Another core is initialising or done; wait, then apply the
+         * detected features to THIS CPU's control registers. */
         while (atomic_load_explicit(&g_state, memory_order_acquire) == 1) {
             cpu_relax();
         }
+        cpu_features_apply(&g_features);
         maybe_print_summary();
         return;
     }
@@ -127,72 +159,23 @@ void cpu_features_init(void) {
         cpuid(0x80000001, 0, &ext_eax, &ext_ebx, &ext_ecx, &ext_edx);
     }
 
-    uint64_t cr0 = read_cr0();
-    uint64_t cr4 = read_cr4();
-
-    cr0 &= ~CR0_EM;
-    cr0 |= CR0_MP | CR0_NE;
-    write_cr0(cr0);
-
-    if (leaf1_edx & (1u << 25)) {
-        cr4 |= CR4_OSFXSR | CR4_OSXMMEXCPT;
-        detected.sse = 1;
-    }
-
-    if (leaf1_edx & (1u << 13)) {
-        cr4 |= CR4_PGE;
-        detected.pge = 1;
-    }
-
-    /* Detect PSE (Page Size Extension) for 2MB large pages - bit 3 of EDX */
-    if (leaf1_edx & (1u << 3)) {
-        detected.pse = 1;
-    }
-
-    if (leaf7_ebx & (1u << 0)) {
-        cr4 |= CR4_FSGSBASE;
-        detected.fsgsbase = 1;
-    }
-
-    if (leaf1_ecx & (1u << 27)) {
-        cr4 |= CR4_OSXSAVE;
-        detected.osxsave = 1;
-    }
-
-    if (leaf7_ebx & (1u << 7)) {
-        cr4 |= CR4_SMEP;
-        detected.smep = 1;
-    }
-
-    if (leaf7_ebx & (1u << 20)) {
-        cr4 |= CR4_SMAP;
-        detected.smap = 1;
-    }
-
-    write_cr4(cr4);
-
-    if (detected.osxsave) {
-        uint64_t xcr0 = XCR0_X87 | XCR0_SSE;
-        /* AVX support is probed but not enabled yet */
-        if (leaf1_ecx & (1u << 28)) {
-            detected.avx = 0;
-        }
-        xsetbv(0, xcr0);
-    }
-
-    if (ext_edx & (1u << 20)) {
-        uint64_t efer = rdmsr(MSR_EFER);
-        efer |= EFER_NXE;
-        wrmsr(MSR_EFER, efer);
-        detected.nx = 1;
-    }
-
-    /* Detect PDPE1GB (1GB pages support) - bit 26 of extended EDX */
-    if (ext_edx & (1u << 26)) {
-        detected.pdpe1gb = 1;
-    }
+    detected.sse      = (leaf1_edx & (1u << 25)) ? 1 : 0;
+    detected.pge      = (leaf1_edx & (1u << 13)) ? 1 : 0;
+    /* PSE (Page Size Extension) for 2MB large pages - bit 3 of EDX */
+    detected.pse      = (leaf1_edx & (1u << 3)) ? 1 : 0;
+    detected.fsgsbase = (leaf7_ebx & (1u << 0)) ? 1 : 0;
+    detected.osxsave  = (leaf1_ecx & (1u << 27)) ? 1 : 0;
+    detected.smep     = (leaf7_ebx & (1u << 7)) ? 1 : 0;
+    detected.smap     = (leaf7_ebx & (1u << 20)) ? 1 : 0;
+    detected.nx       = (ext_edx & (1u << 20)) ? 1 : 0;
+    /* AVX is probed but not enabled yet (XCR0 stays X87|SSE) */
+    detected.avx      = 0;
+    /* PDPE1GB (1GB pages support) - bit 26 of extended EDX */
+    detected.pdpe1gb  = (ext_edx & (1u << 26)) ? 1 : 0;
 
     g_features = detected;
+
+    cpu_features_apply(&g_features);
 
     atomic_store_explicit(&g_state, 2, memory_order_release);
     maybe_print_summary();

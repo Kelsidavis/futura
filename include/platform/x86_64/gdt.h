@@ -150,6 +150,22 @@ extern void fut_gdt_load(void);
 void fut_gdt_set_tss(tss_t *tss);
 
 /**
+ * Give an Application Processor its own GDT + TSS and load them.
+ * Must run before fut_percpu_set on the AP (segment reload zeroes
+ * the GS base). @param percpu this CPU's per-CPU slot (tss stashed
+ * there). Returns 0 on success.
+ */
+struct fut_percpu;
+int fut_tss_init_ap(struct fut_percpu *percpu);
+
+/**
+ * Program SYSCALL/SYSRET MSRs (LSTAR/STAR/FMASK, EFER.SCE) for the
+ * calling CPU. Per-CPU registers — every AP must call this during
+ * bring-up. Defined in platform_init.c.
+ */
+void fut_syscall_msr_init(void);
+
+/**
  * Load TSS selector into task register.
  */
 static inline void fut_ltr(uint16_t selector) {

@@ -12,6 +12,8 @@
  *   Backspace / Delete     Edit
  *   Enter                  Split line
  *   Ctrl+S                 Save
+ *   Ctrl+F                 Find (type query; Enter = next, Esc = done)
+ *   F3 / Shift+F3          Repeat last search forward / backward
  *   Ctrl+Q                 Quit
  */
 
@@ -85,6 +87,16 @@ static bool ed_load_failed = false;
 static char ed_filename[256] = "/tmp/scratch.txt";
 static char ed_status_msg[64] = "";
 static uint64_t ed_status_expire_ms = 0;
+
+/* Incremental search (Ctrl+F). While active, printable keys extend the
+ * query and the cursor jumps to the first match at or after the position
+ * where search began; Enter finds the next hit, Esc leaves search mode.
+ * F3 / Shift+F3 outside search mode repeat the last query. */
+static bool ed_search_active = false;
+static char ed_search_buf[40] = "";
+static int  ed_search_len = 0;
+static int  ed_search_origin_row = 0;
+static int  ed_search_origin_col = 0;
 
 /* Forward decl for tick_ms — defined later with the keyboard-repeat state. */
 static uint64_t tick_ms;
@@ -464,6 +476,43 @@ static void ed_delete_forward(void) {
     }
 }
 
+/* ─── Search ─── */
+
+/* Case-sensitive substring scan starting at (row, col), wrapping around
+ * the whole buffer once. On a hit the cursor moves to the match start
+ * and true is returned; on a miss the cursor stays put. */
+static bool ed_search_find(int row, int col, bool forward) {
+    if (ed_search_len == 0) return false;
+    for (int scanned = 0; scanned <= ed_line_count; scanned++) {
+        int r = row + (forward ? scanned : -scanned);
+        while (r < 0) r += ed_line_count;
+        r %= ed_line_count;
+        const char *line = ed_lines[r];
+        int len = ed_line_len[r];
+        int lo = 0, hi = len - ed_search_len;
+        if (scanned == 0) {
+            if (forward) lo = col;
+            else if (col < hi) hi = col;
+        }
+        if (forward) {
+            for (int c = lo; c <= hi; c++) {
+                if (memcmp(line + c, ed_search_buf, (size_t)ed_search_len) == 0) {
+                    ed_cursor_row = r; ed_cursor_col = c;
+                    return true;
+                }
+            }
+        } else {
+            for (int c = hi; c >= lo; c--) {
+                if (memcmp(line + c, ed_search_buf, (size_t)ed_search_len) == 0) {
+                    ed_cursor_row = r; ed_cursor_col = c;
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
 /* ─── Rendering ─── */
 
 /* Defensive: clip the rect against the surface dims so a caller passing
@@ -621,6 +670,21 @@ static void redraw_all(struct client_state *state) {
     if (px_right < x + 6) px_right = x + 6;
     draw_text_run(px, w, h, stride, px_right, ty, pos, pi, COL_STATUS_FG, COL_STATUS_BG);
 
+    /* Search prompt takes over the center slot while active — it must
+     * stay visible for the whole search, unlike transient statuses. */
+    if (ed_search_active) {
+        char fmsg[56];
+        int fi = 0;
+        const char *fl = "find: ";
+        while (*fl) fmsg[fi++] = *fl++;
+        for (int k = 0; k < ed_search_len && fi < (int)sizeof(fmsg) - 2; k++)
+            fmsg[fi++] = ed_search_buf[k];
+        fmsg[fi++] = '_';
+        fmsg[fi] = '\0';
+        int mx = (w - fi * FONT_WIDTH) / 2;
+        fill_rect(px, stride, mx - 4, sy + 1, fi * FONT_WIDTH + 8, ED_STATUS_H - 2, COL_STATUS_BG);
+        draw_text_run(px, w, h, stride, mx, ty, fmsg, fi, COL_CURSOR, COL_STATUS_BG);
+    } else
     /* Transient status message (centered, replaces line/col when set) */
     if (ed_status_msg[0]) {
         int mlen = (int)ed_strlen(ed_status_msg);
@@ -757,6 +821,48 @@ static void process_key(struct client_state *s, uint32_t key) {
     bool shift = (kbd_mods & 1) != 0;
     bool ctrl  = (kbd_mods & 4) != 0;
 
+    /* Search mode swallows all input until Enter/Esc leaves it. */
+    if (ed_search_active) {
+        if (key == 1) { /* Esc — leave search, return to origin */
+            ed_search_active = false;
+            ed_cursor_row = ed_search_origin_row;
+            ed_cursor_col = ed_search_origin_col;
+            ed_ensure_visible(); s->needs_redraw = true; return;
+        }
+        if (key == 28) { /* Enter — next match (or accept and leave if none) */
+            if (!ed_search_find(ed_cursor_row, ed_cursor_col + 1, true))
+                ed_search_active = false;
+            ed_ensure_visible(); s->needs_redraw = true; return;
+        }
+        if (key == 14) { /* Backspace — shrink query, re-run from origin */
+            if (ed_search_len > 0) {
+                ed_search_buf[--ed_search_len] = '\0';
+                ed_search_find(ed_search_origin_row, ed_search_origin_col, true);
+            }
+            ed_ensure_visible(); s->needs_redraw = true; return;
+        }
+        char c = key_to_ascii(key, shift);
+        if (c >= 32 && c < 127 && ed_search_len < (int)sizeof(ed_search_buf) - 1) {
+            ed_search_buf[ed_search_len++] = c;
+            ed_search_buf[ed_search_len] = '\0';
+            if (!ed_search_find(ed_search_origin_row, ed_search_origin_col, true))
+                ed_set_status("not found", tick_ms);
+            ed_ensure_visible(); s->needs_redraw = true;
+        }
+        return;
+    }
+
+    /* F3 / Shift+F3 — repeat last search without re-entering search mode.
+     * Out-of-range start columns are fine: the scan loop skips positions
+     * the query can't fit and wraps to the adjacent line. */
+    if (key == 61 && ed_search_len > 0) {
+        bool found = shift
+            ? ed_search_find(ed_cursor_row, ed_cursor_col - 1, false)
+            : ed_search_find(ed_cursor_row, ed_cursor_col + 1, true);
+        if (!found) ed_set_status("not found", tick_ms);
+        ed_ensure_visible(); s->needs_redraw = true; return;
+    }
+
     /* Navigation */
     if (key == 103) { if (ed_cursor_row > 0) { ed_cursor_row--;
         if (ed_cursor_col > ed_line_len[ed_cursor_row]) ed_cursor_col = ed_line_len[ed_cursor_row]; }
@@ -823,6 +929,15 @@ static void process_key(struct client_state *s, uint32_t key) {
             } else {
                 ed_set_status("save failed", tick_ms);
             }
+            s->needs_redraw = true;
+            return;
+        }
+        if (c == 'f') {
+            ed_search_active = true;
+            ed_search_len = 0;
+            ed_search_buf[0] = '\0';
+            ed_search_origin_row = ed_cursor_row;
+            ed_search_origin_col = ed_cursor_col;
             s->needs_redraw = true;
             return;
         }

@@ -3,16 +3,17 @@
  * Copyright (c) 2025 Kelsi Davis
  * Licensed under the MPL v2.0 — see LICENSE for details.
  *
- * Lists the contents of a directory (Linux dirent64 via getdents64).
- * Up / Down scrolls the list; Backspace ascends to the parent dir;
- * Ctrl+Q quits. Future iterations will add file open / preview, but
- * the read-only listing is enough to give the desktop a usable file
- * explorer without much new infrastructure.
+ * Lists the contents of a directory (Linux dirent64 via getdents64)
+ * and supports basic file management: delete (with confirm), rename,
+ * and new-directory creation via modal prompts in the header row.
  *
  * Controls:
  *   Up/Down       Move selection
  *   Enter         Descend into dir, ".." ascends, file launches wl-edit
  *   Backspace     Ascend to parent
+ *   Delete        Delete selected entry (y/Enter confirms; rmdir for dirs)
+ *   F2            Rename selected entry (Enter commits, Esc cancels)
+ *   n             New directory (Enter commits, Esc cancels)
  *   /             Jump to root (/)
  *   h             Jump to $HOME (root if HOME unset)
  *   r             Refresh
@@ -43,6 +44,11 @@
 #define O_CREAT     0x0040
 #define O_TRUNC     0x0200
 #define O_DIRECTORY 0x10000
+/* Userspace errno.h doesn't carry ENOTEMPTY; the kernel returns -39
+ * (Linux value) from rmdir on a non-empty directory. */
+#ifndef ENOTEMPTY
+#define ENOTEMPTY   39
+#endif
 #define PROT_READ   0x0001
 #define PROT_WRITE  0x0002
 #define MAP_SHARED  0x0001
@@ -94,6 +100,21 @@ static int proc_count = 0;
 static int scroll_off = 0;
 static int selected = 0;
 static uint64_t last_refresh_ms = 0;
+
+/* Modal input state for file operations. While a mode is active the
+ * header shows a prompt and every key goes to it — Enter commits,
+ * Esc cancels. Delete uses a lighter confirm: y/Enter proceeds,
+ * anything else backs out. */
+/* Defined with the keyboard-repeat state below; the header renderer
+ * needs it earlier to expire transient status messages. */
+static uint64_t tick_ms;
+
+enum input_mode { IM_NONE = 0, IM_CONFIRM_DELETE, IM_NEW_DIR, IM_RENAME };
+static int input_mode = IM_NONE;
+static char input_buf[64];
+static int  input_len = 0;
+static char fm_status[64] = "";
+static uint64_t fm_status_expire = 0;
 /* Hidden-file visibility — toggled by Ctrl-H, default off (hidden).
  * Earlier versions implicitly showed every dot-file which surprised
  * anyone navigating to /etc and seeing internal state files. */
@@ -387,6 +408,38 @@ static void redraw_all(struct client_state *state) {
                       SM_PAD + (tl + 2) * FONT_WIDTH, ty,
                       path_str, cwd_len, COL_DIM, COL_HEADER_BG);
         }
+
+        /* Modal prompt / transient status takes over the header row —
+         * the cwd is momentarily hidden, which also signals "you're in
+         * a mode" without extra chrome. */
+        char ovl[96];
+        int ol = 0;
+        uint32_t ovl_col = COL_WARN;
+        if (input_mode == IM_CONFIRM_DELETE) {
+            const char *q = "delete ";
+            while (*q) ovl[ol++] = *q++;
+            const char *nm = (selected >= 0 && selected < proc_count)
+                                 ? procs[selected].name : "?";
+            for (int i = 0; nm[i] && ol < (int)sizeof(ovl) - 20; i++)
+                ovl[ol++] = nm[i];
+            const char *q2 = "? (y/N)";
+            while (*q2) ovl[ol++] = *q2++;
+        } else if (input_mode == IM_NEW_DIR || input_mode == IM_RENAME) {
+            const char *q = (input_mode == IM_NEW_DIR) ? "new dir: " : "rename: ";
+            while (*q) ovl[ol++] = *q++;
+            for (int i = 0; i < input_len && ol < (int)sizeof(ovl) - 2; i++)
+                ovl[ol++] = input_buf[i];
+            ovl[ol++] = '_';
+            ovl_col = COL_ACCENT;
+        } else if (fm_status[0] && tick_ms < fm_status_expire) {
+            for (int i = 0; fm_status[i] && ol < (int)sizeof(ovl) - 1; i++)
+                ovl[ol++] = fm_status[i];
+        }
+        if (ol > 0) {
+            fill_rect(px, stride, 0, 0, w, SM_HEADER_H, COL_HEADER_BG);
+            draw_text(px, w, h, stride, SM_PAD, ty, ovl, ol,
+                      ovl_col, COL_HEADER_BG);
+        }
     }
 
     /* Column headers */
@@ -551,8 +604,140 @@ static void cwd_ascend(void) {
     else        { cwd[i - 1] = '\0'; }
 }
 
+static void fm_set_status(const char *msg) {
+    int i = 0;
+    while (msg[i] && i < (int)sizeof(fm_status) - 1) {
+        fm_status[i] = msg[i];
+        i++;
+    }
+    fm_status[i] = '\0';
+    fm_status_expire = tick_ms + 2500;
+}
+
+/* Build "<cwd>/<name>" into dst. Refuses (returns false) when the
+ * joined path would truncate — operating on a clipped path would hit
+ * the wrong file. */
+static bool fm_join_path(char *dst, size_t dstsz, const char *name) {
+    size_t cwdlen = strlen(cwd);
+    size_t nlen = strlen(name);
+    int needs_sep = (cwdlen == 0 || cwd[cwdlen - 1] != '/');
+    if (cwdlen + (size_t)needs_sep + nlen + 1 > dstsz) return false;
+    memcpy(dst, cwd, cwdlen);
+    size_t pi = cwdlen;
+    if (needs_sep) dst[pi++] = '/';
+    memcpy(dst + pi, name, nlen);
+    dst[pi + nlen] = '\0';
+    return true;
+}
+
+/* Filename-oriented keycode → ASCII. Letters, digits and the
+ * punctuation that commonly appears in file names. */
+static char fm_key_to_char(uint32_t key, bool shift) {
+    static const char low[] = "1234567890";
+    static const char upr[] = "!@#$%^&*()";
+    if (key >= 2 && key <= 11) return shift ? upr[key - 2] : low[key - 2];
+    static const char row1[] = "qwertyuiop";
+    static const char row2[] = "asdfghjkl";
+    static const char row3[] = "zxcvbnm";
+    char c = 0;
+    if (key >= 16 && key <= 25) c = row1[key - 16];
+    else if (key >= 30 && key <= 38) c = row2[key - 30];
+    else if (key >= 44 && key <= 50) c = row3[key - 44];
+    if (c) return shift ? (char)(c - 32) : c;
+    switch (key) {
+        case 12: return shift ? '_' : '-';
+        case 13: return shift ? '+' : '=';
+        case 52: return '.';
+        case 51: return ',';
+        case 57: return ' ';
+        default: return 0;
+    }
+}
+
+/* Commit the pending modal operation. Called on Enter (and 'y' for
+ * the delete confirm). */
+static void fm_commit_input(void) {
+    char path[256];
+    struct proc_info *p =
+        (selected >= 0 && selected < proc_count) ? &procs[selected] : NULL;
+
+    if (input_mode == IM_CONFIRM_DELETE) {
+        if (!p || !fm_join_path(path, sizeof(path), p->name)) {
+            fm_set_status("delete failed: path too long");
+        } else {
+            long rc = (p->type == FT_DIR) ? sys_rmdir_call(path)
+                                          : sys_unlink(path);
+            if (rc == 0)                fm_set_status("deleted");
+            else if (rc == -ENOTEMPTY)  fm_set_status("directory not empty");
+            else                        fm_set_status("delete failed");
+        }
+    } else if (input_mode == IM_NEW_DIR) {
+        if (input_len == 0) {
+            fm_set_status("empty name");
+        } else if (!fm_join_path(path, sizeof(path), input_buf)) {
+            fm_set_status("mkdir failed: path too long");
+        } else if (sys_mkdir_call(path, 0755) == 0) {
+            fm_set_status("directory created");
+        } else {
+            fm_set_status("mkdir failed");
+        }
+    } else if (input_mode == IM_RENAME) {
+        char newpath[256];
+        if (!p || input_len == 0) {
+            fm_set_status("empty name");
+        } else if (!fm_join_path(path, sizeof(path), p->name) ||
+                   !fm_join_path(newpath, sizeof(newpath), input_buf)) {
+            fm_set_status("rename failed: path too long");
+        } else if (sys_rename_call(path, newpath) == 0) {
+            fm_set_status("renamed");
+        } else {
+            fm_set_status("rename failed");
+        }
+    }
+    input_mode = IM_NONE;
+    input_len = 0;
+    input_buf[0] = '\0';
+    refresh_procs();
+    if (selected >= proc_count) selected = proc_count > 0 ? proc_count - 1 : 0;
+    scroll_into_view();
+}
+
 static void process_key(struct client_state *s, uint32_t key) {
     bool ctrl = (kbd_mods & 4) != 0;
+    bool shift = (kbd_mods & 1) != 0;
+
+    /* Modal input intercepts everything until committed or cancelled. */
+    if (input_mode == IM_CONFIRM_DELETE) {
+        if (key == 21 /* y */ || key == 28 /* Enter */) {
+            fm_commit_input();
+        } else {
+            input_mode = IM_NONE;
+            fm_set_status("cancelled");
+        }
+        s->needs_redraw = true; return;
+    }
+    if (input_mode == IM_NEW_DIR || input_mode == IM_RENAME) {
+        if (key == 1 /* Esc */) {
+            input_mode = IM_NONE; input_len = 0; input_buf[0] = '\0';
+            s->needs_redraw = true; return;
+        }
+        if (key == 28 /* Enter */) {
+            fm_commit_input();
+            s->needs_redraw = true; return;
+        }
+        if (key == 14 /* Backspace */) {
+            if (input_len > 0) input_buf[--input_len] = '\0';
+            s->needs_redraw = true; return;
+        }
+        char c = fm_key_to_char(key, shift);
+        /* '/' can't appear in a single path component. */
+        if (c && input_len < (int)sizeof(input_buf) - 1) {
+            input_buf[input_len++] = c;
+            input_buf[input_len] = '\0';
+            s->needs_redraw = true;
+        }
+        return;
+    }
     /* Up/Down: move selection (scroll viewport with it) */
     if (key == 103) {
         if (selected > 0) selected--;
@@ -583,6 +768,39 @@ static void process_key(struct client_state *s, uint32_t key) {
         last_refresh_ms = tick_ms;
         s->needs_redraw = true; return;
     }
+    /* File operations. ".." is navigation scaffolding, not a real
+     * entry — never delete or rename through it. */
+    if (key == 111 /* Delete */) {
+        if (selected >= 0 && selected < proc_count &&
+            strcmp(procs[selected].name, "..") != 0) {
+            input_mode = IM_CONFIRM_DELETE;
+            s->needs_redraw = true;
+        }
+        return;
+    }
+    if (key == 60 /* F2 — rename, prefilled with the current name */) {
+        if (selected >= 0 && selected < proc_count &&
+            strcmp(procs[selected].name, "..") != 0) {
+            input_mode = IM_RENAME;
+            input_len = 0;
+            const char *nm = procs[selected].name;
+            while (nm[input_len] && input_len < (int)sizeof(input_buf) - 1) {
+                input_buf[input_len] = nm[input_len];
+                input_len++;
+            }
+            input_buf[input_len] = '\0';
+            s->needs_redraw = true;
+        }
+        return;
+    }
+    if (key == 49 /* n — new directory */) {
+        input_mode = IM_NEW_DIR;
+        input_len = 0;
+        input_buf[0] = '\0';
+        s->needs_redraw = true;
+        return;
+    }
+
     /* Ctrl-H toggles dot-prefixed entries on/off. Plain 'h' is taken
      * (jumps to HOME), so the shift modifier is required. */
     if (ctrl && key == 35 /* 'h' */) {
@@ -763,10 +981,14 @@ static void kb_key(void *d, struct wl_keyboard *k, uint32_t ser, uint32_t t,
      * still repeat. */
     bool ctrl_or_alt = (kbd_mods & 0xCu) != 0;
     if (ctrl_or_alt ||
+        input_mode == IM_CONFIRM_DELETE /* held key must not confirm */ ||
         key == 28 /* Enter */ ||
         key == 19 /* r refresh */ ||
         key == 53 /* / root */ ||
         key == 35 /* h home */ ||
+        key == 111 /* Delete — arms the delete confirm */ ||
+        key == 60  /* F2 rename */ ||
+        key == 49  /* n new dir */ ||
         key == 42 || key == 54 || key == 29 || key == 97 ||
         key == 56 || key == 100) {
         repeat_key = 0;

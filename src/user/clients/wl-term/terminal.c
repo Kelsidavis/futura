@@ -213,6 +213,25 @@ static const uint32_t ansi_colors[16] = {
     0xFFC0CAF5u, /* 15: bright white */
 };
 
+/* xterm 256-color index → ARGB.
+ * 0-15: the 16-color palette above; 16-231: 6x6x6 color cube with
+ * component levels {0,95,135,175,215,255}; 232-255: grayscale ramp. */
+static uint32_t xterm256_to_argb(int idx) {
+    if (idx < 0) idx = 0;
+    if (idx > 255) idx = 255;
+    if (idx < 16) return ansi_colors[idx];
+    if (idx < 232) {
+        static const uint8_t lvl[6] = { 0, 95, 135, 175, 215, 255 };
+        int n = idx - 16;
+        uint8_t r = lvl[(n / 36) % 6];
+        uint8_t g = lvl[(n / 6) % 6];
+        uint8_t b = lvl[n % 6];
+        return 0xFF000000u | ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
+    }
+    uint8_t v = (uint8_t)(8 + 10 * (idx - 232));
+    return 0xFF000000u | ((uint32_t)v << 16) | ((uint32_t)v << 8) | v;
+}
+
 /* Parse CSI parameter numbers: ESC[n1;n2;...X */
 static int parse_csi_params(const char *buf, int len, int *params, int max_params) {
     int count = 0, val = 0, has_val = 0;
@@ -282,8 +301,10 @@ static void term_handle_escape(struct terminal *term) {
     if (term->escape_len == 0 || term->escape_buf[0] != '[') return;
 
     char final = term->escape_buf[term->escape_len - 1];
-    int params[8] = {0};
-    int nparams = parse_csi_params(term->escape_buf, term->escape_len, params, 8);
+    /* 16 params: a combined SGR like ESC[1;38;2;r;g;b;48;2;r;g;bm
+     * legitimately carries 11 — 8 silently truncated truecolor. */
+    int params[16] = {0};
+    int nparams = parse_csi_params(term->escape_buf, term->escape_len, params, 16);
 
     switch (final) {
     case 'A': { /* Cursor Up */
@@ -409,6 +430,28 @@ static void term_handle_escape(struct terminal *term) {
                 uint32_t tmp = term->fg_color;
                 term->fg_color = term->bg_color;
                 term->bg_color = tmp;
+            } else if (p == 38 || p == 48) {
+                /* Extended color: 38;5;n (256-color) or 38;2;r;g;b
+                 * (truecolor). Consume the sub-params so they aren't
+                 * re-interpreted as standalone SGR codes. */
+                uint32_t col = 0;
+                bool have = false;
+                if (i + 1 < nparams && params[i + 1] == 5 && i + 2 < nparams) {
+                    col = xterm256_to_argb(params[i + 2]);
+                    have = true;
+                    i += 2;
+                } else if (i + 1 < nparams && params[i + 1] == 2 && i + 4 < nparams) {
+                    uint32_t r = (uint32_t)(params[i + 2] & 0xFF);
+                    uint32_t g = (uint32_t)(params[i + 3] & 0xFF);
+                    uint32_t b = (uint32_t)(params[i + 4] & 0xFF);
+                    col = 0xFF000000u | (r << 16) | (g << 8) | b;
+                    have = true;
+                    i += 4;
+                }
+                if (have) {
+                    if (p == 38) term->fg_color = col;
+                    else         term->bg_color = col;
+                }
             } else if (p >= 30 && p <= 37) { /* FG color */
                 term->fg_color = ansi_colors[p - 30];
             } else if (p >= 40 && p <= 47) { /* BG color */

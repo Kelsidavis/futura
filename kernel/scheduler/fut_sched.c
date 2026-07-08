@@ -155,6 +155,22 @@ _Static_assert(offsetof(fut_percpu_t, syscall_kernel_rsp) == PERCPU_OFFSET_SYSCA
  * context-switch into a not-yet-initialized ready queue. */
 static _Atomic bool scheduler_started = false;
 
+/* Cross-CPU thread placement gate. SMP bring-up (APs online with
+ * full per-CPU state) is default-on; distributing runnable threads
+ * across CPUs is opt-in via the smp_sched boot flag until the
+ * syscall/scheduler paths survive true parallelism (observed
+ * failures with it on: kernel pointers leaking into syscall return
+ * values, connect() misrouting — nondeterministic, load-dependent). */
+static _Atomic bool smp_sched_enabled = false;
+
+bool fut_sched_smp_enabled(void) {
+    return atomic_load_explicit(&smp_sched_enabled, memory_order_acquire);
+}
+
+void fut_sched_enable_smp(void) {
+    atomic_store_explicit(&smp_sched_enabled, true, memory_order_release);
+}
+
 /* ============================================================
  *   Scheduler State
  * ============================================================ */
@@ -467,6 +483,19 @@ void fut_sched_add_thread(fut_thread_t *thread) {
 
     fut_percpu_t *target_percpu = NULL;
 
+    /* Cross-CPU thread placement is gated: SMP bring-up (APs online,
+     * per-CPU state) is default-on, but distributing work to APs is
+     * opt-in (smp_sched boot flag) until the syscall/scheduler paths
+     * are audited for true parallel execution — enabling it today
+     * produces nondeterministic corruption (kernel pointers leaking
+     * into syscall returns, COW bypass windows). */
+    if (!fut_sched_smp_enabled()) {
+        target_percpu = &fut_percpu_data[0];
+        thread->preferred_cpu = 0;
+        if (thread->cpu_affinity_mask == 0) {
+            thread->cpu_affinity_mask = ~0ULL;
+        }
+    } else
     // If thread has no affinity mask set, find least-loaded CPU within default mask
     if (thread->cpu_affinity_mask == 0) {
         // Default: unrestricted affinity - all CPUs allowed
@@ -824,12 +853,15 @@ static fut_thread_t *select_next_thread(void) {
     if (!next) {
         fut_spinlock_release(&percpu->queue_lock);
 
-        // Try to steal work from another CPU
-        // Start by looking for the most loaded CPU within unrestricted affinity
-        uint32_t victim_cpu = find_most_loaded_cpu(~0ULL, percpu->cpu_index);
+        // Try to steal work from another CPU — only when cross-CPU
+        // placement is enabled (see fut_sched_add_thread); stealing
+        // is the same migration hazard from the other side.
+        if (fut_sched_smp_enabled()) {
+            uint32_t victim_cpu = find_most_loaded_cpu(~0ULL, percpu->cpu_index);
 
-        if (victim_cpu != UINT32_MAX) {
-            next = steal_work_from_cpu(victim_cpu);
+            if (victim_cpu != UINT32_MAX) {
+                next = steal_work_from_cpu(victim_cpu);
+            }
         }
 
         // If we couldn't steal, return idle thread

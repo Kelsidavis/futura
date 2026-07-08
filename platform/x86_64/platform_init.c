@@ -726,6 +726,15 @@ static void fut_idt_init(void) {
     fut_idt_set_entry(46, (uint64_t)irq14, 0x08, flags);
     fut_idt_set_entry(47, (uint64_t)irq15, 0x08, flags);
 
+    /* SMP IPIs: halt (0xF0) and TLB shootdown (0xF1). Interrupt gates,
+     * DPL=0 — only ever raised via the LAPIC ICR. */
+    {
+        extern void irq240(void);
+        extern void irq241(void);
+        fut_idt_set_entry(240, (uint64_t)irq240, 0x08, flags);
+        fut_idt_set_entry(241, (uint64_t)irq241, 0x08, flags);
+    }
+
     /* Install system call handler (128) with DPL=3 for user mode */
     fut_idt_set_entry(INT_SYSCALL, (uint64_t)isr_syscall_int80_stub, 0x08, 0xEE);
 
@@ -1293,6 +1302,27 @@ void __attribute__((weak)) fut_isr_handler(void *regs_ptr) {
     }
 
     fut_disable_interrupts();
+
+    /* Serialize the crash dump across CPUs. Two CPUs faulting
+     * together interleave their dumps line-by-line into mutual
+     * garbage — the first CPU in claims the console and freezes the
+     * others; a second faulting CPU parks silently. (A CPU that
+     * faults *inside* its own dump re-enters here and must pass, or
+     * a nested fault would silently hang the dump.) */
+    {
+        static _Atomic int panic_owner = -1;
+        int self = (int)fut_percpu_get_or_bsp()->cpu_index;
+        int expected = -1;
+        if (!atomic_compare_exchange_strong_explicit(&panic_owner, &expected, self,
+                                                     memory_order_acquire,
+                                                     memory_order_relaxed) &&
+            expected != self) {
+            for (;;) __asm__ volatile("cli\n\thlt" ::: "memory");
+        }
+        extern void fut_smp_halt_others(void);
+        fut_smp_halt_others();
+    }
+
     fut_serial_puts("\n\n");
     fut_serial_puts("========================================\n");
     fut_serial_puts("  KERNEL EXCEPTION\n");

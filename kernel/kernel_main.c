@@ -1441,7 +1441,15 @@ void fut_kernel_main(void) {
     if (acpi_init()) {
         fut_printf("[INIT] Parsing MADT for CPU topology...\n");
         acpi_parse_madt();
-        /* [INIT-DBG] bisection marker removed. */
+    }
+
+    /* Cross-CPU thread placement is opt-in until the syscall and
+     * scheduler paths are hardened for true parallelism; without the
+     * flag APs stay online but idle (threads pin to the BSP). */
+    if (fut_boot_arg_flag("smp_sched")) {
+        extern void fut_sched_enable_smp(void);
+        fut_sched_enable_smp();
+        fut_printf("[SMP] smp_sched: cross-CPU thread placement ENABLED\n");
     }
 #else
     /* ARM64: ACPI parsing not yet implemented */

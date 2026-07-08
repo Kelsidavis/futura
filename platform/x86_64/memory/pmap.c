@@ -74,6 +74,12 @@ int pmap_protect(uint64_t vaddr, size_t len, uint64_t prot) {
             return rc;
         }
     }
+    /* Permission changes (especially tightening, e.g. RW->RO) must be
+     * visible to every CPU — a stale writable TLB entry on another
+     * core would let it write through the old permission. One batched
+     * broadcast for the whole range. */
+    extern void fut_tlb_shootdown_all(void);
+    fut_tlb_shootdown_all();
     return 0;
 }
 

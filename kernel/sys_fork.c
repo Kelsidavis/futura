@@ -1725,6 +1725,18 @@ static fut_mm_t *clone_mm(fut_mm_t *parent_mm) {
     }
 
     fut_spinlock_release(&parent_mm->mm_lock);
+
+#if defined(__x86_64__)
+    /* COW arming downgraded the parent's PTEs to read-only. A sibling
+     * thread of the parent running on another CPU with the old
+     * writable translations cached would write straight through COW
+     * and corrupt pages now shared with the child. One batched
+     * broadcast for the whole clone. */
+    {
+        extern void fut_tlb_shootdown_all(void);
+        fut_tlb_shootdown_all();
+    }
+#endif
     return child_mm;
 
 fail_locked:

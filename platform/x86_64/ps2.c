@@ -401,6 +401,18 @@ int ps2_controller_init(bool enable_keyboard, bool enable_mouse) {
 void fut_irq_handler(void *frame_ptr) {
     fut_interrupt_frame_t *frame = (fut_interrupt_frame_t *)frame_ptr;
     uint8_t vector = (uint8_t)frame->vector;
+
+    /* SMP IPIs (LAPIC EOI is sent by irq_common_stub on return). */
+    if (vector == 240) {
+        extern void smp_ipi_halt_handler(void);
+        smp_ipi_halt_handler();   /* never returns */
+    }
+    if (vector == 241) {
+        extern void smp_ipi_tlb_handler(void);
+        smp_ipi_tlb_handler();
+        return;
+    }
+
     if (vector < 32 || vector > 47) {
         return;
     }

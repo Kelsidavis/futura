@@ -117,6 +117,14 @@ void fut_sched_start(void);
 bool fut_sched_is_started(void);
 
 /**
+ * Cross-CPU thread placement gate. Bring-up keeps APs online but
+ * idle; fut_sched_enable_smp() (smp_sched boot flag) opts into
+ * distributing runnable threads across CPUs.
+ */
+bool fut_sched_smp_enabled(void);
+void fut_sched_enable_smp(void);
+
+/**
  * Schedule next thread to run.
  *
  * Selects highest priority READY thread and context switches to it.

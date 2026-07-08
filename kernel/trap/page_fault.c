@@ -669,6 +669,25 @@ bool fut_trap_handle_page_fault(fut_interrupt_frame_t *frame) {
         return true;
     }
 
+    /* Kernel-mode NOT-PRESENT fault on a kernel-half address: on SMP
+     * this can be a benign cross-CPU race — another CPU was mid-way
+     * through installing the mapping (heap growth, vmap) when we
+     * walked a not-yet-complete page-table path. The tables are
+     * shared memory, so re-walking now tells the truth: if the
+     * translation exists, flush any stale negative TLB entry and
+     * retry the faulting instruction. If it still doesn't exist,
+     * fall through to the panic path as before. */
+    if ((frame->error_code & 0x1) == 0 &&
+        fault_addr >= 0xFFFF800000000000ULL) {
+        uint64_t phys = 0;
+        if (fut_virt_to_phys(NULL, fault_addr, &phys) == 0) {
+            __asm__ volatile("invlpg (%0)" :: "r"(fault_addr) : "memory");
+            fut_printf("[#PF-KERN] cross-CPU mapping race resolved: 0x%llx -> 0x%llx (retry)\n",
+                       (unsigned long long)fault_addr, (unsigned long long)phys);
+            return true;
+        }
+    }
+
     return false;
 }
 

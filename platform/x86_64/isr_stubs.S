@@ -101,6 +101,11 @@ IRQ 13, 45                              /* FPU */
 IRQ 14, 46                              /* Primary ATA */
 IRQ 15, 47                              /* Secondary ATA */
 
+/* SMP inter-processor interrupts. Reuse the IRQ frame layout so
+ * fut_irq_handler receives them like any other vector. */
+IRQ 240, 240                            /* IPI: halt (panic on another CPU) */
+IRQ 241, 241                            /* IPI: TLB shootdown */
+
 /* System call interrupt (128) */
 .extern syscall_entry_c
 .global isr_syscall_int80_stub

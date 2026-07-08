@@ -39,6 +39,89 @@ uint32_t smp_get_cpu_count(void) {
     return cpu_count;
 }
 
+/* ============================================================
+ *   Inter-processor interrupts (vectors 0xF0 halt, 0xF1 TLB)
+ * ============================================================ */
+
+#define IPI_VECTOR_HALT 240
+#define IPI_VECTOR_TLB  241
+
+static void udelay(uint32_t usec);
+
+/* Outstanding TLB shootdown: number of CPUs that still need to ack.
+ * One shootdown in flight at a time (tlb_ipi_lock). */
+static _Atomic uint32_t tlb_ipi_pending;
+static _Atomic uint32_t tlb_ipi_lock;
+
+/* Handler for IPI_VECTOR_HALT — another CPU is dumping a panic and
+ * needs the console (and the machine state) frozen. Never returns;
+ * the LAPIC EOI is irrelevant at this point. */
+void smp_ipi_halt_handler(void) {
+    for (;;) {
+        __asm__ volatile("cli\n\thlt" ::: "memory");
+    }
+}
+
+/* Handler for IPI_VECTOR_TLB — flush this CPU's entire TLB (CR3
+ * reload; global pages survive but the kernel maps user+heap without
+ * PTE_GLOBAL) and ack. EOI is sent by irq_common_stub on return. */
+void smp_ipi_tlb_handler(void) {
+    uint64_t cr3;
+    __asm__ volatile("mov %%cr3, %0\n\tmov %0, %%cr3" : "=r"(cr3) :: "memory");
+    atomic_fetch_sub_explicit(&tlb_ipi_pending, 1, memory_order_release);
+}
+
+/**
+ * Freeze every other CPU. Used by the panic path so a crash dump
+ * isn't interleaved with output (or further damage) from other
+ * cores. Safe to call before SMP is up — broadcasts nothing when
+ * this is the only online CPU.
+ */
+void fut_smp_halt_others(void) {
+    if (atomic_load_explicit(&cpu_count, memory_order_acquire) <= 1) {
+        return;
+    }
+    lapic_send_ipi_all_except_self(IPI_VECTOR_HALT);
+}
+
+/**
+ * Flush the TLB on every online CPU and wait for acknowledgement.
+ *
+ * Callers must NOT hold spinlocks another CPU could be spinning on
+ * with IRQs disabled — that CPU can't take the IPI and the wait
+ * would deadlock. The wait therefore has a timeout: on expiry we
+ * proceed anyway (the remote CPU will flush on its next natural CR3
+ * reload; a stale translation window is preferable to a hard hang).
+ */
+void fut_tlb_shootdown_all(void) {
+    uint32_t online = atomic_load_explicit(&cpu_count, memory_order_acquire);
+    if (online <= 1) {
+        return; /* Caller already flushed locally (or will) */
+    }
+
+    /* Serialize shootdowns — the pending counter is single-shot. */
+    uint32_t expected = 0;
+    while (!atomic_compare_exchange_weak_explicit(&tlb_ipi_lock, &expected, 1,
+                                                  memory_order_acquire,
+                                                  memory_order_relaxed)) {
+        expected = 0;
+        __asm__ volatile("pause");
+    }
+
+    atomic_store_explicit(&tlb_ipi_pending, online - 1, memory_order_release);
+    lapic_send_ipi_all_except_self(IPI_VECTOR_TLB);
+
+    /* ~10ms timeout at the udelay calibration used elsewhere here. */
+    for (int i = 0; i < 10000; i++) {
+        if (atomic_load_explicit(&tlb_ipi_pending, memory_order_acquire) == 0) {
+            break;
+        }
+        udelay(1);
+    }
+
+    atomic_store_explicit(&tlb_ipi_lock, 0, memory_order_release);
+}
+
 /**
  * Check if CPU is online.
  */

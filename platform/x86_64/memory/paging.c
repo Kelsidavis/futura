@@ -557,7 +557,13 @@ int fut_map_range(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t paddr,
 /**
  * Unmap a single page.
  */
-int fut_unmap_page(fut_vmem_context_t *ctx, uint64_t vaddr) {
+/* Remote TLB invalidation after PTE teardown. Other CPUs may hold
+ * the dead translation in their TLBs — using it after the frame is
+ * recycled is silent cross-CPU corruption. Broadcast a full-flush
+ * IPI; fut_tlb_shootdown_all no-ops until APs are online. */
+extern void fut_tlb_shootdown_all(void);
+
+static int unmap_page_local(fut_vmem_context_t *ctx, uint64_t vaddr) {
     pte_t *pml4 = ctx ? ctx->pml4 : kernel_pml4;
     if (!pml4) {
         return -1;
@@ -608,8 +614,17 @@ int fut_unmap_page(fut_vmem_context_t *ctx, uint64_t vaddr) {
     return 0;
 }
 
+int fut_unmap_page(fut_vmem_context_t *ctx, uint64_t vaddr) {
+    int rc = unmap_page_local(ctx, vaddr);
+    if (rc == 0) {
+        fut_tlb_shootdown_all();
+    }
+    return rc;
+}
+
 /**
- * Unmap a range of pages.
+ * Unmap a range of pages. The remote-TLB shootdown is batched: one
+ * broadcast for the whole range, not one per page.
  */
 int fut_unmap_range(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t size) {
     if (size == 0) return 0;
@@ -617,8 +632,14 @@ int fut_unmap_range(fut_vmem_context_t *ctx, uint64_t vaddr, uint64_t size) {
     uint64_t start = PAGE_ALIGN_DOWN(vaddr);
     uint64_t end = PAGE_ALIGN_UP(vaddr + size);
 
+    bool any = false;
     for (uint64_t va = start; va < end; va += PAGE_SIZE) {
-        fut_unmap_page(ctx, va);
+        if (unmap_page_local(ctx, va) == 0) {
+            any = true;
+        }
+    }
+    if (any) {
+        fut_tlb_shootdown_all();
     }
 
     return 0;

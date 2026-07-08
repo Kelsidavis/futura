@@ -342,8 +342,13 @@ long sys_memfd_create(const char *uname, unsigned int flags) {
     /* memfd is seekable: clear the FUT_F_UNSEEKABLE flag set by chrdev_alloc_fd */
     {
         fut_task_t *mf_task = fut_task_current();
-        if (mf_task && mf_task->fd_table && fd < mf_task->max_fds && mf_task->fd_table[fd])
-            mf_task->fd_table[fd]->flags &= ~FUT_F_UNSEEKABLE;
+        if (mf_task) {
+            struct fut_file *file = fut_file_get(mf_task, fd);
+            if (file) {
+                file->flags &= ~FUT_F_UNSEEKABLE;
+                fut_file_put(file);
+            }
+        }
     }
 
     /* Set FD_CLOEXEC if requested (per-FD flag) */
@@ -362,11 +367,13 @@ long sys_memfd_create(const char *uname, unsigned int flags) {
      * F_ADD_SEALS checks this flag and returns EPERM if absent. */
     if (effective_flags & MFD_ALLOW_SEALING) {
         fut_task_t *task = fut_task_current();
-        if (task && task->fd_table && fd < task->max_fds && task->fd_table[fd]) {
-            task->fd_table[fd]->flags |= FUT_F_SEALING;
+        struct fut_file *file = task ? fut_file_get(task, fd) : NULL;
+        if (file) {
+            file->flags |= FUT_F_SEALING;
             /* MFD_NOEXEC_SEAL: apply F_SEAL_EXEC immediately */
             if (flags & MFD_NOEXEC_SEAL)
-                task->fd_table[fd]->seals |= 0x0020;  /* F_SEAL_EXEC */
+                file->seals |= 0x0020;  /* F_SEAL_EXEC */
+            fut_file_put(file);
         }
     }
 

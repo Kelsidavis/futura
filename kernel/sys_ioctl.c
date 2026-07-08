@@ -523,6 +523,9 @@ static void termios_init(void) {
  * Phase 4: Implement file ioctls (FIONREAD)
  * Device-specific ioctls
  */
+static long ioctl_impl(int fd, unsigned long request, void *argp,
+                       fut_task_t *task, struct fut_file *file);
+
 long sys_ioctl(int fd, unsigned long request, void *argp) {
     fut_task_t *task = fut_task_current();
     if (!task) {
@@ -544,6 +547,20 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
         return -EBADF;
     }
 
+    struct fut_file *file = fut_file_get(task, fd);
+    if (!file) {
+        fut_printf("[IOCTL] ioctl(fd=%d, request=0x%lx, argp=%p) -> EBADF (invalid file)\n",
+                   fd, request, argp);
+        return -EBADF;
+    }
+
+    long ret = ioctl_impl(fd, request, argp, task, file);
+    fut_file_put(file);
+    return ret;
+}
+
+static long ioctl_impl(int fd, unsigned long request, void *argp,
+                       fut_task_t *task, struct fut_file *file) {
     /* Identify request type for logging */
     const char *request_name = "UNKNOWN";
 
@@ -595,14 +612,6 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
         default:
             request_name = "UNKNOWN";
             break;
-    }
-
-    /* Get file from fd table */
-    struct fut_file *file = task->fd_table[fd];
-    if (!file) {
-        fut_printf("[IOCTL] ioctl(fd=%d, request=0x%lx, argp=%p) -> EBADF (invalid file)\n",
-                   fd, request, argp);
-        return -EBADF;
     }
 
     /* O_PATH fds cannot be used for I/O — only path-based operations */
@@ -1785,21 +1794,17 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
             int backing_fd = (int)(uintptr_t)argp;
             extern int loop_set_fd(int loop_idx, int fd);
             /* Extract loop index from the file's path name (/dev/loopN → N) */
-            fut_task_t *ltask = fut_task_current();
             int loop_idx = -1;
-            if (ltask && ltask->fd_table && fd >= 0 && fd < ltask->max_fds) {
-                struct fut_file *lf = ltask->fd_table[fd];
-                if (lf && lf->path) {
-                    /* Find "loop" in path, extract digit after it */
-                    const char *p = lf->path;
-                    while (*p) {
-                        if (p[0]=='l' && p[1]=='o' && p[2]=='o' && p[3]=='p' &&
-                            p[4] >= '0' && p[4] <= '7') {
-                            loop_idx = p[4] - '0';
-                            break;
-                        }
-                        p++;
+            if (file->path) {
+                /* Find "loop" in path, extract digit after it */
+                const char *p = file->path;
+                while (*p) {
+                    if (p[0]=='l' && p[1]=='o' && p[2]=='o' && p[3]=='p' &&
+                        p[4] >= '0' && p[4] <= '7') {
+                        loop_idx = p[4] - '0';
+                        break;
                     }
+                    p++;
                 }
             }
             if (loop_idx < 0 || loop_idx >= 8) return -ENXIO;
@@ -1807,20 +1812,16 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
         }
 
         case LOOP_CLR_FD: {
-            fut_task_t *ltask = fut_task_current();
             int loop_idx = -1;
-            if (ltask && ltask->fd_table && fd >= 0 && fd < ltask->max_fds) {
-                struct fut_file *lf = ltask->fd_table[fd];
-                if (lf && lf->path) {
-                    const char *p = lf->path;
-                    while (*p) {
-                        if (p[0]=='l' && p[1]=='o' && p[2]=='o' && p[3]=='p' &&
-                            p[4] >= '0' && p[4] <= '7') {
-                            loop_idx = p[4] - '0';
-                            break;
-                        }
-                        p++;
+            if (file->path) {
+                const char *p = file->path;
+                while (*p) {
+                    if (p[0]=='l' && p[1]=='o' && p[2]=='o' && p[3]=='p' &&
+                        p[4] >= '0' && p[4] <= '7') {
+                        loop_idx = p[4] - '0';
+                        break;
                     }
+                    p++;
                 }
             }
             if (loop_idx < 0 || loop_idx >= 8) return -ENXIO;
@@ -1992,11 +1993,7 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
             if (!argp) return -EFAULT;
             uint64_t size_bytes = 0;
             /* Check if fd refers to a block device (loop, ram, etc.) */
-            fut_task_t *btask = fut_task_current();
-            if (btask && fd >= 0 && fd < btask->max_fds && btask->fd_table[fd]) {
-                struct fut_file *bfile = btask->fd_table[fd];
-                if (bfile->vnode) size_bytes = bfile->vnode->size;
-            }
+            if (file->vnode) size_bytes = file->vnode->size;
             if (size_bytes == 0) size_bytes = 1048576; /* Default 1MB for virtual devices */
 #ifdef KERNEL_VIRTUAL_BASE
             if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
@@ -2011,11 +2008,7 @@ long sys_ioctl(int fd, unsigned long request, void *argp) {
             /* Return device size in 512-byte sectors (32-bit) */
             if (!argp) return -EFAULT;
             uint32_t sectors = 2048; /* Default 1MB / 512 */
-            fut_task_t *btask = fut_task_current();
-            if (btask && fd >= 0 && fd < btask->max_fds && btask->fd_table[fd]) {
-                struct fut_file *bfile = btask->fd_table[fd];
-                if (bfile->vnode) sectors = (uint32_t)(bfile->vnode->size / 512);
-            }
+            if (file->vnode) sectors = (uint32_t)(file->vnode->size / 512);
 #ifdef KERNEL_VIRTUAL_BASE
             if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
                 __builtin_memcpy(argp, &sectors, sizeof(sectors));

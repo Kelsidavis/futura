@@ -226,15 +226,23 @@ static void mq_table_remove(struct mqueue *mq) {
 
 /* ---- FD lookup helper --------------------------------------------- */
 
-/* Get the mq_fd from a numeric fd, or NULL on error. */
-static struct mq_fd *mq_fd_lookup(int fd) {
+/* Get and pin the mq file for a numeric fd, or NULL on error. */
+static struct fut_file *mq_file_get(int fd, struct mq_fd **out_mfd) {
+    if (out_mfd)
+        *out_mfd = NULL;
     fut_task_t *task = fut_task_current();
     if (!task || !task->fd_table || fd < 0 || fd >= task->max_fds)
         return NULL;
-    struct fut_file *file = task->fd_table[fd];
-    if (!file || file->chr_ops != &mq_fops || !file->chr_private)
+    struct fut_file *file = fut_file_get(task, fd);
+    if (!file)
         return NULL;
-    return (struct mq_fd *)file->chr_private;
+    if (file->chr_ops != &mq_fops || !file->chr_private) {
+        fut_file_put(file);
+        return NULL;
+    }
+    if (out_mfd)
+        *out_mfd = (struct mq_fd *)file->chr_private;
+    return file;
 }
 
 /* ---- FD file operations ------------------------------------------- */
@@ -446,36 +454,48 @@ long sys_mq_timedsend(int mqdes, const char *msg_ptr, size_t msg_len,
     if (msg_prio >= (unsigned)MQ_PRIO_MAX)
         return -EINVAL;
 
-    /* Get the mq_fd from the FD */
-    struct mq_fd *mfd = mq_fd_lookup(mqdes);
-    if (!mfd)
+    long ret = 0;
+    struct fut_file *mq_file = NULL;
+    struct mq_fd *mfd = NULL;
+    mq_file = mq_file_get(mqdes, &mfd);
+    if (!mq_file)
         return -EBADF;
     struct mqueue *mq = mfd->mq;
-    if (!mq || mq->unlinked)
-        return -EBADF;
+    if (!mq || mq->unlinked) {
+        ret = -EBADF;
+        goto out_file;
+    }
 
     /* Check write permission */
     int accmode = mfd->oflag & O_ACCMODE;
-    if (accmode == O_RDONLY)
-        return -EBADF;
+    if (accmode == O_RDONLY) {
+        ret = -EBADF;
+        goto out_file;
+    }
 
     /* Validate message length */
-    if (msg_len > (size_t)mq->mq_msgsize)
-        return -EMSGSIZE;
+    if (msg_len > (size_t)mq->mq_msgsize) {
+        ret = -EMSGSIZE;
+        goto out_file;
+    }
 
     /* Parse timeout */
     uint64_t deadline = 0;
     bool has_timeout = false;
     if (abs_timeout) {
         struct { long tv_sec; long tv_nsec; } ts;
-        if (mq_copy_from_user(&ts, abs_timeout, sizeof(ts)) != 0)
-            return -EFAULT;
+        if (mq_copy_from_user(&ts, abs_timeout, sizeof(ts)) != 0) {
+            ret = -EFAULT;
+            goto out_file;
+        }
         /* Reject negative tv_sec too — without this the (uint64_t)
          * cast below produces a huge abs_ns and the timeout becomes
          * effectively infinite (or fires immediately if the cast
          * happens to land below now_ns). Linux returns EINVAL. */
-        if (ts.tv_sec < 0 || ts.tv_nsec < 0 || ts.tv_nsec >= 1000000000L)
-            return -EINVAL;
+        if (ts.tv_sec < 0 || ts.tv_nsec < 0 || ts.tv_nsec >= 1000000000L) {
+            ret = -EINVAL;
+            goto out_file;
+        }
         /* Convert absolute CLOCK_REALTIME to deadline in ticks.
          * Simplified: convert ns from now until timeout to ticks. */
         uint64_t abs_ns = (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
@@ -494,8 +514,10 @@ long sys_mq_timedsend(int mqdes, const char *msg_ptr, size_t msg_len,
 
     /* Allocate message node */
     struct mq_node *node = (struct mq_node *)fut_malloc(sizeof(struct mq_node) + msg_len);
-    if (!node)
-        return -ENOMEM;
+    if (!node) {
+        ret = -ENOMEM;
+        goto out_file;
+    }
     node->prio = msg_prio;
     node->len  = msg_len;
     node->next = NULL;
@@ -503,7 +525,8 @@ long sys_mq_timedsend(int mqdes, const char *msg_ptr, size_t msg_len,
     if (msg_len > 0) {
         if (mq_copy_from_user(node->data, msg_ptr, msg_len) != 0) {
             fut_free(node);
-            return -EFAULT;
+            ret = -EFAULT;
+            goto out_file;
         }
     }
 
@@ -527,19 +550,22 @@ long sys_mq_timedsend(int mqdes, const char *msg_ptr, size_t msg_len,
                 if (ntask)
                     fut_signal_send(ntask, nsig);
             }
-            return 0;
+            ret = 0;
+            goto out_file;
         }
 
         /* Queue is full */
         if (nonblock) {
             fut_spinlock_release(&mq->lock);
             fut_free(node);
-            return -EAGAIN;
+            ret = -EAGAIN;
+            goto out_file;
         }
         if (has_timeout && fut_get_ticks() >= deadline) {
             fut_spinlock_release(&mq->lock);
             fut_free(node);
-            return -ETIMEDOUT;
+            ret = -ETIMEDOUT;
+            goto out_file;
         }
 
         /* Check for signals (task-wide OR thread-directed). */
@@ -554,7 +580,8 @@ long sys_mq_timedsend(int mqdes, const char *msg_ptr, size_t msg_len,
             if (pending & ~blocked) {
                 fut_spinlock_release(&mq->lock);
                 fut_free(node);
-                return -EINTR;
+                ret = -EINTR;
+                goto out_file;
             }
         }
 
@@ -562,6 +589,10 @@ long sys_mq_timedsend(int mqdes, const char *msg_ptr, size_t msg_len,
         fut_waitq_sleep_locked(&mq->send_waitq, &mq->lock, FUT_THREAD_BLOCKED);
         fut_spinlock_acquire(&mq->lock);
     }
+
+out_file:
+    fut_file_put(mq_file);
+    return ret;
 }
 
 /* ---- sys_mq_timedreceive ------------------------------------------ */
@@ -569,35 +600,48 @@ long sys_mq_timedsend(int mqdes, const char *msg_ptr, size_t msg_len,
 long sys_mq_timedreceive(int mqdes, char *msg_ptr, size_t msg_len,
                          unsigned *msg_prio, const void *abs_timeout)
 {
-    struct mq_fd *mfd = mq_fd_lookup(mqdes);
-    if (!mfd)
+    long ret = 0;
+    struct fut_file *mq_file = NULL;
+    struct mq_fd *mfd = NULL;
+    mq_file = mq_file_get(mqdes, &mfd);
+    if (!mq_file)
         return -EBADF;
     struct mqueue *mq = mfd->mq;
-    if (!mq || mq->unlinked)
-        return -EBADF;
+    if (!mq || mq->unlinked) {
+        ret = -EBADF;
+        goto out_file;
+    }
 
     /* Check read permission */
     int accmode = mfd->oflag & O_ACCMODE;
-    if (accmode == O_WRONLY)
-        return -EBADF;
+    if (accmode == O_WRONLY) {
+        ret = -EBADF;
+        goto out_file;
+    }
 
     /* msg_len must be >= mq_msgsize */
-    if (msg_len < (size_t)mq->mq_msgsize)
-        return -EMSGSIZE;
+    if (msg_len < (size_t)mq->mq_msgsize) {
+        ret = -EMSGSIZE;
+        goto out_file;
+    }
 
     /* Parse timeout */
     uint64_t deadline = 0;
     bool has_timeout = false;
     if (abs_timeout) {
         struct { long tv_sec; long tv_nsec; } ts;
-        if (mq_copy_from_user(&ts, abs_timeout, sizeof(ts)) != 0)
-            return -EFAULT;
+        if (mq_copy_from_user(&ts, abs_timeout, sizeof(ts)) != 0) {
+            ret = -EFAULT;
+            goto out_file;
+        }
         /* Reject negative tv_sec too — without this the (uint64_t)
          * cast below produces a huge abs_ns and the timeout becomes
          * effectively infinite (or fires immediately if the cast
          * happens to land below now_ns). Linux returns EINVAL. */
-        if (ts.tv_sec < 0 || ts.tv_nsec < 0 || ts.tv_nsec >= 1000000000L)
-            return -EINVAL;
+        if (ts.tv_sec < 0 || ts.tv_nsec < 0 || ts.tv_nsec >= 1000000000L) {
+            ret = -EINVAL;
+            goto out_file;
+        }
         uint64_t abs_ns = (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
         uint64_t now_ns = fut_get_ticks() * (1000000000ULL / FUT_TIMER_HZ);
         if (abs_ns <= now_ns) {
@@ -629,29 +673,33 @@ long sys_mq_timedreceive(int mqdes, char *msg_ptr, size_t msg_len,
             if (copy_len > 0) {
                 if (mq_copy_to_user(msg_ptr, node->data, copy_len) != 0) {
                     fut_free(node);
-                    return -EFAULT;
+                    ret = -EFAULT;
+                    goto out_file;
                 }
             }
             if (msg_prio) {
                 unsigned kprio = node->prio;
                 if (mq_copy_to_user(msg_prio, &kprio, sizeof(kprio)) != 0) {
                     fut_free(node);
-                    return -EFAULT;
+                    ret = -EFAULT;
+                    goto out_file;
                 }
             }
-            long ret = (long)node->len;
+            ret = (long)node->len;
             fut_free(node);
-            return ret;
+            goto out_file;
         }
 
         /* Queue is empty */
         if (nonblock) {
             fut_spinlock_release(&mq->lock);
-            return -EAGAIN;
+            ret = -EAGAIN;
+            goto out_file;
         }
         if (has_timeout && fut_get_ticks() >= deadline) {
             fut_spinlock_release(&mq->lock);
-            return -ETIMEDOUT;
+            ret = -ETIMEDOUT;
+            goto out_file;
         }
 
         /* Check for signals (task-wide OR thread-directed). */
@@ -665,7 +713,8 @@ long sys_mq_timedreceive(int mqdes, char *msg_ptr, size_t msg_len,
                                    : __atomic_load_n(&task->signal_mask, __ATOMIC_ACQUIRE);
             if (pending & ~blocked) {
                 fut_spinlock_release(&mq->lock);
-                return -EINTR;
+                ret = -EINTR;
+                goto out_file;
             }
         }
 
@@ -673,6 +722,10 @@ long sys_mq_timedreceive(int mqdes, char *msg_ptr, size_t msg_len,
         fut_waitq_sleep_locked(&mq->recv_waitq, &mq->lock, FUT_THREAD_BLOCKED);
         fut_spinlock_acquire(&mq->lock);
     }
+
+out_file:
+    fut_file_put(mq_file);
+    return ret;
 }
 
 /* ---- sys_mq_notify ------------------------------------------------ */
@@ -690,16 +743,22 @@ long sys_mq_timedreceive(int mqdes, char *msg_ptr, size_t msg_len,
  */
 long sys_mq_notify(int mqdes, const void *sevp)
 {
-    struct mq_fd *mfd = mq_fd_lookup(mqdes);
-    if (!mfd)
+    long ret = 0;
+    struct mq_fd *mfd = NULL;
+    struct fut_file *mq_file = mq_file_get(mqdes, &mfd);
+    if (!mq_file)
         return -EBADF;
     struct mqueue *mq = mfd->mq;
-    if (!mq || mq->unlinked)
-        return -EBADF;
+    if (!mq || mq->unlinked) {
+        ret = -EBADF;
+        goto out_file;
+    }
 
     fut_task_t *task = fut_task_current();
-    if (!task)
-        return -ESRCH;
+    if (!task) {
+        ret = -ESRCH;
+        goto out_file;
+    }
 
     fut_spinlock_acquire(&mq->lock);
 
@@ -708,26 +767,30 @@ long sys_mq_notify(int mqdes, const void *sevp)
         if (mq->notify_pid == task->pid)
             mq->notify_pid = (uint64_t)-1;
         fut_spinlock_release(&mq->lock);
-        return 0;
+        ret = 0;
+        goto out_file;
     }
 
     /* Another task is already registered → EBUSY */
     if (mq->notify_pid != (uint64_t)-1 && mq->notify_pid != task->pid) {
         fut_spinlock_release(&mq->lock);
-        return -EBUSY;
+        ret = -EBUSY;
+        goto out_file;
     }
 
     /* Copy sigevent from caller */
     struct sigevent kev;
     if (mq_copy_from_user(&kev, sevp, sizeof(kev)) != 0) {
         fut_spinlock_release(&mq->lock);
-        return -EFAULT;
+        ret = -EFAULT;
+        goto out_file;
     }
 
     if (kev.sigev_notify == SIGEV_SIGNAL) {
         if (kev.sigev_signo < 1 || kev.sigev_signo > 64) {
             fut_spinlock_release(&mq->lock);
-            return -EINVAL;
+            ret = -EINVAL;
+            goto out_file;
         }
         mq->notify_pid   = task->pid;
         mq->notify_signo = kev.sigev_signo;
@@ -737,11 +800,15 @@ long sys_mq_notify(int mqdes, const void *sevp)
     } else {
         /* SIGEV_THREAD not supported */
         fut_spinlock_release(&mq->lock);
-        return -EINVAL;
+        ret = -EINVAL;
+        goto out_file;
     }
 
     fut_spinlock_release(&mq->lock);
-    return 0;
+    ret = 0;
+out_file:
+    fut_file_put(mq_file);
+    return ret;
 }
 
 /* ---- sys_mq_getsetattr -------------------------------------------- */
@@ -749,12 +816,16 @@ long sys_mq_notify(int mqdes, const void *sevp)
 long sys_mq_getsetattr(int mqdes, const struct mq_attr *newattr,
                        struct mq_attr *oldattr)
 {
-    struct mq_fd *mfd = mq_fd_lookup(mqdes);
-    if (!mfd)
+    long ret = 0;
+    struct mq_fd *mfd = NULL;
+    struct fut_file *mq_file = mq_file_get(mqdes, &mfd);
+    if (!mq_file)
         return -EBADF;
     struct mqueue *mq = mfd->mq;
-    if (!mq || mq->unlinked)
-        return -EBADF;
+    if (!mq || mq->unlinked) {
+        ret = -EBADF;
+        goto out_file;
+    }
 
     /* Return old attr */
     if (oldattr) {
@@ -764,19 +835,26 @@ long sys_mq_getsetattr(int mqdes, const struct mq_attr *newattr,
         kold.mq_maxmsg  = mq->mq_maxmsg;
         kold.mq_msgsize = mq->mq_msgsize;
         kold.mq_curmsgs = atomic_load_explicit(&mq->mq_curmsgs, memory_order_acquire);
-        if (mq_copy_to_user(oldattr, &kold, sizeof(kold)) != 0)
-            return -EFAULT;
+        if (mq_copy_to_user(oldattr, &kold, sizeof(kold)) != 0) {
+            ret = -EFAULT;
+            goto out_file;
+        }
     }
 
     /* Apply new attr (only mq_flags / O_NONBLOCK can be changed) */
     if (newattr) {
         struct mq_attr knew;
-        if (mq_copy_from_user(&knew, newattr, sizeof(knew)) != 0)
-            return -EFAULT;
+        if (mq_copy_from_user(&knew, newattr, sizeof(knew)) != 0) {
+            ret = -EFAULT;
+            goto out_file;
+        }
         if (knew.mq_flags & O_NONBLOCK)
             mfd->oflag |= O_NONBLOCK;
         else
             mfd->oflag &= ~O_NONBLOCK;
     }
-    return 0;
+    ret = 0;
+out_file:
+    fut_file_put(mq_file);
+    return ret;
 }

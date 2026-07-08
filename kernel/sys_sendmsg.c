@@ -549,24 +549,31 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
                             int nfds = (int)(payload_len / sizeof(int));
                             int *fds = (int *)CMSG_DATA(cmsg);
 
-                            /* POSIX limits SCM_RIGHTS to a reasonable count.
-                             * Linux uses sysctl_optmem_max / sizeof(int); we cap at 253 like BSD. */
-                            if (nfds > 253) {
+                            /* The socket fd queue is the real transfer
+                             * capacity.  Pin every fd before publishing any
+                             * of them so a concurrent close() cannot turn a
+                             * validated SCM_RIGHTS message into a partial
+                             * transfer or a queued dangling pointer. */
+                            if (nfds > FUT_SOCKET_FD_QUEUE_MAX) {
                                 if (kcontrol_on_heap) fut_free(kcontrol);
                                 return -EINVAL;
                             }
 
-                            /* Validate all fds BEFORE queuing any (Linux rejects the
-                             * entire sendmsg with EBADF if any fd is invalid). */
-                            int scm_err = 0;
+                            struct fut_file *scm_files[FUT_SOCKET_FD_QUEUE_MAX];
+                            for (int fi = 0; fi < FUT_SOCKET_FD_QUEUE_MAX; fi++)
+                                scm_files[fi] = NULL;
+
+                            /* Resolve and pin all fds BEFORE queuing any
+                             * (Linux rejects the entire sendmsg with EBADF
+                             * if any fd is invalid). */
                             for (int fi = 0; fi < nfds; fi++) {
-                                struct fut_file *file = vfs_get_file_from_task(
-                                    (struct fut_task *)task, fds[fi]);
-                                if (!file) { scm_err = 1; break; }
-                            }
-                            if (scm_err) {
-                                if (kcontrol_on_heap) fut_free(kcontrol);
-                                return -EBADF;
+                                scm_files[fi] = fut_file_get((struct fut_task *)task, fds[fi]);
+                                if (!scm_files[fi]) {
+                                    for (int pi = 0; pi < fi; pi++)
+                                        fut_file_put(scm_files[pi]);
+                                    if (kcontrol_on_heap) fut_free(kcontrol);
+                                    return -EBADF;
+                                }
                             }
 
                             /* Check that the queue has room for all the FDs.
@@ -574,29 +581,21 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
                             fut_spinlock_acquire(&sock->pair->lock);
                             if (sock->pair->fd_queue_count + (uint32_t)nfds > FUT_SOCKET_FD_QUEUE_MAX) {
                                 fut_spinlock_release(&sock->pair->lock);
+                                for (int fi = 0; fi < nfds; fi++)
+                                    fut_file_put(scm_files[fi]);
                                 if (kcontrol_on_heap) fut_free(kcontrol);
                                 SENDMSG_LOG("[SENDMSG] SCM_RIGHTS: fd queue full (%u + %d > %d)\n",
                                            sock->pair->fd_queue_count, nfds, FUT_SOCKET_FD_QUEUE_MAX);
                                 return -ENOBUFS;
                             }
                             for (int fi = 0; fi < nfds; fi++) {
-                                /* Resolve-and-ref atomically against a
-                                 * concurrent close() (fut_file_get); the
-                                 * reference it takes becomes the in-flight
-                                 * reference owned by the fd queue, released
-                                 * when the receiver claims or the socket
-                                 * drains the queue. */
-                                struct fut_file *file = fut_file_get(
-                                    (struct fut_task *)task, fds[fi]);
-                                if (file) {
-                                    uint32_t tail = sock->pair->fd_queue_tail;
-                                    sock->pair->fd_queue[tail] = file;
-                                    sock->pair->fd_queue_tail =
-                                        (tail + 1) % FUT_SOCKET_FD_QUEUE_MAX;
-                                    sock->pair->fd_queue_count++;
-                                    SENDMSG_LOG("[SENDMSG] SCM_RIGHTS: queued fd=%d (file=%p) on socket pair\n",
-                                               fds[fi], file);
-                                }
+                                uint32_t tail = sock->pair->fd_queue_tail;
+                                sock->pair->fd_queue[tail] = scm_files[fi];
+                                sock->pair->fd_queue_tail =
+                                    (tail + 1) % FUT_SOCKET_FD_QUEUE_MAX;
+                                sock->pair->fd_queue_count++;
+                                SENDMSG_LOG("[SENDMSG] SCM_RIGHTS: queued fd=%d (file=%p) on socket pair\n",
+                                           fds[fi], scm_files[fi]);
                             }
                             fut_spinlock_release(&sock->pair->lock);
                         }

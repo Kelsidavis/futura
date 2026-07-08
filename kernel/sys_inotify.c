@@ -428,18 +428,25 @@ static int inotify_release(void *inode, void *priv) {
  * saw 'bad descriptor' for an entirely different cause ('this descriptor
  * is the wrong kind of object').  Match Linux's split — same shape as
  * the recent signalfd fix. */
-static struct inotify_instance *get_inotify_instance(fut_task_t *task, int fd, int *err) {
+static struct fut_file *get_inotify_file(fut_task_t *task, int fd,
+                                         struct inotify_instance **out_inst,
+                                         int *err) {
+    if (out_inst)
+        *out_inst = NULL;
     if (fd < 0 || fd >= task->max_fds) { *err = -EBADF; return NULL; }
     if (!task->fd_table) { *err = -EBADF; return NULL; }
 
-    struct fut_file *file = task->fd_table[fd];
+    struct fut_file *file = fut_file_get(task, fd);
     if (!file) { *err = -EBADF; return NULL; }
     if (file->chr_ops != &inotify_fops || !file->chr_private) {
         *err = -EINVAL;
+        fut_file_put(file);
         return NULL;
     }
     *err = 0;
-    return (struct inotify_instance *)file->chr_private;
+    if (out_inst)
+        *out_inst = (struct inotify_instance *)file->chr_private;
+    return file;
 }
 
 extern int chrdev_alloc_fd(const struct fut_file_ops *ops, void *inode, void *priv);
@@ -517,16 +524,16 @@ long sys_inotify_init1(int flags) {
     /* Store back-pointer and set O_NONBLOCK/O_CLOEXEC on the file.
      * Atomic-load + atomic OR to coexist with concurrent F_SETFL /
      * FIONBIO writers and ensure full visibility of the newly-installed fd. */
-    if (task->fd_table && fd < task->max_fds) {
-        struct fut_file *f = __atomic_load_n(&task->fd_table[fd], __ATOMIC_ACQUIRE);
+    {
+        struct fut_file *f = fut_file_get(task, fd);
         if (f) {
-            inst->file = f;
+            inst->file = f; /* non-owning back-pointer; fd file owns inst */
             if (flags & IN_NONBLOCK)
                 __atomic_or_fetch(&f->flags, O_NONBLOCK, __ATOMIC_ACQ_REL);
-            if (flags & IN_CLOEXEC) {
-                if (task->fd_flags && fd < task->max_fds)
-                    task->fd_flags[fd] |= FD_CLOEXEC;
-            }
+            fut_file_put(f);
+        }
+        if ((flags & IN_CLOEXEC) && task->fd_flags && fd < task->max_fds) {
+            task->fd_flags[fd] |= FD_CLOEXEC;
         }
     }
 
@@ -577,30 +584,35 @@ long sys_inotify_add_watch(int fd, const char *pathname, uint32_t mask) {
     }
 
     int err;
-    struct inotify_instance *inst = get_inotify_instance(task, fd, &err);
-    if (!inst) {
+    struct inotify_instance *inst = NULL;
+    struct fut_file *inotify_file = get_inotify_file(task, fd, &inst, &err);
+    if (!inotify_file) {
         fut_printf("[INOTIFY] inotify_add_watch(fd=%d) -> %d (not an inotify fd)\n", fd, err);
         return err;
     }
 
     if (!pathname) {
         fut_printf("[INOTIFY] inotify_add_watch(fd=%d, pathname=NULL) -> EFAULT\n", fd);
+        fut_file_put(inotify_file);
         return -EFAULT;
     }
 
     char path_buf[INOTIFY_PATH_MAX];
     if (inotify_copy_from_user(path_buf, pathname, sizeof(path_buf)) != 0) {
         fut_printf("[INOTIFY] inotify_add_watch(fd=%d) -> EFAULT (copy_from_user)\n", fd);
+        fut_file_put(inotify_file);
         return -EFAULT;
     }
     if (memchr(path_buf, '\0', sizeof(path_buf)) == NULL) {
         fut_printf("[INOTIFY] inotify_add_watch(fd=%d) -> ENAMETOOLONG\n", fd);
+        fut_file_put(inotify_file);
         return -ENAMETOOLONG;
     }
     /* Empty pathname is ENOENT per Linux inotify_add_watch(2) — getname()
      * returns -ENOENT for an empty string. */
     if (path_buf[0] == '\0') {
         fut_printf("[INOTIFY] inotify_add_watch(fd=%d, path=\"\") -> ENOENT\n", fd);
+        fut_file_put(inotify_file);
         return -ENOENT;
     }
 
@@ -631,9 +643,11 @@ long sys_inotify_add_watch(int fd, const char *pathname, uint32_t mask) {
         if (lk_err < 0) {
             fut_printf("[INOTIFY] inotify_add_watch(fd=%d, path='%s', mask=0x%x) "
                        "-> %d (path lookup failed)\n", fd, path_buf, mask, lk_err);
+            fut_file_put(inotify_file);
             return lk_err;
         }
         if (!vn) {
+            fut_file_put(inotify_file);
             return -ENOENT;
         }
         enum fut_vnode_type vtype = vn->type;
@@ -641,6 +655,7 @@ long sys_inotify_add_watch(int fd, const char *pathname, uint32_t mask) {
         if ((mask & IN_ONLYDIR) && vtype != VN_DIR) {
             fut_printf("[INOTIFY] inotify_add_watch(fd=%d, path='%s', mask=0x%x) "
                        "-> ENOTDIR (IN_ONLYDIR: not a directory)\n", fd, path_buf, mask);
+            fut_file_put(inotify_file);
             return -ENOTDIR;
         }
     }
@@ -657,6 +672,7 @@ long sys_inotify_add_watch(int fd, const char *pathname, uint32_t mask) {
                 fut_printf("[INOTIFY] inotify_add_watch(fd=%d, path='%s', mask=0x%x) "
                            "-> EEXIST (IN_MASK_CREATE: watch already exists, wd=%d)\n",
                            fd, path_buf, mask, wd);
+                fut_file_put(inotify_file);
                 return -EEXIST;
             }
             if (mask & IN_MASK_ADD) {
@@ -667,6 +683,7 @@ long sys_inotify_add_watch(int fd, const char *pathname, uint32_t mask) {
             fut_spinlock_release(&inst->lock);
             fut_printf("[INOTIFY] inotify_add_watch(fd=%d, path='%s', mask=0x%x) "
                        "-> %d (Phase 3: watch updated)\n", fd, path_buf, mask, wd);
+            fut_file_put(inotify_file);
             return wd;
         }
     }
@@ -676,6 +693,7 @@ long sys_inotify_add_watch(int fd, const char *pathname, uint32_t mask) {
         fut_spinlock_release(&inst->lock);
         fut_printf("[INOTIFY] inotify_add_watch(fd=%d, path='%s') -> ENOSPC (watch limit)\n",
                    fd, path_buf);
+        fut_file_put(inotify_file);
         return -ENOSPC;
     }
 
@@ -693,6 +711,7 @@ long sys_inotify_add_watch(int fd, const char *pathname, uint32_t mask) {
     /* Success path silent — file managers, IDEs, and reload-on-
      * change watchers (webpack, nodemon) register watches in
      * bursts. Errors above still trace explicitly. */
+    fut_file_put(inotify_file);
     return wd;
 }
 
@@ -719,14 +738,16 @@ long sys_inotify_rm_watch(int fd, int wd) {
     if (!task) return -ESRCH;
 
     int err;
-    struct inotify_instance *inst = get_inotify_instance(task, fd, &err);
-    if (!inst) {
+    struct inotify_instance *inst = NULL;
+    struct fut_file *inotify_file = get_inotify_file(task, fd, &inst, &err);
+    if (!inotify_file) {
         fut_printf("[INOTIFY] inotify_rm_watch(fd=%d) -> %d (not an inotify fd)\n", fd, err);
         return err;
     }
 
     if (wd < 0) {
         fut_printf("[INOTIFY] inotify_rm_watch(fd=%d, wd=%d) -> EINVAL\n", fd, wd);
+        fut_file_put(inotify_file);
         return -EINVAL;
     }
 
@@ -744,6 +765,7 @@ long sys_inotify_rm_watch(int fd, int wd) {
     if (found < 0) {
         fut_spinlock_release(&inst->lock);
         fut_printf("[INOTIFY] inotify_rm_watch(fd=%d, wd=%d) -> EINVAL (wd not found)\n", fd, wd);
+        fut_file_put(inotify_file);
         return -EINVAL;
     }
 
@@ -770,6 +792,7 @@ long sys_inotify_rm_watch(int fd, int wd) {
 
     /* Success path silent — paired with the add_watch silencer
      * above. Errors above still trace. */
+    fut_file_put(inotify_file);
     return 0;
 }
 

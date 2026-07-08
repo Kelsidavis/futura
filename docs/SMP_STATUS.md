@@ -116,18 +116,38 @@ small direct-vnode users (`fchdir`, `fchownat`, `linkat`
 uses were audited and left as EBADF/existence probes because they do
 not dereference or retain the returned `fut_file_t`.
 
+The direct fd-table follow-up then converted:
+- POSIX mqueue fd-private-data users (`mq_timedsend`,
+  `mq_timedreceive`, `mq_notify`, `mq_getsetattr`) to pin the owning
+  file for the full private-data lifetime, including blocking waits;
+- pidfd setup and pid extraction paths to pin before reading
+  `pidfd_ctx`, while copying the PID out before slower signal/ptrace
+  checks;
+- inotify instance lookup and init-time flag setup to pin the
+  inotify file, keeping `inst->file` as a non-owning back-pointer;
+- fanotify, userfaultfd, and memfd post-allocation file-flag writes
+  to pin the just-created fd before mutating `struct fut_file`;
+- ioctl's primary fd resolve into a pinning `sys_ioctl` wrapper plus
+  `ioctl_impl`, so the long switch and its early returns use a stable
+  file pointer; loop/block ioctl helpers now reuse that pinned file
+  instead of rereading `fd_table[fd]`;
+- `sendmsg(SCM_RIGHTS)` to pre-pin every transferred fd before
+  publishing any of them to the socket fd queue; the queued references
+  are the in-flight ownership refs consumed by `recvmsg` or dropped
+  by socket teardown.
+
 **Remaining fd follow-up**: direct `task->fd_table[fd]` dereferences
 that still need the same pinning treatment or a documented probe-only
-classification. Known higher-risk sites include `sys_ioctl` (many
-early returns, wants a single-exit wrapper), `sys_mqueue`
-(`mq_fd_lookup` returns `chr_private` without holding the owning file),
-pidfd helpers, inotify/fanotify/userfaultfd/memfd flag setup, procfs
+classification. Known higher-risk sites now are procfs
 `/proc/<pid>/fd*` readers, `kcmp`, fork/exec inheritance/close paths,
-and socket bind/connect/listen/getsockopt/setsockopt/getpeername/
-getsockname/shutdown probes that should be rechecked case-by-case.
-Several remaining `fd_table[]` reads are NULL-check-only probes or
-owner-side table mutation during fd creation/dup/close; those should
-stay documented as non-dereferencing once audited.
+and the raw socket lookup family (`get_socket_from_fd` callers in
+bind/connect/listen/accept/send/recv/setsockopt/getsockopt/
+getpeername/getsockname/shutdown, plus poll/select/epoll socket
+readiness probes), which needs either a socket-pin helper or careful
+probe-only comments at each call site. Several remaining `fd_table[]`
+reads are NULL-check-only probes or owner-side table mutation during
+fd creation/dup/close; those should stay documented as
+non-dereferencing once audited.
 
 ### B. Control-flow corruption at `-smp 4` (distinct bug, UNVALIDATABLE here)
 After the read/write fix, `-smp 4 + smp_sched` runs well past the CAP

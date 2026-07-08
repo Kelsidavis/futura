@@ -190,9 +190,13 @@ long sys_pidfd_open(int pid, unsigned int flags) {
     fut_task_t *cur = fut_task_current();
 
     /* Apply PIDFD_NONBLOCK if requested */
-    if ((flags & PIDFD_NONBLOCK) && cur && cur->fd_table && fd < cur->max_fds &&
-        cur->fd_table[fd])
-        cur->fd_table[fd]->flags |= 0x800; /* O_NONBLOCK */
+    if ((flags & PIDFD_NONBLOCK) && cur) {
+        struct fut_file *file = fut_file_get(cur, fd);
+        if (file) {
+            file->flags |= 0x800; /* O_NONBLOCK */
+            fut_file_put(file);
+        }
+    }
 
     /* Linux pidfd_open(2) always returns the pidfd with FD_CLOEXEC set:
      * 'The returned file descriptor has the close-on-exec flag set.'
@@ -217,13 +221,21 @@ int pidfd_get_pid(int fd) {
     fut_task_t *task = fut_task_current();
     if (!task || !task->fd_table || fd < 0 || fd >= task->max_fds)
         return -EBADF;
-    struct fut_file *file = task->fd_table[fd];
-    if (!file || file->chr_ops != &pidfd_fops)
+    struct fut_file *file = fut_file_get(task, fd);
+    if (!file)
         return -EBADF;
+    if (file->chr_ops != &pidfd_fops) {
+        fut_file_put(file);
+        return -EBADF;
+    }
     struct pidfd_ctx *ctx = (struct pidfd_ctx *)file->chr_private;
-    if (!ctx)
+    if (!ctx) {
+        fut_file_put(file);
         return -EBADF;
-    return ctx->pid;
+    }
+    int pid = ctx->pid;
+    fut_file_put(file);
+    return pid;
 }
 
 /**
@@ -247,12 +259,17 @@ long sys_pidfd_send_signal(int pidfd, int sig, const void *info, unsigned int fl
     /* Look up the pidfd */
     if (!task->fd_table || pidfd < 0 || pidfd >= task->max_fds)
         return -EBADF;
-    struct fut_file *file = task->fd_table[pidfd];
-    if (!file || file->chr_ops != &pidfd_fops || !file->chr_private)
+    struct fut_file *file = fut_file_get(task, pidfd);
+    if (!file)
         return -EBADF;
+    if (file->chr_ops != &pidfd_fops || !file->chr_private) {
+        fut_file_put(file);
+        return -EBADF;
+    }
 
     struct pidfd_ctx *ctx = (struct pidfd_ctx *)file->chr_private;
     int target_pid = ctx->pid;
+    fut_file_put(file);
 
     /* Linux's pidfd_send_signal copies siginfo from user when info != NULL
      * and enforces two invariants:
@@ -365,12 +382,18 @@ long sys_pidfd_getfd(int pidfd, int targetfd, unsigned int flags) {
     /* Resolve pidfd → target PID */
     if (!cur->fd_table || pidfd < 0 || pidfd >= cur->max_fds)
         return -EBADF;
-    struct fut_file *pf = cur->fd_table[pidfd];
-    if (!pf || pf->chr_ops != &pidfd_fops || !pf->chr_private)
+    struct fut_file *pf = fut_file_get(cur, pidfd);
+    if (!pf)
         return -EBADF;
+    if (pf->chr_ops != &pidfd_fops || !pf->chr_private) {
+        fut_file_put(pf);
+        return -EBADF;
+    }
 
     struct pidfd_ctx *ctx = (struct pidfd_ctx *)pf->chr_private;
-    fut_task_t *target = fut_task_by_pid((uint64_t)ctx->pid);
+    int target_pid = ctx->pid;
+    fut_file_put(pf);
+    fut_task_t *target = fut_task_by_pid((uint64_t)target_pid);
     if (!target)
         return -ESRCH;
 

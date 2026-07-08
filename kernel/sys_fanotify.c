@@ -326,9 +326,13 @@ long sys_fanotify_init(unsigned int flags, unsigned int event_f_flags) {
      * never propagated it to the fut_file, so blocking reads still
      * blocked even when the caller requested FAN_NONBLOCK — same
      * class as the matching userfaultfd O_NONBLOCK fix. */
-    if ((flags & FAN_NONBLOCK) && task && task->fd_table &&
-        fd < task->max_fds && task->fd_table[fd])
-        task->fd_table[fd]->flags |= 0x800 /* O_NONBLOCK */;
+    if ((flags & FAN_NONBLOCK) && task) {
+        struct fut_file *file = fut_file_get(task, fd);
+        if (file) {
+            file->flags |= 0x800 /* O_NONBLOCK */;
+            fut_file_put(file);
+        }
+    }
 
     /* Apply FAN_CLOEXEC. Guard against tasks that haven't allocated
      * fd_flags (early init / kernel threads); pipe2, socketpair, dup3,

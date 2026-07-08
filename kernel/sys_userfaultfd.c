@@ -599,9 +599,13 @@ long sys_userfaultfd(int flags) {
      * Futura previously validated the flag bit and stored it on ctx
      * but never propagated it to the fut_file, so blocking reads still
      * blocked even after the caller requested O_NONBLOCK. */
-    if ((flags & 0x800 /* O_NONBLOCK */) && task && task->fd_table &&
-        fd < task->max_fds && task->fd_table[fd])
-        task->fd_table[fd]->flags |= 0x800 /* O_NONBLOCK */;
+    if ((flags & 0x800 /* O_NONBLOCK */) && task) {
+        struct fut_file *file = fut_file_get(task, fd);
+        if (file) {
+            file->flags |= 0x800 /* O_NONBLOCK */;
+            fut_file_put(file);
+        }
+    }
 
     /* Apply FD_CLOEXEC. Guard task->fd_flags non-NULL: the field is lazily
      * allocated and may still be NULL for early-init / kernel-thread

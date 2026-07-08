@@ -843,6 +843,26 @@ void term_send_key(struct terminal *term, char ch) {
     sys_write(term->shell_stdin_fd, &ch, 1);
 }
 
+/* Character at a *view* position — the same scrollback/grid mapping
+ * term_render uses, so selection extraction always matches what is on
+ * screen. Returns ' ' for out-of-range positions. */
+char term_view_char(struct terminal *term, int row, int col) {
+    if (!term || !term->grid || row < 0 || row >= term->rows ||
+        col < 0 || col >= term->cols) {
+        return ' ';
+    }
+    if (term->scrollback && term->scroll_offset > 0 && row < term->scroll_offset &&
+        row < term->scrollback_count) {
+        int sb_line = term->scroll_offset - row;
+        int sb_idx = (term->scrollback_head - sb_line + SCROLLBACK_LINES) % SCROLLBACK_LINES;
+        return term->scrollback[sb_idx][col].ch;
+    }
+    int grid_row = row - (term->scroll_offset < term->rows ? term->scroll_offset : term->rows - 1);
+    if (grid_row < 0) grid_row = 0;
+    if (grid_row >= term->rows) grid_row = term->rows - 1;
+    return term->grid[grid_row][col].ch;
+}
+
 void term_render(struct terminal *term, uint32_t *pixels, int32_t width, int32_t height, int32_t stride,
                  int32_t pad_x, int32_t pad_y) {
 

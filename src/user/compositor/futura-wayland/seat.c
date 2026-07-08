@@ -540,6 +540,47 @@ static void compositor_launch_files(void);
 static void compositor_launch_wallpaper(void);
 static void compositor_launch_settings(void);
 
+/* Window whose dock item sits under (mx, my), or NULL. Geometry MUST
+ * mirror the dock renderer in comp.c (same constants as the left-click
+ * handler below). Returns NULL for the clock / desktop-button region. */
+static struct comp_surface *seat_dock_item_at(struct seat_state *seat,
+                                              int32_t mx, int32_t my) {
+    #define SDI_DOCK_HEIGHT   38                  /* DOCK_HEIGHT */
+    #define SDI_DOCK_ITEM_W   148                 /* DOCK_ITEM_W */
+    #define SDI_DOCK_ITEM_PAD 4                   /* DOCK_ITEM_PAD */
+    #define SDI_DOCK_DSKBTN_W 28                  /* DOCK_DSKBTN_W */
+    #define SDI_CLOCK_W       (22 * 8 + 16)       /* CLOCK_WIDTH_NEW */
+    if (!seat || !seat->comp) return NULL;
+    int32_t fb_h = (int32_t)seat->comp->fb_info.height;
+    int32_t fb_w = (int32_t)seat->comp->fb_info.width;
+    int32_t dock_y = fb_h - SDI_DOCK_HEIGHT - 6;
+    if (my < dock_y || my >= fb_h) return NULL;
+
+    int n_win = 0;
+    struct comp_surface *ds;
+    wl_list_for_each(ds, &seat->comp->surfaces, link)
+        if (ds->has_backing) n_win++;
+
+    int items_w = n_win > 0
+        ? n_win * SDI_DOCK_ITEM_W + (n_win - 1) * SDI_DOCK_ITEM_PAD
+        : 0;
+    int dock_content_w = 8 + items_w + 8 + SDI_CLOCK_W + 4 + SDI_DOCK_DSKBTN_W + 4;
+    if (dock_content_w < 240) dock_content_w = 240;
+    int dock_w_max = fb_w - 16;
+    if (dock_w_max < 240) dock_w_max = 240;
+    int dock_w = dock_content_w > dock_w_max ? dock_w_max : dock_content_w;
+    int dock_x = (fb_w - dock_w) / 2;
+    if (mx < dock_x || mx >= dock_x + dock_w) return NULL;
+
+    int item_x = dock_x + 8;
+    wl_list_for_each(ds, &seat->comp->surfaces, link) {
+        if (!ds->has_backing) continue;
+        if (mx >= item_x && mx < item_x + SDI_DOCK_ITEM_W) return ds;
+        item_x += SDI_DOCK_ITEM_W + SDI_DOCK_ITEM_PAD;
+    }
+    return NULL;
+}
+
 static void seat_handle_button(struct seat_state *seat,
                                uint16_t code,
                                bool pressed,
@@ -760,7 +801,11 @@ static void seat_handle_button(struct seat_state *seat,
         }
     }
 
-    /* Middle-click on title bar: minimize window */
+    /* Middle-click on title bar: minimize window.
+     * Middle-click on a dock item: ask that window to close — the
+     * standard taskbar affordance. Goes through the xdg close request
+     * so the client can prompt about unsaved state rather than being
+     * torn down. */
     if (code == FUT_BTN_MIDDLE && pressed) {
         struct comp_surface *hit_surface = NULL;
         resize_edge_t edge = RSZ_NONE;
@@ -772,6 +817,13 @@ static void seat_handle_button(struct seat_state *seat,
             comp_surface_set_minimized(hit_surface, true);
             comp_damage_add_full(seat->comp);
             seat->comp->needs_repaint = true;
+        } else if (!hit_surface) {
+            struct comp_surface *dock_win =
+                seat_dock_item_at(seat, seat->comp->pointer_x,
+                                  seat->comp->pointer_y);
+            if (dock_win) {
+                comp_surface_request_close(dock_win);
+            }
         }
     }
 

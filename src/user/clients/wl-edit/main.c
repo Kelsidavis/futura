@@ -14,6 +14,7 @@
  *   Ctrl+S                 Save
  *   Ctrl+F                 Find (type query; Enter = next, Esc = done)
  *   F3 / Shift+F3          Repeat last search forward / backward
+ *   Ctrl+G                 Go to line (type number, Enter jumps)
  *   Ctrl+Q                 Quit
  */
 
@@ -97,6 +98,13 @@ static char ed_search_buf[40] = "";
 static int  ed_search_len = 0;
 static int  ed_search_origin_row = 0;
 static int  ed_search_origin_col = 0;
+
+/* Goto-line (Ctrl+G). Digits build the target, Enter jumps, Esc
+ * cancels. Kept separate from search state so a stray Ctrl+G can't
+ * clobber the last search query. */
+static bool ed_goto_active = false;
+static int  ed_goto_value = 0;
+static bool ed_goto_has_digits = false;
 
 /* Forward decl for tick_ms — defined later with the keyboard-repeat state. */
 static uint64_t tick_ms;
@@ -670,6 +678,24 @@ static void redraw_all(struct client_state *state) {
     if (px_right < x + 6) px_right = x + 6;
     draw_text_run(px, w, h, stride, px_right, ty, pos, pi, COL_STATUS_FG, COL_STATUS_BG);
 
+    /* Goto-line prompt takes over the center slot while active. */
+    if (ed_goto_active) {
+        char gmsg[24];
+        int gi = 0;
+        const char *gl = "goto line: ";
+        while (*gl) gmsg[gi++] = *gl++;
+        if (ed_goto_has_digits) {
+            char digits[8];
+            int dn = 0, v = ed_goto_value;
+            while (v > 0 && dn < 7) { digits[dn++] = (char)('0' + v % 10); v /= 10; }
+            while (dn > 0) gmsg[gi++] = digits[--dn];
+        }
+        gmsg[gi++] = '_';
+        gmsg[gi] = '\0';
+        int mx = (w - gi * FONT_WIDTH) / 2;
+        fill_rect(px, stride, mx - 4, sy + 1, gi * FONT_WIDTH + 8, ED_STATUS_H - 2, COL_STATUS_BG);
+        draw_text_run(px, w, h, stride, mx, ty, gmsg, gi, COL_CURSOR, COL_STATUS_BG);
+    } else
     /* Search prompt takes over the center slot while active — it must
      * stay visible for the whole search, unlike transient statuses. */
     if (ed_search_active) {
@@ -821,6 +847,37 @@ static void process_key(struct client_state *s, uint32_t key) {
     bool shift = (kbd_mods & 1) != 0;
     bool ctrl  = (kbd_mods & 4) != 0;
 
+    /* Goto-line mode swallows all input until Enter/Esc leaves it. */
+    if (ed_goto_active) {
+        if (key == 1) { /* Esc */
+            ed_goto_active = false;
+            s->needs_redraw = true; return;
+        }
+        if (key == 28) { /* Enter — jump (1-based, clamped to buffer) */
+            if (ed_goto_has_digits) {
+                int row = ed_goto_value - 1;
+                if (row < 0) row = 0;
+                if (row >= ed_line_count) row = ed_line_count - 1;
+                ed_cursor_row = row;
+                ed_cursor_col = 0;
+            }
+            ed_goto_active = false;
+            ed_ensure_visible(); s->needs_redraw = true; return;
+        }
+        if (key == 14) { /* Backspace */
+            ed_goto_value /= 10;
+            if (ed_goto_value == 0) ed_goto_has_digits = false;
+            s->needs_redraw = true; return;
+        }
+        char c = key_to_ascii(key, shift);
+        if (c >= '0' && c <= '9' && ed_goto_value < 100000) {
+            ed_goto_value = ed_goto_value * 10 + (c - '0');
+            ed_goto_has_digits = true;
+            s->needs_redraw = true;
+        }
+        return;
+    }
+
     /* Search mode swallows all input until Enter/Esc leaves it. */
     if (ed_search_active) {
         if (key == 1) { /* Esc — leave search, return to origin */
@@ -929,6 +986,13 @@ static void process_key(struct client_state *s, uint32_t key) {
             } else {
                 ed_set_status("save failed", tick_ms);
             }
+            s->needs_redraw = true;
+            return;
+        }
+        if (c == 'g') {
+            ed_goto_active = true;
+            ed_goto_value = 0;
+            ed_goto_has_digits = false;
             s->needs_redraw = true;
             return;
         }

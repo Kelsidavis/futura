@@ -89,9 +89,72 @@ struct client_state {
     /* Terminal emulator */
     struct terminal term;
 
+    /* Mouse selection. Coordinates are view cells (what's on screen),
+     * so a selection is invalidated whenever the view changes —
+     * scrolling or new output would silently shift what the range
+     * refers to. */
+    bool sel_dragging;      /* left button held, tracking motion */
+    bool sel_active;        /* completed selection is highlighted */
+    int  sel_anchor_row, sel_anchor_col;
+    int  sel_end_row, sel_end_col;
+    int  ptr_col, ptr_row;  /* last pointer position, in cells */
+
     /* Running state */
     bool running;
 };
+
+/* Copied-out selection text. Sized for the worst case: every view row
+ * full plus a newline per row. */
+static char clip_buf[TERM_MAX_ROWS * (TERM_MAX_COLS + 1) + 1];
+static int  clip_len = 0;
+
+/* Normalize a selection so (r0,c0) <= (r1,c1) in reading order. */
+static void sel_normalize(const struct client_state *state,
+                          int *r0, int *c0, int *r1, int *c1) {
+    int ar = state->sel_anchor_row, ac = state->sel_anchor_col;
+    int er = state->sel_end_row,    ec = state->sel_end_col;
+    if (er < ar || (er == ar && ec < ac)) {
+        *r0 = er; *c0 = ec; *r1 = ar; *c1 = ac;
+    } else {
+        *r0 = ar; *c0 = ac; *r1 = er; *c1 = ec;
+    }
+}
+
+/* Extract the selected text into clip_buf. Line tails are trimmed of
+ * trailing spaces; rows joined with '\n'. */
+static void sel_copy_text(struct client_state *state) {
+    int r0, c0, r1, c1;
+    sel_normalize(state, &r0, &c0, &r1, &c1);
+    clip_len = 0;
+    for (int r = r0; r <= r1; r++) {
+        int cs = (r == r0) ? c0 : 0;
+        int ce = (r == r1) ? c1 : state->term.cols - 1;
+        int line_start = clip_len;
+        for (int c = cs; c <= ce && clip_len < (int)sizeof(clip_buf) - 2; c++) {
+            clip_buf[clip_len++] = term_view_char(&state->term, r, c);
+        }
+        while (clip_len > line_start && clip_buf[clip_len - 1] == ' ') clip_len--;
+        if (r < r1 && clip_len < (int)sizeof(clip_buf) - 1) {
+            clip_buf[clip_len++] = '\n';
+        }
+    }
+    clip_buf[clip_len] = '\0';
+}
+
+static void sel_clear(struct client_state *state) {
+    if (state->sel_active || state->sel_dragging) {
+        state->sel_active = false;
+        state->sel_dragging = false;
+        state->needs_redraw = true;
+    }
+}
+
+/* Paste the copied text into the shell's stdin, as if typed. */
+static void sel_paste(struct client_state *state) {
+    if (clip_len > 0 && state->term.shell_stdin_fd >= 0) {
+        sys_write(state->term.shell_stdin_fd, clip_buf, clip_len);
+    }
+}
 
 /* XDG WM Base listener */
 static void handle_ping(void *data, struct xdg_wm_base *wm_base, uint32_t serial) {
@@ -309,16 +372,27 @@ static void keyboard_key(void *data, struct wl_keyboard *keyboard, uint32_t seri
 
 static void process_key(struct client_state *state, uint32_t key) {
     bool shift = (kbd_mods_depressed & 1) != 0;
+    bool ctrl  = (kbd_mods_depressed & 4) != 0;
+
+    /* Ctrl+Shift+V: paste the mouse selection into the shell. Handled
+     * before the scroll-to-bottom below so the view semantics match
+     * middle-click paste. */
+    if (ctrl && shift && key == 47 /* v */) {
+        sel_paste(state);
+        return;
+    }
 
     /* Shift+PageUp/PageDown: scroll through scrollback history.
      * These are the only keys that should *not* return the user to the
      * live view, since they're how the user navigates scrollback. */
     if (shift && key == 104) {  /* PageUp (evdev keycode) */
+        sel_clear(state);
         term_scroll_view(&state->term, 5);
         state->needs_redraw = true;
         return;
     }
     if (shift && key == 109) {  /* PageDown */
+        sel_clear(state);
         term_scroll_view(&state->term, -5);
         state->needs_redraw = true;
         return;
@@ -375,8 +449,6 @@ static void process_key(struct client_state *state, uint32_t key) {
             return;
         }
     }
-
-    bool ctrl = (kbd_mods_depressed & 4) != 0;  /* Ctrl modifier */
 
     /* Ctrl+key: send control characters (Ctrl+C=0x03, Ctrl+D=0x04, etc.)
      * The PTY line discipline converts these to signals (SIGINT, EOF, etc.) */
@@ -448,25 +520,92 @@ static const struct wl_keyboard_listener keyboard_listener = {
     .repeat_info = keyboard_repeat,
 };
 
-/* Pointer (mouse) listener — used for scroll wheel scrollback */
+/* Pointer (mouse) listener — scroll wheel scrollback + text selection */
+
+/* Surface pixel position → view cell, clamped to the grid. */
+static void ptr_update_cell(struct client_state *state, wl_fixed_t sx, wl_fixed_t sy) {
+    int x = wl_fixed_to_int(sx) - TERM_PAD_X;
+    int y = wl_fixed_to_int(sy) - TERM_PAD_Y;
+    int col = x / FONT_WIDTH;
+    int row = y / FONT_HEIGHT;
+    if (col < 0) col = 0;
+    if (col >= state->term.cols) col = state->term.cols - 1;
+    if (row < 0) row = 0;
+    if (row >= state->term.rows) row = state->term.rows - 1;
+    state->ptr_col = col;
+    state->ptr_row = row;
+}
+
 static void pointer_enter(void *data, struct wl_pointer *pointer, uint32_t serial,
                          struct wl_surface *surface, wl_fixed_t sx, wl_fixed_t sy) {
-    (void)data; (void)pointer; (void)serial; (void)surface; (void)sx; (void)sy;
+    (void)pointer; (void)serial; (void)surface;
+    struct client_state *state = data;
+    if (state) ptr_update_cell(state, sx, sy);
 }
 
 static void pointer_leave(void *data, struct wl_pointer *pointer, uint32_t serial,
                          struct wl_surface *surface) {
-    (void)data; (void)pointer; (void)serial; (void)surface;
+    (void)pointer; (void)serial; (void)surface;
+    struct client_state *state = data;
+    /* A drag that leaves the surface ends where it left off — we keep
+     * the selection made so far rather than discarding it. */
+    if (state && state->sel_dragging) {
+        state->sel_dragging = false;
+        if (state->sel_anchor_row != state->sel_end_row ||
+            state->sel_anchor_col != state->sel_end_col) {
+            state->sel_active = true;
+            sel_copy_text(state);
+        }
+    }
 }
 
 static void pointer_motion(void *data, struct wl_pointer *pointer, uint32_t time,
                           wl_fixed_t sx, wl_fixed_t sy) {
-    (void)data; (void)pointer; (void)time; (void)sx; (void)sy;
+    (void)pointer; (void)time;
+    struct client_state *state = data;
+    if (!state) return;
+    ptr_update_cell(state, sx, sy);
+    if (state->sel_dragging) {
+        if (state->ptr_row != state->sel_end_row ||
+            state->ptr_col != state->sel_end_col) {
+            state->sel_end_row = state->ptr_row;
+            state->sel_end_col = state->ptr_col;
+            state->needs_redraw = true;
+        }
+    }
 }
 
 static void pointer_button(void *data, struct wl_pointer *pointer, uint32_t serial,
                           uint32_t time, uint32_t button, uint32_t button_state) {
-    (void)data; (void)pointer; (void)serial; (void)time; (void)button; (void)button_state;
+    (void)pointer; (void)serial; (void)time;
+    struct client_state *state = data;
+    if (!state) return;
+
+    if (button == 0x110 /* BTN_LEFT */) {
+        if (button_state == WL_POINTER_BUTTON_STATE_PRESSED) {
+            /* New drag replaces any existing selection. */
+            state->sel_active = false;
+            state->sel_dragging = true;
+            state->sel_anchor_row = state->ptr_row;
+            state->sel_anchor_col = state->ptr_col;
+            state->sel_end_row = state->ptr_row;
+            state->sel_end_col = state->ptr_col;
+            state->needs_redraw = true;
+        } else if (state->sel_dragging) {
+            state->sel_dragging = false;
+            /* A click without drag is just a click — no selection. */
+            if (state->sel_anchor_row != state->sel_end_row ||
+                state->sel_anchor_col != state->sel_end_col) {
+                state->sel_active = true;
+                sel_copy_text(state);
+            } else {
+                state->needs_redraw = true;
+            }
+        }
+    } else if (button == 0x112 /* BTN_MIDDLE */ &&
+               button_state == WL_POINTER_BUTTON_STATE_PRESSED) {
+        sel_paste(state);
+    }
 }
 
 static void pointer_axis(void *data, struct wl_pointer *pointer, uint32_t time,
@@ -489,6 +628,9 @@ static void pointer_axis(void *data, struct wl_pointer *pointer, uint32_t time,
             lines = -3;  /* Scroll wheel down: view newer content */
         }
         if (lines != 0) {
+            /* Scrolling shifts what each view row shows — a selection
+             * kept across it would highlight the wrong text. */
+            sel_clear(state);
             term_scroll_view(&state->term, lines);
             state->needs_redraw = true;
         }
@@ -793,6 +935,28 @@ static void redraw(struct client_state *state) {
     term_render(&state->term, pixels, state->pixel_width, state->pixel_height, state->pixel_width,
                 TERM_PAD_X, TERM_PAD_Y);
 
+    /* Selection highlight: invert the selected cell rects. Applied as
+     * an overlay after term_render so the renderer stays unaware of
+     * selection state. */
+    if (state->sel_dragging || state->sel_active) {
+        int r0, c0, r1, c1;
+        sel_normalize(state, &r0, &c0, &r1, &c1);
+        for (int r = r0; r <= r1 && r < state->term.rows; r++) {
+            int cs = (r == r0) ? c0 : 0;
+            int ce = (r == r1) ? c1 : state->term.cols - 1;
+            int y0 = r * FONT_HEIGHT + TERM_PAD_Y;
+            for (int y = y0; y < y0 + FONT_HEIGHT && y < state->pixel_height; y++) {
+                uint32_t *line = pixels + (size_t)y * (size_t)state->pixel_width;
+                int x0 = cs * FONT_WIDTH + TERM_PAD_X;
+                int x1 = (ce + 1) * FONT_WIDTH + TERM_PAD_X;
+                if (x1 > state->pixel_width) x1 = state->pixel_width;
+                for (int x = x0; x < x1; x++) {
+                    line[x] ^= 0x00FFFFFFu;  /* invert RGB, keep alpha */
+                }
+            }
+        }
+    }
+
     /* Destroy any old frame callback that was superseded by timeout */
     if (state->frame_cb) {
         wl_callback_destroy(state->frame_cb);
@@ -862,6 +1026,9 @@ static bool main_loop_iteration(struct client_state *state) {
             }
         }
         if (total > 0) {
+            /* New output may scroll the screen; a selection pinned to
+             * view rows would drift onto the wrong text. */
+            sel_clear(state);
             state->needs_redraw = true;
             state->term.cursor_blink_on = true;
             state->term.cursor_blink_time = tick_ms;

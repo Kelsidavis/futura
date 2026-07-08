@@ -116,6 +116,10 @@ void term_scroll(struct terminal *term);
 /* Scroll view into history (positive = back, negative = forward) */
 void term_scroll_view(struct terminal *term, int delta);
 
+/* Character at a view position (honors scrollback offset) — used by
+ * mouse-selection text extraction in the client. */
+char term_view_char(struct terminal *term, int row, int col);
+
 /* Reset scroll to bottom (live view) */
 void term_scroll_to_bottom(struct terminal *term);
 

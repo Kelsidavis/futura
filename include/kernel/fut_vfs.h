@@ -1047,6 +1047,13 @@ void vfs_close_fd_in_task(struct fut_task *task, int fd);
 /* File reference counting */
 void vfs_file_ref(struct fut_file *file);
 
+/* Resolve fd -> file AND take a reference atomically against a
+ * concurrent close() (SMP-safe; closes the use-after-free window in a
+ * bare fd-table load). Returns NULL for a bad/closed fd. The caller
+ * MUST balance a non-NULL return with fut_file_put(). */
+struct fut_file *fut_file_get(struct fut_task *task, int fd);
+void fut_file_put(struct fut_file *file);
+
 /* Drop one ref on a fut_file. If the count reaches zero, run the
  * release path (chr_ops->release / vnode close + unref, free path,
  * free struct). Use this on speculative-ref rollback paths where the

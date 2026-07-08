@@ -200,6 +200,7 @@ fut_task_t *fut_task_create(void) {
     task->cap_ambient = 0;              /* Ambient set starts empty */
 
     fut_waitq_init(&task->child_waiters);
+    fut_spinlock_init(&task->fd_lock);
     fut_spinlock_init(&task->pidfd_notify_lock);
     for (int pni = 0; pni < FUT_PIDFD_NOTIFY_MAX; pni++)
         task->pidfd_notify[pni] = NULL;

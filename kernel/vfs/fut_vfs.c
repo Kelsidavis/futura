@@ -10,6 +10,7 @@
 #include <kernel/fut_memory.h>
 #include <kernel/fut_mm.h>
 #include <kernel/fut_task.h>
+#include <kernel/fut_irq.h>
 #include <kernel/fut_timer.h>
 #include <kernel/userns.h>
 #include <kernel/chrdev.h>
@@ -1864,6 +1865,40 @@ void vfs_file_ref(struct fut_file *file) {
     }
 }
 
+/* Resolve a fd to its file AND take a reference, atomically against a
+ * concurrent close() on another CPU. get_file_from_task() alone only
+ * loads the slot pointer — between that load and the caller bumping
+ * the refcount, a close() can drop the last ref and free the struct
+ * (SMP use-after-free, seen crashing fut_vfs_read at -smp 4).
+ *
+ * The fd_lock makes {load slot + ref++} in the getter atomic with
+ * {clear slot} in fut_vfs_close: a getter that observes the slot
+ * still populated has incremented the refcount before close's
+ * decrement can reach zero, so the object cannot be freed underneath
+ * it. Callers MUST fut_file_put() the returned file. */
+struct fut_file *fut_file_get(fut_task_t *task, int fd) {
+    if (!task || !task->fd_table || fd < 0 || fd >= task->max_fds) {
+        return NULL;
+    }
+    unsigned long flags = fut_irqsave();
+    fut_spinlock_acquire(&task->fd_lock);
+    struct fut_file *file = __atomic_load_n(&task->fd_table[fd], __ATOMIC_ACQUIRE);
+    if (file) {
+        __atomic_add_fetch(&file->refcount, 1, __ATOMIC_ACQ_REL);
+    }
+    fut_spinlock_release(&task->fd_lock);
+    fut_irqrestore(flags);
+    return file;
+}
+
+/* Drop a reference taken by fut_file_get. Frees on the last ref
+ * (delegates to vfs_file_unref, which runs the release path). Must
+ * NOT be called with fd_lock held — the release path can be slow and
+ * may re-enter the VFS. */
+void fut_file_put(struct fut_file *file) {
+    vfs_file_unref(file);
+}
+
 /* Drop a ref on a detached fut_file. If we hit zero, run the release
  * path so the struct (and any held vnode / chr_private state) is
  * actually freed. Mirrors the last-ref logic in fut_vfs_close /
@@ -2706,7 +2741,11 @@ ssize_t fut_vfs_read(int fd, void *buf, size_t size) {
         return -ESRCH;
     }
 
-    struct fut_file *file = get_file_from_task(task, fd);
+    /* Take a reference for the duration of the read so a concurrent
+     * close() on another CPU can't free the struct underneath us
+     * (SMP use-after-free). Every exit below goes through `out:` to
+     * drop it exactly once. */
+    struct fut_file *file = fut_file_get(task, fd);
     if (!file) {
 #if DEBUG_READ
         fut_printf("[vfs-read] EBADF: no file for fd=%d\n", fd);
@@ -2714,15 +2753,19 @@ ssize_t fut_vfs_read(int fd, void *buf, size_t size) {
         return -EBADF;
     }
 
+    ssize_t ret;
+
     /* O_PATH fds cannot be used for I/O — only path-based operations */
     if (file->flags & O_PATH) {
-        return -EBADF;
+        ret = -EBADF;
+        goto out;
     }
 
     /* Check that fd was opened for reading */
     int access_mode = file->flags & O_ACCMODE;
     if (access_mode == O_WRONLY) {
-        return -EBADF;
+        ret = -EBADF;
+        goto out;
     }
 
     if (file->chr_ops) {
@@ -2733,10 +2776,11 @@ ssize_t fut_vfs_read(int fd, void *buf, size_t size) {
 #if DEBUG_READ
             fut_printf("[vfs-read] EINVAL: no chr_ops->read\n");
 #endif
-            return -EINVAL;
+            ret = -EINVAL;
+            goto out;
         }
         off_t pos = (off_t)file->offset;
-        ssize_t ret = file->chr_ops->read(file->chr_inode, file->chr_private, buf, size, &pos);
+        ret = file->chr_ops->read(file->chr_inode, file->chr_private, buf, size, &pos);
 #if DEBUG_READ
         fut_printf("[vfs-read] chr_ops->read returned %zd\n", ret);
 #endif
@@ -2745,27 +2789,30 @@ ssize_t fut_vfs_read(int fd, void *buf, size_t size) {
             extern void iocg_account_read(uint64_t);
             iocg_account_read((uint64_t)ret);
         }
-        return ret;
+        goto out;
     }
 
     /* Directories cannot be read with read() — use getdents64 */
     if (file->vnode && file->vnode->type == VN_DIR) {
-        return -EISDIR;
+        ret = -EISDIR;
+        goto out;
     }
 
     /* Call vnode read operation */
     if (!file->vnode || !file->vnode->ops || !file->vnode->ops->read) {
-        return -EINVAL;
+        ret = -EINVAL;
+        goto out;
     }
 
     /* Check read permission */
     int perm_ret = check_file_permission(file->vnode, NULL, false);
     if (perm_ret < 0) {
         VFSDBG("[vfs-read] Read permission denied (mode=0%o)\n", file->vnode->mode);
-        return perm_ret;
+        ret = perm_ret;
+        goto out;
     }
 
-    ssize_t ret = file->vnode->ops->read(file->vnode, buf, size, file->offset);
+    ret = file->vnode->ops->read(file->vnode, buf, size, file->offset);
     if (ret > 0) {
         file->offset += ret;
         extern void iocg_account_read(uint64_t);
@@ -2804,6 +2851,8 @@ ssize_t fut_vfs_read(int fd, void *buf, size_t size) {
         task->io_syscr++;
     }
 
+out:
+    fut_file_put(file);
     return ret;
 }
 
@@ -2816,21 +2865,28 @@ ssize_t fut_vfs_write(int fd, const void *buf, size_t size) {
         return -ESRCH;
     }
 
-    struct fut_file *file = get_file_from_task(task, fd);
-    VFSDBG("[vfs-write] get_file_from_task returned %p\n", (void*)file);
+    /* Hold a reference across the write so a concurrent close() on
+     * another CPU can't free the struct mid-use (SMP UAF). Single
+     * exit via `out:` drops it. */
+    struct fut_file *file = fut_file_get(task, fd);
+    VFSDBG("[vfs-write] fut_file_get returned %p\n", (void*)file);
     if (!file) {
         return -EBADF;
     }
 
+    ssize_t ret;
+
     /* O_PATH fds cannot be used for I/O */
     if (file->flags & O_PATH) {
-        return -EBADF;
+        ret = -EBADF;
+        goto out;
     }
 
     /* Check that fd was opened for writing */
     int access_mode = file->flags & O_ACCMODE;
     if (access_mode == O_RDONLY) {
-        return -EBADF;
+        ret = -EBADF;
+        goto out;
     }
 
     /* Enforce file seals: F_SEAL_WRITE and F_SEAL_FUTURE_WRITE prevent writes.
@@ -2838,24 +2894,28 @@ ssize_t fut_vfs_write(int fd, const void *buf, size_t size) {
      * F_SEAL_FUTURE_WRITE (0x0010): prevents future write()/writev() calls but
      *   allows existing shared writable mappings to continue writing via mmap. */
     if (file->seals & (0x0008 /* F_SEAL_WRITE */ | 0x0010 /* F_SEAL_FUTURE_WRITE */)) {
-        return -EPERM;
+        ret = -EPERM;
+        goto out;
     }
 
     if (file->chr_ops) {
         VFSDBG("[vfs-write] chr_ops path\n");
         if (!file->chr_ops->write) {
-            return -EINVAL;
+            ret = -EINVAL;
+            goto out;
         }
         /* Enforce F_SEAL_GROW on chr_ops (memfd) files: if the write would extend
          * past the current file size, reject with EPERM. */
         if (file->seals & 0x0004 /* F_SEAL_GROW */) {
             extern long fut_memfd_get_size(struct fut_file *file);
             long cur = fut_memfd_get_size(file);
-            if (cur >= 0 && file->offset + size > (size_t)cur)
-                return -EPERM;
+            if (cur >= 0 && file->offset + size > (size_t)cur) {
+                ret = -EPERM;
+                goto out;
+            }
         }
         off_t pos = (off_t)file->offset;
-        ssize_t ret = file->chr_ops->write(file->chr_inode, file->chr_private, buf, size, &pos);
+        ret = file->chr_ops->write(file->chr_inode, file->chr_private, buf, size, &pos);
         if (ret > 0) {
             file->offset = (uint64_t)pos;
             extern void iocg_account_write(uint64_t);
@@ -2868,32 +2928,36 @@ ssize_t fut_vfs_write(int fd, const void *buf, size_t size) {
             if (wr_task && !wr_task->suppress_sigpipe)
                 fut_signal_send(wr_task, 13 /* SIGPIPE */);
         }
-        return ret;
+        goto out;
     }
 
     /* Directories cannot be written with write() */
     if (file->vnode && file->vnode->type == VN_DIR) {
-        return -EISDIR;
+        ret = -EISDIR;
+        goto out;
     }
 
     /* Call vnode write operation */
     VFSDBG("[vfs-write] vnode path, checking ops\n");
     if (!file->vnode || !file->vnode->ops || !file->vnode->ops->write) {
         VFSDBG("[vfs-write] invalid vnode/ops/write\n");
-        return -EINVAL;
+        ret = -EINVAL;
+        goto out;
     }
 
     /* Check write permission */
     int perm_ret = check_file_permission(file->vnode, NULL, true);
     if (perm_ret < 0) {
         VFSDBG("[vfs-write] Write permission denied (mode=0%o)\n", file->vnode->mode);
-        return perm_ret;
+        ret = perm_ret;
+        goto out;
     }
 
     /* Enforce F_SEAL_GROW: reject writes that would extend the file */
     if ((file->seals & 0x0004 /* F_SEAL_GROW */) &&
         file->offset + size > file->vnode->size) {
-        return -EPERM;
+        ret = -EPERM;
+        goto out;
     }
 
     /* O_APPEND: acquire per-vnode write lock to make seek-to-end + write
@@ -2925,7 +2989,8 @@ ssize_t fut_vfs_write(int fd, const void *buf, size_t size) {
                         fut_signal_send(wr_task, 25 /* SIGXFSZ */);
                         if (is_append)
                             fut_spinlock_release(&file->vnode->write_lock);
-                        return -27;  /* EFBIG */
+                        ret = -27;  /* EFBIG */
+                        goto out;
                     }
                     /* Truncate write to fit within limit */
                     size = (size_t)(fsize_limit - file->offset);
@@ -2935,7 +3000,7 @@ ssize_t fut_vfs_write(int fd, const void *buf, size_t size) {
     }
 
     VFSDBG("[vfs-write] calling vnode->ops->write\n");
-    ssize_t ret = file->vnode->ops->write(file->vnode, buf, size, file->offset);
+    ret = file->vnode->ops->write(file->vnode, buf, size, file->offset);
     VFSDBG("[vfs-write] vnode->ops->write returned %lld\n", (long long)ret);
     if (ret > 0) {
         file->offset += ret;
@@ -3000,6 +3065,8 @@ ssize_t fut_vfs_write(int fd, const void *buf, size_t size) {
     }
 
     VFSDBG("[vfs-write] returning %lld\n", (long long)ret);
+out:
+    fut_file_put(file);
     return ret;
 }
 
@@ -3010,23 +3077,31 @@ int fut_vfs_close(int fd) {
         return -ESRCH;
     }
 
-    struct fut_file *file = get_file_from_task(task, fd);
-    VFSDBG("[vfs-close] get_file_from_task returned file=%p\n", (void*)file);
+    /* Load the file and clear the slot atomically under fd_lock, so
+     * the clear is ordered against fut_file_get's {load slot + ref++}.
+     * A concurrent reader either bumped the refcount before we cleared
+     * (so our decrement below can't reach zero and free underneath it)
+     * or observes the NULL slot and backs off. Clearing the slot first
+     * also stops any new reader from grabbing this fd during cleanup. */
+    unsigned long fdflags = fut_irqsave();
+    fut_spinlock_acquire(&task->fd_lock);
+    struct fut_file *file = NULL;
+    if (task->fd_table && fd >= 0 && fd < task->max_fds) {
+        file = __atomic_load_n(&task->fd_table[fd], __ATOMIC_ACQUIRE);
+        if (file) {
+            __atomic_store_n(&task->fd_table[fd], NULL, __ATOMIC_RELEASE);
+            /* Clear per-FD flags (FD_CLOEXEC) so stale flags don't leak
+             * to a future FD reusing this slot. */
+            if (task->fd_flags)
+                task->fd_flags[fd] = 0;
+        }
+    }
+    fut_spinlock_release(&task->fd_lock);
+    fut_irqrestore(fdflags);
+
+    VFSDBG("[vfs-close] slot cleared, file=%p\n", (void*)file);
     if (!file) {
         return -EBADF;
-    }
-
-    /* Remove FD from task table first, then handle refcount.
-     * This prevents other threads from accessing the FD during cleanup.
-     * Release-store pairs with the acquire-load in get_file_from_task
-     * so a concurrent reader on ARM64 reliably observes the NULL. */
-    if (task->fd_table && fd >= 0 && fd < task->max_fds) {
-        __atomic_store_n(&task->fd_table[fd], NULL, __ATOMIC_RELEASE);
-        /* Clear per-FD flags (FD_CLOEXEC) so stale flags don't leak to
-         * a future FD reusing this slot.  alloc_fd_for_task() also clears
-         * fd_flags on allocation, but clearing here is defense-in-depth. */
-        if (task->fd_flags)
-            task->fd_flags[fd] = 0;
     }
 
     /* Clear socket tracking table so stale socket pointers don't pollute

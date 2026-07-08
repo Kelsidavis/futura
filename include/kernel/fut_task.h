@@ -222,6 +222,12 @@ struct fut_task {
     int next_fd;                       // Next FD index to allocate
     bool fd_table_dynamic;             // True if fd_table/fd_flags are from fut_malloc
                                        // (false for static/early-boot tables we must not free)
+    /* Serializes fd-resolve-plus-ref (fut_file_get) against the
+     * slot-clear-plus-unref in close/dup2/exec. Without it, a reader
+     * on one CPU can load a fd_table[] pointer that another CPU's
+     * close() frees before the reader bumps its refcount — a
+     * use-after-free that surfaced under SMP (see fut_file_get). */
+    fut_spinlock_t fd_lock;
 
     /* Resource limits (POSIX rlimits) */
     struct rlimit64 {

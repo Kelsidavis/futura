@@ -20,6 +20,7 @@
 #include <kernel/fut_socket.h>
 #include <kernel/errno.h>
 #include <kernel/uaccess.h>
+#include <kernel/fut_vfs.h>
 #include <stdint.h>
 
 #include <kernel/kprintf.h>
@@ -318,21 +319,23 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
      * ENOTSOCK.  Move the socket lookup ahead of the pointer checks —
      * same fix as the matching setsockopt / bind / connect / getsockname
      * / getpeername / shutdown / accept reorder. */
-    {
-        extern fut_socket_t *get_socket_from_fd(int fd);
-        fut_socket_t *gso_sock = get_socket_from_fd(sockfd);
-        if (!gso_sock) {
-            if (sockfd < task->max_fds && task->fd_table && task->fd_table[sockfd]) {
-                fut_printf("[GETSOCKOPT] getsockopt(sockfd=%d) -> ENOTSOCK (not a socket)\n", sockfd);
-                return -ENOTSOCK;
-            }
-            fut_printf("[GETSOCKOPT] getsockopt(sockfd=%d) -> EBADF (not a socket)\n", sockfd);
-            return -EBADF;
+    struct fut_file *sock_pin = NULL;
+    fut_socket_t *gso_sock = get_socket_pinned(sockfd, &sock_pin);
+    if (!gso_sock) {
+        if (sock_pin) {
+            fut_file_put(sock_pin);
+            fut_printf("[GETSOCKOPT] getsockopt(sockfd=%d) -> ENOTSOCK (not a socket)\n", sockfd);
+            return -ENOTSOCK;
         }
+        fut_printf("[GETSOCKOPT] getsockopt(sockfd=%d) -> EBADF (not a socket)\n", sockfd);
+        return -EBADF;
     }
+
+    #define GSO_RETURN(value) do { fut_file_put(sock_pin); return (value); } while (0)
 
     /* Validate optval pointer */
     if (!optval) {
+        fut_file_put(sock_pin);
         fut_printf("[GETSOCKOPT] getsockopt(sockfd=%d, level=%d, optname=%d) -> EFAULT (optval is NULL)\n",
                    sockfd, level, optname);
         return -EFAULT;
@@ -340,6 +343,7 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
 
     /* Validate optlen pointer */
     if (!optlen) {
+        fut_file_put(sock_pin);
         fut_printf("[GETSOCKOPT] getsockopt(sockfd=%d, level=%d, optname=%d) -> EFAULT (optlen is NULL)\n",
                    sockfd, level, optname);
         return -EFAULT;
@@ -348,6 +352,7 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
     /* Read optlen from userspace */
     socklen_t len;
     if (gso_copy_from_user(&len, optlen, sizeof(socklen_t)) != 0) {
+        fut_file_put(sock_pin);
         fut_printf("[GETSOCKOPT] getsockopt(sockfd=%d, level=%d, optname=%d) -> EFAULT (copy_from_user optlen failed)\n",
                    sockfd, level, optname);
         return -EFAULT;
@@ -429,7 +434,7 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
      *    - Line 393: get_socket_from_fd performs expensive socket lookup
      *    - Line 407: Retrieves socket type value
      *    - Line 412: fut_copy_to_user attempts write to readonly
-     *    - Result: Page fault → kernel panic/DoS
+     *    - Result: Page fault -> kernel panic/DoS
      * 4. WITH check (line 381-390):
      *    - Line 384: Test write with dummy byte before socket lookup
      *    - Syscall fails fast with EFAULT, no socket lookup
@@ -452,7 +457,7 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
      *    - Line 381-390: optval write permission check passes
      *    - Line 393: Expensive socket lookup
      *    - Line 407-412: Retrieve and write socket type to optval
-     *    - Line 417: fut_copy_to_user writes to readonly_len → fault
+     *    - Line 417: fut_copy_to_user writes to readonly_len -> fault
      *    - Result: Crash AFTER doing all the work
      * 4. Impact:
      *    - DoS: Late failure after expensive operations
@@ -536,6 +541,7 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
 
     /* Validate optlen value */
     if (len == 0 || len > 1024) {  /* Sanity check */
+        fut_file_put(sock_pin);
         fut_printf("[GETSOCKOPT] getsockopt(sockfd=%d, level=%d, optname=%d, optlen=%u) -> EINVAL\n",
                    sockfd, level, optname, len);
         return -EINVAL;
@@ -543,6 +549,7 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
 
     /* Validate optlen write permission early (kernel writes back actual size) */
     if (optlen && gso_access_ok(optlen, sizeof(socklen_t), 1) != 0) {
+        fut_file_put(sock_pin);
         fut_printf("[GETSOCKOPT] getsockopt(sockfd=%d) -> EFAULT (optlen not writable)\n",
                    sockfd);
         return -EFAULT;
@@ -558,6 +565,7 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
          * caller relied on optval being unmodified on EFAULT/short
          * returns it would silently see a zeroed first byte. */
         if (gso_access_ok(optval, len, 1) != 0) {
+            fut_file_put(sock_pin);
             fut_printf("[GETSOCKOPT] getsockopt(sockfd=%d, level=%d, optname=%d, optval=%p) -> EFAULT "
                        "(buffer not writable)\n",
                        sockfd, level, optname, optval);
@@ -565,17 +573,8 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
         }
     }
 
-    /* Get socket from FD */
-    fut_socket_t *socket = get_socket_from_fd(sockfd);
-    if (!socket) {
-        /* Distinguish ENOTSOCK (valid fd, not a socket) from EBADF (invalid fd) */
-        if (sockfd >= 0 && sockfd < task->max_fds && task->fd_table && task->fd_table[sockfd]) {
-            fut_printf("[GETSOCKOPT] getsockopt(sockfd=%d) -> ENOTSOCK (not a socket)\n", sockfd);
-            return -ENOTSOCK;
-        }
-        fut_printf("[GETSOCKOPT] getsockopt(sockfd=%d) -> EBADF (not a socket)\n", sockfd);
-        return -EBADF;
-    }
+    /* Reuse already-pinned socket */
+    fut_socket_t *socket = gso_sock;
 
     /* Phase 2: Implement common SOL_SOCKET options */
     if (level == SOL_SOCKET) {
@@ -591,16 +590,16 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
                 /* Copy as much as fits in user buffer */
                 socklen_t copy_len = (len < value_len) ? len : value_len;
                 if (gso_copy_to_user(optval, &int_value, copy_len) != 0) {
-                    return -EFAULT;
+                    GSO_RETURN(-EFAULT);
                 }
 
                 /* Update optlen with actual size */
                 if (gso_copy_to_user(optlen, &value_len, sizeof(socklen_t)) != 0) {
-                    return -EFAULT;
+                    GSO_RETURN(-EFAULT);
                 }
 
                 (void)sockfd;  /* Used only in error logs */
-                return 0;
+                GSO_RETURN(0);
 
             case SO_ERROR:
                 /* Return pending error and atomically clear it (Linux semantics) */
@@ -610,14 +609,14 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
 
                 copy_len = (len < value_len) ? len : value_len;
                 if (gso_copy_to_user(optval, &int_value, copy_len) != 0) {
-                    return -EFAULT;
+                    GSO_RETURN(-EFAULT);
                 }
 
                 if (gso_copy_to_user(optlen, &value_len, sizeof(socklen_t)) != 0) {
-                    return -EFAULT;
+                    GSO_RETURN(-EFAULT);
                 }
 
-                return 0;
+                GSO_RETURN(0);
 
             case SO_SNDBUF:
                 /* Return stored send buffer size (set doubled by setsockopt) */
@@ -626,14 +625,14 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
 
                 copy_len = (len < value_len) ? len : value_len;
                 if (gso_copy_to_user(optval, &int_value, copy_len) != 0) {
-                    return -EFAULT;
+                    GSO_RETURN(-EFAULT);
                 }
 
                 if (gso_copy_to_user(optlen, &value_len, sizeof(socklen_t)) != 0) {
-                    return -EFAULT;
+                    GSO_RETURN(-EFAULT);
                 }
 
-                return 0;
+                GSO_RETURN(0);
 
             case SO_RCVBUF:
                 /* Return stored receive buffer size (set doubled by setsockopt) */
@@ -642,14 +641,14 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
 
                 copy_len = (len < value_len) ? len : value_len;
                 if (gso_copy_to_user(optval, &int_value, copy_len) != 0) {
-                    return -EFAULT;
+                    GSO_RETURN(-EFAULT);
                 }
 
                 if (gso_copy_to_user(optlen, &value_len, sizeof(socklen_t)) != 0) {
-                    return -EFAULT;
+                    GSO_RETURN(-EFAULT);
                 }
 
-                return 0;
+                GSO_RETURN(0);
 
             case SO_DEBUG:
             case SO_REUSEADDR:
@@ -660,7 +659,7 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
             case SO_DONTROUTE: {
                 /* Boolean options — return stored so_flags value.
                  * SO_DEBUG was missing from this group, so a setsockopt
-                 * → getsockopt round-trip on the debug bit returned
+                 * -> getsockopt round-trip on the debug bit returned
                  * ENOPROTOOPT instead of the stored 0/1, breaking libc
                  * feature-detection via the boolean-roundtrip pattern. */
                 uint32_t bit = 0;
@@ -678,13 +677,13 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
 
                 copy_len = (len < value_len) ? len : value_len;
                 if (gso_copy_to_user(optval, &int_value, copy_len) != 0) {
-                    return -EFAULT;
+                    GSO_RETURN(-EFAULT);
                 }
                 if (gso_copy_to_user(optlen, &value_len, sizeof(socklen_t)) != 0) {
-                    return -EFAULT;
+                    GSO_RETURN(-EFAULT);
                 }
 
-                return 0;
+                GSO_RETURN(0);
             }
 
             case SO_RCVLOWAT:
@@ -692,22 +691,18 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
                 int_value = (int)socket->rcvlowat;
                 value_len = sizeof(int);
                 copy_len = (len < value_len) ? len : value_len;
-                if (gso_copy_to_user(optval, &int_value, copy_len) != 0)
-                    return -EFAULT;
-                if (gso_copy_to_user(optlen, &value_len, sizeof(socklen_t)) != 0)
-                    return -EFAULT;
-                return 0;
+                if (gso_copy_to_user(optval, &int_value, copy_len) != 0) { fut_file_put(sock_pin); return -EFAULT; }
+                if (gso_copy_to_user(optlen, &value_len, sizeof(socklen_t)) != 0) { fut_file_put(sock_pin); return -EFAULT; }
+                GSO_RETURN(0);
 
             case SO_SNDLOWAT:
                 /* SO_SNDLOWAT: always 1 (Linux does not allow changing) */
                 int_value = 1;
                 value_len = sizeof(int);
                 copy_len = (len < value_len) ? len : value_len;
-                if (gso_copy_to_user(optval, &int_value, copy_len) != 0)
-                    return -EFAULT;
-                if (gso_copy_to_user(optlen, &value_len, sizeof(socklen_t)) != 0)
-                    return -EFAULT;
-                return 0;
+                if (gso_copy_to_user(optval, &int_value, copy_len) != 0) { fut_file_put(sock_pin); return -EFAULT; }
+                if (gso_copy_to_user(optlen, &value_len, sizeof(socklen_t)) != 0) { fut_file_put(sock_pin); return -EFAULT; }
+                GSO_RETURN(0);
 
             case SO_RCVTIMEO:
             case SO_SNDTIMEO:
@@ -726,12 +721,12 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
                     value_len = sizeof(tv);
                     copy_len = (len < value_len) ? len : value_len;
                     if (gso_copy_to_user(optval, &tv, copy_len) != 0) {
-                        return -EFAULT;
+                        GSO_RETURN(-EFAULT);
                     }
                     if (gso_copy_to_user(optlen, &value_len, sizeof(socklen_t)) != 0) {
-                        return -EFAULT;
+                        GSO_RETURN(-EFAULT);
                     }
-                    return 0;
+                    GSO_RETURN(0);
                 }
 
             case SO_LINGER:
@@ -745,13 +740,13 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
 
                     copy_len = (len < value_len) ? len : value_len;
                     if (gso_copy_to_user(optval, &ling_zero, copy_len) != 0) {
-                        return -EFAULT;
+                        GSO_RETURN(-EFAULT);
                     }
                     if (gso_copy_to_user(optlen, &value_len, sizeof(socklen_t)) != 0) {
-                        return -EFAULT;
+                        GSO_RETURN(-EFAULT);
                     }
 
-                    return 0;
+                    GSO_RETURN(0);
                 }
 
             case 17: /* SO_PEERCRED */ {
@@ -761,7 +756,7 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
                     uint32_t uid;
                     uint32_t gid;
                 };
-                if (socket->state != FUT_SOCK_CONNECTED) return -ENOTCONN;
+                if (socket->state != FUT_SOCK_CONNECTED) { fut_file_put(sock_pin); return -ENOTCONN; }
 
                 struct ucred cred = {
                     .pid = (int32_t)socket->peer_pid,
@@ -770,18 +765,18 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
                 };
                 value_len = sizeof(struct ucred);
                 copy_len = (len < value_len) ? len : value_len;
-                if (gso_copy_to_user(optval, &cred, copy_len) != 0) return -EFAULT;
-                if (gso_copy_to_user(optlen, &value_len, sizeof(socklen_t)) != 0) return -EFAULT;
-                return 0;
+                if (gso_copy_to_user(optval, &cred, copy_len) != 0) { fut_file_put(sock_pin); return -EFAULT; }
+                if (gso_copy_to_user(optlen, &value_len, sizeof(socklen_t)) != 0) { fut_file_put(sock_pin); return -EFAULT; }
+                GSO_RETURN(0);
             }
 
             case 30: /* SO_ACCEPTCONN - is socket in listen state? */
                 int_value = (socket->state == FUT_SOCK_LISTENING) ? 1 : 0;
                 value_len = sizeof(int);
                 copy_len = (len < value_len) ? len : value_len;
-                if (gso_copy_to_user(optval, &int_value, copy_len) != 0) return -EFAULT;
-                if (gso_copy_to_user(optlen, &value_len, sizeof(socklen_t)) != 0) return -EFAULT;
-                return 0;
+                if (gso_copy_to_user(optval, &int_value, copy_len) != 0) { fut_file_put(sock_pin); return -EFAULT; }
+                if (gso_copy_to_user(optlen, &value_len, sizeof(socklen_t)) != 0) { fut_file_put(sock_pin); return -EFAULT; }
+                GSO_RETURN(0);
 
             case 38: /* SO_PROTOCOL - protocol number */
                 /* Linux's SO_PROTOCOL returns the protocol number that was
@@ -813,41 +808,41 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
                 }
                 value_len = sizeof(int);
                 copy_len = (len < value_len) ? len : value_len;
-                if (gso_copy_to_user(optval, &int_value, copy_len) != 0) return -EFAULT;
-                if (gso_copy_to_user(optlen, &value_len, sizeof(socklen_t)) != 0) return -EFAULT;
-                return 0;
+                if (gso_copy_to_user(optval, &int_value, copy_len) != 0) { fut_file_put(sock_pin); return -EFAULT; }
+                if (gso_copy_to_user(optlen, &value_len, sizeof(socklen_t)) != 0) { fut_file_put(sock_pin); return -EFAULT; }
+                GSO_RETURN(0);
 
             case 39: /* SO_DOMAIN - address family */
                 int_value = socket->address_family;
                 value_len = sizeof(int);
                 copy_len = (len < value_len) ? len : value_len;
-                if (gso_copy_to_user(optval, &int_value, copy_len) != 0) return -EFAULT;
-                if (gso_copy_to_user(optlen, &value_len, sizeof(socklen_t)) != 0) return -EFAULT;
-                return 0;
+                if (gso_copy_to_user(optval, &int_value, copy_len) != 0) { fut_file_put(sock_pin); return -EFAULT; }
+                if (gso_copy_to_user(optlen, &value_len, sizeof(socklen_t)) != 0) { fut_file_put(sock_pin); return -EFAULT; }
+                GSO_RETURN(0);
 
             case 16: /* SO_PASSCRED - credential passing enabled? */
                 int_value = socket->passcred ? 1 : 0;
                 value_len = sizeof(int);
                 copy_len = (len < value_len) ? len : value_len;
-                if (gso_copy_to_user(optval, &int_value, copy_len) != 0) return -EFAULT;
-                if (gso_copy_to_user(optlen, &value_len, sizeof(socklen_t)) != 0) return -EFAULT;
-                return 0;
+                if (gso_copy_to_user(optval, &int_value, copy_len) != 0) { fut_file_put(sock_pin); return -EFAULT; }
+                if (gso_copy_to_user(optlen, &value_len, sizeof(socklen_t)) != 0) { fut_file_put(sock_pin); return -EFAULT; }
+                GSO_RETURN(0);
 
             case 29: /* SO_TIMESTAMP */
                 int_value = (socket->so_flags & FUT_SO_F_TIMESTAMP) ? 1 : 0;
                 value_len = sizeof(int);
                 copy_len = (len < value_len) ? len : value_len;
-                if (gso_copy_to_user(optval, &int_value, copy_len) != 0) return -EFAULT;
-                if (gso_copy_to_user(optlen, &value_len, sizeof(socklen_t)) != 0) return -EFAULT;
-                return 0;
+                if (gso_copy_to_user(optval, &int_value, copy_len) != 0) { fut_file_put(sock_pin); return -EFAULT; }
+                if (gso_copy_to_user(optlen, &value_len, sizeof(socklen_t)) != 0) { fut_file_put(sock_pin); return -EFAULT; }
+                GSO_RETURN(0);
 
             case 35: /* SO_TIMESTAMPNS */
                 int_value = (socket->so_flags & FUT_SO_F_TIMESTAMPNS) ? 1 : 0;
                 value_len = sizeof(int);
                 copy_len = (len < value_len) ? len : value_len;
-                if (gso_copy_to_user(optval, &int_value, copy_len) != 0) return -EFAULT;
-                if (gso_copy_to_user(optlen, &value_len, sizeof(socklen_t)) != 0) return -EFAULT;
-                return 0;
+                if (gso_copy_to_user(optval, &int_value, copy_len) != 0) { fut_file_put(sock_pin); return -EFAULT; }
+                if (gso_copy_to_user(optlen, &value_len, sizeof(socklen_t)) != 0) { fut_file_put(sock_pin); return -EFAULT; }
+                GSO_RETURN(0);
 
             case 62: /* SO_RCVTIMEO_NEW */
             case 63: { /* SO_SNDTIMEO_NEW — Y2038-safe (struct __kernel_sock_timeval) */
@@ -858,9 +853,9 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
                 };
                 value_len = sizeof(tv);
                 copy_len = (len < value_len) ? len : value_len;
-                if (gso_copy_to_user(optval, &tv, copy_len) != 0) return -EFAULT;
-                if (gso_copy_to_user(optlen, &value_len, sizeof(socklen_t)) != 0) return -EFAULT;
-                return 0;
+                if (gso_copy_to_user(optval, &tv, copy_len) != 0) { fut_file_put(sock_pin); return -EFAULT; }
+                if (gso_copy_to_user(optlen, &value_len, sizeof(socklen_t)) != 0) { fut_file_put(sock_pin); return -EFAULT; }
+                GSO_RETURN(0);
             }
 
             case 25: { /* SO_BINDTODEVICE — return bound device name */
@@ -870,9 +865,9 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
                 nlen++; /* include NUL terminator */
                 socklen_t out_len = (socklen_t)nlen;
                 size_t cp = (len < out_len) ? len : out_len;
-                if (gso_copy_to_user(optval, name, cp) != 0) return -EFAULT;
-                if (gso_copy_to_user(optlen, &out_len, sizeof(socklen_t)) != 0) return -EFAULT;
-                return 0;
+                if (gso_copy_to_user(optval, name, cp) != 0) { fut_file_put(sock_pin); return -EFAULT; }
+                if (gso_copy_to_user(optlen, &out_len, sizeof(socklen_t)) != 0) { fut_file_put(sock_pin); return -EFAULT; }
+                GSO_RETURN(0);
             }
 
             case 12: /* SO_PRIORITY */
@@ -909,13 +904,13 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
                 int_value = 0;
                 value_len = sizeof(int);
                 copy_len = (len < value_len) ? len : value_len;
-                if (gso_copy_to_user(optval, &int_value, copy_len) != 0) return -EFAULT;
-                if (gso_copy_to_user(optlen, &value_len, sizeof(socklen_t)) != 0) return -EFAULT;
-                return 0;
+                if (gso_copy_to_user(optval, &int_value, copy_len) != 0) { fut_file_put(sock_pin); return -EFAULT; }
+                if (gso_copy_to_user(optlen, &value_len, sizeof(socklen_t)) != 0) { fut_file_put(sock_pin); return -EFAULT; }
+                GSO_RETURN(0);
             }
 
             default:
-                return -ENOPROTOOPT;
+                GSO_RETURN(-ENOPROTOOPT);
         }
     } else if (level == IPPROTO_TCP || level == IPPROTO_IP || level == IPPROTO_IPV6 || level == 17 /* IPPROTO_UDP */) {
         /* Protocol-level options: return stored values or defaults */
@@ -923,7 +918,7 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
         if (level == 17 /* IPPROTO_UDP */) {
             /* UDP options: return 0 (no real UDP stack state) */
             if (optname >= 1 && optname <= 120) { proto_val = 0; }
-            else { return -ENOPROTOOPT; }
+            else { fut_file_put(sock_pin); return -ENOPROTOOPT; }
         } else if (level == IPPROTO_TCP) {
             switch (optname) {
                 case 1:  proto_val = socket->tcp_nodelay;      break; /* TCP_NODELAY */
@@ -997,14 +992,14 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
                     /* Copy the portion the caller can accept */
                     socklen_t info_len = sizeof(info);
                     socklen_t info_copy = (len < info_len) ? len : info_len;
-                    if (gso_copy_to_user(optval, &info, info_copy) != 0) return -EFAULT;
-                    if (gso_copy_to_user(optlen, &info_copy, sizeof(socklen_t)) != 0) return -EFAULT;
-                    return 0;
+                    if (gso_copy_to_user(optval, &info, info_copy) != 0) { fut_file_put(sock_pin); return -EFAULT; }
+                    if (gso_copy_to_user(optlen, &info_copy, sizeof(socklen_t)) != 0) { fut_file_put(sock_pin); return -EFAULT; }
+                    GSO_RETURN(0);
                 }
                 case 12: proto_val = socket->tcp_quickack;     break; /* TCP_QUICKACK */
                 default:
                     if (optname >= 13 && optname <= 31) { proto_val = 0; break; }
-                    return -ENOPROTOOPT;
+                    GSO_RETURN(-ENOPROTOOPT);
             }
         } else if (level == IPPROTO_IP) {
             switch (optname) {
@@ -1018,7 +1013,7 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
                 case 34: proto_val = 1;  break; /* IP_MULTICAST_LOOP: default enabled */
                 default:
                     if (optname >= 4 && optname <= 64) { proto_val = 0; break; }
-                    return -ENOPROTOOPT;
+                    GSO_RETURN(-ENOPROTOOPT);
             }
         } else { /* IPPROTO_IPV6 */
             switch (optname) {
@@ -1028,16 +1023,17 @@ long sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t 
                 default:
                     if ((optname >= 1 && optname <= 25) ||
                         (optname >= 27 && optname <= 80)) { proto_val = 0; break; }
-                    return -ENOPROTOOPT;
+                    GSO_RETURN(-ENOPROTOOPT);
             }
         }
         socklen_t pv_len = sizeof(int);
         socklen_t pv_copy = (len < pv_len) ? len : pv_len;
-        if (gso_copy_to_user(optval, &proto_val, pv_copy) != 0) return -EFAULT;
-        if (gso_copy_to_user(optlen, &pv_len, sizeof(socklen_t)) != 0) return -EFAULT;
-        return 0;
+        if (gso_copy_to_user(optval, &proto_val, pv_copy) != 0) { fut_file_put(sock_pin); return -EFAULT; }
+        if (gso_copy_to_user(optlen, &pv_len, sizeof(socklen_t)) != 0) { fut_file_put(sock_pin); return -EFAULT; }
+        GSO_RETURN(0);
     } else {
         /* Unknown protocol level */
-        return -ENOPROTOOPT;
+        GSO_RETURN(-ENOPROTOOPT);
     }
+#undef GSO_RETURN
 }

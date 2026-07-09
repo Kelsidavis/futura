@@ -14,6 +14,7 @@
 
 #include <kernel/fut_task.h>
 #include <kernel/fut_socket.h>
+#include <kernel/fut_vfs.h>
 #include <kernel/errno.h>
 #include <kernel/uaccess.h>
 #include <sys/un.h>
@@ -336,9 +337,11 @@ long sys_getsockname(int sockfd, void *addr, socklen_t *addrlen) {
      * pattern (open a file, getsockname(fd, NULL, NULL) — Linux: ENOTSOCK,
      * Futura was returning EFAULT).  Move the socket lookup ahead of
      * the pointer checks. */
-    fut_socket_t *socket = get_socket_from_fd(local_sockfd);
+    struct fut_file *sock_pin = NULL;
+    fut_socket_t *socket = get_socket_pinned(local_sockfd, &sock_pin);
     if (!socket) {
-        if (task->fd_table && task->fd_table[local_sockfd]) {
+        if (sock_pin) {
+            fut_file_put(sock_pin);
             fut_printf("[GETSOCKNAME] getsockname(sockfd=%d) -> ENOTSOCK (not a socket)\n", local_sockfd);
             return -ENOTSOCK;
         }
@@ -348,18 +351,21 @@ long sys_getsockname(int sockfd, void *addr, socklen_t *addrlen) {
 
     /* Validate addr pointer */
     if (!local_addr) {
+        fut_file_put(sock_pin);
         fut_printf("[GETSOCKNAME] getsockname(sockfd=%d) -> EFAULT (addr is NULL)\n", local_sockfd);
         return -EFAULT;
     }
 
     /* Validate addrlen pointer */
     if (!local_addrlen) {
+        fut_file_put(sock_pin);
         fut_printf("[GETSOCKNAME] getsockname(sockfd=%d) -> EFAULT (addrlen is NULL)\n", local_sockfd);
         return -EFAULT;
     }
 
     /* Validate addrlen write permission early (kernel writes back actual size) */
     if (getsockname_access_ok(local_addrlen, sizeof(socklen_t), 1) != 0) {
+        fut_file_put(sock_pin);
         fut_printf("[GETSOCKNAME] getsockname(sockfd=%d) -> EFAULT (addrlen not writable)\n",
                    local_sockfd);
         return -EFAULT;
@@ -368,6 +374,7 @@ long sys_getsockname(int sockfd, void *addr, socklen_t *addrlen) {
     /* Read addrlen from userspace */
     socklen_t len;
     if (getsockname_copy_from_user(&len, local_addrlen, sizeof(socklen_t)) != 0) {
+        fut_file_put(sock_pin);
         fut_printf("[GETSOCKNAME] getsockname(sockfd=%d) -> EFAULT (copy_from_user addrlen failed)\n",
                    local_sockfd);
         return -EFAULT;
@@ -375,6 +382,7 @@ long sys_getsockname(int sockfd, void *addr, socklen_t *addrlen) {
 
     /* Validate addr write permission early (kernel writes socket address) */
     if (len > 0 && getsockname_access_ok(local_addr, len, 1) != 0) {
+        fut_file_put(sock_pin);
         fut_printf("[GETSOCKNAME] getsockname(sockfd=%d, addrlen=%u) -> EFAULT (addr not writable for %u bytes)\n",
                    local_sockfd, len, len);
         return -EFAULT;
@@ -388,8 +396,9 @@ long sys_getsockname(int sockfd, void *addr, socklen_t *addrlen) {
         nladdr.nl_family = 16;
         socklen_t actual_len = (socklen_t)sizeof(nladdr);
         socklen_t copy_len = (len < actual_len) ? len : actual_len;
-        if (getsockname_copy_to_user(local_addr, &nladdr, copy_len) != 0) return -EFAULT;
-        if (getsockname_copy_to_user(local_addrlen, &actual_len, sizeof(socklen_t)) != 0) return -EFAULT;
+        if (getsockname_copy_to_user(local_addr, &nladdr, copy_len) != 0) { fut_file_put(sock_pin); return -EFAULT; }
+        if (getsockname_copy_to_user(local_addrlen, &actual_len, sizeof(socklen_t)) != 0) { fut_file_put(sock_pin); return -EFAULT; }
+        fut_file_put(sock_pin);
         return 0;
     }
 
@@ -401,10 +410,15 @@ long sys_getsockname(int sockfd, void *addr, socklen_t *addrlen) {
         sin.sin_addr   = socket->inet_addr;
         socklen_t actual_len = (socklen_t)sizeof(sockaddr_in_t);
         socklen_t copy_len = (len < actual_len) ? len : actual_len;
-        if (getsockname_copy_to_user(local_addr, &sin, copy_len) != 0)
+        if (getsockname_copy_to_user(local_addr, &sin, copy_len) != 0) {
+            fut_file_put(sock_pin);
             return -EFAULT;
-        if (getsockname_copy_to_user(local_addrlen, &actual_len, sizeof(socklen_t)) != 0)
+        }
+        if (getsockname_copy_to_user(local_addrlen, &actual_len, sizeof(socklen_t)) != 0) {
+            fut_file_put(sock_pin);
             return -EFAULT;
+        }
+        fut_file_put(sock_pin);
         return 0;
     }
 
@@ -416,10 +430,15 @@ long sys_getsockname(int sockfd, void *addr, socklen_t *addrlen) {
         __builtin_memcpy(&sin6.sin6_addr, socket->inet6_addr, 16);
         socklen_t actual_len = (socklen_t)sizeof(sockaddr_in6_t);
         socklen_t copy_len = (len < actual_len) ? len : actual_len;
-        if (getsockname_copy_to_user(local_addr, &sin6, copy_len) != 0)
+        if (getsockname_copy_to_user(local_addr, &sin6, copy_len) != 0) {
+            fut_file_put(sock_pin);
             return -EFAULT;
-        if (getsockname_copy_to_user(local_addrlen, &actual_len, sizeof(socklen_t)) != 0)
+        }
+        if (getsockname_copy_to_user(local_addrlen, &actual_len, sizeof(socklen_t)) != 0) {
+            fut_file_put(sock_pin);
             return -EFAULT;
+        }
+        fut_file_put(sock_pin);
         return 0;
     }
 
@@ -443,6 +462,7 @@ long sys_getsockname(int sockfd, void *addr, socklen_t *addrlen) {
     /* Copy as much as fits in user buffer */
     socklen_t copy_len = (len < actual_len) ? len : actual_len;
     if (getsockname_copy_to_user(local_addr, &sock_addr, copy_len) != 0) {
+        fut_file_put(sock_pin);
         fut_printf("[GETSOCKNAME] getsockname(sockfd=%d) -> EFAULT (copy_to_user failed)\n",
                    local_sockfd);
         return -EFAULT;
@@ -450,10 +470,12 @@ long sys_getsockname(int sockfd, void *addr, socklen_t *addrlen) {
 
     /* Update addrlen with actual size */
     if (getsockname_copy_to_user(local_addrlen, &actual_len, sizeof(socklen_t)) != 0) {
+        fut_file_put(sock_pin);
         fut_printf("[GETSOCKNAME] getsockname(sockfd=%d) -> EFAULT (copy addrlen failed)\n",
                    local_sockfd);
         return -EFAULT;
     }
 
+    fut_file_put(sock_pin);
     return 0;
 }

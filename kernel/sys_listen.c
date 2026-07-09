@@ -12,6 +12,7 @@
  */
 
 #include <kernel/fut_task.h>
+#include <kernel/fut_vfs.h>
 #include <kernel/fut_socket.h>
 #include <kernel/errno.h>
 
@@ -123,10 +124,11 @@ long sys_listen(int sockfd, int backlog) {
     }
 
     /* Phase 2: Get socket and validate */
-    fut_socket_t *socket = get_socket_from_fd(local_sockfd);
+    struct fut_file *sock_pin = NULL;
+    fut_socket_t *socket = get_socket_pinned(local_sockfd, &sock_pin);
     if (!socket) {
-        /* Distinguish ENOTSOCK (valid fd, not a socket) from EBADF (invalid fd) */
-        if (local_sockfd < task->max_fds && task->fd_table && task->fd_table[local_sockfd]) {
+        if (sock_pin) {
+            fut_file_put(sock_pin);
             listen_printf("[LISTEN] listen(sockfd=%d, backlog=%d [%s]) -> ENOTSOCK (not a socket)\n",
                        local_sockfd, local_backlog, backlog_desc);
             return -ENOTSOCK;
@@ -174,6 +176,7 @@ long sys_listen(int sockfd, int backlog) {
         listen_printf("[LISTEN] listen(sockfd=%d, backlog=%d, type=%d) -> EOPNOTSUPP "
                    "(only SOCK_STREAM/SOCK_SEQPACKET support listen)\n",
                    local_sockfd, local_backlog, socket->socket_type);
+        fut_file_put(sock_pin);
         return -EOPNOTSUPP;
     }
 
@@ -183,12 +186,14 @@ long sys_listen(int sockfd, int backlog) {
         if (socket->listener) socket->listener->backlog = effective_backlog;
         listen_printf("[LISTEN] listen(sockfd=%d, backlog=%d) -> 0 (already listening, backlog updated)\n",
                    local_sockfd, local_backlog);
+        fut_file_put(sock_pin);
         return 0;
     }
 
     if (socket->state == FUT_SOCK_CONNECTED) {
         listen_printf("[LISTEN] listen(sockfd=%d, backlog=%d [%s]) -> EINVAL (socket already connected, state=%s)\n",
                    local_sockfd, local_backlog, backlog_desc, socket_state_desc);
+        fut_file_put(sock_pin);
         return -EINVAL;
     }
 
@@ -210,6 +215,7 @@ long sys_listen(int sockfd, int backlog) {
 
         listen_printf("[LISTEN] listen(sockfd=%d, backlog=%d [%s], state=%s) -> %d (%s)\n",
                    local_sockfd, local_backlog, backlog_desc, socket_state_desc, ret, error_desc);
+        fut_file_put(sock_pin);
         return ret;
     }
 
@@ -222,5 +228,6 @@ long sys_listen(int sockfd, int backlog) {
                    local_sockfd, local_backlog, backlog_desc, socket_state_desc);
     }
 
+    fut_file_put(sock_pin);
     return 0;
 }

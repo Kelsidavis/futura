@@ -21,6 +21,7 @@
 
 #include <kernel/fut_task.h>
 #include <kernel/fut_socket.h>
+#include <kernel/fut_vfs.h>
 #include <kernel/errno.h>
 #include <kernel/uaccess.h>
 #include <futura/netif.h>
@@ -278,23 +279,25 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
      * Move the socket lookup ahead of the pointer check — same fix as
      * the matching bind / connect / getsockname / getpeername / shutdown
      * / accept reorder. */
-    {
-        fut_socket_t *sso_sock = get_socket_from_fd(sockfd);
-        if (!sso_sock) {
-            if (sockfd < task->max_fds && task->fd_table && task->fd_table[sockfd]) {
-                fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d) -> ENOTSOCK (not a socket)\n", sockfd);
-                return -ENOTSOCK;
-            }
-            fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d) -> EBADF (not a socket)\n", sockfd);
-            return -EBADF;
+    struct fut_file *sock_pin = NULL;
+    fut_socket_t *sso_sock = get_socket_pinned(sockfd, &sock_pin);
+    if (!sso_sock) {
+        if (sock_pin) {
+            fut_file_put(sock_pin);
+            fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d) -> ENOTSOCK (not a socket)\n", sockfd);
+            return -ENOTSOCK;
         }
+        fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d) -> EBADF (not a socket)\n", sockfd);
+        return -EBADF;
     }
+
+    #define SSO_RETURN(value) do { fut_file_put(sock_pin); return (value); } while (0)
 
     /* Validate optval pointer */
     if (!optval) {
         fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, level=%d, optname=%d) -> EFAULT (optval is NULL)\n",
                    sockfd, level, optname);
-        return -EFAULT;
+        SSO_RETURN(-EFAULT);
     }
 
     /* COMPREHENSIVE SECURITY HARDENING
@@ -473,20 +476,11 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
     if (optlen == 0 || optlen > 1024) {  /* Sanity check */
         fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, level=%d, optname=%d, optlen=%u) -> EINVAL\n",
                    sockfd, level, optname, optlen);
-        return -EINVAL;
+        SSO_RETURN(-EINVAL);
     }
 
-    /* Get socket from FD */
-    fut_socket_t *socket = get_socket_from_fd(sockfd);
-    if (!socket) {
-        /* Distinguish ENOTSOCK (valid fd, not a socket) from EBADF (invalid fd) */
-        if (sockfd >= 0 && sockfd < task->max_fds && task->fd_table && task->fd_table[sockfd]) {
-            fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d) -> ENOTSOCK (not a socket)\n", sockfd);
-            return -ENOTSOCK;
-        }
-        fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d) -> EBADF (not a socket)\n", sockfd);
-        return -EBADF;
-    }
+    /* Reuse already-resolved socket from the early lookup */
+    fut_socket_t *socket = sso_sock;
 
     /* Phase 2: Implement common SOL_SOCKET options */
     if (level == SOL_SOCKET) {
@@ -495,7 +489,7 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
             case SO_ERROR:
                 /* Read-only options cannot be set — silent ENOPROTOOPT
                  * matches the rest of the unknown/unsupported probes. */
-                return -ENOPROTOOPT;
+                SSO_RETURN(-ENOPROTOOPT);
 
             case SO_REUSEADDR:
             case SO_REUSEPORT:
@@ -505,9 +499,9 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
             case SO_DONTROUTE:
             case SO_DEBUG: {
                 /* Boolean options — store in so_flags for getsockopt round-trip */
-                if (optlen < sizeof(int)) return -EINVAL;
+                if (optlen < sizeof(int)) { fut_file_put(sock_pin); return -EINVAL; }
                 int val = 0;
-                if (sso_copy_from_user(&val, optval, sizeof(int)) != 0) return -EFAULT;
+                if (sso_copy_from_user(&val, optval, sizeof(int)) != 0) { fut_file_put(sock_pin); return -EFAULT; }
                 /* Linux's sock_setsockopt gates ENABLING SO_DEBUG behind
                  * CAP_NET_ADMIN ("if (val && !ns_capable(... CAP_NET_ADMIN))
                  * ret = -EACCES").  Disabling (val == 0) is always allowed.
@@ -517,8 +511,9 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                 if (optname == SO_DEBUG && val) {
                     fut_task_t *cur_task = fut_task_current();
                     if (cur_task && cur_task->uid != 0 &&
-                        !(cur_task->cap_effective & (1ULL << 12 /* CAP_NET_ADMIN */)))
-                        return -EACCES;
+                        !(cur_task->cap_effective & (1ULL << 12 /* CAP_NET_ADMIN */))) {
+                        SSO_RETURN(-EACCES);
+                    }
                 }
                 uint32_t bit = 0;
                 switch (optname) {
@@ -537,7 +532,7 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                     __atomic_or_fetch(&socket->so_flags, bit, __ATOMIC_ACQ_REL);
                 else
                     __atomic_and_fetch(&socket->so_flags, ~bit, __ATOMIC_ACQ_REL);
-                return 0;
+                SSO_RETURN(0);
             }
 
             case SO_SNDBUF:
@@ -553,9 +548,9 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                  * - reserved' and accidentally produce a negative on
                  * tight machines) saw EINVAL on Futura but a clamped
                  * minimum on Linux. */
-                if (optlen < (socklen_t)sizeof(int)) return -EINVAL;
+                if (optlen < (socklen_t)sizeof(int)) { fut_file_put(sock_pin); return -EINVAL; }
                 int req = 0;
-                if (sso_copy_from_user(&req, optval, sizeof(int)) != 0) return -EFAULT;
+                if (sso_copy_from_user(&req, optval, sizeof(int)) != 0) { fut_file_put(sock_pin); return -EFAULT; }
                 if (req < 0) req = 0;
                 /* Double the requested value in unsigned arithmetic; the
                  * old 'req * 2' on a signed int triggered UB once req
@@ -572,22 +567,22 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                     socket->sndbuf = effective;
                 else
                     socket->rcvbuf = effective;
-                return 0;
+                SSO_RETURN(0);
             }
 
             case SO_RCVLOWAT: {
                 /* SO_RCVLOWAT: minimum bytes before poll/select reports readable.
                  * Stored and used by poll/select readiness checks. */
-                if (optlen < (socklen_t)sizeof(int)) return -EINVAL;
+                if (optlen < (socklen_t)sizeof(int)) { fut_file_put(sock_pin); return -EINVAL; }
                 int lowat = 0;
-                if (sso_copy_from_user(&lowat, optval, sizeof(int)) != 0) return -EFAULT;
+                if (sso_copy_from_user(&lowat, optval, sizeof(int)) != 0) { fut_file_put(sock_pin); return -EFAULT; }
                 if (lowat < 1) lowat = 1;  /* POSIX minimum is 1 */
                 socket->rcvlowat = (uint32_t)lowat;
-                return 0;
+                SSO_RETURN(0);
             }
             case SO_SNDLOWAT:
                 /* SO_SNDLOWAT — Linux does not allow setting, return ENOPROTOOPT */
-                return -ENOPROTOOPT;
+                SSO_RETURN(-ENOPROTOOPT);
 
             case SO_RCVTIMEO:
             case SO_SNDTIMEO: {
@@ -598,11 +593,12 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                  * comment already noted EDOM was correct but the code
                  * returned EINVAL anyway). Use EDOM so libc wrappers / tests
                  * that distinguish the two see the Linux-correct value. */
-                if (optlen < (socklen_t)(2 * sizeof(long))) return -EINVAL;
+                if (optlen < (socklen_t)(2 * sizeof(long))) { fut_file_put(sock_pin); return -EINVAL; }
                 struct { long tv_sec; long tv_usec; } tv = {0, 0};
-                if (sso_copy_from_user(&tv, optval, sizeof(tv)) != 0) return -EFAULT;
-                if (tv.tv_sec < 0 || tv.tv_usec < 0 || tv.tv_usec >= 1000000)
-                    return -EDOM;
+                if (sso_copy_from_user(&tv, optval, sizeof(tv)) != 0) { fut_file_put(sock_pin); return -EFAULT; }
+                if (tv.tv_sec < 0 || tv.tv_usec < 0 || tv.tv_usec >= 1000000) {
+                    SSO_RETURN(-EDOM);
+                }
                 /* Cap tv_sec so the *1000 multiply can't overflow uint64_t.
                  * UINT64_MAX/1000 is plenty (~5.8e14 seconds). */
                 uint64_t sec = (uint64_t)tv.tv_sec;
@@ -614,24 +610,24 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                     socket->rcvtimeo_ms = ms;
                 else
                     socket->sndtimeo_ms = ms;
-                return 0;
+                SSO_RETURN(0);
             }
 
             case SO_LINGER: {
                 /* Linger — store l_onoff/l_linger for getsockopt round-trip */
-                if (optlen < (socklen_t)(2 * sizeof(int))) return -EINVAL;
+                if (optlen < (socklen_t)(2 * sizeof(int))) { fut_file_put(sock_pin); return -EINVAL; }
                 struct { int l_onoff; int l_linger; } ling = {0, 0};
-                if (sso_copy_from_user(&ling, optval, sizeof(ling)) != 0) return -EFAULT;
+                if (sso_copy_from_user(&ling, optval, sizeof(ling)) != 0) { fut_file_put(sock_pin); return -EFAULT; }
                 socket->linger_onoff = ling.l_onoff;
                 socket->linger_secs  = ling.l_linger;
-                return 0;
+                SSO_RETURN(0);
             }
 
             case SO_TIMESTAMP: {
                 /* SO_TIMESTAMP: deliver SCM_TIMESTAMP cmsg with struct timeval on recvmsg */
-                if (optlen < sizeof(int)) return -EINVAL;
+                if (optlen < sizeof(int)) { fut_file_put(sock_pin); return -EINVAL; }
                 int val = 0;
-                if (sso_copy_from_user(&val, optval, sizeof(int)) != 0) return -EFAULT;
+                if (sso_copy_from_user(&val, optval, sizeof(int)) != 0) { fut_file_put(sock_pin); return -EFAULT; }
                 /* Atomic to pair with the other concurrent setsockopt
                  * paths setting different bits in so_flags. */
                 if (val) {
@@ -641,13 +637,13 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                 } else {
                     __atomic_and_fetch(&socket->so_flags, ~FUT_SO_F_TIMESTAMP, __ATOMIC_ACQ_REL);
                 }
-                return 0;
+                SSO_RETURN(0);
             }
 
             case 35: { /* SO_TIMESTAMPNS — deliver SCM_TIMESTAMPNS cmsg with struct timespec */
-                if (optlen < sizeof(int)) return -EINVAL;
+                if (optlen < sizeof(int)) { fut_file_put(sock_pin); return -EINVAL; }
                 int val = 0;
-                if (sso_copy_from_user(&val, optval, sizeof(int)) != 0) return -EFAULT;
+                if (sso_copy_from_user(&val, optval, sizeof(int)) != 0) { fut_file_put(sock_pin); return -EFAULT; }
                 if (val) {
                     __atomic_or_fetch(&socket->so_flags, FUT_SO_F_TIMESTAMPNS, __ATOMIC_ACQ_REL);
                     /* Mutually exclusive with SO_TIMESTAMP */
@@ -655,7 +651,7 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                 } else {
                     __atomic_and_fetch(&socket->so_flags, ~FUT_SO_F_TIMESTAMPNS, __ATOMIC_ACQ_REL);
                 }
-                return 0;
+                SSO_RETURN(0);
             }
 
             case 25: { /* SO_BINDTODEVICE — bind to specific NIC */
@@ -667,13 +663,14 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                  * routing decisions. */
                 if (task->uid != 0 &&
                     !(task->cap_effective & ((1ULL << 13 /* CAP_NET_RAW */) |
-                                             (1ULL << 12 /* CAP_NET_ADMIN */))))
-                    return -EPERM;
+                                             (1ULL << 12 /* CAP_NET_ADMIN */)))) {
+                    SSO_RETURN(-EPERM);
+                }
                 if (!optval || optlen == 0) {
                     /* Unbind from device */
                     socket->bound_device_idx = 0;
                     socket->bound_device_name[0] = '\0';
-                    return 0;
+                    SSO_RETURN(0);
                 }
                 char devname[16];
                 __builtin_memset(devname, 0, sizeof(devname));
@@ -683,22 +680,24 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                     __builtin_memcpy(devname, optval, copy);
                 else
 #endif
-                if (fut_copy_from_user(devname, optval, copy) != 0)
-                    return -EFAULT;
+                if (fut_copy_from_user(devname, optval, copy) != 0) {
+                    SSO_RETURN(-EFAULT);
+                }
                 devname[15] = '\0';
                 /* Empty string or single NUL = unbind */
                 if (devname[0] == '\0') {
                     socket->bound_device_idx = 0;
                     socket->bound_device_name[0] = '\0';
-                    return 0;
+                    SSO_RETURN(0);
                 }
                 /* Look up interface by name */
                 struct net_iface *iface = netif_by_name(devname);
-                if (!iface)
-                    return -ENODEV;
+                if (!iface) {
+                    SSO_RETURN(-ENODEV);
+                }
                 socket->bound_device_idx = (uint16_t)iface->index;
                 __builtin_memcpy(socket->bound_device_name, devname, 16);
-                return 0;
+                SSO_RETURN(0);
             }
 
             case 32: /* SO_SNDBUFFORCE — forced send buffer (privileged) */
@@ -714,13 +713,15 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                  * sndbuf, and the matching getsockopt would round-trip
                  * the *unchanged* value. Mirror Linux's behaviour. */
                 {
-                    if (optlen < (socklen_t)sizeof(int)) return -EINVAL;
+                    if (optlen < (socklen_t)sizeof(int)) { fut_file_put(sock_pin); return -EINVAL; }
                     if (task->uid != 0 &&
-                        !(task->cap_effective & (1ULL << 12 /* CAP_NET_ADMIN */)))
-                        return -EPERM;
+                        !(task->cap_effective & (1ULL << 12 /* CAP_NET_ADMIN */))) {
+                        SSO_RETURN(-EPERM);
+                    }
                     int req = 0;
-                    if (sso_copy_from_user(&req, optval, sizeof(int)) != 0)
-                        return -EFAULT;
+                    if (sso_copy_from_user(&req, optval, sizeof(int)) != 0) {
+                        SSO_RETURN(-EFAULT);
+                    }
                     if (req < 0) req = 0;
                     uint32_t ureq = (uint32_t)req;
                     if (ureq > 0x7FFFFFFFu) ureq = 0x7FFFFFFFu;
@@ -731,7 +732,7 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                         socket->sndbuf = effective;
                     else
                         socket->rcvbuf = effective;
-                    return 0;
+                    SSO_RETURN(0);
                 }
             case 36: /* SO_MARK — socket mark for policy routing */
                 /* Linux requires CAP_NET_ADMIN for SO_MARK; without the
@@ -741,9 +742,10 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                  * consume sk_mark, so accept-and-stub after the cap
                  * check is the right shape here. */
                 if (task->uid != 0 &&
-                    !(task->cap_effective & (1ULL << 12 /* CAP_NET_ADMIN */)))
-                    return -EPERM;
-                return 0;
+                    !(task->cap_effective & (1ULL << 12 /* CAP_NET_ADMIN */))) {
+                    SSO_RETURN(-EPERM);
+                }
+                SSO_RETURN(0);
 
             case 26: /* SO_ATTACH_FILTER — BPF filter */
             case 27: /* SO_DETACH_FILTER — detach BPF filter */
@@ -756,9 +758,10 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                  * even though Futura has no packet-filter engine — a
                  * silent success here is wrong feedback to userspace. */
                 if (task->uid != 0 &&
-                    !(task->cap_effective & (1ULL << 12 /* CAP_NET_ADMIN */)))
-                    return -EPERM;
-                return 0;
+                    !(task->cap_effective & (1ULL << 12 /* CAP_NET_ADMIN */))) {
+                    SSO_RETURN(-EPERM);
+                }
+                SSO_RETURN(0);
 
             case 12: { /* SO_PRIORITY — socket priority for QoS.
                         *
@@ -778,16 +781,18 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                         * CAP_NET_ADMIN.  Match Linux: any negative or > 6
                         * value goes through the capability check, returning
                         * EPERM (not EINVAL) on insufficient privilege. */
-                if (optlen < sizeof(int)) return -EINVAL;
+                if (optlen < sizeof(int)) { fut_file_put(sock_pin); return -EINVAL; }
                 int prio = 0;
-                if (sso_copy_from_user(&prio, optval, sizeof(int)) != 0)
-                    return -EFAULT;
+                if (sso_copy_from_user(&prio, optval, sizeof(int)) != 0) {
+                    SSO_RETURN(-EFAULT);
+                }
                 if (!(prio >= 0 && prio <= 6) &&
                     task->uid != 0 &&
                     !(task->cap_effective & ((1ULL << 12 /* CAP_NET_ADMIN */) |
-                                             (1ULL << 13 /* CAP_NET_RAW */))))
-                    return -EPERM;
-                return 0;
+                                             (1ULL << 13 /* CAP_NET_RAW */)))) {
+                    SSO_RETURN(-EPERM);
+                }
+                SSO_RETURN(0);
             }
             case 34: /* SO_PASSSEC — SELinux label passing */
             case 37: /* SO_TIMESTAMPING — hardware timestamping */
@@ -811,7 +816,7 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                  * privilege checks, so silently returning 0 keeps
                  * userspace probes that branch on success vs ENOPROTOOPT
                  * matching the documented Linux behaviour. */
-                return 0;
+                SSO_RETURN(0);
 
             case 46: /* SO_BUSY_POLL — Linux 3.11+: kernel poll usec.
                       * Linux's sock_setsockopt:
@@ -825,15 +830,17 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                       * an unprivileged caller could enable busy-polling that
                       * Linux would reject with -EPERM. Mirror Linux's gate. */
             {
-                if (optlen < sizeof(int)) return -EINVAL;
+                if (optlen < sizeof(int)) { fut_file_put(sock_pin); return -EINVAL; }
                 int val = 0;
-                if (sso_copy_from_user(&val, optval, sizeof(int)) != 0) return -EFAULT;
+                if (sso_copy_from_user(&val, optval, sizeof(int)) != 0) { fut_file_put(sock_pin); return -EFAULT; }
                 if (val != 0 && task->uid != 0 &&
-                    !(task->cap_effective & (1ULL << 12 /* CAP_NET_ADMIN */)))
-                    return -EPERM;
-                if (val < 0)
-                    return -EINVAL;
-                return 0;
+                    !(task->cap_effective & (1ULL << 12 /* CAP_NET_ADMIN */))) {
+                    SSO_RETURN(-EPERM);
+                }
+                if (val < 0) {
+                    SSO_RETURN(-EINVAL);
+                }
+                SSO_RETURN(0);
             }
 
             case 62: /* SO_RCVTIMEO_NEW — Y2038-safe variant (struct __kernel_sock_timeval) */
@@ -842,11 +849,12 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                  * Same validation as SO_RCVTIMEO/SO_SNDTIMEO above: reject
                  * negative or out-of-range values rather than letting the
                  * cast-to-uint64 produce a near-infinite timeout. */
-                if (optlen < 16) return -EINVAL;
+                if (optlen < 16) { fut_file_put(sock_pin); return -EINVAL; }
                 struct { int64_t tv_sec; int64_t tv_usec; } tv = {0, 0};
-                if (sso_copy_from_user(&tv, optval, sizeof(tv)) != 0) return -EFAULT;
-                if (tv.tv_sec < 0 || tv.tv_usec < 0 || tv.tv_usec >= 1000000)
-                    return -EINVAL;
+                if (sso_copy_from_user(&tv, optval, sizeof(tv)) != 0) { fut_file_put(sock_pin); return -EFAULT; }
+                if (tv.tv_sec < 0 || tv.tv_usec < 0 || tv.tv_usec >= 1000000) {
+                    SSO_RETURN(-EINVAL);
+                }
                 uint64_t sec = (uint64_t)tv.tv_sec;
                 if (sec > (UINT64_MAX / 1000ULL) - 1ULL)
                     sec = (UINT64_MAX / 1000ULL) - 1ULL;
@@ -856,13 +864,13 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                     socket->rcvtimeo_ms = ms;
                 else
                     socket->sndtimeo_ms = ms;
-                return 0;
+                SSO_RETURN(0);
             }
 
             case 64: /* SO_DETACH_REUSEPORT_BPF */
             case 67: /* SO_NETNS_COOKIE */
                 /* Accept silently — no enforcement for these options */
-                return 0;
+                SSO_RETURN(0);
 
             case 68: /* SO_BUF_LOCK — Linux: val must only have SNDBUF_LOCK|RCVBUF_LOCK bits */
                 /* Linux's sock_setsockopt (net/core/sock.c):
@@ -873,13 +881,15 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                  * accepted any value, masking malformed-call detection used
                  * by libc to probe for future BUF_LOCK extension bits. */
                 {
-                    if (optlen < sizeof(int)) return -EINVAL;
+                    if (optlen < sizeof(int)) { fut_file_put(sock_pin); return -EINVAL; }
                     int val = 0;
-                    if (sso_copy_from_user(&val, optval, sizeof(int)) != 0)
-                        return -EFAULT;
-                    if (val & ~0x6 /* SOCK_SNDBUF_LOCK | SOCK_RCVBUF_LOCK */)
-                        return -EINVAL;
-                    return 0;
+                    if (sso_copy_from_user(&val, optval, sizeof(int)) != 0) {
+                        SSO_RETURN(-EFAULT);
+                    }
+                    if (val & ~0x6 /* SOCK_SNDBUF_LOCK | SOCK_RCVBUF_LOCK */) {
+                        SSO_RETURN(-EINVAL);
+                    }
+                    SSO_RETURN(0);
                 }
 
             case 70: /* SO_TXREHASH — Linux 5.16+: val must be in {-1, 0, 1} */
@@ -891,13 +901,15 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                  * ENABLED(1).  The previous Futura code silently accepted any
                  * int, masking the malformed-call detection. */
                 {
-                    if (optlen < sizeof(int)) return -EINVAL;
+                    if (optlen < sizeof(int)) { fut_file_put(sock_pin); return -EINVAL; }
                     int val = 0;
-                    if (sso_copy_from_user(&val, optval, sizeof(int)) != 0)
-                        return -EFAULT;
-                    if (val < -1 || val > 1)
-                        return -EINVAL;
-                    return 0;
+                    if (sso_copy_from_user(&val, optval, sizeof(int)) != 0) {
+                        SSO_RETURN(-EFAULT);
+                    }
+                    if (val < -1 || val > 1) {
+                        SSO_RETURN(-EINVAL);
+                    }
+                    SSO_RETURN(0);
                 }
 
             case 65: /* SO_PREFER_BUSY_POLL — Linux 5.11+ */
@@ -914,14 +926,16 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                  * allowed.  Match Linux's gate so libc/sandbox probes see
                  * the documented EPERM when CAP_NET_ADMIN is missing. */
                 {
-                    if (optlen < sizeof(int)) return -EINVAL;
+                    if (optlen < sizeof(int)) { fut_file_put(sock_pin); return -EINVAL; }
                     int val = 0;
-                    if (sso_copy_from_user(&val, optval, sizeof(int)) != 0)
-                        return -EFAULT;
+                    if (sso_copy_from_user(&val, optval, sizeof(int)) != 0) {
+                        SSO_RETURN(-EFAULT);
+                    }
                     if (val != 0 && task->uid != 0 &&
-                        !(task->cap_effective & (1ULL << 12 /* CAP_NET_ADMIN */)))
-                        return -EPERM;
-                    return 0;
+                        !(task->cap_effective & (1ULL << 12 /* CAP_NET_ADMIN */))) {
+                        SSO_RETURN(-EPERM);
+                    }
+                    SSO_RETURN(0);
                 }
 
             case 66: /* SO_BUSY_POLL_BUDGET — Linux 5.16+: CAP_NET_ADMIN-gated */
@@ -934,9 +948,10 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                  * semantics, but match the permission ABI so libc/sandbox
                  * probes see the documented EPERM. */
                 if (task->uid != 0 &&
-                    !(task->cap_effective & (1ULL << 12 /* CAP_NET_ADMIN */)))
-                    return -EPERM;
-                return 0;
+                    !(task->cap_effective & (1ULL << 12 /* CAP_NET_ADMIN */))) {
+                    SSO_RETURN(-EPERM);
+                }
+                SSO_RETURN(0);
 
             case 71: /* SO_RCVMARK — Linux 5.20+: tag incoming packets with sk_mark */
                 /* Linux's sock_setsockopt SO_RCVMARK requires CAP_NET_RAW
@@ -946,17 +961,18 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                  * use to read marks set by a privileged peer. */
                 if (task->uid != 0 &&
                     !(task->cap_effective & ((1ULL << 13 /* CAP_NET_RAW */) |
-                                             (1ULL << 12 /* CAP_NET_ADMIN */))))
-                    return -EPERM;
-                return 0;
+                                             (1ULL << 12 /* CAP_NET_ADMIN */)))) {
+                    SSO_RETURN(-EPERM);
+                }
+                SSO_RETURN(0);
 
             case SO_PASSCRED: {
                 /* Enable/disable SCM_CREDENTIALS cmsg attachment on recvmsg */
-                if (optlen < sizeof(int)) return -EINVAL;
+                if (optlen < sizeof(int)) { fut_file_put(sock_pin); return -EINVAL; }
                 int val = 0;
-                if (sso_copy_from_user(&val, optval, sizeof(int)) != 0) return -EFAULT;
+                if (sso_copy_from_user(&val, optval, sizeof(int)) != 0) { fut_file_put(sock_pin); return -EFAULT; }
                 socket->passcred = (val != 0);
-                return 0;
+                SSO_RETURN(0);
             }
 
             default:
@@ -965,7 +981,7 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                  * ENOPROTOOPT return is the correct answer per POSIX
                  * and shouldn't fill the kernel log with one line per
                  * probe. */
-                return -ENOPROTOOPT;
+                SSO_RETURN(-ENOPROTOOPT);
         }
     } else if (level == IPPROTO_TCP) {
         /* IPPROTO_TCP options — stored per-socket, enforced where possible.
@@ -980,11 +996,11 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
          *               Linux auto-resets this after one immediate ACK; we persist
          *               the flag for getsockopt round-trip and ack path awareness.
          */
-        if (optlen < sizeof(int)) return -EINVAL;
+        if (optlen < sizeof(int)) { fut_file_put(sock_pin); return -EINVAL; }
         int val = 0;
-        if (sso_copy_from_user(&val, optval, sizeof(int)) != 0) return -EFAULT;
+        if (sso_copy_from_user(&val, optval, sizeof(int)) != 0) { fut_file_put(sock_pin); return -EFAULT; }
         switch (optname) {
-            case 1:  socket->tcp_nodelay     = (uint8_t)(val != 0); return 0; /* TCP_NODELAY */
+            case 1:  socket->tcp_nodelay     = (uint8_t)(val != 0); fut_file_put(sock_pin); return 0; /* TCP_NODELAY */
             case 2: /* TCP_MAXSEG */
                 /* Linux's do_tcp_setsockopt rejects val outside
                  * [TCP_MIN_MSS=88, MAX_TCP_WINDOW=32767] with -EINVAL:
@@ -994,9 +1010,9 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                  * The previous gate accepted any val > 0 — including 1
                  * or 87 — which a strict TCP stack would later trip on
                  * during option negotiation. */
-                if (val != 0 && (val < 88 || val > 32767)) return -EINVAL;
+                if (val != 0 && (val < 88 || val > 32767)) { fut_file_put(sock_pin); return -EINVAL; }
                 if (val > 0) socket->tcp_maxseg = (uint32_t)val;
-                return 0;
+                SSO_RETURN(0);
             case 3: { /* TCP_CORK — delay sending until uncorked or buffer full */
                 uint8_t was_corked = socket->tcp_cork;
                 socket->tcp_cork = (uint8_t)(val != 0);
@@ -1008,20 +1024,20 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                     if (p->send_waitq)
                         fut_waitq_wake_all(p->send_waitq);
                 }
-                return 0;
+                SSO_RETURN(0);
             }
             case 4: /* TCP_KEEPIDLE — Linux: 1..MAX_TCP_KEEPIDLE (32767) */
-                if (val < 1 || val > 32767) return -EINVAL;
+                if (val < 1 || val > 32767) { fut_file_put(sock_pin); return -EINVAL; }
                 socket->tcp_keepidle = (uint32_t)val;
-                return 0;
+                SSO_RETURN(0);
             case 5: /* TCP_KEEPINTVL — Linux: 1..MAX_TCP_KEEPINTVL (32767) */
-                if (val < 1 || val > 32767) return -EINVAL;
+                if (val < 1 || val > 32767) { fut_file_put(sock_pin); return -EINVAL; }
                 socket->tcp_keepintvl = (uint32_t)val;
-                return 0;
+                SSO_RETURN(0);
             case 6: /* TCP_KEEPCNT — Linux: 1..MAX_TCP_KEEPCNT (127) */
-                if (val < 1 || val > 127) return -EINVAL;
+                if (val < 1 || val > 127) { fut_file_put(sock_pin); return -EINVAL; }
                 socket->tcp_keepcnt = (uint32_t)val;
-                return 0;
+                SSO_RETURN(0);
             case 7: /* TCP_SYNCNT — Linux 2.4+: 1..MAX_TCP_SYNCNT (127).
                      * Linux's do_tcp_setsockopt enforces 'val < 1 || val >
                      * MAX_TCP_SYNCNT -> EINVAL'; the previous Futura code
@@ -1031,18 +1047,18 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                      * retry counts via TCP_SYNCNT) saw success on values
                      * that real Linux always rejects, making 'kernel-too-
                      * old' detection impossible. */
-                if (val < 1 || val > 127) return -EINVAL;
+                if (val < 1 || val > 127) { fut_file_put(sock_pin); return -EINVAL; }
                 socket->tcp_syncnt = (uint32_t)val;
-                return 0;
-            case 8:  socket->tcp_linger2     = val; return 0; /* TCP_LINGER2 */
-            case 9:  socket->tcp_defer_accept= (uint32_t)(val > 0 ? val : 0); return 0; /* TCP_DEFER_ACCEPT */
-            case 10: case 11: return 0; /* TCP_WINDOW_CLAMP, TCP_INFO — accept, no storage */
+                SSO_RETURN(0);
+            case 8:  socket->tcp_linger2     = val; fut_file_put(sock_pin); return 0; /* TCP_LINGER2 */
+            case 9:  socket->tcp_defer_accept= (uint32_t)(val > 0 ? val : 0); fut_file_put(sock_pin); return 0; /* TCP_DEFER_ACCEPT */
+            case 10: case 11: fut_file_put(sock_pin); return 0; /* TCP_WINDOW_CLAMP, TCP_INFO — accept, no storage */
             case 12: /* TCP_QUICKACK — disable delayed ACKs */
                 socket->tcp_quickack = (uint8_t)(val != 0);
-                return 0;
+                SSO_RETURN(0);
             default:
-                if (optname >= 13 && optname <= 31) return 0; /* accept remaining TCP opts */
-                return -ENOPROTOOPT;
+                if (optname >= 13 && optname <= 31) { fut_file_put(sock_pin); return 0; } /* accept remaining TCP opts */
+                SSO_RETURN(-ENOPROTOOPT);
         }
     } else if (level == IPPROTO_IP) {
         /* IPPROTO_IP options — stored per-socket, enforced in send path.
@@ -1056,38 +1072,38 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
          *         Value is masked to 8 bits; stored in socket->ip_tos and
          *         applied as g_send_tos_override in the sendto path.
          */
-        if (optlen < sizeof(int)) return -EINVAL;
+        if (optlen < sizeof(int)) { fut_file_put(sock_pin); return -EINVAL; }
         int val = 0;
-        if (sso_copy_from_user(&val, optval, sizeof(int)) != 0) return -EFAULT;
+        if (sso_copy_from_user(&val, optval, sizeof(int)) != 0) { fut_file_put(sock_pin); return -EFAULT; }
         switch (optname) {
-            case 1:  socket->ip_tos         = (uint8_t)(val & 0xff); return 0; /* IP_TOS */
+            case 1:  socket->ip_tos         = (uint8_t)(val & 0xff); fut_file_put(sock_pin); return 0; /* IP_TOS */
             case 2: /* IP_TTL — reject out-of-range values per Linux behavior */
-                if (val == -1) { socket->ip_ttl = 0; return 0; } /* reset to default */
-                if (val < 1 || val > 255) return -EINVAL;
+                if (val == -1) { socket->ip_ttl = 0; fut_file_put(sock_pin); return 0; } /* reset to default */
+                if (val < 1 || val > 255) { fut_file_put(sock_pin); return -EINVAL; }
                 socket->ip_ttl = (uint8_t)val;
-                return 0;
-            case 3:  socket->ip_hdrincl     = (uint8_t)(val != 0); return 0; /* IP_HDRINCL */
-            case 10: socket->ip_mtu_discover= (uint32_t)val; return 0; /* IP_MTU_DISCOVER */
-            case 12: socket->ip_recvttl     = (uint8_t)(val != 0); return 0; /* IP_RECVTTL */
-            case 13: socket->ip_recvtos     = (uint8_t)(val != 0); return 0; /* IP_RECVTOS */
-            case 32: return 0; /* IP_MULTICAST_IF — accept silently (no multicast routing) */
-            case 33: return 0; /* IP_MULTICAST_TTL — accept silently */
-            case 34: return 0; /* IP_MULTICAST_LOOP — accept silently */
-            case 35: return 0; /* IP_ADD_MEMBERSHIP — accept silently */
-            case 36: return 0; /* IP_DROP_MEMBERSHIP — accept silently */
+                SSO_RETURN(0);
+            case 3:  socket->ip_hdrincl     = (uint8_t)(val != 0); fut_file_put(sock_pin); return 0; /* IP_HDRINCL */
+            case 10: socket->ip_mtu_discover= (uint32_t)val; fut_file_put(sock_pin); return 0; /* IP_MTU_DISCOVER */
+            case 12: socket->ip_recvttl     = (uint8_t)(val != 0); fut_file_put(sock_pin); return 0; /* IP_RECVTTL */
+            case 13: socket->ip_recvtos     = (uint8_t)(val != 0); fut_file_put(sock_pin); return 0; /* IP_RECVTOS */
+            case 32: fut_file_put(sock_pin); return 0; /* IP_MULTICAST_IF — accept silently (no multicast routing) */
+            case 33: fut_file_put(sock_pin); return 0; /* IP_MULTICAST_TTL — accept silently */
+            case 34: fut_file_put(sock_pin); return 0; /* IP_MULTICAST_LOOP — accept silently */
+            case 35: fut_file_put(sock_pin); return 0; /* IP_ADD_MEMBERSHIP — accept silently */
+            case 36: fut_file_put(sock_pin); return 0; /* IP_DROP_MEMBERSHIP — accept silently */
             default:
                 /* multicast, IP_PKTINFO, etc. — accept without storage */
-                if (optname >= 4 && optname <= 64) return 0;
-                return -ENOPROTOOPT;
+                if (optname >= 4 && optname <= 64) { fut_file_put(sock_pin); return 0; }
+                SSO_RETURN(-ENOPROTOOPT);
         }
     } else if (level == IPPROTO_IPV6) {
         /* IPPROTO_IPV6 options */
-        if (optlen < sizeof(int)) return -EINVAL;
+        if (optlen < sizeof(int)) { fut_file_put(sock_pin); return -EINVAL; }
         int val = 0;
-        if (sso_copy_from_user(&val, optval, sizeof(int)) != 0) return -EFAULT;
+        if (sso_copy_from_user(&val, optval, sizeof(int)) != 0) { fut_file_put(sock_pin); return -EFAULT; }
         switch (optname) {
-            case 26: socket->ipv6_v6only    = (uint8_t)(val != 0); return 0; /* IPV6_V6ONLY */
-            case 66: socket->ipv6_recvtclass= (uint8_t)(val != 0); return 0; /* IPV6_RECVTCLASS */
+            case 26: socket->ipv6_v6only    = (uint8_t)(val != 0); fut_file_put(sock_pin); return 0; /* IPV6_V6ONLY */
+            case 66: socket->ipv6_recvtclass= (uint8_t)(val != 0); fut_file_put(sock_pin); return 0; /* IPV6_RECVTCLASS */
             case 67: /* IPV6_TCLASS */
                 /* Linux's net/ipv6/ipv6_sockglue.c rejects val < -1 or
                  * val > 0xff with -EINVAL, and treats val == -1 as
@@ -1095,14 +1111,15 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
                  * silently masked with 0xff, so val == 256 became 0
                  * and val == -1 became 0xff — divergent ABI either
                  * way. */
-                if (val < -1 || val > 0xff)
-                    return -EINVAL;
+                if (val < -1 || val > 0xff) {
+                    SSO_RETURN(-EINVAL);
+                }
                 socket->ipv6_tclass = (uint8_t)(val == -1 ? 0 : val);
-                return 0;
+                SSO_RETURN(0);
             default:
                 if ((optname >= 1 && optname <= 25) ||
-                    (optname >= 27 && optname <= 80)) return 0;
-                return -ENOPROTOOPT;
+                    (optname >= 27 && optname <= 80)) { fut_file_put(sock_pin); return 0; }
+                SSO_RETURN(-ENOPROTOOPT);
         }
     } else if (level == 17 /* IPPROTO_UDP */) {
         /* IPPROTO_UDP options — accept without enforcement (no real UDP stack) */
@@ -1113,15 +1130,16 @@ long sys_setsockopt(int sockfd, int level, int optname, const void *optval, sock
             case 102: /* UDP_NO_CHECK6_RX */
             case 103: /* UDP_SEGMENT */
             case 104: /* UDP_GRO */
-                return 0;
+                SSO_RETURN(0);
             default:
-                if (optname >= 2 && optname <= 120) return 0;
-                return -ENOPROTOOPT;
+                if (optname >= 2 && optname <= 120) { fut_file_put(sock_pin); return 0; }
+                SSO_RETURN(-ENOPROTOOPT);
         }
     } else {
         /* Unknown protocol level */
         fut_printf("[SETSOCKOPT] setsockopt(sockfd=%d, level=%d, optname=%d) -> ENOPROTOOPT\n",
                    sockfd, level, optname);
-        return -ENOPROTOOPT;
+        SSO_RETURN(-ENOPROTOOPT);
     }
+#undef SSO_RETURN
 }

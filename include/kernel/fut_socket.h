@@ -661,6 +661,7 @@ int fut_socket_poll(fut_socket_t *socket, int events);
  * @return Socket pointer if fd is a socket, NULL otherwise
  */
 fut_socket_t *get_socket_from_fd(int fd);
+fut_socket_t *get_socket_pinned(int fd, struct fut_file **filep);
 
 /**
  * Allocate a file descriptor for a socket.

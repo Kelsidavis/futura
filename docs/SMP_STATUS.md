@@ -1,6 +1,6 @@
 # x86_64 SMP: Status and Bring-Up Architecture
 
-**Date**: 2026-07-08
+**Date**: 2026-07-09
 **Status**: 🟡 **Bring-up complete and validated; cross-CPU thread
 placement gated behind `smp_sched` boot flag pending the remaining
 direct fd-table audit and the `-smp 4` control-flow bug.**
@@ -136,17 +136,26 @@ The direct fd-table follow-up then converted:
   are the in-flight ownership refs consumed by `recvmsg` or dropped
   by socket teardown.
 
+The current socket tranche added `get_socket_pinned()`, a
+`fut_file_get()`-backed socket resolver for syscall paths that need to
+dereference or retain `fut_socket_t *` past the fd-table lookup. It
+converted the socket metadata/control families that had many early
+returns (`bind`, `connect`, `listen`, `accept`/`accept4`, `close`,
+`shutdown`, `sendmsg`, `sendmmsg`, `recvmmsg`, `setsockopt`,
+`getsockopt`, `getpeername`, `getsockname`) and procfs
+`/proc/<pid>/fd*` readers that inspect another task's fd. The long
+option handlers now use local cleanup-return helpers so new branches
+cannot silently leak the pin.
+
 **Remaining fd follow-up**: direct `task->fd_table[fd]` dereferences
 that still need the same pinning treatment or a documented probe-only
-classification. Known higher-risk sites now are procfs
-`/proc/<pid>/fd*` readers, `kcmp`, fork/exec inheritance/close paths,
-and the raw socket lookup family (`get_socket_from_fd` callers in
-bind/connect/listen/accept/send/recv/setsockopt/getsockopt/
-getpeername/getsockname/shutdown, plus poll/select/epoll socket
-readiness probes), which needs either a socket-pin helper or careful
-probe-only comments at each call site. Several remaining `fd_table[]`
-reads are NULL-check-only probes or owner-side table mutation during
-fd creation/dup/close; those should stay documented as
+classification. Known higher-risk sites now are `kcmp`,
+fork/exec inheritance/close paths, the socket data paths
+(`sendto`, `recvfrom`, `recvmsg`), `poll`/`select`/`epoll` socket
+readiness probes, AIO fd helper users, `fcntl` socket-flag side paths,
+and `sys_fileio_advanced` socket checks. Several remaining
+`fd_table[]` reads are NULL-check-only probes or owner-side table
+mutation during fd creation/dup/close; those should stay documented as
 non-dereferencing once audited.
 
 ### B. Control-flow corruption at `-smp 4` (distinct bug, UNVALIDATABLE here)
@@ -185,3 +194,12 @@ reliable ceiling here.
   `lapic_timer_get_calibrated_count()` is already preferred in
   `ap_main`; deferring `smp_init` past calibration is a trivial change
   once `-smp 4` is stable.
+- Direct `make run KAPPEND="futura.runtests async-tests=1 smp_sched"
+  EXTRA_QEMU_FLAGS="-smp 2"` now gets past the i915 probe path that
+  previously faulted when QEMU's Intel e1000 NIC occupied PCI
+  `00:02.0`. `i915_init` rejects non-display class devices and I/O BAR0
+  before MMIO mapping; the observed run logged
+  `class=0x020000 is not display -skipping`. The same run later failed
+  in init/userland staging with RAMFS/heap `-ENOMEM` messages and
+  `Failed to create test task`; that is a post-driver boot failure, not
+  the i915 BAR fault.

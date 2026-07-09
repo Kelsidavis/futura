@@ -14,6 +14,7 @@
  */
 
 #include <kernel/fut_task.h>
+#include <kernel/fut_vfs.h>
 #include <kernel/fut_socket.h>
 #include <kernel/fut_waitq.h>
 #include <kernel/errno.h>
@@ -132,10 +133,11 @@ long sys_shutdown(int sockfd, int how) {
      * shutdown(non_socket_fd, 99) returned EINVAL where Linux returns
      * ENOTSOCK — masking 'fd is not a socket' as 'how out of range' for
      * libc probes.  Move the socket lookup ahead of the 'how' switch. */
-    fut_socket_t *socket = get_socket_from_fd(local_sockfd);
+    struct fut_file *sock_pin = NULL;
+    fut_socket_t *socket = get_socket_pinned(local_sockfd, &sock_pin);
     if (!socket) {
-        /* Distinguish ENOTSOCK (valid fd, not a socket) from EBADF (invalid fd) */
-        if (local_sockfd < task->max_fds && task->fd_table && task->fd_table[local_sockfd]) {
+        if (sock_pin) {
+            fut_file_put(sock_pin);
             fut_printf("[SHUTDOWN] shutdown(sockfd=%d, how=%d) -> ENOTSOCK (not a socket)\n",
                        local_sockfd, local_how);
             return -ENOTSOCK;
@@ -160,6 +162,7 @@ long sys_shutdown(int sockfd, int how) {
         default:
             fut_printf("[SHUTDOWN] shutdown(sockfd=%d, how=%d) -> EINVAL (invalid how, must be 0/1/2)\n",
                        local_sockfd, local_how);
+            fut_file_put(sock_pin);
             return -EINVAL;
     }
 
@@ -197,6 +200,7 @@ long sys_shutdown(int sockfd, int how) {
         if (socket->socket_type != SOCK_DGRAM) {
             fut_printf("[SHUTDOWN] shutdown(sockfd=%d, socket_id=%u, state=%s, how=%s) -> ENOTCONN (socket not connected)\n",
                        local_sockfd, socket->socket_id, socket_state_desc, how_desc);
+            fut_file_put(sock_pin);
             return -ENOTCONN;
         }
     }
@@ -279,5 +283,6 @@ long sys_shutdown(int sockfd, int how) {
     if (socket->pair_reverse && socket->pair_reverse->epoll_notify)
         fut_waitq_wake_one(socket->pair_reverse->epoll_notify);
 
+    fut_file_put(sock_pin);
     return 0;
 }

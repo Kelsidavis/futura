@@ -223,6 +223,19 @@ pub extern "C" fn i915_init() -> i32 {
         return -1;
     }
 
+    let class_reg = pci_read32(GPU_BUS, GPU_DEV, GPU_FUNC, 0x08);
+    let class_code = (class_reg >> 8) & 0x00FF_FFFF;
+    let base_class = (class_code >> 16) & 0xFF;
+    if base_class != 0x03 {
+        unsafe {
+            fut_printf(
+                b"i915: PCI 00:02.0 class=0x%06x is not display -skipping\n\0".as_ptr(),
+                class_code,
+            );
+        }
+        return -1;
+    }
+
     unsafe {
         fut_printf(
             b"i915: found Intel device 0x%04x at PCI 00:02.0\n\0".as_ptr(),
@@ -236,6 +249,11 @@ pub extern "C" fn i915_init() -> i32 {
     let bar0_hi = pci_read32(GPU_BUS, GPU_DEV, GPU_FUNC, PCI_CFG_BAR0_HI);
     let bar0_type = bar0_lo & 0x07;
     let bar0_phys: u64 = ((bar0_hi as u64) << 32) | ((bar0_lo as u64) & !0x0Fu64);
+
+    if (bar0_lo & 0x1) != 0 {
+        log("i915: BAR0 is I/O space, expected MMIO -skipping");
+        return -2;
+    }
 
     if bar0_phys == 0 {
         log("i915: BAR0 not programmed by firmware -skipping");

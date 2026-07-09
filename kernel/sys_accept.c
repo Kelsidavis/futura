@@ -213,17 +213,18 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
      * &buf, NULL) returned EFAULT where Linux returns ENOTSOCK — same
      * fix as the matching bind / connect / getsockname / getpeername /
      * shutdown reorder. */
-    {
-        fut_socket_t *acc_sock_probe = get_socket_from_fd(local_sockfd);
-        if (!acc_sock_probe) {
-            if (task->fd_table && task->fd_table[local_sockfd]) {
-                accept_printf("[ACCEPT] accept(local_sockfd=%d) -> ENOTSOCK (not a socket)\n",
-                           local_sockfd);
-                return -ENOTSOCK;
-            }
-            return -EBADF;
+    struct fut_file *listen_pin = NULL;
+    fut_socket_t *listen_socket = get_socket_pinned(local_sockfd, &listen_pin);
+    if (!listen_socket) {
+        if (listen_pin) {
+            fut_file_put(listen_pin);
+            accept_printf("[ACCEPT] accept(local_sockfd=%d) -> ENOTSOCK (not a socket)\n",
+                       local_sockfd);
+            return -ENOTSOCK;
         }
+        return -EBADF;
     }
+#define ACCEPT_RETURN(value) do { fut_file_put(listen_pin); return (value); } while (0)
 
     /* Phase 2: Categorize address request */
     const char *addr_request;
@@ -233,7 +234,7 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
         addr_request = "address requested";
     } else if (local_addr != NULL && local_addrlen == NULL) {
         accept_printf("[ACCEPT] accept(local_sockfd=%d) -> EFAULT (local_addr non-NULL but local_addrlen is NULL)\n", local_sockfd);
-        return -EFAULT;
+        ACCEPT_RETURN(-EFAULT);
     } else {
         // local_addr == NULL && local_addrlen != NULL
         addr_request = "local_addrlen without local_addr (unusual)";
@@ -429,7 +430,7 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
         if (accept_copy_from_user(&len, local_addrlen, sizeof(socklen_t)) != 0) {
             accept_printf("[ACCEPT] accept(local_sockfd=%d, addr_request=%s) -> EFAULT (copy_from_user local_addrlen failed)\n",
                        local_sockfd, addr_request);
-            return -EFAULT;
+            ACCEPT_RETURN(-EFAULT);
         }
 
         /* IMMEDIATE bounds validation after copy to prevent TOCTOU
@@ -439,7 +440,7 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
             accept_printf("[ACCEPT] accept(local_sockfd=%d, local_addrlen=%u) -> EINVAL "
                        "(excessive address length, max 1024 bytes TOCTOU protection)\n",
                        local_sockfd, len);
-            return -EINVAL;
+            ACCEPT_RETURN(-EINVAL);
         }
 
         /* Reject addrlen=0 when addr is provided
@@ -448,14 +449,14 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
         if (local_addr != NULL && len == 0) {
             accept_printf("[ACCEPT] accept(local_sockfd=%d) -> EINVAL "
                        "(addr provided but addrlen=0)\n", local_sockfd);
-            return -EINVAL;
+            ACCEPT_RETURN(-EINVAL);
         }
 
         /* Validate addr write permission early (before accepting connection) */
         if (local_addr && accept_access_ok(local_addr, len, 1) != 0) {
             accept_printf("[ACCEPT] accept(local_sockfd=%d) -> EFAULT (addr not writable for %u bytes)\n",
                        local_sockfd, len);
-            return -EFAULT;
+            ACCEPT_RETURN(-EFAULT);
         }
 
         /* Phase 2: Categorize buffer size (safe after bounds check) */
@@ -474,20 +475,6 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
 
         /* Categorization for logging only - bounds already checked */
         (void)buffer_size_category;
-    }
-
-    /* Get listening socket from FD */
-    fut_socket_t *listen_socket = get_socket_from_fd(local_sockfd);
-    if (!listen_socket) {
-        /* Distinguish ENOTSOCK (valid fd, not a socket) from EBADF (invalid fd) */
-        if (local_sockfd < task->max_fds && task->fd_table && task->fd_table[local_sockfd]) {
-            accept_printf("[ACCEPT] accept(local_sockfd=%d, addr_request=%s) -> ENOTSOCK (not a socket)\n",
-                       local_sockfd, addr_request);
-            return -ENOTSOCK;
-        }
-        accept_printf("[ACCEPT] accept(local_sockfd=%d, addr_request=%s) -> EBADF (not a socket)\n",
-                   local_sockfd, addr_request);
-        return -EBADF;
     }
 
     /* Phase 2: Identify listening socket state */
@@ -520,7 +507,7 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
     if (listen_socket->state != FUT_SOCK_LISTENING) {
         accept_printf("[ACCEPT] accept(local_sockfd=%d, state=%s, addr_request=%s) -> EINVAL (socket not listening)\n",
                    local_sockfd, socket_state_desc, addr_request);
-        return -EINVAL;
+        ACCEPT_RETURN(-EINVAL);
     }
 
     /* Phase 2: Identify socket type */
@@ -551,7 +538,7 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
 
         /* EAGAIN: no pending connections */
         if (listen_socket->flags & 0x800) {  /* O_NONBLOCK */
-            return -EAGAIN;
+            ACCEPT_RETURN(-EAGAIN);
         }
 
         /* Check for pending signals → EINTR (use per-thread mask). Include
@@ -568,7 +555,7 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
                     __atomic_load_n(&acc_thr->signal_mask, __ATOMIC_ACQUIRE) :
                     sig_task->signal_mask;
                 if (pending & ~blocked)
-                    return -EINTR;
+                    ACCEPT_RETURN(-EINTR);
             }
         }
 
@@ -584,7 +571,7 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
 
     if (ret < 0) {
         accept_printf("[ACCEPT] accept(sockfd=%d) -> %d\n", local_sockfd, ret);
-        return ret;
+        ACCEPT_RETURN(ret);
     }
 
     /* Allocate new file descriptor for accepted socket */
@@ -593,7 +580,7 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
         accept_printf("[ACCEPT] accept(local_sockfd=%d, socket_id=%u) -> EMFILE (failed to allocate FD)\n",
                    local_sockfd, listen_socket->socket_id);
         fut_socket_unref(accepted_socket);
-        return -EMFILE;
+        ACCEPT_RETURN(-EMFILE);
     }
 
     /* Store file back-pointer for O_ASYNC/SIGIO delivery */
@@ -698,7 +685,8 @@ long sys_accept(int sockfd, void *addr, socklen_t *addrlen) {
                    addr_request, newfd, accepted_socket->socket_id);
     }
 
-    return newfd;
+    ACCEPT_RETURN(newfd);
+#undef ACCEPT_RETURN
 }
 
 /* SOCK_NONBLOCK and SOCK_CLOEXEC provided by sys/socket.h */
@@ -832,9 +820,12 @@ long sys_accept4(int sockfd, void *addr, socklen_t *addrlen, int flags) {
                 /* Also propagate to socket struct so socket_nonblock()
                  * returns true in fut_socket_recv/send. Atomic to pair
                  * with the F_SETFL/FIONBIO writers (da66992b/7f5da717). */
-                fut_socket_t *asock = get_socket_from_fd((int)newfd);
+                struct fut_file *asock_pin = NULL;
+                fut_socket_t *asock = get_socket_pinned((int)newfd, &asock_pin);
                 if (asock)
                     __atomic_or_fetch(&asock->flags, O_NONBLOCK, __ATOMIC_ACQ_REL);
+                if (asock_pin)
+                    fut_file_put(asock_pin);
             }
             if (local_flags & SOCK_CLOEXEC) {
                 /* Guard fd_flags non-NULL: lazily allocated, may be NULL

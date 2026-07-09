@@ -751,6 +751,37 @@ fut_socket_t *get_socket_from_fd(int fd) {
 }
 
 /**
+ * Pin a socket's owning file across a syscall to prevent use-after-free.
+ *
+ * Like get_socket_from_fd but uses fut_file_get so the returned socket
+ * cannot be freed by a concurrent close() on another CPU. On success
+ * *filep holds the pinned file — caller MUST fut_file_put(*filep) on
+ * every exit path. On failure *filep is non-NULL when the fd exists
+ * but is not a socket (ENOTSOCK); caller must still put it.
+ */
+fut_socket_t *get_socket_pinned(int fd, struct fut_file **filep) {
+    if (!filep)
+        return NULL;
+
+    fut_task_t *task = fut_task_current();
+    if (!task) {
+        *filep = NULL;
+        return NULL;
+    }
+
+    struct fut_file *file = fut_file_get(task, fd);
+    if (!file) {
+        *filep = NULL;
+        return NULL;
+    }
+    *filep = file;
+    if (file->chr_ops == &socket_fops && file->chr_private) {
+        return (fut_socket_t *)file->chr_private;
+    }
+    return NULL;
+}
+
+/**
  * Store a kernel socket object for a file descriptor.
  * Returns 0 on success, -1 if FD is invalid.
  */

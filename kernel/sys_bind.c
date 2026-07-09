@@ -345,22 +345,23 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
      * ENOTSOCK for libc 'is this fd a socket?' probes.  Move the socket
      * lookup ahead of the pointer/length checks — same fix as the
      * matching getsockname / getpeername reorder. */
-    {
-        fut_socket_t *bind_sock = get_socket_from_fd(local_sockfd);
-        if (!bind_sock) {
-            if (task->fd_table && task->fd_table[local_sockfd]) {
-                bind_printf("[BIND] bind(sockfd=%d) -> ENOTSOCK (not a socket)\n",
-                           local_sockfd);
-                return -ENOTSOCK;
-            }
-            return -EBADF;
+    struct fut_file *sock_pin = NULL;
+    fut_socket_t *socket = get_socket_pinned(local_sockfd, &sock_pin);
+    if (!socket) {
+        if (sock_pin) {
+            bind_printf("[BIND] bind(sockfd=%d) -> ENOTSOCK (not a socket)\n",
+                       local_sockfd);
+            fut_file_put(sock_pin);
+            return -ENOTSOCK;
         }
+        return -EBADF;
     }
 
     /* Phase 2: Validate addr pointer */
     if (!local_addr) {
         bind_printf("[BIND] bind(sockfd=%d, addr=NULL, addrlen=%u) -> EFAULT (NULL addr)\n",
                    local_sockfd, (unsigned)local_addrlen);
+        fut_file_put(sock_pin);
         return -EFAULT;
     }
 
@@ -368,6 +369,7 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
     if (local_addrlen < 2) {
         bind_printf("[BIND] bind(sockfd=%d, addrlen=%u) -> EINVAL (too small, need at least 2 bytes for family)\n",
                    local_sockfd, (unsigned)local_addrlen);
+        fut_file_put(sock_pin);
         return -EINVAL;
     }
 
@@ -376,6 +378,7 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
     if (bind_copy_from_user(&sa_family, local_addr, 2) != 0) {
         bind_printf("[BIND] bind(sockfd=%d, addrlen=%u) -> EFAULT (failed to copy sa_family)\n",
                    local_sockfd, (unsigned)local_addrlen);
+        fut_file_put(sock_pin);
         return -EFAULT;
     }
 
@@ -410,12 +413,14 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
     if (sa_family == AF_INET && local_addrlen < sizeof(sockaddr_in_t)) {
         bind_printf("[BIND] bind(sockfd=%d, family=%s, addrlen=%u) -> EINVAL (AF_INET needs at least %zu bytes)\n",
                    local_sockfd, family_name, local_addrlen, sizeof(sockaddr_in_t));
+        fut_file_put(sock_pin);
         return -EINVAL;
     }
 
     if (sa_family == AF_INET6 && local_addrlen < sizeof(sockaddr_in6_t)) {
         bind_printf("[BIND] bind(sockfd=%d, family=%s, addrlen=%u) -> EINVAL (AF_INET6 needs at least %zu bytes)\n",
                    local_sockfd, family_name, local_addrlen, sizeof(sockaddr_in6_t));
+        fut_file_put(sock_pin);
         return -EINVAL;
     }
 
@@ -425,6 +430,7 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
         if (bind_copy_from_user(&inet_addr, local_addr, sizeof(inet_addr)) != 0) {
             bind_printf("[BIND] bind(sockfd=%d, family=%s, addrlen=%u) -> EFAULT (failed to copy AF_INET address)\n",
                        local_sockfd, family_name, local_addrlen);
+            fut_file_put(sock_pin);
             return -EFAULT;
         }
 
@@ -436,15 +442,14 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
             bind_printf("[BIND] bind(sockfd=%d, family=%s, port=%u [%s]) -> EACCES "
                        "(privileged port requires CAP_NET_BIND_SERVICE, uid=%u)\n",
                        local_sockfd, family_name, port, port_cat, task->uid);
+            fut_file_put(sock_pin);
             return -EACCES;
         }
 
-        fut_socket_t *inet_socket = get_socket_from_fd(local_sockfd);
-        if (!inet_socket) return -EBADF;
-
-        int ret = fut_socket_bind_inet(inet_socket, inet_addr.sin_addr, inet_addr.sin_port);
+        int ret = fut_socket_bind_inet(socket, inet_addr.sin_addr, inet_addr.sin_port);
         bind_printf("[BIND] bind(sockfd=%d, family=%s, port=%u [%s], addrlen=%u) -> %d\n",
                    local_sockfd, family_name, port, port_cat, local_addrlen, ret);
+        fut_file_put(sock_pin);
         return ret;
     }
 
@@ -454,6 +459,7 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
         if (bind_copy_from_user(&inet6_addr, local_addr, sizeof(inet6_addr)) != 0) {
             bind_printf("[BIND] bind(sockfd=%d, family=%s, addrlen=%u) -> EFAULT (failed to copy AF_INET6 address)\n",
                        local_sockfd, family_name, local_addrlen);
+            fut_file_put(sock_pin);
             return -EFAULT;
         }
 
@@ -468,14 +474,14 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
             bind_printf("[BIND] bind(sockfd=%d, family=%s, port=%u [%s]) -> EACCES "
                        "(privileged port requires CAP_NET_BIND_SERVICE, uid=%u)\n",
                        local_sockfd, family_name, port, port_cat, task->uid);
+            fut_file_put(sock_pin);
             return -EACCES;
         }
 
         /* Map IPv6 to IPv4 for the socket registry so listeners are discoverable.
          * Must happen BEFORE setting state to BOUND since bind_inet checks CREATED state.
          * ::1 and :: → 0.0.0.0 (any) or 127.0.0.1; ::ffff:x.x.x.x → x.x.x.x */
-        fut_socket_t *inet6_socket = get_socket_from_fd(local_sockfd);
-        if (inet6_socket) {
+        {
             int is_loopback = 1, is_any = 1, is_v4mapped = 1;
             for (int i = 0; i < 15; i++) { if (inet6_addr.sin6_addr[i] != 0) is_loopback = 0; }
             if (inet6_addr.sin6_addr[15] != 1) is_loopback = 0;
@@ -493,21 +499,22 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
                               ((uint32_t)inet6_addr.sin6_addr[15] << 24);
             }
             /* Register in IPv4 socket registry (sets state to BOUND) */
-            fut_socket_bind_inet(inet6_socket, mapped_ipv4, inet6_addr.sin6_port);
+            fut_socket_bind_inet(socket, mapped_ipv4, inet6_addr.sin6_port);
             /* Store IPv6-specific fields for getsockname() */
-            inet6_socket->inet_port = inet6_addr.sin6_port;
-            __builtin_memcpy(inet6_socket->inet6_addr, &inet6_addr.sin6_addr, 16);
+            socket->inet_port = inet6_addr.sin6_port;
+            __builtin_memcpy(socket->inet6_addr, &inet6_addr.sin6_addr, 16);
         }
 
         bind_printf("[BIND] bind(sockfd=%d, family=%s, port=%u [%s], addrlen=%u) -> 0 (AF_INET6 → IPv4 mapped)\n",
                    local_sockfd, family_name, port, port_cat, local_addrlen);
+        fut_file_put(sock_pin);
         return 0;
     }
 
     /* AF_NETLINK: accept any sockaddr_nl — no real port assignment needed */
     if (sa_family == 16 /* AF_NETLINK */) {
-        fut_socket_t *nl_sock = get_socket_from_fd(local_sockfd);
-        if (nl_sock) nl_sock->state = FUT_SOCK_BOUND;
+        socket->state = FUT_SOCK_BOUND;
+        fut_file_put(sock_pin);
         return 0;
     }
 
@@ -524,6 +531,7 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
     if (sa_family != AF_UNIX) {
         bind_printf("[BIND] bind(sockfd=%d, family=%u [%s, %s], addrlen=%u) -> EAFNOSUPPORT (unsupported address family)\n",
                    local_sockfd, sa_family, family_name, family_desc, local_addrlen);
+        fut_file_put(sock_pin);
         return -EAFNOSUPPORT;
     }
 
@@ -531,6 +539,7 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
     if (local_addrlen < 3) {
         bind_printf("[BIND] bind(sockfd=%d, family=%s, addrlen=%u) -> EINVAL (AF_UNIX needs at least 3 bytes: 2 for family + 1 for path)\n",
                    local_sockfd, family_name, local_addrlen);
+        fut_file_put(sock_pin);
         return -EINVAL;
     }
 
@@ -541,6 +550,7 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
     if (path_len > sizeof(sock_path) - 1) {
         bind_printf("[BIND] bind(sockfd=%d, family=%s, path_len=%zu) -> ENAMETOOLONG (max %zu bytes)\n",
                    local_sockfd, family_name, path_len, sizeof(sock_path) - 1);
+        fut_file_put(sock_pin);
         return -ENAMETOOLONG;
     }
 
@@ -548,6 +558,7 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
         if (bind_copy_from_user(sock_path, (const char *)local_addr + 2, path_len) != 0) {
             bind_printf("[BIND] bind(sockfd=%d, family=%s, path_len=%zu) -> EFAULT (failed to copy sun_path)\n",
                        local_sockfd, family_name, path_len);
+            fut_file_put(sock_pin);
             return -EFAULT;
         }
         sock_path[path_len] = '\0';
@@ -608,25 +619,12 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
                     bind_printf("[BIND] bind(sockfd=%d, family=%s, path='%s') -> EINVAL "
                                "(path contains '..' component - directory traversal blocked)\n",
                                local_sockfd, family_name, sock_path);
+                    fut_file_put(sock_pin);
                     return -EINVAL;
                 }
             }
             i++;
         }
-    }
-
-    /* Get socket from file descriptor */
-    fut_socket_t *socket = get_socket_from_fd(local_sockfd);
-    if (!socket) {
-        /* Distinguish ENOTSOCK (valid fd, not a socket) from EBADF (invalid fd) */
-        if (local_sockfd < task->max_fds && task->fd_table && task->fd_table[local_sockfd]) {
-            bind_printf("[BIND] bind(sockfd=%d, family=%s, path='%s' [%s]) -> ENOTSOCK (not a socket)\n",
-                       local_sockfd, family_name, sock_path, path_type);
-            return -ENOTSOCK;
-        }
-        bind_printf("[BIND] bind(sockfd=%d, family=%s, path='%s' [%s]) -> EBADF (not a socket)\n",
-                   local_sockfd, family_name, sock_path, path_type);
-        return -EBADF;
     }
 
     /* Validate socket state IMMEDIATELY after retrieval
@@ -675,6 +673,7 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
                            local_sockfd, family_name, sock_path, socket_state_desc, socket->state);
                 break;
         }
+        fut_file_put(sock_pin);
         return -EINVAL;
     }
 
@@ -707,6 +706,7 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
                                "(no write permission on parent directory '%s')\n",
                                local_sockfd, sock_path, parent_path);
                     fut_vnode_unref(parent_vnode);
+                    fut_file_put(sock_pin);
                     return -EACCES;
                 }
                 fut_vnode_unref(parent_vnode);
@@ -743,6 +743,7 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
 
         bind_printf("[BIND] bind(sockfd=%d, family=%s, path='%s' [%s, %s]) -> %d (%s)\n",
                    local_sockfd, family_name, sock_path, path_type, path_desc, ret, error_desc);
+        fut_file_put(sock_pin);
         return ret;
     }
 
@@ -750,5 +751,6 @@ long sys_bind(int sockfd, const void *addr, socklen_t addrlen) {
     bind_printf("[BIND] bind(sockfd=%d, family=%s, path='%s' [%s, %s], state=created->bound) -> 0 (Socket %u bound)\n",
                local_sockfd, family_name, sock_path, path_type, path_desc, socket->socket_id);
 
+    fut_file_put(sock_pin);
     return 0;
 }

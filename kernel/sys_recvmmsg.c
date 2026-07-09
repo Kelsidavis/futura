@@ -14,6 +14,7 @@
 #include <time.h>
 #include <kernel/fut_task.h>
 #include <kernel/fut_memory.h>
+#include <kernel/fut_vfs.h>
 #include <kernel/fut_socket.h>
 #include <kernel/uaccess.h>
 #include <kernel/errno.h>
@@ -51,12 +52,14 @@ long sys_recvmmsg(int sockfd, void *msgvec, unsigned int vlen,
      * (NULL msgvec).  Validate the socket fd up front so the EBADF
      * errno class is preserved for libc probes. */
     {
-        extern struct fut_file *vfs_get_file(int fd);
-        extern fut_socket_t *get_socket_from_fd(int fd);
-        if (sockfd < 0 || !vfs_get_file(sockfd))
-            return -EBADF;
-        if (!get_socket_from_fd(sockfd))
-            return -ENOTSOCK;
+        struct fut_file *sock_pin = NULL;
+        fut_socket_t *sock = get_socket_pinned(sockfd, &sock_pin);
+        if (!sock) {
+            int err = sock_pin ? ENOTSOCK : EBADF;
+            if (sock_pin) fut_file_put(sock_pin);
+            return -err;
+        }
+        fut_file_put(sock_pin);
     }
 
     /* Linux's SYSCALL_DEFINE5(recvmmsg) reads and validates the timeout

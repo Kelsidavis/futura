@@ -14,6 +14,7 @@
 
 #include <kernel/fut_task.h>
 #include <kernel/fut_socket.h>
+#include <kernel/fut_vfs.h>
 #include <kernel/errno.h>
 #include <kernel/uaccess.h>
 #include <sys/un.h>
@@ -276,9 +277,11 @@ long sys_getpeername(int sockfd, void *addr, socklen_t *addrlen) {
      * masking ENOTSOCK for the common 'is this fd a socket?' probe
      * pattern.  Move the socket lookup ahead of the pointer checks —
      * same fix as the matching sys_getsockname reorder. */
-    fut_socket_t *socket = get_socket_from_fd(local_sockfd);
+    struct fut_file *sock_pin = NULL;
+    fut_socket_t *socket = get_socket_pinned(local_sockfd, &sock_pin);
     if (!socket) {
-        if (task->fd_table && task->fd_table[local_sockfd]) {
+        if (sock_pin) {
+            fut_file_put(sock_pin);
             fut_printf("[GETPEERNAME] getpeername(sockfd=%d) -> ENOTSOCK (not a socket)\n", local_sockfd);
             return -ENOTSOCK;
         }
@@ -288,18 +291,21 @@ long sys_getpeername(int sockfd, void *addr, socklen_t *addrlen) {
 
     /* Validate addr pointer */
     if (!local_addr) {
+        fut_file_put(sock_pin);
         fut_printf("[GETPEERNAME] getpeername(sockfd=%d) -> EFAULT (addr is NULL)\n", local_sockfd);
         return -EFAULT;
     }
 
     /* Validate addrlen pointer */
     if (!local_addrlen) {
+        fut_file_put(sock_pin);
         fut_printf("[GETPEERNAME] getpeername(sockfd=%d) -> EFAULT (addrlen is NULL)\n", local_sockfd);
         return -EFAULT;
     }
 
     /* Validate addrlen write permission early (kernel writes back actual size) */
     if (getpeername_access_ok(local_addrlen, sizeof(socklen_t), 1) != 0) {
+        fut_file_put(sock_pin);
         fut_printf("[GETPEERNAME] getpeername(sockfd=%d) -> EFAULT (addrlen not writable)\n",
                    local_sockfd);
         return -EFAULT;
@@ -308,6 +314,7 @@ long sys_getpeername(int sockfd, void *addr, socklen_t *addrlen) {
     /* Read addrlen from userspace */
     socklen_t len;
     if (getpeername_copy_from_user(&len, local_addrlen, sizeof(socklen_t)) != 0) {
+        fut_file_put(sock_pin);
         fut_printf("[GETPEERNAME] getpeername(sockfd=%d) -> EFAULT (copy_from_user addrlen failed)\n",
                    local_sockfd);
         return -EFAULT;
@@ -315,6 +322,7 @@ long sys_getpeername(int sockfd, void *addr, socklen_t *addrlen) {
 
     /* Validate addr write permission early (kernel writes peer address) */
     if (len > 0 && getpeername_access_ok(local_addr, len, 1) != 0) {
+        fut_file_put(sock_pin);
         fut_printf("[GETPEERNAME] getpeername(sockfd=%d, addrlen=%u) -> EFAULT (addr not writable for %u bytes)\n",
                    local_sockfd, len, len);
         return -EFAULT;
@@ -325,6 +333,7 @@ long sys_getpeername(int sockfd, void *addr, socklen_t *addrlen) {
         fut_socket_t *peer = NULL;
         if (socket->socket_type == SOCK_STREAM || socket->socket_type == SOCK_SEQPACKET) {
             if (socket->state != FUT_SOCK_CONNECTED) {
+                fut_file_put(sock_pin);
                 fut_printf("[GETPEERNAME] getpeername(sockfd=%d) -> ENOTCONN (AF_INET not connected)\n",
                            local_sockfd);
                 return -ENOTCONN;
@@ -343,10 +352,15 @@ long sys_getpeername(int sockfd, void *addr, socklen_t *addrlen) {
         }
         socklen_t actual_len = (socklen_t)sizeof(gpn_sockaddr_in_t);
         socklen_t copy_len = (len < actual_len) ? len : actual_len;
-        if (getpeername_copy_to_user(local_addr, &sin, copy_len) != 0)
+        if (getpeername_copy_to_user(local_addr, &sin, copy_len) != 0) {
+            fut_file_put(sock_pin);
             return -EFAULT;
-        if (getpeername_copy_to_user(local_addrlen, &actual_len, sizeof(socklen_t)) != 0)
+        }
+        if (getpeername_copy_to_user(local_addrlen, &actual_len, sizeof(socklen_t)) != 0) {
+            fut_file_put(sock_pin);
             return -EFAULT;
+        }
+        fut_file_put(sock_pin);
         return 0;
     }
 
@@ -355,6 +369,7 @@ long sys_getpeername(int sockfd, void *addr, socklen_t *addrlen) {
         fut_socket_t *peer = NULL;
         if (socket->socket_type == SOCK_STREAM || socket->socket_type == SOCK_SEQPACKET) {
             if (socket->state != FUT_SOCK_CONNECTED) {
+                fut_file_put(sock_pin);
                 fut_printf("[GETPEERNAME] getpeername(sockfd=%d) -> ENOTCONN (AF_INET6 not connected)\n",
                            local_sockfd);
                 return -ENOTCONN;
@@ -369,10 +384,15 @@ long sys_getpeername(int sockfd, void *addr, socklen_t *addrlen) {
         }
         socklen_t actual_len = (socklen_t)sizeof(gpn_sockaddr_in6_t);
         socklen_t copy_len = (len < actual_len) ? len : actual_len;
-        if (getpeername_copy_to_user(local_addr, &sin6, copy_len) != 0)
+        if (getpeername_copy_to_user(local_addr, &sin6, copy_len) != 0) {
+            fut_file_put(sock_pin);
             return -EFAULT;
-        if (getpeername_copy_to_user(local_addrlen, &actual_len, sizeof(socklen_t)) != 0)
+        }
+        if (getpeername_copy_to_user(local_addrlen, &actual_len, sizeof(socklen_t)) != 0) {
+            fut_file_put(sock_pin);
             return -EFAULT;
+        }
+        fut_file_put(sock_pin);
         return 0;
     }
 
@@ -383,6 +403,7 @@ long sys_getpeername(int sockfd, void *addr, socklen_t *addrlen) {
     if (socket->socket_type == SOCK_DGRAM) {
         /* SOCK_DGRAM: peer is the address stored by connect() */
         if (socket->dgram_peer_path_len == 0) {
+            fut_file_put(sock_pin);
             fut_printf("[GETPEERNAME] getpeername(sockfd=%d) -> ENOTCONN (DGRAM not connected)\n",
                        local_sockfd);
             return -ENOTCONN;
@@ -392,12 +413,14 @@ long sys_getpeername(int sockfd, void *addr, socklen_t *addrlen) {
     } else {
         /* SOCK_STREAM / SOCK_SEQPACKET: peer is the other end of the pair */
         if (socket->state != FUT_SOCK_CONNECTED) {
+            fut_file_put(sock_pin);
             fut_printf("[GETPEERNAME] getpeername(sockfd=%d) -> ENOTCONN (state=%d)\n",
                        local_sockfd, socket->state);
             return -ENOTCONN;
         }
         fut_socket_t *peer = socket->pair ? socket->pair->peer : NULL;
         if (!peer) {
+            fut_file_put(sock_pin);
             fut_printf("[GETPEERNAME] getpeername(sockfd=%d) -> ENOTCONN (no peer)\n", local_sockfd);
             return -ENOTCONN;
         }
@@ -426,6 +449,7 @@ long sys_getpeername(int sockfd, void *addr, socklen_t *addrlen) {
     /* Copy as much as fits in user buffer */
     socklen_t copy_len = (len < actual_len) ? len : actual_len;
     if (getpeername_copy_to_user(local_addr, &peer_addr, copy_len) != 0) {
+        fut_file_put(sock_pin);
         fut_printf("[GETPEERNAME] getpeername(sockfd=%d) -> EFAULT (copy_to_user failed)\n",
                    local_sockfd);
         return -EFAULT;
@@ -433,10 +457,12 @@ long sys_getpeername(int sockfd, void *addr, socklen_t *addrlen) {
 
     /* Update addrlen with actual size */
     if (getpeername_copy_to_user(local_addrlen, &actual_len, sizeof(socklen_t)) != 0) {
+        fut_file_put(sock_pin);
         fut_printf("[GETPEERNAME] getpeername(sockfd=%d) -> EFAULT (copy addrlen failed)\n",
                    local_sockfd);
         return -EFAULT;
     }
 
+    fut_file_put(sock_pin);
     return 0;
 }

@@ -119,26 +119,27 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
      * sendmsg() probes that branch on ENOTSOCK.  Same split as the
      * matching sendto / recvfrom / bind / connect / accept / listen /
      * shutdown / setsockopt / getsockname fixes. */
-    struct fut_file *file = vfs_get_file(local_sockfd);
-    if (!file) {
+    struct fut_file *sock_pin = NULL;
+    fut_socket_t *sm_sock = get_socket_pinned(local_sockfd, &sock_pin);
+    if (!sock_pin) {
         SENDMSG_LOG("[SENDMSG] ERROR: socket fd %d is not valid\n", local_sockfd);
         return -EBADF;
     }
-    {
-        extern fut_socket_t *get_socket_from_fd(int fd);
-        if (!get_socket_from_fd(local_sockfd))
-            return -ENOTSOCK;
+    if (!sm_sock) {
+        fut_file_put(sock_pin);
+        return -ENOTSOCK;
     }
+#define SENDMSG_RETURN(value) do { fut_file_put(sock_pin); return (value); } while (0)
 
     /* Validate msg pointer */
     if (!local_msg) {
-        return -EFAULT;
+        SENDMSG_RETURN(-EFAULT);
     }
 
     /* Copy msghdr from userspace */
     struct msghdr kmsg;
     if (sendmsg_copy_from_user(&kmsg, local_msg, sizeof(struct msghdr)) != 0) {
-        return -EFAULT;
+        SENDMSG_RETURN(-EFAULT);
     }
 
     /* Validate control message length to prevent DoS and resource exhaustion
@@ -222,7 +223,7 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
             SENDMSG_LOG("[SENDMSG] sendmsg(sockfd=%d, controllen=%zu) -> EINVAL "
                        "(control message too large, max %zu bytes)\n",
                        local_sockfd, kmsg.msg_controllen, MAX_CONTROL_LEN);
-            return -EINVAL;
+            SENDMSG_RETURN(-EINVAL);
         }
 
         /* Validate control buffer pointer is not NULL */
@@ -230,19 +231,19 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
             SENDMSG_LOG("[SENDMSG] sendmsg(sockfd=%d, controllen=%zu) -> EFAULT "
                        "(msg_control is NULL with non-zero length)\n",
                        local_sockfd, kmsg.msg_controllen);
-            return -EFAULT;
+            SENDMSG_RETURN(-EFAULT);
         }
     }
 
     /* Validate iovlen */
     if (kmsg.msg_iovlen == 0) {
         SENDMSG_LOG("[SENDMSG] sendmsg(sockfd=%d, iovlen=0) -> 0 (nothing to send)\n", local_sockfd);
-        return 0;  /* Nothing to send */
+        SENDMSG_RETURN(0);  /* Nothing to send */
     }
     if (kmsg.msg_iovlen > 1024) {
         SENDMSG_LOG("[SENDMSG] sendmsg(sockfd=%d, iovlen=%zu) -> EINVAL (exceeds UIO_MAXIOV=1024)\n",
                    local_sockfd, kmsg.msg_iovlen);
-        return -EINVAL;
+        SENDMSG_RETURN(-EINVAL);
     }
 
     /* Phase 2: Calculate total size, validate iovecs, and gather statistics */
@@ -257,7 +258,7 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
         if (sendmsg_copy_from_user(&iov, &kmsg.msg_iov[i], sizeof(struct iovec)) != 0) {
             SENDMSG_LOG("[SENDMSG] sendmsg(sockfd=%d, iovlen=%zu) -> EFAULT (copy_from_user iovec %zu failed)\n",
                        local_sockfd, kmsg.msg_iovlen, i);
-            return -EFAULT;
+            SENDMSG_RETURN(-EFAULT);
         }
 
         /* Security hardening: Limit individual iovec size to prevent memory exhaustion DoS
@@ -272,7 +273,7 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
             SENDMSG_LOG("[SENDMSG] sendmsg(sockfd=%d, iovlen=%zu) -> EINVAL "
                        "(iov[%zu].iov_len=%zu exceeds max %zu bytes)\n",
                        local_sockfd, kmsg.msg_iovlen, i, iov.iov_len, MAX_IOV_SIZE);
-            return -EINVAL;
+            SENDMSG_RETURN(-EINVAL);
         }
 
         /* Prevent integer overflow in total_size accumulation
@@ -293,7 +294,7 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
             SENDMSG_LOG("[SENDMSG] sendmsg(sockfd=%d, iovlen=%zu) -> EINVAL "
                        "(size overflow at iovec %zu, total=%zu, iov_len=%zu)\n",
                        local_sockfd, kmsg.msg_iovlen, i, total_size, iov.iov_len);
-            return -EINVAL;
+            SENDMSG_RETURN(-EINVAL);
         }
         total_size += iov.iov_len;
 
@@ -343,9 +344,6 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
 
     /* For named DGRAM sockets (no stream pair): extract destination from msg_name,
      * then send each iovec as a separate datagram to that address. */
-    extern fut_socket_t *get_socket_from_fd(int fd);
-    fut_socket_t *sm_sock = get_socket_from_fd(local_sockfd);
-
     /* AF_NETLINK: parse the RTM_GET* request and pre-build the response. */
     if (sm_sock && sm_sock->address_family == 16 /* AF_NETLINK */) {
         extern ssize_t netlink_handle_send(fut_socket_t *sock,
@@ -361,7 +359,7 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
                 nl_iov_len  = iov0.iov_len;
             }
         }
-        return netlink_handle_send(sm_sock, nl_iov_base, nl_iov_len, (ssize_t)total_size);
+        SENDMSG_RETURN(netlink_handle_send(sm_sock, nl_iov_base, nl_iov_len, (ssize_t)total_size));
     }
     bool is_dgram_sendmsg = (sm_sock && sm_sock->socket_type == SOCK_DGRAM && !sm_sock->pair);
 
@@ -374,9 +372,9 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
             struct { unsigned short sun_family; char sun_path[108]; } sun = {0};
             size_t name_copy = (size_t)kmsg.msg_namelen < sizeof(sun) ? (size_t)kmsg.msg_namelen : sizeof(sun);
             if (sendmsg_copy_from_user(&sun, kmsg.msg_name, name_copy) != 0)
-                return -EFAULT;
+                SENDMSG_RETURN(-EFAULT);
             if (sun.sun_family != 1 /* AF_UNIX */)
-                return -EAFNOSUPPORT;
+                SENDMSG_RETURN(-EAFNOSUPPORT);
             /* Path length = namelen - 2 (family bytes) */
             dgram_dest_len = (uint16_t)(kmsg.msg_namelen - 2);
             if (dgram_dest_len > 107) dgram_dest_len = 107;
@@ -386,7 +384,7 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
             dgram_dest_len = sm_sock->dgram_peer_path_len;
             __builtin_memcpy(dgram_dest, sm_sock->dgram_peer_path, dgram_dest_len);
         } else {
-            return -EDESTADDRREQ;
+            SENDMSG_RETURN(-EDESTADDRREQ);
         }
     }
 
@@ -396,7 +394,7 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
     for (size_t i = 0; i < kmsg.msg_iovlen; i++) {
         struct iovec iov;
         if (sendmsg_copy_from_user(&iov, &kmsg.msg_iov[i], sizeof(struct iovec)) != 0) {
-            return total_sent > 0 ? total_sent : -EFAULT;
+            SENDMSG_RETURN(total_sent > 0 ? total_sent : -EFAULT);
         }
 
         if (iov.iov_len == 0) {
@@ -409,7 +407,7 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
             SENDMSG_LOG("[SENDMSG] sendmsg(sockfd=%d) -> EFAULT "
                        "(iov_base[%zu] is NULL with non-zero length %zu)\n",
                        local_sockfd, i, iov.iov_len);
-            return total_sent > 0 ? total_sent : -EFAULT;
+            SENDMSG_RETURN(total_sent > 0 ? total_sent : -EFAULT);
         }
 
         /* Validate iov_base is readable before allocating kernel buffer */
@@ -418,7 +416,7 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
             SENDMSG_LOG("[SENDMSG] sendmsg(sockfd=%d) -> EFAULT "
                        "(iov_base[%zu] not accessible, len=%zu)\n",
                        local_sockfd, i, iov.iov_len);
-            return total_sent > 0 ? total_sent : -EFAULT;
+            SENDMSG_RETURN(total_sent > 0 ? total_sent : -EFAULT);
         }
 
         /* Bounce buffer: small segments use stack to avoid per-segment
@@ -432,7 +430,7 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
         } else {
             kbuf = fut_malloc(iov.iov_len);
             if (!kbuf) {
-                return total_sent > 0 ? total_sent : -ENOMEM;
+                SENDMSG_RETURN(total_sent > 0 ? total_sent : -ENOMEM);
             }
             kbuf_on_heap = true;
         }
@@ -440,7 +438,7 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
         /* Copy from userspace */
         if (sendmsg_copy_from_user(kbuf, iov.iov_base, iov.iov_len) != 0) {
             if (kbuf_on_heap) fut_free(kbuf);
-            return total_sent > 0 ? total_sent : -EFAULT;
+            SENDMSG_RETURN(total_sent > 0 ? total_sent : -EFAULT);
         }
 
         /* Write to socket — use sendto_dgram for named DGRAM, VFS for stream/socketpair.
@@ -472,7 +470,7 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
             if (ret == -EPIPE && !(local_flags & MSG_NOSIGNAL)) {
                 if (sm_task) fut_signal_send(sm_task, 13 /* SIGPIPE */);
             }
-            return total_sent > 0 ? total_sent : ret;
+            SENDMSG_RETURN(total_sent > 0 ? total_sent : ret);
         }
 
         total_sent += ret;
@@ -511,9 +509,7 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
 
     /* Phase 4: SCM_RIGHTS - extract FDs from control messages and queue on socket pair */
     if (kmsg.msg_controllen > 0 && kmsg.msg_control) {
-        /* Get the socket for this FD to access the pair's FD queue */
-        extern fut_socket_t *get_socket_from_fd(int fd);
-        fut_socket_t *sock = get_socket_from_fd(local_sockfd);
+        fut_socket_t *sock = sm_sock;
         if (sock && sock->pair) {
             /* Copy control data from userspace. Small cmsg payloads
              * (typical SCM_RIGHTS: 24 bytes header + a few fds) use a
@@ -556,7 +552,7 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
                              * transfer or a queued dangling pointer. */
                             if (nfds > FUT_SOCKET_FD_QUEUE_MAX) {
                                 if (kcontrol_on_heap) fut_free(kcontrol);
-                                return -EINVAL;
+                                SENDMSG_RETURN(-EINVAL);
                             }
 
                             struct fut_file *scm_files[FUT_SOCKET_FD_QUEUE_MAX];
@@ -572,7 +568,7 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
                                     for (int pi = 0; pi < fi; pi++)
                                         fut_file_put(scm_files[pi]);
                                     if (kcontrol_on_heap) fut_free(kcontrol);
-                                    return -EBADF;
+                                    SENDMSG_RETURN(-EBADF);
                                 }
                             }
 
@@ -586,7 +582,7 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
                                 if (kcontrol_on_heap) fut_free(kcontrol);
                                 SENDMSG_LOG("[SENDMSG] SCM_RIGHTS: fd queue full (%u + %d > %d)\n",
                                            sock->pair->fd_queue_count, nfds, FUT_SOCKET_FD_QUEUE_MAX);
-                                return -ENOBUFS;
+                                SENDMSG_RETURN(-ENOBUFS);
                             }
                             for (int fi = 0; fi < nfds; fi++) {
                                 uint32_t tail = sock->pair->fd_queue_tail;
@@ -607,5 +603,6 @@ ssize_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
         }
     }
 
-    return total_sent;
+    SENDMSG_RETURN(total_sent);
+#undef SENDMSG_RETURN
 }

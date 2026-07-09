@@ -205,6 +205,7 @@
 
 #include <kernel/fut_task.h>
 #include <kernel/fut_socket.h>
+#include <kernel/fut_vfs.h>
 #include <kernel/uaccess.h>
 #include <kernel/errno.h>
 #include <stdint.h>
@@ -312,23 +313,23 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
      * ENOTSOCK for libc 'is this fd a socket?' probes.  Move the socket
      * lookup ahead of the pointer/length checks — same fix as the
      * matching getsockname / getpeername / bind reorder. */
-    {
-        extern fut_socket_t *get_socket_from_fd(int fd);
-        fut_socket_t *conn_sock = get_socket_from_fd(local_sockfd);
-        if (!conn_sock) {
-            if (task->fd_table && task->fd_table[local_sockfd]) {
-                connect_printf("[CONNECT] connect(sockfd=%d) -> ENOTSOCK (not a socket)\n",
-                           local_sockfd);
-                return -ENOTSOCK;
-            }
-            return -EBADF;
+    struct fut_file *sock_pin = NULL;
+    fut_socket_t *socket = get_socket_pinned(local_sockfd, &sock_pin);
+    if (!socket) {
+        if (sock_pin) {
+            fut_file_put(sock_pin);
+            connect_printf("[CONNECT] connect(sockfd=%d) -> ENOTSOCK (not a socket)\n",
+                       local_sockfd);
+            return -ENOTSOCK;
         }
+        return -EBADF;
     }
 
     /* Phase 2: Validate addr pointer */
     if (!local_addr) {
         connect_printf("[CONNECT] connect(sockfd=%d, addr=NULL, addrlen=%u) -> EFAULT (NULL addr)\n",
                    local_sockfd, local_addrlen);
+        fut_file_put(sock_pin);
         return -EFAULT;
     }
     connect_printf("[CONNECT-DBG] addr OK, checking addrlen=%u\n", local_addrlen);
@@ -337,6 +338,7 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
     if (local_addrlen < 2) {
         connect_printf("[CONNECT] connect(sockfd=%d, addrlen=%u) -> EINVAL (too small, need at least 2 bytes for family)\n",
                    local_sockfd, local_addrlen);
+        fut_file_put(sock_pin);
         return -EINVAL;
     }
     connect_printf("[CONNECT-DBG] addrlen >= 2 OK\n");
@@ -347,6 +349,7 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
     if (local_addrlen > MAX_ADDRLEN) {
         connect_printf("[CONNECT] connect(sockfd=%d, addrlen=%u) -> EINVAL (exceeds maximum %u)\n",
                    local_sockfd, local_addrlen, MAX_ADDRLEN);
+        fut_file_put(sock_pin);
         return -EINVAL;
     }
     connect_printf("[CONNECT-DBG] addrlen <= MAX OK, about to copy sa_family\n");
@@ -359,6 +362,7 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
     if (copy_rc != 0) {
         connect_printf("[CONNECT] connect(sockfd=%d, addrlen=%u) -> EFAULT (failed to copy sa_family)\n",
                    local_sockfd, local_addrlen);
+        fut_file_put(sock_pin);
         return -EFAULT;
     }
 
@@ -392,74 +396,43 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
     /* AF_UNSPEC: disconnect a connected SOCK_DGRAM socket (Linux-compat).
      * For SOCK_STREAM, this is an error. */
     if (sa_family == 0 /* AF_UNSPEC */) {
-        extern fut_socket_t *get_socket_from_fd(int fd);
-        fut_socket_t *unspec_sock = get_socket_from_fd(local_sockfd);
-        if (!unspec_sock) {
-            if (local_sockfd < task->max_fds && task->fd_table && task->fd_table[local_sockfd])
-                return -ENOTSOCK;
-            return -EBADF;
-        }
-        if (unspec_sock->socket_type == SOCK_DGRAM) {
+        if (socket->socket_type == SOCK_DGRAM) {
             /* Clear the connected peer path to "disconnect" the datagram socket */
-            unspec_sock->dgram_peer_path_len = 0;
-            unspec_sock->dgram_peer_path[0] = '\0';
-            if (unspec_sock->state == FUT_SOCK_CONNECTED)
-                unspec_sock->state = FUT_SOCK_BOUND;
+            socket->dgram_peer_path_len = 0;
+            socket->dgram_peer_path[0] = '\0';
+            if (socket->state == FUT_SOCK_CONNECTED)
+                socket->state = FUT_SOCK_BOUND;
             connect_printf("[CONNECT] connect(sockfd=%d, AF_UNSPEC) -> 0 (DGRAM disconnected)\n",
                        local_sockfd);
+            fut_file_put(sock_pin);
             return 0;
         }
         /* SOCK_STREAM with AF_UNSPEC: Linux returns EAFNOSUPPORT */
         connect_printf("[CONNECT] connect(sockfd=%d, AF_UNSPEC) -> EAFNOSUPPORT (not DGRAM)\n",
                    local_sockfd);
+        fut_file_put(sock_pin);
         return -EAFNOSUPPORT;
     }
 
     /* AF_INET: wire to fut_socket_connect_inet() */
     if (sa_family == AF_INET) {
-        if (local_addrlen < 16) return -EINVAL;  /* sizeof(sockaddr_in) = 16 */
+        if (local_addrlen < 16) { fut_file_put(sock_pin); return -EINVAL; }  /* sizeof(sockaddr_in) = 16 */
         struct { uint16_t sin_family; uint16_t sin_port; uint32_t sin_addr; uint8_t sin_zero[8]; } sin = {0};
-        if (connect_copy_from_user(&sin, local_addr, 16) != 0) return -EFAULT;
+        if (connect_copy_from_user(&sin, local_addr, 16) != 0) { fut_file_put(sock_pin); return -EFAULT; }
 
-        extern fut_socket_t *get_socket_from_fd(int fd);
-        fut_socket_t *inet_sock = get_socket_from_fd(local_sockfd);
-        if (!inet_sock) {
-            /* Distinguish EBADF (fd not allocated) from ENOTSOCK (fd is
-             * valid but not a socket) — same split Linux uses via
-             * sockfd_lookup_light.  The previous unconditional EBADF
-             * masked 'wrong fd type' as 'bad descriptor' on the
-             * AF_INET path, breaking libc connect() probes that
-             * branch on ENOTSOCK. Same shape as the existing AF_UNIX
-             * gate above and the matching bind / accept / listen /
-             * shutdown / setsockopt / getsockname fixes. */
-            if (local_sockfd < task->max_fds && task->fd_table &&
-                task->fd_table[local_sockfd])
-                return -ENOTSOCK;
-            return -EBADF;
-        }
-
-        int ret = fut_socket_connect_inet(inet_sock, sin.sin_addr, sin.sin_port);
+        int ret = fut_socket_connect_inet(socket, sin.sin_addr, sin.sin_port);
         connect_printf("[CONNECT] connect(sockfd=%d, family=AF_INET, port=%u) -> %d\n",
                    local_sockfd, (unsigned)((sin.sin_port >> 8) | ((sin.sin_port & 0xFF) << 8)), ret);
+        fut_file_put(sock_pin);
         return ret;
     }
 
     /* AF_INET6: map to IPv4 loopback for ::1 and ::ffff:<ipv4> addresses */
     if (sa_family == AF_INET6) {
-        if (local_addrlen < 28) return -EINVAL;  /* sizeof(sockaddr_in6) = 28 */
+        if (local_addrlen < 28) { fut_file_put(sock_pin); return -EINVAL; }  /* sizeof(sockaddr_in6) = 28 */
         struct { uint16_t family; uint16_t port; uint32_t flowinfo;
                  uint8_t addr[16]; uint32_t scope_id; } sin6 = {0};
-        if (connect_copy_from_user(&sin6, local_addr, 28) != 0) return -EFAULT;
-
-        extern fut_socket_t *get_socket_from_fd(int fd);
-        fut_socket_t *inet6_sock = get_socket_from_fd(local_sockfd);
-        if (!inet6_sock) {
-            /* Same EBADF / ENOTSOCK split as the AF_INET path above. */
-            if (local_sockfd < task->max_fds && task->fd_table &&
-                task->fd_table[local_sockfd])
-                return -ENOTSOCK;
-            return -EBADF;
-        }
+        if (connect_copy_from_user(&sin6, local_addr, 28) != 0) { fut_file_put(sock_pin); return -EFAULT; }
 
         /* Check for ::1 (loopback) */
         int is_loopback = 1;
@@ -493,26 +466,27 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
             /* Non-loopback, non-mapped IPv6: not yet supported */
             connect_printf("[CONNECT] connect(sockfd=%d, family=AF_INET6) -> ECONNREFUSED (non-loopback IPv6)\n",
                        local_sockfd);
+            fut_file_put(sock_pin);
             return -ECONNREFUSED;
         }
 
-        int ret = fut_socket_connect_inet(inet6_sock, mapped_ipv4, sin6.port);
+        int ret = fut_socket_connect_inet(socket, mapped_ipv4, sin6.port);
         /* Populate IPv6 peer address for /proc/net/tcp6 reporting */
         if (ret == 0 || ret == -EINPROGRESS) {
-            __builtin_memcpy(inet6_sock->inet6_peer_addr, sin6.addr, 16);
-            inet6_sock->inet6_peer_port = sin6.port;
+            __builtin_memcpy(socket->inet6_peer_addr, sin6.addr, 16);
+            socket->inet6_peer_port = sin6.port;
         }
         connect_printf("[CONNECT] connect(sockfd=%d, family=AF_INET6, mapped_ipv4=0x%x, port=%u) -> %d\n",
                    local_sockfd, mapped_ipv4,
                    (unsigned)((sin6.port >> 8) | ((sin6.port & 0xFF) << 8)), ret);
+        fut_file_put(sock_pin);
         return ret;
     }
 
     /* AF_NETLINK: connect to kernel (nl_pid=0) is a no-op; mark socket as bound */
     if (sa_family == 16 /* AF_NETLINK */) {
-        extern fut_socket_t *get_socket_from_fd(int fd);
-        fut_socket_t *nl_sock = get_socket_from_fd(local_sockfd);
-        if (nl_sock) nl_sock->state = FUT_SOCK_CONNECTED;
+        socket->state = FUT_SOCK_CONNECTED;
+        fut_file_put(sock_pin);
         return 0;
     }
 
@@ -520,6 +494,7 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
     if (sa_family != AF_UNIX) {
         connect_printf("[CONNECT] connect(sockfd=%d, family=%u [%s, %s], addrlen=%u) -> EAFNOSUPPORT\n",
                    local_sockfd, sa_family, family_name, family_desc, local_addrlen);
+        fut_file_put(sock_pin);
         return -EAFNOSUPPORT;
     }
 
@@ -527,6 +502,7 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
     if (local_addrlen < 3) {
         connect_printf("[CONNECT] connect(sockfd=%d, family=%s, addrlen=%u) -> EINVAL (AF_UNIX needs at least 3 bytes: 2 for family + 1 for path)\n",
                    local_sockfd, family_name, local_addrlen);
+        fut_file_put(sock_pin);
         return -EINVAL;
     }
 
@@ -562,6 +538,7 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
         connect_printf("[CONNECT] connect(sockfd=%d, family=%s, path_len=%zu) -> ENAMETOOLONG "
                    "(exceeds UNIX_PATH_MAX %d bytes)\n",
                    local_sockfd, family_name, path_len, UNIX_PATH_MAX);
+        fut_file_put(sock_pin);
         return -ENAMETOOLONG;
     }
 
@@ -572,6 +549,7 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
         connect_printf("[CONNECT] connect(sockfd=%d, family=%s, path_len=%zu) -> ENAMETOOLONG "
                    "(exceeds kernel buffer %zu bytes)\n",
                    local_sockfd, family_name, path_len, sizeof(sock_path) - 1);
+        fut_file_put(sock_pin);
         return -ENAMETOOLONG;
     }
 
@@ -582,6 +560,7 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
         if (path_rc != 0) {
             connect_printf("[CONNECT] connect(sockfd=%d, family=%s, path_len=%zu) -> EFAULT (failed to copy sun_path)\n",
                        local_sockfd, family_name, path_len);
+            fut_file_put(sock_pin);
             return -EFAULT;
         }
         sock_path[path_len] = '\0';
@@ -642,27 +621,12 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
                     connect_printf("[CONNECT] connect(sockfd=%d, family=%s, path='%s') -> EINVAL "
                                "(path contains '..' component - directory traversal blocked)\n",
                                local_sockfd, family_name, sock_path);
+                    fut_file_put(sock_pin);
                     return -EINVAL;
                 }
             }
             i++;
         }
-    }
-
-    /* Get socket from file descriptor */
-    connect_printf("[CONNECT-DBG] calling get_socket_from_fd(%d)\n", local_sockfd);
-    fut_socket_t *socket = get_socket_from_fd(local_sockfd);
-    connect_printf("[CONNECT-DBG] get_socket_from_fd returned %p\n", socket);
-    if (!socket) {
-        /* Distinguish ENOTSOCK (valid fd, not a socket) from EBADF (invalid fd) */
-        if (local_sockfd < task->max_fds && task->fd_table && task->fd_table[local_sockfd]) {
-            connect_printf("[CONNECT] connect(sockfd=%d, family=%s, path='%s' [%s]) -> ENOTSOCK (not a socket)\n",
-                       local_sockfd, family_name, sock_path, path_type);
-            return -ENOTSOCK;
-        }
-        connect_printf("[CONNECT] connect(sockfd=%d, family=%s, path='%s' [%s]) -> EBADF (not a socket)\n",
-                   local_sockfd, family_name, sock_path, path_type);
-        return -EBADF;
     }
 
     /* Phase 2: Check socket state */
@@ -698,24 +662,28 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
                    local_sockfd, family_name, sock_path, socket_state_desc,
                    socket->pair && socket->pair->peer && socket->pair->peer->bound_path ?
                    socket->pair->peer->bound_path : "(unknown)");
+        fut_file_put(sock_pin);
         return -EISCONN;
     }
 
     if (socket->state == FUT_SOCK_LISTENING) {
         connect_printf("[CONNECT] connect(sockfd=%d, family=%s, path='%s', state=%s) -> EINVAL (cannot connect listening socket)\n",
                    local_sockfd, family_name, sock_path, socket_state_desc);
+        fut_file_put(sock_pin);
         return -EINVAL;
     }
 
     if (socket->state == FUT_SOCK_CONNECTING) {
         connect_printf("[CONNECT] connect(sockfd=%d, family=%s, path='%s', state=%s) -> EALREADY\n",
                    local_sockfd, family_name, sock_path, socket_state_desc);
+        fut_file_put(sock_pin);
         return -EALREADY;
     }
 
     if (socket->state == FUT_SOCK_CLOSED) {
         connect_printf("[CONNECT] connect(sockfd=%d, family=%s, path='%s', state=%s) -> EINVAL (socket closed)\n",
                    local_sockfd, family_name, sock_path, socket_state_desc);
+        fut_file_put(sock_pin);
         return -EINVAL;
     }
 
@@ -751,6 +719,7 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
 
         connect_printf("[CONNECT] connect(sockfd=%d, family=%s, path='%s' [%s, %s], state=%s) -> %d (%s)\n",
                    local_sockfd, family_name, sock_path, path_type, path_desc, socket_state_desc, ret, error_desc);
+        fut_file_put(sock_pin);
         return ret;
     }
 
@@ -758,5 +727,6 @@ long sys_connect(int sockfd, const void *addr, socklen_t addrlen) {
     connect_printf("[CONNECT] connect(sockfd=%d, family=%s, path='%s' [%s, %s], state=%s->connected) -> 0 (Socket %u connected, Phase 2)\n",
                local_sockfd, family_name, sock_path, path_type, path_desc, socket_state_desc, socket->socket_id);
 
+    fut_file_put(sock_pin);
     return 0;
 }

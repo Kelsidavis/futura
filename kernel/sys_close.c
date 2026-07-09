@@ -186,7 +186,8 @@ long sys_close(int fd) {
     const char *fd_desc;
     int ret;
 
-    fut_socket_t *socket = get_socket_from_fd(local_fd);
+    struct fut_file *sock_pin = NULL;
+    fut_socket_t *socket = get_socket_pinned(local_fd, &sock_pin);
     if (socket) {
         fd_type = "socket";
         fd_desc = "connected";
@@ -194,6 +195,7 @@ long sys_close(int fd) {
         fd_type = "file";
         fd_desc = "regular file or special device";
     }
+    if (sock_pin) fut_file_put(sock_pin);
 
     ret = fut_vfs_close(local_fd);
     if (ret < 0) {

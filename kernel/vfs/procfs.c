@@ -5053,10 +5053,9 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
         case PROC_FDINFO_ENTRY: {
             /* /proc/<pid>/fdinfo/<n>: pos, flags, mnt_id, type-specific fields */
             fut_task_t *ftask = fut_task_by_pid(n->pid);
-            if (!ftask || n->fd < 0 || n->fd >= ftask->max_fds || !ftask->fd_table[n->fd]) {
-                total = 0; break;
-            }
-            struct fut_file *file = ftask->fd_table[n->fd];
+            if (!ftask) { total = 0; break; }
+            struct fut_file *file = fut_file_get(ftask, n->fd);
+            if (!file) { total = 0; break; }
             struct pbuf b = { tmp, 0, GEN_BUF };
             pb_str(&b, "pos:\t");  pb_u64(&b, file->offset); pb_char(&b, '\n');
             pb_str(&b, "flags:\t0"); pb_oct(&b, (uint32_t)file->flags); pb_char(&b, '\n');
@@ -5097,6 +5096,7 @@ static ssize_t procfs_file_read(struct fut_vnode *vnode, void *buf, size_t size,
                 }
             }
             total = b.pos;
+            fut_file_put(file);
             break;
         }
         case PROC_SYS_OSTYPE:
@@ -6104,14 +6104,15 @@ static ssize_t procfs_link_readlink(struct fut_vnode *vnode, char *buf, size_t s
              *  - Fallback: "/dev/fd/<n>"  */
             fut_task_t *task = fut_task_by_pid(n->pid);
             if (!task) return -ESRCH;
-            if (n->fd >= 0 && n->fd < task->max_fds && task->fd_table[n->fd]) {
-                struct fut_file *file = task->fd_table[n->fd];
+            struct fut_file *file = fut_file_get(task, n->fd);
+            if (file) {
 
                 /* 1. Regular file path */
                 if (file->path && file->path[0]) {
                     const char *fp = file->path;
                     while (fp[len] && len < sizeof(tmp) - 1)
                         { tmp[len] = fp[len]; len++; }
+                    fut_file_put(file);
                     break;
                 }
 
@@ -6126,20 +6127,24 @@ static ssize_t procfs_link_readlink(struct fut_vnode *vnode, char *buf, size_t s
                         pb_u64(&b, ino);
                         pb_str(&b, "]");
                         len = b.pos;
+                        fut_file_put(file);
                         break;
                     }
                 }
 
-                /* 3. Socket fd (tracked in posix_compat socket table) */
-                {
-                    extern struct fut_socket *get_socket_from_fd(int fd);
-                    if (get_socket_from_fd(n->fd)) {
+                /* 3. Socket fd — check the pinned file directly instead of
+                 * going through get_socket_from_fd (which resolves against
+                 * the current task, not the target pid's fd table). */
+                if (file->chr_private) {
+                    fut_socket_t *sk = (fut_socket_t *)file->chr_private;
+                    if (sk->magic == FUT_SOCKET_MAGIC) {
                         uint64_t ino = file->vnode ? file->vnode->ino : (uint64_t)n->fd;
                         struct pbuf b = { tmp, 0, sizeof(tmp) };
                         pb_str(&b, "socket:[");
                         pb_u64(&b, ino);
                         pb_str(&b, "]");
                         len = b.pos;
+                        fut_file_put(file);
                         break;
                     }
                 }
@@ -6167,6 +6172,7 @@ static ssize_t procfs_link_readlink(struct fut_vnode *vnode, char *buf, size_t s
                         pb_str(&b, anon_type);
                         pb_str(&b, "]");
                         len = b.pos;
+                        fut_file_put(file);
                         break;
                     }
                 }
@@ -6177,9 +6183,11 @@ static ssize_t procfs_link_readlink(struct fut_vnode *vnode, char *buf, size_t s
                     if (built) {
                         len = 0;
                         while (tmp[len] && len < sizeof(tmp) - 1) len++;
+                        fut_file_put(file);
                         break;
                     }
                 }
+                fut_file_put(file);
             }
             /* Final fallback */
             {

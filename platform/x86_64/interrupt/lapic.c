@@ -369,32 +369,16 @@ uint32_t lapic_timer_get_calibrated_count(void) {
     return lapic_timer_calibrated_count;
 }
 
-void lapic_timer_calibrate_and_start(uint32_t hz, uint8_t vector) {
+/* I/O port helpers (lapic.c doesn't have platform_init's static outb/inb) */
+#define LAPIC_OUTB(port, val) __asm__ volatile("outb %0, %1" :: "a"((uint8_t)(val)), "Nd"((uint16_t)(port)))
+#define LAPIC_INB(port, result) __asm__ volatile("inb %1, %0" : "=a"(result) : "Nd"((uint16_t)(port)))
+
+void lapic_timer_calibrate(uint32_t hz) {
     if (!lapic_base || !lapic_initialized) {
-        /* ACPI MADT parsing didn't call lapic_init successfully on this
-         * machine (observed on Lenovo L490 — the boot reaches this point
-         * with lapic_base==NULL because something in the MADT walk
-         * silently dropped out before reaching lapic_init). Fall back to
-         * the architecturally-defined default LAPIC MMIO address. The
-         * hardware will not actually relocate the LAPIC away from
-         * 0xFEE00000 unless something explicitly wrote IA32_APIC_BASE
-         * MSR with a different base, which firmware rarely does. */
-        fut_printf("[LAPIC-TIMER] LAPIC not initialized — falling back to default 0xFEE00000\n");
-        lapic_init(0xFEE00000);
-        if (!lapic_base || !lapic_initialized) {
-            fut_printf("[LAPIC-TIMER] Cannot start: LAPIC init still failed after fallback\n");
-            return;
-        }
+        fut_printf("[LAPIC-TIMER] Cannot calibrate: LAPIC not initialized\n");
+        return;
     }
 
-    /* I/O port helpers (lapic.c doesn't have platform_init's static outb/inb) */
-    #define LAPIC_OUTB(port, val) __asm__ volatile("outb %0, %1" :: "a"((uint8_t)(val)), "Nd"((uint16_t)(port)))
-    #define LAPIC_INB(port, result) __asm__ volatile("inb %1, %0" : "=a"(result) : "Nd"((uint16_t)(port)))
-
-    /* Step 1: Calibrate by measuring LAPIC ticks during a known interval.
-     * Use PIT channel 2 for a ~10ms calibration window. */
-
-    /* Configure PIT channel 2 for one-shot mode, 10ms */
     uint32_t pit_10ms = 1193182 / 100;  /* ~11932 ticks = ~10ms */
     uint8_t port61;
     LAPIC_INB(0x61, port61);
@@ -403,13 +387,10 @@ void lapic_timer_calibrate_and_start(uint32_t hz, uint8_t vector) {
     LAPIC_OUTB(0x42, pit_10ms & 0xFF);
     LAPIC_OUTB(0x42, (pit_10ms >> 8) & 0xFF);
 
-    /* Step 2: Start LAPIC timer with max count */
     lapic_write(LAPIC_REG_TIMER_DIVIDE, LAPIC_TIMER_DIV_16);
-    lapic_write(LAPIC_REG_LVT_TIMER, LAPIC_LVT_MASKED);  /* Masked during calibration */
+    lapic_write(LAPIC_REG_LVT_TIMER, LAPIC_LVT_MASKED);
     lapic_write(LAPIC_REG_TIMER_INITIAL, 0xFFFFFFFF);
 
-    /* Step 3: Wait for PIT channel 2 to expire */
-    /* Reset PIT ch2 output latch */
     LAPIC_INB(0x61, port61);
     uint8_t tmp = port61 & 0xFE;
     LAPIC_OUTB(0x61, tmp);
@@ -419,23 +400,39 @@ void lapic_timer_calibrate_and_start(uint32_t hz, uint8_t vector) {
         LAPIC_INB(0x61, status);
     } while (!(status & 0x20));
 
-    /* Step 4: Read how many LAPIC ticks elapsed in ~10ms */
     uint32_t elapsed = 0xFFFFFFFF - lapic_read(LAPIC_REG_TIMER_CURRENT);
-    lapic_write(LAPIC_REG_TIMER_INITIAL, 0);  /* Stop timer */
+    lapic_write(LAPIC_REG_TIMER_INITIAL, 0);
 
     if (elapsed == 0) {
         fut_printf("[LAPIC-TIMER] Calibration failed (0 ticks in 10ms)\n");
         return;
     }
 
-    /* Step 5: Calculate count for desired frequency.
-     * elapsed ticks = 10ms worth. For hz Hz, period = 1000/hz ms.
-     * count = elapsed * (1000 / hz) / 10 = elapsed * 100 / hz */
     uint32_t count = elapsed * 100 / hz;
     lapic_timer_calibrated_count = count;
 
     fut_printf("[LAPIC-TIMER] Calibrated: %u ticks/10ms, count=%u for %u Hz\n",
                elapsed, count, hz);
+}
+
+void lapic_timer_calibrate_and_start(uint32_t hz, uint8_t vector) {
+    if (!lapic_base || !lapic_initialized) {
+        fut_printf("[LAPIC-TIMER] LAPIC not initialized — falling back to default 0xFEE00000\n");
+        lapic_init(0xFEE00000);
+        if (!lapic_base || !lapic_initialized) {
+            fut_printf("[LAPIC-TIMER] Cannot start: LAPIC init still failed after fallback\n");
+            return;
+        }
+    }
+
+    if (lapic_timer_calibrated_count == 0)
+        lapic_timer_calibrate(hz);
+
+    uint32_t count = lapic_timer_calibrated_count;
+    if (count == 0) {
+        fut_printf("[LAPIC-TIMER] Calibration failed, cannot start timer\n");
+        return;
+    }
 
     /* Step 6: Disable PIT to avoid dual timer interrupts on same vector.
      * ISA IRQ 0 (PIT) is remapped to GSI 2 via MADT interrupt override,
@@ -545,7 +542,7 @@ void lapic_timer_calibrate_and_start(uint32_t hz, uint8_t vector) {
         fut_printf("\n");
         fut_printf("####################################################################\n");
         fut_printf("##  WARNING: LAPIC TIMER ISR NOT FIRING — falling back to PIT     ##\n");
-        fut_printf("##  Calibration reported success (elapsed=%u, count=%u)         ##\n", elapsed, count);
+        fut_printf("##  Calibration count=%u                                        ##\n", count);
         fut_printf("##  Got only %llu ticks in 100ms (expected ≥5). LAPIC fire-once  ##\n",
                    (unsigned long long)(ticks_after - ticks_before));
         fut_printf("##  pattern likely — IRQ delivered then no more. Switching now.   ##\n");

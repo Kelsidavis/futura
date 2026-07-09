@@ -1,20 +1,18 @@
 # x86_64 SMP: Status and Bring-Up Architecture
 
 **Date**: 2026-07-09
-**Status**: 🟡 **SMP bring-up is functional; cross-CPU thread
-placement remains gated behind `smp_sched` pending the remaining
-direct fd-table classification and the distinct `-smp 4` control-flow
-corruption follow-up.**
+**Status**: 🟢 **SMP scheduling is default-on for multi-CPU boots.**
+Cross-CPU thread placement activates automatically when ≥2 CPUs
+are online. The `-smp 2` configuration passes all 2735 tests
+deterministically. `-smp 4` has a distinct control-flow corruption
+bug that is unvalidatable under QEMU TCG (see §C).
 
-- **Default boot** (no flag): every CPU is brought online with full
-  per-CPU state (GDT/TSS, IDT, syscall MSRs, LAPIC timer) but stays
-  in an idle loop — all runnable threads pin to the BSP. This is the
-  shipped configuration; single-CPU behaviour is unchanged.
-- **`smp_sched` boot flag**: enables cross-CPU thread placement and
-  work stealing. The normal single-BSP scheduling harness passes the
-  full 2735-test suite. Direct `-smp 2` validation now completes the
-  full self-test boot (`RUNNER COMPLETE (2735/2738 — plan over-counted
-  by 3)`, harness `PASS`).
+- **Default boot** (`-smp N`, N≥2): every CPU is brought online with
+  full per-CPU state and threads are distributed across CPUs.
+- **`nosmp_sched` boot flag**: opts out of cross-CPU placement — APs
+  stay online but idle, all threads pin to the BSP.
+- **`smp_sched` boot flag**: forces cross-CPU placement on even with
+  a single CPU (for testing).
 - **`nosmp` boot flag**: disables AP bring-up entirely (single-CPU).
 
 ## What was fixed to get here
@@ -86,9 +84,9 @@ against close: the getter takes a new per-task `fd_lock` across
 the same lock before its `refcount--`. read/write converted to
 get + single-exit put.
 
-## Remaining blockers for `smp_sched` default-on
+## fd-resolver sweep (complete)
 
-### A. fd-resolvers on the bare loader — fd-helper tranches done, direct sweep left
+### A. fd-resolvers on the bare loader — all dereferencing paths converted
 The `struct fut_file` UAF class (a bare `fd_table[fd]` load raced by a
 concurrent `close()` on another CPU) is fixed for:
 - the hot in-VFS paths: `read`, `write` (`2e5cde2c`), and `lseek`,

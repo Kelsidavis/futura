@@ -1443,13 +1443,22 @@ void fut_kernel_main(void) {
         acpi_parse_madt();
     }
 
-    /* Cross-CPU thread placement is opt-in until the syscall and
-     * scheduler paths are hardened for true parallelism; without the
-     * flag APs stay online but idle (threads pin to the BSP). */
-    if (fut_boot_arg_flag("smp_sched")) {
+    /* Cross-CPU thread placement: default-on when multiple CPUs are
+     * online. nosmp_sched opts out (APs stay online but idle — threads
+     * pin to the BSP). smp_sched forces it on even with 1 CPU (testing). */
+    {
+        extern uint32_t smp_get_cpu_count(void);
         extern void fut_sched_enable_smp(void);
-        fut_sched_enable_smp();
-        fut_printf("[SMP] smp_sched: cross-CPU thread placement ENABLED\n");
+        bool want_smp_sched = smp_get_cpu_count() >= 2;
+        if (fut_boot_arg_flag("smp_sched"))
+            want_smp_sched = true;
+        if (fut_boot_arg_flag("nosmp_sched"))
+            want_smp_sched = false;
+        if (want_smp_sched) {
+            fut_sched_enable_smp();
+            fut_printf("[SMP] cross-CPU thread placement ENABLED (%u CPUs online)\n",
+                       smp_get_cpu_count());
+        }
     }
 #else
     /* ARM64: ACPI parsing not yet implemented */

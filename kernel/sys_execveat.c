@@ -98,14 +98,30 @@ long sys_execveat(int dirfd, const char *pathname,
         fut_task_t *task = fut_task_current();
         if (!task || !task->fd_table || dirfd >= task->max_fds)
             return -EBADF;
-        struct fut_file *f = task->fd_table[dirfd];
+        struct fut_file *f = fut_file_get(task, dirfd);
         if (!f)
             return -EBADF;
-        if (!f->path)
+        if (!f->path) {
+            fut_file_put(f);
             return -ENOENT;
+        }
+
+        char exec_path[256];
+        size_t path_len = 0;
+        while (path_len < sizeof(exec_path) - 1 && f->path[path_len]) {
+            exec_path[path_len] = f->path[path_len];
+            path_len++;
+        }
+        exec_path[path_len] = '\0';
+        if (f->path[path_len] != '\0') {
+            fut_file_put(f);
+            return -ENAMETOOLONG;
+        }
+        fut_file_put(f);
+
         /* Use the dirfd's own path as the exec target */
         extern long sys_execve(const char *, char *const *, char *const *);
-        return sys_execve(f->path, argv, envp);
+        return sys_execve(exec_path, argv, envp);
     }
 
     /* Absolute path or AT_FDCWD + relative: delegate directly */

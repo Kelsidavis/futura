@@ -15,6 +15,7 @@
 #include <kernel/fut_task.h>
 #include <kernel/fut_vfs.h>
 #include <kernel/fut_socket.h>
+#include <kernel/fut_irq.h>
 #include <kernel/errno.h>
 
 #include <kernel/kprintf.h>
@@ -281,11 +282,20 @@ long sys_close_range(unsigned int first, unsigned int last, unsigned int flags) 
     if (flags & CLOSE_RANGE_CLOEXEC) {
         /* Set FD_CLOEXEC on every open FD in the range (per-FD flag) */
         for (unsigned int fd = first; fd <= upper; fd++) {
-            struct fut_file *file = vfs_get_file_from_task(task, (int)fd);
-            if (!file)
-                continue;
-            if (task->fd_flags) task->fd_flags[fd] |= FD_CLOEXEC;
-            closed++;
+            unsigned long fdflags = fut_irqsave();
+            fut_spinlock_acquire(&task->fd_lock);
+            struct fut_file *file = NULL;
+            if (task->fd_table && fd < (unsigned int)task->max_fds) {
+                file = __atomic_load_n(&task->fd_table[fd], __ATOMIC_ACQUIRE);
+                if (file && task->fd_flags) {
+                    task->fd_flags[fd] |= FD_CLOEXEC;
+                }
+            }
+            fut_spinlock_release(&task->fd_lock);
+            fut_irqrestore(fdflags);
+
+            if (file)
+                closed++;
         }
         /* Success path silent (CLOSE_DEBUG can re-enable via close_printf
          * elsewhere). close_range is called once per fork+exec, and a

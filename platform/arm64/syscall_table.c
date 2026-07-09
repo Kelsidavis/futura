@@ -2908,15 +2908,31 @@ static int64_t sys_setns_wrapper(uint64_t fd, uint64_t nstype,
     /* Delegate to the shared x86_64 implementation via the same handler logic.
      * For ARM64, call the kernel setns directly. */
     extern fut_task_t *fut_task_current(void);
-    extern struct fut_file *fut_vfs_get_file(int fd);
     extern fut_task_t *fut_task_by_pid(uint64_t pid);
 
     fut_task_t *task = fut_task_current();
     if (!task) return -3;
-    struct fut_file *file = fut_vfs_get_file((int)fd);
-    if (!file || !file->path) return -9;
+    struct fut_file *file = fut_file_get(task, (int)fd);
+    if (!file) return -9;
+    if (!file->path) {
+        fut_file_put(file);
+        return -9;
+    }
 
-    const char *path = file->path;
+    char path_buf[256];
+    size_t path_len = 0;
+    while (path_len < sizeof(path_buf) - 1 && file->path[path_len]) {
+        path_buf[path_len] = file->path[path_len];
+        path_len++;
+    }
+    path_buf[path_len] = '\0';
+    if (file->path[path_len] != '\0') {
+        fut_file_put(file);
+        return -ENAMETOOLONG;
+    }
+    fut_file_put(file);
+
+    const char *path = path_buf;
     const char *ns_name = 0;
     for (int i = 0; path[i]; i++) {
         if (path[i]=='/' && path[i+1]=='n' && path[i+2]=='s' && path[i+3]=='/') {

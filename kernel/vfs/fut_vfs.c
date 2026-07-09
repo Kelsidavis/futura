@@ -309,13 +309,20 @@ static void close_fd_in_task(fut_task_t *task, int fd) {
         return;
     }
 
-    /* Atomically take ownership of the slot. Two threads in the same
-     * task calling close(fd) concurrently would otherwise both read
-     * fd_table[fd], both reach the per-fd cleanup, and double-free
-     * the underlying file struct. With exchange, only the first thread
-     * sees a non-NULL value; the second sees NULL and returns. */
-    struct fut_file *file = __atomic_exchange_n(&task->fd_table[fd], NULL,
-                                                 __ATOMIC_ACQ_REL);
+    /* Take ownership of the slot under fd_lock. fut_file_get() holds the
+     * same lock across {load slot + ref++}, so a cross-task close cannot
+     * free a file that a concurrent getter has observed but not pinned yet. */
+    unsigned long flags = fut_irqsave();
+    fut_spinlock_acquire(&task->fd_lock);
+    struct fut_file *file = __atomic_load_n(&task->fd_table[fd], __ATOMIC_ACQUIRE);
+    if (file) {
+        __atomic_store_n(&task->fd_table[fd], NULL, __ATOMIC_RELEASE);
+        if (task->fd_flags)
+            task->fd_flags[fd] = 0;
+    }
+    fut_spinlock_release(&task->fd_lock);
+    fut_irqrestore(flags);
+
     release_detached_file(task, fd, file);
 }
 
@@ -351,20 +358,29 @@ static int alloc_specific_fd_for_task(fut_task_t *task, int target_fd, struct fu
         return -EBADF;
     }
 
-    /* Atomically install the new file and capture whatever was there
-     * before. Without exchange, two threads racing dup2()→same fd would
-     * each call close_fd_in_task (atomic-exchange empties slot for one,
-     * sees NULL for the other), then both store their new file —
-     * leaking one of them. Exchange-then-release-prev fixes that race. */
+    /* Install under fd_lock for the same reason close_fd_in_task clears
+     * under fd_lock: replacement may drop the old slot's last reference,
+     * so it must serialize with fut_file_get's load-plus-ref. */
+    unsigned long flags = fut_irqsave();
+    fut_spinlock_acquire(&task->fd_lock);
     struct fut_file *prev = __atomic_exchange_n(&task->fd_table[target_fd], file,
                                                  __ATOMIC_ACQ_REL);
-    if (task->fd_flags) task->fd_flags[target_fd] = 0;
+    if (task->fd_flags)
+        task->fd_flags[target_fd] = 0;
+    fut_spinlock_release(&task->fd_lock);
+    fut_irqrestore(flags);
 
     if (prev != NULL) {
         release_detached_file(task, target_fd, prev);
-        /* release_detached_file clobbers fd_flags[target_fd]; restore the
-         * clear we wanted for the new file. */
-        if (task->fd_flags) task->fd_flags[target_fd] = 0;
+        /* release_detached_file clears fd_flags[target_fd] as part of closing
+         * the old descriptor. Preserve the clear intended for the newly
+         * installed file, but only if the slot still contains that file. */
+        unsigned long restore_flags = fut_irqsave();
+        fut_spinlock_acquire(&task->fd_lock);
+        if (task->fd_table[target_fd] == file && task->fd_flags)
+            task->fd_flags[target_fd] = 0;
+        fut_spinlock_release(&task->fd_lock);
+        fut_irqrestore(restore_flags);
     }
     return target_fd;
 }
@@ -3455,16 +3471,19 @@ int fut_vfs_lstat(const char *path, struct fut_stat *stat) {
 }
 
 int fut_vfs_ioctl(int fd, unsigned long req, unsigned long arg) {
-    struct fut_file *file = get_file(fd);
+    fut_task_t *task = fut_task_current();
+    struct fut_file *file = task ? fut_file_get(task, fd) : NULL;
     if (!file) {
         return -EBADF;
     }
 
+    int ret = -ENOTTY;
     if (file->chr_ops && file->chr_ops->ioctl) {
-        return file->chr_ops->ioctl(file->chr_inode, file->chr_private, req, arg);
+        ret = file->chr_ops->ioctl(file->chr_inode, file->chr_private, req, arg);
     }
 
-    return -ENOTTY;
+    fut_file_put(file);
+    return ret;
 }
 
 void *fut_vfs_mmap(int fd, void *addr, size_t len, int prot, int flags, off_t off) {

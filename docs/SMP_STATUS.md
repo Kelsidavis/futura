@@ -167,8 +167,8 @@ and drops before returning. The audited `fut_vfs_get_file` users left
 in AIO and epoll are errno-class probes only (`EBADF` vs
 `EOPNOTSUPP`/`EINVAL`) and do not dereference or retain the pointer.
 The lingering `vfs_get_file_from_task` users in fstatat, dup/dup2,
-fcntl free-fd scans, and close_range(CLOEXEC) are existence probes or
-owner-side fd-table mutation and do not dereference the loaded file.
+and fcntl free-fd scans are existence probes and do not dereference
+the loaded file.
 
 The latest direct-table tranche added `fut_file_get_with_flags()`, a
 pinning resolver that samples descriptor flags under the same
@@ -180,13 +180,31 @@ slot being pinned. It also changed the fork overflow rollback path to
 drop already-inherited files with `fut_file_put()` instead of raw
 refcount subtraction.
 
+The latest fd-lock tranche tightened the shared per-task fd-table
+mutation helpers to match the `fut_file_get()` lifetime contract:
+cross-task `vfs_close_fd_in_task()` and dup/replace
+`vfs_alloc_specific_fd_for_task()` now clear or replace slots under
+`fd_lock`, serializing with `fut_file_get()`'s load-plus-ref section
+before any old slot reference can be dropped. It also moved
+`close_range(CLOSE_RANGE_CLOEXEC)`'s open-slot test and
+`FD_CLOEXEC` mutation under the same lock, converted
+`execveat(AT_EMPTY_PATH)` and the ARM64 `setns` fd path parser to pin
+and copy `file->path` before use, and converted the exported
+`fut_vfs_ioctl()` helper to hold a real file reference across its
+character-device dispatch.
+Validation for this tranche passed `make kernel`, `make test`, and a
+direct SMP boot/test with
+`timeout 420s make run KAPPEND="futura.runtests async-tests=1 smp_sched"
+EXTRA_QEMU_FLAGS="-smp 2"` (`RUNNER COMPLETE (2735/2738 -- plan
+over-counted by 3)`, `[RUN] PASS`).
+
 **Remaining fd follow-up**: direct `task->fd_table[]` sites still need
-final classification. The remaining production hits are mostly
-NULL-check-only errno/existence probes, newly-created-task fd-table
-writes before publication, owner-side close/dup mutation, task
-teardown, and proc/debug summaries. They should be either documented
-as non-dereferencing or converted if a later audit finds a retained or
-dereferenced file pointer.
+final classification. The remaining production hits are helper
+definitions, NULL-check-only errno/existence probes, newly-created-task
+fd-table writes before publication, task teardown, and proc/debug
+summaries. They should be either documented as non-dereferencing or
+converted if a later audit finds a retained or dereferenced file
+pointer.
 
 ### B. `-smp 2 smp_sched` clear-child-tid scheduler failure fixed
 Validation after the fd inheritance/kcmp tranche exposed a scheduler

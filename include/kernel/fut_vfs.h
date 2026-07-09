@@ -1043,6 +1043,7 @@ struct fut_file *vfs_get_file_from_task(struct fut_task *task, int fd);
 int vfs_alloc_fd_for_task(struct fut_task *task, struct fut_file *file);
 int vfs_alloc_specific_fd_for_task(struct fut_task *task, int target_fd, struct fut_file *file);
 void vfs_close_fd_in_task(struct fut_task *task, int fd);
+int fut_vfs_close_if_cloexec(struct fut_task *task, int fd);
 
 /* File reference counting */
 void vfs_file_ref(struct fut_file *file);

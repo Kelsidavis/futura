@@ -2040,6 +2040,34 @@ void vfs_close_fd_in_task(struct fut_task *task, int fd) {
     close_fd_in_task((fut_task_t *)task, fd);
 }
 
+int fut_vfs_close_if_cloexec(struct fut_task *task, int fd) {
+    fut_task_t *ftask = (fut_task_t *)task;
+    if (!ftask || !ftask->fd_table || !ftask->fd_flags ||
+        fd < 0 || fd >= ftask->max_fds) {
+        return 0;
+    }
+
+    struct fut_file *file = NULL;
+    unsigned long flags = fut_irqsave();
+    fut_spinlock_acquire(&ftask->fd_lock);
+    file = __atomic_load_n(&ftask->fd_table[fd], __ATOMIC_ACQUIRE);
+    if (file && (ftask->fd_flags[fd] & FD_CLOEXEC)) {
+        __atomic_store_n(&ftask->fd_table[fd], NULL, __ATOMIC_RELEASE);
+        ftask->fd_flags[fd] = 0;
+    } else {
+        file = NULL;
+    }
+    fut_spinlock_release(&ftask->fd_lock);
+    fut_irqrestore(flags);
+
+    if (!file) {
+        return 0;
+    }
+
+    release_detached_file(ftask, fd, file);
+    return 1;
+}
+
 static int try_open_chrdev(const char *path, int flags) {
     /* Dynamic PTY slave: /dev/pts/<n> — not pre-registered in devfs */
     if (path[0] == '/' && path[1] == 'd' && path[2] == 'e' && path[3] == 'v' &&

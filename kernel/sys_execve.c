@@ -944,24 +944,30 @@ long sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
         }
     }
 
-    /* Phase 2: Count FDs to close (per-FD flags in task->fd_flags[]) */
+    /* Phase 2: Count FDs to close (per-FD flags in task->fd_flags[]).
+     * Sample the slot and FD_CLOEXEC under fd_lock via
+     * fut_file_get_with_flags(), matching the ELF loader inherited-fd loops
+     * and avoiding unlocked fd_table/fd_flags races with close/dup. */
     __attribute__((unused)) int cloexec_count = 0;
     if (task->fd_table && task->fd_flags) {
         for (int i = 0; i < task->max_fds; i++) {
-            if (task->fd_table[i] != NULL && (task->fd_flags[i] & FD_CLOEXEC)) {
+            int fd_flags = 0;
+            struct fut_file *file = fut_file_get_with_flags(task, i, &fd_flags);
+            if (!file)
+                continue;
+            if (fd_flags & FD_CLOEXEC)
                 cloexec_count++;
-            }
+            fut_file_put(file);
         }
     }
 
     /* Close all FDs marked with FD_CLOEXEC before executing new binary.
-     * fut_vfs_close() sets fd_table[i]=NULL and fd_flags[i]=0, so there
-     * is no risk of stale FD_CLOEXEC flags leaking to reused slots. */
+     * The helper tests FD_CLOEXEC and detaches the slot under fd_lock, so
+     * a concurrent close/dup cannot swap fd i between the flag sample and
+     * the close. */
     if (task->fd_table && task->fd_flags) {
         for (int i = 0; i < task->max_fds; i++) {
-            if (task->fd_table[i] != NULL && (task->fd_flags[i] & FD_CLOEXEC)) {
-                fut_vfs_close(i);
-            }
+            fut_vfs_close_if_cloexec(task, i);
         }
     }
 

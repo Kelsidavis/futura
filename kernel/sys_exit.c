@@ -241,10 +241,8 @@ long sys_exit(int status) {
         /* Close all open file descriptors to prevent resource leaks */
         if (task->fd_table) {
             for (int i = 0; i < task->max_fds; i++) {
-                if (task->fd_table[i] != NULL) {
-                    fut_vfs_close(i);
+                if (fut_vfs_close(i) == 0)
                     fds_closed++;
-                }
             }
         }
 
@@ -286,10 +284,8 @@ long sys_exit_group(int status) {
     /* Close FDs and run hooks before killing the task */
     if (task) {
         if (task->fd_table) {
-            for (int i = 0; i < task->max_fds; i++) {
-                if (task->fd_table[i] != NULL)
-                    fut_vfs_close(i);
-            }
+            for (int i = 0; i < task->max_fds; i++)
+                (void)fut_vfs_close(i);
         }
         for (int i = 0; i < exit_hooks.count && i < MAX_EXIT_HOOKS; i++) {
             if (exit_hooks.hooks[i].cleanup_fn != NULL)

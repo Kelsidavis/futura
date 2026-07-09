@@ -198,13 +198,24 @@ direct SMP boot/test with
 EXTRA_QEMU_FLAGS="-smp 2"` (`RUNNER COMPLETE (2735/2738 -- plan
 over-counted by 3)`, `[RUN] PASS`).
 
+The follow-up cleanup tranche removed the remaining direct
+close-on-exec scan in `sys_execve()`: the count pass samples the slot and
+`FD_CLOEXEC` bit with `fut_file_get_with_flags()`, and the close pass now
+uses `fut_vfs_close_if_cloexec()` so the flag check and fd-table detach
+happen under `fd_lock`. `sys_exit()` and `sys_exit_group()` also no longer
+pre-test `task->fd_table[]` before cleanup; they iterate the fd range and
+let `fut_vfs_close()` perform the locked descriptor removal.
+Validation for this cleanup passed `make kernel`, `make test`, and the
+direct `-smp 2 smp_sched` boot/test (`RUNNER COMPLETE (2735/2738 -- plan
+over-counted by 3)`, `[RUN] PASS`).
+
 **Remaining fd follow-up**: direct `task->fd_table[]` sites still need
 final classification. The remaining production hits are helper
 definitions, NULL-check-only errno/existence probes, newly-created-task
-fd-table writes before publication, task teardown, and proc/debug
-summaries. They should be either documented as non-dereferencing or
-converted if a later audit finds a retained or dereferenced file
-pointer.
+fd-table writes before publication, task teardown, proc/debug
+summaries, and test-only fd inspection. They should be either
+documented as non-dereferencing or converted if a later audit finds a
+retained or dereferenced file pointer.
 
 ### B. `-smp 2 smp_sched` clear-child-tid scheduler failure fixed
 Validation after the fd inheritance/kcmp tranche exposed a scheduler

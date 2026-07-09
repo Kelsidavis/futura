@@ -250,27 +250,32 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
      * for libc recvfrom() probes that branch on ENOTSOCK.  Same
      * split as the matching sendto / bind / connect / accept /
      * listen / shutdown / setsockopt / getsockname fixes. */
-    struct fut_file *file = vfs_get_file(local_sockfd);
-    if (!file) {
+    struct fut_file *sock_pin = NULL;
+    fut_socket_t *socket = get_socket_pinned(local_sockfd, &sock_pin);
+    if (!socket) {
+        if (sock_pin) {
+            fut_printf("[RECVFROM] recvfrom(sockfd=%d [%s]) -> ENOTSOCK (not a socket)\n",
+                       local_sockfd, fd_category);
+            fut_file_put(sock_pin);
+            return -ENOTSOCK;
+        }
         fut_printf("[RECVFROM] recvfrom(sockfd=%d [%s]) -> EBADF (fd not open)\n",
                    local_sockfd, fd_category);
         return -EBADF;
     }
-    {
-        extern fut_socket_t *get_socket_from_fd(int fd);
-        if (!get_socket_from_fd(local_sockfd)) {
-            fut_printf("[RECVFROM] recvfrom(sockfd=%d [%s]) -> ENOTSOCK (not a socket)\n",
-                       local_sockfd, fd_category);
-            return -ENOTSOCK;
-        }
-    }
+
+#define RECVFROM_RETURN(value) do { \
+        ssize_t __recvfrom_ret = (ssize_t)(value); \
+        fut_file_put(sock_pin); \
+        return __recvfrom_ret; \
+    } while (0)
 
     /* Handle zero-length receive — Wayland clients commonly issue
      * len=0 reads as a wakeup probe; logging each one was per-frame
      * console spam. Silent success matches Linux. */
     if (local_len == 0) {
         (void)fd_category;
-        return 0;
+        RECVFROM_RETURN(0);
     }
 
     /* src_addr/addrlen consistency validation
@@ -279,7 +284,7 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
     if (local_src_addr != NULL && local_addrlen == NULL) {
         fut_printf("[RECVFROM] recvfrom(sockfd=%d) -> EFAULT "
                    "(src_addr provided but addrlen is NULL)\n", local_sockfd);
-        return -EFAULT;
+        RECVFROM_RETURN(-EFAULT);
     }
 
     /* COMPREHENSIVE SECURITY HARDENING
@@ -472,14 +477,14 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
         fut_printf("[RECVFROM] recvfrom(sockfd=%d [%s], len=%zu [%s]) -> EINVAL "
                    "(length exceeds max %zu bytes, memory exhaustion prevention)\n",
                    local_sockfd, fd_category, local_len, size_category, MAX_RECV_SIZE);
-        return -EINVAL;
+        RECVFROM_RETURN(-EINVAL);
     }
 
     /* Validate buf write permission early (kernel writes received data) */
     if (local_buf && local_len > 0 && recv_access_ok_write(local_buf, local_len) != 0) {
         fut_printf("[RECVFROM] recvfrom(sockfd=%d, len=%zu) -> EFAULT (buf not writable)\n",
                    local_sockfd, local_len);
-        return -EFAULT;
+        RECVFROM_RETURN(-EFAULT);
     }
 
     /* NULL buffer is a pointer fault (EFAULT) per Linux recvfrom(2) — the
@@ -487,7 +492,7 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
     if (!local_buf) {
         fut_printf("[RECVFROM] recvfrom(sockfd=%d [%s], buf=NULL, len=%zu, pid=%u) -> EFAULT\n",
                    local_sockfd, fd_category, local_len, task->pid);
-        return -EFAULT;
+        RECVFROM_RETURN(-EFAULT);
     }
 
     /* Kernel buffer: small receives use a stack buffer to avoid hammering
@@ -503,33 +508,33 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
             fut_printf("[RECVFROM] recvfrom(sockfd=%d [%s], len=%zu [%s], pid=%u) -> ENOMEM "
                        "(kernel buffer allocation failed)\n",
                        local_sockfd, fd_category, local_len, size_category, task->pid);
-            return -ENOMEM;
+            RECVFROM_RETURN(-ENOMEM);
         }
         kbuf_on_heap = true;
     }
 
+#define RECVFROM_FREE_RETURN(value) do { \
+        ssize_t __recvfrom_ret = (ssize_t)(value); \
+        if (kbuf_on_heap) fut_free(kbuf); \
+        fut_file_put(sock_pin); \
+        return __recvfrom_ret; \
+    } while (0)
+
     /* AF_NETLINK: drain pending response buffer directly */
-    {
-        extern fut_socket_t *get_socket_from_fd(int fd);
-        fut_socket_t *nlsock = get_socket_from_fd(local_sockfd);
-        if (nlsock && nlsock->address_family == 16 /* AF_NETLINK */) {
-            extern ssize_t netlink_handle_recv(fut_socket_t *sock,
-                                               void *out_buf, size_t out_len);
-            ssize_t got = netlink_handle_recv(nlsock, kbuf, local_len);
-            if (got > 0 && recv_copy_to_user(local_buf, kbuf, (size_t)got) != 0) {
-                if (kbuf_on_heap) fut_free(kbuf);
-                return -EFAULT;
-            }
-            if (kbuf_on_heap) fut_free(kbuf);
-            return got;
+    if (socket->address_family == 16 /* AF_NETLINK */) {
+        extern ssize_t netlink_handle_recv(fut_socket_t *sock,
+                                           void *out_buf, size_t out_len);
+        ssize_t got = netlink_handle_recv(socket, kbuf, local_len);
+        if (got > 0 && recv_copy_to_user(local_buf, kbuf, (size_t)got) != 0) {
+            RECVFROM_FREE_RETURN(-EFAULT);
         }
+        RECVFROM_FREE_RETURN(got);
     }
 
     /* For SOCK_DGRAM sockets with a dgram_queue, use the datagram receive path */
     {
-        extern fut_socket_t *get_socket_from_fd(int fd);
-        fut_socket_t *dgsock = get_socket_from_fd(local_sockfd);
-        if (dgsock && (dgsock->socket_type == 2 /* SOCK_DGRAM */ ||
+        fut_socket_t *dgsock = socket;
+        if ((dgsock->socket_type == 2 /* SOCK_DGRAM */ ||
                        dgsock->socket_type == 3 /* SOCK_RAW */) &&
             !dgsock->pair && dgsock->dgram_queue) {
             char sender_path[108];
@@ -555,13 +560,11 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
             if ((local_flags & MSG_DONTWAIT) && dg_task)
                 dg_task->msg_dontwait = dg_saved;
             if (dg_ret < 0) {
-                if (kbuf_on_heap) fut_free(kbuf);
-                return dg_ret;
+                RECVFROM_FREE_RETURN(dg_ret);
             }
             if (dg_ret > 0) {
                 if (recv_copy_to_user(local_buf, kbuf, (size_t)dg_ret) != 0) {
-                    if (kbuf_on_heap) fut_free(kbuf);
-                    return -EFAULT;
+                    RECVFROM_FREE_RETURN(-EFAULT);
                 }
             }
             if (kbuf_on_heap) fut_free(kbuf);
@@ -600,8 +603,8 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
             }
             /* MSG_TRUNC: return actual datagram length even if buffer was too small */
             if ((local_flags & MSG_TRUNC) && actual_dgram_len > (size_t)local_len)
-                return (ssize_t)actual_dgram_len;
-            return dg_ret;
+                RECVFROM_RETURN((ssize_t)actual_dgram_len);
+            RECVFROM_RETURN(dg_ret);
         }
     }
 
@@ -616,24 +619,16 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
     /* Read from socket — use peek path for MSG_PEEK, loop for MSG_WAITALL */
     ssize_t ret;
     if (local_flags & MSG_PEEK) {
-        extern fut_socket_t *get_socket_from_fd(int fd);
-        fut_socket_t *sock = get_socket_from_fd(local_sockfd);
-        if (sock) {
-            ret = fut_socket_recv_peek(sock, kbuf, local_len);
-        } else {
-            ret = fut_vfs_read(local_sockfd, kbuf, local_len);
-        }
+        ret = fut_socket_recv_peek(socket, kbuf, local_len);
     } else if ((local_flags & MSG_WAITALL) && !(local_flags & MSG_DONTWAIT)) {
         /* MSG_WAITALL: keep reading until the full buffer is filled, EOF, or error.
          * Only applies to SOCK_STREAM; message-oriented sockets (DGRAM and
          * SEQPACKET) ignore MSG_WAITALL — each recv returns exactly one message.
          * Looping on SEQPACKET would concatenate messages, breaking boundaries. */
-        extern fut_socket_t *get_socket_from_fd(int fd);
-        fut_socket_t *wtsock = get_socket_from_fd(local_sockfd);
-        bool is_msg_oriented = wtsock &&
-            (wtsock->socket_type == 2 /* SOCK_DGRAM */ ||
-             wtsock->socket_type == 3 /* SOCK_RAW */ ||
-             wtsock->socket_type == 5 /* SOCK_SEQPACKET */);
+        bool is_msg_oriented =
+            (socket->socket_type == 2 /* SOCK_DGRAM */ ||
+             socket->socket_type == 3 /* SOCK_RAW */ ||
+             socket->socket_type == 5 /* SOCK_SEQPACKET */);
 
         if (is_msg_oriented) {
             /* DGRAM/SEQPACKET: single receive, MSG_WAITALL ignored */
@@ -686,7 +681,7 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
                    "flags=0x%x [%s], pid=%u) -> %zd (%s)\n",
                    local_sockfd, fd_category, local_len, size_category,
                    local_flags, flags_description, task->pid, ret, error_desc);
-        return ret;
+        RECVFROM_FREE_RETURN(ret);
     }
 
     /* Copy to userspace */
@@ -696,7 +691,7 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
             fut_printf("[RECVFROM] recvfrom(sockfd=%d [%s], len=%zu [%s], pid=%u) -> EFAULT "
                        "(copy_to_user failed)\n",
                        local_sockfd, fd_category, local_len, size_category, task->pid);
-            return -EFAULT;
+            RECVFROM_FREE_RETURN(-EFAULT);
         }
     }
 
@@ -713,11 +708,9 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
         if (recv_copy_from_user(&len, local_addrlen, sizeof(socklen_t)) != 0) {
             fut_printf("[RECVFROM] recvfrom(sockfd=%d) -> EFAULT (failed to read addrlen)\n",
                        local_sockfd);
-            return -EFAULT;
+            RECVFROM_RETURN(-EFAULT);
         }
 
-        /* Get socket to retrieve peer address */
-        fut_socket_t *socket = get_socket_from_fd(local_sockfd);
         if (socket && socket->address_family == 1 /* AF_UNIX */) {
             /* AF_UNIX: Return peer's bound path if connected */
             if (socket->pair && socket->pair->peer) {
@@ -806,11 +799,11 @@ ssize_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags,
      * framed recv path in fut_socket_recv stores the full message length when
      * truncation occurs. Return that instead of the truncated byte count. */
     if ((local_flags & MSG_TRUNC) && ret > 0) {
-        extern fut_socket_t *get_socket_from_fd(int fd);
-        fut_socket_t *tsock = get_socket_from_fd(local_sockfd);
-        if (tsock && tsock->pair != NULL && tsock->last_recv_full_msg_len > 0)
-            return (ssize_t)tsock->last_recv_full_msg_len;
+        if (socket->pair != NULL && socket->last_recv_full_msg_len > 0)
+            RECVFROM_RETURN((ssize_t)socket->last_recv_full_msg_len);
     }
 
-    return ret;
+    RECVFROM_RETURN(ret);
+#undef RECVFROM_FREE_RETURN
+#undef RECVFROM_RETURN
 }

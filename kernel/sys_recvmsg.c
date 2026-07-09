@@ -127,26 +127,32 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
      * recvmsg() probes that branch on ENOTSOCK.  Same split as the
      * matching sendmsg / sendto / recvfrom / bind / connect / accept /
      * listen / shutdown / setsockopt / getsockname fixes. */
-    struct fut_file *file = vfs_get_file(local_sockfd);
-    if (!file) {
+    struct fut_file *sock_pin = NULL;
+    fut_socket_t *socket = get_socket_pinned(local_sockfd, &sock_pin);
+    if (!socket) {
+        if (sock_pin) {
+            fut_file_put(sock_pin);
+            return -ENOTSOCK;
+        }
         RECVMSG_LOG("[RECVMSG] ERROR: socket fd %d is not valid\n", local_sockfd);
         return -EBADF;
     }
-    {
-        extern fut_socket_t *get_socket_from_fd(int fd);
-        if (!get_socket_from_fd(local_sockfd))
-            return -ENOTSOCK;
-    }
+
+#define RECVMSG_RETURN(value) do { \
+        ssize_t __recvmsg_ret = (ssize_t)(value); \
+        fut_file_put(sock_pin); \
+        return __recvmsg_ret; \
+    } while (0)
 
     /* Validate msg pointer */
     if (!local_msg) {
-        return -EFAULT;
+        RECVMSG_RETURN(-EFAULT);
     }
 
     /* Copy msghdr from userspace */
     struct msghdr kmsg;
     if (recvmsg_copy_from_user(&kmsg, local_msg, sizeof(struct msghdr)) != 0) {
-        return -EFAULT;
+        RECVMSG_RETURN(-EFAULT);
     }
 
     /* Validate control message length to prevent DoS and buffer overflows
@@ -230,7 +236,7 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
             RECVMSG_LOG("[RECVMSG] recvmsg(sockfd=%d, controllen=%zu) -> EINVAL "
                        "(control message too large, max %zu bytes)\n",
                        local_sockfd, kmsg.msg_controllen, MAX_CONTROL_LEN);
-            return -EINVAL;
+            RECVMSG_RETURN(-EINVAL);
         }
 
         /* Validate control buffer pointer is not NULL */
@@ -238,19 +244,19 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
             RECVMSG_LOG("[RECVMSG] recvmsg(sockfd=%d, controllen=%zu) -> EFAULT "
                        "(msg_control is NULL with non-zero length)\n",
                        local_sockfd, kmsg.msg_controllen);
-            return -EFAULT;
+            RECVMSG_RETURN(-EFAULT);
         }
     }
 
     /* Validate iovlen */
     if (kmsg.msg_iovlen == 0) {
         RECVMSG_LOG("[RECVMSG] recvmsg(sockfd=%d, iovlen=0) -> 0 (nothing to receive)\n", local_sockfd);
-        return 0;  /* Nothing to receive */
+        RECVMSG_RETURN(0);  /* Nothing to receive */
     }
     if (kmsg.msg_iovlen > 1024) {
         RECVMSG_LOG("[RECVMSG] recvmsg(sockfd=%d, iovlen=%zu) -> EINVAL (exceeds UIO_MAXIOV=1024)\n",
                    local_sockfd, kmsg.msg_iovlen);
-        return -EINVAL;
+        RECVMSG_RETURN(-EINVAL);
     }
 
     /* Phase 2: Calculate total size, validate iovecs, and gather statistics */
@@ -265,7 +271,7 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
         if (recvmsg_copy_from_user(&iov, &kmsg.msg_iov[i], sizeof(struct iovec)) != 0) {
             RECVMSG_LOG("[RECVMSG] recvmsg(sockfd=%d, iovlen=%zu) -> EFAULT (copy_from_user iovec %zu failed)\n",
                        local_sockfd, kmsg.msg_iovlen, i);
-            return -EFAULT;
+            RECVMSG_RETURN(-EFAULT);
         }
 
         /* Prevent integer overflow in total_size accumulation
@@ -277,7 +283,7 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
             RECVMSG_LOG("[RECVMSG] recvmsg(sockfd=%d, iovlen=%zu) -> EINVAL "
                        "(size overflow at iovec %zu, total=%zu, iov_len=%zu)\n",
                        local_sockfd, kmsg.msg_iovlen, i, total_size, iov.iov_len);
-            return -EINVAL;
+            RECVMSG_RETURN(-EINVAL);
         }
         total_size += iov.iov_len;
 
@@ -326,43 +332,39 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
      */
 
     /* AF_NETLINK: drain pre-built response directly into the first iov. */
-    {
-        extern fut_socket_t *get_socket_from_fd(int fd);
-        fut_socket_t *nl_sock = get_socket_from_fd(local_sockfd);
-        if (nl_sock && nl_sock->address_family == 16 /* AF_NETLINK */) {
-            extern ssize_t netlink_handle_recv(fut_socket_t *sock,
-                                               void *out_buf, size_t out_len);
-            ssize_t total_nl = 0;
-            for (size_t i = 0; i < kmsg.msg_iovlen; i++) {
-                struct iovec iov;
-                if (recvmsg_copy_from_user(&iov, &kmsg.msg_iov[i], sizeof(iov)) != 0)
-                    break;
-                if (!iov.iov_base || iov.iov_len == 0) continue;
-                /* Bounce buffer: small segments use stack to avoid slab
-                 * churn on every netlink RTM_* response. */
-                uint8_t stack_buf[2048];
-                void *kbuf;
-                bool kbuf_on_heap = false;
-                if (iov.iov_len <= sizeof(stack_buf)) {
-                    kbuf = stack_buf;
-                } else {
-                    kbuf = fut_malloc(iov.iov_len);
-                    if (!kbuf) break;
-                    kbuf_on_heap = true;
-                }
-                ssize_t got = netlink_handle_recv(nl_sock, kbuf, iov.iov_len);
-                if (got > 0) {
-                    if (recvmsg_copy_to_user(iov.iov_base, kbuf, (size_t)got) != 0) {
-                        if (kbuf_on_heap) fut_free(kbuf);
-                        break;
-                    }
-                    total_nl += got;
-                }
-                if (kbuf_on_heap) fut_free(kbuf);
-                if (got <= 0) break;
+    if (socket->address_family == 16 /* AF_NETLINK */) {
+        extern ssize_t netlink_handle_recv(fut_socket_t *sock,
+                                           void *out_buf, size_t out_len);
+        ssize_t total_nl = 0;
+        for (size_t i = 0; i < kmsg.msg_iovlen; i++) {
+            struct iovec iov;
+            if (recvmsg_copy_from_user(&iov, &kmsg.msg_iov[i], sizeof(iov)) != 0)
+                break;
+            if (!iov.iov_base || iov.iov_len == 0) continue;
+            /* Bounce buffer: small segments use stack to avoid slab
+             * churn on every netlink RTM_* response. */
+            uint8_t stack_buf[2048];
+            void *kbuf;
+            bool kbuf_on_heap = false;
+            if (iov.iov_len <= sizeof(stack_buf)) {
+                kbuf = stack_buf;
+            } else {
+                kbuf = fut_malloc(iov.iov_len);
+                if (!kbuf) break;
+                kbuf_on_heap = true;
             }
-            return total_nl;
+            ssize_t got = netlink_handle_recv(socket, kbuf, iov.iov_len);
+            if (got > 0) {
+                if (recvmsg_copy_to_user(iov.iov_base, kbuf, (size_t)got) != 0) {
+                    if (kbuf_on_heap) fut_free(kbuf);
+                    break;
+                }
+                total_nl += got;
+            }
+            if (kbuf_on_heap) fut_free(kbuf);
+            if (got <= 0) break;
         }
+        RECVMSG_RETURN(total_nl);
     }
 
     /* Apply MSG_DONTWAIT via per-task flag (avoids mutating shared sock->flags) */
@@ -379,7 +381,7 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
     bool msg_trunc_set = false;
     size_t dgram_actual_len = 0;  /* Real datagram length for MSG_TRUNC return value */
     /* Identify DGRAM socket once; used for MSG_TRUNC and direct dgram recv path */
-    fut_socket_t *dgsock = get_socket_from_fd(local_sockfd);
+    fut_socket_t *dgsock = socket;
     /* Named DGRAM (no stream pair): use direct dgram path for MSG_TRUNC detection.
      * Socketpair DGRAM sockets have pair!=NULL and use the stream recv path. */
     bool is_dgram_sock = (dgsock && dgsock->socket_type == SOCK_DGRAM &&
@@ -493,10 +495,7 @@ ssize_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
                 dgram_actual_len = actual_len;
             }
         } else if (do_peek) {
-            extern ssize_t fut_socket_recv_peek(fut_socket_t *sock, void *buf, size_t len);
-            extern fut_socket_t *get_socket_from_fd(int fd);
-            fut_socket_t *psock = get_socket_from_fd(local_sockfd);
-            ret = psock ? fut_socket_recv_peek(psock, kbuf, iov.iov_len) : -EBADF;
+            ret = fut_socket_recv_peek(socket, kbuf, iov.iov_len);
         } else if (do_waitall) {
             ssize_t got = 0;
             ret = 0;
@@ -576,9 +575,7 @@ iov_loop_done:
     /* SOCK_SEQPACKET: set MSG_EOR when a complete message boundary is received.
      * Each SEQPACKET read returns exactly one message, so MSG_EOR is always set. */
     if (total_received > 0) {
-        extern fut_socket_t *get_socket_from_fd(int fd);
-        fut_socket_t *eor_sock = get_socket_from_fd(local_sockfd);
-        if (eor_sock && eor_sock->socket_type == SOCK_SEQPACKET)
+        if (socket->socket_type == SOCK_SEQPACKET)
             kmsg.msg_flags |= MSG_EOR;
     }
 
@@ -586,11 +583,8 @@ iov_loop_done:
     kmsg.msg_controllen = 0;  /* Default: no ancillary data */
 
     if (total_received > 0) {
-        extern fut_socket_t *get_socket_from_fd(int fd);
-        fut_socket_t *sock = get_socket_from_fd(local_sockfd);
-
         /* Check the receive-direction pair (pair_reverse) for queued FDs */
-        fut_socket_pair_t *recv_pair = sock ? sock->pair_reverse : NULL;
+        fut_socket_pair_t *recv_pair = socket->pair_reverse;
         if (recv_pair && recv_pair->fd_queue_count > 0 &&
             kmsg.msg_control != NULL) {
             /* Dequeue FDs and install in receiver's FD table */
@@ -691,15 +685,13 @@ iov_loop_done:
      * credentials only when the peer creds are unset (e.g. socketpair in the
      * same process where peer_pid is 0). */
     if (total_received > 0 && kmsg.msg_control != NULL) {
-        extern fut_socket_t *get_socket_from_fd(int fd);
-        fut_socket_t *passcred_sock = get_socket_from_fd(local_sockfd);
-        if (passcred_sock && passcred_sock->passcred) {
+        if (socket->passcred) {
             struct ucred_t { int32_t pid; uint32_t uid; uint32_t gid; } cred;
-            if (passcred_sock->peer_pid != 0) {
+            if (socket->peer_pid != 0) {
                 /* Use the peer credentials set at connect/accept time */
-                cred.pid = (int32_t)passcred_sock->peer_pid;
-                cred.uid = passcred_sock->peer_uid;
-                cred.gid = passcred_sock->peer_gid;
+                cred.pid = (int32_t)socket->peer_pid;
+                cred.uid = socket->peer_uid;
+                cred.gid = socket->peer_gid;
             } else {
                 /* Fallback for socketpair (same-process): use current task */
                 cred.pid = task ? (int32_t)task->pid : 0;
@@ -741,14 +733,12 @@ iov_loop_done:
      * When SO_TIMESTAMP is set, deliver SCM_TIMESTAMP with struct timeval (8+8 bytes).
      * When SO_TIMESTAMPNS is set, deliver SCM_TIMESTAMPNS with struct timespec (8+8 bytes). */
     if (total_received > 0 && kmsg.msg_control != NULL) {
-        extern fut_socket_t *get_socket_from_fd(int fd);
-        fut_socket_t *ts_sock = get_socket_from_fd(local_sockfd);
-        if (ts_sock && (ts_sock->so_flags & (FUT_SO_F_TIMESTAMP | FUT_SO_F_TIMESTAMPNS))) {
+        if (socket->so_flags & (FUT_SO_F_TIMESTAMP | FUT_SO_F_TIMESTAMPNS)) {
             extern volatile int64_t g_realtime_offset_sec;
             uint64_t ticks = fut_get_ticks();
             uint64_t total_ns = ticks * 10000000ULL;  /* 100 Hz → 10ms/tick */
 
-            bool use_ns = (ts_sock->so_flags & FUT_SO_F_TIMESTAMPNS) != 0;
+            bool use_ns = (socket->so_flags & FUT_SO_F_TIMESTAMPNS) != 0;
             size_t ts_data_size = use_ns ? (2 * sizeof(int64_t)) : (2 * sizeof(int64_t));
             size_t ts_cmsg_size = CMSG_SPACE(ts_data_size);
 
@@ -838,5 +828,7 @@ iov_loop_done:
         dw_task->msg_dontwait = saved_dontwait;
     }
 
+    fut_file_put(sock_pin);
     return total_received;
+#undef RECVMSG_RETURN
 }

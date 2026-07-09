@@ -142,18 +142,20 @@ dereference or retain `fut_socket_t *` past the fd-table lookup. It
 converted the socket metadata/control families that had many early
 returns (`bind`, `connect`, `listen`, `accept`/`accept4`, `close`,
 `shutdown`, `sendmsg`, `sendmmsg`, `recvmmsg`, `setsockopt`,
-`getsockopt`, `getpeername`, `getsockname`) and procfs
+`getsockopt`, `getpeername`, `getsockname`) and the socket data paths
+that keep touching the socket after userspace copies or queued-message
+work (`sendto`, `recvfrom`, `recvmsg`). It also converted procfs
 `/proc/<pid>/fd*` readers that inspect another task's fd. The long
-option handlers now use local cleanup-return helpers so new branches
-cannot silently leak the pin.
+option and send/receive handlers now use local cleanup-return helpers
+so new branches cannot silently leak the pin.
 
 **Remaining fd follow-up**: direct `task->fd_table[fd]` dereferences
 that still need the same pinning treatment or a documented probe-only
 classification. Known higher-risk sites now are `kcmp`,
-fork/exec inheritance/close paths, the socket data paths
-(`sendto`, `recvfrom`, `recvmsg`), `poll`/`select`/`epoll` socket
+fork/exec inheritance/close paths, `poll`/`select`/`epoll` socket
 readiness probes, AIO fd helper users, `fcntl` socket-flag side paths,
-and `sys_fileio_advanced` socket checks. Several remaining
+`sys_fileio_advanced` socket checks, and the socket-layer helper
+wrappers that still call `get_socket_from_fd` internally. Several remaining
 `fd_table[]` reads are NULL-check-only probes or owner-side table
 mutation during fd creation/dup/close; those should stay documented as
 non-dereferencing once audited.

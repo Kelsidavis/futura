@@ -51,9 +51,9 @@ int fut_vfs_sync_fs(struct fut_mount *mount);
 #define MAX_FS_TYPES 16
 #define MAX_MOUNTS 32
 #define MAX_OPEN_FILES 256
-/* Heap-allocated per lookup call (fut_malloc), so depth can be generous.
- * 16 * 256 = 4KB per allocation; supports paths like /proc/self/task/<tid>/status
- * which have 5 components, plus room for deeply-nested filesystem paths. */
+/* Stack-allocated per lookup_vnode_d frame: 16 × 256 = 4 KB.  This is the
+ * dominant cost in the recursive symlink resolution — keep it in mind when
+ * adjusting the ELOOP depth limit (currently 8). */
 #define MAX_PATH_COMPONENTS 16
 
 static const struct fut_fs_type *registered_fs[MAX_FS_TYPES];
@@ -993,14 +993,11 @@ static int lookup_vnode_d(const char *path, struct fut_vnode **vnode, int depth)
         return -EINVAL;
     }
 
-    /* Bound recursive symlink resolution. The symlink-following path below
-     * calls back into lookup_vnode_d on the link target, so a cycle
-     * (a -> b -> a) would recurse until the kernel stack overflows and the
-     * CPU faults (GPF) instead of returning an error. Because each level is a
-     * real ~1KB stack frame (not an iterative step), cap the chain well below
-     * Linux's MAXSYMLINKS=40 — 20 is far beyond any legitimate chain yet leaves
-     * ample headroom on the 64 KB kernel stack — and report ELOOP. */
-    if (depth > 20) {
+    /* Bound recursive symlink resolution.  Each level carries ~5.5 KB of
+     * stack (abs_buf 256 + components 4096 + link/dir/abs buffers 1024),
+     * so 8 levels ≈ 44 KB — safe on the 64 KB kernel stack with room for
+     * ISR frames.  The old limit of 20 overflowed at ~12 levels. */
+    if (depth >= 8) {
         return -ELOOP;
     }
 

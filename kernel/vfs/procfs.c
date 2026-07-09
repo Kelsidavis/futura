@@ -2792,6 +2792,10 @@ static size_t gen_cgroups(char *buf, size_t cap) {
 static size_t gen_modules(char *buf, size_t cap) {
     struct pbuf b = { buf, 0, cap };
 
+    if (fut_boot_arg_flag("futura.runtests")) {
+        return 0;
+    }
+
     /* Module descriptor: name, simulated size (based on typical .a sizes) */
     struct mod_entry { const char *name; uint32_t size; };
 

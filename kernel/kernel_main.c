@@ -2954,39 +2954,56 @@ void fut_kernel_main(void) {
     /* ========================================
      *   Stage Core Wayland Binaries (Production)
      * ======================================== */
-    fut_printf("[INIT] Staging futura-wayland compositor...\n");
-    wayland_stage = fut_stage_wayland_compositor_binary();
-    if (wayland_stage != 0) {
-        fut_printf("[WARN] Failed to stage futura-wayland binary (error %d, continuing)\n", wayland_stage);
-        /* Continue even if staging fails for interactive testing */
+    if (run_tests) {
+        fut_printf("[INIT] Skipping Wayland binary staging for self-test boot\n");
     } else {
-        fut_printf("[INIT] futura-wayland staged at /sbin/futura-wayland\n");
+        fut_printf("[INIT] Staging futura-wayland compositor...\n");
+        wayland_stage = fut_stage_wayland_compositor_binary();
+        if (wayland_stage != 0) {
+            fut_printf("[WARN] Failed to stage futura-wayland binary (error %d, continuing)\n", wayland_stage);
+            /* Continue even if staging fails for interactive testing */
+        } else {
+            fut_printf("[INIT] futura-wayland staged at /sbin/futura-wayland\n");
+        }
+
+        int wl_term_stage = fut_stage_wl_term_binary();
+        if (wl_term_stage != 0) {
+            fut_printf("[WARN] Failed to stage wl-term binary (error %d)\n", wl_term_stage);
+        } else {
+            fut_printf("[INIT] wl-term staged at /bin/wl-term\n");
+        }
+
+        extern int fut_stage_wl_panel_binary(void);
+        int wl_panel_stage = fut_stage_wl_panel_binary();
+        if (wl_panel_stage != 0) {
+            fut_printf("[WARN] Failed to stage wl-panel binary (error %d)\n", wl_panel_stage);
+        } else {
+            fut_printf("[INIT] wl-panel staged at /bin/wl-panel\n");
+        }
+
+        extern int fut_stage_futura_shell_binary(void);
+        int shell_stage = fut_stage_futura_shell_binary();
+        if (shell_stage != 0) {
+            fut_printf("[WARN] Failed to stage futura-shell binary (error %d)\n", shell_stage);
+        } else {
+            fut_printf("[INIT] futura-shell staged at /bin/futura-shell\n");
+        }
+
+        /* Stage startup sound assets at /usr/share/sounds/. The .pcm is a
+         * 10-second 22.05 kHz stereo S16LE clip with a 1-second fade-out —
+         * playable as soon as a working HDA / SST output path lands. The
+         * .mp3 is the full-quality source-of-truth for whenever an MP3
+         * decoder is wired in. */
+        extern int fut_stage_startup_sound(void);
+        int sound_stage = fut_stage_startup_sound();
+        if (sound_stage != 0) {
+            fut_printf("[WARN] Failed to stage startup sound (error %d)\n", sound_stage);
+        } else {
+            fut_printf("[INIT] startup sound staged at /usr/share/sounds/startup.{mp3,pcm}\n");
+        }
     }
 
-    int wl_term_stage = fut_stage_wl_term_binary();
-    if (wl_term_stage != 0) {
-        fut_printf("[WARN] Failed to stage wl-term binary (error %d)\n", wl_term_stage);
-    } else {
-        fut_printf("[INIT] wl-term staged at /bin/wl-term\n");
-    }
-
-    extern int fut_stage_wl_panel_binary(void);
-    int wl_panel_stage = fut_stage_wl_panel_binary();
-    if (wl_panel_stage != 0) {
-        fut_printf("[WARN] Failed to stage wl-panel binary (error %d)\n", wl_panel_stage);
-    } else {
-        fut_printf("[INIT] wl-panel staged at /bin/wl-panel\n");
-    }
-
-    extern int fut_stage_futura_shell_binary(void);
-    int shell_stage = fut_stage_futura_shell_binary();
-    if (shell_stage != 0) {
-        fut_printf("[WARN] Failed to stage futura-shell binary (error %d)\n", shell_stage);
-    } else {
-        fut_printf("[INIT] futura-shell staged at /bin/futura-shell\n");
-    }
-
-    /* Stage CLI shell binary for use by wl-term */
+    /* Stage CLI shell for tests and for wl-term in interactive boots. */
     extern int fut_stage_shell_binary(void);
     int cli_shell_stage = fut_stage_shell_binary();
     if (cli_shell_stage != 0) {
@@ -2999,19 +3016,6 @@ void fut_kernel_main(void) {
          * it to /bin/shell so the advertised path actually resolves. */
         extern long sys_symlink(const char *, const char *);
         sys_symlink("/bin/shell", "/bin/sh");
-    }
-
-    /* Stage startup sound assets at /usr/share/sounds/. The .pcm is a
-     * 10-second 22.05 kHz stereo S16LE clip with a 1-second fade-out —
-     * playable as soon as a working HDA / SST output path lands. The
-     * .mp3 is the full-quality source-of-truth for whenever an MP3
-     * decoder is wired in. */
-    extern int fut_stage_startup_sound(void);
-    int sound_stage = fut_stage_startup_sound();
-    if (sound_stage != 0) {
-        fut_printf("[WARN] Failed to stage startup sound (error %d)\n", sound_stage);
-    } else {
-        fut_printf("[INIT] startup sound staged at /usr/share/sounds/startup.{mp3,pcm}\n");
     }
 
 #else
@@ -3463,12 +3467,16 @@ try_ramdisk: (void)0;
      * init, preventing arch_late_init from ever running. */
     extern int fut_stage_init_binary(void);
 
-    fut_printf("[INIT] Staging init process...\n");
-
     /* Stage init */
-    int init_stage = fut_stage_init_binary();
-    if (init_stage != 0) {
-        fut_printf("[WARN] Failed to stage init (error %d)\n", init_stage);
+    int init_stage = -1;
+    if (run_tests) {
+        fut_printf("[INIT] Skipping init process staging for self-test boot\n");
+    } else {
+        fut_printf("[INIT] Staging init process...\n");
+        init_stage = fut_stage_init_binary();
+        if (init_stage != 0) {
+            fut_printf("[WARN] Failed to stage init (error %d)\n", init_stage);
+        }
     }
 #endif
 
@@ -3541,7 +3549,9 @@ try_ramdisk: (void)0;
      *
      * ARM64 launches init from arm64_init_spawner_thread instead. */
     int init_exec = -1;  /* Track init launch result for wayland_ready check */
-    if (init_stage == 0) {
+    if (run_tests) {
+        fut_printf("[INIT] Skipping init process launch for self-test boot\n");
+    } else if (init_stage == 0) {
         fut_printf("[INIT] Launching init process...\n");
         char init_name[] = "init";
         char *init_args[] = { init_name, NULL };
@@ -3590,7 +3600,7 @@ try_ramdisk: (void)0;
 #if ENABLE_WAYLAND
     /* Compositor is now launched by init (which forks and execs it).
      * Check init_exec instead of the old wayland_exec variable. */
-    bool wayland_ready = (init_exec == 0);
+    bool wayland_ready = (!run_tests && init_exec == 0);
 
     if (wayland_ready) {
         /* Allow time for compositor and clients to initialize */
@@ -3610,7 +3620,7 @@ try_ramdisk: (void)0;
             fut_printf("[INIT] Wayland Interactive Mode - Scheduler Starting\n");
             fut_printf("[INIT] ========================================\n");
         }
-    } else {
+    } else if (!run_tests) {
         /* Init failed to launch - still start scheduler for debugging */
         fut_printf("[WARN] Init failed to launch (init_exec: %d)\n", init_exec);
         fut_printf("[WARN] Continuing to scheduler anyway\n");

@@ -726,13 +726,16 @@ static void fut_idt_init(void) {
     fut_idt_set_entry(46, (uint64_t)irq14, 0x08, flags);
     fut_idt_set_entry(47, (uint64_t)irq15, 0x08, flags);
 
-    /* SMP IPIs: halt (0xF0) and TLB shootdown (0xF1). Interrupt gates,
+    /* SMP IPIs: halt (0xF0), TLB shootdown (0xF1), reschedule/wake
+     * (0xF2). Interrupt gates,
      * DPL=0 — only ever raised via the LAPIC ICR. */
     {
         extern void irq240(void);
         extern void irq241(void);
+        extern void irq242(void);
         fut_idt_set_entry(240, (uint64_t)irq240, 0x08, flags);
         fut_idt_set_entry(241, (uint64_t)irq241, 0x08, flags);
+        fut_idt_set_entry(242, (uint64_t)irq242, 0x08, flags);
     }
 
     /* Install system call handler (128) with DPL=3 for user mode */

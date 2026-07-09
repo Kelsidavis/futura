@@ -481,6 +481,7 @@ void fut_sched_add_thread(fut_thread_t *thread) {
      * from ISR context too (where IF is already 0). */
     unsigned long irq_flags = sched_irqsave();
 
+    fut_percpu_t *current_percpu = fut_percpu_get();
     fut_percpu_t *target_percpu = NULL;
 
     /* Cross-CPU thread placement is gated: SMP bring-up (APs online,
@@ -591,6 +592,10 @@ void fut_sched_add_thread(fut_thread_t *thread) {
         return;  // No per-CPU data available
     }
 
+    bool remote_enqueue = (current_percpu &&
+                           target_percpu != current_percpu &&
+                           fut_sched_smp_enabled());
+
     fut_spinlock_acquire(&target_percpu->queue_lock);
 
     // Check if thread is already in the ready queue by walking the list
@@ -621,8 +626,17 @@ void fut_sched_add_thread(fut_thread_t *thread) {
     target_percpu->ready_count++;
     target_percpu->queue_depth = target_percpu->ready_count;
 
+    uint32_t target_cpu_index = target_percpu->cpu_index;
+
     fut_spinlock_release(&target_percpu->queue_lock);
     sched_irqrestore(irq_flags);
+
+#if defined(__x86_64__)
+    if (remote_enqueue) {
+        extern void fut_smp_reschedule_cpu(uint32_t cpu_index);
+        fut_smp_reschedule_cpu(target_cpu_index);
+    }
+#endif
 }
 
 /**

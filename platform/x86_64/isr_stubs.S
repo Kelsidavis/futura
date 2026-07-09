@@ -105,6 +105,7 @@ IRQ 15, 47                              /* Secondary ATA */
  * fut_irq_handler receives them like any other vector. */
 IRQ 240, 240                            /* IPI: halt (panic on another CPU) */
 IRQ 241, 241                            /* IPI: TLB shootdown */
+IRQ 242, 242                            /* IPI: reschedule/wake halted CPU */
 
 /* System call interrupt (128) */
 .extern syscall_entry_c

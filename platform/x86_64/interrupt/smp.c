@@ -40,11 +40,12 @@ uint32_t smp_get_cpu_count(void) {
 }
 
 /* ============================================================
- *   Inter-processor interrupts (vectors 0xF0 halt, 0xF1 TLB)
+ *   Inter-processor interrupts
  * ============================================================ */
 
 #define IPI_VECTOR_HALT 240
 #define IPI_VECTOR_TLB  241
+#define IPI_VECTOR_RESCHEDULE 242
 
 static void udelay(uint32_t usec);
 
@@ -120,6 +121,26 @@ void fut_tlb_shootdown_all(void) {
     }
 
     atomic_store_explicit(&tlb_ipi_lock, 0, memory_order_release);
+}
+
+/**
+ * Wake a CPU that may be halted in its AP idle loop after a remote
+ * scheduler enqueue. The IPI handler itself is a no-op; returning from the
+ * interrupt gets the AP back to the idle loop, which immediately polls the
+ * scheduler before halting again.
+ */
+void fut_smp_reschedule_cpu(uint32_t cpu_index) {
+    uint32_t online = atomic_load_explicit(&cpu_count, memory_order_acquire);
+    if (online <= 1 || cpu_index >= MAX_CPUS) {
+        return;
+    }
+
+    fut_percpu_t *percpu = &fut_percpu_data[cpu_index];
+    if (!percpu->self) {
+        return;
+    }
+
+    lapic_send_ipi(percpu->cpu_id, IPI_VECTOR_RESCHEDULE);
 }
 
 /**
@@ -232,6 +253,7 @@ void ap_main(uint32_t apic_id) {
      * to the idle thread resumes right here. */
     while (1) {
         __asm__ volatile("sti\n\thlt" ::: "memory");
+        fut_schedule();
     }
 }
 

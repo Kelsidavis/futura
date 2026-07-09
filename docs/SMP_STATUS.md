@@ -3,8 +3,8 @@
 **Date**: 2026-07-09
 **Status**: 🟡 **SMP bring-up is functional; cross-CPU thread
 placement remains gated behind `smp_sched` pending the remaining
-direct fd-table classification and the current SMP scheduler/thread
-test failure.**
+direct fd-table classification and the distinct `-smp 4` control-flow
+corruption follow-up.**
 
 - **Default boot** (no flag): every CPU is brought online with full
   per-CPU state (GDT/TSS, IDT, syscall MSRs, LAPIC timer) but stays
@@ -12,8 +12,9 @@ test failure.**
   shipped configuration; single-CPU behaviour is unchanged.
 - **`smp_sched` boot flag**: enables cross-CPU thread placement and
   work stealing. The normal single-BSP scheduling harness passes the
-  full 2735-test suite. The direct `-smp 2` path currently reaches the
-  clear-child-tid/futex tests and fails at test 1236 (below).
+  full 2735-test suite. Direct `-smp 2` validation now completes the
+  full self-test boot (`RUNNER COMPLETE (2735/2738 — plan over-counted
+  by 3)`, harness `PASS`).
 - **`nosmp` boot flag**: disables AP bring-up entirely (single-CPU).
 
 ## What was fixed to get here
@@ -187,23 +188,39 @@ teardown, and proc/debug summaries. They should be either documented
 as non-dereferencing or converted if a later audit finds a retained or
 dereferenced file pointer.
 
-### B. Current `-smp 2 smp_sched` failure: clear-child-tid child never runs
-Validation on 2026-07-09 after the fd inheritance/kcmp tranche:
-`make kernel` passed and `make test` passed with
-`ALL TESTS PASSED (2735/2735)`. Direct SMP validation with
+### B. `-smp 2 smp_sched` clear-child-tid scheduler failure fixed
+Validation after the fd inheritance/kcmp tranche exposed a scheduler
+progress bug: direct SMP boot with
 `timeout 420s make run KAPPEND="futura.runtests async-tests=1 smp_sched"
 EXTRA_QEMU_FLAGS="-smp 2"` brought both CPUs online, enabled
-`smp_sched`, reached the miscellaneous syscall suite, then failed:
+`smp_sched`, then failed at the clear-child-tid self-test:
 `Test 1235: child thread created, tid=8` followed by
-`Test 1236: child never wrote TID (timeout)` and QEMU exit 169.
+`Test 1236: child never wrote TID (timeout)`.
 
-This failure is in the kernel self-test path for
-`CLONE_CHILD_CLEARTID`: a child thread is created, but under
-cross-CPU placement it did not run and publish its TID before the
-parent's bounded yield loop expired. The normal non-`smp_sched`
-`make test` path passes the same test. Next work should inspect
-`fut_thread_create` runnable publication, per-CPU run queue wakeups,
-and the yield loop/wakeup path used by tests 1235-1238.
+The root cause was remote runnable publication without a remote wakeup.
+With `smp_sched` enabled, `fut_sched_add_thread()` can enqueue a new
+READY thread on another CPU's run queue. APs sit in `sti; hlt` when
+idle, and without a reschedule IPI the target CPU might not poll the
+run queue until a later LAPIC timer tick. The parent self-test loop
+could burn through its bounded local yields before that remote tick,
+so the child existed but had not yet run and stored its TID.
+
+The fix adds x86_64 reschedule/wake IPI vector `0xF2`, wires it into
+the IDT and generic IRQ dispatcher as a no-op wake interrupt, adds
+`fut_smp_reschedule_cpu()`, and has `fut_sched_add_thread()` send it
+after a successful remote enqueue. The AP idle loop now calls
+`fut_schedule()` after any interrupt returns before halting again,
+so the IPI wakes the CPU and immediately drains the remote run queue
+without attempting to context-switch from the generic IRQ stub.
+
+Validation on 2026-07-09:
+- `make kernel` passed.
+- Direct SMP validation passed:
+  `timeout 420s make run KAPPEND="futura.runtests async-tests=1 smp_sched"
+  EXTRA_QEMU_FLAGS="-smp 2"` completed with
+  `RUNNER COMPLETE (2735/2738 — plan over-counted by 3)` and harness
+  `PASS`; tests 1235-1238 all passed, including
+  `Test 1236: child TID=8 in g_cleartid_stored_tid`.
 
 ### C. Control-flow corruption at `-smp 4` (distinct bug, UNVALIDATABLE here)
 After the read/write fix, `-smp 4 + smp_sched` runs well past the CAP

@@ -412,6 +412,11 @@ void fut_irq_handler(void *frame_ptr) {
         smp_ipi_tlb_handler();
         return;
     }
+    if (vector == 242) {
+        /* Reschedule/wake IPI. The generic IRQ stub will send EOI; the AP
+         * idle loop polls fut_schedule() after the interrupt returns. */
+        return;
+    }
 
     if (vector < 32 || vector > 47) {
         return;

@@ -96,20 +96,29 @@ long sys_kcmp(int pid1, int pid2, int type,
         /* Compare whether pid1:fd1 and pid2:fd2 reference the same file object */
         int fd1 = (int)idx1, fd2 = (int)idx2;
         if (fd1 < 0 || fd2 < 0) return -EBADF;
-        if (!task1->fd_table || fd1 >= task1->max_fds) return -EBADF;
-        if (!task2->fd_table || fd2 >= task2->max_fds) return -EBADF;
 
-        struct fut_file *f1 = task1->fd_table[fd1];
-        struct fut_file *f2 = task2->fd_table[fd2];
-        if (!f1 || !f2) return -EBADF;
+        struct fut_file *f1 = fut_file_get(task1, fd1);
+        struct fut_file *f2 = fut_file_get(task2, fd2);
+        if (!f1 || !f2) {
+            if (f1) fut_file_put(f1);
+            if (f2) fut_file_put(f2);
+            return -EBADF;
+        }
 
         /* Same pointer → same file object */
-        if (f1 == f2) return 0;
-        /* Different objects: return Linux kcmp ordering — 1 if v1 < v2,
-         * 2 if v1 > v2. Returning -1 here would be interpreted by
-         * userspace as an -EPERM errno, breaking CRIU's file-share
-         * detection. */
-        return (uintptr_t)f1 < (uintptr_t)f2 ? 1 : 2;
+        int ret;
+        if (f1 == f2) {
+            ret = 0;
+        } else {
+            /* Different objects: return Linux kcmp ordering — 1 if v1 < v2,
+             * 2 if v1 > v2. Returning -1 here would be interpreted by
+             * userspace as an -EPERM errno, breaking CRIU's file-share
+             * detection. */
+            ret = (uintptr_t)f1 < (uintptr_t)f2 ? 1 : 2;
+        }
+        fut_file_put(f1);
+        fut_file_put(f2);
+        return ret;
     }
 
     case KCMP_VM:

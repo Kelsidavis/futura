@@ -1,17 +1,19 @@
 # x86_64 SMP: Status and Bring-Up Architecture
 
 **Date**: 2026-07-09
-**Status**: 🟡 **Bring-up complete and validated; cross-CPU thread
-placement gated behind `smp_sched` boot flag pending the remaining
-direct fd-table audit and the `-smp 4` control-flow bug.**
+**Status**: 🟡 **SMP bring-up is functional; cross-CPU thread
+placement remains gated behind `smp_sched` pending the remaining
+direct fd-table classification and the current SMP scheduler/thread
+test failure.**
 
 - **Default boot** (no flag): every CPU is brought online with full
   per-CPU state (GDT/TSS, IDT, syscall MSRs, LAPIC timer) but stays
   in an idle loop — all runnable threads pin to the BSP. This is the
   shipped configuration; single-CPU behaviour is unchanged.
 - **`smp_sched` boot flag**: enables cross-CPU thread placement and
-  work stealing. Passes the full 2735-test suite at `-smp 2`. At
-  `-smp 4` two distinct concurrency bugs remain (below).
+  work stealing. The normal single-BSP scheduling harness passes the
+  full 2735-test suite. The direct `-smp 2` path currently reaches the
+  clear-child-tid/futex tests and fails at test 1236 (below).
 - **`nosmp` boot flag**: disables AP bring-up entirely (single-CPU).
 
 ## What was fixed to get here
@@ -167,16 +169,43 @@ The lingering `vfs_get_file_from_task` users in fstatat, dup/dup2,
 fcntl free-fd scans, and close_range(CLOEXEC) are existence probes or
 owner-side fd-table mutation and do not dereference the loaded file.
 
-**Remaining fd follow-up**: direct `task->fd_table[fd]` dereferences
-that still need the same pinning treatment or a documented probe-only
-classification. Known higher-risk sites now are `kcmp`, fork/exec
-inheritance/close paths, and any direct `fd_table[]` ownership/probe
-sites not yet classified. Several remaining `fd_table[]` reads are
-NULL-check-only probes or owner-side table mutation during fd
-creation/dup/close; those should stay documented as
-non-dereferencing once audited.
+The latest direct-table tranche added `fut_file_get_with_flags()`, a
+pinning resolver that samples descriptor flags under the same
+`fd_lock` as the file ref. It converted `kcmp(KCMP_FILE)` to compare
+pinned file objects, fork fd inheritance to transfer a pinned child fd
+reference instead of bumping a raw `fd_table[]` pointer, and both ELF
+exec inherited-fd loops to sample `FD_CLOEXEC` atomically with the
+slot being pinned. It also changed the fork overflow rollback path to
+drop already-inherited files with `fut_file_put()` instead of raw
+refcount subtraction.
 
-### B. Control-flow corruption at `-smp 4` (distinct bug, UNVALIDATABLE here)
+**Remaining fd follow-up**: direct `task->fd_table[]` sites still need
+final classification. The remaining production hits are mostly
+NULL-check-only errno/existence probes, newly-created-task fd-table
+writes before publication, owner-side close/dup mutation, task
+teardown, and proc/debug summaries. They should be either documented
+as non-dereferencing or converted if a later audit finds a retained or
+dereferenced file pointer.
+
+### B. Current `-smp 2 smp_sched` failure: clear-child-tid child never runs
+Validation on 2026-07-09 after the fd inheritance/kcmp tranche:
+`make kernel` passed and `make test` passed with
+`ALL TESTS PASSED (2735/2735)`. Direct SMP validation with
+`timeout 420s make run KAPPEND="futura.runtests async-tests=1 smp_sched"
+EXTRA_QEMU_FLAGS="-smp 2"` brought both CPUs online, enabled
+`smp_sched`, reached the miscellaneous syscall suite, then failed:
+`Test 1235: child thread created, tid=8` followed by
+`Test 1236: child never wrote TID (timeout)` and QEMU exit 169.
+
+This failure is in the kernel self-test path for
+`CLONE_CHILD_CLEARTID`: a child thread is created, but under
+cross-CPU placement it did not run and publish its TID before the
+parent's bounded yield loop expired. The normal non-`smp_sched`
+`make test` path passes the same test. Next work should inspect
+`fut_thread_create` runnable publication, per-CPU run queue wakeups,
+and the yield loop/wakeup path used by tests 1235-1238.
+
+### C. Control-flow corruption at `-smp 4` (distinct bug, UNVALIDATABLE here)
 After the read/write fix, `-smp 4 + smp_sched` runs well past the CAP
 and EPOLL suites, then dies with **Invalid Opcode, RIP in kernel
 stack space** (`0x88xxxxxx`, not `.text` at `0x8020xxxx`–`0x804xxxxx`;
@@ -213,18 +242,19 @@ reliable ceiling here.
   `ap_main`; deferring `smp_init` past calibration is a trivial change
   once `-smp 4` is stable.
 - Direct `make run KAPPEND="futura.runtests async-tests=1 smp_sched"
-  EXTRA_QEMU_FLAGS="-smp 2"` now passes through the direct initramfs
-  path as well as the ISO test harness. The direct runtest path skips
-  Wayland payload staging and `/sbin/init` staging/launch so the kernel
+  EXTRA_QEMU_FLAGS="-smp 2"` boots the initramfs path rather than the
+  full ISO self-test harness. The direct runtest path skips Wayland
+  payload staging and `/sbin/init` staging/launch so the kernel
   self-test thread is not blocked by GUI userland heap pressure or an
   init respawn loop. `/proc/modules` also reports the monolithic empty
   listing while `futura.runtests` is active, keeping the self-test ABI
-  independent of the interactive driver manifest. Validation on
-  2026-07-09: `make kernel` passed, `make test` passed with
-  `ALL TESTS PASSED (2735/2735)`, and
-  `timeout 360 make run KAPPEND="futura.runtests async-tests=1 smp_sched"
-  EXTRA_QEMU_FLAGS="-smp 2"` reached `RUNNER COMPLETE (2735/2738 — plan
-  over-counted by 3)` and the run harness reported `PASS`. The run still
-  logs a nonfatal CLI shell staging `-ENOMEM` for the large shell blob;
-  this is no longer a blocker for self-test boots but remains a RAMFS
+  independent of the interactive driver manifest. The run still logs a
+  nonfatal CLI shell staging `-ENOMEM` for the large shell blob; this
+  is no longer a blocker for self-test boots but remains a RAMFS
   contiguous-allocation cleanup item.
+- The Intel i915 init path must treat `i915_init()` failure as a hard
+  stop for follow-on i915 phases. On QEMU `-smp 2`, PCI 00:02.0 is the
+  e1000 NIC (`class=0x020000`), so the i915 probe correctly rejects it
+  as non-display; the kernel now skips GTT/BCS/framebuffer registration
+  afterward instead of running phase-2+ probes against an uninitialized
+  BAR/GTT state.

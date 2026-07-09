@@ -1912,6 +1912,36 @@ struct fut_file *fut_file_get(fut_task_t *task, int fd) {
     return file;
 }
 
+/* Resolve a fd to its file, take a reference, and sample per-descriptor
+ * flags under the same fd_lock. Use this for fork/exec-style inheritance
+ * where FD_CLOEXEC must match the file slot that was pinned. */
+struct fut_file *fut_file_get_with_flags(fut_task_t *task, int fd, int *out_flags) {
+    if (out_flags) {
+        *out_flags = 0;
+    }
+    if (!task || !task->fd_table || fd < 0 || fd >= task->max_fds) {
+        return NULL;
+    }
+
+    unsigned long flags = fut_irqsave();
+    fut_spinlock_acquire(&task->fd_lock);
+    struct fut_file *file = __atomic_load_n(&task->fd_table[fd], __ATOMIC_ACQUIRE);
+    int fd_flags = 0;
+    if (file) {
+        __atomic_add_fetch(&file->refcount, 1, __ATOMIC_ACQ_REL);
+        if (task->fd_flags) {
+            fd_flags = task->fd_flags[fd];
+        }
+    }
+    fut_spinlock_release(&task->fd_lock);
+    fut_irqrestore(flags);
+
+    if (out_flags) {
+        *out_flags = fd_flags;
+    }
+    return file;
+}
+
 /* Drop a reference taken by fut_file_get. Frees on the last ref
  * (delegates to vfs_file_unref, which runs the release path). Must
  * NOT be called with fd_lock held — the release path can be slow and

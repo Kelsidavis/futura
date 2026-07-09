@@ -2491,21 +2491,25 @@ void fut_kernel_main(void) {
              * fb_console_scroll memcpy. Safe to call now: the function
              * just observes and bails cleanly on any non-Intel-GPU config. */
             fut_printf("[INIT] Intel: entering i915_init\n");
-            i915_init();
-            /* Phase 2: install at least one GTT mapping as a smoke test.
-             * Pre-req for phase 3 (BCS ring buffer) which lives in this
-             * GTT VA range. */
-            i915_gtt_init();
-            /* Phase 3: bring up BCS engine, run NOOP through ring. */
-            i915_bcs_init();
-            /* Phase 4: map the kernel framebuffer through the GTT so
-             * fb_console_scroll's BLT fast-path has a GPU VA to use. */
-            i915_map_fb_in_gtt();
-            /* Phase 6: register fb_console's cached DRAM back buffer
-             * with the GTT. fb_console_flush_full now submits a single
-             * XY_SRC_COPY_BLT (back_buf → fb) per present instead of a
-             * CPU memcpy. */
-            fb_console_attach_i915();
+            int i915_rc = i915_init();
+            if (i915_rc == 0) {
+                /* Phase 2: install at least one GTT mapping as a smoke test.
+                 * Pre-req for phase 3 (BCS ring buffer) which lives in this
+                 * GTT VA range. */
+                i915_gtt_init();
+                /* Phase 3: bring up BCS engine, run NOOP through ring. */
+                i915_bcs_init();
+                /* Phase 4: map the kernel framebuffer through the GTT so
+                 * fb_console_scroll's BLT fast-path has a GPU VA to use. */
+                i915_map_fb_in_gtt();
+                /* Phase 6: register fb_console's cached DRAM back buffer
+                 * with the GTT. fb_console_flush_full now submits a single
+                 * XY_SRC_COPY_BLT (back_buf → fb) per present instead of a
+                 * CPU memcpy. */
+                fb_console_attach_i915();
+            } else {
+                fut_printf("[INIT] Intel: i915 probe skipped follow-on init (rc=%d)\n", i915_rc);
+            }
             /* intel_hda_hdmi_init() intentionally NOT called.
              * The Rust function takes (verb_fn: HdaVerbFn, codec_addr: u8)
              * but the C extern was zero-arg, so verb_fn read whatever

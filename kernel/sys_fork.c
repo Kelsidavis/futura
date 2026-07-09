@@ -147,16 +147,17 @@
  *
  * DEFENSE STRATEGY:
  * [DONE] Add refcount overflow check in FD inheritance:
- *   - Check parent_file->refcount < FUT_FILE_REF_MAX (0xFFFFFFF0) before increment
+ *   - Pin each inherited fd with fut_file_get_with_flags() under fd_lock
+ *   - Check parent_file->refcount < FUT_FILE_REF_MAX (0xFFFFFFF0) after pinning
  *   - Return -ENOMEM from sys_fork() if overflow would occur
  *   - Log warning when file refcount limit reached
- *   - Clean up already-inherited FDs on failure (decrement refcounts)
+ *   - Clean up already-inherited FDs on failure with fut_file_put()
  *   - Destroy child_task on failure
  *   - Commit: (see below)
  *
  * [DONE] Atomic refcount operations:
- *   - vfs_file_ref() uses __atomic_add_fetch for increment (line 799)
- *   - Cleanup uses __atomic_sub_fetch for decrement (line 790)
+ *   - fut_file_get_with_flags() uses __atomic_add_fetch for increment
+ *   - Cleanup uses fut_file_put() for decrement/release
  *   - Prevents race condition where concurrent forks overflow refcount
  *
  * [DONE] Implement per-process file descriptor limit:
@@ -922,8 +923,10 @@ long sys_fork(void) {
     int fd_count = 0;
     if (parent_task->fd_table) {
         for (int i = 0; i < parent_task->max_fds; i++) {
-            if (parent_task->fd_table[i] != NULL) {
+            struct fut_file *file = fut_file_get(parent_task, i);
+            if (file) {
                 fd_count++;
+                fut_file_put(file);
             }
         }
     }
@@ -1173,20 +1176,24 @@ long sys_fork(void) {
     #define FUT_FILE_REF_MAX 0xFFFFFFF0u  /* Leave headroom below UINT32_MAX */
     if (parent_task->fd_table) {
         for (int i = 0; i < parent_task->max_fds; i++) {
-            if (parent_task->fd_table[i] != NULL) {
-                struct fut_file *parent_file = parent_task->fd_table[i];
+            int fd_flags = 0;
+            struct fut_file *parent_file = fut_file_get_with_flags(parent_task, i, &fd_flags);
+            if (parent_file) {
 
-                /* SECURITY: Check for refcount overflow before incrementing.
+                /* SECURITY: Check for refcount overflow after the pinned lookup.
+                 * fut_file_get_with_flags() took the in-flight child reference
+                 * under fd_lock; on overflow rollback that ref before aborting.
                  * This prevents attacks where mass forking with many open FDs
                  * overflows file refcounts, causing files to be prematurely
                  * closed and freed while still in use. */
                 if (parent_file->refcount >= FUT_FILE_REF_MAX) {
                     fut_printf("[FORK] File refcount overflow for fd=%d (count=%u) - aborting fork\n",
                                i, parent_file->refcount);
+                    fut_file_put(parent_file);
                     /* Clean up: decrement refcounts of already-inherited files */
                     for (int j = 0; j < i; j++) {
                         if (child_task->fd_table[j] != NULL) {
-                            __atomic_sub_fetch(&child_task->fd_table[j]->refcount, 1, __ATOMIC_ACQ_REL);
+                            fut_file_put(child_task->fd_table[j]);
                             child_task->fd_table[j] = NULL;
                         }
                     }
@@ -1194,14 +1201,11 @@ long sys_fork(void) {
                     return -ENOMEM;
                 }
 
-                /* Increment refcount (file is now referenced by parent and child) */
-                vfs_file_ref(parent_file);
-
                 /* Child inherits the same file object at the same FD */
                 child_task->fd_table[i] = parent_file;
                 /* Copy per-FD flags (FD_CLOEXEC is per-descriptor, inherited on fork) */
-                if (child_task->fd_flags && parent_task->fd_flags)
-                    child_task->fd_flags[i] = parent_task->fd_flags[i];
+                if (child_task->fd_flags)
+                    child_task->fd_flags[i] = fd_flags;
             }
         }
     }

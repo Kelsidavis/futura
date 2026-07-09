@@ -3173,8 +3173,9 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
             int max = caller_task->max_fds;
             if (max > (int)task->max_fds) max = (int)task->max_fds;
             for (int i = 0; i < max; i++) {
-                struct fut_file *f = fut_file_get(caller_task, i);
-                int cloexec = (caller_task->fd_flags && (caller_task->fd_flags[i] & FD_CLOEXEC));
+                int fd_flags = 0;
+                struct fut_file *f = fut_file_get_with_flags(caller_task, i, &fd_flags);
+                int cloexec = (fd_flags & FD_CLOEXEC);
                 if (f && !cloexec) {
                     task->fd_table[i] = f;
                     if (task->fd_flags) task->fd_flags[i] = 0;
@@ -4745,8 +4746,9 @@ int fut_exec_elf(const char *path, char *const argv[], char *const envp[]) {
             int max = caller_task->max_fds;
             if (max > (int)task->max_fds) max = (int)task->max_fds;
             for (int i = 0; i < max; i++) {
-                struct fut_file *f = fut_file_get(caller_task, i);
-                int cloexec = (caller_task->fd_flags && (caller_task->fd_flags[i] & FD_CLOEXEC));
+                int fd_flags = 0;
+                struct fut_file *f = fut_file_get_with_flags(caller_task, i, &fd_flags);
+                int cloexec = (fd_flags & FD_CLOEXEC);
                 if (f && !cloexec) {
                     task->fd_table[i] = f;
                     if (task->fd_flags) task->fd_flags[i] = 0;

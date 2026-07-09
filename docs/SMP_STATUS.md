@@ -149,15 +149,31 @@ work (`sendto`, `recvfrom`, `recvmsg`). It also converted procfs
 option and send/receive handlers now use local cleanup-return helpers
 so new branches cannot silently leak the pin.
 
+The follow-up socket-readiness tranche converted the remaining
+syscall-side socket dereferences that were still using bare
+`get_socket_from_fd`: `sendfile` socket source/output classification,
+`fcntl(F_SETFL)` propagation of `O_NONBLOCK`, `poll` wire/unwire and
+readiness scans, `select`/`pselect6` wire/unwire and readiness scans,
+and `epoll` registration, fd-close cleanup, and wait readiness scans.
+It also converted socket ioctl side paths (`FIONREAD`, `TIOCOUTQ`,
+`FIONBIO`, `FIOASYNC`) plus the socket-layer byte-count helpers used
+by those ioctls.
+These paths now either hold the owning socket file pinned across the
+socket dereference or funnel through a small helper that pins, acts,
+and drops before returning. The audited `fut_vfs_get_file` users left
+in AIO and epoll are errno-class probes only (`EBADF` vs
+`EOPNOTSUPP`/`EINVAL`) and do not dereference or retain the pointer.
+The lingering `vfs_get_file_from_task` users in fstatat, dup/dup2,
+fcntl free-fd scans, and close_range(CLOEXEC) are existence probes or
+owner-side fd-table mutation and do not dereference the loaded file.
+
 **Remaining fd follow-up**: direct `task->fd_table[fd]` dereferences
 that still need the same pinning treatment or a documented probe-only
-classification. Known higher-risk sites now are `kcmp`,
-fork/exec inheritance/close paths, `poll`/`select`/`epoll` socket
-readiness probes, AIO fd helper users, `fcntl` socket-flag side paths,
-`sys_fileio_advanced` socket checks, and the socket-layer helper
-wrappers that still call `get_socket_from_fd` internally. Several remaining
-`fd_table[]` reads are NULL-check-only probes or owner-side table
-mutation during fd creation/dup/close; those should stay documented as
+classification. Known higher-risk sites now are `kcmp`, fork/exec
+inheritance/close paths, and any direct `fd_table[]` ownership/probe
+sites not yet classified. Several remaining `fd_table[]` reads are
+NULL-check-only probes or owner-side table mutation during fd
+creation/dup/close; those should stay documented as
 non-dereferencing once audited.
 
 ### B. Control-flow corruption at `-smp 4` (distinct bug, UNVALIDATABLE here)
@@ -201,7 +217,8 @@ reliable ceiling here.
   previously faulted when QEMU's Intel e1000 NIC occupied PCI
   `00:02.0`. `i915_init` rejects non-display class devices and I/O BAR0
   before MMIO mapping; the observed run logged
-  `class=0x020000 is not display -skipping`. The same run later failed
-  in init/userland staging with RAMFS/heap `-ENOMEM` messages and
-  `Failed to create test task`; that is a post-driver boot failure, not
-  the i915 BAR fault.
+  `class=0x020000 is not display -skipping`. The PCIe ECAM path also
+  refused to map a zero low-memory BAR (`phys=0x0`) instead of treating
+  it as a valid MMIO window. The same run later failed in init/userland
+  staging with RAMFS/heap `-ENOMEM` messages and `Failed to create test
+  task`; that is a post-driver boot failure, not the i915/PCI BAR fault.

@@ -1051,13 +1051,10 @@ static long ioctl_impl(int fd, unsigned long request, void *argp,
                 }
             } else if (file->chr_ops) {
                 /* Socket: use fut_socket_bytes_available */
-                extern fut_socket_t *get_socket_from_fd(int fd);
                 extern int fut_socket_bytes_available(int sockfd);
-                fut_socket_t *sock = get_socket_from_fd(fd);
-                if (sock) {
-                    int sock_bytes = fut_socket_bytes_available(fd);
-                    if (sock_bytes >= 0)
-                        bytes_available = sock_bytes;
+                int sock_bytes = fut_socket_bytes_available(fd);
+                if (sock_bytes >= 0) {
+                    bytes_available = sock_bytes;
                 } else {
                     /* PTY: delegate to chr_ops->ioctl which handles FIONREAD */
                     if (file->chr_ops && file->chr_ops->ioctl) {
@@ -1105,15 +1102,12 @@ static long ioctl_impl(int fd, unsigned long request, void *argp,
             int bytes_pending = 0;
 
             /* Only sockets support TIOCOUTQ */
-            extern fut_socket_t *get_socket_from_fd(int fd);
             extern int fut_socket_bytes_pending(int sockfd);
-            fut_socket_t *outq_sock = get_socket_from_fd(fd);
-            if (!outq_sock)
+            int sock_pending = fut_socket_bytes_pending(fd);
+            if (sock_pending < 0)
                 return -ENOTTY;
 
-            int sock_pending = fut_socket_bytes_pending(fd);
-            if (sock_pending >= 0)
-                bytes_pending = sock_pending;
+            bytes_pending = sock_pending;
 
 #ifdef KERNEL_VIRTUAL_BASE
             if ((uintptr_t)argp >= KERNEL_VIRTUAL_BASE)
@@ -1155,13 +1149,16 @@ static long ioctl_impl(int fd, unsigned long request, void *argp,
                                      (unsigned long)new_flags);
             }
             /* Propagate to socket object so socket-layer checks see the flag */
-            fut_socket_t *sock = get_socket_from_fd(fd);
+            struct fut_file *sock_pin = NULL;
+            fut_socket_t *sock = get_socket_pinned(fd, &sock_pin);
             if (sock) {
                 if (nb_flag)
                     __atomic_or_fetch(&sock->flags, O_NONBLOCK, __ATOMIC_ACQ_REL);
                 else
                     __atomic_and_fetch(&sock->flags, ~O_NONBLOCK, __ATOMIC_ACQ_REL);
             }
+            if (sock_pin)
+                fut_file_put(sock_pin);
             return 0;
         }
         case FIOASYNC: {
@@ -1186,13 +1183,16 @@ static long ioctl_impl(int fd, unsigned long request, void *argp,
             else
                 __atomic_and_fetch(&file->flags, ~O_ASYNC, __ATOMIC_ACQ_REL);
             /* Propagate to socket if applicable */
-            fut_socket_t *sock = get_socket_from_fd(fd);
+            struct fut_file *sock_pin = NULL;
+            fut_socket_t *sock = get_socket_pinned(fd, &sock_pin);
             if (sock) {
                 if (async_flag)
                     __atomic_or_fetch(&sock->flags, O_ASYNC, __ATOMIC_ACQ_REL);
                 else
                     __atomic_and_fetch(&sock->flags, ~O_ASYNC, __ATOMIC_ACQ_REL);
             }
+            if (sock_pin)
+                fut_file_put(sock_pin);
             return 0;
         }
         case FIOCLEX:

@@ -542,10 +542,11 @@ static long fcntl_impl(int fd, int cmd, uint64_t arg, struct fut_file *pinned_fi
         /* Propagate O_NONBLOCK to kernel socket object if this FD is a socket.
          * Atomic update — pair with the ioctl(FIONBIO) sock->flags atomic
          * (da66992b) so concurrent F_SETFL + FIONBIO doesn't clobber each
-         * other's other flag bits. */
+         * other's other flag bits.  Pin while dereferencing the socket so
+         * F_SETFL racing close() cannot update a freed socket object. */
         {
-            extern fut_socket_t *get_socket_from_fd(int fd);
-            fut_socket_t *sock = get_socket_from_fd(local_fd);
+            struct fut_file *sock_pin = NULL;
+            fut_socket_t *sock = get_socket_pinned(local_fd, &sock_pin);
             if (sock) {
                 if (new_flags & O_NONBLOCK) {
                     __atomic_or_fetch(&sock->flags, O_NONBLOCK, __ATOMIC_ACQ_REL);
@@ -553,6 +554,8 @@ static long fcntl_impl(int fd, int cmd, uint64_t arg, struct fut_file *pinned_fi
                     __atomic_and_fetch(&sock->flags, ~O_NONBLOCK, __ATOMIC_ACQ_REL);
                 }
             }
+            if (sock_pin)
+                fut_file_put(sock_pin);
         }
 
         (void)old_flags;

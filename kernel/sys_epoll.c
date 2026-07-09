@@ -320,6 +320,75 @@ static inline void epoll_ensure_init(void) {
 static int epoll_release_op(void *inode, void *priv);
 static void epoll_deallocate_set(struct epoll_set *set);
 
+static void epoll_wire_socket_fd(int fd, fut_waitq_t *wq) {
+    struct fut_file *sock_pin = NULL;
+    fut_socket_t *sock = get_socket_pinned(fd, &sock_pin);
+    if (sock) {
+        if (sock->pair_reverse)
+            sock->pair_reverse->epoll_notify = wq;
+        if (sock->listener)
+            sock->listener->epoll_notify = wq;
+        if (sock->state == FUT_SOCK_CONNECTING)
+            sock->connect_notify = wq;
+    }
+    if (sock_pin)
+        fut_file_put(sock_pin);
+}
+
+static void epoll_unwire_socket_fd(int fd, fut_waitq_t *wq) {
+    struct fut_file *sock_pin = NULL;
+    fut_socket_t *sock = get_socket_pinned(fd, &sock_pin);
+    if (sock) {
+        if (sock->pair_reverse && sock->pair_reverse->epoll_notify == wq)
+            sock->pair_reverse->epoll_notify = NULL;
+        if (sock->listener && sock->listener->epoll_notify == wq)
+            sock->listener->epoll_notify = NULL;
+        if (sock->connect_notify == wq)
+            sock->connect_notify = NULL;
+    }
+    if (sock_pin)
+        fut_file_put(sock_pin);
+}
+
+static void epoll_clear_socket_connect_fd(int fd, fut_waitq_t *wq) {
+    struct fut_file *sock_pin = NULL;
+    fut_socket_t *sock = get_socket_pinned(fd, &sock_pin);
+    if (sock && sock->connect_notify == wq)
+        sock->connect_notify = NULL;
+    if (sock_pin)
+        fut_file_put(sock_pin);
+}
+
+static bool epoll_poll_socket_fd(int fd, uint32_t requested,
+                                 uint32_t *events_ready) {
+    struct fut_file *sock_pin = NULL;
+    fut_socket_t *socket = get_socket_pinned(fd, &sock_pin);
+    if (!socket) {
+        if (sock_pin)
+            fut_file_put(sock_pin);
+        return false;
+    }
+
+    int poll_events = 0;
+    if (requested & (EPOLLIN | EPOLLRDNORM))
+        poll_events |= 0x1;
+    if (requested & (EPOLLOUT | EPOLLWRNORM))
+        poll_events |= 0x4;
+    int socket_ready = fut_socket_poll(socket, poll_events);
+#if EPOLL_DEBUG
+    fut_printf("[EPOLL-DBG] fd=%d poll_events=0x%x socket_ready=0x%x state=%d\n",
+               fd, poll_events, socket_ready, socket->state);
+#endif
+    if (socket_ready & 0x1)    *events_ready |= EPOLLIN | EPOLLRDNORM;
+    if (socket_ready & 0x4)    *events_ready |= EPOLLOUT | EPOLLWRNORM;
+    if (socket_ready & 0x2000) *events_ready |= EPOLLRDHUP;
+    if (socket_ready & 0x10)   *events_ready |= EPOLLHUP;
+    if (socket_ready & 0x8)    *events_ready |= EPOLLERR;
+
+    fut_file_put(sock_pin);
+    return true;
+}
+
 /* File operations for epoll file descriptors.
  * epoll fds are now regular chrdev fds in fd_table, so close() and
  * FD_CLOEXEC work through the normal VFS path instead of a separate
@@ -352,17 +421,7 @@ void epoll_notify_fd_close(int fd) {
                  * backing object so they don't point at a stale waitqueue
                  * after the entry is removed. */
                 {
-                    fut_socket_t *sock = get_socket_from_fd(fd);
-                    if (sock) {
-                        if (sock->pair_reverse &&
-                            sock->pair_reverse->epoll_notify == &epoll_instances[i].epoll_waitq)
-                            sock->pair_reverse->epoll_notify = NULL;
-                        if (sock->listener &&
-                            sock->listener->epoll_notify == &epoll_instances[i].epoll_waitq)
-                            sock->listener->epoll_notify = NULL;
-                        if (sock->connect_notify == &epoll_instances[i].epoll_waitq)
-                            sock->connect_notify = NULL;
-                    }
+                    epoll_unwire_socket_fd(fd, &epoll_instances[i].epoll_waitq);
                     fut_task_t *t = fut_task_current();
                     if (t) {
                         struct fut_file *f = fut_file_get(t, fd);
@@ -1235,18 +1294,7 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
 
         /* Wire up epoll notification on socket pairs/listeners */
         {
-            fut_socket_t *sock = get_socket_from_fd(fd);
-            if (sock) {
-                if (sock->pair_reverse) {
-                    sock->pair_reverse->epoll_notify = &set->epoll_waitq;
-                }
-                if (sock->listener) {
-                    sock->listener->epoll_notify = &set->epoll_waitq;
-                }
-                /* CONNECTING socket: wire connect_notify so epoll_wait wakes when accept() completes */
-                if (sock->state == FUT_SOCK_CONNECTING)
-                    sock->connect_notify = &set->epoll_waitq;
-            }
+            epoll_wire_socket_fd(fd, &set->epoll_waitq);
         }
 
         /* Wire up epoll notification on eventfd, timerfd, signalfd, and pipe */
@@ -1347,9 +1395,7 @@ long sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
 
                 /* Clear connect_notify if we had wired it */
                 {
-                    fut_socket_t *sock = get_socket_from_fd(fd);
-                    if (sock && sock->connect_notify == &set->epoll_waitq)
-                        sock->connect_notify = NULL;
+                    epoll_clear_socket_connect_fd(fd, &set->epoll_waitq);
                 }
                 /* Clear signalfd/pty epoll_notify if we had wired it */
                 {
@@ -1688,28 +1734,9 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
                 }
             }
 
-            /* For sockets: check get_socket_from_fd first (sockets may not have vnodes) */
+            /* For sockets: check pinned socket first (sockets may not have vnodes) */
             if (!handled) {
-                fut_socket_t *socket = get_socket_from_fd(set->fds[i].fd);
-                if (socket) {
-                    /* Convert EPOLL events to poll events and check socket readiness */
-                    int poll_events = 0;
-                    if (set->fds[i].events & (EPOLLIN | EPOLLRDNORM)) {
-                        poll_events |= 0x1;  /* POLLIN */
-                    }
-                    if (set->fds[i].events & (EPOLLOUT | EPOLLWRNORM)) {
-                        poll_events |= 0x4;  /* POLLOUT */
-                    }
-                    int socket_ready = fut_socket_poll(socket, poll_events);
-#if EPOLL_DEBUG
-                    fut_printf("[EPOLL-DBG] fd=%d poll_events=0x%x socket_ready=0x%x state=%d\n",
-                               set->fds[i].fd, poll_events, socket_ready, socket->state);
-#endif
-                    if (socket_ready & 0x1)  events_ready |= EPOLLIN | EPOLLRDNORM;
-                    if (socket_ready & 0x4)  events_ready |= EPOLLOUT | EPOLLWRNORM;
-                    if (socket_ready & 0x2000) events_ready |= EPOLLRDHUP;
-                    if (socket_ready & 0x10) events_ready |= EPOLLHUP;
-                    if (socket_ready & 0x8)  events_ready |= EPOLLERR;
+                if (epoll_poll_socket_fd(set->fds[i].fd, set->fds[i].events, &events_ready)) {
                     handled = true;
                 }
             }
@@ -1727,22 +1754,7 @@ long sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int tim
 
             /* For sockets with vnodes: redundant but keep for VN_SOCK path */
             if (!handled && file->vnode && file->vnode->type == VN_SOCK) {
-                fut_socket_t *socket = get_socket_from_fd(set->fds[i].fd);
-                if (socket) {
-                    int poll_events = 0;
-                    if (set->fds[i].events & (EPOLLIN | EPOLLRDNORM)) {
-                        poll_events |= 0x1;
-                    }
-                    if (set->fds[i].events & (EPOLLOUT | EPOLLWRNORM)) {
-                        poll_events |= 0x4;
-                    }
-                    int socket_ready = fut_socket_poll(socket, poll_events);
-                    if (socket_ready & 0x1)  events_ready |= EPOLLIN | EPOLLRDNORM;
-                    if (socket_ready & 0x4)  events_ready |= EPOLLOUT | EPOLLWRNORM;
-                    if (socket_ready & 0x2000) events_ready |= EPOLLRDHUP;
-                    if (socket_ready & 0x10) events_ready |= EPOLLHUP;
-                    if (socket_ready & 0x8)  events_ready |= EPOLLERR;
-                }
+                (void)epoll_poll_socket_fd(set->fds[i].fd, set->fds[i].events, &events_ready);
                 handled = true;
             }
 
@@ -2196,19 +2208,7 @@ long sys_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
                 }
             }
             if (!handled) {
-                fut_socket_t *socket = get_socket_from_fd(set->fds[i].fd);
-                if (socket) {
-                    int poll_events = 0;
-                    if (set->fds[i].events & (EPOLLIN | EPOLLRDNORM))
-                        poll_events |= 0x1;
-                    if (set->fds[i].events & (EPOLLOUT | EPOLLWRNORM))
-                        poll_events |= 0x4;
-                    int socket_ready = fut_socket_poll(socket, poll_events);
-                    if (socket_ready & 0x1)    events_ready |= EPOLLIN | EPOLLRDNORM;
-                    if (socket_ready & 0x4)    events_ready |= EPOLLOUT | EPOLLWRNORM;
-                    if (socket_ready & 0x2000) events_ready |= EPOLLRDHUP;
-                    if (socket_ready & 0x10)   events_ready |= EPOLLHUP;
-                    if (socket_ready & 0x8)    events_ready |= EPOLLERR;
+                if (epoll_poll_socket_fd(set->fds[i].fd, set->fds[i].events, &events_ready)) {
                     handled = true;
                 }
             }
@@ -2220,20 +2220,7 @@ long sys_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
                 handled = true;
             }
             if (!handled && file->vnode && file->vnode->type == VN_SOCK) {
-                fut_socket_t *socket = get_socket_from_fd(set->fds[i].fd);
-                if (socket) {
-                    int poll_events = 0;
-                    if (set->fds[i].events & (EPOLLIN | EPOLLRDNORM))
-                        poll_events |= 0x1;
-                    if (set->fds[i].events & (EPOLLOUT | EPOLLWRNORM))
-                        poll_events |= 0x4;
-                    int socket_ready = fut_socket_poll(socket, poll_events);
-                    if (socket_ready & 0x1)    events_ready |= EPOLLIN | EPOLLRDNORM;
-                    if (socket_ready & 0x4)    events_ready |= EPOLLOUT | EPOLLWRNORM;
-                    if (socket_ready & 0x2000) events_ready |= EPOLLRDHUP;
-                    if (socket_ready & 0x10)   events_ready |= EPOLLHUP;
-                    if (socket_ready & 0x8)    events_ready |= EPOLLERR;
-                }
+                (void)epoll_poll_socket_fd(set->fds[i].fd, set->fds[i].events, &events_ready);
                 handled = true;
             }
             if (!handled && file->vnode) {

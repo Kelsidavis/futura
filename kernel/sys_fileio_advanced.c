@@ -282,21 +282,34 @@ long sys_sendfile(int out_fd, int in_fd, int64_t *offset, size_t count) {
     }
 
     /* Reject socket source — sendfile() only reads from regular files/pipes.
-     * Linux returns EINVAL when in_fd is a socket. */
-    extern fut_socket_t *get_socket_from_fd(int fd);
-    if (get_socket_from_fd(local_in_fd)) {
+     * Linux returns EINVAL when in_fd is a socket.  Use the pinning socket
+     * resolver so the classification cannot race a concurrent close(). */
+    struct fut_file *in_sock_pin = NULL;
+    fut_socket_t *in_sock = get_socket_pinned(local_in_fd, &in_sock_pin);
+    if (in_sock) {
+        fut_file_put(in_sock_pin);
         fut_file_put(in_file);
         fut_file_put(out_file);
         return -EINVAL;
     }
+    if (in_sock_pin)
+        fut_file_put(in_sock_pin);
 
-    /* Check if out_fd is a socket — socket sends use fut_socket_send, not vnode write */
-    fut_socket_t *out_sock = get_socket_from_fd(local_out_fd);
+    /* Check if out_fd is a socket — socket sends use fut_socket_send, not
+     * vnode write.  Keep the socket's owning file pinned for the transfer
+     * loop because fut_socket_send dereferences the socket after fd lookup. */
+    struct fut_file *out_sock_pin = NULL;
+    fut_socket_t *out_sock = get_socket_pinned(local_out_fd, &out_sock_pin);
+    if (!out_sock && out_sock_pin) {
+        fut_file_put(out_sock_pin);
+        out_sock_pin = NULL;
+    }
 
     /* Validate out_file supports writing (sockets are always writable) */
     if (!out_sock) {
         if (!out_file->vnode || !out_file->vnode->ops || !out_file->vnode->ops->write) {
             if (!out_file->chr_ops || !out_file->chr_ops->write) {
+                if (out_sock_pin) fut_file_put(out_sock_pin);
                 fut_file_put(in_file);
                 fut_file_put(out_file);
                 return -EINVAL;
@@ -383,6 +396,7 @@ long sys_sendfile(int out_fd, int in_fd, int64_t *offset, size_t count) {
     if (local_offset) {
         int64_t final_offset = (int64_t)read_offset;
         if (fileio_copy_to_user(local_offset, &final_offset, sizeof(int64_t)) != 0) {
+            if (out_sock_pin) fut_file_put(out_sock_pin);
             fut_file_put(in_file);
             fut_file_put(out_file);
             return -EFAULT;
@@ -392,6 +406,8 @@ long sys_sendfile(int out_fd, int in_fd, int64_t *offset, size_t count) {
         in_file->offset = read_offset;
     }
 
+    if (out_sock_pin)
+        fut_file_put(out_sock_pin);
     fut_file_put(in_file);
     fut_file_put(out_file);
     return (long)total;

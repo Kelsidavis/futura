@@ -59,7 +59,8 @@ static void poll_wire_fds(struct pollfd *kfds, unsigned long nfds,
         fut_pipe_set_epoll_notify(file, wq);
         fut_pidfd_set_epoll_notify(file, wq);
         fut_inotify_set_epoll_notify(file, wq);
-        fut_socket_t *sock = get_socket_from_fd(fd);
+        struct fut_file *sock_pin = NULL;
+        fut_socket_t *sock = get_socket_pinned(fd, &sock_pin);
         if (sock) {
             if (sock->pair_reverse) sock->pair_reverse->epoll_notify = wq;
             if (sock->listener)    sock->listener->epoll_notify = wq;
@@ -67,6 +68,8 @@ static void poll_wire_fds(struct pollfd *kfds, unsigned long nfds,
             if (sock->state == FUT_SOCK_CONNECTING)
                 sock->connect_notify = wq;
         }
+        if (sock_pin)
+            fut_file_put(sock_pin);
         fut_file_put(file);
     }
 }
@@ -93,7 +96,8 @@ static void poll_unwire_fds(struct pollfd *kfds, unsigned long nfds,
         fut_pipe_set_epoll_notify(file, NULL);
         fut_pidfd_set_epoll_notify(file, NULL);
         fut_inotify_set_epoll_notify(file, NULL);
-        fut_socket_t *sock = get_socket_from_fd(fd);
+        struct fut_file *sock_pin = NULL;
+        fut_socket_t *sock = get_socket_pinned(fd, &sock_pin);
         if (sock) {
             if (sock->pair_reverse && sock->pair_reverse->epoll_notify == wq)
                 sock->pair_reverse->epoll_notify = NULL;
@@ -102,6 +106,8 @@ static void poll_unwire_fds(struct pollfd *kfds, unsigned long nfds,
             if (sock->connect_notify == wq)
                 sock->connect_notify = NULL;
         }
+        if (sock_pin)
+            fut_file_put(sock_pin);
         fut_file_put(file);
     }
 }
@@ -177,7 +183,8 @@ static struct poll_scan_stats poll_scan_fds(struct pollfd *kfds, unsigned long n
         }
 
         if (!handled) {
-            fut_socket_t *socket = get_socket_from_fd(kfds[i].fd);
+            struct fut_file *sock_pin = NULL;
+            fut_socket_t *socket = get_socket_pinned(kfds[i].fd, &sock_pin);
             if (socket) {
                 int poll_events = 0;
                 if (kfds[i].events & (POLLIN | POLLRDNORM))  poll_events |= 0x1;
@@ -190,6 +197,8 @@ static struct poll_scan_stats poll_scan_fds(struct pollfd *kfds, unsigned long n
                 if (socket_ready & 0x8)  epoll_ready |= EPOLLERR;
                 handled = true;
             }
+            if (sock_pin)
+                fut_file_put(sock_pin);
         }
 
         if (!handled && file->vnode && file->vnode->type == VN_REG) {

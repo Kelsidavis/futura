@@ -1927,25 +1927,31 @@ int fut_socket_poll(fut_socket_t *socket, int events) {
  * @return Number of bytes available, or -1 on error
  */
 int fut_socket_bytes_available(int sockfd) {
-    /* Get socket from file descriptor */
-    extern fut_socket_t *get_socket_from_fd(int fd);
-    fut_socket_t *socket = get_socket_from_fd(sockfd);
+    struct fut_file *sock_pin = NULL;
+    fut_socket_t *socket = get_socket_pinned(sockfd, &sock_pin);
 
     if (!socket) {
+        if (sock_pin)
+            fut_file_put(sock_pin);
         return -1;
     }
 
     /* Named DGRAM sockets: check dgram_queue for next datagram size */
     if (socket->dgram_queue) {
         fut_dgram_queue_t *dq = socket->dgram_queue;
-        if (dq->count == 0)
+        if (dq->count == 0) {
+            fut_file_put(sock_pin);
             return 0;
+        }
         /* Return size of next (head) datagram */
-        return (int)dq->msgs[dq->head].data_len;
+        int ret = (int)dq->msgs[dq->head].data_len;
+        fut_file_put(sock_pin);
+        return ret;
     }
 
     /* Only connected sockets have data to read */
     if (socket->state != FUT_SOCK_CONNECTED || !socket->pair_reverse) {
+        fut_file_put(sock_pin);
         return 0;
     }
 
@@ -1962,7 +1968,11 @@ int fut_socket_bytes_available(int sockfd) {
     if (socket->pair != NULL &&
         (socket->socket_type == SOCK_DGRAM || socket->socket_type == SOCK_SEQPACKET)) {
         if (bytes_available < 4)
-            return 0;  /* No complete frame header available */
+            bytes_available = 0;  /* No complete frame header available */
+        if (bytes_available == 0) {
+            fut_file_put(sock_pin);
+            return 0;
+        }
         /* Peek at the 4-byte length header without consuming it */
         uint32_t sz = recv_pair->recv_size;
         uint32_t t = recv_pair->recv_tail;
@@ -1971,10 +1981,13 @@ int fut_socket_bytes_available(int sockfd) {
             hdr[i] = recv_pair->recv_buf[(t + (uint32_t)i) % sz];
         uint32_t msglen = (uint32_t)hdr[0] | ((uint32_t)hdr[1] << 8)
                         | ((uint32_t)hdr[2] << 16) | ((uint32_t)hdr[3] << 24);
+        fut_file_put(sock_pin);
         return (int)msglen;
     }
 
-    return (int)bytes_available;
+    int ret = (int)bytes_available;
+    fut_file_put(sock_pin);
+    return ret;
 }
 
 /**
@@ -1984,14 +1997,19 @@ int fut_socket_bytes_available(int sockfd) {
  * @return Number of bytes pending, or -1 on error
  */
 int fut_socket_bytes_pending(int sockfd) {
-    extern fut_socket_t *get_socket_from_fd(int fd);
-    fut_socket_t *socket = get_socket_from_fd(sockfd);
+    struct fut_file *sock_pin = NULL;
+    fut_socket_t *socket = get_socket_pinned(sockfd, &sock_pin);
 
-    if (!socket)
+    if (!socket) {
+        if (sock_pin)
+            fut_file_put(sock_pin);
         return -1;
+    }
 
-    if (socket->state != FUT_SOCK_CONNECTED || !socket->pair)
+    if (socket->state != FUT_SOCK_CONNECTED || !socket->pair) {
+        fut_file_put(sock_pin);
         return 0;
+    }
 
     /* socket->pair is the send direction; data sits in recv_buf
      * (sender writes to pair->recv_buf, peer reads from it) */
@@ -1999,7 +2017,9 @@ int fut_socket_bytes_pending(int sockfd) {
     uint32_t bytes_pending = (send_pair->recv_head + send_pair->recv_size -
                               send_pair->recv_tail) % send_pair->recv_size;
 
-    return (int)bytes_pending;
+    int ret = (int)bytes_pending;
+    fut_file_put(sock_pin);
+    return ret;
 }
 
 /* ============================================================

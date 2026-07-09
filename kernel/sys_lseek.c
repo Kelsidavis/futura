@@ -221,9 +221,13 @@ int64_t sys_lseek(int fd, int64_t offset, int whence) {
 
     /* O_PATH fds cannot be used for I/O — only path-based operations */
     {
-        struct fut_file *lseek_file = fut_vfs_get_file(fd);
-        if (lseek_file && (lseek_file->flags & O_PATH))
+        struct fut_file *lseek_file = fut_file_get(task, fd);
+        if (lseek_file && (lseek_file->flags & O_PATH)) {
+            fut_file_put(lseek_file);
             return -EBADF;
+        }
+        if (lseek_file)
+            fut_file_put(lseek_file);
     }
 
     /* Phase 2: Get old position before seek (for diagnostics) */

@@ -1151,13 +1151,19 @@ ssize_t fut_socket_send(fut_socket_t *socket, const void *buf, size_t len) {
     }
 
     /* Wait for connection to complete if socket is still connecting */
-    if (socket->state == FUT_SOCK_CONNECTING) {
+    while (socket->state == FUT_SOCK_CONNECTING) {
         if (socket_nonblock(socket)) {
             return -EAGAIN;
         }
-        /* Block until connection completes */
         if (socket->connect_waitq) {
+            uint64_t seq = fut_waitq_wake_seq(socket->connect_waitq);
+            if (socket->state != FUT_SOCK_CONNECTING)
+                break;
+            if (fut_waitq_wake_seq(socket->connect_waitq) != seq)
+                continue;
             fut_waitq_sleep_locked(socket->connect_waitq, NULL, FUT_THREAD_BLOCKED);
+        } else {
+            break;
         }
     }
 
@@ -1405,13 +1411,19 @@ ssize_t fut_socket_recv(fut_socket_t *socket, void *buf, size_t len) {
     }
 
     /* Wait for connection to complete if socket is still connecting */
-    if (socket->state == FUT_SOCK_CONNECTING) {
+    while (socket->state == FUT_SOCK_CONNECTING) {
         if (socket_nonblock(socket)) {
             return -EAGAIN;
         }
-        /* Block until connection completes */
         if (socket->connect_waitq) {
+            uint64_t seq = fut_waitq_wake_seq(socket->connect_waitq);
+            if (socket->state != FUT_SOCK_CONNECTING)
+                break;
+            if (fut_waitq_wake_seq(socket->connect_waitq) != seq)
+                continue;
             fut_waitq_sleep_locked(socket->connect_waitq, NULL, FUT_THREAD_BLOCKED);
+        } else {
+            break;
         }
     }
 

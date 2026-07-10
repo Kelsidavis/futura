@@ -908,8 +908,14 @@ void fut_task_do_stop(fut_task_t *task, int sig) {
     } else {
         fut_spinlock_release(&task_list_lock);
     }
-    /* Block current thread until SIGCONT wakes the stop_waitq */
-    fut_waitq_sleep_locked(&task->stop_waitq, NULL, FUT_THREAD_BLOCKED);
+    /* Block current thread until SIGCONT wakes the stop_waitq.
+     * Use wait-mark to close the race where SIGCONT fires between
+     * the state-set above and the sleep enqueue. */
+    uint64_t stop_seq = fut_waitq_wake_seq(&task->stop_waitq);
+    if (task->state == FUT_TASK_STOPPED) {
+        if (fut_waitq_wake_seq(&task->stop_waitq) == stop_seq)
+            fut_waitq_sleep_locked(&task->stop_waitq, NULL, FUT_THREAD_BLOCKED);
+    }
 }
 
 /**

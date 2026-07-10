@@ -583,10 +583,6 @@ void fut_sched_add_thread(fut_thread_t *thread) {
         return;  // No per-CPU data available
     }
 
-    bool remote_enqueue = (current_percpu &&
-                           target_percpu != current_percpu &&
-                           fut_sched_smp_enabled());
-
     fut_spinlock_acquire(&target_percpu->queue_lock);
 
     // Check if thread is already in the ready queue by walking the list
@@ -617,7 +613,12 @@ void fut_sched_add_thread(fut_thread_t *thread) {
     target_percpu->ready_count++;
     target_percpu->queue_depth = target_percpu->ready_count;
 
+#if defined(__x86_64__)
+    bool remote_enqueue = (current_percpu &&
+                           target_percpu != current_percpu &&
+                           fut_sched_smp_enabled());
     uint32_t target_cpu_index = target_percpu->cpu_index;
+#endif
 
     fut_spinlock_release(&target_percpu->queue_lock);
     sched_irqrestore(irq_flags);

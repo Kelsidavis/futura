@@ -291,6 +291,11 @@ int fut_vnode_lock_shared(struct fut_vnode *vnode, uint32_t pid, int nonblock) {
                 if (pending & ~blocked)
                     return -EINTR;
             }
+            uint64_t seq = fut_waitq_wake_seq(&vnode->lock_waitq);
+            if (!(vnode->lock_type == FUT_LOCK_EXCLUSIVE && vnode->lock_owner_pid != pid))
+                break;
+            if (fut_waitq_wake_seq(&vnode->lock_waitq) != seq)
+                continue;
             fut_waitq_sleep_locked(&vnode->lock_waitq, NULL, FUT_THREAD_BLOCKED);
         }
     }
@@ -360,6 +365,12 @@ int fut_vnode_lock_exclusive(struct fut_vnode *vnode, uint32_t pid, int nonblock
                 if (pending & ~blocked)
                     return -EINTR;
             }
+            uint64_t seq = fut_waitq_wake_seq(&vnode->lock_waitq);
+            if (!(vnode->lock_type == FUT_LOCK_SHARED ||
+                  (vnode->lock_type == FUT_LOCK_EXCLUSIVE && vnode->lock_owner_pid != pid)))
+                break;
+            if (fut_waitq_wake_seq(&vnode->lock_waitq) != seq)
+                continue;
             fut_waitq_sleep_locked(&vnode->lock_waitq, NULL, FUT_THREAD_BLOCKED);
         }
     }

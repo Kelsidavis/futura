@@ -218,7 +218,10 @@ static int ps2_expect_ack_tolerant(int max_bytes) {
 
 void ps2_irq_keyboard(void) {
     if (!g_ps2_keyboard_enabled) {
-        fut_irq_send_eoi(1);
+        /* Drain the data port so the controller deasserts the IRQ line. */
+        while (hal_inb(PS2_STATUS_PORT) & 0x01u)
+            (void)hal_inb(PS2_DATA_PORT);
+        hal_outb(0x20, 0x20);  /* PIC1 EOI */
         return;
     }
 
@@ -236,19 +239,19 @@ void ps2_irq_keyboard(void) {
         }
     }
 
-    /* Send PIC EOI first so the legacy PIC clears its ISR bit and
-     * deasserts the IRQ line.  This allows the IOAPIC (edge-triggered)
-     * to detect a new rising edge for the next keystroke.  In QEMU's
-     * i440FX emulation the i8042 routes through the PIC even when the
-     * IOAPIC is active. */
+    /* Send PIC EOI so the legacy PIC clears its ISR bit and deasserts
+     * the IRQ line.  The LAPIC EOI is sent by the dedicated irq1_keyboard
+     * ISR stub after this function returns — sending it here too would
+     * write EOI with no in-service bit (undefined per Intel SDM). */
     hal_outb(0x20, 0x20);  /* PIC1 EOI */
-
-    fut_irq_send_eoi(1);
 }
 
 void ps2_irq_mouse(void) {
     if (!g_ps2_mouse_enabled) {
-        fut_irq_send_eoi(12);
+        while (hal_inb(PS2_STATUS_PORT) & 0x01u)
+            (void)hal_inb(PS2_DATA_PORT);
+        hal_outb(0xA0, 0x20);  /* PIC2 EOI (slave) */
+        hal_outb(0x20, 0x20);  /* PIC1 EOI (master cascade) */
         return;
     }
 
@@ -267,11 +270,10 @@ void ps2_irq_mouse(void) {
     }
 
     /* Send PIC EOI (both slave and master) so the legacy PIC deasserts
-     * the IRQ line, enabling the IOAPIC to detect the next edge. */
+     * the IRQ line, enabling the IOAPIC to detect the next edge.
+     * LAPIC EOI is sent by the dedicated irq12_mouse ISR stub. */
     hal_outb(0xA0, 0x20);  /* PIC2 EOI (slave) */
     hal_outb(0x20, 0x20);  /* PIC1 EOI (master cascade) */
-
-    fut_irq_send_eoi(12);
 }
 
 int ps2_controller_init(bool enable_keyboard, bool enable_mouse) {

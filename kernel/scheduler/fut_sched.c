@@ -477,7 +477,6 @@ void fut_sched_add_thread(fut_thread_t *thread) {
      * from ISR context too (where IF is already 0). */
     unsigned long irq_flags = sched_irqsave();
 
-    fut_percpu_t *current_percpu = fut_percpu_get();
     fut_percpu_t *target_percpu = NULL;
 
     /* When SMP scheduling is off (nosmp_sched or single CPU), pin to BSP. */
@@ -614,6 +613,7 @@ void fut_sched_add_thread(fut_thread_t *thread) {
     target_percpu->queue_depth = target_percpu->ready_count;
 
 #if defined(__x86_64__)
+    fut_percpu_t *current_percpu = fut_percpu_get();
     bool remote_enqueue = (current_percpu &&
                            target_percpu != current_percpu &&
                            fut_sched_smp_enabled());

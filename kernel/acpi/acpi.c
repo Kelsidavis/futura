@@ -321,6 +321,12 @@ void acpi_parse_madt(void) {
     extern void lapic_init(uint64_t lapic_base);
     lapic_init(madt->local_apic_address);
 
+    /* Calibrate the LAPIC timer before starting APs so they pick up the
+     * PIT-measured periodic count via lapic_timer_get_calibrated_count()
+     * instead of falling back to the uncalibrated 10M count (~6 Hz). */
+    extern void lapic_timer_calibrate(uint32_t hz);
+    lapic_timer_calibrate(100);
+
     /* Parse MADT entries */
     uint32_t cpu_count = 0;
     uint32_t io_apic_count = 0;

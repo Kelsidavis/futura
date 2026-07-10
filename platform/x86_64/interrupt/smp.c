@@ -230,10 +230,9 @@ void ap_main(uint32_t apic_id) {
     extern void fut_sched_init_cpu(void);
     fut_sched_init_cpu();
 
-    /* Per-CPU LAPIC timer for preemptive scheduling. Reuse the BSP's
-     * PIT-calibrated count — re-running the calibration here would
-     * race the BSP for PIT channel 2, and the LAPIC bus frequency is
-     * uniform across cores on every x86 SMP system we target. */
+    /* Reuse the BSP's PIT-calibrated count (lapic_timer_calibrate runs
+     * inside acpi_parse_madt, before smp_init). Fallback to 10M (~6 Hz)
+     * only if calibration somehow failed. */
     extern void lapic_timer_periodic(uint32_t initial_count, uint8_t vector);
     extern uint32_t lapic_timer_get_calibrated_count(void);
     #define LAPIC_TIMER_FALLBACK_COUNT 10000000

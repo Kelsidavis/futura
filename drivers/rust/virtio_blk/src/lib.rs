@@ -1731,7 +1731,17 @@ impl VirtioBlkDevice {
         core::sync::atomic::fence(Ordering::SeqCst);
         self.notify_queue();
 
-        let rc = self.queue.poll_completion(self.isr as *const u8);
+        let isr = self.isr as *const u8;
+        #[cfg(target_arch = "x86_64")]
+        const KERN_MIN: u64 = 0xFFFFFFFF00000000;
+        #[cfg(target_arch = "aarch64")]
+        const KERN_MIN: u64 = 0xFFFFFF80_00000000;
+        let safe_isr = if !isr.is_null() && (isr as u64) >= KERN_MIN {
+            isr
+        } else {
+            core::ptr::null()
+        };
+        let rc = self.queue.poll_completion(safe_isr);
         log("virtio-blk: poll_completion returned");
         // Invalidate cache for DMA buffer to see device's status write
         #[cfg(target_arch = "aarch64")]

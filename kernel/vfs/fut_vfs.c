@@ -993,14 +993,10 @@ static int lookup_vnode_d(const char *path, struct fut_vnode **vnode, int depth)
         return -EINVAL;
     }
 
-    /* Bound recursive symlink resolution. The symlink-following path below
-     * calls back into lookup_vnode_d on the link target, so a cycle
-     * (a -> b -> a) would recurse until the kernel stack overflows and the
-     * CPU faults (GPF) instead of returning an error. Because each level is a
-     * real ~1KB stack frame (not an iterative step), cap the chain well below
-     * Linux's MAXSYMLINKS=40 — 20 is far beyond any legitimate chain yet leaves
-     * ample headroom on the 64 KB kernel stack — and report ELOOP. */
-    if (depth > 20) {
+    /* Bound recursive symlink resolution.  Each level is a ~5.5 KB
+     * stack frame (abs_buf + locals); 12 levels would overflow the
+     * 64 KB kernel stack.  Cap at 8 to leave safe headroom. */
+    if (depth > 8) {
         return -ELOOP;
     }
 

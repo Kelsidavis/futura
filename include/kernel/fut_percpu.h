@@ -130,6 +130,12 @@ typedef struct fut_percpu {
      * Opaque pointer here; platform code owns the actual tss_t. */
     void *tss;
 
+    /* Deferred re-queue: thread preempted on this CPU that must be
+     * re-added to a ready queue AFTER the context switch completes.
+     * Adding it before the switch lets a remote CPU run it while this
+     * CPU is still on its kernel stack — classic SMP stack corruption. */
+    struct fut_thread *switch_prev;
+
     /* Padding to 128-byte cache line for alignment */
 } __attribute__((aligned(128))) fut_percpu_t;
 

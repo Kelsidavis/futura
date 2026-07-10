@@ -921,10 +921,16 @@ void fut_schedule(void) {
      * compounds under high IRQ rates (e.g. PS/2 mouse on L490). */
     unsigned long sched_irq_flags = sched_irqsave();
 
+    fut_percpu_t *percpu = fut_percpu_get();
+
+    if (percpu && percpu->switch_prev) {
+        fut_thread_t *deferred = percpu->switch_prev;
+        percpu->switch_prev = NULL;
+        fut_sched_add_thread(deferred);
+    }
+
     fut_thread_t *next = select_next_thread();
 
-    // Get per-CPU data for idle thread check
-    fut_percpu_t *percpu = fut_percpu_get();
     fut_thread_t *idle = percpu ? percpu->idle_thread : NULL;
 
     if (!next)
@@ -964,7 +970,9 @@ void fut_schedule(void) {
     // dup-check work in fut_sched_add_thread.
     if (prev && prev != idle && prev != next && prev->state == FUT_THREAD_RUNNING) {
         prev->state = FUT_THREAD_READY;
-        fut_sched_add_thread(prev);
+        if (percpu) {
+            percpu->switch_prev = prev;
+        }
     }
 
     // Mark next thread as running (no-op if prev==next and already RUNNING)
@@ -1175,6 +1183,14 @@ void fut_schedule(void) {
                 fut_switch_context(NULL, &next->context);
             }
             // Context switch returns when this thread is switched back to (cooperative threading).
+            {
+                fut_percpu_t *rp = fut_percpu_get();
+                if (rp && rp->switch_prev) {
+                    fut_thread_t *deferred = rp->switch_prev;
+                    rp->switch_prev = NULL;
+                    fut_sched_add_thread(deferred);
+                }
+            }
             // Restore IRQs that we masked at the top of fut_schedule.  On ARM64
             // the cooperative resume path (fut_switch_context's EL1 br x2) does
             // not touch DAIF, so without this the resumed thread would run with

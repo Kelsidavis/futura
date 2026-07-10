@@ -52,6 +52,9 @@ struct seat_state {
     struct comp_surface *last_click_surface;
     comp_selection_t selection;
     struct wl_listener selection_destroy_listener;
+    uint64_t last_mouse_event_ms;
+    uint64_t mouse_stall_logged_ms;
+    uint32_t mouse_events_total;
 };
 
 struct seat_state *seat_init(struct compositor_state *comp);

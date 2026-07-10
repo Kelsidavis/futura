@@ -1969,6 +1969,18 @@ void seat_poll_input(struct seat_state *seat) {
             for (size_t i = 0; i < count; ++i) {
                 seat_handle_mouse_event(seat, &events[i]);
             }
+            seat->mouse_events_total += (uint32_t)count;
+            seat->last_mouse_event_ms = (uint64_t)sys_time_millis_call() * 10;
+        } else if (seat->last_mouse_event_ms > 0) {
+            uint64_t now_ms = (uint64_t)sys_time_millis_call() * 10;
+            uint64_t gap = now_ms - seat->last_mouse_event_ms;
+            if (gap > 3000 && now_ms - seat->mouse_stall_logged_ms > 5000) {
+                seat->mouse_stall_logged_ms = now_ms;
+                printf("[INPUT STALL] no mouse events for %llu ms "
+                       "(fd=%d rc=%ld total=%u)\n",
+                       (unsigned long long)gap, seat->mouse_fd, rc,
+                       seat->mouse_events_total);
+            }
         }
     }
 }
